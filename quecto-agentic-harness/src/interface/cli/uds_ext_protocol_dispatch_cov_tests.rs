@@ -81,7 +81,7 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
 
     dispatch_register_tools(&mut ctx, Some("shadow-disabled"), &tools).await;
 
-    assert!(ctx.agent.tool_registry_extension_names().is_empty());
+    assert!(ctx.agent.runtime_tool_names().is_empty());
     assert!(
         client_registry.lock().unwrap().get(&456).is_none(),
         "rejected shadow must not create client tool state"
@@ -144,7 +144,7 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
 
     dispatch_register_tools(&mut ctx, Some("deny-reg"), &tools).await;
 
-    assert!(ctx.agent.tool_registry_extension_names().is_empty());
+    assert!(ctx.agent.runtime_tool_names().is_empty());
     assert!(
         client_registry.lock().unwrap().get(&789).is_none(),
         "staged UDS ownership must be rolled back when registry insertion rejects"

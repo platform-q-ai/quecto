@@ -14,11 +14,8 @@ pub(super) type ExtensionSnapshot = std::sync::Arc<tokio::sync::RwLock<Vec<serde
 /// reported through tool descriptors/catalogue state and are not governed by UDS
 /// load/unload lifecycle.
 pub(super) fn build_extension_list(ctx: &DispatchCtx<'_>) -> Vec<serde_json::Value> {
-    let ext_names: std::collections::HashSet<String> = ctx
-        .agent
-        .tool_registry_extension_names()
-        .into_iter()
-        .collect();
+    let ext_names: std::collections::HashSet<String> =
+        ctx.agent.runtime_tool_names().into_iter().collect();
     let descriptors = ctx.agent.tool_descriptors();
     if ext_names.is_empty() {
         return vec![];

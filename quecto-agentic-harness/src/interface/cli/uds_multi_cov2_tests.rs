@@ -234,8 +234,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
     let live = Arc::new(std::sync::atomic::AtomicU32::new(1));
     let registry = super::super::uds_ext_protocol::new_client_tool_registry();
     let mut agent = make_agent();
-    agent
-        .register_uds_extension_tool_for_owner(Arc::new(TinyExtensionTool), "uds:client:55".into());
+    agent.register_uds_tool_for_owner(Arc::new(TinyExtensionTool), "uds:client:55".into());
     registry
         .lock()
         .unwrap()
@@ -304,7 +303,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
     )
     .await;
 
-    assert!(ctx.agent.tool_registry_extension_names().is_empty());
+    assert!(ctx.agent.runtime_tool_names().is_empty());
     let changed = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
         .await
         .expect("extensions_changed should be broadcast")

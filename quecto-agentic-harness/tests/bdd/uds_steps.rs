@@ -114,7 +114,10 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
 
     // Build empty extension registry (script extensions removed in #353).
     let ext_registry = quecto::infrastructure::extensions::registry::ExtensionRegistry::new();
-    quecto::interface::shared::register_extension_tools(&mut registry, &ext_registry);
+    quecto::interface::shared::register_bundled_native_extension_tools(
+        &mut registry,
+        &ext_registry,
+    );
 
     let ephemeral = world.no_session || world.session_name.as_deref() == Some("-");
     let session_key = if ephemeral {

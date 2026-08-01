@@ -9,8 +9,8 @@ use std::sync::Arc;
 pub use super::registration::ToolRegistration;
 use crate::domain::error::DomainError;
 use crate::domain::tool::{
-    ExtensionToolRegistry, SessionAwareTools, Tool, ToolCatalog, ToolDefinition, ToolExecutor,
-    ToolGuard, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationResult,
+    RuntimeToolLifecycleRegistry, SessionAwareTools, Tool, ToolCatalog, ToolDefinition,
+    ToolExecutor, ToolGuard, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationResult,
     ToolPolicyMutationStatus, ToolPolicyReconciliation, ToolResult,
 };
 use crate::domain::tool_descriptor::{
@@ -208,18 +208,18 @@ impl ToolRegistryImpl {
     /// Bundled native extension tools must not use this path; they should use
     /// `register`/`register_with_metadata` with `ToolSource::BundledNative` and
     /// `unloadable: false`.
-    pub fn register_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
+    pub fn register_runtime_tool(&mut self, tool: Arc<dyn Tool>) -> bool {
         self.register_with_metadata(tool, ToolRegistration::runtime("runtime:extension"))
     }
 
     /// Register a UDS-delivered extension tool.
-    pub fn register_uds_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
+    pub fn register_uds_tool(&mut self, tool: Arc<dyn Tool>) -> bool {
         self.register_with_metadata(tool, ToolRegistration::uds())
     }
 
     /// Return whether a UDS-delivered extension tool with `name` and `owner`
     /// would be accepted by the registry without mutating it.
-    pub fn can_register_uds_extension_for_owner(&self, name: &str, owner: &str) -> bool {
+    pub fn can_register_uds_tool_for_owner(&self, name: &str, owner: &str) -> bool {
         if self.denied_names.contains(name) {
             return false;
         }
@@ -231,7 +231,7 @@ impl ToolRegistryImpl {
     }
 
     /// Register a UDS-delivered extension tool with per-connection ownership.
-    pub fn register_uds_extension_for_owner(
+    pub fn register_uds_tool_for_owner(
         &mut self,
         tool: Arc<dyn Tool>,
         owner: Cow<'static, str>,
@@ -243,7 +243,7 @@ impl ToolRegistryImpl {
     ///
     /// No-op if `name` is not unloadable, preventing runtime lifecycle events
     /// from removing bundled native official tools.
-    pub fn unregister_extension(&mut self, name: &str) {
+    pub fn unregister_runtime_tool(&mut self, name: &str) {
         if !self
             .metadata
             .get(name)
@@ -261,7 +261,7 @@ impl ToolRegistryImpl {
     ///
     /// This keeps UDS disconnect cleanup scoped to the disconnecting client while
     /// preserving bundled native tools and other clients' runtime tools.
-    pub fn unregister_extensions_for_owner(&mut self, owner: &str) -> Vec<String> {
+    pub fn unregister_runtime_tools_for_owner(&mut self, owner: &str) -> Vec<String> {
         let names: Vec<String> = self
             .metadata
             .iter()
@@ -279,7 +279,7 @@ impl ToolRegistryImpl {
     }
 
     /// Return the names of currently unloadable runtime tools.
-    pub fn extension_names(&self) -> Vec<String> {
+    pub fn runtime_tool_names(&self) -> Vec<String> {
         let mut names: Vec<_> = self
             .metadata
             .iter()
@@ -288,6 +288,45 @@ impl ToolRegistryImpl {
             .collect();
         names.sort();
         names
+    }
+
+    /// Compatibility name for the legacy extension lifecycle API.
+    pub fn extension_names(&self) -> Vec<String> {
+        self.runtime_tool_names()
+    }
+
+    /// Compatibility name for the legacy extension lifecycle API.
+    pub fn register_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
+        self.register_runtime_tool(tool)
+    }
+
+    /// Compatibility name for the legacy UDS lifecycle API.
+    pub fn register_uds_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
+        self.register_uds_tool(tool)
+    }
+
+    /// Compatibility name for the legacy UDS lifecycle API.
+    pub fn can_register_uds_extension_for_owner(&self, name: &str, owner: &str) -> bool {
+        self.can_register_uds_tool_for_owner(name, owner)
+    }
+
+    /// Compatibility name for the legacy UDS lifecycle API.
+    pub fn register_uds_extension_for_owner(
+        &mut self,
+        tool: Arc<dyn Tool>,
+        owner: Cow<'static, str>,
+    ) -> bool {
+        self.register_uds_tool_for_owner(tool, owner)
+    }
+
+    /// Compatibility name for the legacy extension lifecycle API.
+    pub fn unregister_extension(&mut self, name: &str) {
+        self.unregister_runtime_tool(name)
+    }
+
+    /// Compatibility name for the legacy extension lifecycle API.
+    pub fn unregister_extensions_for_owner(&mut self, owner: &str) -> Vec<String> {
+        self.unregister_runtime_tools_for_owner(owner)
     }
 
     /// Return descriptors for all registered tools.
@@ -600,37 +639,37 @@ impl ToolExecutor for ToolRegistryImpl {
     }
 }
 
-impl ExtensionToolRegistry for ToolRegistryImpl {
-    fn extension_names(&self) -> Vec<String> {
-        self.extension_names()
+impl RuntimeToolLifecycleRegistry for ToolRegistryImpl {
+    fn runtime_tool_names(&self) -> Vec<String> {
+        self.runtime_tool_names()
     }
 
-    fn register_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
-        self.register_extension(tool)
+    fn register_runtime_tool(&mut self, tool: Arc<dyn Tool>) -> bool {
+        self.register_runtime_tool(tool)
     }
 
-    fn unregister_extension(&mut self, name: &str) {
-        self.unregister_extension(name);
+    fn unregister_runtime_tool(&mut self, name: &str) {
+        self.unregister_runtime_tool(name);
     }
 
-    fn unregister_extensions_for_owner(&mut self, owner: &str) -> Vec<String> {
-        self.unregister_extensions_for_owner(owner)
+    fn unregister_runtime_tools_for_owner(&mut self, owner: &str) -> Vec<String> {
+        self.unregister_runtime_tools_for_owner(owner)
     }
 
-    fn register_uds_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
-        self.register_uds_extension(tool)
+    fn register_uds_tool(&mut self, tool: Arc<dyn Tool>) -> bool {
+        self.register_uds_tool(tool)
     }
 
-    fn can_register_uds_extension_for_owner(&self, name: &str, owner: &str) -> bool {
-        self.can_register_uds_extension_for_owner(name, owner)
+    fn can_register_uds_tool_for_owner(&self, name: &str, owner: &str) -> bool {
+        self.can_register_uds_tool_for_owner(name, owner)
     }
 
-    fn register_uds_extension_for_owner(
+    fn register_uds_tool_for_owner(
         &mut self,
         tool: Arc<dyn Tool>,
         owner: Cow<'static, str>,
     ) -> bool {
-        self.register_uds_extension_for_owner(tool, owner)
+        self.register_uds_tool_for_owner(tool, owner)
     }
 
     fn enable_tool(&mut self, name: &str) -> bool {

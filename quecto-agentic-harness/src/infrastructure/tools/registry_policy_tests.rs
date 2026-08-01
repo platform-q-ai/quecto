@@ -81,7 +81,7 @@ fn startup_restriction_blocks_live_policy_enable_and_later_registration() {
     );
 
     let future_tool: Arc<dyn Tool> = Arc::new(DummyTestTool::new("future_tool"));
-    assert!(!reg.register_uds_extension(future_tool));
+    assert!(!reg.register_uds_tool(future_tool));
     assert!(reg.get("future_tool").is_none());
 }
 

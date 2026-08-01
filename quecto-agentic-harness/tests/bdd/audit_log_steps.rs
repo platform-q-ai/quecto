@@ -348,7 +348,7 @@ impl quecto::domain::tool::ToolExecutor for LoopEmptyRegistry {
     }
 }
 
-impl quecto::domain::tool::ExtensionToolRegistry for LoopEmptyRegistry {}
+impl quecto::domain::tool::RuntimeToolLifecycleRegistry for LoopEmptyRegistry {}
 
 impl quecto::domain::tool::SessionAwareTools for LoopEmptyRegistry {}
 

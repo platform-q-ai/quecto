@@ -224,64 +224,97 @@ pub trait ToolPolicyMutator: Send + Sync {
     }
 }
 
-/// Port: runtime-loadable tool lifecycle management.
+/// Port: runtime-loadable UDS tool lifecycle management.
 ///
-/// This port is about provider lifecycle, not the common catalogue meaning of
-/// "extension" in #1276. Bundled native extension tools are compiled into Quecto
-/// and should remain registered while policy enables/disables them. UDS tools are
-/// runtime-loadable: they may be registered, unregistered, or removed on client
-/// disconnect.
-pub trait ExtensionToolRegistry: Send + Sync {
-    /// Return names of runtime-loadable tools currently owned by dynamic providers.
-    ///
-    /// Historical name retained for compatibility; this is not the complete
-    /// native+UDS extension catalogue.
-    fn extension_names(&self) -> Vec<String> {
+/// This port is only for tools delivered by runtime lifecycle adapters such as
+/// UDS. Bundled native provider tools are compiled into Quecto and remain in the
+/// catalogue while policy enables/disables them; they must not use this unload
+/// path.
+pub use RuntimeToolLifecycleRegistry as ExtensionToolRegistry;
+
+pub trait RuntimeToolLifecycleRegistry: Send + Sync {
+    /// Return names of currently unloadable runtime tools.
+    fn runtime_tool_names(&self) -> Vec<String> {
         vec![]
     }
 
-    /// Register a runtime-loadable extension tool.
-    ///
-    /// Historical compatibility API. Bundled native extension tools should use
-    /// the catalogue/registry registration path with bundled-native metadata,
-    /// not this UDS/runtime lifecycle path. Default: no-op.
-    fn register_extension(&mut self, _tool: std::sync::Arc<dyn Tool>) -> bool {
+    /// Register a runtime-loadable tool.
+    fn register_runtime_tool(&mut self, _tool: std::sync::Arc<dyn Tool>) -> bool {
         false
     }
 
     /// Unregister a runtime-loadable tool by name.
     ///
-    /// No-op if the name is not owned by a dynamic provider. Bundled native tools
+    /// No-op if the name is not owned by a runtime provider. Bundled native tools
     /// are disabled/enabled by policy rather than unloaded. Default: no-op.
-    fn unregister_extension(&mut self, _name: &str) {}
+    fn unregister_runtime_tool(&mut self, _name: &str) {}
 
     /// Unregister runtime-loadable tools owned by one dynamic provider/client.
-    fn unregister_extensions_for_owner(&mut self, _owner: &str) -> Vec<String> {
+    fn unregister_runtime_tools_for_owner(&mut self, _owner: &str) -> Vec<String> {
         vec![]
     }
 
-    /// Register a UDS-delivered runtime-loadable extension tool.
-    fn register_uds_extension(&mut self, tool: std::sync::Arc<dyn Tool>) -> bool {
-        self.register_extension(tool)
+    /// Register a UDS-delivered runtime-loadable tool.
+    fn register_uds_tool(&mut self, tool: std::sync::Arc<dyn Tool>) -> bool {
+        self.register_runtime_tool(tool)
     }
 
-    /// Return whether a UDS-delivered runtime-loadable extension tool with this
-    /// name and owner would be accepted by the registry without mutating it.
-    fn can_register_uds_extension_for_owner(&self, _name: &str, _owner: &str) -> bool {
+    /// Compatibility name for the legacy extension lifecycle API.
+    fn extension_names(&self) -> Vec<String> {
+        self.runtime_tool_names()
+    }
+
+    /// Compatibility name for the legacy extension lifecycle API.
+    fn register_extension(&mut self, tool: std::sync::Arc<dyn Tool>) -> bool {
+        self.register_runtime_tool(tool)
+    }
+
+    /// Compatibility name for the legacy extension lifecycle API.
+    fn unregister_extension(&mut self, name: &str) {
+        self.unregister_runtime_tool(name)
+    }
+
+    /// Compatibility name for the legacy extension lifecycle API.
+    fn unregister_extensions_for_owner(&mut self, owner: &str) -> Vec<String> {
+        self.unregister_runtime_tools_for_owner(owner)
+    }
+
+    /// Compatibility name for the legacy UDS lifecycle API.
+    fn register_uds_extension(&mut self, tool: std::sync::Arc<dyn Tool>) -> bool {
+        self.register_uds_tool(tool)
+    }
+
+    /// Return whether a UDS-delivered runtime-loadable tool with this name and
+    /// owner would be accepted by the registry without mutating it.
+    fn can_register_uds_tool_for_owner(&self, _name: &str, _owner: &str) -> bool {
         true
     }
 
-    /// Register a UDS-delivered runtime-loadable extension tool owned by a
-    /// specific UDS client/connection.
+    /// Register a UDS-delivered runtime-loadable tool owned by a specific UDS
+    /// client/connection.
     ///
-    /// Default delegates to the legacy ownerless UDS path for registries that do
-    /// not yet expose per-connection ownership metadata.
-    fn register_uds_extension_for_owner(
+    /// Default delegates to the ownerless UDS path for registries that do not
+    /// expose per-connection ownership metadata.
+    fn register_uds_tool_for_owner(
         &mut self,
         tool: std::sync::Arc<dyn Tool>,
         _owner: std::borrow::Cow<'static, str>,
     ) -> bool {
-        self.register_uds_extension(tool)
+        self.register_uds_tool(tool)
+    }
+
+    /// Compatibility name for the legacy UDS lifecycle API.
+    fn can_register_uds_extension_for_owner(&self, name: &str, owner: &str) -> bool {
+        self.can_register_uds_tool_for_owner(name, owner)
+    }
+
+    /// Compatibility name for the legacy UDS lifecycle API.
+    fn register_uds_extension_for_owner(
+        &mut self,
+        tool: std::sync::Arc<dyn Tool>,
+        owner: std::borrow::Cow<'static, str>,
+    ) -> bool {
+        self.register_uds_tool_for_owner(tool, owner)
     }
 
     /// Runtime-enable a registered tool. Default: unsupported.
@@ -308,7 +341,7 @@ pub trait SessionAwareTools: Send + Sync {
 /// session propagation behaviour. The full registry remains as the ergonomic
 /// bundle owned by `AgentLoopImpl`.
 pub trait ToolRegistry:
-    ToolCatalog + ToolExecutor + ExtensionToolRegistry + SessionAwareTools + ToolPolicyMutator
+    ToolCatalog + ToolExecutor + RuntimeToolLifecycleRegistry + SessionAwareTools + ToolPolicyMutator
 {
 }
 

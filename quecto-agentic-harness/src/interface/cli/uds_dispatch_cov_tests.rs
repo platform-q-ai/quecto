@@ -667,7 +667,7 @@ async fn dispatch_register_then_unregister_tools() {
     // The extension tool should now appear in the agent registry.
     assert!(
         fx.agent
-            .tool_registry_extension_names()
+            .runtime_tool_names()
             .contains(&"weather".to_string())
     );
 
@@ -679,7 +679,7 @@ async fn dispatch_register_then_unregister_tools() {
         let mut ctx = fx.ctx();
         assert!(!dispatch_command(unreg_cmd, &mut ctx).await);
     }
-    assert!(fx.agent.tool_registry_extension_names().is_empty());
+    assert!(fx.agent.runtime_tool_names().is_empty());
 }
 
 #[tokio::test]

@@ -8,8 +8,8 @@ use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role};
 use crate::domain::provider::LlmProvider;
 use crate::domain::tool::{
-    ExtensionToolRegistry, SessionAwareTools, Tool, ToolCatalog, ToolDefinition, ToolExecutor,
-    ToolResult,
+    RuntimeToolLifecycleRegistry, SessionAwareTools, Tool, ToolCatalog, ToolDefinition,
+    ToolExecutor, ToolResult,
 };
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::test_support::StubProvider;
@@ -61,7 +61,7 @@ impl ToolExecutor for EmptyRegistry {
     }
 }
 
-impl ExtensionToolRegistry for EmptyRegistry {}
+impl RuntimeToolLifecycleRegistry for EmptyRegistry {}
 
 impl SessionAwareTools for EmptyRegistry {}
 
@@ -73,14 +73,14 @@ impl crate::domain::tool::ToolRegistry for EmptyRegistry {}
 async fn empty_registry_trait_methods_are_invoked() {
     let mut registry = EmptyRegistry;
     assert_eq!(registry.tool_count(), 0);
-    assert!(registry.extension_names().is_empty());
+    assert!(registry.runtime_tool_names().is_empty());
     registry.set_session_key("session");
     let tool = Arc::new(NoopTool);
     assert_eq!(tool.definition().name.as_ref(), "noop");
     tool.set_session_key("tool-session".into());
     assert_eq!(tool.execute("{}").await.unwrap().content, "noop");
-    registry.register_extension(tool);
-    registry.unregister_extension("missing");
+    registry.register_runtime_tool(tool);
+    registry.unregister_runtime_tool("missing");
     let err = registry.execute("missing", "{}").await.unwrap_err();
     assert!(err.to_string().contains("no tools"));
 }

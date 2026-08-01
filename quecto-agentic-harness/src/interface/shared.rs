@@ -661,7 +661,7 @@ pub fn build_and_register_native_extensions(
 /// invoked in-process, and governed by catalogue/policy enablement. They are not
 /// UDS/runtime-loadable tools, so they must use the bundled-native registration
 /// path rather than the historical `register_extension` lifecycle API.
-pub fn register_extension_tools(
+pub fn register_bundled_native_extension_tools(
     registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
     ext_registry: &crate::infrastructure::extensions::registry::ExtensionRegistry,
 ) {
@@ -675,6 +675,14 @@ pub fn register_extension_tools(
             );
         }
     }
+}
+
+/// Compatibility name for the pre-ADR-0020 bundled-native helper.
+pub fn register_runtime_tools(
+    registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
+    ext_registry: &crate::infrastructure::extensions::registry::ExtensionRegistry,
+) {
+    register_bundled_native_extension_tools(registry, ext_registry);
 }
 
 pub(crate) use crate::interface::tool_runtime::{

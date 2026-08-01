@@ -41,7 +41,7 @@ fn mock_catalogue_entry(name: &str, effective_enabled: bool) -> ToolCatalogueEnt
     }
 }
 
-impl ExtensionToolRegistry for MockRegistry {}
+impl RuntimeToolLifecycleRegistry for MockRegistry {}
 impl SessionAwareTools for MockRegistry {}
 impl crate::domain::tool::ToolPolicyMutator for MockRegistry {
     fn apply_tool_policy_mutations(
@@ -132,7 +132,7 @@ impl ToolExecutor for RestrictedMockRegistry {
     }
 }
 
-impl ExtensionToolRegistry for RestrictedMockRegistry {}
+impl RuntimeToolLifecycleRegistry for RestrictedMockRegistry {}
 impl SessionAwareTools for RestrictedMockRegistry {}
 impl crate::domain::tool::ToolPolicyMutator for RestrictedMockRegistry {
     fn apply_tool_policy_mutations(

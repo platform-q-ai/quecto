@@ -314,7 +314,7 @@ fn given_native_ext_in_tool_registry(world: &mut QuectoWorld, name: String) {
 #[then(expr = "the tool registry extension names should include {string}")]
 fn then_tool_registry_ext_names_include(world: &mut QuectoWorld, name: String) {
     let reg = world.tool_registry.as_ref().expect("need tool registry");
-    let names = reg.extension_names();
+    let names = reg.runtime_tool_names();
     assert!(
         names.contains(&name),
         "extension '{}' not in extension_names: {:?}",
@@ -326,7 +326,7 @@ fn then_tool_registry_ext_names_include(world: &mut QuectoWorld, name: String) {
 #[then(expr = "the tool registry extension names should not include {string}")]
 fn then_tool_registry_ext_names_exclude(world: &mut QuectoWorld, name: String) {
     let reg = world.tool_registry.as_ref().expect("need tool registry");
-    let names = reg.extension_names();
+    let names = reg.runtime_tool_names();
     assert!(
         !names.contains(&name),
         "extension '{}' should not be in extension_names: {:?}",
@@ -565,7 +565,7 @@ fn given_uds_extension_tool_registered(world: &mut QuectoWorld, tool_name: Strin
         name: tool_name,
         description: "UDS extension test tool".to_string(),
     });
-    world.tool_policy_change_result = Some(registry.register_uds_extension(tool));
+    world.tool_policy_change_result = Some(registry.register_uds_tool(tool));
     world.tool_definitions_snapshot = registry.definitions().to_vec();
 }
 
@@ -581,7 +581,7 @@ fn given_uds_client_registered_capability(
         description: "UDS extension test tool".to_string(),
     });
     let owner = format!("uds:client:{client_id}").into();
-    world.tool_policy_change_result = Some(registry.register_uds_extension_for_owner(tool, owner));
+    world.tool_policy_change_result = Some(registry.register_uds_tool_for_owner(tool, owner));
     world.tool_definitions_snapshot = registry.definitions().to_vec();
 }
 

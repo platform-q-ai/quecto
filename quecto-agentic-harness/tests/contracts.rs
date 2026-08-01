@@ -9,10 +9,10 @@ mod audit_sink;
 mod context_spill_store;
 #[path = "contracts/extension.rs"]
 mod extension;
-#[path = "contracts/extension_tool_registry.rs"]
-mod extension_tool_registry;
 #[path = "contracts/llm_provider.rs"]
 mod llm_provider;
+#[path = "contracts/runtime_tool_lifecycle_registry.rs"]
+mod runtime_tool_lifecycle_registry;
 #[path = "contracts/session_aware_tools.rs"]
 mod session_aware_tools;
 #[path = "contracts/session_store.rs"]

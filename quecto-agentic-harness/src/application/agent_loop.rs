@@ -14,7 +14,7 @@ use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent
 use crate::domain::provider_error::classify_provider_error;
 use crate::domain::session::ContextSpillStore;
 use crate::domain::tool::{
-    ExtensionToolRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolPolicyMutation,
+    RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolPolicyMutation,
     ToolRegistry,
 };
 use std::pin::Pin;
@@ -283,8 +283,8 @@ impl AgentLoopImpl {
     }
     /// Return names of tools registered from extensions (UDS `get_extensions`
     /// reports only actually-available tools; shadows are rejected earlier).
-    pub fn tool_registry_extension_names(&self) -> Vec<String> {
-        self.extension_tool_registry().extension_names()
+    pub fn runtime_tool_names(&self) -> Vec<String> {
+        self.extension_tool_registry().runtime_tool_names()
     }
     /// Return descriptors for policy/UI callers without exposing concrete tool
     /// implementations.
@@ -300,31 +300,30 @@ impl AgentLoopImpl {
         self.tool_catalog().catalogue_entries()
     }
 
-    /// Register a single native extension tool.
-    pub fn register_extension_tool(
-        &mut self,
-        tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
-    ) -> bool {
-        self.extension_tool_registry_mut().register_extension(tool)
-    }
-
-    /// Register a single UDS-delivered extension tool.
-    pub fn register_uds_extension_tool(
+    pub fn register_runtime_tool(
         &mut self,
         tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
     ) -> bool {
         self.extension_tool_registry_mut()
-            .register_uds_extension(tool)
+            .register_runtime_tool(tool)
+    }
+
+    /// Register a single UDS-delivered extension tool.
+    pub fn register_uds_tool(
+        &mut self,
+        tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
+    ) -> bool {
+        self.extension_tool_registry_mut().register_uds_tool(tool)
     }
 
     /// Return whether a UDS-delivered extension tool would be accepted for a
     /// client owner without mutating the registry.
-    pub fn can_register_uds_extension_tool_for_owner(&self, name: &str, owner: &str) -> bool {
+    pub fn can_register_uds_tool_for_owner(&self, name: &str, owner: &str) -> bool {
         self.extension_tool_registry()
-            .can_register_uds_extension_for_owner(name, owner)
+            .can_register_uds_tool_for_owner(name, owner)
     }
 
-    pub fn register_uds_extension_tool_for_owner(
+    pub fn register_uds_tool_for_owner(
         &mut self,
         tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
         owner: std::borrow::Cow<'static, str>,
@@ -333,32 +332,33 @@ impl AgentLoopImpl {
         let before = self.tool_catalogue_entries();
         let registered = self
             .extension_tool_registry_mut()
-            .register_uds_extension_for_owner(tool, owner);
+            .register_uds_tool_for_owner(tool, owner);
         if registered {
             self.notify_tool_catalogue_changed(vec![name], before, "register_tool");
         }
         registered
     }
     /// Unregister a single extension tool by name (e.g. on UDS client disconnect).
-    pub fn unregister_extension_tool(&mut self, name: &str) {
+    pub fn unregister_runtime_tool(&mut self, name: &str) {
         let before = self.tool_catalogue_entries();
         self.extension_tool_registry_mut()
-            .unregister_extension(name);
+            .unregister_runtime_tool(name);
         self.notify_tool_catalogue_changed(vec![name.to_string()], before, "unregister_tool");
     }
 
     /// Unregister all UDS-delivered extension tools owned by a connection.
-    pub fn unregister_uds_extension_tools_for_client(&mut self, client_id: u64) -> Vec<String> {
+    pub fn unregister_uds_tools_for_client(&mut self, client_id: u64) -> Vec<String> {
         let owner = format!("uds:client:{client_id}");
         let before = self.tool_catalogue_entries();
         let removed = self
             .tool_registry
-            .unregister_extensions_for_owner(owner.as_str());
+            .unregister_runtime_tools_for_owner(owner.as_str());
         if !removed.is_empty() {
             self.notify_tool_catalogue_changed(removed.clone(), before, "unregister_client_tools");
         }
         removed
     }
+
     /// Return all tool definitions (for core name lookups).
     pub fn tool_definitions(&self) -> &[crate::domain::tool::ToolDefinition] {
         self.tool_catalog().definitions()
@@ -372,11 +372,11 @@ impl AgentLoopImpl {
         &*self.tool_registry
     }
 
-    fn extension_tool_registry(&self) -> &dyn ExtensionToolRegistry {
+    fn extension_tool_registry(&self) -> &dyn RuntimeToolLifecycleRegistry {
         &*self.tool_registry
     }
 
-    fn extension_tool_registry_mut(&mut self) -> &mut dyn ExtensionToolRegistry {
+    fn extension_tool_registry_mut(&mut self) -> &mut dyn RuntimeToolLifecycleRegistry {
         &mut *self.tool_registry
     }
 

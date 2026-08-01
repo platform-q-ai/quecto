@@ -18,7 +18,8 @@ use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, StopReason};
 use quecto::domain::provider::{ChatRequest, LlmProvider};
 use quecto::domain::tool::{
-    ExtensionToolRegistry, SessionAwareTools, ToolCatalog, ToolDefinition, ToolExecutor, ToolResult,
+    RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolDefinition, ToolExecutor,
+    ToolResult,
 };
 use std::future::Future;
 use std::pin::Pin;
@@ -67,7 +68,7 @@ impl ToolExecutor for EmptyRegistry {
     }
 }
 
-impl ExtensionToolRegistry for EmptyRegistry {}
+impl RuntimeToolLifecycleRegistry for EmptyRegistry {}
 
 impl SessionAwareTools for EmptyRegistry {}
 

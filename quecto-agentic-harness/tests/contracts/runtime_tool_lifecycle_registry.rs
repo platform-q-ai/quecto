@@ -1,4 +1,4 @@
-//! Contract tests for the `ExtensionToolRegistry` role port.
+//! Contract tests for the `RuntimeToolLifecycleRegistry` role port.
 //!
 //! Contract:
 //! - extension tools are named separately from core tools.
@@ -6,7 +6,7 @@
 //! - extension tools cannot shadow core tools.
 
 use quecto::domain::tool::{
-    ExtensionToolRegistry, Tool, ToolCatalog, ToolDefinition, ToolExecutor, ToolResult,
+    RuntimeToolLifecycleRegistry, Tool, ToolCatalog, ToolDefinition, ToolExecutor, ToolResult,
 };
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use std::borrow::Cow;
@@ -67,43 +67,57 @@ impl Tool for Echo {
 fn extension_names_track_lifecycle_for_multiple_extensions_only() {
     let mut registry = ToolRegistryImpl::new();
     registry.register(Arc::new(Echo::new("core")));
-    registry.register_extension(Arc::new(Echo::new("extension_a")));
-    registry.register_extension(Arc::new(Echo::new("extension_b")));
+    registry.register_runtime_tool(Arc::new(Echo::new("extension_a")));
+    registry.register_runtime_tool(Arc::new(Echo::new("extension_b")));
 
     {
-        let extension_registry: &mut dyn ExtensionToolRegistry = &mut registry;
-        extension_registry.unregister_extension("extension_a");
+        let extension_registry: &mut dyn RuntimeToolLifecycleRegistry = &mut registry;
+        extension_registry.unregister_runtime_tool("extension_a");
     }
 
-    let mut extension_names = registry.extension_names();
-    extension_names.sort();
-    assert_eq!(extension_names, vec!["extension_b"]);
+    assert_eq!(registry.runtime_tool_names(), vec!["extension_b"]);
     assert!(registry.names().contains(&"core".to_string()));
     assert!(!registry.names().contains(&"extension_a".to_string()));
     assert!(registry.names().contains(&"extension_b".to_string()));
 }
 
 #[test]
+fn legacy_extension_lifecycle_names_delegate_to_runtime_lifecycle() {
+    let mut registry = ToolRegistryImpl::new();
+    {
+        let extension_registry: &mut dyn RuntimeToolLifecycleRegistry = &mut registry;
+        assert!(extension_registry.register_extension(Arc::new(Echo::new("legacy_a"))));
+        assert!(extension_registry.register_uds_extension(Arc::new(Echo::new("legacy_b"))));
+        assert_eq!(
+            extension_registry.extension_names(),
+            vec!["legacy_a".to_string(), "legacy_b".to_string()]
+        );
+        extension_registry.unregister_extension("legacy_a");
+    }
+    assert_eq!(registry.runtime_tool_names(), vec!["legacy_b".to_string()]);
+}
+
+#[test]
 fn unregister_extension_removes_extension_without_removing_core_tools() {
     let mut registry = ToolRegistryImpl::new();
     registry.register(Arc::new(Echo::new("core")));
-    registry.register_extension(Arc::new(Echo::new("extension")));
+    registry.register_runtime_tool(Arc::new(Echo::new("extension")));
 
     {
-        let extension_registry: &mut dyn ExtensionToolRegistry = &mut registry;
-        extension_registry.unregister_extension("core");
-        extension_registry.unregister_extension("extension");
+        let extension_registry: &mut dyn RuntimeToolLifecycleRegistry = &mut registry;
+        extension_registry.unregister_runtime_tool("core");
+        extension_registry.unregister_runtime_tool("extension");
     }
 
     assert!(registry.names().contains(&"core".to_string()));
     assert!(!registry.names().contains(&"extension".to_string()));
-    assert!(registry.extension_names().is_empty());
+    assert!(registry.runtime_tool_names().is_empty());
 }
 
 #[tokio::test]
 async fn registered_extension_tools_are_cataloged_executable_and_removed_on_unregister() {
     let mut registry = ToolRegistryImpl::new();
-    registry.register_extension(Arc::new(Echo::with_marker("extension", "extension")));
+    registry.register_runtime_tool(Arc::new(Echo::with_marker("extension", "extension")));
 
     let catalog: &dyn ToolCatalog = &registry;
     assert_eq!(catalog.tool_count(), 1);
@@ -120,8 +134,8 @@ async fn registered_extension_tools_are_cataloged_executable_and_removed_on_unre
     );
 
     {
-        let extension_registry: &mut dyn ExtensionToolRegistry = &mut registry;
-        extension_registry.unregister_extension("extension");
+        let extension_registry: &mut dyn RuntimeToolLifecycleRegistry = &mut registry;
+        extension_registry.unregister_runtime_tool("extension");
     }
 
     assert_eq!(registry.definitions().len(), 0);
@@ -134,11 +148,11 @@ fn extension_tools_cannot_shadow_core_tools() {
     registry.register(Arc::new(Echo::with_marker("same", "core")));
 
     {
-        let extension_registry: &mut dyn ExtensionToolRegistry = &mut registry;
-        extension_registry.register_extension(Arc::new(Echo::with_marker("same", "extension")));
+        let extension_registry: &mut dyn RuntimeToolLifecycleRegistry = &mut registry;
+        extension_registry.register_runtime_tool(Arc::new(Echo::with_marker("same", "extension")));
     }
 
-    assert!(registry.extension_names().is_empty());
+    assert!(registry.runtime_tool_names().is_empty());
     assert_eq!(registry.names(), vec!["same"]);
     assert_eq!(
         registry.definitions()[0].description.as_ref(),

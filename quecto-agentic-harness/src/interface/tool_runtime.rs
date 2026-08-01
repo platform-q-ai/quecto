@@ -196,7 +196,7 @@ pub(crate) fn build_tool_runtime(
     let ext_registry =
         crate::interface::shared::build_and_register_native_extensions(config, http_client);
     let extension_prompt_snippets = ext_registry.system_prompt_snippets();
-    crate::interface::shared::register_extension_tools(&mut registry, &ext_registry);
+    crate::interface::shared::register_bundled_native_extension_tools(&mut registry, &ext_registry);
     if !policy_state.web_default_enabled {
         registry.disable_tool_by_entrypoint_default("web_search");
         registry.disable_tool_by_entrypoint_default("web_fetch");

@@ -45,10 +45,10 @@ trait ToolExecutor {
     fn execute(...);
 }
 
-trait ExtensionToolRegistry {
-    fn extension_names(&self) -> Vec<String>;
-    fn register_extension(...);
-    fn unregister_extension(...);
+trait RuntimeToolLifecycleRegistry {
+    fn runtime_tool_names(&self) -> Vec<String>;
+    fn register_runtime_tool(...);
+    fn unregister_runtime_tool(...);
 }
 
 trait SessionAwareTools {

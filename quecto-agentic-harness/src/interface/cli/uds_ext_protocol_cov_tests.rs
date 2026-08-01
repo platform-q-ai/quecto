@@ -459,7 +459,7 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
 
     assert!(
         ctx.agent
-            .tool_registry_extension_names()
+            .runtime_tool_names()
             .contains(&"cov_ext".to_string())
     );
     let descriptor = ctx
@@ -501,7 +501,7 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
         },
         std::time::Duration::from_secs(1),
     );
-    agent.register_uds_extension_tool_for_owner(existing_tool, "uds:client:123".into());
+    agent.register_uds_tool_for_owner(existing_tool, "uds:client:123".into());
     let mut messages = Vec::new();
     let mut session =
         super::super::uds_session::AgentSession::new("stub".into(), "cli:test".into());
