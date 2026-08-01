@@ -102,8 +102,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         AgentCommand::ResumeSession { session, .. } => {
             handle_resume_session(ctx, id.as_deref(), &type_name, session).await
         }
-        AgentCommand::ReloadExtensions { .. }
-        | AgentCommand::RegisterTools { .. }
+        AgentCommand::RegisterTools { .. }
         | AgentCommand::UnregisterTools { .. }
         | AgentCommand::ToolResult { .. } => {
             dispatch_ext_command(cmd, ctx, id.as_deref(), &type_name).await
@@ -112,7 +111,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         AgentCommand::ClearHistory { .. }
         | AgentCommand::DeleteAllSubagents { .. }
         | AgentCommand::ListModels { .. }
-        | AgentCommand::GetExtensions { .. }
+        | AgentCommand::GetToolCatalogue { .. }
         | AgentCommand::GetSubagents { .. }
         | AgentCommand::GetMessage { .. }
         | AgentCommand::GetState { .. }
@@ -232,12 +231,9 @@ pub(super) async fn dispatch_ext_command(
     cmd: AgentCommand,
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
-    tn: &str,
+    _tn: &str,
 ) -> bool {
     match cmd {
-        AgentCommand::ReloadExtensions { .. } => {
-            super::super::uds_extensions::handle_reload_extensions(ctx, id, tn).await
-        }
         AgentCommand::RegisterTools { tools, .. } => {
             uds_ext_protocol::dispatch_register_tools(ctx, id, &tools).await
         }
@@ -281,3 +277,6 @@ mod tests_843;
 #[cfg(test)]
 #[path = "uds_dispatch_843_targeted_tests.rs"]
 mod tests_843_targeted;
+#[cfg(test)]
+#[path = "uds_dispatch_tool_catalogue_tests.rs"]
+mod tool_catalogue_tests;

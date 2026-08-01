@@ -205,7 +205,7 @@ norm.
 - Reload is **fail-safe**: a malformed source on reload logs a warning and keeps
   the **last-good** provider/registry state (never crashes the session).
 - Expose an explicit `reload` trigger too (convenience, not the only path; the
-  no-op `reload_extensions` is the precedent).
+  pre-customer compatibility no-ops were the precedent).
 - **Shared mechanism** with Workflow-set reload: one "sources changed → rebuild
   affected live state" component, not bespoke reloads. This shared component is
   the concrete realization of ADR-0002.

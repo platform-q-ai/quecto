@@ -91,8 +91,6 @@ pub enum AgentEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
-    /// Extension list changed (after reload or hot-reload).
-    ExtensionsChanged { extensions: Vec<ExtensionInfo> },
     /// Rich catalogue changed after tool registration/unregistration.
     #[serde(rename_all = "camelCase")]
     ToolCatalogueChanged {
@@ -214,23 +212,6 @@ pub struct SubagentInfo {
     /// The TUI renders an observer marker next to its name when true (#966).
     #[serde(default)]
     pub read_only: bool,
-}
-
-/// Metadata for a registered extension, used in `ExtensionsChanged` events
-/// and `get_extensions` responses.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtensionInfo {
-    pub name: String,
-    pub description: String,
-    /// Delivery adapter for this tool (`bundled-native`, `uds`, ...).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
-    /// Policy owner/profile responsible for this tool's availability.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub owner: Option<String>,
-    /// Runtime policy state for the registered tool.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub availability: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

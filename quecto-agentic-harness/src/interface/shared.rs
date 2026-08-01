@@ -639,7 +639,7 @@ pub fn build_official_tool_registry(
 ///
 /// Returns an `ExtensionRegistry` containing native extensions.
 /// Native extensions are evaluated once at agent construction and are not
-/// affected by `reload_extensions`. Changes to config require an agent restart.
+/// affected by ``. Changes to config require an agent restart.
 pub fn build_and_register_native_extensions(
     config: &crate::infrastructure::config::Config,
     http_client: &reqwest::Client,

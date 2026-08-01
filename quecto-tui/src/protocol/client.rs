@@ -223,8 +223,12 @@ pub enum Event {
         tool_name: String,
         arguments: String,
     },
-    ExtensionsChanged {
-        extensions: Vec<serde_json::Value>,
+    #[serde(rename_all = "camelCase")]
+    ToolCatalogueChanged {
+        changed_tools: Vec<String>,
+        before: Vec<serde_json::Value>,
+        after: Vec<serde_json::Value>,
+        reason: String,
     },
     /// Subagent state changed — full list replacement (#525).
     SubagentStateChanged {

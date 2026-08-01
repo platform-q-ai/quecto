@@ -80,7 +80,7 @@ impl ActEnv {
             )),
             state_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(state)),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
-            extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: Some(&mut self.writer),
@@ -91,7 +91,7 @@ impl ActEnv {
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
             turn_control: std::sync::Arc::default(),
             broadcast_tx: None,
-            ext_registry: None,
+            _ext_registry: None,
             client_tool_registry: crate::interface::cli::uds_ext_protocol::new_client_tool_registry(
             ),
             current_client_id: 0,

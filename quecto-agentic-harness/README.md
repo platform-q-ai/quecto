@@ -6,7 +6,7 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.97.14**.
+Current version: **0.98.0**.
 
 ## Quick Start
 
@@ -189,7 +189,7 @@ The UDS agent is the sole integration point for external consumers (TUIs, IDE pl
 
 | Module | Responsibility |
 |---|---|
-| `protocol.rs` | `AgentCommand` enum (documented surface: `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages` (optional `count`/`before`/`agent_id`), `get_message` (`messageId` plus optional `offset`/`limit`/`agent_id`/`toolCallId` for bounded recovery), `get_session_stats`, `list_models`, `list_sessions`, `new_session`, `resume_session`, `set_model`, `set_effort`, `get_extensions`, `reload`, `reload_extensions`, `register_tools`, `unregister_tools`, `tool_result`, `clear_history`, `rewind_to`, `set_workflow_automation`, `get_subagents`), `AgentEvent` enum (events: `agent_start`, `agent_end` (`messageRefs`; legacy `messages` empty after #1060), `workflow_idle`, `token`, `turn_start`, `turn_end` (`messageRefs` / context occupancy fields), `tool_execution_start`, `tool_execution_end`, `response`, `execute_tool`, `extensions_changed`, `subagent_notification`, `subagent_state_changed`, `subagent_messages_appended`, `workflow_state`), `StreamingBehavior`, `SessionState` (includes `effort` / `effortLevels` / `maxContextTokens`), `SessionStats` (includes `contextTokens` / `maxContextTokens`). All commands except `tool_result` carry optional `id` for request/response correlation |
+| `protocol.rs` | `AgentCommand` enum (documented surface: `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages` (optional `count`/`before`/`agent_id`), `get_message` (`messageId` plus optional `offset`/`limit`/`agent_id`/`toolCallId` for bounded recovery), `get_session_stats`, `list_models`, `list_sessions`, `new_session`, `resume_session`, `set_model`, `set_effort`, `get_tool_catalogue`, `reload`, `register_tools`, `unregister_tools`, `tool_result`, `clear_history`, `rewind_to`, `set_workflow_automation`, `get_subagents`), `AgentEvent` enum (events: `agent_start`, `agent_end` (`messageRefs`; legacy `messages` empty after #1060), `workflow_idle`, `token`, `turn_start`, `turn_end` (`messageRefs` / context occupancy fields), `tool_execution_start`, `tool_execution_end`, `response`, `execute_tool`, `tool_catalogue_changed`, `subagent_notification`, `subagent_state_changed`, `subagent_messages_appended`, `workflow_state`), `StreamingBehavior`, `SessionState` (includes `effort` / `effortLevels` / `maxContextTokens`), `SessionStats` (includes `contextTokens` / `maxContextTokens`). All commands except `tool_result` carry optional `id` for request/response correlation |
 | `uds.rs` | Entry point (`run_uds_loop`), socket binding (`chmod 0600`), stale socket reaping, single-client backward-compatible path, shared dispatch loop (`dispatch_command`), system prompt injection/removal |
 | `uds_multi.rs` | Multi-client accept loop (Docker-style event bus). `tokio::sync::broadcast` delivers events to all connected clients. `tokio::sync::mpsc` merges commands from all clients into a single dispatch loop (no concurrent session mutation). Max 64 clients. Agent shuts down when all clients disconnect. RAII `ClientGuard` tracks client count. Lagged clients receive a re-sync notification |
 | `uds_session.rs` | `AgentSession` — in-memory state tracker (model, streaming flag, pending message queue with `VecDeque`, max 64 pending). `compute_session_stats()`, `message_to_json()`, `messages_tail_json()` |
@@ -312,9 +312,8 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `resume_session` | `session`, optional `id` | Switch the active UDS conversation to a persisted CLI session |
 | `set_model` | `model` or `provider`+`modelId`, optional `id` | Switch model at runtime |
 | `set_effort` | `effort`, optional `id` | Set session reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`, validated against the active model's provider vocabulary) |
-| `get_extensions` | optional `id` | Return the compatibility list of runtime-loadable UDS extension tools, not the complete bundled-native+UDS catalogue |
+| `get_tool_catalogue` / `list_tools` | optional `id` | Return the rich `ToolCatalogueEntry` snapshot for control/query clients in `data.tools` (bundled-native and UDS tools, policy/effective availability, source/owner/lifecycle/health) |
 | `reload` | optional `id` | Force a provider/model config reload |
-| `reload_extensions` | optional `id` | **Deprecated no-op** (returns success immediately) |
 | `register_tools` | `tools` array, optional `id` | Register extension tools from a connected client |
 | `unregister_tools` | `tools` array (names), optional `id` | Remove previously registered extension tools |
 | `tool_result` | `toolCallId`, `content`, optional `isError` | Return result of an `execute_tool` request |
@@ -336,7 +335,7 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `tool_execution_start` | Tool began executing (with `toolCallId`, `toolName`, `args`) |
 | `tool_execution_end` | Tool finished (with `toolCallId`, `toolName`, `result`, `isError`) |
 | `execute_tool` | Routed to extension client that registered the tool (not broadcast) |
-| `extensions_changed` | Broadcast when extension list changes |
+| `tool_catalogue_changed` | Broadcast when the rich tool catalogue changes after runtime tool registration/unregistration (`changedTools`, `before`, `after`, `reason`) |
 | `subagent_notification` | Passive child-agent completion/error/exit notification for UI visibility |
 | `subagent_state_changed` | Broadcast replacement snapshot of spawned subagent statuses, including `readOnly` observer status |
 | `subagent_messages_appended` | Child turn completed; `messageRefs` for the appended messages (`agent_id` set when forwarded onto a parent stream) |
@@ -621,7 +620,7 @@ External tool binaries (`rg`, `fd`) are resolved from `PATH`; missing binaries r
 | `find` | Find files by glob pattern with fd. Respects nested `.gitignore` files, path-segment patterns via `--full-path`, configurable limit (default 1000), 50KB output cap |
 | `recall` | Retrieve a spilled tool output by its spill ID (e.g. `turn20:bash:0`). Use `recall("list")` for the full index |
 | `spawn` | Spawn a background UDS-mode subagent for long-running tasks |
-| `agent_cmd` | Send commands to spawned UDS subagents: `prompt`, `steer`, `follow_up`, `abort`, `kill`, `await`, `get_state`, `get_messages` (optional `count`/`before` — omit both for the newest history page, N for last N, `before` pages backward), `get_session_stats`, `get_subagents`, `get_subagents_all`, `get_extensions`, `set_model`, `set_effort`, `clear_history`, `reload_extensions`. **Model-facing schema:** `await` is currently hidden from the tool enum/description; prefer spawn → end turn → passive completion note → `get_messages`. Do not poll `get_subagents` / `get_subagents_all` or sleep as a wait loop. |
+| `agent_cmd` | Send commands to spawned UDS subagents: `prompt`, `steer`, `follow_up`, `abort`, `kill`, `await`, `get_state`, `get_messages` (optional `count`/`before` — omit both for the newest history page, N for last N, `before` pages backward), `get_session_stats`, `get_subagents`, `get_subagents_all`, `get_tool_catalogue`, `set_model`, `set_effort`, `clear_history`. **Model-facing schema:** `await` is currently hidden from the tool enum/description; prefer spawn → end turn → passive completion note → `get_messages`. Do not poll `get_subagents` / `get_subagents_all` or sleep as a wait loop. |
 
 For `agent_cmd` command `get_subagents_all`, pass `agent_id` as `*` to list the current parent agent's tracked subagent registry instead of targeting a child agent.
 

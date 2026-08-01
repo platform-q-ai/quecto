@@ -3,8 +3,8 @@
 #![allow(unused_imports)]
 use super::*;
 
-#[path = "protocol_shape_extensions_tests.rs"]
-mod extension_shape_tests;
+#[path = "protocol_shape_tool_catalogue_tests.rs"]
+mod tool_catalogue_shape_tests;
 fn round_trip<T: serde::Serialize + serde::de::DeserializeOwned>(v: &T) -> serde_json::Value {
     let s = serde_json::to_string(v).unwrap();
     serde_json::from_str(&s).unwrap()

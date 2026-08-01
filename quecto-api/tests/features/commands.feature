@@ -1,7 +1,7 @@
 @done @issue-1139
 Feature: Agent control endpoints
   As a client application
-  I want to steer, follow up, abort, switch model, and inspect subagents/extensions
+  I want to steer, follow up, abort, switch model, and inspect subagents/tools
   So that I can drive the full UDS capability model over HTTP
 
   Scenario: Steer the running agent
@@ -118,14 +118,14 @@ Feature: Agent control endpoints
     Then the response status is 200
     And the response body contains "success":true
 
-  Scenario: List extensions
+  Scenario: List tools through the rich catalogue
     Given the agent is connected
-    When I request GET /extensions
+    When I request GET /tools/catalogue
     Then the response status is 200
     And the response body contains "success":true
 
-  Scenario: Reload extensions
+  Scenario: List tools through the short alias
     Given the agent is connected
-    When I POST /extensions/reload with an empty body
+    When I request GET /tools
     Then the response status is 200
     And the response body contains "success":true

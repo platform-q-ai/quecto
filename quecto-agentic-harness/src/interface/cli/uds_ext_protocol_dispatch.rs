@@ -5,12 +5,43 @@
 use super::*;
 // ─── Dispatch helpers (called from uds.rs dispatch_command) ───────────────
 
+fn catalogue_values(
+    agent: &crate::application::agent_loop::AgentLoopImpl,
+) -> Vec<serde_json::Value> {
+    agent
+        .tool_catalogue_entries()
+        .into_iter()
+        .map(|entry| serde_json::to_value(entry).unwrap_or_default())
+        .collect()
+}
+
+async fn emit_tool_catalogue_changed(
+    ctx: &mut crate::interface::cli::uds::DispatchCtx<'_>,
+    changed_tools: Vec<String>,
+    before: Vec<serde_json::Value>,
+    reason: &str,
+) {
+    let after = catalogue_values(ctx.agent);
+    {
+        let mut snapshot = ctx.tool_catalogue_snapshot.write().await;
+        *snapshot = after.clone();
+    }
+    let ev = crate::interface::cli::protocol::AgentEvent::ToolCatalogueChanged {
+        changed_tools,
+        before,
+        after,
+        reason: reason.to_string(),
+    };
+    crate::interface::cli::uds::emit_event_to_broadcast_or_writer(ctx, &ev).await;
+}
+
 /// Handle `register_tools` command in dispatch context.
 pub(in crate::interface::cli) async fn dispatch_register_tools(
     ctx: &mut crate::interface::cli::uds::DispatchCtx<'_>,
     id: Option<&str>,
     tools: &[ToolRegistration],
 ) {
+    let before = catalogue_values(ctx.agent);
     let ext_names = ctx.agent.runtime_tool_names();
     let core_names: std::collections::HashSet<String> = ctx
         .agent
@@ -95,9 +126,7 @@ pub(in crate::interface::cli) async fn dispatch_register_tools(
     for tool_reg in tools {
         spawn_tool_forwarder_for(ctx, &tool_reg.name);
     }
-    let ext_names = ctx.agent.runtime_tool_names();
-    let changed = build_extensions_changed_event(&ext_names, ctx.agent);
-    crate::interface::cli::uds::emit_event_to_broadcast_or_writer(ctx, &changed).await;
+    emit_tool_catalogue_changed(ctx, accepted, before, "register_tool").await;
 }
 
 pub(crate) fn spawn_tool_forwarder_for(
@@ -288,6 +317,7 @@ pub(in crate::interface::cli) async fn dispatch_unregister_tools(
     id: Option<&str>,
     tool_names: &[String],
 ) {
+    let before = catalogue_values(ctx.agent);
     let (ev, removed) = handle_unregister_tools(
         ctx.current_client_id,
         id,
@@ -298,11 +328,9 @@ pub(in crate::interface::cli) async fn dispatch_unregister_tools(
 
     if !removed.is_empty() {
         for name in &removed {
-            ctx.agent.unregister_runtime_tool(name);
+            ctx.agent.unregister_runtime_tool_quiet(name);
         }
-        let ext_names = ctx.agent.runtime_tool_names();
-        let changed = build_extensions_changed_event(&ext_names, ctx.agent);
-        crate::interface::cli::uds::emit_event_to_broadcast_or_writer(ctx, &changed).await;
+        emit_tool_catalogue_changed(ctx, removed, before, "unregister_tool").await;
     }
 }
 

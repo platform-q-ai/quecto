@@ -124,18 +124,14 @@ pub enum AgentCommand {
         id: Option<String>,
         effort: String,
     },
-    /// Return the list of registered extensions.
-    GetExtensions {
+    /// Return the complete rich tool catalogue for control/query clients.
+    #[serde(alias = "list_tools")]
+    GetToolCatalogue {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
     /// Force a provider/model config reload.
     Reload {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-    },
-    /// Re-scan extension directories and reload script extensions.
-    ReloadExtensions {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
@@ -246,9 +242,8 @@ impl AgentCommand {
             Self::GetState { id } => id.as_deref(),
             Self::GetMessages { id, .. } => id.as_deref(),
             Self::Sync { id, .. } => id.as_deref(),
-            Self::GetExtensions { id } => id.as_deref(),
+            Self::GetToolCatalogue { id } => id.as_deref(),
             Self::Reload { id } => id.as_deref(),
-            Self::ReloadExtensions { id } => id.as_deref(),
             Self::GetMessagesTail { id, .. } => id.as_deref(),
             Self::GetSessionStats { id } => id.as_deref(),
             Self::ListModels { id } => id.as_deref(),
@@ -286,9 +281,8 @@ impl AgentCommand {
             Self::ResumeSession { .. } => "resume_session",
             Self::SetModel { .. } => "set_model",
             Self::SetEffort { .. } => "set_effort",
-            Self::GetExtensions { .. } => "get_extensions",
+            Self::GetToolCatalogue { .. } => "get_tool_catalogue",
             Self::Reload { .. } => "reload",
-            Self::ReloadExtensions { .. } => "reload_extensions",
             Self::RegisterTools { .. } => "register_tools",
             Self::UnregisterTools { .. } => "unregister_tools",
             Self::ToolResult { .. } => "tool_result",

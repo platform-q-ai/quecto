@@ -281,7 +281,7 @@ impl AgentLoopImpl {
     pub fn swap_registry(&mut self, registry: Box<dyn ToolRegistry>) {
         self.tool_registry = registry;
     }
-    /// Return names of tools registered from extensions (UDS `get_extensions`
+    /// Return names of tools registered from extensions (UDS `get_tool_catalogue`
     /// reports only actually-available tools; shadows are rejected earlier).
     pub fn runtime_tool_names(&self) -> Vec<String> {
         self.extension_tool_registry().runtime_tool_names()
@@ -328,22 +328,22 @@ impl AgentLoopImpl {
         tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
         owner: std::borrow::Cow<'static, str>,
     ) -> bool {
-        let name = tool.definition().name.to_string();
-        let before = self.tool_catalogue_entries();
-        let registered = self
-            .extension_tool_registry_mut()
-            .register_uds_tool_for_owner(tool, owner);
-        if registered {
-            self.notify_tool_catalogue_changed(vec![name], before, "register_tool");
-        }
-        registered
+        self.extension_tool_registry_mut()
+            .register_uds_tool_for_owner(tool, owner)
     }
     /// Unregister a single extension tool by name (e.g. on UDS client disconnect).
     pub fn unregister_runtime_tool(&mut self, name: &str) {
-        let before = self.tool_catalogue_entries();
+        self.unregister_runtime_tool_quiet(name);
+    }
+
+    /// Unregister one runtime tool without emitting a progress notification.
+    ///
+    /// UDS command dispatch batches catalogue change emission for a whole
+    /// logical `unregister_tools` command so clients see one before/after event
+    /// instead of one per tool plus one aggregate event.
+    pub(crate) fn unregister_runtime_tool_quiet(&mut self, name: &str) {
         self.extension_tool_registry_mut()
             .unregister_runtime_tool(name);
-        self.notify_tool_catalogue_changed(vec![name.to_string()], before, "unregister_tool");
     }
 
     /// Unregister all UDS-delivered extension tools owned by a connection.

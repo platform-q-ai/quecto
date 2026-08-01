@@ -4,7 +4,7 @@ HTTP/WebSocket gateway to a quecto agent over UDS.
 
 Connects to a running `quecto agent --mode uds` process via Unix domain socket
 and exposes its capabilities as a REST + WebSocket API for web applications.
-Version **0.3.1**.
+Version **0.4.0**.
 
 ## Endpoints
 
@@ -19,8 +19,7 @@ Version **0.3.1**.
 | `POST` | `/effort` | Set session reasoning effort. Body: `{"effort":"..."}`. Accepted values (case/whitespace normalized): `none`, `low`, `medium`, `high`, `xhigh`, `max`. Unknown values → `400` |
 | `POST` | `/clear_history` | Clear conversation history in-place without restarting the agent (empty body) |
 | `GET` | `/subagents` | List spawned subagents and their live status (#524) |
-| `GET` | `/extensions` | List registered extensions |
-| `POST` | `/extensions/reload` | Forward `reload_extensions` to the agent (harness treats this as a **deprecated no-op**; kept for API parity) |
+| `GET` | `/tools` / `/tools/catalogue` | Return the agent rich tool catalogue (`get_tool_catalogue`) |
 | `GET` | `/state` | Get current agent state (`get_state`) |
 | `GET` | `/messages` | Newest bounded history page (#1061). Query: optional `?before=<messageId>` pages backward. Response `data` carries `before` / `hasMoreBefore` |
 | `GET` | `/messages/tail?n=N` | Last N messages (defaults to 10). Maps to the harness `get_messages` count / tail path |

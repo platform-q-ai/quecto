@@ -1,8 +1,56 @@
 use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::{Message, ToolCall};
+use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::test_support::message_contents;
+use crate::infrastructure::tools::registration::ToolRegistration;
+use std::{future::Future, pin::Pin, sync::Arc};
+
+struct CatalogueFixtureTool {
+    def: ToolDefinition,
+}
+
+impl CatalogueFixtureTool {
+    fn new(name: &str) -> Self {
+        Self {
+            def: ToolDefinition {
+                name: name.to_string().into(),
+                description: format!("Fixture {name} tool").into(),
+                parameters_schema: r#"{"type":"object"}"#.into(),
+            },
+        }
+    }
+}
+
+impl std::fmt::Debug for CatalogueFixtureTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CatalogueFixtureTool")
+            .field("name", &self.def.name)
+            .finish()
+    }
+}
+
+impl Tool for CatalogueFixtureTool {
+    fn definition(&self) -> ToolDefinition {
+        self.def.clone()
+    }
+
+    fn execute(
+        &self,
+        _arguments: &str,
+    ) -> Pin<
+        Box<dyn Future<Output = Result<ToolResult, crate::domain::error::DomainError>> + Send + '_>,
+    > {
+        Box::pin(async move {
+            Ok(ToolResult {
+                content: "ok".into(),
+                is_error: false,
+                image_blocks: vec![],
+            })
+        })
+    }
+}
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds_cancel::CancelSlot;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
@@ -21,12 +69,15 @@ pub(crate) struct Fx {
 impl Fx {
     pub(crate) fn new() -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
+        let mut tool_registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+        tool_registry.register_with_metadata(
+            Arc::new(CatalogueFixtureTool::new("bash")),
+            ToolRegistration::official_native(),
+        );
         Self {
             agent: AgentLoopImpl::new(AgentLoopConfig {
                 provider: crate::interface::test_support::make_stub_provider(),
-                tool_registry: Box::new(
-                    crate::infrastructure::tools::registry::ToolRegistryImpl::new(),
-                ),
+                tool_registry: Box::new(tool_registry),
                 model: "stub".into(),
                 max_tokens: 100,
                 temperature: 0.0,
@@ -72,7 +123,7 @@ impl Fx {
                 self.session.state_snapshot(0, None, 0, None),
             )),
             session_stats_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(initial_stats)),
-            extension_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            tool_catalogue_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session: &mut self.session,
             stdout: Some(&mut self.writer),
@@ -83,7 +134,7 @@ impl Fx {
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
             turn_control: std::sync::Arc::default(),
             broadcast_tx: None,
-            ext_registry: None,
+            _ext_registry: None,
             client_tool_registry: new_client_tool_registry(),
             current_client_id: 0,
             subagent_registry: None,
@@ -501,10 +552,19 @@ fn query_get_message_tool_call_uses_tool_id_not_request_or_message_id() {
 fn query_metadata_commands_are_shaped_or_deferred() {
     let mut fx = Fx::new();
     let ctx = fx.ctx();
-    assert!(
-        query_response_data(&AgentCommand::GetExtensions { id: None }, &ctx).unwrap()["extensions"]
-            .is_array()
-    );
+    let catalogue =
+        query_response_data(&AgentCommand::GetToolCatalogue { id: None }, &ctx).unwrap();
+    let tools = catalogue["tools"]
+        .as_array()
+        .expect("tools must be an array");
+    let bash = tools
+        .iter()
+        .find(|entry| entry["name"].as_str() == Some("bash"))
+        .expect("core bash tool should be present in the catalogue");
+    assert_eq!(bash["source"].as_str(), Some("bundled-native"));
+    assert_eq!(bash["runtimeAvailability"].as_str(), Some("enabled"));
+    assert_eq!(bash["effectiveEnabled"].as_bool(), Some(true));
+    assert_eq!(bash["inputSchema"].as_str(), Some(r#"{"type":"object"}"#));
     assert!(
         query_response_data(&AgentCommand::ListModels { id: None }, &ctx).unwrap()["models"]
             .is_array()
@@ -513,5 +573,4 @@ fn query_metadata_commands_are_shaped_or_deferred() {
         query_response_data(&AgentCommand::GetSubagents { id: None }, &ctx).unwrap()["subagents"]
             .is_array()
     );
-    assert!(query_response_data(&AgentCommand::ReloadExtensions { id: None }, &ctx).is_none());
 }

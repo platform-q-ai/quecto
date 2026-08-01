@@ -6,7 +6,7 @@
 //! cover the parent half: the `"ack":"accept"` marker is stamped on control
 //! commands (only), and a child that acks acceptance promptly (but never sends a
 //! turn-completion response) unblocks the parent fast. #880 extends the
-//! same queue-and-accept semantic to set_model/clear_history/reload_extensions.
+//! same queue-and-accept semantic to set_model/clear_history.
 
 use super::super::subagent_registry::SubagentStatus;
 use super::*;
@@ -42,10 +42,6 @@ fn control_commands_carry_accept_marker() {
             r#"{"agent_id":"w1","command":"clear_history"}"#,
             "clear_history",
         ),
-        (
-            r#"{"agent_id":"w1","command":"reload_extensions"}"#,
-            "reload_extensions",
-        ),
     ] {
         let v = parsed(&tool, args);
         assert_eq!(v["type"], ty);
@@ -63,7 +59,7 @@ fn non_control_commands_do_not_carry_accept_marker() {
         r#"{"agent_id":"w1","command":"get_state"}"#,
         r#"{"agent_id":"w1","command":"get_messages"}"#,
         r#"{"agent_id":"w1","command":"get_session_stats"}"#,
-        r#"{"agent_id":"w1","command":"get_extensions"}"#,
+        r#"{"agent_id":"w1","command":"get_tool_catalogue"}"#,
     ] {
         let v = parsed(&tool, args);
         assert!(
@@ -82,7 +78,6 @@ fn is_control_command_matches_queueable_agent_cmd_forwards() {
         "abort",
         "set_model",
         "clear_history",
-        "reload_extensions",
     ] {
         assert!(AgentCmdTool::is_control_command(c), "{c} is control");
     }
@@ -90,7 +85,7 @@ fn is_control_command_matches_queueable_agent_cmd_forwards() {
         "get_state",
         "get_messages",
         "get_session_stats",
-        "get_extensions",
+        "get_tool_catalogue",
         "await",
         "kill",
     ] {
@@ -227,12 +222,10 @@ async fn busy_child_steer_abort_follow_up_return_promptly() {
 }
 
 #[tokio::test]
-async fn busy_child_set_model_clear_history_reload_extensions_return_promptly_without_starting_run()
-{
+async fn busy_child_set_model_clear_history_return_promptly_without_starting_run() {
     for (cmd, body) in [
         ("set_model", r#","model":"anthropic/claude-sonnet-4-6""#),
         ("clear_history", ""),
-        ("reload_extensions", ""),
     ] {
         let id = format!("busy-{cmd}");
         let (tool, reg, _tmp) = busy_fast_ack_child(&id);

@@ -267,7 +267,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         session_stats_snapshot: Arc::new(tokio::sync::RwLock::new(
             super::super::uds_session::compute_session_stats("cli:cov", &[]),
         )),
-        extension_snapshot: Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        tool_catalogue_snapshot: Arc::new(tokio::sync::RwLock::new(Vec::new())),
         busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         session: &mut session,
         stdout: Some(&mut writer),
@@ -280,7 +280,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         )),
         turn_control: Arc::default(),
         broadcast_tx: Some(broadcast_tx.clone()),
-        ext_registry: None,
+        _ext_registry: None,
         client_tool_registry: registry,
         current_client_id: 0,
         subagent_registry: None,
@@ -306,9 +306,9 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
     assert!(ctx.agent.runtime_tool_names().is_empty());
     let changed = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
         .await
-        .expect("extensions_changed should be broadcast")
+        .expect("tool_catalogue_changed should be broadcast")
         .expect("broadcast recv");
-    assert!(changed.contains("extensions_changed"), "{changed}");
+    assert!(changed.contains("tool_catalogue_changed"), "{changed}");
 }
 
 #[test]

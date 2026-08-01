@@ -280,9 +280,8 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
         }
         AgentCommand::ClearHistory => serde_json::json!({"type": "clear_history", "id": id}),
         AgentCommand::GetSubagents => serde_json::json!({"type": "get_subagents", "id": id}),
-        AgentCommand::GetExtensions => serde_json::json!({"type": "get_extensions", "id": id}),
-        AgentCommand::ReloadExtensions => {
-            serde_json::json!({"type": "reload_extensions", "id": id})
+        AgentCommand::GetToolCatalogue => {
+            serde_json::json!({"type": "get_tool_catalogue", "id": id})
         }
     }
 }

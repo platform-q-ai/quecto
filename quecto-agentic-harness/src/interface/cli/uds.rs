@@ -111,7 +111,7 @@ pub(crate) struct DispatchCtx<'a> {
     pub state_snapshot: super::uds_multi::StateSnapshot,               // #837
     pub execution_state: super::uds_execution_state::ExecutionStateHandle,
     pub session_stats_snapshot: super::uds_snapshots::SessionStatsSnapshot, // #880
-    pub extension_snapshot: super::uds_extensions::ExtensionSnapshot,       // #880
+    pub tool_catalogue_snapshot: super::uds_extensions::ToolCatalogueSnapshot, // #880
     pub busy: super::uds_multi::BusyFlag,                                   // #828
     pub session: &'a mut AgentSession,
     /// Direct writer for the single-client / test path. `None` on the
@@ -127,7 +127,7 @@ pub(crate) struct DispatchCtx<'a> {
     /// (#895/#896). Set by the reader task, read at the idle boundary.
     pub turn_control: TurnControlHandle,
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    pub ext_registry: Option<ExtRegistry>,
+    pub _ext_registry: Option<ExtRegistry>,
     pub client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
     pub current_client_id: u64,
     pub subagent_registry:

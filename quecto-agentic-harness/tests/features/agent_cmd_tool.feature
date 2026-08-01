@@ -176,15 +176,10 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_subagents"}'
     Then the agent_cmd should have sent command type "get_subagents"
 
-  Scenario: get_extensions command is built correctly
+  Scenario: get_tool_catalogue command is built correctly
     Given an AgentCmdTool with a mock registry entry "w1"
-    When I execute agent_cmd with '{"agent_id":"w1","command":"get_extensions"}'
-    Then the agent_cmd should have sent command type "get_extensions"
-
-  Scenario: reload_extensions command is built correctly
-    Given an AgentCmdTool with a mock registry entry "w1"
-    When I execute agent_cmd with '{"agent_id":"w1","command":"reload_extensions"}'
-    Then the agent_cmd should have sent command type "reload_extensions"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_tool_catalogue"}'
+    Then the agent_cmd should have sent command type "get_tool_catalogue"
 
   # --- Kill command (#559) ---
 
@@ -335,9 +330,9 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
   # --- Remaining busy-safe commands (#880) ---
 
   # Acceptance criteria for #880:
-  # - get_session_stats and get_extensions against a BUSY child return their
+  # - get_session_stats and get_tool_catalogue against a BUSY child return their
   #   connect-time snapshots promptly, tagged data.snapshot:true.
-  # - set_model, clear_history, and reload_extensions against a BUSY child use
+  # - set_model and clear_history against a BUSY child use
   #   the same queue-and-accept-ack semantic as other agent_cmd forwards: the
   #   parent returns on an id-correlated acceptance response and never waits for
   #   the child's full turn.
@@ -354,12 +349,12 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     And the agent_cmd response command "get_session_stats" should include boolean field "snapshot" set to "true"
     And the agent_cmd result should contain "cli:busy-stats"
 
-  Scenario: get_extensions against a busy child accepts the connect-time snapshot
-    Given an AgentCmdTool with a busy extensions snapshot registry entry "busy-exts880"
-    When I execute agent_cmd with '{"agent_id":"busy-exts880","command":"get_extensions"}'
+  Scenario: get_tool_catalogue against a busy child accepts the connect-time snapshot
+    Given an AgentCmdTool with a busy extensions snapshot registry entry "busy-tools880"
+    When I execute agent_cmd with '{"agent_id":"busy-tools880","command":"get_tool_catalogue"}'
     Then the agent_cmd result should not be an error
-    And the agent_cmd response command "get_extensions" should include a "extensions" array
-    And the agent_cmd response command "get_extensions" should include boolean field "snapshot" set to "true"
+    And the agent_cmd response command "get_tool_catalogue" should include a "tools" array
+    And the agent_cmd response command "get_tool_catalogue" should include boolean field "snapshot" set to "true"
     And the agent_cmd result should contain "mock_ext_tool"
 
   Scenario: set_model against a busy child returns on acceptance
@@ -378,16 +373,8 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     And the agent_cmd should have sent command type "clear_history"
     And the agent_cmd should have sent ack "accept"
 
-  Scenario: reload_extensions against a busy child returns on acceptance
-    Given an AgentCmdTool with a fast-ack busy registry entry "busy-reload-exts880"
-    When I execute agent_cmd with '{"agent_id":"busy-reload-exts880","command":"reload_extensions"}'
-    Then the agent_cmd result should not be an error
-    And the agent_cmd result should contain "success"
-    And the agent_cmd should have sent command type "reload_extensions"
-    And the agent_cmd should have sent ack "accept"
-
-  Scenario: mismatched command against busy stats and extensions snapshots preserves id-correlation
-    Given an AgentCmdTool with busy stats and extensions snapshots plus echo registry entry "busy-remaining-skip880"
+  Scenario: mismatched command against busy stats and tool catalogue snapshots preserves id-correlation
+    Given an AgentCmdTool with busy stats and tool catalogue snapshots plus echo registry entry "busy-remaining-skip880"
     When I execute agent_cmd with '{"agent_id":"busy-remaining-skip880","command":"get_subagents"}'
     Then the agent_cmd result should not be an error
     And the agent_cmd result should contain "grandchild-worker"

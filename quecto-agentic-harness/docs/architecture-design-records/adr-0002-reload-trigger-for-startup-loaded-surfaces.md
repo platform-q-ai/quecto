@@ -43,7 +43,7 @@ folder sources, models/providers, and workflow template sets.
 Tools are deliberately not a consumer. ADR-0002 specifies a **pull** trigger:
 the kernel re-reads file-backed sources on a turn boundary, gated by mtime/hash.
 Tools are **push**: an external process calls UDS `register_tools` and mutates the
-live `ToolRegistry` directly. `reload_extensions` is a no-op and does not provide
+live `ToolRegistry` directly. the removed pre-customer compatibility no-op did not provide
 the ADR-0002 trigger.
 
 ## Consequences

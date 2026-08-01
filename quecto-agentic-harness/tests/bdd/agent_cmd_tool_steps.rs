@@ -470,7 +470,7 @@ fn given_agent_cmd_with_busy_extensions_snapshot_entry(world: &mut QuectoWorld, 
             let last_cmd_inner = last_cmd_clone.clone();
             std::thread::spawn(move || {
                 use std::io::Write;
-                let snapshot = r#"{"type":"response","command":"get_extensions","data":{"extensions":[{"name":"mock_ext_tool","description":"mock extension"}],"snapshot":true}}"#;
+                let snapshot = r#"{"type":"response","command":"get_tool_catalogue","data":{"tools":[{"name":"mock_ext_tool","description":"mock extension"}],"snapshot":true}}"#;
                 let _ = writeln!(stream, "{}", snapshot);
                 while let Some(line) =
                     quecto::infrastructure::test_support::read_framed_command(&stream)
@@ -492,7 +492,7 @@ fn given_agent_cmd_with_busy_extensions_snapshot_entry(world: &mut QuectoWorld, 
 }
 
 #[given(
-    expr = "an AgentCmdTool with busy stats and extensions snapshots plus echo registry entry {string}"
+    expr = "an AgentCmdTool with busy stats and tool catalogue snapshots plus echo registry entry {string}"
 )]
 fn given_agent_cmd_with_busy_remaining_snapshots_and_echo_entry(
     world: &mut QuectoWorld,
@@ -512,9 +512,9 @@ fn given_agent_cmd_with_busy_remaining_snapshots_and_echo_entry(
             std::thread::spawn(move || {
                 use std::io::Write;
                 let stats = r#"{"type":"response","command":"get_session_stats","data":{"sessionKey":"cli:busy-stats","userMessages":1,"assistantMessages":1,"totalMessages":2,"snapshot":true}}"#;
-                let exts = r#"{"type":"response","command":"get_extensions","data":{"extensions":[{"name":"mock_ext_tool"}],"snapshot":true}}"#;
+                let tools = r#"{"type":"response","command":"get_tool_catalogue","data":{"tools":[{"name":"mock_ext_tool"}],"snapshot":true}}"#;
                 let _ = writeln!(stream, "{}", stats);
-                let _ = writeln!(stream, "{}", exts);
+                let _ = writeln!(stream, "{}", tools);
                 while let Some(line) =
                     quecto::infrastructure::test_support::read_framed_command(&stream)
                 {
