@@ -81,6 +81,7 @@ impl App {
              \x20 Ctrl+C         Clear editor first, abort if empty\n\
              \x20 Ctrl+D         Exit\n\
              \x20 Ctrl+L         Open model selector\n\
+             \x20 Ctrl+T         Open tool/profile policy\n\
              \x20 Ctrl+O         Toggle tool output expansion\n\
              \x20 Ctrl+Shift+A   Toggle workflow auto-continue\n\
              \x20 Ctrl+Shift+N   Toggle workflow completion nudge\n\
