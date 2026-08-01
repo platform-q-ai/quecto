@@ -32,7 +32,11 @@ fn test_enqueue_subagent_notification_buffers_system_note() {
     let drained = session.drain_pending();
     assert_eq!(drained.len(), 1);
     let msg = drained.into_iter().next().unwrap().into_message();
-    assert_eq!(msg.role, Role::System, "note is an operator/system message");
+    assert_eq!(
+        msg.role,
+        Role::User,
+        "note must be a real conversational turn, not a system message (#1338)"
+    );
     assert!(msg.content.contains("researcher"));
     assert!(msg.content.contains("all tests pass"));
 }

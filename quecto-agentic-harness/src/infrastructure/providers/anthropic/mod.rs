@@ -309,7 +309,23 @@ impl AnthropicProvider {
             let m: &Message = &normalized[i];
             match m.role {
                 Role::System => {
-                    system_prompt = Some(m.content.clone());
+                    // Concatenate rather than overwrite (#1338). Anthropic has
+                    // no in-conversation system role, so every system message
+                    // folds into the single top-level `system` field; assigning
+                    // meant the LAST one silently discarded the real system
+                    // prompt — e.g. the pinned spill manifest
+                    // (`context_pruning::update_spill_manifest`) left the agent
+                    // running with its entire prompt replaced by one line of
+                    // recall guidance. Codex does the same join
+                    // (`codex.rs`); OpenAI demotes later system messages to
+                    // `user` in place.
+                    match &mut system_prompt {
+                        Some(existing) => {
+                            existing.push_str("\n\n");
+                            existing.push_str(&m.content);
+                        }
+                        None => system_prompt = Some(m.content.clone()),
+                    }
                     i += 1;
                 }
                 Role::User => {

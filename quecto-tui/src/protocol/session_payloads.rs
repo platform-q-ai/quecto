@@ -165,6 +165,9 @@ pub fn parse_resumed_messages(
                 .unwrap_or(false);
             let content_len = optional_usize_field(message, "contentLength");
             match role {
+                // Sub-agent notes are user-role turns on the wire but operator
+                // status in the UI; not part of the resumed transcript (#1338).
+                "user" if super::presentation_payloads::is_subagent_note(&content) => Vec::new(),
                 "user" => vec![ResumedChatMessage::User {
                     text: content,
                     id,
