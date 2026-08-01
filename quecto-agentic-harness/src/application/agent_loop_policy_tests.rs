@@ -177,7 +177,7 @@ impl ToolRegistry for RestrictedMockRegistry {}
 
 #[test]
 fn queued_tool_policy_mutations_apply_once_at_turn_boundary() {
-    let (mut agent, provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
+    let (agent, provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
 
     agent.queue_tool_policy_mutation(&[
         ToolPolicyMutation::disable("alpha", "queue first"),
@@ -289,6 +289,53 @@ fn immediate_if_idle_queues_when_a_turn_is_in_flight() {
             .after
             .as_ref()
             .is_some_and(|entry| !entry.effective_enabled)
+    );
+}
+
+#[tokio::test]
+async fn queued_policy_drains_at_single_response_final_boundary() {
+    let (agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
+
+    agent.queue_tool_policy_mutation(&[ToolPolicyMutation::disable("alpha", "final boundary")]);
+    let mut messages = vec![Message::user("hello")];
+
+    agent
+        .process(&mut messages)
+        .await
+        .expect("single response turn");
+
+    assert!(agent.current_tool_definitions().is_empty());
+    assert!(
+        agent
+            .drain_tool_policy_mutations_at_internal_boundary()
+            .is_none(),
+        "final boundary must drain queued mutations exactly once"
+    );
+}
+
+#[tokio::test]
+async fn queued_policy_drains_at_terminal_provider_failure_boundary() {
+    let provider = Arc::new(MockProvider::new_results(vec![Err(DomainError::Provider(
+        "provider error (401): invalid credentials".to_string(),
+    ))]));
+    let mut registry = MockRegistry::new();
+    registry.register(Arc::new(MockTool::new("alpha", "ok")));
+    let agent = AgentLoopImpl::new(test_config(provider, Box::new(registry)));
+
+    agent.queue_tool_policy_mutation(&[ToolPolicyMutation::disable("alpha", "terminal boundary")]);
+    let mut messages = vec![Message::user("hello")];
+
+    agent
+        .process(&mut messages)
+        .await
+        .expect_err("provider failure is terminal");
+
+    assert!(agent.current_tool_definitions().is_empty());
+    assert!(
+        agent
+            .drain_tool_policy_mutations_at_internal_boundary()
+            .is_none(),
+        "terminal boundary must drain queued mutations exactly once"
     );
 }
 

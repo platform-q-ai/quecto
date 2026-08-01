@@ -366,7 +366,7 @@ impl AgentLoopImpl {
         self.drain_pending_tool_policy_mutations(false)
     }
 
-    pub fn drain_tool_policy_mutations_at_boundary(&mut self) -> Option<ToolPolicyReconciliation> {
+    pub fn drain_tool_policy_mutations_at_boundary(&self) -> Option<ToolPolicyReconciliation> {
         self.drain_pending_tool_policy_mutations(true)
     }
 }

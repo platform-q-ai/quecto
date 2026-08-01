@@ -624,7 +624,7 @@ impl AgentLoopImpl {
                         }
                         ProviderFailureTransition::Terminal(_class) => {
                             let _state = TurnState::FailProviderRequest;
-                            self.clear_turn_in_flight();
+                            self.drain_tool_policy_mutations_at_boundary();
                             return self.fail_provider_request(current_turn, error).await;
                         }
                     }
@@ -654,7 +654,7 @@ impl AgentLoopImpl {
                     let result = self
                         .finalize_turn_response(messages, response, end, &mut appended_messages)
                         .await;
-                    self.clear_turn_in_flight();
+                    self.drain_tool_policy_mutations_at_boundary();
                     return Ok(result);
                 }
                 TurnState::ExecuteToolCalls => {}
@@ -694,7 +694,7 @@ impl AgentLoopImpl {
                     usage_totals,
                     appended_messages,
                 );
-                self.clear_turn_in_flight();
+                self.drain_tool_policy_mutations_at_boundary();
                 return Ok(result);
             }
         }
