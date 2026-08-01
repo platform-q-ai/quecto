@@ -7,10 +7,10 @@ use crate::interface::cli::uds_session::{NotificationEnqueueOutcome, PendingMess
 // ─── #816: auto-await subagent completion notes (enqueue + idle delivery) ─────
 
 /// A successful enqueue buffers exactly one pending note carrying the child id
-/// and the one-line summary, rendered as a `role:"system"` message — the operator
-/// channel — so it surfaces only at the next idle drain, never mid-turn.
+/// and the one-line summary, rendered as a `Role::User` turn (#1338) so it
+/// surfaces only at the next idle drain, never mid-turn.
 #[test]
-fn test_enqueue_subagent_notification_buffers_system_note() {
+fn test_enqueue_subagent_notification_buffers_user_note() {
     use crate::domain::message::Role;
     let mut session = AgentSession::new("m".to_string(), "k".to_string());
     let enqueued = session
