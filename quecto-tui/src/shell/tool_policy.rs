@@ -32,15 +32,11 @@ impl From<ScopeSelection> for ToolScope {
 
 impl App {
     pub(super) fn open_tool_policy_modal(&mut self) {
-        if self.tool_catalogue.is_empty() {
-            self.tool_policy_modal_pending_catalogue = true;
-            self.send_command(Command::GetToolCatalogue {
-                id: Some("tool-policy-catalogue".into()),
-            });
-            self.notify("Requested tool catalogue", NotifyLevel::Info);
-            return;
-        }
-        self.open_tool_policy_modal_now();
+        self.tool_policy_modal_pending_catalogue = true;
+        self.send_command(Command::GetToolCatalogue {
+            id: Some("tool-policy-catalogue".into()),
+        });
+        self.notify("Requested tool catalogue", NotifyLevel::Info);
     }
 
     pub(super) fn open_pending_tool_policy_modal_after_catalogue_update(&mut self) {
