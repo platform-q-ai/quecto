@@ -170,7 +170,6 @@ async fn build_official_tool_registry_registers_common_bundled_native_surface() 
             max_capture_bytes: 4,
             ..crate::infrastructure::tools::bash::ExecOptions::default()
         },
-        false,
     );
 
     let names: std::collections::BTreeSet<_> = registry
@@ -459,6 +458,7 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
         let mut stderr = String::new();
         crate::interface::shared::build_tool_runtime(
             crate::interface::shared::ToolRuntimeBuildArgs {
+                profile_context: crate::interface::tool_runtime::ToolRuntimeProfileContext::Parent,
                 entrypoint,
                 base_dir: tmp.path(),
                 config: &config,
@@ -544,6 +544,7 @@ fn shared_tool_runtime_builder_repl_uses_same_pipeline_with_policy_selected_surf
     let built = crate::interface::shared::build_tool_runtime(
         crate::interface::shared::ToolRuntimeBuildArgs {
             entrypoint: crate::interface::shared::ToolEntrypoint::Repl,
+            profile_context: crate::interface::tool_runtime::ToolRuntimeProfileContext::Parent,
             base_dir: tmp.path(),
             config: &config,
             http_client: &client,

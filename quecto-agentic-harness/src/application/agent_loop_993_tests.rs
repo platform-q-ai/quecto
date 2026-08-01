@@ -29,6 +29,7 @@ fn agent_config(
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     }
 }
 

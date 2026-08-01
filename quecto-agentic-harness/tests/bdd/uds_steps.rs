@@ -74,7 +74,6 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
             max_capture_bytes: exec_settings,
             ..Default::default()
         },
-        false,
     );
 
     // Create broadcast channel early so the workflow emitter can use it (#598).
@@ -148,6 +147,7 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(max_tool_iterations);
     // Enable streaming when the scenario has set the flag (e.g. SSE mock).

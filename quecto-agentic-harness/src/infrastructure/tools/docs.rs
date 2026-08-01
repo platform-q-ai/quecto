@@ -72,7 +72,7 @@ fn doc_title(body: &str) -> Option<&str> {
     None
 }
 
-/// Whether `key` is a parent-only page that spawned children must not see.
+/// Whether `key` is a parent-coordination page filtered by child content policy.
 fn is_parent_only_doc(key: &str) -> bool {
     key == PARENT_ONLY_DOC
 }
@@ -91,9 +91,26 @@ fn lookup_embedded_doc(key: &str) -> Option<&'static str> {
         .map(|(_, body)| *body)
 }
 
-/// Table of contents for the given visibility mode.
-fn available_listing(spawned: bool) -> String {
-    let intro = if spawned {
+/// Explicit content policy for embedded manual pages. This is deliberately
+/// separate from tool availability/profile policy: every runtime may receive
+/// the same `docs` tool according to profile scope, while child content policy
+/// keeps parent-coordination quick-start material out of spawned child context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocsContentPolicy {
+    Parent,
+    Child,
+}
+
+impl DocsContentPolicy {
+    const fn is_child(self) -> bool {
+        matches!(self, Self::Child)
+    }
+}
+
+/// Table of contents for the given content policy.
+fn available_listing(policy: DocsContentPolicy) -> String {
+    let child = policy.is_child();
+    let intro = if child {
         "Quecto operating manual (`docs` tool).\n\
          Call with no name to list pages; pass a name to read one.\n\
          Open manual pages only when that knowledge is needed. Keep context lean.\n\n\
@@ -106,7 +123,7 @@ fn available_listing(spawned: bool) -> String {
     };
     let mut out = String::from(intro);
     for (name, body) in EMBEDDED_DOCS {
-        if spawned && is_parent_only_doc(name) {
+        if child && is_parent_only_doc(name) {
             continue;
         }
         let title = doc_title(body).unwrap_or(name);
@@ -116,7 +133,7 @@ fn available_listing(spawned: bool) -> String {
         out.push_str(title);
         out.push('\n');
     }
-    if spawned {
+    if child {
         out.push_str("\nRead one with: docs {\"name\": \"workflow\"}");
     } else {
         out.push_str("\nRead one with: docs {\"name\": \"quick-start\"}");
@@ -126,34 +143,41 @@ fn available_listing(spawned: bool) -> String {
 
 /// Tool that serves the embedded operating manual by name (CWD-independent).
 ///
-/// When constructed with `spawned = true` (internal `--spawned` CLI flag), the
-/// parent-only `quick-start` page is omitted from the TOC and rejected on
-/// direct lookup — including aliases like `docs/quick-start.md` (#1319).
-#[derive(Debug, Default)]
+/// Child runtimes may use child content policy, which omits the parent-only
+/// `quick-start` page from the TOC and rejects direct lookup — including aliases
+/// like `docs/quick-start.md` (#1319). Tool availability itself is not decided
+/// here; it is owned by runtime profile policy.
+#[derive(Debug)]
 pub struct DocsTool {
-    spawned: bool,
+    content_policy: DocsContentPolicy,
+}
+
+impl Default for DocsTool {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DocsTool {
     /// Top-level (parent) docs tool: full manual including `quick-start`.
     pub fn new() -> Self {
-        Self { spawned: false }
+        Self::with_content_policy(DocsContentPolicy::Parent)
     }
 
-    /// Docs tool for a process launched with the internal `--spawned` flag.
-    pub fn for_spawned() -> Self {
-        Self { spawned: true }
+    /// Docs tool with child content filtering. Availability remains profile-driven.
+    pub fn for_child_content() -> Self {
+        Self::with_content_policy(DocsContentPolicy::Child)
     }
 
-    /// Construct with an explicit spawned-visibility bit (#1319).
-    pub fn with_spawned(spawned: bool) -> Self {
-        Self { spawned }
+    /// Construct with an explicit content policy (#1319/#1334 Phase 3).
+    pub fn with_content_policy(content_policy: DocsContentPolicy) -> Self {
+        Self { content_policy }
     }
 }
 
 impl Tool for DocsTool {
     fn definition(&self) -> ToolDefinition {
-        let description = if self.spawned {
+        let description = if self.content_policy.is_child() {
             "Quecto operating manual (embedded in the binary, CWD-independent). \
                 Call with no name (or {}) for the table of contents (name + title per page). \
                 Pass a name to read one page. Open deep-dive pages only when needed. \
@@ -178,7 +202,7 @@ impl Tool for DocsTool {
         &self,
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
-        let spawned = self.spawned;
+        let content_policy = self.content_policy;
         let name = serde_json::from_str::<serde_json::Value>(arguments)
             .ok()
             .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
@@ -187,17 +211,17 @@ impl Tool for DocsTool {
         Box::pin(async move {
             let Some(name) = name else {
                 return Ok(ToolResult {
-                    content: available_listing(spawned),
+                    content: available_listing(content_policy),
                     is_error: false,
                     image_blocks: vec![],
                 });
             };
             let key = normalize_name(&name);
-            if spawned && is_parent_only_doc(&key) {
+            if content_policy.is_child() && is_parent_only_doc(&key) {
                 return Ok(ToolResult {
                     content: format!(
                         "No embedded doc named '{name}'.\n\n{}",
-                        available_listing(true)
+                        available_listing(DocsContentPolicy::Child)
                     ),
                     is_error: true,
                     image_blocks: vec![],
@@ -213,7 +237,7 @@ impl Tool for DocsTool {
             Ok(ToolResult {
                 content: format!(
                     "No embedded doc named '{name}'.\n\n{}",
-                    available_listing(spawned)
+                    available_listing(content_policy)
                 ),
                 is_error: true,
                 image_blocks: vec![],

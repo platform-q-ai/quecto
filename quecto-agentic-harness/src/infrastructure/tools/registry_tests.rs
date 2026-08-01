@@ -12,7 +12,6 @@ pub(crate) fn test_registry() -> (ToolRegistryImpl, TempDir) {
         tmp.path().to_path_buf(),
         sandbox,
         Default::default(),
-        false,
     );
     (reg, tmp)
 }
@@ -415,7 +414,6 @@ fn test_rebuild_definitions_no_duplicates_after_re_register() {
         tmp.path().to_path_buf(),
         sandbox.clone(),
         Default::default(),
-        false,
     );
     let initial_count = reg.definitions().len();
 

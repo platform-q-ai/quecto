@@ -303,6 +303,7 @@ pub fn run_repl<R: BufRead, W: Write>(
     let runtime = match crate::interface::shared::build_tool_runtime(
         crate::interface::shared::ToolRuntimeBuildArgs {
             entrypoint: crate::interface::shared::ToolEntrypoint::Repl,
+            profile_context: crate::interface::tool_runtime::ToolRuntimeProfileContext::Parent,
             base_dir: ctx.base_dir,
             config: ctx.config,
             http_client: &crate::interface::shared::build_http_client(),
@@ -378,6 +379,7 @@ pub fn run_repl<R: BufRead, W: Write>(
         pin_recent_turns: ctx.config.agents.defaults.pin_recent_turns,
         context_collapse_after_messages: ctx.config.agents.defaults.context_collapse_after_messages,
         model_context_window,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_model_max_tokens(model_max_tokens);
 

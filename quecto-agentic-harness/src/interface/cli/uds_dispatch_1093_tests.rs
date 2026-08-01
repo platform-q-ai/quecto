@@ -1,27 +1,26 @@
-//! Regression tests for #1093: `get_message` resolves collapsed spill refs.
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::{Message, ToolCall};
 use crate::domain::session::{ContextSpillStore, Session, SessionStore, SpillEntry, SpillIndex};
-use crate::infrastructure::persistence::session_store::FileSessionStore;
+use crate::domain::tool::ToolProfileContext;
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::{DispatchCtx, dispatch_command};
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::{AgentSession, compute_session_stats};
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 #[derive(Debug, Default)]
 pub(super) struct MemSpillStore {
     entries: Mutex<HashMap<(String, String), SpillEntry>>,
     recalls: Mutex<Vec<(String, String)>>,
     recall_error: bool,
 }
-
 impl MemSpillStore {
     fn with_entry(entry: SpillEntry) -> Self {
         Self::with_session_entry("cli:test", entry)
     }
-
     fn with_session_entry(session_key: &str, entry: SpillEntry) -> Self {
         Self {
             entries: Mutex::new(HashMap::from([(
@@ -32,7 +31,6 @@ impl MemSpillStore {
             recall_error: false,
         }
     }
-
     pub(super) fn with_recall_error() -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
@@ -40,7 +38,6 @@ impl MemSpillStore {
             recall_error: true,
         }
     }
-
     pub(super) fn recall_count(&self) -> usize {
         self.recalls.lock().unwrap().len()
     }
@@ -133,7 +130,7 @@ struct Fixture {
     messages: Vec<Message>,
     session: AgentSession,
     session_key: String,
-    store: FileSessionStore,
+    store: crate::infrastructure::persistence::session_store::FileSessionStore,
     _tmp: tempfile::TempDir,
     cancel: CancelHandle,
 }
@@ -141,7 +138,8 @@ struct Fixture {
 impl Fixture {
     fn new(spill_store: Option<Arc<dyn ContextSpillStore>>) -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
-        let store = FileSessionStore::new(tmp.path());
+        let store =
+            crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
         Self {
             agent: AgentLoopImpl::new(AgentLoopConfig {
                 provider: crate::interface::test_support::make_stub_provider(),
@@ -162,6 +160,7 @@ impl Fixture {
                 pin_recent_turns: 2,
                 context_collapse_after_messages: u32::MAX,
                 model_context_window: None,
+                tool_profile_context: ToolProfileContext::Parent,
             }),
             messages: Vec::new(),
             session: AgentSession::new("stub".into(), "cli:test".into()),

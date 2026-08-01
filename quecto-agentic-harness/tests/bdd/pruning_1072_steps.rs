@@ -91,6 +91,7 @@ fn when_user_sends_through_pruning_agent(world: &mut QuectoWorld, text: String) 
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: quecto_agentic_harness::domain::tool::ToolProfileContext::Parent,
     });
 
     let mut messages = world.watermark_history.clone();

@@ -42,6 +42,7 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
     // Before the switch the stub model has no registry cap → configured value.
     assert_eq!(agent.effective_max_tokens(), 100);

@@ -625,13 +625,11 @@ pub fn build_official_tool_registry(
     workspace: std::path::PathBuf,
     sandbox: crate::infrastructure::security::sandbox::Sandbox,
     exec_options: crate::infrastructure::tools::bash::ExecOptions,
-    spawned: bool,
 ) -> crate::infrastructure::tools::registry::ToolRegistryImpl {
     crate::infrastructure::extensions::native::build_official_tool_registry(
         workspace,
         sandbox,
         exec_options,
-        spawned,
     )
 }
 

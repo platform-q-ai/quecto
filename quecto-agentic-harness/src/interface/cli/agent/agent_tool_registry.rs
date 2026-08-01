@@ -91,6 +91,10 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
     let runtime = crate::interface::shared::build_tool_runtime(
         crate::interface::shared::ToolRuntimeBuildArgs {
             entrypoint,
+            profile_context:
+                crate::interface::tool_runtime::ToolRuntimeProfileContext::from_spawned(
+                    flags.spawned,
+                ),
             base_dir,
             config,
             http_client,

@@ -26,7 +26,6 @@ fn test_headless_agent_registry_includes_spawn_tool() {
             max_capture_bytes: exec_settings,
             ..Default::default()
         },
-        false,
     );
 
     // Match what build_agent_from_config does: with_base_dir so spawn is

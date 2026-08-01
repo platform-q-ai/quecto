@@ -400,6 +400,11 @@ pub(crate) fn build_agent_from_config(
         pin_recent_turns: config.agents.defaults.pin_recent_turns,
         context_collapse_after_messages: config.agents.defaults.context_collapse_after_messages,
         model_context_window: window,
+        tool_profile_context: if flags.spawned {
+            crate::domain::tool::ToolProfileContext::Child
+        } else {
+            crate::domain::tool::ToolProfileContext::Parent
+        },
     })
     .with_max_tool_iterations(
         flags

@@ -1,9 +1,10 @@
 use super::tests::*;
 use super::*;
+use crate::domain::agent::AgentLoop;
 use crate::domain::message::Role;
 use crate::domain::tool::{
-    ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationResult, ToolPolicyMutationStatus,
-    ToolPolicyReconciliation, ToolRegistry,
+    ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationResult,
+    ToolPolicyMutationStatus, ToolPolicyReconciliation, ToolProfileContext, ToolRegistry,
 };
 use crate::domain::tool_descriptor::{
     ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolHealth, ToolLifecycleKind,
@@ -359,6 +360,13 @@ impl ToolCatalog for CatalogueOnlyRegistry {
         &self.definitions
     }
 
+    fn definitions_for(&self, context: ToolProfileContext) -> &[ToolDefinition] {
+        match context {
+            ToolProfileContext::Parent => &self.definitions,
+            ToolProfileContext::Child => &self.definitions,
+        }
+    }
+
     fn catalogue_entries(&self) -> Vec<ToolCatalogueEntry> {
         self.entries.clone()
     }
@@ -401,6 +409,66 @@ fn current_tool_definitions_hide_child_only_scope_from_parent_requests() {
     let agent = AgentLoopImpl::new(test_config(provider, Box::new(registry)));
 
     assert!(agent.current_tool_definitions().is_empty());
+}
+
+#[tokio::test]
+async fn first_turn_uses_configured_profile_for_model_visible_tools() {
+    let provider = Arc::new(MockProvider::new(vec![text_response("done")]));
+    let mut spawn = mock_catalogue_entry("spawn", true);
+    spawn.profile_scope = Some(ProfileAvailabilityScope::Parent);
+    spawn.effective_scope = ProfileAvailabilityScope::Parent;
+    spawn.effective_parent_enabled = true;
+    spawn.effective_child_enabled = false;
+    let mut docs = mock_catalogue_entry("docs", true);
+    docs.profile_scope = Some(ProfileAvailabilityScope::Child);
+    docs.effective_scope = ProfileAvailabilityScope::Child;
+    docs.effective_parent_enabled = false;
+    docs.effective_child_enabled = true;
+    let registry = CatalogueOnlyRegistry {
+        entries: vec![spawn, docs],
+        definitions: vec![],
+    };
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_profile_context: ToolProfileContext::Child,
+        ..test_config(provider.clone(), Box::new(registry))
+    });
+    let mut messages = vec![Message::user("hello")];
+
+    agent.process(&mut messages).await.expect("first turn");
+    let names: Vec<_> = provider
+        .last_tool_defs()
+        .into_iter()
+        .map(|definition| definition.name)
+        .collect();
+    assert!(names.iter().any(|name| name.as_ref() == "docs"));
+    assert!(!names.iter().any(|name| name.as_ref() == "spawn"));
+}
+
+#[tokio::test]
+async fn first_turn_parent_profile_keeps_parent_tools_model_visible() {
+    let provider = Arc::new(MockProvider::new(vec![text_response("done")]));
+    let mut spawn = mock_catalogue_entry("spawn", true);
+    spawn.profile_scope = Some(ProfileAvailabilityScope::Parent);
+    spawn.effective_scope = ProfileAvailabilityScope::Parent;
+    spawn.effective_parent_enabled = true;
+    spawn.effective_child_enabled = false;
+    let registry = CatalogueOnlyRegistry {
+        entries: vec![spawn],
+        definitions: vec![],
+    };
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_profile_context: ToolProfileContext::Parent,
+        ..test_config(provider.clone(), Box::new(registry))
+    });
+    let mut messages = vec![Message::user("hello")];
+
+    agent.process(&mut messages).await.expect("first turn");
+    assert!(
+        provider
+            .last_tool_defs()
+            .iter()
+            .any(|definition| definition.name.as_ref() == "spawn")
+    );
 }
 
 #[test]

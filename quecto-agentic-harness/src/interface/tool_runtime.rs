@@ -86,9 +86,27 @@ impl<'a> ToolRuntimeWorkflowPolicy<'a> {
     }
 }
 
+/// Runtime profile selected for model-visible tool policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolRuntimeProfileContext {
+    Parent,
+    Child,
+}
+
+impl ToolRuntimeProfileContext {
+    pub(crate) fn from_spawned(spawned: bool) -> Self {
+        if spawned { Self::Child } else { Self::Parent }
+    }
+
+    fn is_child(self) -> bool {
+        matches!(self, Self::Child)
+    }
+}
+
 /// Inputs for the shared tool runtime/catalogue builder.
 pub(crate) struct ToolRuntimeBuildArgs<'a> {
     pub entrypoint: ToolEntrypoint,
+    pub profile_context: ToolRuntimeProfileContext,
     pub base_dir: &'a std::path::Path,
     pub config: &'a crate::infrastructure::config::Config,
     pub http_client: &'a reqwest::Client,
@@ -133,13 +151,16 @@ pub(crate) fn build_tool_runtime(
     args: ToolRuntimeBuildArgs<'_>,
 ) -> Result<ToolRuntimeBuild, String> {
     use crate::infrastructure::extensions::native::{
-        AgentControlToolDeps, SessionToolDeps, build_agent_control_tool_extensions,
+        AgentControlToolDeps, OfficialToolDeps, SessionToolDeps,
+        build_agent_control_tool_extensions, build_official_tool_extensions,
         build_session_tool_extensions, register_bundled_native_tools,
+        register_bundled_native_tools_with_scope,
     };
     use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 
     let ToolRuntimeBuildArgs {
         entrypoint,
+        profile_context,
         base_dir,
         config,
         http_client,
@@ -156,11 +177,27 @@ pub(crate) fn build_tool_runtime(
     } = args;
 
     let policy_state = ToolRuntimePolicyState::for_entrypoint(entrypoint);
-    let mut registry = crate::interface::shared::build_official_tool_registry(
-        workspace,
-        sandbox,
-        exec_options,
-        spawned,
+    let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+    register_bundled_native_tools_with_scope(
+        &mut registry,
+        build_official_tool_extensions(OfficialToolDeps {
+            workspace,
+            sandbox,
+            exec_options,
+            docs_content_policy: if profile_context.is_child() {
+                crate::infrastructure::tools::docs::DocsContentPolicy::Child
+            } else {
+                crate::infrastructure::tools::docs::DocsContentPolicy::Parent
+            },
+        }),
+        Some(match profile_context {
+            ToolRuntimeProfileContext::Parent => {
+                crate::domain::tool_descriptor::ProfileAvailabilityScope::Parent
+            }
+            ToolRuntimeProfileContext::Child => {
+                crate::domain::tool_descriptor::ProfileAvailabilityScope::Child
+            }
+        }),
     );
 
     let spill_store = std::sync::Arc::new(FileContextSpillStore::new(base_dir.to_path_buf()));
@@ -182,7 +219,11 @@ pub(crate) fn build_tool_runtime(
         broadcast_tx: workflow.broadcast_tx.clone(),
         parent_session_name,
     });
-    register_bundled_native_tools(&mut registry, agent_control.extensions);
+    register_bundled_native_tools_with_scope(
+        &mut registry,
+        agent_control.extensions,
+        Some(crate::domain::tool_descriptor::ProfileAvailabilityScope::Parent),
+    );
     let notify_rx = agent_control.notification_rx;
     let _ = agent_control.notification_tx;
     let subagent_registry_for_protocol = agent_control.subagent_registry;
@@ -330,6 +371,10 @@ fn build_workflow_runtime(
 #[cfg(test)]
 #[path = "tool_runtime_catalogue_tests.rs"]
 mod catalogue_tests;
+
+#[cfg(test)]
+#[path = "tool_runtime_profile_tests.rs"]
+mod profile_tests;
 
 pub(crate) fn load_workflow_spec(
     path: &std::path::Path,
