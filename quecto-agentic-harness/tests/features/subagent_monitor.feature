@@ -32,11 +32,11 @@ Feature: Persistent subagent monitor — live event stream from child agents
     Then the subagent status should be "Running"
     And the last_tool should be "bash"
 
-  Scenario: tool_execution_end with is_error true sets Error status
+  Scenario: tool_execution_end with is_error true stays Running
     Given a SubagentEntry with status Running
     When the monitor receives a "tool_execution_end" event with is_error true and tool_name "bash"
-    Then the subagent status should be "Error"
-    And the last_error should contain "bash"
+    Then the subagent status should be "Running"
+    And the last_error should be None
 
   Scenario: tool_execution_end with is_error false keeps Running
     Given a SubagentEntry with status Running
@@ -82,11 +82,11 @@ Feature: Persistent subagent monitor — live event stream from child agents
     Then the subagent status should be "Running"
     And the last_tool should be "grep"
 
-  Scenario: apply_event handles tool_execution_end with error JSON
+  Scenario: apply_event handles tool_execution_end with error JSON as child-local
     Given a SubagentEntry with status Running
     When apply_event is called with '{"type":"tool_execution_end","toolCallId":"c1","toolName":"edit","result":{"content":[]},"isError":true}'
-    Then the subagent status should be "Error"
-    And the last_error should contain "edit"
+    Then the subagent status should be "Running"
+    And the last_error should be None
 
   Scenario: apply_event handles tool_execution_end without error JSON
     Given a SubagentEntry with status Running

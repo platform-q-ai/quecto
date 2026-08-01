@@ -56,7 +56,7 @@ fn wave3_notify_and_broadcast_paths_cover_terminal_and_stall() {
 }
 
 #[test]
-fn wave3_error_notification_and_exit_sequence_paths() {
+fn wave3_agent_error_notification_and_exit_sequence_paths() {
     let registry = super::super::subagent_registry::new_registry();
     registry
         .lock()
@@ -67,10 +67,15 @@ fn wave3_error_notification_and_exit_sequence_paths() {
         &registry,
         Some(&tx),
         "bot",
-        &serde_json::json!({"type":"tool_execution_end","toolName":"verylongtool","isError":true}),
+        &serde_json::json!({"type":"response","command":"agent_error","error":"fatal provider error"}),
     );
-    assert!(rx.try_recv().unwrap().to_message().contains("verylongtool"));
-    assert!(should_broadcast_state_changed_after_event(
+    assert!(
+        rx.try_recv()
+            .unwrap()
+            .to_message()
+            .contains("fatal provider error")
+    );
+    assert!(!should_broadcast_state_changed_after_event(
         &serde_json::json!({"type":"tool_execution_end","isError":true})
     ));
     assert!(!should_broadcast_state_changed_after_event(
@@ -145,12 +150,13 @@ fn w5_monitor_poisoned_registry_and_notification_edges() {
         steps_completed: 1,
         steps_total: 1,
     });
-    entry.last_error = Some("tool failed".into());
+    entry.last_error = Some("fatal run failure".into());
+    entry.run_error = Some("fatal run failure".into());
     registry.lock().unwrap().insert("bot".into(), entry);
     poison_registry(&registry);
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
-    // last_error suppresses the following agent_end success notification.
+    // A retained terminal run error suppresses the following agent_end success notification.
     apply_and_notify(
         &registry,
         Some(&tx),

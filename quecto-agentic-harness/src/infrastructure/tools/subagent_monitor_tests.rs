@@ -66,15 +66,16 @@ fn test_tool_start_sets_running_and_last_tool() {
 // --- apply_event: tool_execution_end ---
 
 #[test]
-fn test_tool_end_error_sets_error_and_last_error() {
+fn test_tool_end_error_stays_child_local() {
     let mut entry = test_entry();
     entry.status = SubagentStatus::Running;
     apply_event(
         &mut entry,
         r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"edit","result":{"content":[]},"isError":true}"#,
     );
-    assert_eq!(entry.status, SubagentStatus::Error);
-    assert!(entry.last_error.as_ref().unwrap().contains("edit"));
+    assert_eq!(entry.status, SubagentStatus::Running);
+    assert!(entry.last_error.is_none());
+    assert!(entry.run_error.is_none());
 }
 
 #[test]
@@ -89,7 +90,7 @@ fn test_tool_end_no_error_keeps_running() {
 }
 
 #[test]
-fn test_tool_end_success_clears_last_error() {
+fn test_tool_end_success_preserves_terminal_last_error() {
     let mut entry = test_entry();
     entry.status = SubagentStatus::Running;
     entry.last_error = Some("previous error".to_string());
@@ -97,7 +98,7 @@ fn test_tool_end_success_clears_last_error() {
         &mut entry,
         r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"read","result":{"content":[]},"isError":false}"#,
     );
-    assert!(entry.last_error.is_none());
+    assert_eq!(entry.last_error.as_deref(), Some("previous error"));
 }
 
 // --- apply_event: agent_error response ---
@@ -256,20 +257,14 @@ async fn test_notify_on_agent_end() {
 }
 
 #[tokio::test]
-async fn test_notify_on_tool_error() {
+async fn test_no_notify_on_tool_error() {
     let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
     let line = r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","result":{"content":[]},"isError":true}"#;
     maybe_notify(Some(&tx), "worker", line);
-    let notif = rx.try_recv().unwrap();
-    match notif.notification {
-        SubagentNotification::Errored {
-            agent_id, error, ..
-        } => {
-            assert_eq!(agent_id, "worker");
-            assert!(error.contains("bash"));
-        }
-        _ => panic!("expected Errored"),
-    }
+    assert!(
+        rx.try_recv().is_err(),
+        "recoverable tool errors stay child-local"
+    );
 }
 
 #[tokio::test]
@@ -350,20 +345,11 @@ async fn test_maybe_notify_agent_end() {
 }
 
 #[tokio::test]
-async fn test_maybe_notify_tool_error() {
+async fn test_maybe_notify_tool_error_is_silent() {
     let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
     let line = r#"{"type":"tool_execution_end","toolName":"bash","isError":true}"#;
     maybe_notify(Some(&tx), "worker", line);
-    let notif = rx.try_recv().unwrap();
-    match notif.notification {
-        SubagentNotification::Errored {
-            agent_id, error, ..
-        } => {
-            assert_eq!(agent_id, "worker");
-            assert!(error.contains("bash"));
-        }
-        _ => panic!("expected Errored"),
-    }
+    assert!(rx.try_recv().is_err());
 }
 
 #[tokio::test]
@@ -600,8 +586,8 @@ fn recoverable_tool_error_returns_to_idle_on_agent_end() {
         r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","result":{"content":[]},"isError":true}"#,
     );
 
-    assert_eq!(entry.status, SubagentStatus::Error);
-    assert!(entry.last_error.as_ref().unwrap().contains("bash"));
+    assert_eq!(entry.status, SubagentStatus::Running);
+    assert!(entry.last_error.is_none());
     assert!(entry.run_error.is_none());
 
     apply_event(&mut entry, r#"{"type":"agent_end","messages":[]}"#);

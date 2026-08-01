@@ -445,9 +445,9 @@ async fn non_workflow_agent_emits_completion_on_turn_end() {
     ));
 }
 
-// AC3: errored notifications are unaffected by the terminal-completion gating.
+// #1337: recoverable tool errors stay child-local and do not notify parents.
 #[tokio::test]
-async fn tool_error_still_notifies_mid_workflow() {
+async fn tool_error_stays_silent_mid_workflow() {
     let registry = new_registry();
     insert_entry(&registry, "worker");
     let (tx, mut rx) = new_notification_channel();
@@ -463,11 +463,10 @@ async fn tool_error_still_notifies_mid_workflow() {
         "worker",
         &serde_json::json!({"type": "tool_execution_end", "isError": true, "toolName": "bash"}),
     );
-    let n = rx.try_recv().expect("expected an error notification");
-    assert!(matches!(
-        n.notification,
-        SubagentNotification::Errored { .. }
-    ));
+    assert!(
+        rx.try_recv().is_err(),
+        "recoverable tool errors should not emit parent notifications"
+    );
 }
 
 // Review fix (#1082): `workflow_idle` must survive the monitor's cheap
