@@ -4,6 +4,11 @@ async fn harness() -> TuiHarness {
     TuiHarness::new().await
 }
 
+async fn request_tool_catalogue(h: &mut TuiHarness) -> String {
+    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
+    extract_command_id(&h.drain_commands().await.join("\n"))
+}
+
 #[tokio::test]
 async fn ctrl_t_opens_tool_policy_modal_and_apply_sends_mutations() {
     let mut h = harness().await;
@@ -15,9 +20,9 @@ async fn ctrl_t_opens_tool_policy_modal_and_apply_sends_mutations() {
             ..Default::default()
         }]);
 
-    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
+    let request_id = request_tool_catalogue(&mut h).await;
     h.app_mut().handle_response(
-        Some("tool-policy-catalogue".into()),
+        Some(request_id.clone()),
         "get_tool_catalogue".into(),
         true,
         Some(serde_json::json!({
@@ -45,9 +50,7 @@ async fn ctrl_t_opens_tool_policy_modal_and_apply_sends_mutations() {
 async fn ctrl_t_with_empty_catalogue_opens_modal_after_catalogue_update() {
     let mut h = harness().await;
 
-    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
-    let sent = h.drain_commands().await.join("\n");
-    assert!(sent.contains("\"type\":\"get_tool_catalogue\""), "{sent}");
+    let _request_id = request_tool_catalogue(&mut h).await;
 
     h.app_mut()
         .merge_tool_catalogue(vec![crate::protocol::client::ToolCatalogueEntry {
@@ -66,9 +69,11 @@ async fn ctrl_t_with_empty_catalogue_opens_modal_after_catalogue_update() {
 async fn incremental_catalogue_event_during_pending_ctrl_t_does_not_open_or_consume() {
     let mut h = harness().await;
 
-    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
-    let sent = h.drain_commands().await.join("\n");
-    assert!(sent.contains("\"id\":\"tool-policy-catalogue\""), "{sent}");
+    let request_id = request_tool_catalogue(&mut h).await;
+    assert!(
+        request_id.starts_with("tool-policy-catalogue-"),
+        "{request_id}"
+    );
 
     h.app_mut()
         .handle_event(crate::protocol::client::Event::ToolCatalogueChanged {
@@ -90,7 +95,7 @@ async fn incremental_catalogue_event_during_pending_ctrl_t_does_not_open_or_cons
     );
 
     h.app_mut().handle_response(
-        Some("tool-policy-catalogue".into()),
+        Some(request_id.clone()),
         "get_tool_catalogue".into(),
         true,
         Some(serde_json::json!({
@@ -119,9 +124,11 @@ async fn incremental_catalogue_event_during_pending_ctrl_t_does_not_open_or_cons
 async fn stale_get_tool_catalogue_response_does_not_open_or_consume_pending_ctrl_t_request() {
     let mut h = harness().await;
 
-    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
-    let sent = h.drain_commands().await.join("\n");
-    assert!(sent.contains("\"id\":\"tool-policy-catalogue\""), "{sent}");
+    let request_id = request_tool_catalogue(&mut h).await;
+    assert!(
+        request_id.starts_with("tool-policy-catalogue-"),
+        "{request_id}"
+    );
 
     h.app_mut().handle_response(
         Some("unrelated-tool-policy-catalogue".into()),
@@ -148,7 +155,7 @@ async fn stale_get_tool_catalogue_response_does_not_open_or_consume_pending_ctrl
     );
 
     h.app_mut().handle_response(
-        Some("tool-policy-catalogue".into()),
+        Some(request_id.clone()),
         "get_tool_catalogue".into(),
         true,
         Some(serde_json::json!({
@@ -177,15 +184,88 @@ async fn stale_get_tool_catalogue_response_does_not_open_or_consume_pending_ctrl
 }
 
 #[tokio::test]
+async fn overlapping_ctrl_t_refreshes_ignore_earlier_response_and_open_latest() {
+    let mut h = harness().await;
+
+    let first_id = request_tool_catalogue(&mut h).await;
+
+    let second_id = request_tool_catalogue(&mut h).await;
+
+    assert_ne!(first_id, second_id, "Ctrl+T refresh ids must be unique");
+
+    h.app_mut().handle_response(
+        Some(first_id),
+        "get_tool_catalogue".into(),
+        true,
+        Some(serde_json::json!({
+            "tools": [{
+                "stableId": "tool-stale",
+                "name": "stale",
+                "profileScope": "both"
+            }]
+        })),
+        None,
+    );
+
+    let stale_frame = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        !stale_frame.contains("Tool Policy"),
+        "earlier response opened policy modal:\n{stale_frame}"
+    );
+    assert!(
+        !stale_frame.contains("stale"),
+        "earlier response replaced latest pending catalogue:\n{stale_frame}"
+    );
+
+    h.app_mut().handle_response(
+        Some(second_id),
+        "get_tool_catalogue".into(),
+        true,
+        Some(serde_json::json!({
+            "tools": [{
+                "stableId": "tool-fresh",
+                "name": "fresh",
+                "profileScope": "child"
+            }]
+        })),
+        None,
+    );
+
+    let frame = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        frame.contains("Tool Policy"),
+        "latest response did not open modal:\n{frame}"
+    );
+    assert!(
+        frame.contains("[-C] fresh"),
+        "fresh catalogue missing:\n{frame}"
+    );
+    assert!(
+        !frame.contains("stale"),
+        "stale catalogue leaked into modal:\n{frame}"
+    );
+}
+
+fn extract_command_id(sent: &str) -> String {
+    sent.lines()
+        .find_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .and_then(|value| {
+            value
+                .get("id")
+                .and_then(|id| id.as_str())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| panic!("missing command id in {sent}"))
+}
+
+#[tokio::test]
 async fn ctrl_t_with_empty_catalogue_opens_modal_after_get_tool_catalogue_response() {
     let mut h = harness().await;
 
-    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
-    let sent = h.drain_commands().await.join("\n");
-    assert!(sent.contains("\"type\":\"get_tool_catalogue\""), "{sent}");
+    let request_id = request_tool_catalogue(&mut h).await;
 
     h.app_mut().handle_response(
-        Some("tool-policy-catalogue".into()),
+        Some(request_id.clone()),
         "get_tool_catalogue".into(),
         true,
         Some(serde_json::json!({
@@ -214,14 +294,12 @@ async fn ctrl_t_with_cached_catalogue_waits_for_fresh_get_tool_catalogue_respons
             ..Default::default()
         }]);
 
-    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
-    let sent = h.drain_commands().await.join("\n");
-    assert!(sent.contains("\"type\":\"get_tool_catalogue\""), "{sent}");
+    let request_id = request_tool_catalogue(&mut h).await;
     let stale_frame = h.app_mut().compose_frame().join("\n");
     assert!(!crate::components::ansi::strip_ansi(&stale_frame).contains("Tool Policy"));
 
     h.app_mut().handle_response(
-        Some("tool-policy-catalogue".into()),
+        Some(request_id.clone()),
         "get_tool_catalogue".into(),
         true,
         Some(serde_json::json!({
@@ -251,9 +329,9 @@ async fn ctrl_t_success_without_tool_catalogue_data_does_not_open_stale_cached_c
             ..Default::default()
         }]);
 
-    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
+    let request_id = request_tool_catalogue(&mut h).await;
     h.app_mut().handle_response(
-        Some("tool-policy-catalogue".into()),
+        Some(request_id.clone()),
         "get_tool_catalogue".into(),
         true,
         None,
@@ -282,9 +360,9 @@ async fn ctrl_t_empty_catalogue_response_clears_stale_cache_and_opens_empty_poli
             ..Default::default()
         }]);
 
-    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
+    let request_id = request_tool_catalogue(&mut h).await;
     h.app_mut().handle_response(
-        Some("tool-policy-catalogue".into()),
+        Some(request_id.clone()),
         "get_tool_catalogue".into(),
         true,
         Some(serde_json::json!({ "tools": [] })),
@@ -317,9 +395,9 @@ async fn ctrl_t_fresh_catalogue_response_removes_stale_absent_tools() {
             ..Default::default()
         }]);
 
-    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
+    let request_id = request_tool_catalogue(&mut h).await;
     h.app_mut().handle_response(
-        Some("tool-policy-catalogue".into()),
+        Some(request_id.clone()),
         "get_tool_catalogue".into(),
         true,
         Some(serde_json::json!({
@@ -352,9 +430,9 @@ async fn ctrl_t_fresh_catalogue_response_removes_stale_absent_tools() {
 #[tokio::test]
 async fn ctrl_t_seeds_and_applies_legacy_profile_enabled_when_profile_scope_absent() {
     let mut h = harness().await;
-    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
+    let request_id = request_tool_catalogue(&mut h).await;
     h.app_mut().handle_response(
-        Some("tool-policy-catalogue".into()),
+        Some(request_id.clone()),
         "get_tool_catalogue".into(),
         true,
         Some(serde_json::json!({
@@ -390,9 +468,9 @@ async fn ctrl_t_apply_without_changes_does_not_persist_effective_downstream_scop
             ..Default::default()
         }]);
 
-    h.app_mut().handle_key(crate::shell::keys::Key::Ctrl('t'));
+    let request_id = request_tool_catalogue(&mut h).await;
     h.app_mut().handle_response(
-        Some("tool-policy-catalogue".into()),
+        Some(request_id.clone()),
         "get_tool_catalogue".into(),
         true,
         Some(serde_json::json!({
