@@ -1,4 +1,4 @@
-use super::app_selection::{SelectionAnchor, apply_selection_highlight, display_col_to_char_idx};
+use super::app_selection::apply_selection_highlight;
 use super::*;
 use crate::components::select_list::route_overlay_key;
 use crate::components::select_overlay::{
@@ -497,6 +497,17 @@ impl App {
                 });
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
+        if let Some(modal) = &mut self.tool_policy.modal {
+            let (selector_lines, overlay_width) =
+                crate::components::selectable_item_modal::build_selectable_item_modal_overlay(
+                    "Tool/profile policy",
+                    "Space cycles None → Parent → Child → Both · Enter apply · Esc cancel",
+                    modal,
+                    width,
+                    height,
+                );
+            Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
+        }
 
         for line in &mut lines {
             if crate::components::utils::visible_width(line) > width {
@@ -664,60 +675,6 @@ impl App {
     }
 
     // ── Mouse text selection (#528) ───────────────────────────────────
-
-    /// Extract visible text from the rendered buffer between two selection anchors.
-    pub(super) fn extract_selection(
-        &self,
-        start: &SelectionAnchor,
-        end: &SelectionAnchor,
-    ) -> String {
-        // Normalize: ensure start ≤ end (top-to-bottom, left-to-right).
-        let (start, end) = if (start.row, start.col) <= (end.row, end.col) {
-            (start, end)
-        } else {
-            (end, start)
-        };
-
-        let lines = &self.last_rendered_lines;
-        let (panel_width, divider_width, _) = self.frame_split();
-        let body_start_col = panel_width.saturating_add(divider_width);
-        let mut result = String::new();
-
-        for row in start.row..=end.row {
-            let row_idx = row as usize;
-            if row_idx >= lines.len() {
-                break;
-            }
-            let visible = strip_ansi_for_selection(&lines[row_idx]);
-            let visible_width = crate::components::utils::visible_width(&visible);
-            let chars: Vec<char> = visible.chars().collect();
-
-            let col_start = if row == start.row {
-                start.col as usize
-            } else {
-                0
-            };
-            let col_end = if row == end.row {
-                end.col as usize
-            } else {
-                visible_width
-            };
-
-            let col_start = col_start.max(body_start_col).min(visible_width);
-            let col_end = col_end.max(body_start_col).min(visible_width);
-
-            let start_idx = display_col_to_char_idx(&chars, col_start);
-            let end_idx = display_col_to_char_idx(&chars, col_end);
-            let segment: String = chars[start_idx..end_idx].iter().collect();
-
-            if !result.is_empty() {
-                result.push('\n');
-            }
-            result.push_str(&segment);
-        }
-
-        result
-    }
 }
 
 /// Animated "N subagent(s) working…" line shown in the reserved spinner slot

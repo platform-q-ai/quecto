@@ -410,3 +410,26 @@ fn selectable_item_modal_can_build_from_provider_contract() {
     }
     assert!(provider.dismissed);
 }
+
+#[test]
+fn selectable_item_modal_scope_mode_cycles_and_renders_four_states() {
+    let mut scopes = std::collections::BTreeMap::new();
+    scopes.insert("alpha".to_string(), ScopeSelection::None);
+    let mut modal = SelectableItemModal::builder()
+        .items(fixture_items())
+        .scopes(scopes)
+        .id(|item| item.id.to_string())
+        .label(|item| item.label.to_string())
+        .build()
+        .unwrap();
+
+    assert!(strip_ansi(&modal.render(80).join("\n")).contains("[--] Alpha"));
+    modal.handle_input(&Key::Char(' '));
+    assert!(strip_ansi(&modal.render(80).join("\n")).contains("[P-] Alpha"));
+    modal.handle_input(&Key::Char(' '));
+    assert!(strip_ansi(&modal.render(80).join("\n")).contains("[-C] Alpha"));
+    modal.handle_input(&Key::Char(' '));
+    assert!(strip_ansi(&modal.render(80).join("\n")).contains("[PC] Alpha"));
+    modal.handle_input(&Key::Char(' '));
+    assert!(strip_ansi(&modal.render(80).join("\n")).contains("[--] Alpha"));
+}

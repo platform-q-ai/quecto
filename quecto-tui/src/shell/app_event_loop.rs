@@ -335,6 +335,12 @@ impl App {
             return;
         }
 
+        if self.tool_policy.modal.is_some() {
+            self.rewind.last_idle_escape = None;
+            self.handle_tool_policy_key(&key);
+            return;
+        }
+
         // If the model selector is active, route input to it.
         if self.inference.model_selector.is_some() {
             self.rewind.last_idle_escape = None;
@@ -489,6 +495,10 @@ impl App {
             Key::Ctrl('l') => {
                 // Open model selector overlay.
                 self.open_model_selector();
+                return;
+            }
+            Key::Ctrl('t') => {
+                self.open_tool_policy_modal();
                 return;
             }
             Key::Ctrl('o') => {

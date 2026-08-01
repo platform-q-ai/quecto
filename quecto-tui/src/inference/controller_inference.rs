@@ -24,3 +24,8 @@ pub(crate) struct ModelRegistry {
     /// A selector open is deferred until the fresh list arrives (ADR-0002).
     pub(super) open_pending: bool,
 }
+
+#[derive(Default)]
+pub(super) struct ToolPolicyFlow {
+    pub(super) modal: Option<crate::components::selectable_item_modal::SelectableItemModal>,
+}

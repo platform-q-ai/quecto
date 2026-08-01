@@ -307,6 +307,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `inference/controller_effort.rs` | `inference` (relocated, #1257 Phase 5) |
 | `inference/controller_inference.rs` | `inference` (relocated, #1257 Phase 5) |
 | `inference/controller_models.rs` | `inference` (relocated, #1257 Phase 5) |
+| `inference/controller_tool_policy.rs` | `inference` tool/profile policy presentation coordination (#1334 Phase 6) |
 | `inference/mod.rs` | `inference` (relocated, #1257 Phase 5) |
 | `lib.rs` | `shell` crate composition/export root |
 | `main.rs` | `shell` thin binary entrypoint |
@@ -333,6 +334,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_methods.rs` | `shell` composition methods (relocated, #1257 Phase 6) |
 | `shell/app_response.rs` | `shell` response dispatch seam (relocated, #1257 Phase 6; protocol-mapper allowlist #1220) |
 | `shell/app_selection.rs` | `shell` focus/selection routing (relocated, #1257 Phase 6) |
+| `shell/app_selection_methods.rs` | `shell` selection extraction composition methods (split for file-size guardrail, #1334 Phase 6) |
 | `shell/app_stdin.rs` | `shell` stdin coordination (relocated, #1257 Phase 6) |
 | `shell/app_submit.rs` | `shell` submit/prompt coordination (relocated, #1257 Phase 6) |
 | `shell/child_watch.rs` | `shell` runtime supervision (relocated, #1257 Phase 1) |

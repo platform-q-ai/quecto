@@ -70,6 +70,7 @@ pub struct App {
     /// reported exactly once (#1047).
     surfaced_oversized_drops: u64,
     inference: InferenceFlow,
+    tool_policy: ToolPolicyFlow,
     /// Connected agent's own id (get_state sessionKey), vs descendants' (#997).
     connected_agent_id: Option<String>,
     sessions: SessionsFlow,
@@ -150,6 +151,7 @@ impl App {
             child_exit_watch: None,
             surfaced_oversized_drops: 0,
             inference: InferenceFlow::default(),
+            tool_policy: ToolPolicyFlow::default(),
             connected_agent_id: None,
             sessions: SessionsFlow::default(),
             workflow: WorkflowFlow::default(),
@@ -242,6 +244,8 @@ mod app_events;
 mod app_git;
 #[path = "../inference/controller_inference.rs"]
 mod app_inference;
+#[path = "../inference/controller_tool_policy.rs"]
+mod app_tool_policy;
 // Feature controllers own policy; shell composes their App extension methods.
 #[path = "../conversation/controller_rewind_state.rs"]
 mod app_rewind_state;
@@ -251,7 +255,7 @@ mod app_sessions;
 mod app_workflow;
 #[path = "../workspace/controller_workspace.rs"]
 mod app_workspace;
-use app_inference::InferenceFlow;
+use app_inference::{InferenceFlow, ToolPolicyFlow};
 use app_rewind_state::RewindFlow;
 use app_sessions::SessionsFlow;
 use app_workflow::WorkflowFlow;
@@ -280,6 +284,8 @@ mod app_resumed_history;
 mod app_rewind;
 #[path = "app_selection.rs"]
 mod app_selection;
+#[path = "app_selection_methods.rs"]
+mod app_selection_methods;
 #[path = "../agents/controller_subagent_feed.rs"]
 mod app_subagent_feed;
 #[path = "../agents/controller_subagent_panel.rs"]
