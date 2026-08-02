@@ -17,6 +17,7 @@ mod registry_catalogue;
 mod registry_inherited_policy;
 pub mod spawn;
 mod spawn_binary;
+mod spawn_inherited_policy;
 mod spawn_launch_args;
 mod spawn_registry;
 pub mod subagent_cascade;

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::infrastructure::tools::registration::ToolRegistration;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
@@ -37,17 +39,18 @@ impl ToolRegistryImpl {
             }
         }
         self.rebuild_definitions();
+        self.refresh_spawn_inherited_child_policy_snapshot();
         warnings
     }
 
-    pub(crate) fn inherited_child_policy_snapshot(
-        &self,
-    ) -> crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot {
-        let tools = self
+    pub(crate) fn refresh_spawn_inherited_child_policy_snapshot(&self) {
+        let snapshot: BTreeMap<_, _> = self
             .catalogue_entries()
             .into_iter()
             .map(|tool| (tool.name.into_owned(), tool.effective_scope))
             .collect();
-        crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot::new(tools)
+        if let Some(spawn) = self.tools.get("spawn") {
+            spawn.set_inherited_child_policy_snapshot_for_spawn(snapshot);
+        }
     }
 }

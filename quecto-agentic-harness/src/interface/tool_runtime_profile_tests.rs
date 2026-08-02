@@ -155,3 +155,53 @@ async fn child_profile_blocks_parent_only_tools_even_if_called_directly() {
     let docs_result = built.registry.execute("docs", "{}").await.unwrap();
     assert!(!docs_result.is_error);
 }
+
+#[test]
+fn inherited_child_policy_snapshot_includes_agent_control_after_child_policy_allows_it() {
+    let mut built = runtime(ToolRuntimeProfileContext::Parent, false, &[]);
+    let before_policy_change = built
+        .registry
+        .get("spawn")
+        .expect("spawn registered")
+        .inherited_child_policy_snapshot_for_spawn()
+        .expect("spawn should carry initial inherited policy");
+    assert_ne!(
+        before_policy_change.get("spawn"),
+        Some(&crate::domain::tool_descriptor::ProfileAvailabilityScope::Both),
+        "the regression must prove the snapshot is not captured before policy changes"
+    );
+
+    built.registry.apply_tool_policy_mutations(
+        &[
+            crate::domain::tool::ToolPolicyMutation::set_scope(
+                "spawn",
+                crate::domain::tool_descriptor::ProfileAvailabilityScope::Both,
+                "allow child spawning",
+            ),
+            crate::domain::tool::ToolPolicyMutation::set_scope(
+                "agent_cmd",
+                crate::domain::tool_descriptor::ProfileAvailabilityScope::Both,
+                "allow child coordination",
+            ),
+        ],
+        crate::domain::tool::ToolPolicyApplyMode::ImmediateIfIdle,
+    );
+
+    let snapshot = built
+        .registry
+        .get("spawn")
+        .expect("spawn registered")
+        .inherited_child_policy_snapshot_for_spawn()
+        .expect("spawn should carry inherited policy");
+
+    assert_eq!(
+        snapshot.get("spawn"),
+        Some(&crate::domain::tool_descriptor::ProfileAvailabilityScope::Both),
+        "child-to-grandchild spawn must inherit child-visible spawn policy"
+    );
+    assert_eq!(
+        snapshot.get("agent_cmd"),
+        Some(&crate::domain::tool_descriptor::ProfileAvailabilityScope::Both),
+        "child-to-grandchild spawn must inherit child-visible agent_cmd policy"
+    );
+}

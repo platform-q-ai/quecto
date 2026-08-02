@@ -231,7 +231,7 @@ pub(crate) fn build_tool_runtime(
         restrict_to_workspace,
         broadcast_tx: workflow.broadcast_tx.clone(),
         parent_session_name,
-        inherited_tool_policy: Some(registry.inherited_child_policy_snapshot()),
+        inherited_tool_policy: None,
     });
     register_bundled_native_tools_with_scope(
         &mut registry,
@@ -283,6 +283,7 @@ pub(crate) fn build_tool_runtime(
     }
 
     registry.set_execution_profile_context(profile_context.profile_context());
+    registry.refresh_spawn_inherited_child_policy_snapshot();
 
     let catalogue_entries = registry.catalogue_entries();
 

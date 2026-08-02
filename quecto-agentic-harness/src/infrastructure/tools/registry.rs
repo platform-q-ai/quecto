@@ -487,6 +487,7 @@ impl ToolRegistryImpl {
                 reason: mutation.reason.clone(),
             });
         }
+        self.refresh_spawn_inherited_child_policy_snapshot();
         ToolPolicyReconciliation { mode, results }
     }
 

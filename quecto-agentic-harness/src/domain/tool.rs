@@ -72,6 +72,28 @@ pub trait Tool: Send + Sync {
     /// Notify stateful tools that the active session key changed.
     fn set_session_key(&self, _session_key: String) {}
 
+    /// Update a stateful spawn-like tool with the current child policy ceiling.
+    fn set_inherited_child_policy_snapshot_for_spawn(
+        &self,
+        _snapshot: std::collections::BTreeMap<
+            String,
+            crate::domain::tool_descriptor::ProfileAvailabilityScope,
+        >,
+    ) {
+    }
+
+    /// Inspect a stateful spawn-like tool's current child policy ceiling.
+    fn inherited_child_policy_snapshot_for_spawn(
+        &self,
+    ) -> Option<
+        std::collections::BTreeMap<
+            String,
+            crate::domain::tool_descriptor::ProfileAvailabilityScope,
+        >,
+    > {
+        None
+    }
+
     /// Execute the tool with JSON-encoded arguments.
     ///
     /// See the trait-level docs for the error-handling contract:
