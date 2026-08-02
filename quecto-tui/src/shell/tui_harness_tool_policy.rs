@@ -4,7 +4,7 @@ use crate::protocol::client::{ToolCatalogueEntry, ToolPolicyResult};
 impl TuiHarness {
     /// Merge tool catalogue entries through the production app event helper.
     pub fn merge_tool_catalogue(&mut self, entries: Vec<ToolCatalogueEntry>) -> &mut Self {
-        self.app.merge_tool_catalogue(entries);
+        self.app.merge_tool_catalogue_event(entries);
         self.capture();
         self
     }

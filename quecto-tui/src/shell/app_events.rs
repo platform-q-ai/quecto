@@ -62,11 +62,6 @@ impl App {
         }
     }
 
-    pub(super) fn merge_tool_catalogue(&mut self, entries: Vec<ToolCatalogueEntry>) {
-        self.merge_tool_catalogue_entries(entries);
-        self.open_pending_tool_policy_modal_after_catalogue_update();
-    }
-
     pub(super) fn merge_tool_catalogue_event(&mut self, entries: Vec<ToolCatalogueEntry>) {
         self.merge_tool_catalogue_entries(entries);
         if self.tool_policy_modal_pending_catalogue_id.is_none() {
@@ -120,7 +115,7 @@ impl App {
             .into_iter()
             .filter_map(|result| result.after)
             .collect();
-        self.merge_tool_catalogue(entries);
+        self.merge_tool_catalogue_entries(entries);
     }
 
     fn handle_agent_start(&mut self) {

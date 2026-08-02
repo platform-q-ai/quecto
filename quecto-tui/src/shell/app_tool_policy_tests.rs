@@ -13,7 +13,7 @@ async fn request_tool_catalogue(h: &mut TuiHarness) -> String {
 async fn ctrl_t_opens_tool_policy_modal_and_apply_sends_mutations() {
     let mut h = harness().await;
     h.app_mut()
-        .merge_tool_catalogue(vec![crate::protocol::client::ToolCatalogueEntry {
+        .merge_tool_catalogue_event(vec![crate::protocol::client::ToolCatalogueEntry {
             stable_id: "tool-alpha".into(),
             name: "alpha".into(),
             profile_scope: Some(crate::protocol::client::ToolScope::None),
@@ -53,7 +53,7 @@ async fn ctrl_t_with_empty_catalogue_opens_modal_after_catalogue_update() {
     let _request_id = request_tool_catalogue(&mut h).await;
 
     h.app_mut()
-        .merge_tool_catalogue(vec![crate::protocol::client::ToolCatalogueEntry {
+        .merge_tool_catalogue_event(vec![crate::protocol::client::ToolCatalogueEntry {
             stable_id: "tool-alpha".into(),
             name: "alpha".into(),
             profile_scope: Some(crate::protocol::client::ToolScope::None),
@@ -287,7 +287,7 @@ async fn ctrl_t_with_empty_catalogue_opens_modal_after_get_tool_catalogue_respon
 async fn ctrl_t_with_cached_catalogue_waits_for_fresh_get_tool_catalogue_response() {
     let mut h = harness().await;
     h.app_mut()
-        .merge_tool_catalogue(vec![crate::protocol::client::ToolCatalogueEntry {
+        .merge_tool_catalogue_event(vec![crate::protocol::client::ToolCatalogueEntry {
             stable_id: "tool-alpha".into(),
             name: "alpha".into(),
             profile_scope: Some(crate::protocol::client::ToolScope::None),
@@ -322,7 +322,7 @@ async fn ctrl_t_with_cached_catalogue_waits_for_fresh_get_tool_catalogue_respons
 async fn ctrl_t_success_without_tool_catalogue_data_does_not_open_stale_cached_catalogue() {
     let mut h = harness().await;
     h.app_mut()
-        .merge_tool_catalogue(vec![crate::protocol::client::ToolCatalogueEntry {
+        .merge_tool_catalogue_event(vec![crate::protocol::client::ToolCatalogueEntry {
             stable_id: "tool-stale".into(),
             name: "stale".into(),
             profile_scope: Some(crate::protocol::client::ToolScope::Both),
@@ -353,7 +353,7 @@ async fn ctrl_t_success_without_tool_catalogue_data_does_not_open_stale_cached_c
 async fn ctrl_t_empty_catalogue_response_clears_stale_cache_and_opens_empty_policy_state() {
     let mut h = harness().await;
     h.app_mut()
-        .merge_tool_catalogue(vec![crate::protocol::client::ToolCatalogueEntry {
+        .merge_tool_catalogue_event(vec![crate::protocol::client::ToolCatalogueEntry {
             stable_id: "tool-stale".into(),
             name: "stale".into(),
             profile_scope: Some(crate::protocol::client::ToolScope::Both),
@@ -388,7 +388,7 @@ async fn ctrl_t_empty_catalogue_response_clears_stale_cache_and_opens_empty_poli
 async fn ctrl_t_fresh_catalogue_response_removes_stale_absent_tools() {
     let mut h = harness().await;
     h.app_mut()
-        .merge_tool_catalogue(vec![crate::protocol::client::ToolCatalogueEntry {
+        .merge_tool_catalogue_event(vec![crate::protocol::client::ToolCatalogueEntry {
             stable_id: "tool-stale".into(),
             name: "stale".into(),
             profile_scope: Some(crate::protocol::client::ToolScope::Both),
@@ -460,7 +460,7 @@ async fn ctrl_t_seeds_and_applies_legacy_profile_enabled_when_profile_scope_abse
 async fn ctrl_t_apply_without_changes_does_not_persist_effective_downstream_scope() {
     let mut h = harness().await;
     h.app_mut()
-        .merge_tool_catalogue(vec![crate::protocol::client::ToolCatalogueEntry {
+        .merge_tool_catalogue_event(vec![crate::protocol::client::ToolCatalogueEntry {
             stable_id: "tool-alpha".into(),
             name: "alpha".into(),
             profile_scope: None,
@@ -543,6 +543,59 @@ async fn ctrl_t_reopen_does_not_reflect_unapplied_same_session_policy_after_appl
         "reopened modal reflected unapplied same-session policy:\n{reopened}"
     );
     assert!(!reopened.contains("[--] alpha"), "{reopened}");
+}
+
+#[tokio::test]
+async fn tool_policy_changed_does_not_satisfy_pending_ctrl_t_catalogue_request() {
+    let mut h = harness().await;
+    h.app_mut()
+        .merge_tool_catalogue_event(vec![crate::protocol::client::ToolCatalogueEntry {
+            stable_id: "tool-alpha".into(),
+            name: "alpha".into(),
+            ..Default::default()
+        }]);
+
+    let request_id = request_tool_catalogue(&mut h).await;
+    h.app_mut()
+        .merge_tool_policy_results(vec![crate::protocol::client::ToolPolicyResult {
+            after: Some(crate::protocol::client::ToolCatalogueEntry {
+                stable_id: "tool-beta".into(),
+                name: "beta".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }]);
+
+    h.app_mut().handle_response(
+        Some(request_id),
+        "get_tool_catalogue".into(),
+        true,
+        Some(serde_json::json!({
+            "tools": [{
+                "stableId": "tool-alpha",
+                "name": "alpha",
+                "profileScope": null
+            }, {
+                "stableId": "tool-beta",
+                "name": "beta",
+                "profileScope": null
+            }, {
+                "stableId": "tool-gamma",
+                "name": "gamma",
+                "profileScope": null
+            }]
+        })),
+        None,
+    );
+
+    let after_response =
+        crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        after_response.contains("alpha")
+            && after_response.contains("beta")
+            && after_response.contains("gamma"),
+        "requested catalogue response did not open complete modal:\n{after_response}"
+    );
 }
 
 #[tokio::test]
