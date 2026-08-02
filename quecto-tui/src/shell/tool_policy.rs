@@ -58,7 +58,7 @@ impl App {
                 let scope = entry
                     .profile_scope
                     .or_else(|| entry.profile_enabled.map(legacy_profile_enabled_scope))
-                    .unwrap_or(ToolScope::None)
+                    .unwrap_or(ToolScope::Both)
                     .into();
                 (id, scope)
             })
@@ -126,7 +126,7 @@ fn catalogue_key(entry: &ToolCatalogueEntry) -> String {
     }
 }
 
-fn legacy_profile_enabled_scope(enabled: bool) -> ToolScope {
+pub(super) fn legacy_profile_enabled_scope(enabled: bool) -> ToolScope {
     if enabled {
         ToolScope::Both
     } else {

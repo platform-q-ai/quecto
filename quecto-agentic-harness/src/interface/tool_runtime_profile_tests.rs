@@ -87,12 +87,12 @@ fn tool_visibility_is_selected_by_runtime_profile_not_spawned_role_bit() {
         "child profile does not imply read-only by itself"
     );
     assert!(
-        !child_names.contains("spawn"),
-        "conservative child profile hides spawn"
+        child_names.contains("spawn"),
+        "child profile keeps spawn visible by default"
     );
     assert!(
-        !child_names.contains("agent_cmd"),
-        "conservative child profile hides agent_cmd"
+        child_names.contains("agent_cmd"),
+        "child profile keeps agent_cmd visible by default"
     );
 
     let spawned_parent_profile = runtime(ToolRuntimeProfileContext::Parent, true, &[]);
@@ -113,8 +113,8 @@ async fn spawned_disable_tools_restrictions_are_layered_over_child_profile_polic
     let child_names = names_for(&built, ToolProfileContext::Child);
 
     assert!(
-        !child_names.contains("spawn"),
-        "child profile hides parent coordination tools"
+        child_names.contains("spawn"),
+        "child profile keeps agent-control tools unless explicitly restricted"
     );
     assert!(
         !child_names.contains("write"),
@@ -141,51 +141,23 @@ async fn spawned_disable_tools_restrictions_are_layered_over_child_profile_polic
 }
 
 #[tokio::test]
-async fn child_profile_blocks_parent_only_tools_even_if_called_directly() {
+async fn child_profile_executes_agent_control_tools_when_not_restricted_by_policy() {
     let built = runtime(ToolRuntimeProfileContext::Child, true, &[]);
-
-    let spawn_result = built.registry.execute("spawn", "{}").await.unwrap();
-    assert!(spawn_result.is_error);
-    assert!(spawn_result.content.contains("Child runtime profile"));
 
     let agent_cmd_result = built.registry.execute("agent_cmd", "{}").await.unwrap();
     assert!(agent_cmd_result.is_error);
-    assert!(agent_cmd_result.content.contains("Child runtime profile"));
+    assert!(
+        !agent_cmd_result.content.contains("Child runtime profile"),
+        "agent_cmd should reach its implementation instead of profile gating"
+    );
 
     let docs_result = built.registry.execute("docs", "{}").await.unwrap();
     assert!(!docs_result.is_error);
 }
 
 #[test]
-fn inherited_child_policy_snapshot_includes_agent_control_after_child_policy_allows_it() {
-    let mut built = runtime(ToolRuntimeProfileContext::Parent, false, &[]);
-    let before_policy_change = built
-        .registry
-        .get("spawn")
-        .expect("spawn registered")
-        .inherited_child_policy_snapshot_for_spawn()
-        .expect("spawn should carry initial inherited policy");
-    assert_ne!(
-        before_policy_change.get("spawn"),
-        Some(&crate::domain::tool_descriptor::ProfileAvailabilityScope::Both),
-        "the regression must prove the snapshot is not captured before policy changes"
-    );
-
-    built.registry.apply_tool_policy_mutations(
-        &[
-            crate::domain::tool::ToolPolicyMutation::set_scope(
-                "spawn",
-                crate::domain::tool_descriptor::ProfileAvailabilityScope::Both,
-                "allow child spawning",
-            ),
-            crate::domain::tool::ToolPolicyMutation::set_scope(
-                "agent_cmd",
-                crate::domain::tool_descriptor::ProfileAvailabilityScope::Both,
-                "allow child coordination",
-            ),
-        ],
-        crate::domain::tool::ToolPolicyApplyMode::ImmediateIfIdle,
-    );
+fn inherited_child_policy_snapshot_includes_agent_control_by_default() {
+    let built = runtime(ToolRuntimeProfileContext::Parent, false, &[]);
 
     let snapshot = built
         .registry

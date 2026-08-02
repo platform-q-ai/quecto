@@ -1,5 +1,13 @@
 use super::*;
-use crate::protocol::client::ToolCatalogueEntry;
+use crate::protocol::client::{ToolCatalogueEntry, ToolScope};
+
+fn effective_profile_scope(entry: &ToolCatalogueEntry) -> Option<ToolScope> {
+    entry.profile_scope.or_else(|| {
+        entry
+            .profile_enabled
+            .map(super::tool_policy::legacy_profile_enabled_scope)
+    })
+}
 
 #[cfg(test)]
 pub(super) use super::app_message_recovery::recovered_chat_entries;
@@ -62,11 +70,6 @@ impl App {
         }
     }
 
-    pub(super) fn merge_tool_catalogue(&mut self, entries: Vec<ToolCatalogueEntry>) {
-        self.merge_tool_catalogue_entries(entries);
-        self.open_pending_tool_policy_modal_after_catalogue_update();
-    }
-
     pub(super) fn merge_tool_catalogue_event(&mut self, entries: Vec<ToolCatalogueEntry>) {
         self.merge_tool_catalogue_entries(entries);
         if self.tool_policy_modal_pending_catalogue_id.is_none() {
@@ -75,16 +78,36 @@ impl App {
     }
 
     fn merge_tool_catalogue_entries(&mut self, entries: Vec<ToolCatalogueEntry>) {
-        for entry in entries {
+        for mut entry in entries {
             let key = tool_catalogue_key(&entry);
+            if entry.profile_scope.is_none() && entry.profile_enabled.is_none() {
+                if let Some(scope) = self
+                    .tool_catalogue
+                    .get(&key)
+                    .and_then(effective_profile_scope)
+                {
+                    entry.profile_scope = Some(scope);
+                    entry.profile_enabled = Some(scope != ToolScope::None);
+                }
+            }
             self.tool_catalogue.insert(key, entry);
         }
     }
 
     pub(super) fn replace_tool_catalogue(&mut self, entries: Vec<ToolCatalogueEntry>) {
+        let previous = &self.tool_catalogue;
         self.tool_catalogue = entries
             .into_iter()
-            .map(|entry| (tool_catalogue_key(&entry), entry))
+            .map(|mut entry| {
+                let key = tool_catalogue_key(&entry);
+                if entry.profile_scope.is_none() && entry.profile_enabled.is_none() {
+                    if let Some(scope) = previous.get(&key).and_then(effective_profile_scope) {
+                        entry.profile_scope = Some(scope);
+                        entry.profile_enabled = Some(scope != ToolScope::None);
+                    }
+                }
+                (key, entry)
+            })
             .collect();
         self.open_pending_tool_policy_modal_after_catalogue_update();
     }
@@ -97,7 +120,7 @@ impl App {
             .into_iter()
             .filter_map(|result| result.after)
             .collect();
-        self.merge_tool_catalogue(entries);
+        self.merge_tool_catalogue_entries(entries);
     }
 
     fn handle_agent_start(&mut self) {

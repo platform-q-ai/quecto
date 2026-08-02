@@ -19,6 +19,8 @@ use crate::shell::keys::Key;
 /// Maximum filter-query length; matches existing selector bounds.
 pub(crate) const MAX_QUERY_LEN: usize = 64;
 const MAX_VISIBLE_ITEMS: usize = 12;
+const TWO_COLUMN_MIN_WIDTH: usize = 72;
+const TWO_COLUMN_GAP: usize = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SelectableItemModalResult {
@@ -391,6 +393,97 @@ impl SelectableItemModal {
         };
         truncate_to_width(&line, width, None)
     }
+
+    fn render_row(&self, row_idx: usize) -> ListRow {
+        let row = &self.rows[row_idx];
+        let marker = if self.scope_mode {
+            self.working_scopes
+                .get(&row.id)
+                .copied()
+                .unwrap_or(ScopeSelection::None)
+                .marker()
+        } else if self.working_enabled.contains(&row.id) {
+            "[x] "
+        } else {
+            "[ ] "
+        };
+        ListRow {
+            label: format!("{marker}{}", row.label),
+            description: row.description.clone(),
+            marker: "",
+            dim_label: false,
+        }
+    }
+
+    fn render_two_columns(&self, width: usize, mode: DescriptionMode) -> Vec<String> {
+        let range = self
+            .navigator
+            .visible_range(self.visible_indices.len(), MAX_VISIBLE_ITEMS * 2);
+        let visible = &self.visible_indices[range.clone()];
+        let rows_per_column = visible.len().div_ceil(2);
+        let column_width = (width.saturating_sub(TWO_COLUMN_GAP)) / 2;
+        let selected_in_window = self.navigator.selected().saturating_sub(range.start);
+        let mut left_nav = ListNavigator::new();
+        let mut right_nav = ListNavigator::new();
+        if selected_in_window < rows_per_column {
+            left_nav.set_selected(selected_in_window);
+            right_nav.set_selected(usize::MAX);
+        } else {
+            left_nav.set_selected(usize::MAX);
+            right_nav.set_selected(selected_in_window - rows_per_column);
+        }
+
+        let left = render_windowed(
+            &visible[..rows_per_column],
+            &left_nav,
+            rows_per_column,
+            column_width,
+            "  ",
+            mode,
+            |idx| self.render_row(*idx),
+        );
+        let right = if rows_per_column < visible.len() {
+            render_windowed(
+                &visible[rows_per_column..],
+                &right_nav,
+                visible.len() - rows_per_column,
+                column_width,
+                "  ",
+                mode,
+                |idx| self.render_row(*idx),
+            )
+        } else {
+            Vec::new()
+        };
+
+        let mut lines = Vec::with_capacity(left.len().max(right.len()) + 1);
+        for idx in 0..left.len().max(right.len()) {
+            let left_line = left.get(idx).cloned().unwrap_or_default();
+            let right_line = right.get(idx).cloned().unwrap_or_default();
+            let padded_left = format!(
+                "{}{}",
+                left_line,
+                " ".repeat(column_width.saturating_sub(visible_width(&left_line)) + TWO_COLUMN_GAP)
+            );
+            lines.push(truncate_to_width(
+                &format!("{padded_left}{right_line}"),
+                width,
+                None,
+            ));
+        }
+        if range.start > 0 || range.end < self.visible_indices.len() {
+            lines.push(truncate_to_width(
+                &theme::dim(&format!(
+                    "  ({}/{})",
+                    self.navigator.selected() + 1,
+                    self.visible_indices.len()
+                )),
+                width,
+                None,
+            ));
+        }
+        lines
+    }
 }
 
 impl Component for SelectableItemModal {
@@ -420,34 +513,19 @@ impl Component for SelectableItemModal {
         let mode = DescriptionMode::AlignedCached {
             label_width: self.cached_max_label_width,
         };
-        lines.extend(render_windowed(
-            &self.visible_indices,
-            &self.navigator,
-            MAX_VISIBLE_ITEMS,
-            width,
-            "  ",
-            mode,
-            |idx| {
-                let row = &self.rows[*idx];
-                let marker = if self.scope_mode {
-                    self.working_scopes
-                        .get(&row.id)
-                        .copied()
-                        .unwrap_or(ScopeSelection::None)
-                        .marker()
-                } else if self.working_enabled.contains(&row.id) {
-                    "[x] "
-                } else {
-                    "[ ] "
-                };
-                ListRow {
-                    label: format!("{marker}{}", row.label),
-                    description: row.description.clone(),
-                    marker: "",
-                    dim_label: false,
-                }
-            },
-        ));
+        if width >= TWO_COLUMN_MIN_WIDTH && self.visible_indices.len() > MAX_VISIBLE_ITEMS {
+            lines.extend(self.render_two_columns(width, mode));
+        } else {
+            lines.extend(render_windowed(
+                &self.visible_indices,
+                &self.navigator,
+                MAX_VISIBLE_ITEMS,
+                width,
+                "  ",
+                mode,
+                |idx| self.render_row(*idx),
+            ));
+        }
         lines
     }
 

@@ -598,6 +598,9 @@ mod app_subagents_tests;
 #[path = "app_text_input_1277_tests.rs"]
 mod app_text_input_1277_tests;
 #[cfg(test)]
+#[path = "app_tool_policy_cache_tests.rs"]
+mod app_tool_policy_cache_tests;
+#[cfg(test)]
 #[path = "app_tool_policy_tests.rs"]
 mod app_tool_policy_tests;
 #[cfg(test)]

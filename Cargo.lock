@@ -1723,7 +1723,7 @@ dependencies = [
 
 [[package]]
 name = "quecto-tui"
-version = "0.73.1"
+version = "0.73.2"
 dependencies = [
  "cucumber",
  "futures",
