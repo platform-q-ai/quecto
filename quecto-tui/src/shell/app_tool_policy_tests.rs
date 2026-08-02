@@ -504,3 +504,26 @@ async fn help_mentions_ctrl_t_tool_policy_shortcut() {
             .contains("Ctrl+T         Open tool policy selector")
     );
 }
+
+#[tokio::test]
+async fn tool_policy_modal_help_mentions_bulk_shortcuts() {
+    let mut h = harness().await;
+    let request_id = request_tool_catalogue(&mut h).await;
+    h.app_mut().handle_response(
+        Some(request_id),
+        "get_tool_catalogue".into(),
+        true,
+        Some(serde_json::json!({
+            "tools": [{
+                "stableId": "tool-alpha",
+                "name": "alpha",
+                "profileScope": "none"
+            }]
+        })),
+        None,
+    );
+
+    let frame = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(frame.contains("Ctrl+Shift+A enable all"), "{frame}");
+    assert!(frame.contains("Ctrl+Shift+D disable all"), "{frame}");
+}

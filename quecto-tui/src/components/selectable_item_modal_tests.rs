@@ -507,3 +507,168 @@ fn selectable_item_modal_scope_mode_bulk_actions_update_visible_scopes() {
         ]))
     );
 }
+
+#[test]
+fn selectable_item_modal_wide_render_uses_two_columns_for_many_items() {
+    let items = (0..16)
+        .map(|idx| FixtureItem {
+            id: Box::leak(format!("tool-{idx:02}").into_boxed_str()),
+            label: Box::leak(format!("Tool {idx:02}").into_boxed_str()),
+            description: Some("kernel tool"),
+            metadata: vec!["tool"],
+        })
+        .collect::<Vec<_>>();
+    let mut modal = SelectableItemModal::builder()
+        .items(items)
+        .enabled_ids(BTreeSet::new())
+        .id(|item: &FixtureItem| item.id.to_string())
+        .label(|item| item.label.to_string())
+        .description(|item| item.description.map(str::to_string))
+        .search_metadata(|item| item.metadata.iter().map(|s| (*s).to_string()).collect())
+        .build()
+        .unwrap();
+
+    let rendered = modal
+        .render(100)
+        .into_iter()
+        .map(|line| strip_ansi(&line))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        rendered
+            .lines()
+            .any(|line| line.contains("Tool 00") && line.contains("Tool 08")),
+        "wide modal should pack the visible tool list into two columns:\n{rendered}"
+    );
+    modal.handle_input(&Key::CtrlShift('a'));
+    modal.handle_input(&Key::Enter);
+    assert_eq!(
+        modal.take_result(),
+        SelectableItemModalResult::Applied(set(&[
+            "tool-00", "tool-01", "tool-02", "tool-03", "tool-04", "tool-05", "tool-06", "tool-07",
+            "tool-08", "tool-09", "tool-10", "tool-11", "tool-12", "tool-13", "tool-14", "tool-15",
+        ]))
+    );
+}
+
+fn many_tool_modal(count: usize) -> SelectableItemModal {
+    let items = (0..count)
+        .map(|idx| FixtureItem {
+            id: Box::leak(format!("tool-{idx:02}").into_boxed_str()),
+            label: Box::leak(format!("Tool {idx:02}").into_boxed_str()),
+            description: Some("kernel tool"),
+            metadata: vec![Box::leak(format!("group-{idx:02}").into_boxed_str())],
+        })
+        .collect::<Vec<_>>();
+    SelectableItemModal::builder()
+        .items(items)
+        .enabled_ids(BTreeSet::new())
+        .id(|item: &FixtureItem| item.id.to_string())
+        .label(|item| item.label.to_string())
+        .description(|item| item.description.map(str::to_string))
+        .search_metadata(|item| item.metadata.iter().map(|s| (*s).to_string()).collect())
+        .build()
+        .unwrap()
+}
+
+fn rendered_plain(modal: &mut SelectableItemModal, width: usize) -> String {
+    modal
+        .render(width)
+        .into_iter()
+        .map(|line| strip_ansi(&line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn selectable_item_modal_two_column_layout_boundaries_are_pinned() {
+    let mut twelve = many_tool_modal(12);
+    let twelve_rendered = rendered_plain(&mut twelve, 100);
+    assert!(
+        !twelve_rendered
+            .lines()
+            .any(|line| line.contains("Tool 00") && line.contains("Tool 06")),
+        "12 visible items should remain a single column:\n{twelve_rendered}"
+    );
+
+    let mut thirteen_wide = many_tool_modal(13);
+    let thirteen_wide_rendered = rendered_plain(&mut thirteen_wide, 100);
+    assert!(
+        thirteen_wide_rendered
+            .lines()
+            .any(|line| line.contains("Tool 00") && line.contains("Tool 07")),
+        "13 visible items should use two columns on a wide modal:\n{thirteen_wide_rendered}"
+    );
+
+    let mut thirteen_narrow = many_tool_modal(13);
+    let thirteen_narrow_rendered = rendered_plain(&mut thirteen_narrow, 71);
+    assert!(
+        !thirteen_narrow_rendered
+            .lines()
+            .any(|line| line.contains("Tool 00") && line.contains("Tool 07")),
+        "width 71 should stay single-column:\n{thirteen_narrow_rendered}"
+    );
+
+    let mut thirteen_at_threshold = many_tool_modal(13);
+    let thirteen_at_threshold_rendered = rendered_plain(&mut thirteen_at_threshold, 72);
+    assert!(
+        thirteen_at_threshold_rendered
+            .lines()
+            .any(|line| line.contains("Tool 00") && line.contains("Tool 07")),
+        "width 72 should enable two-column layout:\n{thirteen_at_threshold_rendered}"
+    );
+}
+
+#[test]
+fn selectable_item_modal_two_column_mode_preserves_filter_navigation_toggle_and_bulk_disable() {
+    let mut modal = many_tool_modal(16);
+
+    modal.handle_input(&Key::Down);
+    let navigated = rendered_plain(&mut modal, 100);
+    assert!(
+        navigated.lines().any(|line| line.contains("→ [ ] Tool 01")),
+        "selection should move while rendered in two columns:\n{navigated}"
+    );
+
+    modal.handle_input(&Key::Char(' '));
+    modal.handle_input(&Key::CtrlShift('a'));
+    modal.handle_input(&Key::CtrlShift('d'));
+    modal.handle_input(&Key::Enter);
+    assert_eq!(
+        modal.take_result(),
+        SelectableItemModalResult::Applied(set(&[]))
+    );
+
+    let mut filtered = many_tool_modal(16);
+    for c in "group-15".chars() {
+        filtered.handle_input(&Key::Char(c));
+    }
+    assert_eq!(filtered.visible_count(), 1);
+    assert_eq!(filtered.selected_item(), Some("tool-15"));
+    filtered.handle_input(&Key::CtrlShift('a'));
+    filtered.handle_input(&Key::Enter);
+    assert_eq!(
+        filtered.take_result(),
+        SelectableItemModalResult::Applied(set(&["tool-15"]))
+    );
+}
+
+#[test]
+fn selectable_item_modal_two_column_visible_window_caps_at_twenty_four_items() {
+    let mut modal = many_tool_modal(25);
+    let rendered = rendered_plain(&mut modal, 100);
+
+    assert!(
+        rendered.contains("Tool 23"),
+        "24th visible row missing:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("Tool 24"),
+        "25th row should be paged out:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("(1/25)"),
+        "overflow indicator missing:\n{rendered}"
+    );
+}
