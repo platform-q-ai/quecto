@@ -207,10 +207,13 @@ pub(crate) fn build_tool_runtime(
                 crate::infrastructure::tools::docs::DocsContentPolicy::Parent
             },
         }),
-        Some(match profile_context {
-            ToolRuntimeProfileContext::Parent => ProfileAvailabilityScope::Parent,
-            ToolRuntimeProfileContext::Child => ProfileAvailabilityScope::Child,
-        }),
+        match profile_context {
+            // A fresh top-level session has no user/profile policy yet. Leaving
+            // the profile field absent serializes the registry default as Both,
+            // so the TUI's first Ctrl+T render shows unrestricted tools as [PC].
+            ToolRuntimeProfileContext::Parent => None,
+            ToolRuntimeProfileContext::Child => Some(ProfileAvailabilityScope::Child),
+        },
     );
 
     let spill_store = std::sync::Arc::new(FileContextSpillStore::new(base_dir.to_path_buf()));

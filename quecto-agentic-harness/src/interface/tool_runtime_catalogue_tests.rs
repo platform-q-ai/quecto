@@ -1,4 +1,6 @@
-use crate::domain::tool_descriptor::{ToolAvailability, ToolHealth, ToolRestrictionReason};
+use crate::domain::tool_descriptor::{
+    ProfileAvailabilityScope, ToolAvailability, ToolHealth, ToolRestrictionReason,
+};
 use crate::interface::tool_runtime::{
     ToolEntrypoint, ToolRuntimeBuildArgs, ToolRuntimeProfileContext, ToolRuntimeWorkflowPolicy,
     build_tool_runtime,
@@ -78,4 +80,30 @@ fn spawned_runtime_catalogue_marks_disable_tool_as_spawn_restriction() {
     assert_eq!(write.session_enabled, Some(false));
     assert_eq!(write.runtime_availability, ToolAvailability::Disabled);
     assert!(!write.effective_enabled);
+}
+
+#[test]
+fn fresh_parent_runtime_catalogue_leaves_unrestricted_tools_available_to_parent_and_child() {
+    let built = build_runtime_with_flags(ToolRuntimeProfileContext::Parent, false, &[]);
+
+    for name in [
+        "bash", "docs", "edit", "find", "grep", "ls", "read", "recall", "write",
+    ] {
+        let entry = built
+            .catalogue_entries
+            .iter()
+            .find(|entry| entry.name == name)
+            .unwrap_or_else(|| panic!("{name} should be registered in fresh parent runtime"));
+        assert_eq!(
+            entry.profile_scope, None,
+            "fresh/default parent install must not serialize parent-only profile policy for {name}"
+        );
+        assert_eq!(
+            entry.effective_scope,
+            ProfileAvailabilityScope::Both,
+            "fresh/default parent install should show {name} as [PC] in the TUI"
+        );
+        assert!(entry.effective_parent_enabled, "{name} parent enabled");
+        assert!(entry.effective_child_enabled, "{name} child enabled");
+    }
 }
