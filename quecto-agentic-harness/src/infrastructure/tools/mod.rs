@@ -10,6 +10,7 @@ pub mod path_utils;
 pub mod recall;
 pub mod registration;
 pub mod registry;
+mod registry_catalogue;
 mod registry_inherited_policy;
 pub mod spawn;
 mod spawn_binary;

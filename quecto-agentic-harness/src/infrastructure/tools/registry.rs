@@ -12,8 +12,8 @@ use crate::domain::tool::{
     ToolProfileContext, ToolResult,
 };
 use crate::domain::tool_descriptor::{
-    ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolDescriptor, ToolHealth,
-    ToolLifecycleKind, ToolRestrictionReason,
+    ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolDescriptor,
+    ToolRestrictionReason,
 };
 use crate::infrastructure::config::Config;
 
@@ -33,6 +33,8 @@ pub struct ToolRegistryImpl {
     /// unregistering existing tools, so disabled names remain described but UDS
     /// and other runtime registration paths cannot reintroduce or shadow them.
     denied_names: std::collections::HashSet<String>,
+    pub(super) inherited_policy_scopes: HashMap<String, ProfileAvailabilityScope>,
+    pub(super) inherited_policy_default_scope: Option<ProfileAvailabilityScope>,
 }
 
 impl std::fmt::Debug for ToolRegistryImpl {
@@ -66,6 +68,8 @@ impl ToolRegistryImpl {
             execution_profile_context: None,
             guards: Vec::new(),
             denied_names: std::collections::HashSet::new(),
+            inherited_policy_scopes: HashMap::new(),
+            inherited_policy_default_scope: None,
         }
     }
 
@@ -198,6 +202,17 @@ impl ToolRegistryImpl {
                 tracing::warn!(tool = %name, existing_owner = %existing.owner, new_owner = %metadata.owner, "register rejected: shadows another owner");
                 return false;
             }
+        }
+        let mut metadata = metadata;
+        if let Some(scope) = self
+            .inherited_policy_scopes
+            .get(&name)
+            .copied()
+            .or(self.inherited_policy_default_scope)
+        {
+            metadata.inherited_scope = Some(scope);
+            metadata.profile_scope = Some(scope);
+            metadata.profile_enabled = Some(scope.is_enabled());
         }
         self.metadata.insert(name.clone(), metadata);
         self.tools.insert(name, tool);
@@ -376,68 +391,13 @@ impl ToolRegistryImpl {
         ))
     }
 
-    /// Return rich additive catalogue/effective-policy state for all registered tools.
-    pub fn catalogue_entries(&self) -> Vec<ToolCatalogueEntry> {
-        let mut entries: Vec<ToolCatalogueEntry> = self
-            .tools
-            .iter()
-            .map(|(name, tool)| {
-                let definition = tool.definition();
-                let metadata = self
-                    .metadata
-                    .get(name)
-                    .cloned()
-                    .unwrap_or_else(ToolRegistration::official_native);
-                let effective_scope = Self::effective_scope(&metadata);
-                let effective_enabled = effective_scope != ProfileAvailabilityScope::None;
-                ToolCatalogueEntry {
-                    stable_id: Cow::Owned(name.clone()),
-                    name: definition.name.clone(),
-                    label: definition.name.clone(),
-                    description: definition.description.clone(),
-                    input_schema: definition.parameters_schema.clone(),
-                    source: metadata.source,
-                    owner: metadata.owner.clone(),
-                    provider_id: metadata.provider_id.clone(),
-                    version: None,
-                    lifecycle: if metadata.unloadable {
-                        ToolLifecycleKind::RuntimeLoadable
-                    } else {
-                        ToolLifecycleKind::Bundled
-                    },
-                    configurable: true,
-                    default_enabled: metadata.default_enabled,
-                    configured_enabled: metadata.configured_enabled,
-                    profile_enabled: metadata
-                        .profile_scope
-                        .map(ProfileAvailabilityScope::is_enabled),
-                    profile_scope: metadata.profile_scope,
-                    session_enabled: metadata.session_enabled,
-                    explicit_restriction: metadata.explicit_restriction,
-                    runtime_availability: metadata.availability,
-                    effective_enabled,
-                    effective_scope,
-                    effective_parent_enabled: effective_scope.allows_parent(),
-                    effective_child_enabled: effective_scope.allows_child(),
-                    health: if effective_enabled {
-                        ToolHealth::Ok
-                    } else {
-                        ToolHealth::Disabled
-                    },
-                }
-            })
-            .collect();
-        entries.sort_by(|a, b| a.name.cmp(&b.name));
-        entries
-    }
-
     fn catalogue_entry(&self, name: &str) -> Option<ToolCatalogueEntry> {
         self.catalogue_entries()
             .into_iter()
             .find(|entry| entry.name.as_ref() == name || entry.stable_id.as_ref() == name)
     }
 
-    fn effective_scope(metadata: &ToolRegistration) -> ProfileAvailabilityScope {
+    pub(super) fn effective_scope(metadata: &ToolRegistration) -> ProfileAvailabilityScope {
         let runtime = ProfileAvailabilityScope::from_enabled(metadata.availability.is_enabled());
         let default = ProfileAvailabilityScope::from_enabled(metadata.default_enabled);
         let configured = metadata
