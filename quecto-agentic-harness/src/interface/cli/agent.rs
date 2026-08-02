@@ -56,7 +56,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut workflow_guards = false;
     let mut workflow_spec_path: Option<std::path::PathBuf> = None;
     let mut parent_id: Option<String> = None;
-    let mut inherited_tool_policy = None;
+    let mut inherited_tool_policy_path: Option<std::path::PathBuf> = None;
     let mut spawned = false;
     let mut i = 0;
 
@@ -147,12 +147,8 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 i += 2;
             }
             "--inherited-tool-policy-snapshot" => {
-                flag_private::parse_inherited_tool_policy_flag(
-                    args,
-                    i,
-                    stderr,
-                    &mut inherited_tool_policy,
-                )?;
+                inherited_tool_policy_path =
+                    Some(flag_private::parse_snapshot_path(args, i, stderr)?);
                 i += 2;
             }
             _ => {
@@ -175,7 +171,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         return None;
     }
 
-    let flags = AgentFlags {
+    let mut flags = AgentFlags {
         session_name,
         no_session,
         message,
@@ -193,11 +189,17 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         workflow_guards,
         workflow_disabled: no_workflow_requested,
         workflow_spec_path,
-        inherited_tool_policy,
+        inherited_tool_policy: None,
         parent_id,
         spawned,
     };
-    validate_agent_flags(flags, stderr)
+    flags = validate_agent_flags(flags, stderr)?;
+
+    if let Some(path) = inherited_tool_policy_path {
+        flag_private::load_inherited_tool_policy_for_valid_child(&path, stderr, &mut flags)?;
+    }
+
+    Some(flags)
 }
 
 /// Post-parse validation of mutually exclusive / dependent flags.
