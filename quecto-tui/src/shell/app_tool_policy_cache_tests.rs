@@ -102,6 +102,84 @@ async fn tool_policy_changed_fresh_legacy_profile_enabled_overrides_stale_cached
 }
 
 #[tokio::test]
+async fn ctrl_t_preserves_cached_legacy_profile_enabled_false_when_incoming_profile_fields_absent_on_replace()
+ {
+    let mut h = harness().await;
+    h.app_mut()
+        .merge_tool_catalogue_event(vec![crate::protocol::client::ToolCatalogueEntry {
+            stable_id: "tool-alpha".into(),
+            name: "alpha".into(),
+            profile_enabled: Some(false),
+            ..Default::default()
+        }]);
+
+    let request_id = request_tool_catalogue(&mut h).await;
+    h.app_mut().handle_response(
+        Some(request_id),
+        "get_tool_catalogue".into(),
+        true,
+        Some(serde_json::json!({
+            "tools": [{
+                "stableId": "tool-alpha",
+                "name": "alpha"
+            }]
+        })),
+        None,
+    );
+
+    let frame = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        frame.contains("[--] alpha"),
+        "cached legacy profileEnabled=false was not preserved on replace when incoming profile fields were absent:\n{frame}"
+    );
+    assert!(!frame.contains("[PC] alpha"), "{frame}");
+}
+
+#[tokio::test]
+async fn tool_policy_changed_preserves_cached_legacy_profile_enabled_false_when_incoming_profile_fields_absent_on_merge()
+ {
+    let mut h = harness().await;
+    h.app_mut()
+        .merge_tool_catalogue_event(vec![crate::protocol::client::ToolCatalogueEntry {
+            stable_id: "tool-alpha".into(),
+            name: "alpha".into(),
+            profile_enabled: Some(false),
+            ..Default::default()
+        }]);
+
+    h.app_mut()
+        .merge_tool_policy_results(vec![crate::protocol::client::ToolPolicyResult {
+            after: Some(crate::protocol::client::ToolCatalogueEntry {
+                stable_id: "tool-alpha".into(),
+                name: "alpha".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }]);
+
+    let request_id = request_tool_catalogue(&mut h).await;
+    h.app_mut().handle_response(
+        Some(request_id),
+        "get_tool_catalogue".into(),
+        true,
+        Some(serde_json::json!({
+            "tools": [{
+                "stableId": "tool-alpha",
+                "name": "alpha"
+            }]
+        })),
+        None,
+    );
+
+    let frame = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        frame.contains("[--] alpha"),
+        "cached legacy profileEnabled=false was not preserved on merge when incoming profile fields were absent:\n{frame}"
+    );
+    assert!(!frame.contains("[PC] alpha"), "{frame}");
+}
+
+#[tokio::test]
 async fn ctrl_t_preserves_cached_scope_only_when_incoming_profile_fields_absent() {
     let mut h = harness().await;
     h.app_mut()

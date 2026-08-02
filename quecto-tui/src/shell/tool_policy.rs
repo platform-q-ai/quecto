@@ -126,7 +126,7 @@ fn catalogue_key(entry: &ToolCatalogueEntry) -> String {
     }
 }
 
-fn legacy_profile_enabled_scope(enabled: bool) -> ToolScope {
+pub(super) fn legacy_profile_enabled_scope(enabled: bool) -> ToolScope {
     if enabled {
         ToolScope::Both
     } else {

@@ -1,6 +1,14 @@
 use super::*;
 use crate::protocol::client::{ToolCatalogueEntry, ToolScope};
 
+fn effective_profile_scope(entry: &ToolCatalogueEntry) -> Option<ToolScope> {
+    entry.profile_scope.or_else(|| {
+        entry
+            .profile_enabled
+            .map(super::tool_policy::legacy_profile_enabled_scope)
+    })
+}
+
 #[cfg(test)]
 pub(super) use super::app_message_recovery::recovered_chat_entries;
 
@@ -76,7 +84,7 @@ impl App {
                 if let Some(scope) = self
                     .tool_catalogue
                     .get(&key)
-                    .and_then(|previous| previous.profile_scope)
+                    .and_then(effective_profile_scope)
                 {
                     entry.profile_scope = Some(scope);
                     entry.profile_enabled = Some(scope != ToolScope::None);
@@ -93,10 +101,7 @@ impl App {
             .map(|mut entry| {
                 let key = tool_catalogue_key(&entry);
                 if entry.profile_scope.is_none() && entry.profile_enabled.is_none() {
-                    if let Some(scope) = previous
-                        .get(&key)
-                        .and_then(|previous| previous.profile_scope)
-                    {
+                    if let Some(scope) = previous.get(&key).and_then(effective_profile_scope) {
                         entry.profile_scope = Some(scope);
                         entry.profile_enabled = Some(scope != ToolScope::None);
                     }

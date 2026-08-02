@@ -451,6 +451,36 @@ async fn ctrl_t_fresh_catalogue_response_removes_stale_absent_tools() {
 }
 
 #[tokio::test]
+async fn ctrl_t_first_open_defaults_unrestricted_tools_to_parent_and_child_when_policy_fields_absent()
+ {
+    let mut h = harness().await;
+    let request_id = request_tool_catalogue(&mut h).await;
+    h.app_mut().handle_response(
+        Some(request_id),
+        "get_tool_catalogue".into(),
+        true,
+        Some(serde_json::json!({
+            "tools": [{
+                "stableId": "tool-alpha",
+                "name": "alpha",
+                "effectiveScope": "both",
+                "effectiveParentEnabled": true,
+                "effectiveChildEnabled": true,
+                "effectiveEnabled": true
+            }]
+        })),
+        None,
+    );
+
+    let frame = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        frame.contains("[PC] alpha"),
+        "first-open unrestricted catalogue entry without explicit policy fields did not default to Both:\n{frame}"
+    );
+    assert!(!frame.contains("[--] alpha"), "{frame}");
+}
+
+#[tokio::test]
 async fn ctrl_t_seeds_and_applies_legacy_profile_enabled_when_profile_scope_absent() {
     let mut h = harness().await;
     let request_id = request_tool_catalogue(&mut h).await;
