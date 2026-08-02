@@ -37,7 +37,7 @@ fn load_rejects_unsupported_snapshot_version_and_unlinks() {
 }
 
 #[test]
-fn load_rejects_empty_tool_ids() {
+fn load_rejects_empty_tool_ids_and_unlinks() {
     let tmp = TempDir::new().unwrap();
     let path = tmp.path().join("policy.json");
     std::fs::write(&path, r#"{"version":1,"tools":{" ":"both"}}"#).unwrap();
@@ -45,4 +45,28 @@ fn load_rejects_empty_tool_ids() {
     let err = load_validate_unlink(&path).unwrap_err();
 
     assert!(err.contains("empty tool id"));
+    assert!(!path.exists());
+}
+
+#[test]
+fn load_reports_missing_snapshot_without_creating_or_unlinking() {
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("missing-policy.json");
+
+    let err = load_validate_unlink(&path).unwrap_err();
+
+    assert!(err.contains("read inherited tool policy snapshot"));
+    assert!(!path.exists());
+}
+
+#[test]
+fn load_reports_malformed_snapshot_and_unlinks() {
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("policy.json");
+    std::fs::write(&path, b"not json").unwrap();
+
+    let err = load_validate_unlink(&path).unwrap_err();
+
+    assert!(err.contains("parse inherited tool policy snapshot"));
+    assert!(!path.exists());
 }
