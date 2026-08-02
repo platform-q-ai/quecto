@@ -6,6 +6,9 @@ pub mod filesystem;
 pub mod find;
 pub mod grep;
 pub(crate) mod inherited_tool_policy;
+#[cfg(test)]
+#[path = "inherited_tool_policy_unit_tests.rs"]
+mod inherited_tool_policy_unit_tests;
 pub mod path_utils;
 pub mod recall;
 pub mod registration;
