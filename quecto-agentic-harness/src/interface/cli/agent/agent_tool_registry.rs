@@ -106,6 +106,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             restrict_to_workspace,
             parent_session_name: flags.session_name.clone(),
             disabled_tools: &flags.disabled_tools,
+            inherited_tool_policy: flags.inherited_tool_policy.clone(),
             workflow: crate::interface::shared::ToolRuntimeWorkflowPolicy {
                 workflow_disabled: flags.workflow_disabled,
                 workflow_guards: flags.workflow_guards,

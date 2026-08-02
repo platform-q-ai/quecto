@@ -333,6 +333,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         workflow_guards: false,
         workflow_disabled: true,
         workflow_spec_path: None,
+        inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
     };
@@ -362,6 +363,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         workflow_guards: false,
         workflow_disabled: true,
         workflow_spec_path: None,
+        inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
     };

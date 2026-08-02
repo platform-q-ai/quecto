@@ -278,6 +278,7 @@ fn build_agent_control_tool_extensions_supplies_spawn_and_agent_cmd() {
         restrict_to_workspace: true,
         broadcast_tx: None,
         parent_session_name: Some("parent".into()),
+        inherited_tool_policy: None,
     });
     assert_eq!(built.extensions.len(), 1);
     assert_eq!(built.extensions[0].name(), "quecto:agent-control");

@@ -128,6 +128,7 @@ pub struct SpawnTool {
     /// This (parent) agent's own id, stamped as the `parent_id` on forwarded
     /// child events (PRD Stage B).
     parent_id: Option<String>,
+    inherited_tool_policy: Option<super::inherited_tool_policy::InheritedToolPolicySnapshot>,
 }
 
 impl SpawnTool {
@@ -141,6 +142,7 @@ impl SpawnTool {
             notify_tx: None,
             broadcast_tx: None,
             parent_id: None,
+            inherited_tool_policy: None,
         }
     }
 
@@ -159,12 +161,21 @@ impl SpawnTool {
             notify_tx: None,
             broadcast_tx: None,
             parent_id: None,
+            inherited_tool_policy: None,
         }
     }
 
     /// Set the directory for child agent UDS sockets.
     pub fn with_socket_dir(mut self, socket_dir: PathBuf) -> Self {
         self.socket_dir = socket_dir;
+        self
+    }
+
+    pub(crate) fn with_inherited_tool_policy(
+        mut self,
+        snapshot: super::inherited_tool_policy::InheritedToolPolicySnapshot,
+    ) -> Self {
+        self.inherited_tool_policy = Some(snapshot);
         self
     }
 
@@ -350,6 +361,20 @@ impl SpawnTool {
             None
         };
 
+        let inherited_tool_policy_path = if let Some(snapshot) = self.inherited_tool_policy.as_ref()
+        {
+            let path = self.socket_dir.join(format!(
+                "quecto-tool-policy-{session_name}-{}.json",
+                std::process::id()
+            ));
+            super::inherited_tool_policy::write_snapshot(&path, snapshot).map_err(|e| {
+                DomainError::Tool(format!("failed to write inherited tool policy: {e}"))
+            })?;
+            Some(path)
+        } else {
+            None
+        };
+
         // Build the full child argument list (incl. `--model`, #881) via the
         // pure builder so the exact flag set is unit-testable.
         let effective_config =
@@ -363,6 +388,7 @@ impl SpawnTool {
                 parent_id: self.parent_id.as_deref(),
                 restrict_to_workspace: self.restrict_to_workspace,
                 workflow_spec_path: workflow_spec_path.as_deref(),
+                inherited_tool_policy_path: inherited_tool_policy_path.as_deref(),
             },
         );
 

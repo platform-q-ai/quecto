@@ -471,6 +471,7 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
                 restrict_to_workspace: true,
                 parent_session_name: Some("parent".into()),
                 disabled_tools: &[],
+                inherited_tool_policy: None,
                 workflow: crate::interface::shared::ToolRuntimeWorkflowPolicy::disabled(
                     cwd,
                     Some(cwd),
@@ -556,6 +557,7 @@ fn shared_tool_runtime_builder_repl_uses_same_pipeline_with_policy_selected_surf
             restrict_to_workspace: true,
             parent_session_name: None,
             disabled_tools: &[],
+            inherited_tool_policy: None,
             workflow: crate::interface::shared::ToolRuntimeWorkflowPolicy::disabled(
                 tmp.path(),
                 Some(tmp.path()),

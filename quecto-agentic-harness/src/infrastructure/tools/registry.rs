@@ -19,8 +19,8 @@ use crate::infrastructure::config::Config;
 
 /// Registry of all available tools, keyed by name.
 pub struct ToolRegistryImpl {
-    tools: HashMap<String, Arc<dyn Tool>>,
-    metadata: HashMap<String, ToolRegistration>,
+    pub(super) tools: HashMap<String, Arc<dyn Tool>>,
+    pub(super) metadata: HashMap<String, ToolRegistration>,
     definitions: Vec<ToolDefinition>,
     parent_definitions: Vec<ToolDefinition>,
     child_definitions: Vec<ToolDefinition>,
@@ -448,6 +448,9 @@ impl ToolRegistryImpl {
             .session_enabled
             .map(ProfileAvailabilityScope::from_enabled)
             .unwrap_or(ProfileAvailabilityScope::Both);
+        let inherited = metadata
+            .inherited_scope
+            .unwrap_or(ProfileAvailabilityScope::Both);
         let profile = metadata
             .profile_scope
             .unwrap_or(ProfileAvailabilityScope::Both);
@@ -455,10 +458,11 @@ impl ToolRegistryImpl {
             .intersection(default)
             .intersection(configured)
             .intersection(session)
+            .intersection(inherited)
             .intersection(profile)
     }
 
-    fn restriction_ceiling(entry: &ToolCatalogueEntry) -> ProfileAvailabilityScope {
+    fn restriction_ceiling(&self, entry: &ToolCatalogueEntry) -> ProfileAvailabilityScope {
         let default = ProfileAvailabilityScope::from_enabled(entry.default_enabled);
         let configured = entry
             .configured_enabled
@@ -473,9 +477,15 @@ impl ToolRegistryImpl {
         } else {
             ProfileAvailabilityScope::Both
         };
+        let inherited = self
+            .metadata
+            .get(entry.name.as_ref())
+            .and_then(|m| m.inherited_scope)
+            .unwrap_or(ProfileAvailabilityScope::Both);
         default
             .intersection(configured)
             .intersection(session)
+            .intersection(inherited)
             .intersection(restriction)
     }
 
@@ -490,11 +500,7 @@ impl ToolRegistryImpl {
             let before = self.catalogue_entry(&mutation.name);
             let status = match before.as_ref() {
                 None => ToolPolicyMutationStatus::UnknownTool,
-                Some(entry)
-                    if !mutation
-                        .scope
-                        .is_subset_of(Self::restriction_ceiling(entry)) =>
-                {
+                Some(entry) if !mutation.scope.is_subset_of(self.restriction_ceiling(entry)) => {
                     ToolPolicyMutationStatus::BlockedByRestriction
                 }
                 Some(entry)
@@ -601,7 +607,7 @@ impl ToolRegistryImpl {
     ///
     /// Deduplication is unnecessary: `self.tools` is a `HashMap<String, _>`
     /// keyed by `tool.definition().name`, so keys are inherently unique.
-    fn rebuild_definitions(&mut self) {
+    pub(super) fn rebuild_definitions(&mut self) {
         let mut parent = Vec::new();
         let mut child = Vec::new();
         for (name, tool) in &self.tools {
@@ -733,6 +739,9 @@ mod tests;
 #[cfg(test)]
 #[path = "registry_catalogue_tests.rs"]
 mod catalogue_tests;
+#[cfg(test)]
+#[path = "inherited_tool_policy_tests.rs"]
+mod inherited_tool_policy_tests;
 #[cfg(test)]
 #[path = "registry_policy_tests.rs"]
 mod policy_tests;

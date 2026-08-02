@@ -168,6 +168,8 @@ pub struct AgentControlToolDeps {
     pub restrict_to_workspace: bool,
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     pub parent_session_name: Option<String>,
+    pub inherited_tool_policy:
+        Option<crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot>,
 }
 
 pub struct AgentControlToolBuild {
@@ -182,15 +184,19 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
     let (notification_tx, notification_rx) = tokio::sync::mpsc::channel(64);
     let active_awaits = crate::infrastructure::tools::agent_cmd::new_active_awaits();
 
-    let spawn = crate::infrastructure::tools::spawn::SpawnTool::with_base_dir(
+    let mut spawn = crate::infrastructure::tools::spawn::SpawnTool::with_base_dir(
         Vec::new(),
         deps.restrict_to_workspace,
         deps.base_dir,
     )
-    .with_socket_dir(deps.socket_dir)
-    .with_registry(registry.clone())
-    .with_notify_tx(notification_tx.clone())
-    .with_event_forwarding(deps.broadcast_tx.clone(), deps.parent_session_name);
+    .with_socket_dir(deps.socket_dir);
+    if let Some(snapshot) = deps.inherited_tool_policy {
+        spawn = spawn.with_inherited_tool_policy(snapshot);
+    }
+    let spawn = spawn
+        .with_registry(registry.clone())
+        .with_notify_tx(notification_tx.clone())
+        .with_event_forwarding(deps.broadcast_tx.clone(), deps.parent_session_name);
     let agent_cmd = crate::infrastructure::tools::agent_cmd::AgentCmdTool::with_active_awaits(
         registry.clone(),
         active_awaits,

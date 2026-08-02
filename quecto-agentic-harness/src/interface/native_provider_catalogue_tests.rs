@@ -24,6 +24,7 @@ fn bundled_native_registration_preserves_provider_ids() {
             restrict_to_workspace: true,
             broadcast_tx: None,
             parent_session_name: None,
+            inherited_tool_policy: None,
         })
         .extensions,
     );

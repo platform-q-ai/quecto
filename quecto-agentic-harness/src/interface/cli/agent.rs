@@ -30,6 +30,7 @@ pub(crate) enum DeadlineResult {
 }
 
 mod flag_parse;
+mod flag_private;
 pub(crate) use flag_parse::AgentFlags;
 use flag_parse::{
     next_arg, parse_agent_mode, parse_effort_level, parse_pos_u32, parse_pos_u64,
@@ -55,6 +56,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut workflow_guards = false;
     let mut workflow_spec_path: Option<std::path::PathBuf> = None;
     let mut parent_id: Option<String> = None;
+    let mut inherited_tool_policy = None;
     let mut spawned = false;
     let mut i = 0;
 
@@ -144,6 +146,15 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 parent_id = Some(val.to_string());
                 i += 2;
             }
+            "--inherited-tool-policy-snapshot" => {
+                flag_private::parse_inherited_tool_policy_flag(
+                    args,
+                    i,
+                    stderr,
+                    &mut inherited_tool_policy,
+                )?;
+                i += 2;
+            }
             _ => {
                 i += 1;
             }
@@ -182,6 +193,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         workflow_guards,
         workflow_disabled: no_workflow_requested,
         workflow_spec_path,
+        inherited_tool_policy,
         parent_id,
         spawned,
     };
@@ -565,11 +577,7 @@ pub(crate) fn run_with_deadline(
 }
 
 /// Resolve the UDS session key. Ephemeral → empty (no persistence). An explicit
-/// `--session` keeps the `cli:` namespace so internal sessions (sub-agents,
-/// agent-manager) stay out of the user-facing `/resume` list. With no
-/// `--session`, start a fresh per-launch user chat (`chat-` namespace) so each
-/// interactive launch is a distinct, resumable conversation (PRD: new chat per
-/// launch).
+/// Resolve UDS persistence key.
 fn resolve_uds_session_key(ephemeral: bool, session_name: Option<&str>) -> String {
     if ephemeral {
         String::new()

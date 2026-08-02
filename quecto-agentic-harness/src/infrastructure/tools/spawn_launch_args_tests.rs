@@ -31,6 +31,7 @@ fn spec<'a>(config: &'a SubagentConfig) -> ChildLaunchSpec<'a> {
         parent_id: None,
         restrict_to_workspace: true,
         workflow_spec_path: None,
+        inherited_tool_policy_path: None,
     }
 }
 
@@ -130,6 +131,7 @@ fn forwards_existing_flags_alongside_model() {
         parent_id: Some("parent-7"),
         restrict_to_workspace: false,
         workflow_spec_path: Some(Path::new("/run/spec.json")),
+        inherited_tool_policy_path: None,
     };
     let args = build_child_cli_args(&s);
     let strs = as_strings(&args);
@@ -172,4 +174,19 @@ fn emits_spawned_without_parent_id() {
     let strs = as_strings(&build_child_cli_args(&s));
     assert!(strs.iter().any(|a| a == "--spawned"));
     assert!(!strs.iter().any(|a| a == "--parent-id"));
+}
+
+#[test]
+fn child_launch_args_include_internal_inherited_tool_policy_snapshot_flag() {
+    let cfg = base_config();
+    let mut s = spec(&cfg);
+    s.inherited_tool_policy_path = Some(Path::new("/run/policy.json"));
+
+    let args = build_child_cli_args(&s);
+    let strs = as_strings(&args);
+    let pos = strs
+        .iter()
+        .position(|arg| arg == "--inherited-tool-policy-snapshot")
+        .expect("policy snapshot flag is forwarded");
+    assert_eq!(strs[pos + 1], "/run/policy.json");
 }
