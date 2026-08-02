@@ -32,6 +32,7 @@ fn build_runtime_with_flags(
         restrict_to_workspace: true,
         parent_session_name: None,
         disabled_tools,
+        inherited_tool_policy: None,
         workflow: ToolRuntimeWorkflowPolicy::disabled(tmp.path(), Some(tmp.path())),
         stderr: &mut stderr,
     })

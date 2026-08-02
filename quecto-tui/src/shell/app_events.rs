@@ -1,4 +1,5 @@
 use super::*;
+use crate::protocol::client::ToolCatalogueEntry;
 
 #[cfg(test)]
 pub(super) use super::app_message_recovery::recovered_chat_entries;
@@ -55,24 +56,37 @@ impl App {
                 active_template,
                 available_templates,
             }),
-            Event::ToolCatalogueChanged { after, .. } => self.merge_tool_catalogue(after),
+            Event::ToolCatalogueChanged { after, .. } => self.merge_tool_catalogue_event(after),
             Event::ToolPolicyChanged { results, .. } => self.merge_tool_policy_results(results),
             _ => {}
         }
     }
 
-    pub(super) fn merge_tool_catalogue(
-        &mut self,
-        entries: Vec<crate::protocol::client::ToolCatalogueEntry>,
-    ) {
+    pub(super) fn merge_tool_catalogue(&mut self, entries: Vec<ToolCatalogueEntry>) {
+        self.merge_tool_catalogue_entries(entries);
+        self.open_pending_tool_policy_modal_after_catalogue_update();
+    }
+
+    pub(super) fn merge_tool_catalogue_event(&mut self, entries: Vec<ToolCatalogueEntry>) {
+        self.merge_tool_catalogue_entries(entries);
+        if self.tool_policy_modal_pending_catalogue_id.is_none() {
+            self.open_pending_tool_policy_modal_after_catalogue_update();
+        }
+    }
+
+    fn merge_tool_catalogue_entries(&mut self, entries: Vec<ToolCatalogueEntry>) {
         for entry in entries {
-            let key = if entry.stable_id.is_empty() {
-                entry.name.clone()
-            } else {
-                entry.stable_id.clone()
-            };
+            let key = tool_catalogue_key(&entry);
             self.tool_catalogue.insert(key, entry);
         }
+    }
+
+    pub(super) fn replace_tool_catalogue(&mut self, entries: Vec<ToolCatalogueEntry>) {
+        self.tool_catalogue = entries
+            .into_iter()
+            .map(|entry| (tool_catalogue_key(&entry), entry))
+            .collect();
+        self.open_pending_tool_policy_modal_after_catalogue_update();
     }
 
     pub(super) fn merge_tool_policy_results(
@@ -386,6 +400,14 @@ pub(super) fn build_workflow_state(
         event["availableTemplates"] = serde_json::json!(templates);
     }
     workflow_bar::parse_workflow_event(&event)
+}
+
+fn tool_catalogue_key(entry: &ToolCatalogueEntry) -> String {
+    if entry.stable_id.is_empty() {
+        entry.name.clone()
+    } else {
+        entry.stable_id.clone()
+    }
 }
 
 struct WorkflowStateEvent {

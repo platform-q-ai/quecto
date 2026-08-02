@@ -316,6 +316,7 @@ pub fn run_repl<R: BufRead, W: Write>(
                 && ctx.config.agents.defaults.restrict_to_workspace,
             parent_session_name: ctx.flags.session_name.clone(),
             disabled_tools: &[],
+            inherited_tool_policy: None,
             workflow: crate::interface::shared::ToolRuntimeWorkflowPolicy::disabled(
                 ctx.base_dir,
                 None,

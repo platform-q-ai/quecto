@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 use crate::components::ansi::strip_ansi;
@@ -409,4 +409,101 @@ fn selectable_item_modal_can_build_from_provider_contract() {
         provider.dismiss_selectable_items();
     }
     assert!(provider.dismissed);
+}
+
+#[test]
+fn selectable_item_modal_cycles_four_state_scope_rows_and_applies_scopes() {
+    let mut scopes = BTreeMap::new();
+    scopes.insert("alpha".to_string(), ScopeSelection::None);
+    let mut modal = SelectableItemModal::builder()
+        .items(fixture_items())
+        .id(|item: &FixtureItem| item.id.to_string())
+        .label(|item| item.label.to_string())
+        .description(|item| item.description.map(str::to_string))
+        .build()
+        .unwrap()
+        .with_scope_selection(scopes);
+
+    assert!(plain_render(&mut modal).contains("[--] Alpha Model"));
+    assert!(modal.handle_input(&Key::Char(' ')));
+    assert!(plain_render(&mut modal).contains("[P-] Alpha Model"));
+    assert!(modal.handle_input(&Key::Char(' ')));
+    assert!(plain_render(&mut modal).contains("[-C] Alpha Model"));
+    assert!(modal.handle_input(&Key::Char(' ')));
+    assert!(plain_render(&mut modal).contains("[PC] Alpha Model"));
+    assert!(modal.handle_input(&Key::Char(' ')));
+    assert!(plain_render(&mut modal).contains("[--] Alpha Model"));
+
+    assert!(modal.handle_input(&Key::Char(' ')));
+    assert!(modal.handle_input(&Key::Enter));
+    assert_eq!(
+        modal.take_result(),
+        SelectableItemModalResult::AppliedScopes(BTreeMap::from([(
+            "alpha".to_string(),
+            ScopeSelection::Parent,
+        )]))
+    );
+}
+
+#[test]
+fn selectable_item_modal_scope_mode_bulk_actions_update_visible_scopes() {
+    let mut modal = SelectableItemModal::builder()
+        .items(fixture_items())
+        .id(|item: &FixtureItem| item.id.to_string())
+        .label(|item| item.label.to_string())
+        .description(|item| item.description.map(str::to_string))
+        .search_metadata(|item| item.metadata.iter().map(|s| (*s).to_string()).collect())
+        .build()
+        .unwrap()
+        .with_scope_selection(BTreeMap::from([
+            ("alpha".to_string(), ScopeSelection::None),
+            ("beta".to_string(), ScopeSelection::Child),
+            ("gamma".to_string(), ScopeSelection::Both),
+        ]));
+
+    for c in "uniquezz".chars() {
+        modal.handle_input(&Key::Char(c));
+    }
+    assert_eq!(modal.selected_item(), Some("beta"));
+
+    assert!(modal.handle_input(&Key::CtrlShift('a')));
+    assert!(modal.handle_input(&Key::Enter));
+    assert_eq!(
+        modal.take_result(),
+        SelectableItemModalResult::AppliedScopes(BTreeMap::from([
+            ("alpha".to_string(), ScopeSelection::None),
+            ("beta".to_string(), ScopeSelection::Both),
+            ("gamma".to_string(), ScopeSelection::Both),
+        ]))
+    );
+
+    let mut modal = SelectableItemModal::builder()
+        .items(fixture_items())
+        .id(|item: &FixtureItem| item.id.to_string())
+        .label(|item| item.label.to_string())
+        .description(|item| item.description.map(str::to_string))
+        .search_metadata(|item| item.metadata.iter().map(|s| (*s).to_string()).collect())
+        .build()
+        .unwrap()
+        .with_scope_selection(BTreeMap::from([
+            ("alpha".to_string(), ScopeSelection::Parent),
+            ("beta".to_string(), ScopeSelection::Both),
+            ("gamma".to_string(), ScopeSelection::Child),
+        ]));
+
+    for c in "gammaonly".chars() {
+        modal.handle_input(&Key::Char(c));
+    }
+    assert_eq!(modal.selected_item(), Some("gamma"));
+
+    assert!(modal.handle_input(&Key::CtrlShift('d')));
+    assert!(modal.handle_input(&Key::Enter));
+    assert_eq!(
+        modal.take_result(),
+        SelectableItemModalResult::AppliedScopes(BTreeMap::from([
+            ("alpha".to_string(), ScopeSelection::Parent),
+            ("beta".to_string(), ScopeSelection::Both),
+            ("gamma".to_string(), ScopeSelection::None),
+        ]))
+    );
 }

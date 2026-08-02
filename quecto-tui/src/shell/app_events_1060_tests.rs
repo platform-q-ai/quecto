@@ -16,7 +16,7 @@ fn chat_text(app: &mut App) -> String {
     let lines = app.master_session.chat.render(120);
     lines
         .iter()
-        .map(|l| super::app_methods::strip_ansi(l))
+        .map(|l| super::app_render_helpers::strip_ansi(l))
         .collect::<Vec<_>>()
         .join("\n")
 }

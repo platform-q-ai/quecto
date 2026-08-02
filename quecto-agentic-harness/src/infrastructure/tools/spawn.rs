@@ -2,7 +2,8 @@ pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
 use crate::domain::error::DomainError;
 use crate::domain::subagent::{SubagentConfig, validate_agent_id};
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
-use std::collections::HashMap;
+use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -128,6 +129,7 @@ pub struct SpawnTool {
     /// This (parent) agent's own id, stamped as the `parent_id` on forwarded
     /// child events (PRD Stage B).
     parent_id: Option<String>,
+    inherited_tool_policy: super::spawn_inherited_policy::InheritedToolPolicyState,
 }
 
 impl SpawnTool {
@@ -141,6 +143,7 @@ impl SpawnTool {
             notify_tx: None,
             broadcast_tx: None,
             parent_id: None,
+            inherited_tool_policy: super::spawn_inherited_policy::new_state(),
         }
     }
 
@@ -159,12 +162,21 @@ impl SpawnTool {
             notify_tx: None,
             broadcast_tx: None,
             parent_id: None,
+            inherited_tool_policy: super::spawn_inherited_policy::new_state(),
         }
     }
 
     /// Set the directory for child agent UDS sockets.
     pub fn with_socket_dir(mut self, socket_dir: PathBuf) -> Self {
         self.socket_dir = socket_dir;
+        self
+    }
+
+    pub(crate) fn with_inherited_tool_policy(
+        self,
+        snapshot: super::inherited_tool_policy::InheritedToolPolicySnapshot,
+    ) -> Self {
+        super::spawn_inherited_policy::replace_state(&self.inherited_tool_policy, snapshot);
         self
     }
 
@@ -350,6 +362,21 @@ impl SpawnTool {
             None
         };
 
+        let inherited_tool_policy =
+            super::spawn_inherited_policy::snapshot(&self.inherited_tool_policy);
+        let inherited_tool_policy_path = if let Some(snapshot) = inherited_tool_policy.as_ref() {
+            let path = self.socket_dir.join(format!(
+                "quecto-tool-policy-{session_name}-{}.json",
+                std::process::id()
+            ));
+            super::inherited_tool_policy::write_snapshot(&path, snapshot).map_err(|e| {
+                DomainError::Tool(format!("failed to write inherited tool policy: {e}"))
+            })?;
+            Some(path)
+        } else {
+            None
+        };
+
         // Build the full child argument list (incl. `--model`, #881) via the
         // pure builder so the exact flag set is unit-testable.
         let effective_config =
@@ -363,6 +390,7 @@ impl SpawnTool {
                 parent_id: self.parent_id.as_deref(),
                 restrict_to_workspace: self.restrict_to_workspace,
                 workflow_spec_path: workflow_spec_path.as_deref(),
+                inherited_tool_policy_path: inherited_tool_policy_path.as_deref(),
             },
         );
 
@@ -641,6 +669,19 @@ impl Tool for SpawnTool {
                 .into(),
             parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"Initial task to send to the subagent (optional — starts idle if omitted)"},"agent_id":{"type":"string","description":"Session name for the subagent (used to address it via agent_cmd)"},"system":{"type":"string","description":"System prompt for the subagent"},"config":{"type":"string","description":"Path to a config file to pass to the child agent via --config (optional)"},"model":{"type":"string","description":"Model for the child in provider/model form (e.g. 'openai/gpt-5.5'), same format as agent_cmd set_model. Forwarded to the child as --model at launch so its FIRST turn runs on this model. Precedence: explicit model > --config > built-in default. Invalid combinations are rejected with a clear error."},"effort":{"type":"string","description":"Reasoning effort for the child. Must be one of: none, low, medium, high, xhigh, max. Forwarded as --effort at launch. Precedence: explicit spawn effort > child forwarded agents.defaults.effort > inherited QUECTO_AGENTS_DEFAULTS_EFFORT > provider default."},"provider":{"type":"string","description":"Provider name for the child model (alternative to model; must be paired with model_id)"},"model_id":{"type":"string","description":"Model id for the child model (used with provider)"},"workflow":{"type":"boolean","description":"Start the child agent with --workflow (requires --mode uds, always enabled for spawned agents)"},"workflow_guards":{"type":"boolean","description":"Start the child agent with --workflow-guards (requires --workflow)"},"disable_tools":{"type":"array","items":{"type":"string"},"description":"Tool names to disable and hide from the child model before its session starts (forwarded as --disable-tool per entry), e.g. [\"write\",\"edit\"]. Disabled tools remain described for policy/UI callers, reject execution, and cannot be re-registered at runtime. Entries must be strings."},"read_only":{"type":"boolean","description":"Convenience that disables the 'write' and 'edit' tools in the child (equivalent to disable_tools:[\"write\",\"edit\"]); unions with any explicit disable_tools. Use to launch read-only children such as reviewers."},"workflow_spec":{"type":"object","description":"Assign a binding workflow to the child by value. Provide the full template inline: {\"template\":{\"id\":...,\"label\":...,\"description\":...,\"steps\":[{\"key\":...,\"label\":...,\"phase\":...}]}}. The child runs exactly this template in Active mode (no template selection) and it overrides the child's default template library.","properties":{"template":{"type":"object"}}}}}"#.into(),
         }
+    }
+
+    fn set_inherited_child_policy_snapshot_for_spawn(
+        &self,
+        snapshot: BTreeMap<String, ProfileAvailabilityScope>,
+    ) {
+        super::spawn_inherited_policy::set_from_tools(&self.inherited_tool_policy, snapshot);
+    }
+
+    fn inherited_child_policy_snapshot_for_spawn(
+        &self,
+    ) -> Option<BTreeMap<String, ProfileAvailabilityScope>> {
+        super::spawn_inherited_policy::tools(&self.inherited_tool_policy)
     }
 
     fn execute(

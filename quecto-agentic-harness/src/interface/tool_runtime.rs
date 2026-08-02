@@ -37,7 +37,7 @@ impl ToolEntrypoint {
 /// persisted policy state is a later phase. The fields here make today's
 /// user-visible CLI/UDS/REPL differences explicit instead of encoding them as
 /// omitted provider construction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ToolRuntimePolicyState {
     pub entrypoint: ToolEntrypoint,
     pub agent_control_default_enabled: bool,
@@ -46,6 +46,8 @@ pub(crate) struct ToolRuntimePolicyState {
     pub configured_enabled: Option<bool>,
     pub profile_enabled: Option<bool>,
     pub session_enabled: Option<bool>,
+    pub inherited_tool_policy:
+        Option<crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot>,
 }
 
 impl ToolRuntimePolicyState {
@@ -58,6 +60,7 @@ impl ToolRuntimePolicyState {
             configured_enabled: None,
             profile_enabled: None,
             session_enabled: None,
+            inherited_tool_policy: None,
         }
     }
 }
@@ -128,6 +131,8 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     pub restrict_to_workspace: bool,
     pub parent_session_name: Option<String>,
     pub disabled_tools: &'a [String],
+    pub inherited_tool_policy:
+        Option<crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot>,
     pub workflow: ToolRuntimeWorkflowPolicy<'a>,
     pub stderr: &'a mut String,
 }
@@ -182,11 +187,13 @@ pub(crate) fn build_tool_runtime(
         restrict_to_workspace,
         parent_session_name,
         disabled_tools,
+        inherited_tool_policy,
         workflow,
         stderr,
     } = args;
 
-    let policy_state = ToolRuntimePolicyState::for_entrypoint(entrypoint);
+    let mut policy_state = ToolRuntimePolicyState::for_entrypoint(entrypoint);
+    policy_state.inherited_tool_policy = inherited_tool_policy.clone();
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     register_bundled_native_tools_with_scope(
         &mut registry,
@@ -224,6 +231,7 @@ pub(crate) fn build_tool_runtime(
         restrict_to_workspace,
         broadcast_tx: workflow.broadcast_tx.clone(),
         parent_session_name,
+        inherited_tool_policy: None,
     });
     register_bundled_native_tools_with_scope(
         &mut registry,
@@ -249,6 +257,16 @@ pub(crate) fn build_tool_runtime(
         registry.disable_tool_by_entrypoint_default("web_fetch");
     }
 
+    if let Some(snapshot) = inherited_tool_policy.as_ref() {
+        let warnings = registry.apply_inherited_tool_policy_snapshot(snapshot);
+        for name in &warnings {
+            stderr.push_str(&format!(
+                "WARNING: inherited tool policy: no tool named '{}' in the registry\n",
+                name
+            ));
+        }
+    }
+
     // Apply explicit startup restrictions after every startup provider has had a
     // chance to register, so descriptors remain available while model-visible
     // definitions and execution follow policy.
@@ -265,6 +283,7 @@ pub(crate) fn build_tool_runtime(
     }
 
     registry.set_execution_profile_context(profile_context.profile_context());
+    registry.refresh_spawn_inherited_child_policy_snapshot();
 
     let catalogue_entries = registry.catalogue_entries();
 

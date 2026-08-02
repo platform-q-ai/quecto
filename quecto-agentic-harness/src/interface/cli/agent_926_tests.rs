@@ -36,6 +36,7 @@ fn spawn_capable_flags() -> AgentFlags {
         workflow_guards: false,
         workflow_disabled: false,
         workflow_spec_path: None,
+        inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
     }

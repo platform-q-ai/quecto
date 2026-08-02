@@ -15,6 +15,7 @@ use crate::components::kitty::KittyProtocol;
 use crate::components::model_selector::ModelSelectorResult;
 use crate::components::notification::{Notification, NotificationStack, NotifyLevel};
 use crate::components::select_list::{SelectItem, SelectList};
+use crate::components::selectable_item_modal::SelectableItemModal;
 use crate::components::spinner::Spinner;
 use crate::components::text_input::Editor;
 use crate::components::workflow_bar;
@@ -36,6 +37,11 @@ const RAW_PASTE_QUIET_TIMEOUT: Duration = Duration::from_millis(10);
 
 #[path = "app_commands.rs"]
 mod app_commands;
+#[path = "tool_policy.rs"]
+mod tool_policy;
+#[cfg(any(test, feature = "test-harness"))]
+#[path = "tui_harness_tool_policy.rs"]
+mod tui_harness_tool_policy;
 use app_commands::builtin_commands;
 use app_message_recovery::{MessageRecoveryBatch, PendingMessageRecovery};
 
@@ -96,6 +102,8 @@ pub struct App {
     pending_stub_recall: HashMap<String, app_paged_history::StubRecall>,
     /// Latest catalogue snapshot keyed by stable id (or name fallback) for future policy UI.
     tool_catalogue: HashMap<String, crate::protocol::client::ToolCatalogueEntry>,
+    tool_policy_modal: Option<SelectableItemModal>,
+    tool_policy_modal_pending_catalogue_id: Option<String>,
     failed_stub_recalls: HashSet<(Option<String>, String)>,
     /// Exact correlation id for this client's in-flight resume transcript fetch (#1237).
     /// `get_messages` responses are broadcast; fixed literals would clobber peers.
@@ -166,6 +174,8 @@ impl App {
             message_recovery_batches: HashMap::new(),
             pending_stub_recall: HashMap::new(),
             tool_catalogue: HashMap::new(),
+            tool_policy_modal: None,
+            tool_policy_modal_pending_catalogue_id: None,
             failed_stub_recalls: HashSet::new(),
             pending_resume_messages_id: None,
             pending_rewind_refresh_id: None,
@@ -272,6 +282,8 @@ mod app_methods;
 mod app_models;
 #[path = "../conversation/controller_paged_history.rs"]
 mod app_paged_history;
+#[path = "app_render_helpers.rs"]
+mod app_render_helpers;
 #[path = "app_response.rs"]
 mod app_response;
 #[path = "../conversation/controller_resumed_history.rs"]
@@ -585,6 +597,9 @@ mod app_subagents_tests;
 #[cfg(test)]
 #[path = "app_text_input_1277_tests.rs"]
 mod app_text_input_1277_tests;
+#[cfg(test)]
+#[path = "app_tool_policy_tests.rs"]
+mod app_tool_policy_tests;
 #[cfg(test)]
 #[path = "../workflow/app_workflow_box_width_tests.rs"]
 mod app_workflow_box_width_tests;

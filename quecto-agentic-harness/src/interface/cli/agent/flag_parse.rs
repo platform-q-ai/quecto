@@ -20,6 +20,8 @@ pub(crate) struct AgentFlags {
     pub(crate) workflow_guards: bool,
     pub(crate) workflow_disabled: bool,
     pub(crate) workflow_spec_path: Option<std::path::PathBuf>,
+    pub(crate) inherited_tool_policy:
+        Option<crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot>,
     /// `--parent-id`: the spawning agent's id, stamped onto this agent's emitted
     /// events so consumers can reconstruct the unit tree (PRD Stage B). `None`
     /// at the root.

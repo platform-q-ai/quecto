@@ -16,9 +16,9 @@ async fn compose_bottom_shows_active_child_indicator_in_stable_slot() {
     let bottom = h.app_mut().compose_bottom(120);
     let joined = bottom.join("\n");
     assert!(
-        bottom
-            .first()
-            .is_some_and(|line| super::app_methods::strip_ansi(line).contains("subagent working")),
+        bottom.first().is_some_and(
+            |line| super::app_render_helpers::strip_ansi(line).contains("subagent working")
+        ),
         "active child indicator must render in the stable tracked-child slot: {joined}"
     );
 }
@@ -38,15 +38,15 @@ async fn compose_bottom_keeps_tracked_child_activity_slot_stable() {
     let active_bottom = active.app_mut().compose_bottom(120);
 
     assert!(
-        idle_bottom
-            .first()
-            .is_some_and(|line| super::app_methods::strip_ansi(line).contains("subagent idle")),
+        idle_bottom.first().is_some_and(
+            |line| super::app_render_helpers::strip_ansi(line).contains("subagent idle")
+        ),
         "idle tracked subagents should reserve the activity slot with visible status, not a blank gap: {idle_bottom:?}"
     );
     assert!(
-        active_bottom
-            .first()
-            .is_some_and(|line| super::app_methods::strip_ansi(line).contains("subagent working")),
+        active_bottom.first().is_some_and(
+            |line| super::app_render_helpers::strip_ansi(line).contains("subagent working")
+        ),
         "active tracked subagents should reuse the reserved activity slot: {active_bottom:?}"
     );
     assert_eq!(

@@ -7,7 +7,7 @@
 //! current API and assert on observable outputs (active session, drained
 //! commands, rendered frame), so no production code is added by this phase.
 
-use super::app_methods::strip_ansi;
+use super::app_render_helpers::strip_ansi;
 use super::keys::Key;
 use super::tui_harness::*;
 use crate::protocol::client::Event;

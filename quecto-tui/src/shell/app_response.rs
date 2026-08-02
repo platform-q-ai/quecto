@@ -1,4 +1,5 @@
 use super::*;
+use crate::protocol::client::ToolCatalogueEntry;
 
 /// Family prefix for the master attach-time history backfill (#1050 / #1237).
 /// Minted ids are `attach-backfill-{uuid_like}-{seq}`; bare legacy literals are
@@ -190,6 +191,13 @@ impl App {
                 }
             }
             "list_sessions" => self.notify_response_error("Could not list sessions", error),
+            "get_tool_catalogue" if success => self.handle_get_tool_catalogue(id.as_deref(), data),
+            "get_tool_catalogue" => {
+                if self.is_pending_tool_policy_catalogue_response(id.as_deref()) {
+                    self.tool_policy_modal_pending_catalogue_id = None;
+                    self.notify_response_error("Could not load tool catalogue", error);
+                }
+            }
             "resume_session" if success => {
                 self.clear_message_recovery();
                 self.handle_resume_success(data);
@@ -258,6 +266,25 @@ impl App {
             "agent_error" => self.handle_agent_error(error),
             _ => {}
         }
+    }
+
+    fn handle_get_tool_catalogue(&mut self, id: Option<&str>, data: Option<serde_json::Value>) {
+        if !self.is_pending_tool_policy_catalogue_response(id) {
+            return;
+        }
+        let Some(tools_value) = data.and_then(|data| data.get("tools").cloned()) else {
+            self.tool_policy_modal_pending_catalogue_id = None;
+            self.replace_tool_catalogue(Vec::new());
+            self.notify("Tool catalogue response missing tools", NotifyLevel::Error);
+            return;
+        };
+        let Ok(tools) = serde_json::from_value::<Vec<ToolCatalogueEntry>>(tools_value) else {
+            self.tool_policy_modal_pending_catalogue_id = None;
+            self.replace_tool_catalogue(Vec::new());
+            self.notify("Tool catalogue response malformed", NotifyLevel::Error);
+            return;
+        };
+        self.replace_tool_catalogue(tools);
     }
 
     /// Correlate a successful master `get_messages` response (#1061 / #1237).
