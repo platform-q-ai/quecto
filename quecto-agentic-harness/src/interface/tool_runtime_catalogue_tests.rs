@@ -11,6 +11,20 @@ fn build_runtime_with_flags(
     spawned: bool,
     disabled_tools: &[String],
 ) -> crate::interface::tool_runtime::ToolRuntimeBuild {
+    build_runtime_with_entrypoint(
+        ToolEntrypoint::Repl,
+        profile_context,
+        spawned,
+        disabled_tools,
+    )
+}
+
+fn build_runtime_with_entrypoint(
+    entrypoint: ToolEntrypoint,
+    profile_context: ToolRuntimeProfileContext,
+    spawned: bool,
+    disabled_tools: &[String],
+) -> crate::interface::tool_runtime::ToolRuntimeBuild {
     let tmp = tempfile::tempdir().expect("tempdir");
     let config = crate::infrastructure::config::Config::default();
     let client = reqwest::Client::new();
@@ -21,7 +35,7 @@ fn build_runtime_with_flags(
     let mut stderr = String::new();
 
     build_tool_runtime(ToolRuntimeBuildArgs {
-        entrypoint: ToolEntrypoint::Repl,
+        entrypoint,
         profile_context,
         base_dir: tmp.path(),
         config: &config,
@@ -105,5 +119,36 @@ fn fresh_parent_runtime_catalogue_leaves_unrestricted_tools_available_to_parent_
         );
         assert!(entry.effective_parent_enabled, "{name} parent enabled");
         assert!(entry.effective_child_enabled, "{name} child enabled");
+    }
+}
+
+#[test]
+fn fresh_child_runtime_catalogue_leaves_agent_control_tools_available_to_parent_and_child() {
+    let built = build_runtime_with_entrypoint(
+        ToolEntrypoint::UdsAgent,
+        ToolRuntimeProfileContext::Child,
+        true,
+        &[],
+    );
+
+    for name in ["spawn", "agent_cmd"] {
+        let entry = built
+            .catalogue_entries
+            .iter()
+            .find(|entry| entry.name == name)
+            .unwrap_or_else(|| panic!("{name} should be registered in fresh child runtime"));
+        assert_eq!(
+            entry.profile_scope, None,
+            "fresh/default child install must not serialize parent-only profile policy for {name}"
+        );
+        assert_eq!(
+            entry.effective_scope,
+            ProfileAvailabilityScope::Both,
+            "fresh/default child install should show {name} as [PC] in the TUI"
+        );
+        assert!(entry.effective_parent_enabled, "{name} parent enabled");
+        assert!(entry.effective_child_enabled, "{name} child enabled");
+        assert!(entry.default_enabled, "{name} default enabled");
+        assert!(entry.effective_enabled, "{name} effective enabled");
     }
 }

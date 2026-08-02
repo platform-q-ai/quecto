@@ -236,11 +236,7 @@ pub(crate) fn build_tool_runtime(
         parent_session_name,
         inherited_tool_policy: None,
     });
-    register_bundled_native_tools_with_scope(
-        &mut registry,
-        agent_control.extensions,
-        Some(ProfileAvailabilityScope::Parent),
-    );
+    register_bundled_native_tools_with_scope(&mut registry, agent_control.extensions, None);
     let notify_rx = agent_control.notification_rx;
     let _ = agent_control.notification_tx;
     let subagent_registry_for_protocol = agent_control.subagent_registry;
