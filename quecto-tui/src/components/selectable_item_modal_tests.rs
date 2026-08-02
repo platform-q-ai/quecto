@@ -661,6 +661,37 @@ fn selectable_item_modal_two_column_mode_preserves_filter_navigation_toggle_and_
 }
 
 #[test]
+fn selectable_item_modal_bulk_disable_matches_tool_policy_footer_filtered_matches() {
+    let mut modal = many_tool_modal(25).with_scope_selection(
+        (0..25)
+            .map(|idx| (format!("tool-{idx:02}"), ScopeSelection::Both))
+            .collect(),
+    );
+
+    let rendered = rendered_plain(&mut modal, 100);
+    assert!(
+        rendered.contains("Tool 23"),
+        "test setup must render first 24 tools:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("Tool 24"),
+        "test setup must leave the 25th matching tool paged out:\n{rendered}"
+    );
+
+    assert!(modal.handle_input(&Key::CtrlShift('d')));
+    assert!(modal.handle_input(&Key::Enter));
+
+    assert_eq!(
+        modal.take_result(),
+        SelectableItemModalResult::AppliedScopes(
+            (0..25)
+                .map(|idx| (format!("tool-{idx:02}"), ScopeSelection::None))
+                .collect()
+        )
+    );
+}
+
+#[test]
 fn selectable_item_modal_two_column_visible_window_caps_at_twenty_four_items() {
     let mut modal = many_tool_modal(25);
     let rendered = rendered_plain(&mut modal, 100);

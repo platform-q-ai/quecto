@@ -71,8 +71,9 @@ fn modal_shows_tools_with_current_state(world: &mut TuiWorld) {
 #[then("the modal help distinguishes parent-and-child allowance from disabling visible tools")]
 fn modal_help_shows_bulk_shortcuts(world: &mut TuiWorld) {
     let frame = plain_frame(world);
-    assert!(frame.contains("Ctrl+Shift+A allow parent+child"), "{frame}");
-    assert!(frame.contains("Ctrl+"), "{frame}");
+    assert!(frame.contains("Ctrl+Shift+A allow all"), "{frame}");
+    assert!(frame.contains("Ctrl+Shift+D disable matches"), "{frame}");
+    assert!(!frame.contains("disable visible"), "{frame}");
 }
 
 #[when("the user changes tool access for a tool")]
