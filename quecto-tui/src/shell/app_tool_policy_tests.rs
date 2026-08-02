@@ -495,7 +495,7 @@ async fn ctrl_t_apply_without_changes_does_not_persist_effective_downstream_scop
 }
 
 #[tokio::test]
-async fn ctrl_t_reopen_reflects_same_session_policy_after_apply() {
+async fn ctrl_t_reopen_does_not_reflect_unapplied_same_session_policy_after_apply() {
     let mut h = harness().await;
 
     let first_id = request_tool_catalogue(&mut h).await;
@@ -539,8 +539,46 @@ async fn ctrl_t_reopen_reflects_same_session_policy_after_apply() {
     );
     let reopened = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
     assert!(
+        reopened.contains("[PC] alpha"),
+        "reopened modal reflected unapplied same-session policy:\n{reopened}"
+    );
+    assert!(!reopened.contains("[--] alpha"), "{reopened}");
+}
+
+#[tokio::test]
+async fn tool_policy_changed_result_updates_reopened_modal_scope() {
+    let mut h = harness().await;
+
+    h.app_mut()
+        .merge_tool_policy_results(vec![crate::protocol::client::ToolPolicyResult {
+            after: Some(crate::protocol::client::ToolCatalogueEntry {
+                stable_id: "tool-alpha".into(),
+                name: "alpha".into(),
+                profile_scope: Some(crate::protocol::client::ToolScope::None),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }]);
+
+    let request_id = request_tool_catalogue(&mut h).await;
+    h.app_mut().handle_response(
+        Some(request_id),
+        "get_tool_catalogue".into(),
+        true,
+        Some(serde_json::json!({
+            "tools": [{
+                "stableId": "tool-alpha",
+                "name": "alpha",
+                "profileScope": null
+            }]
+        })),
+        None,
+    );
+
+    let reopened = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
         reopened.contains("[--] alpha"),
-        "reopened modal lost same-session policy:\n{reopened}"
+        "applied policy result not preserved across catalogue refresh:\n{reopened}"
     );
 }
 
