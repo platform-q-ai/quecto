@@ -491,7 +491,7 @@ impl App {
             let (selector_lines, overlay_width) =
                 crate::components::selectable_item_modal::build_selectable_item_modal_overlay(
                     "Tool Policy",
-                    "Space cycle scope • Ctrl+Shift+A enable all • Ctrl+Shift+D disable all • Enter apply • Esc cancel",
+                    "Space cycle scope • Ctrl+Shift+A allow parent+child • Ctrl+Shift+D disable visible • Enter apply • Esc cancel",
                     modal,
                     width,
                     height,

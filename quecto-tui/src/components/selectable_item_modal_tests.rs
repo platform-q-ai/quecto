@@ -627,6 +627,12 @@ fn selectable_item_modal_two_column_mode_preserves_filter_navigation_toggle_and_
     modal.handle_input(&Key::Down);
     let navigated = rendered_plain(&mut modal, 100);
     assert!(
+        navigated
+            .lines()
+            .any(|line| line.contains("Tool 00") && line.contains("Tool 08")),
+        "test setup must stay in two-column mode:\n{navigated}"
+    );
+    assert!(
         navigated.lines().any(|line| line.contains("→ [ ] Tool 01")),
         "selection should move while rendered in two columns:\n{navigated}"
     );
@@ -660,6 +666,10 @@ fn selectable_item_modal_two_column_visible_window_caps_at_twenty_four_items() {
     let rendered = rendered_plain(&mut modal, 100);
 
     assert!(
+        rendered.lines().filter(|line| line.contains('→')).count() == 1,
+        "exactly one selected row should render before scrolling:\n{rendered}"
+    );
+    assert!(
         rendered.contains("Tool 23"),
         "24th visible row missing:\n{rendered}"
     );
@@ -670,5 +680,20 @@ fn selectable_item_modal_two_column_visible_window_caps_at_twenty_four_items() {
     assert!(
         rendered.contains("(1/25)"),
         "overflow indicator missing:\n{rendered}"
+    );
+
+    for _ in 0..24 {
+        modal.handle_input(&Key::Down);
+    }
+    let scrolled = rendered_plain(&mut modal, 100);
+    assert!(
+        scrolled.lines().filter(|line| line.contains('→')).count() == 1,
+        "exactly one selected row should render after scrolling:\n{scrolled}"
+    );
+    assert!(
+        scrolled
+            .lines()
+            .any(|line| line.contains('→') && line.contains("Tool 24")),
+        "selected scrolled row should remain highlighted:\n{scrolled}"
     );
 }

@@ -6,7 +6,7 @@ Feature: TUI master tool access management
     Given the TUI has a current tool catalogue
     When the user opens tool management
     Then the modal shows each available tool with its current enabled state
-    And the modal help shows the enable-all and disable-all shortcuts
+    And the modal help distinguishes parent-and-child allowance from disabling visible tools
 
   Scenario: Tool access changes are sent for the master agent only
     Given the TUI has a current tool catalogue

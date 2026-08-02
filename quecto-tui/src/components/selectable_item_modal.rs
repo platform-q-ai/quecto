@@ -422,14 +422,16 @@ impl SelectableItemModal {
         let visible = &self.visible_indices[range.clone()];
         let rows_per_column = visible.len().div_ceil(2);
         let column_width = (width.saturating_sub(TWO_COLUMN_GAP)) / 2;
+        let selected_in_window = self.navigator.selected().saturating_sub(range.start);
         let mut left_nav = ListNavigator::new();
         let mut right_nav = ListNavigator::new();
-        left_nav.set_selected(
-            self.navigator
-                .selected()
-                .min(rows_per_column.saturating_sub(1)),
-        );
-        right_nav.set_selected(self.navigator.selected().saturating_sub(rows_per_column));
+        if selected_in_window < rows_per_column {
+            left_nav.set_selected(selected_in_window);
+            right_nav.set_selected(usize::MAX);
+        } else {
+            left_nav.set_selected(usize::MAX);
+            right_nav.set_selected(selected_in_window - rows_per_column);
+        }
 
         let left = render_windowed(
             &visible[..rows_per_column],
