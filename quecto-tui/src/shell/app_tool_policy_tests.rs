@@ -47,10 +47,10 @@ async fn ctrl_t_opens_tool_policy_modal_and_apply_sends_mutations() {
 }
 
 #[tokio::test]
-async fn ctrl_t_with_empty_catalogue_opens_modal_after_catalogue_update() {
+async fn ctrl_t_with_empty_catalogue_waits_for_get_tool_catalogue_after_catalogue_update() {
     let mut h = harness().await;
 
-    let _request_id = request_tool_catalogue(&mut h).await;
+    let request_id = request_tool_catalogue(&mut h).await;
 
     h.app_mut()
         .merge_tool_catalogue_event(vec![crate::protocol::client::ToolCatalogueEntry {
@@ -60,9 +60,32 @@ async fn ctrl_t_with_empty_catalogue_opens_modal_after_catalogue_update() {
             ..Default::default()
         }]);
 
-    let frame = h.app_mut().compose_frame().join("\n");
-    assert!(crate::components::ansi::strip_ansi(&frame).contains("Tool Policy"));
-    assert!(crate::components::ansi::strip_ansi(&frame).contains("[--] alpha"));
+    let event_frame = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        !event_frame.contains("Tool Policy"),
+        "catalogue update opened pending policy modal:\n{event_frame}"
+    );
+
+    h.app_mut().handle_response(
+        Some(request_id),
+        "get_tool_catalogue".into(),
+        true,
+        Some(serde_json::json!({
+            "tools": [{
+                "stableId": "tool-alpha",
+                "name": "alpha",
+                "profileScope": "none"
+            }]
+        })),
+        None,
+    );
+
+    let frame = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        frame.contains("Tool Policy"),
+        "fresh response did not open modal:\n{frame}"
+    );
+    assert!(frame.contains("[--] alpha"), "fresh tool missing:\n{frame}");
 }
 
 #[tokio::test]
