@@ -1,5 +1,5 @@
 use super::*;
-use crate::protocol::client::ToolCatalogueEntry;
+use crate::protocol::client::{ToolCatalogueEntry, ToolScope};
 
 #[cfg(test)]
 pub(super) use super::app_message_recovery::recovered_chat_entries;
@@ -75,16 +75,39 @@ impl App {
     }
 
     fn merge_tool_catalogue_entries(&mut self, entries: Vec<ToolCatalogueEntry>) {
-        for entry in entries {
+        for mut entry in entries {
             let key = tool_catalogue_key(&entry);
+            if entry.profile_scope.is_none() {
+                if let Some(scope) = self
+                    .tool_catalogue
+                    .get(&key)
+                    .and_then(|previous| previous.profile_scope)
+                {
+                    entry.profile_scope = Some(scope);
+                    entry.profile_enabled = Some(scope != ToolScope::None);
+                }
+            }
             self.tool_catalogue.insert(key, entry);
         }
     }
 
     pub(super) fn replace_tool_catalogue(&mut self, entries: Vec<ToolCatalogueEntry>) {
+        let previous = &self.tool_catalogue;
         self.tool_catalogue = entries
             .into_iter()
-            .map(|entry| (tool_catalogue_key(&entry), entry))
+            .map(|mut entry| {
+                let key = tool_catalogue_key(&entry);
+                if entry.profile_scope.is_none() {
+                    if let Some(scope) = previous
+                        .get(&key)
+                        .and_then(|previous| previous.profile_scope)
+                    {
+                        entry.profile_scope = Some(scope);
+                        entry.profile_enabled = Some(scope != ToolScope::None);
+                    }
+                }
+                (key, entry)
+            })
             .collect();
         self.open_pending_tool_policy_modal_after_catalogue_update();
     }

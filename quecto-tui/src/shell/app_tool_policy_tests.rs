@@ -484,14 +484,64 @@ async fn ctrl_t_apply_without_changes_does_not_persist_effective_downstream_scop
         None,
     );
     let frame = h.app_mut().compose_frame().join("\n");
-    assert!(crate::components::ansi::strip_ansi(&frame).contains("[--] alpha"));
+    assert!(crate::components::ansi::strip_ansi(&frame).contains("[PC] alpha"));
 
     h.app_mut().handle_key(crate::shell::keys::Key::Enter);
     let sent = h.drain_commands().await.join("\n");
     assert!(sent.contains("\"type\":\"set_tool_policy\""), "{sent}");
     assert!(sent.contains("\"toolId\":\"tool-alpha\""), "{sent}");
-    assert!(sent.contains("\"scope\":\"none\""), "{sent}");
+    assert!(sent.contains("\"scope\":\"both\""), "{sent}");
     assert!(!sent.contains("\"scope\":\"child\""), "{sent}");
+}
+
+#[tokio::test]
+async fn ctrl_t_reopen_reflects_same_session_policy_after_apply() {
+    let mut h = harness().await;
+
+    let first_id = request_tool_catalogue(&mut h).await;
+    h.app_mut().handle_response(
+        Some(first_id),
+        "get_tool_catalogue".into(),
+        true,
+        Some(serde_json::json!({
+            "tools": [{
+                "stableId": "tool-alpha",
+                "name": "alpha",
+                "profileScope": null
+            }]
+        })),
+        None,
+    );
+    let first_frame = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        first_frame.contains("[PC] alpha"),
+        "default scope not both:\n{first_frame}"
+    );
+
+    h.app_mut().handle_key(crate::shell::keys::Key::Char(' '));
+    h.app_mut().handle_key(crate::shell::keys::Key::Enter);
+    let sent = h.drain_commands().await.join("\n");
+    assert!(sent.contains("\"scope\":\"none\""), "{sent}");
+
+    let second_id = request_tool_catalogue(&mut h).await;
+    h.app_mut().handle_response(
+        Some(second_id),
+        "get_tool_catalogue".into(),
+        true,
+        Some(serde_json::json!({
+            "tools": [{
+                "stableId": "tool-alpha",
+                "name": "alpha",
+                "profileScope": null
+            }]
+        })),
+        None,
+    );
+    let reopened = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        reopened.contains("[--] alpha"),
+        "reopened modal lost same-session policy:\n{reopened}"
+    );
 }
 
 #[tokio::test]

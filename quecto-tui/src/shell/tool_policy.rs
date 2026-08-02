@@ -58,7 +58,7 @@ impl App {
                 let scope = entry
                     .profile_scope
                     .or_else(|| entry.profile_enabled.map(legacy_profile_enabled_scope))
-                    .unwrap_or(ToolScope::None)
+                    .unwrap_or(ToolScope::Both)
                     .into();
                 (id, scope)
             })
@@ -104,9 +104,22 @@ impl App {
                 if !mutations.is_empty() {
                     self.send_command(Command::SetToolPolicy {
                         id: Some("tool-policy-apply".into()),
-                        mutations,
+                        mutations: mutations.clone(),
                         mode: ToolPolicyApplyMode::ImmediateIfIdle,
                     });
+                    for mutation in mutations {
+                        let Some(entry) = self.tool_catalogue.get_mut(
+                            mutation
+                                .tool_id
+                                .as_deref()
+                                .or(mutation.name.as_deref())
+                                .unwrap_or(""),
+                        ) else {
+                            continue;
+                        };
+                        entry.profile_scope = Some(mutation.scope);
+                        entry.profile_enabled = Some(mutation.scope != ToolScope::None);
+                    }
                 }
             }
             SelectableItemModalResult::Dismissed => {
