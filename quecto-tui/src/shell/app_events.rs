@@ -72,7 +72,7 @@ impl App {
     fn merge_tool_catalogue_entries(&mut self, entries: Vec<ToolCatalogueEntry>) {
         for mut entry in entries {
             let key = tool_catalogue_key(&entry);
-            if entry.profile_scope.is_none() {
+            if entry.profile_scope.is_none() && entry.profile_enabled.is_none() {
                 if let Some(scope) = self
                     .tool_catalogue
                     .get(&key)
@@ -92,7 +92,7 @@ impl App {
             .into_iter()
             .map(|mut entry| {
                 let key = tool_catalogue_key(&entry);
-                if entry.profile_scope.is_none() {
+                if entry.profile_scope.is_none() && entry.profile_enabled.is_none() {
                     if let Some(scope) = previous
                         .get(&key)
                         .and_then(|previous| previous.profile_scope)
