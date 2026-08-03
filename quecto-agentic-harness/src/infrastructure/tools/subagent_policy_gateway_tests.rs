@@ -111,6 +111,7 @@ fn command_json_contains_set_tool_policy_mode_and_mutations() {
 
     assert_eq!(value["type"], "set_tool_policy");
     assert_eq!(value["mode"], "atNextTurnBoundary");
+    assert_eq!(value["propagated"], true);
     assert_eq!(value["mutations"][0]["name"], "bash");
     assert_eq!(value["mutations"][0]["scope"], "none");
     assert_eq!(value["mutations"][0]["reason"], "review policy");
@@ -252,4 +253,106 @@ fn parse_mutation_result_rejects_unknown_availability() {
     });
 
     assert!(parse_mutation_result(&value).is_none());
+}
+
+#[tokio::test]
+async fn live_policy_propagates_to_all_four_direct_children_independently() {
+    use tokio::io::{AsyncWriteExt, BufReader};
+
+    let temp = tempfile::tempdir().unwrap();
+    let mut registry_entries = HashMap::new();
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let mut tasks = Vec::new();
+
+    for index in 0..4 {
+        let agent_id = format!("child-{}", index + 1);
+        let socket_path = temp.path().join(format!("{agent_id}.sock"));
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+        let received = Arc::clone(&received);
+        let agent_id_for_task = agent_id.clone();
+        tasks.push(tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let frame = quecto_line_io::read_frame_or_legacy_line(
+                &mut reader,
+                quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let bytes = match frame {
+                quecto_line_io::Incoming::Frame(bytes)
+                | quecto_line_io::Incoming::LegacyLine(bytes) => bytes,
+            };
+            let command: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            received
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push((agent_id_for_task, command.clone()));
+            let id = command.get("id").and_then(|value| value.as_str()).unwrap();
+            let response = serde_json::json!({
+                "type": "response",
+                "id": id,
+                "ok": true,
+                "data": {
+                    "mode": "atNextTurnBoundary",
+                    "results": [{
+                        "name": "bash",
+                        "requestedAvailability": "disabled",
+                        "requestedScope": "none",
+                        "status": "applied",
+                        "reason": "four-child live policy"
+                    }]
+                }
+            })
+            .to_string();
+            quecto_line_io::write_frame(
+                &mut writer,
+                response.as_bytes(),
+                quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
+            )
+            .await
+            .unwrap();
+            writer.shutdown().await.unwrap();
+        }));
+
+        let mut entry = SubagentEntry::new(socket_path, index as u32);
+        entry.status = SubagentStatus::Idle;
+        registry_entries.insert(agent_id, entry);
+    }
+
+    let registry = Arc::new(Mutex::new(registry_entries));
+    let results = propagate_tool_policy_to_children(
+        &Some(registry),
+        &[ToolPolicyMutation::disable(
+            "bash",
+            "four-child live policy",
+        )],
+        ToolPolicyApplyMode::AtNextTurnBoundary,
+    )
+    .await;
+
+    assert_eq!(results.len(), 4);
+    assert!(
+        results
+            .iter()
+            .all(|result| result.status == ChildToolPolicyPropagationStatus::Applied)
+    );
+
+    for task in tasks {
+        task.await.unwrap();
+    }
+    let mut received = received
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    received.sort_by(|left, right| left.0.cmp(&right.0));
+    assert_eq!(received.len(), 4);
+    for (index, (agent_id, command)) in received.iter().enumerate() {
+        assert_eq!(agent_id, &format!("child-{}", index + 1));
+        assert_eq!(command["type"], "set_tool_policy");
+        assert_eq!(command["propagated"], true);
+        assert_eq!(command["mutations"][0]["name"], "bash");
+    }
 }

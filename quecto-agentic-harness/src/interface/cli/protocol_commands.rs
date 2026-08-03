@@ -139,6 +139,12 @@ pub enum AgentCommand {
         mutations: Vec<ToolPolicyMutationCommand>,
         #[serde(default = "default_tool_policy_apply_mode")]
         mode: ToolPolicyApplyModeCommand,
+        /// Internal parent-to-direct-child propagation marker. External callers
+        /// omit it, so their policy changes fan out to direct children; the
+        /// gateway sets it so children apply locally without recursively
+        /// cascading to grandchildren outside the parent's direct scope.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        propagated: bool,
     },
     /// Force a provider/model config reload.
     Reload {

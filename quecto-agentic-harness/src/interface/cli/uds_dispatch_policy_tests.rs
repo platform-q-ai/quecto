@@ -94,6 +94,7 @@ async fn dispatch_set_tool_policy_applies_and_catalogue_reflects_scope() {
             reason: Some("test".into()),
         }],
         mode: ToolPolicyApplyModeCommand::ImmediateIfIdle,
+        propagated: false,
     };
     {
         let mut ctx = fx.ctx();
@@ -127,6 +128,7 @@ async fn dispatch_set_tool_policy_immediate_if_idle_applies_and_propagates_when_
             reason: Some("tui tool policy modal".into()),
         }],
         mode: ToolPolicyApplyModeCommand::ImmediateIfIdle,
+        propagated: false,
     };
 
     {

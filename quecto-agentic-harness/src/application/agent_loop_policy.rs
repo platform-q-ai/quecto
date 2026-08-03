@@ -216,12 +216,21 @@ impl AgentLoopImpl {
         mutations: &[ToolPolicyMutation],
         mode: ToolPolicyApplyMode,
     ) -> Option<ToolPolicyReconciliation> {
+        self.request_tool_policy_mutation_with_child_propagation(mutations, mode, true)
+    }
+
+    pub fn request_tool_policy_mutation_with_child_propagation(
+        &mut self,
+        mutations: &[ToolPolicyMutation],
+        mode: ToolPolicyApplyMode,
+        propagate_to_children: bool,
+    ) -> Option<ToolPolicyReconciliation> {
         let in_flight = self.turn_in_flight.load(Ordering::SeqCst);
         let should_queue = (mode == ToolPolicyApplyMode::AtNextTurnBoundary && in_flight)
             || (mode == ToolPolicyApplyMode::ImmediateIfIdle && in_flight);
         if should_queue {
             self.queue_tool_policy_mutation(mutations);
-            if let Some(propagator) = &self.tool_policy_child_propagator {
+            if propagate_to_children && let Some(propagator) = &self.tool_policy_child_propagator {
                 let child_propagation = propagator.propagate_tool_policy_to_children(
                     mutations,
                     ToolPolicyApplyMode::AtNextTurnBoundary,
@@ -241,7 +250,7 @@ impl AgentLoopImpl {
         let mut reconciliation = self
             .tool_registry
             .apply_tool_policy_mutations(mutations, mode);
-        if let Some(propagator) = &self.tool_policy_child_propagator {
+        if propagate_to_children && let Some(propagator) = &self.tool_policy_child_propagator {
             reconciliation.child_propagation =
                 propagator.propagate_tool_policy_to_children(mutations, mode);
         }

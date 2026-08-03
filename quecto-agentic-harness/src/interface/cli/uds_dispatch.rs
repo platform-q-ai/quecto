@@ -98,8 +98,14 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             handle_set_effort(ctx, id.as_deref(), &type_name, &effort).await
         }
         AgentCommand::SetToolPolicy {
-            mutations, mode, ..
-        } => handle_set_tool_policy(ctx, id.as_deref(), &type_name, mutations, mode).await,
+            mutations,
+            mode,
+            propagated,
+            ..
+        } => {
+            handle_set_tool_policy(ctx, id.as_deref(), &type_name, mutations, mode, propagated)
+                .await
+        }
         AgentCommand::Reload { .. } => {
             super::super::uds_reload::handle_reload(ctx, id.as_deref(), &type_name).await
         }
@@ -139,6 +145,7 @@ pub(super) async fn handle_set_tool_policy(
     type_name: &str,
     mutations: Vec<ToolPolicyMutationCommand>,
     mode: ToolPolicyApplyModeCommand,
+    propagated: bool,
 ) -> bool {
     let mut domain_mutations = Vec::with_capacity(mutations.len());
     for mutation in mutations {
@@ -163,7 +170,11 @@ pub(super) async fn handle_set_tool_policy(
     };
     let reconciliation = ctx
         .agent
-        .request_tool_policy_mutation(&domain_mutations, apply_mode);
+        .request_tool_policy_mutation_with_child_propagation(
+            &domain_mutations,
+            apply_mode,
+            !propagated,
+        );
     let data = match reconciliation {
         Some(reconciliation) => serde_json::to_value(&reconciliation).unwrap_or_default(),
         None => {

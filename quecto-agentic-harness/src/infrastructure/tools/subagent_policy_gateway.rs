@@ -138,6 +138,7 @@ pub(super) fn child_policy_command(
     serde_json::json!({
         "type": "set_tool_policy",
         "mode": mode,
+        "propagated": true,
         "mutations": mutations.iter().map(|mutation| serde_json::json!({
             "name": mutation.name,
             "scope": mutation.scope,

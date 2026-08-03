@@ -10,9 +10,11 @@ fn set_tool_policy_command_deserializes_scope_and_mode() {
             id,
             mutations,
             mode,
+            propagated,
         } => {
             assert_eq!(id.as_deref(), Some("p1"));
             assert_eq!(mode, ToolPolicyApplyModeCommand::AtNextTurnBoundary);
+            assert!(!propagated);
             assert_eq!(mutations[0].name.as_deref(), Some("alpha"));
             assert_eq!(mutations[0].scope, ProfileAvailabilityScope::Child);
         }
