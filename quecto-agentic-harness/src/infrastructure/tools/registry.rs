@@ -172,7 +172,7 @@ impl ToolRegistryImpl {
                     continue;
                 }
             };
-            self.deny_registration_name(&name);
+            self.reserve_removed_tool_identity(&name);
             self.deny_policy_id(policy_id);
             if !self.tools.contains_key(&name) {
                 warnings.push(policy_id.clone());

@@ -276,6 +276,30 @@ fn unknown_raw_name_policy_id_blocks_later_legacy_alias_registration() {
 }
 
 #[test]
+fn startup_disable_by_known_stable_id_blocks_unload_then_reintroduce_with_disabled_alias() {
+    let mut reg = ToolRegistryImpl::new();
+    assert!(reg.register_with_metadata(
+        Arc::new(DummyTestTool::new("weather")),
+        ToolRegistration::uds_owner("uds:client-a"),
+    ));
+
+    assert!(
+        reg.apply_startup_tool_restrictions(&["tool.v1:uds:12:uds:client-a:weather".into()])
+            .is_empty()
+    );
+    reg.unregister_runtime_tool("weather");
+
+    assert!(
+        !reg.register_with_metadata(
+            Arc::new(DummyTestTool::new("weather_v2")),
+            ToolRegistration::uds_owner("uds:client-b")
+                .with_stable_id("tool.v1:uds:12:uds:client-b:weather_v2")
+                .with_alias("weather"),
+        )
+    );
+}
+
+#[test]
 fn remove_registered_stable_id_tool_blocks_reintroducing_same_stable_id_under_new_name() {
     let mut reg = ToolRegistryImpl::new();
     assert!(reg.register_with_metadata(
