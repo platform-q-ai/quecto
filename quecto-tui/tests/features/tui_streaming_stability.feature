@@ -24,6 +24,12 @@ Feature: TUI remains stable during high-throughput streaming
     When the TUI presents the streaming response near the chat frame edge
     Then the streaming indicator remains inside the chat frame
 
+  Scenario: Streaming content has vertical breathing room
+    Given an assistant response is streaming
+    When the TUI presents the streaming response
+    Then the streaming content is separated from the master idle area by one blank line
+    And the streaming content is separated from the working area by one blank line
+
   Scenario: Terminal cursor stays hidden during streaming recovery
     Given the terminal cursor is hidden while an assistant response streams
     When the display recovers during the streaming response
