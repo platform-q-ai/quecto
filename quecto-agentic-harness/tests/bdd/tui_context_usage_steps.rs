@@ -71,7 +71,7 @@ fn run_context_turn(world: &mut QuectoWorld, streaming: bool) {
         stop_reason: None,
         thinking_blocks: vec![],
     });
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: provider as Arc<dyn LlmProvider>,
         tool_registry: Box::new(ToolRegistryImpl::new()),
         model: "test-model".to_string(),
@@ -88,6 +88,7 @@ fn run_context_turn(world: &mut QuectoWorld, streaming: bool) {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let mut messages = vec![Message::user("Hi")];

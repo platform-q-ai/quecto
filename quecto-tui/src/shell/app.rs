@@ -15,6 +15,7 @@ use crate::components::kitty::KittyProtocol;
 use crate::components::model_selector::ModelSelectorResult;
 use crate::components::notification::{Notification, NotificationStack, NotifyLevel};
 use crate::components::select_list::{SelectItem, SelectList};
+use crate::components::selectable_item_modal::SelectableItemModal;
 use crate::components::spinner::Spinner;
 use crate::components::text_input::Editor;
 use crate::components::workflow_bar;
@@ -36,6 +37,11 @@ const RAW_PASTE_QUIET_TIMEOUT: Duration = Duration::from_millis(10);
 
 #[path = "app_commands.rs"]
 mod app_commands;
+#[path = "tool_policy.rs"]
+mod tool_policy;
+#[cfg(any(test, feature = "test-harness"))]
+#[path = "tui_harness_tool_policy.rs"]
+mod tui_harness_tool_policy;
 use app_commands::builtin_commands;
 use app_message_recovery::{MessageRecoveryBatch, PendingMessageRecovery};
 
@@ -94,6 +100,10 @@ pub struct App {
     /// Recovery batches (client-local id → turn chat range) guarding late overwrites.
     message_recovery_batches: HashMap<String, MessageRecoveryBatch>,
     pending_stub_recall: HashMap<String, app_paged_history::StubRecall>,
+    /// Latest catalogue snapshot keyed by stable id (or name fallback) for future policy UI.
+    tool_catalogue: HashMap<String, crate::protocol::client::ToolCatalogueEntry>,
+    tool_policy_modal: Option<SelectableItemModal>,
+    tool_policy_modal_pending_catalogue_id: Option<String>,
     failed_stub_recalls: HashSet<(Option<String>, String)>,
     /// Exact correlation id for this client's in-flight resume transcript fetch (#1237).
     /// `get_messages` responses are broadcast; fixed literals would clobber peers.
@@ -163,6 +173,9 @@ impl App {
             pending_message_recovery: HashMap::new(),
             message_recovery_batches: HashMap::new(),
             pending_stub_recall: HashMap::new(),
+            tool_catalogue: HashMap::new(),
+            tool_policy_modal: None,
+            tool_policy_modal_pending_catalogue_id: None,
             failed_stub_recalls: HashSet::new(),
             pending_resume_messages_id: None,
             pending_rewind_refresh_id: None,
@@ -205,17 +218,38 @@ impl App {
         });
     }
 
-    fn start_files_autocomplete_load(&self, tx: &mpsc::Sender<Vec<String>>, in_flight: &mut bool) {
+    fn files_autocomplete_root(&self) -> PathBuf {
+        self.workspace
+            .root
+            .clone()
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| PathBuf::from("."))
+    }
+
+    fn start_files_autocomplete_load(
+        &self,
+        tx: &mpsc::Sender<(PathBuf, Vec<String>)>,
+        in_flight: &mut bool,
+    ) {
         if *in_flight {
             return;
         }
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let root = self.files_autocomplete_root();
         *in_flight = true;
         let tx = tx.clone();
         tokio::task::spawn_blocking(move || {
-            let files = list_workspace_files(&cwd);
-            let _ = tx.blocking_send(files);
+            let files = list_workspace_files(&root);
+            let _ = tx.blocking_send((root, files));
         });
+    }
+
+    fn apply_files_autocomplete_load(&mut self, root: PathBuf, files: Vec<String>) -> bool {
+        if self.files_autocomplete_root() != root {
+            return false;
+        }
+        self.workspace.files_autocomplete.apply_loaded_files(files);
+        self.refresh_files_autocomplete_from_editor();
+        true
     }
 
     fn refresh_files_autocomplete_from_editor(&mut self) {
@@ -269,6 +303,8 @@ mod app_methods;
 mod app_models;
 #[path = "../conversation/controller_paged_history.rs"]
 mod app_paged_history;
+#[path = "app_render_helpers.rs"]
+mod app_render_helpers;
 #[path = "app_response.rs"]
 mod app_response;
 #[path = "../conversation/controller_resumed_history.rs"]
@@ -582,6 +618,12 @@ mod app_subagents_tests;
 #[cfg(test)]
 #[path = "app_text_input_1277_tests.rs"]
 mod app_text_input_1277_tests;
+#[cfg(test)]
+#[path = "app_tool_policy_cache_tests.rs"]
+mod app_tool_policy_cache_tests;
+#[cfg(test)]
+#[path = "app_tool_policy_tests.rs"]
+mod app_tool_policy_tests;
 #[cfg(test)]
 #[path = "../workflow/app_workflow_box_width_tests.rs"]
 mod app_workflow_box_width_tests;

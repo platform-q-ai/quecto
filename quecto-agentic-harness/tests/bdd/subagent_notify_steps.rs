@@ -396,9 +396,12 @@ fn idle_note(world: &mut QuectoWorld) -> &quecto::domain::message::Message {
 }
 
 #[then("the parent's next idle note should be delivered on the operator channel")]
-fn then_next_note_is_system(world: &mut QuectoWorld) {
+fn then_next_note_is_user_turn(world: &mut QuectoWorld) {
     use quecto::domain::message::Role;
-    assert_eq!(idle_note(world).role, Role::System);
+    // #1338: notes are Role::User so providers treat them as a real turn.
+    // Role::System was hoisted out of messages (Anthropic/Codex) and never
+    // reached the model.
+    assert_eq!(idle_note(world).role, Role::User);
 }
 
 #[then("the parent's next idle note should be a single line")]

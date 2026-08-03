@@ -355,6 +355,8 @@ mod tui_subagent_parity_steps;
 mod tui_subagent_readonly_marker_steps;
 mod tui_table_safety_steps;
 mod tui_terminal_restore_steps;
+mod tui_tool_access_management_steps;
+mod tui_tool_policy_modal_steps;
 mod tui_uds_client_defence_steps;
 
 fn main() {

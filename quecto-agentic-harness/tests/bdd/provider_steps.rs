@@ -132,7 +132,7 @@ fn when_agent_builds_request_for_model(world: &mut QuectoWorld) {
         stop_reason: None,
         thinking_blocks: vec![],
     });
-    let agent = AgentLoopImpl::new(quecto::application::agent_loop::AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(quecto::application::agent_loop::AgentLoopConfig {
         provider: provider.clone() as Arc<dyn LlmProvider>,
         tool_registry: Box::new(ToolRegistryImpl::new()),
         model: "fireworks/qwen3p7-plus".to_string(),
@@ -149,6 +149,7 @@ fn when_agent_builds_request_for_model(world: &mut QuectoWorld) {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     })
     .with_model_max_tokens(Some(cap));
     let mut messages = vec![Message::user("hi")];

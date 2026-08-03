@@ -263,6 +263,7 @@ pub(super) fn test_config(
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     }
 }
 
@@ -424,7 +425,7 @@ pub(super) fn tool_call_response(name: &str, args: &str) -> LlmResponse {
 
 #[tokio::test]
 async fn test_simple_text_response() {
-    let (agent, _) = make_agent(vec![text_response("Hello, world!")], vec![]);
+    let (mut agent, _) = make_agent(vec![text_response("Hello, world!")], vec![]);
     let mut messages = vec![Message::user("Hi")];
     let result = agent.run_loop(&mut messages).await.unwrap();
     assert_eq!(result.response, "Hello, world!");
@@ -434,7 +435,7 @@ async fn test_simple_text_response() {
 
 #[tokio::test]
 async fn test_single_tool_call() {
-    let (agent, _) = make_agent(
+    let (mut agent, _) = make_agent(
         vec![
             tool_call_response("read", r#"{"path":"notes.txt"}"#),
             text_response("Your notes say: Buy groceries"),
@@ -449,7 +450,7 @@ async fn test_single_tool_call() {
 
 #[tokio::test]
 async fn test_multiple_tool_calls_in_sequence() {
-    let (agent, _) = make_agent(
+    let (mut agent, _) = make_agent(
         vec![
             tool_call_response("read", r#"{"path":"a.txt"}"#),
             tool_call_response("write", r#"{"path":"b.txt","content":"data"}"#),
@@ -465,7 +466,7 @@ async fn test_multiple_tool_calls_in_sequence() {
 
 #[tokio::test]
 async fn test_agent_result_accumulates_usage_cache_and_cost_across_llm_calls() {
-    let (agent, _) = make_agent(
+    let (mut agent, _) = make_agent(
         vec![
             tool_call_response_with_usage(
                 "read",
@@ -497,7 +498,7 @@ async fn test_iteration_limit() {
         .map(|i| tool_call_response("bash", &format!(r#"{{"cmd":"echo {}"}}"#, i)))
         .collect();
     let (agent, _) = make_agent(responses, vec![("bash", "output")]);
-    let agent = agent.with_max_tool_iterations(3);
+    let mut agent = agent.with_max_tool_iterations(3);
 
     let mut messages = vec![Message::user("Loop forever")];
     let result = agent.run_loop(&mut messages).await.unwrap();
@@ -508,7 +509,8 @@ async fn test_iteration_limit() {
 
 #[tokio::test]
 async fn test_tool_definitions_sent_to_llm() {
-    let (agent, provider) = make_agent(vec![text_response("ok")], vec![("bash", ""), ("read", "")]);
+    let (mut agent, provider) =
+        make_agent(vec![text_response("ok")], vec![("bash", ""), ("read", "")]);
     let mut messages = vec![Message::user("test")];
     let _ = agent.run_loop(&mut messages).await.unwrap();
     let defs = provider.last_tool_defs();
@@ -527,7 +529,7 @@ async fn test_agent_info() {
 
 #[tokio::test]
 async fn test_messages_appended_during_loop() {
-    let (agent, _) = make_agent(
+    let (mut agent, _) = make_agent(
         vec![
             tool_call_response("read", r#"{"path":"x"}"#),
             text_response("final"),
@@ -563,7 +565,7 @@ async fn test_tool_error_is_sent_back() {
     ];
     let provider = Arc::new(MockProvider::new(responses));
     let registry = MockRegistry::new(); // empty
-    let agent = AgentLoopImpl::new(test_config(provider, Box::new(registry)));
+    let mut agent = AgentLoopImpl::new(test_config(provider, Box::new(registry)));
     let mut messages = vec![Message::user("use a tool")];
     let result = agent.run_loop(&mut messages).await.unwrap();
     assert_eq!(result.response, "I got an error");
@@ -606,7 +608,7 @@ fn make_agent_with_callback(
 
 #[tokio::test]
 async fn test_progress_callback_thinking_fired_before_llm_call() {
-    let (agent, _, events) = make_agent_with_callback(vec![text_response("hello")], vec![]);
+    let (mut agent, _, events) = make_agent_with_callback(vec![text_response("hello")], vec![]);
     let mut messages = vec![Message::user("hi")];
     agent.run_loop(&mut messages).await.unwrap();
 
@@ -619,7 +621,7 @@ async fn test_progress_callback_thinking_fired_before_llm_call() {
 
 #[tokio::test]
 async fn test_progress_callback_done_fired_on_text_response() {
-    let (agent, _, events) = make_agent_with_callback(vec![text_response("hello")], vec![]);
+    let (mut agent, _, events) = make_agent_with_callback(vec![text_response("hello")], vec![]);
     let mut messages = vec![Message::user("hi")];
     agent.run_loop(&mut messages).await.unwrap();
 
@@ -648,6 +650,7 @@ fn new_threads_context_knobs_and_model_window_into_observable_budget() {
         context_collapse_after_messages: 11,
         max_context_tokens: 10_000,
         model_context_window: Some(4_096),
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
         max_tokens: 512,
         ..test_config(provider, Box::new(registry))
     });

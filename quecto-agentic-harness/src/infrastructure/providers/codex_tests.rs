@@ -736,3 +736,6 @@ fn codex_streaming_task_clone_preserves_all_fields() {
     }
     assert_eq!(cloned.api_base, "https://codex.example");
 }
+
+#[path = "codex_1338_tests.rs"]
+mod issue_1338_tests;

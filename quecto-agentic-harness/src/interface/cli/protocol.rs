@@ -18,7 +18,10 @@ pub fn parse_command_line(line: &str) -> Result<AgentCommand, String> {
 }
 #[path = "protocol_commands.rs"]
 mod protocol_commands;
-pub use protocol_commands::{AgentCommand, StreamingBehavior, ToolRegistration};
+pub use protocol_commands::{
+    AgentCommand, StreamingBehavior, ToolPolicyApplyModeCommand, ToolPolicyMutationCommand,
+    ToolRegistration,
+};
 
 // ─── Events (stdout) ─────────────────────────────────────────────────────────
 
@@ -28,6 +31,9 @@ pub use protocol_commands::{AgentCommand, StreamingBehavior, ToolRegistration};
 pub enum AgentEvent {
     /// Agent begins processing a prompt.
     AgentStart,
+    /// Announces the harness workspace path to socket clients (#1350).
+    #[serde(rename_all = "camelCase")]
+    Workspace { path: String },
     /// Agent finished processing. Identifies this run's messages by stable refs
     /// (#1060 / ADR-0008 part 2). Legacy full-content `messages` is emptied;
     /// clients that already hold stream tokens need no fetch; partial observers
@@ -434,6 +440,9 @@ mod tests;
 #[path = "protocol_event_tests.rs"]
 mod event_tests;
 
+#[cfg(test)]
+#[path = "protocol_policy_tests.rs"]
+mod policy_tests;
 #[cfg(test)]
 #[path = "protocol_shape_tests.rs"]
 mod shape_tests;

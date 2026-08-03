@@ -8,6 +8,8 @@ pub(super) struct WorkspaceFlow {
     pub(super) git_branch: Option<String>,
     /// Repository root used for git branch polling.
     pub(super) git_repo: Option<PathBuf>,
+    /// Harness workspace root announced over the socket (#1350).
+    pub(super) root: Option<PathBuf>,
 }
 
 impl WorkspaceFlow {
@@ -16,6 +18,7 @@ impl WorkspaceFlow {
             files_autocomplete: FilesAutocomplete::new(8),
             git_branch,
             git_repo,
+            root: None,
         }
     }
 }

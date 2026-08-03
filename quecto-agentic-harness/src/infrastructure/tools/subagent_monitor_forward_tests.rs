@@ -245,7 +245,7 @@ fn handle_monitor_line_skips_full_state_broadcast_for_tool_boundaries() {
 }
 
 #[test]
-fn handle_monitor_line_tool_error_broadcasts_subagent_state_changed_promptly() {
+fn handle_monitor_line_tool_error_stays_child_local_without_state_changed_broadcast() {
     let registry = super::super::subagent_registry::new_registry();
     let mut child = test_entry();
     child.status = SubagentStatus::Running;
@@ -261,13 +261,15 @@ fn handle_monitor_line_tool_error_broadcasts_subagent_state_changed_promptly() {
         None,
     );
 
-    let event: serde_json::Value = serde_json::from_str(
-        &rx.try_recv()
-            .expect("tool error should promptly broadcast subagent_state_changed"),
-    )
-    .unwrap();
-    assert_eq!(event["type"], "subagent_state_changed");
-    assert_eq!(find_subagent(&event, "child")["status"], "error");
+    assert!(
+        rx.try_recv().is_err(),
+        "recoverable tool errors should not broadcast subagent_state_changed"
+    );
+    let entries = registry.lock().unwrap();
+    let child = entries.get("child").unwrap();
+    assert_eq!(child.status, SubagentStatus::Running);
+    assert!(child.last_error.is_none());
+    assert!(child.run_error.is_none());
 }
 
 #[test]

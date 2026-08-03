@@ -313,6 +313,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/agent_ledger_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/client.rs` | `protocol` UDS client and wire DTOs (relocated, #1257 Phase 2) |
 | `protocol/client_classes.rs` | `protocol` command admission classes + test-harness queue constructor (split from `client.rs` for the 750-line baseline, child-progress-freeze fix 2026-07-29) |
+| `protocol/client_policy_types.rs` | `protocol` catalogue-backed tool policy wire DTOs (#1334 Phase 4) |
 | `protocol/mod.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/model_payloads.rs` | `protocol` mapper feeding `models` (relocated, #1257 Phase 2) |
 | `protocol/presentation_payloads.rs` | `protocol` typed mapping for turn, history, spawn, and tool display payloads (#1257 Phase 6) |
@@ -330,6 +331,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_events_test_support.rs` | `shell` test support (relocated, #1257 Phase 6) |
 | `shell/app_idle_efficiency.rs` | `shell` event-loop policy (relocated, #1257 Phase 6) |
 | `shell/app_methods.rs` | `shell` composition methods (relocated, #1257 Phase 6) |
+| `shell/app_render_helpers.rs` | `shell` render helper extraction (line-count split, #1334 PR 4) |
 | `shell/app_response.rs` | `shell` response dispatch seam (relocated, #1257 Phase 6; protocol-mapper allowlist #1220) |
 | `shell/app_selection.rs` | `shell` focus/selection routing (relocated, #1257 Phase 6) |
 | `shell/app_stdin.rs` | `shell` stdin coordination (relocated, #1257 Phase 6) |
@@ -343,7 +345,9 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/signals.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
 | `shell/stdin_buffer.rs` | `shell` stdin adapter/policy (relocated, #1257 Phase 6) |
 | `shell/terminal.rs` | `shell` terminal adapter (relocated, #1257 Phase 1) |
+| `shell/tool_policy.rs` | `shell` live tool/profile policy modal controller (#1334 PR 4) |
 | `shell/tui_harness.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
+| `shell/tui_harness_tool_policy.rs` | `shell` tool policy test-harness event helpers (#1334 PR 4) |
 | `shell/tui_harness_disconnect.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/tui_harness_events.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/tui_harness_probes.rs` | `shell` test harness support (relocated, #1257 Phase 6) |

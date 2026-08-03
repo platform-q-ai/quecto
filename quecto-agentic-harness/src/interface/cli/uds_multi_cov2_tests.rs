@@ -86,6 +86,7 @@ fn make_agent() -> AgentLoopImpl {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
 }
 
@@ -93,6 +94,7 @@ fn multi_args<'a>(base: &'a std::path::Path) -> MultiClientArgs<'a> {
     MultiClientArgs {
         agent: make_agent(),
         base_dir: base,
+        workspace: base,
         messages: vec![Message::user("seed")],
         model: "stub".into(),
         session_key: "cli:cov".into(),
@@ -151,6 +153,8 @@ async fn real_multi_client_loop_answers_read_command_then_exits_on_disconnect() 
         .unwrap();
     write_half.flush().await.unwrap();
 
+    let event = next_json_line(&mut lines).await;
+    assert_eq!(event["type"], "workspace");
     let event = next_json_line(&mut lines).await;
     assert_eq!(event["type"], "response");
     assert_eq!(event["id"], "s1");

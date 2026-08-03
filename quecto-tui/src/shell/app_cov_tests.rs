@@ -15,7 +15,7 @@ fn chat_text(app: &mut App) -> String {
         .chat
         .render(120)
         .iter()
-        .map(|l| super::app_methods::strip_ansi(l))
+        .map(|l| super::app_render_helpers::strip_ansi(l))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -333,7 +333,7 @@ async fn replace_chat_with_messages_missing_messages_preserves_chat_and_reports_
         .notifications
         .render(120)
         .iter()
-        .map(|line| super::app_methods::strip_ansi(line))
+        .map(|line| super::app_render_helpers::strip_ansi(line))
         .collect::<Vec<_>>()
         .join("\n");
     assert!(notification_text.contains("Invalid resume payload"));
@@ -684,7 +684,7 @@ async fn spinner_renders_in_bottom_subagent_moved_to_panel() {
         .app_mut()
         .compose_bottom(120)
         .iter()
-        .map(|l| super::app_methods::strip_ansi(l))
+        .map(|l| super::app_render_helpers::strip_ansi(l))
         .collect();
 
     assert!(
@@ -695,7 +695,7 @@ async fn spinner_renders_in_bottom_subagent_moved_to_panel() {
         !bottom.iter().any(|l| l.contains("orderworker")),
         "the sub-agent must NOT render in the bottom stack any more: {bottom:?}"
     );
-    let frame = super::app_methods::strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    let frame = super::app_render_helpers::strip_ansi(&h.app_mut().compose_frame().join("\n"));
     assert!(
         frame.contains("orderworker"),
         "the sub-agent must render in the left panel instead:\n{frame}"
@@ -717,14 +717,18 @@ fn format_time_helpers_cover_epoch_leap_and_pre_epoch_paths() {
 
 #[test]
 fn subagent_activity_line_singular_plural_and_frame_wrap() {
-    let one = super::app_methods::strip_ansi(&super::app_methods::subagent_activity_line(1, 0));
-    let many = super::app_methods::strip_ansi(&super::app_methods::subagent_activity_line(2, 999));
+    let one = super::app_render_helpers::strip_ansi(
+        &super::app_render_helpers::subagent_activity_line(1, 0),
+    );
+    let many = super::app_render_helpers::strip_ansi(
+        &super::app_render_helpers::subagent_activity_line(2, 999),
+    );
     assert!(one.contains("1 subagent working") && many.contains("2 subagents working"));
 }
 
 #[test]
 fn strip_ansi_handles_csi_osc_and_plain() {
-    use super::app_methods::strip_ansi;
+    use super::app_render_helpers::strip_ansi;
     assert_eq!(strip_ansi("plain"), "plain");
     assert_eq!(strip_ansi("\x1b[31mred\x1b[0m"), "red");
     assert_eq!(strip_ansi("\x1b]0;title\x07body"), "body");

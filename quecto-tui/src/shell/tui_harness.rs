@@ -14,7 +14,7 @@
 //! the chat, so that's what the harness records.
 
 use super::App;
-use super::app_methods::strip_ansi;
+use super::app_render_helpers::strip_ansi;
 use super::app_selection::{SelectionAnchor, TextSelection};
 use crate::agents::focus::Focus;
 use crate::components::chat::ChatEntry;
@@ -59,7 +59,7 @@ async fn headless_app(width: usize, height: usize) -> (App, mpsc::Receiver<Strin
 
 /// Frame-capturing harness over the real render path.
 pub struct TuiHarness {
-    app: App,
+    pub(super) app: App,
     width: usize,
     /// Below-chat section per captured frame (ANSI-stripped, trailing-trimmed).
     bottoms: Vec<Vec<String>>,

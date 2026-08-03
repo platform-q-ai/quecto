@@ -662,7 +662,7 @@ fn seed_stub_session(world: &mut QuectoWorld) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let messages = rt.block_on(async {
         spill_store.clear(&session_key).await.expect("clear spill");
-        let agent = AgentLoopImpl::new(AgentLoopConfig {
+        let mut agent = AgentLoopImpl::new(AgentLoopConfig {
             provider: Arc::new(StubSeedProvider),
             tool_registry: Box::new(ToolRegistryImpl::new()),
             model: "paged-stub-seed".into(),
@@ -679,6 +679,7 @@ fn seed_stub_session(world: &mut QuectoWorld) {
             pin_recent_turns: 0,
             context_collapse_after_messages: 0,
             model_context_window: None,
+            tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
         });
         let mut messages = vec![Message::user("seed stub")];
         agent.process(&mut messages).await.expect("seed turn");
@@ -868,7 +869,6 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
             max_capture_bytes: exec_settings,
             ..Default::default()
         },
-        false,
     );
     let ext_registry = quecto::infrastructure::extensions::registry::ExtensionRegistry::new();
     quecto::interface::shared::register_bundled_native_extension_tools(
@@ -895,6 +895,7 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     });
     let socket_path = base.join(format!("{session_name}.sock"));
     let _ = std::fs::remove_file(&socket_path);
@@ -905,6 +906,7 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
         run_uds_loop(UdsLoopArgs {
             agent,
             base_dir: &base_for_thread,
+            workspace: &base_for_thread,
             session_key,
             model,
             ephemeral: false,

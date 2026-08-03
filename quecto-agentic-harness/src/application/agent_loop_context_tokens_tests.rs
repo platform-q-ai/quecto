@@ -23,7 +23,7 @@ fn response_with_provider_input_tokens(content: &str, provider_input_tokens: u32
 
 #[tokio::test]
 async fn non_streaming_result_context_tokens_uses_provider_reported_occupancy() {
-    let (agent, _) = make_agent(
+    let (mut agent, _) = make_agent(
         vec![response_with_provider_input_tokens("hello", 280_000)],
         vec![],
     );
@@ -42,7 +42,7 @@ async fn non_streaming_result_context_tokens_uses_provider_reported_occupancy() 
 
 #[tokio::test]
 async fn non_streaming_result_context_tokens_falls_back_to_estimate_without_usage() {
-    let (agent, _) = make_agent(
+    let (mut agent, _) = make_agent(
         vec![LlmResponse {
             content: Some("hello".to_string()),
             tool_calls: vec![],
@@ -67,7 +67,7 @@ async fn streaming_result_context_tokens_uses_provider_reported_occupancy() {
     let provider = Arc::new(MockStreamingProvider::new(vec![vec![StreamEvent::Done(
         response_with_provider_input_tokens("hello", 280_000),
     )]]));
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(MockRegistry::new()),
         model: "test-model".to_string(),
@@ -84,6 +84,7 @@ async fn streaming_result_context_tokens_uses_provider_reported_occupancy() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
     let mut messages = vec![Message::user("Hi")];
 
@@ -109,7 +110,7 @@ async fn thinking_context_tokens_carry_provider_truth_forward_across_collapse() 
     );
     let events = Arc::new(std::sync::Mutex::new(Vec::new()));
     let captured = Arc::clone(&events);
-    let agent = agent.with_progress_callback(Some(Arc::new(move |event| {
+    let mut agent = agent.with_progress_callback(Some(Arc::new(move |event| {
         if let AgentProgressEvent::Thinking { context_tokens, .. } = event {
             captured.lock().unwrap().push(context_tokens);
         }

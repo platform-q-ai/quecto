@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 
-use crate::domain::tool_descriptor::{ToolAvailability, ToolRestrictionReason, ToolSource};
+use crate::domain::tool_descriptor::{
+    ProfileAvailabilityScope, ToolAvailability, ToolRestrictionReason, ToolSource,
+};
 
 /// Ownership and lifecycle metadata supplied when a tool enters the common
 /// registry. Delivery adapters (bundled native, UDS, future sources) differ only
@@ -14,7 +16,10 @@ pub struct ToolRegistration {
     pub default_enabled: bool,
     pub configured_enabled: Option<bool>,
     pub profile_enabled: Option<bool>,
+    pub profile_scope: Option<ProfileAvailabilityScope>,
     pub session_enabled: Option<bool>,
+    /// Non-widenable profile ceiling inherited by a spawned child at process launch.
+    pub inherited_scope: Option<ProfileAvailabilityScope>,
     pub explicit_restriction: Option<ToolRestrictionReason>,
     /// Whether lifecycle APIs may unregister this concrete registration without
     /// removing/denying the stable tool name. UDS tools are unloadable when their
@@ -32,7 +37,9 @@ impl ToolRegistration {
             default_enabled: true,
             configured_enabled: None,
             profile_enabled: None,
+            profile_scope: None,
             session_enabled: None,
+            inherited_scope: None,
             explicit_restriction: None,
             unloadable: false,
         }
@@ -52,7 +59,9 @@ impl ToolRegistration {
             default_enabled: true,
             configured_enabled: None,
             profile_enabled: None,
+            profile_scope: None,
             session_enabled: None,
+            inherited_scope: None,
             explicit_restriction: None,
             unloadable: true,
         }
@@ -68,7 +77,9 @@ impl ToolRegistration {
             default_enabled: true,
             configured_enabled: None,
             profile_enabled: None,
+            profile_scope: None,
             session_enabled: None,
+            inherited_scope: None,
             explicit_restriction: None,
             unloadable: true,
         }

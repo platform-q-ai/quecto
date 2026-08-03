@@ -1,3 +1,6 @@
+use crate::domain::tool::ToolProfileContext;
+use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+
 /// Entrypoint policy selector for the shared tool runtime/catalogue builder.
 ///
 /// The value describes the supported composition root, not a separate tool
@@ -34,7 +37,7 @@ impl ToolEntrypoint {
 /// persisted policy state is a later phase. The fields here make today's
 /// user-visible CLI/UDS/REPL differences explicit instead of encoding them as
 /// omitted provider construction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ToolRuntimePolicyState {
     pub entrypoint: ToolEntrypoint,
     pub agent_control_default_enabled: bool,
@@ -43,6 +46,8 @@ pub(crate) struct ToolRuntimePolicyState {
     pub configured_enabled: Option<bool>,
     pub profile_enabled: Option<bool>,
     pub session_enabled: Option<bool>,
+    pub inherited_tool_policy:
+        Option<crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot>,
 }
 
 impl ToolRuntimePolicyState {
@@ -55,6 +60,7 @@ impl ToolRuntimePolicyState {
             configured_enabled: None,
             profile_enabled: None,
             session_enabled: None,
+            inherited_tool_policy: None,
         }
     }
 }
@@ -86,9 +92,34 @@ impl<'a> ToolRuntimeWorkflowPolicy<'a> {
     }
 }
 
+/// Runtime profile selected for model-visible tool policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolRuntimeProfileContext {
+    Parent,
+    Child,
+}
+
+impl ToolRuntimeProfileContext {
+    pub(crate) fn from_spawned(spawned: bool) -> Self {
+        if spawned { Self::Child } else { Self::Parent }
+    }
+
+    fn is_child(self) -> bool {
+        matches!(self, Self::Child)
+    }
+
+    fn profile_context(self) -> ToolProfileContext {
+        match self {
+            Self::Parent => ToolProfileContext::Parent,
+            Self::Child => ToolProfileContext::Child,
+        }
+    }
+}
+
 /// Inputs for the shared tool runtime/catalogue builder.
 pub(crate) struct ToolRuntimeBuildArgs<'a> {
     pub entrypoint: ToolEntrypoint,
+    pub profile_context: ToolRuntimeProfileContext,
     pub base_dir: &'a std::path::Path,
     pub config: &'a crate::infrastructure::config::Config,
     pub http_client: &'a reqwest::Client,
@@ -100,6 +131,8 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     pub restrict_to_workspace: bool,
     pub parent_session_name: Option<String>,
     pub disabled_tools: &'a [String],
+    pub inherited_tool_policy:
+        Option<crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot>,
     pub workflow: ToolRuntimeWorkflowPolicy<'a>,
     pub stderr: &'a mut String,
 }
@@ -133,13 +166,16 @@ pub(crate) fn build_tool_runtime(
     args: ToolRuntimeBuildArgs<'_>,
 ) -> Result<ToolRuntimeBuild, String> {
     use crate::infrastructure::extensions::native::{
-        AgentControlToolDeps, SessionToolDeps, build_agent_control_tool_extensions,
+        AgentControlToolDeps, OfficialToolDeps, SessionToolDeps,
+        build_agent_control_tool_extensions, build_official_tool_extensions,
         build_session_tool_extensions, register_bundled_native_tools,
+        register_bundled_native_tools_with_scope,
     };
     use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 
     let ToolRuntimeBuildArgs {
         entrypoint,
+        profile_context,
         base_dir,
         config,
         http_client,
@@ -151,16 +187,33 @@ pub(crate) fn build_tool_runtime(
         restrict_to_workspace,
         parent_session_name,
         disabled_tools,
+        inherited_tool_policy,
         workflow,
         stderr,
     } = args;
 
-    let policy_state = ToolRuntimePolicyState::for_entrypoint(entrypoint);
-    let mut registry = crate::interface::shared::build_official_tool_registry(
-        workspace,
-        sandbox,
-        exec_options,
-        spawned,
+    let mut policy_state = ToolRuntimePolicyState::for_entrypoint(entrypoint);
+    policy_state.inherited_tool_policy = inherited_tool_policy.clone();
+    let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+    register_bundled_native_tools_with_scope(
+        &mut registry,
+        build_official_tool_extensions(OfficialToolDeps {
+            workspace,
+            sandbox,
+            exec_options,
+            docs_content_policy: if profile_context.is_child() {
+                crate::infrastructure::tools::docs::DocsContentPolicy::Child
+            } else {
+                crate::infrastructure::tools::docs::DocsContentPolicy::Parent
+            },
+        }),
+        match profile_context {
+            // A fresh top-level session has no user/profile policy yet. Leaving
+            // the profile field absent serializes the registry default as Both,
+            // so the TUI's first Ctrl+T render shows unrestricted tools as [PC].
+            ToolRuntimeProfileContext::Parent => None,
+            ToolRuntimeProfileContext::Child => Some(ProfileAvailabilityScope::Child),
+        },
     );
 
     let spill_store = std::sync::Arc::new(FileContextSpillStore::new(base_dir.to_path_buf()));
@@ -181,8 +234,9 @@ pub(crate) fn build_tool_runtime(
         restrict_to_workspace,
         broadcast_tx: workflow.broadcast_tx.clone(),
         parent_session_name,
+        inherited_tool_policy: None,
     });
-    register_bundled_native_tools(&mut registry, agent_control.extensions);
+    register_bundled_native_tools_with_scope(&mut registry, agent_control.extensions, None);
     let notify_rx = agent_control.notification_rx;
     let _ = agent_control.notification_tx;
     let subagent_registry_for_protocol = agent_control.subagent_registry;
@@ -202,6 +256,16 @@ pub(crate) fn build_tool_runtime(
         registry.disable_tool_by_entrypoint_default("web_fetch");
     }
 
+    if let Some(snapshot) = inherited_tool_policy.as_ref() {
+        let warnings = registry.apply_inherited_tool_policy_snapshot(snapshot);
+        for name in &warnings {
+            stderr.push_str(&format!(
+                "WARNING: inherited tool policy: no tool named '{}' in the registry\n",
+                name
+            ));
+        }
+    }
+
     // Apply explicit startup restrictions after every startup provider has had a
     // chance to register, so descriptors remain available while model-visible
     // definitions and execution follow policy.
@@ -216,6 +280,9 @@ pub(crate) fn build_tool_runtime(
             name
         ));
     }
+
+    registry.set_execution_profile_context(profile_context.profile_context());
+    registry.refresh_spawn_inherited_child_policy_snapshot();
 
     let catalogue_entries = registry.catalogue_entries();
 
@@ -330,6 +397,10 @@ fn build_workflow_runtime(
 #[cfg(test)]
 #[path = "tool_runtime_catalogue_tests.rs"]
 mod catalogue_tests;
+
+#[cfg(test)]
+#[path = "tool_runtime_profile_tests.rs"]
+mod profile_tests;
 
 pub(crate) fn load_workflow_spec(
     path: &std::path::Path,

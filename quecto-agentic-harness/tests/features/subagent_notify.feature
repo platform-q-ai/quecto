@@ -58,10 +58,10 @@ Feature: Auto-notify a parent when a sub-agent ends a turn
     When the monitor processes an agent_end event with messages
     Then a Completed notification should be sent
 
-  Scenario: Monitor sends Errored on tool_execution_end with is_error
+  Scenario: Monitor keeps tool_execution_end with is_error child-local
     Given a monitor with notification sender
     When the monitor processes a tool_execution_end event with is_error true
-    Then an Errored notification should be sent
+    Then no notification should be sent
 
   Scenario: Monitor sends Exited on connection close
     Given a monitor with notification sender

@@ -110,7 +110,7 @@ async fn test_malformed_tool_call_api_rejection_is_addressable_not_fatal() {
     ];
     let provider = Arc::new(MockProvider::new_results(responses));
     let registry = MockRegistry::new();
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: provider.clone(),
         tool_registry: Box::new(registry),
         model: "test-model".to_string(),
@@ -127,6 +127,7 @@ async fn test_malformed_tool_call_api_rejection_is_addressable_not_fatal() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
 
     let mut messages = vec![Message::user("call a tool")];
@@ -180,7 +181,7 @@ async fn test_terminal_auth_error_fails_the_turn_with_classified_message() {
         "provider error (401): invalid credentials".to_string(),
     ))];
     let provider = Arc::new(MockProvider::new_results(responses));
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: provider.clone(),
         tool_registry: Box::new(MockRegistry::new()),
         model: "test-model".to_string(),
@@ -197,6 +198,7 @@ async fn test_terminal_auth_error_fails_the_turn_with_classified_message() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
 
     let mut messages = vec![Message::user("hi")];
@@ -222,7 +224,7 @@ async fn test_terminal_server_error_fails_the_turn_after_retries() {
         })
         .collect();
     let provider = Arc::new(MockProvider::new_results(responses));
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: provider.clone(),
         tool_registry: Box::new(MockRegistry::new()),
         model: "test-model".to_string(),
@@ -239,6 +241,7 @@ async fn test_terminal_server_error_fails_the_turn_after_retries() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
 
     let mut messages = vec![Message::user("hi")];

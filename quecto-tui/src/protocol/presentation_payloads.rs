@@ -152,3 +152,30 @@ pub fn tool_display_args(value: Option<&Value>) -> ToolDisplayArgs<'_> {
         old_text: str_field(v, "oldText"),
     }
 }
+
+/// Whether a `user`-role history message is a harness-injected sub-agent note
+/// rather than something the operator typed (#1338).
+///
+/// These notes are delivered as real user turns so the model actually answers
+/// them (as system messages they were folded into the provider's `system`
+/// field and never reached the conversation). For display they are still
+/// operator-facing status, not user input: the live path renders them as a
+/// one-line chat status via `handle_subagent_notification`, so replayed
+/// history must skip them instead of drawing them as user messages.
+/// Also matches a ladder-collapsed note: pruning rewrites the content as
+/// `[user: "<preview>" (N tokens) — recall("id")]`, and the 60-char preview
+/// keeps the opening wrapper tag. Notes are now user-role, so unlike before
+/// they are ordinary conversation for the collapse ladder.
+pub fn is_subagent_note(content: &str) -> bool {
+    let content = content.trim_start();
+    content.starts_with(SUBAGENT_NOTE_TAG)
+        || content
+            .strip_prefix("[user: \"")
+            .is_some_and(|preview| preview.starts_with(SUBAGENT_NOTE_TAG))
+}
+
+const SUBAGENT_NOTE_TAG: &str = "<subagent_notification";
+
+#[cfg(test)]
+#[path = "presentation_payloads_tests.rs"]
+mod tests;

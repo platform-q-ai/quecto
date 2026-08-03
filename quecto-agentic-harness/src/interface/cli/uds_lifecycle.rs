@@ -24,6 +24,7 @@ type ExtRegistry = std::sync::Arc<
 pub struct UdsLoopArgs<'a> {
     pub agent: AgentLoopImpl,
     pub base_dir: &'a std::path::Path,
+    pub workspace: &'a std::path::Path,
     pub session_key: String,
     pub model: String,
     pub ephemeral: bool,
@@ -60,6 +61,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     let UdsLoopArgs {
         agent,
         base_dir,
+        workspace,
         session_key,
         model,
         ephemeral,
@@ -106,6 +108,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
             SingleClientArgs {
                 agent,
                 base_dir,
+                workspace,
                 messages,
                 model,
                 session_key,
@@ -136,6 +139,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
             MultiClientArgs {
                 agent,
                 base_dir,
+                workspace,
                 messages,
                 model,
                 session_key,
@@ -162,6 +166,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
 struct SingleClientArgs<'a> {
     agent: AgentLoopImpl,
     base_dir: &'a std::path::Path,
+    workspace: &'a std::path::Path,
     messages: Vec<Message>,
     model: String,
     session_key: String,
@@ -182,6 +187,7 @@ async fn single_client_loop(
     let SingleClientArgs {
         mut agent,
         base_dir,
+        workspace,
         mut messages,
         model,
         mut session_key,
@@ -201,7 +207,12 @@ async fn single_client_loop(
     let reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = Box::new(r);
     let mut writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = Box::new(w);
 
-    let wire_mode = super::uds_wire::ConnectionWireMode::default();
+    let wire_mode = super::uds_wire::ConnectionWireMode::legacy();
+    let workspace_event = super::protocol::AgentEvent::Workspace {
+        path: workspace.display().to_string(),
+    };
+    let line = workspace_event.to_json_line() + "\n";
+    let _ = super::uds_wire::write_event_line(&mut writer, &line, &wire_mode).await;
 
     inject_system_prompt(&mut messages, &system_prompt);
 

@@ -7,6 +7,85 @@ fn argv(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|s| s.to_string()).collect()
 }
 
+fn write_policy_snapshot(path: &std::path::Path) {
+    std::fs::write(path, r#"{"version":1,"tools":{"read":"both"}}"#).unwrap();
+}
+
+#[test]
+fn inherited_tool_policy_snapshot_rejects_top_level_without_unlinking() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let path = tmp.path().join("policy.json");
+    write_policy_snapshot(&path);
+
+    let mut e = String::new();
+    let r = parse_agent_flags(
+        &argv(&["--inherited-tool-policy-snapshot", path.to_str().unwrap()]),
+        &mut e,
+    );
+
+    assert!(r.is_none());
+    assert!(
+        path.exists(),
+        "invalid top-level use must not unlink caller file"
+    );
+    assert!(
+        e.contains("requires --spawned and --mode uds"),
+        "stderr={e}"
+    );
+}
+
+#[test]
+fn inherited_tool_policy_snapshot_rejects_spawned_non_uds_without_unlinking() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let path = tmp.path().join("policy.json");
+    write_policy_snapshot(&path);
+
+    let mut e = String::new();
+    let r = parse_agent_flags(
+        &argv(&[
+            "--spawned",
+            "--inherited-tool-policy-snapshot",
+            path.to_str().unwrap(),
+        ]),
+        &mut e,
+    );
+
+    assert!(r.is_none());
+    assert!(path.exists(), "non-UDS use must not unlink caller file");
+    assert!(
+        e.contains("requires --spawned and --mode uds"),
+        "stderr={e}"
+    );
+}
+
+#[test]
+fn inherited_tool_policy_snapshot_accepts_spawned_uds_and_unlinks() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let path = tmp.path().join("policy.json");
+    write_policy_snapshot(&path);
+
+    let mut e = String::new();
+    let f = parse_agent_flags(
+        &argv(&[
+            "--mode",
+            "uds",
+            "--spawned",
+            "--inherited-tool-policy-snapshot",
+            path.to_str().unwrap(),
+        ]),
+        &mut e,
+    )
+    .unwrap();
+
+    assert!(f.spawned);
+    assert!(f.uds_mode);
+    assert!(f.inherited_tool_policy.is_some());
+    assert!(
+        !path.exists(),
+        "valid child use should consume private file"
+    );
+}
+
 #[test]
 fn mode_uds_sets_uds_mode() {
     let mut e = String::new();
@@ -333,6 +412,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         workflow_guards: false,
         workflow_disabled: true,
         workflow_spec_path: None,
+        inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
     };
@@ -362,6 +442,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         workflow_guards: false,
         workflow_disabled: true,
         workflow_spec_path: None,
+        inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
     };

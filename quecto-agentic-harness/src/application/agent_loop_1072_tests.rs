@@ -94,6 +94,7 @@ fn agent_with(
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
 }
 
@@ -129,7 +130,7 @@ async fn in_place_stub_demotion_latches_durable_prefix_dirty() {
     ];
     // Budget forces rung 1 to stub turns 1–2; turns 3–4 are tail-pinned and
     // the post-stub total fits, so NOTHING is dropped: identity is unchanged.
-    let agent = agent_with(
+    let mut agent = agent_with(
         MockProvider::new(vec![text_response("ok")]),
         MockRegistry::new(),
         None,
@@ -170,7 +171,7 @@ async fn mid_run_shrink_below_pre_turn_length_reports_exact_ledger_and_dirty() {
 
     let mut registry = MockRegistry::new();
     registry.register(Arc::new(MockTool::new("bulk", "tool-output-payload")));
-    let agent = agent_with(
+    let mut agent = agent_with(
         MockProvider::new(vec![
             tool_call_response("bulk", "{}"),
             text_response("final answer"),
@@ -216,7 +217,7 @@ async fn runs_own_demoted_messages_still_appear_in_full_in_the_ledger() {
     let big_output = "y".repeat(4000); // ~1000 tokens per tool result
     let mut registry = MockRegistry::new();
     registry.register(Arc::new(MockTool::new("bulk", &big_output)));
-    let agent = agent_with(
+    let mut agent = agent_with(
         MockProvider::new(vec![
             tool_call_response("bulk", "{}"),
             tool_call_response("bulk", "{}"),
@@ -275,7 +276,7 @@ async fn runs_own_demoted_messages_still_appear_in_full_in_the_ledger() {
 async fn malformed_feedback_message_is_included_in_the_appended_ledger() {
     let mut registry = MockRegistry::new();
     registry.register(Arc::new(MockTool::new("echo", "echoed")));
-    let agent = agent_with(
+    let mut agent = agent_with(
         MockProvider::new_results(vec![
             Ok(tool_call_response("echo", "{}")),
             Err(DomainError::Provider(
@@ -405,7 +406,7 @@ async fn manifest_insertion_into_the_persisted_prefix_latches_dirty() {
         Message::assistant("persisted two", vec![]),
         Message::user("go"),
     ];
-    let agent = agent_with(
+    let mut agent = agent_with(
         MockProvider::new(vec![text_response("ok")]),
         MockRegistry::new(),
         Some(Arc::new(MemSpillStore::default())),
@@ -433,7 +434,7 @@ async fn manifest_insertion_into_the_persisted_prefix_latches_dirty() {
 async fn unchanged_static_manifest_does_not_latch_dirty() {
     let store: Arc<dyn crate::domain::session::ContextSpillStore> =
         Arc::new(MemSpillStore::default());
-    let agent = agent_with(
+    let mut agent = agent_with(
         MockProvider::new(vec![text_response("first"), text_response("second")]),
         MockRegistry::new(),
         Some(store),
@@ -471,7 +472,7 @@ async fn legacy_dynamic_manifest_migration_latches_dirty() {
         )
         .await
         .unwrap();
-    let agent = agent_with(
+    let mut agent = agent_with(
         MockProvider::new(vec![text_response("ok")]),
         MockRegistry::new(),
         Some(store),
@@ -508,7 +509,7 @@ async fn under_budget_run_leaves_the_durable_prefix_clean() {
         Message::user("hi"),
     ];
     let pre_run = messages.clone();
-    let agent = agent_with(
+    let mut agent = agent_with(
         MockProvider::new(vec![text_response("ok")]),
         MockRegistry::new(),
         None,

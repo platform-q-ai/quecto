@@ -118,6 +118,7 @@ fn agent(
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
 }
 
@@ -127,7 +128,7 @@ fn agent(
 async fn assistant_and_user_messages_are_spilled_at_creation() {
     let store = Arc::new(MemSpillStore::default());
     // Huge budget: no drop-time pressure — creation-time spilling only.
-    let loop_ = agent(
+    let mut loop_ = agent(
         vec![text_response("the reply")],
         store.clone(),
         190_000,
@@ -155,7 +156,7 @@ async fn assistant_and_user_messages_are_spilled_at_creation() {
 #[tokio::test]
 async fn creation_spill_ids_never_collide_across_prompts() {
     let store = Arc::new(MemSpillStore::default());
-    let loop_ = agent(
+    let mut loop_ = agent(
         vec![text_response("reply A"), text_response("reply B")],
         store.clone(),
         190_000,
@@ -190,7 +191,7 @@ async fn creation_spill_ids_never_collide_across_prompts() {
 #[tokio::test]
 async fn message_collapse_knob_threads_through_the_loop() {
     let store = Arc::new(MemSpillStore::default());
-    let loop_ = agent(vec![text_response("done")], store.clone(), 190_000, None)
+    let mut loop_ = agent(vec![text_response("done")], store.clone(), 190_000, None)
         .with_context_collapse_after_messages(1);
     let mut old_a = Message::assistant("an old answer with plenty of words in it", vec![]);
     old_a.turn = Some(1);
@@ -233,7 +234,7 @@ async fn non_default_pin_recent_turns_changes_pinning() {
     // Default pinning (2): turn 2 is outside the tail and must be pruned away
     // from full context under a 100-token budget.
     let store = Arc::new(MemSpillStore::default());
-    let default_loop = agent(vec![text_response("done")], store, 100, None);
+    let mut default_loop = agent(vec![text_response("done")], store, 100, None);
     let mut default_messages = history();
     default_loop.run_loop(&mut default_messages).await.unwrap();
     assert!(
@@ -246,7 +247,8 @@ async fn non_default_pin_recent_turns_changes_pinning() {
     // Non-default pinning (3): turn 2 is inside the tail and must survive in
     // full despite the same impossible budget.
     let store = Arc::new(MemSpillStore::default());
-    let wide_loop = agent(vec![text_response("done")], store, 100, None).with_pin_recent_turns(3);
+    let mut wide_loop =
+        agent(vec![text_response("done")], store, 100, None).with_pin_recent_turns(3);
     let mut wide_messages = history();
     wide_loop.run_loop(&mut wide_messages).await.unwrap();
     assert!(
@@ -265,7 +267,7 @@ async fn unmet_ceiling_is_reflected_in_the_context_pruned_audit_event() {
     let sink = Arc::new(CapturingAuditSink::default());
     // Budget of 5 tokens; the in-flight prompt alone (never droppable) blows
     // it, so the ceiling cannot be met by any amount of demotion.
-    let loop_ = agent(
+    let mut loop_ = agent(
         vec![text_response("done")],
         store,
         5,
@@ -380,7 +382,7 @@ async fn reported_max_context_tokens_matches_the_enforced_budget() {
 async fn met_ceiling_records_no_over_budget_prune() {
     let store = Arc::new(MemSpillStore::default());
     let sink = Arc::new(CapturingAuditSink::default());
-    let loop_ = agent(
+    let mut loop_ = agent(
         vec![text_response("done")],
         store,
         190_000,
@@ -420,7 +422,7 @@ async fn window_derived_budget_drives_pruning_not_the_larger_config() {
     };
 
     // Control: config budget alone (200k) leaves the history untouched.
-    let loose =
+    let mut loose =
         agent(vec![text_response("done")], store.clone(), 200_000, None).with_pin_recent_turns(0);
     let mut untouched = history();
     loose.run_loop(&mut untouched).await.unwrap();
@@ -431,7 +433,7 @@ async fn window_derived_budget_drives_pruning_not_the_larger_config() {
 
     // Same config, but the model's known window is 100 tokens: the effective
     // budget must reach the ceiling and demote the old message.
-    let clamped = agent(vec![text_response("done")], store, 200_000, None)
+    let mut clamped = agent(vec![text_response("done")], store, 200_000, None)
         .with_pin_recent_turns(0)
         .with_model_context_window(Some(100));
     let mut pruned = history();
@@ -449,7 +451,7 @@ async fn ladder_dropped_message_is_never_spilled_a_second_time() {
     let store = Arc::new(MemSpillStore::default());
     let big = "x".repeat(2000); // ~500 tokens
     // Budget so tight the ladder must stub AND drop the old assistant turn.
-    let loop_ =
+    let mut loop_ =
         agent(vec![text_response("done")], store.clone(), 20, None).with_pin_recent_turns(0);
     let mut old = Message::assistant(&big, vec![]);
     old.turn = Some(1);
@@ -500,6 +502,7 @@ fn agent_loop_config_carries_context_knobs_as_constructor_fields() {
         pin_recent_turns: 5,
         context_collapse_after_messages: 7,
         model_context_window: Some(48_000),
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
     assert_eq!(agent.context_knob_snapshot(), (5, 7));
     assert_eq!(agent.model_context_window, Some(48_000));

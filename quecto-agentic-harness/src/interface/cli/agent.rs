@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use super::CliContext;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
@@ -14,7 +13,6 @@ use crate::infrastructure::persistence::session_store::FileSessionStore;
 /// Max byte length for `--socket` paths.  Linux allows 108, macOS 104;
 /// we use the stricter limit for portability.
 const MAX_SOCKET_PATH_BYTES: usize = 104;
-
 /// Bundles the stdout/stderr pair passed through the agent pipeline.
 pub(crate) struct AgentOutput<'a> {
     pub(crate) stdout: &'a mut String,
@@ -30,6 +28,7 @@ pub(crate) enum DeadlineResult {
 }
 
 mod flag_parse;
+mod flag_private;
 pub(crate) use flag_parse::AgentFlags;
 use flag_parse::{
     next_arg, parse_agent_mode, parse_effort_level, parse_pos_u32, parse_pos_u64,
@@ -55,6 +54,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut workflow_guards = false;
     let mut workflow_spec_path: Option<std::path::PathBuf> = None;
     let mut parent_id: Option<String> = None;
+    let mut inherited_tool_policy_path: Option<std::path::PathBuf> = None;
     let mut spawned = false;
     let mut i = 0;
 
@@ -144,6 +144,11 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 parent_id = Some(val.to_string());
                 i += 2;
             }
+            "--inherited-tool-policy-snapshot" => {
+                inherited_tool_policy_path =
+                    Some(flag_private::parse_snapshot_path(args, i, stderr)?);
+                i += 2;
+            }
             _ => {
                 i += 1;
             }
@@ -164,7 +169,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         return None;
     }
 
-    let flags = AgentFlags {
+    let mut flags = AgentFlags {
         session_name,
         no_session,
         message,
@@ -182,10 +187,17 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         workflow_guards,
         workflow_disabled: no_workflow_requested,
         workflow_spec_path,
+        inherited_tool_policy: None,
         parent_id,
         spawned,
     };
-    validate_agent_flags(flags, stderr)
+    flags = validate_agent_flags(flags, stderr)?;
+
+    if let Some(path) = inherited_tool_policy_path {
+        flag_private::load_inherited_tool_policy_for_valid_child(&path, stderr, &mut flags)?;
+    }
+
+    Some(flags)
 }
 
 /// Post-parse validation of mutually exclusive / dependent flags.
@@ -269,6 +281,7 @@ pub(crate) struct AgentBuildResult {
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub provider_reload: crate::interface::cli::provider_reload::ProviderReload,
     pub provider_reload_inputs: crate::interface::cli::provider_reload::ProviderReloadInputs,
+    pub workspace: std::path::PathBuf,
 }
 
 pub(crate) fn build_agent_from_config(
@@ -320,8 +333,7 @@ pub(crate) fn build_agent_from_config(
         http_client.clone(),
     );
 
-    // Workflow template discovery (slice 2) resolves against the process
-    // working directory and the user's home directory.
+    // Workflow templates resolve against CWD and home.
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let home_dir = crate::infrastructure::tools::path_utils::home_dir();
     let ToolRegistryBuild {
@@ -334,6 +346,7 @@ pub(crate) fn build_agent_from_config(
         notification_rx,
         subagent_registry,
         workflow_state,
+        workspace,
     } = match build_tool_registry(ToolRegistryArgs {
         base_dir,
         config: &config,
@@ -400,6 +413,11 @@ pub(crate) fn build_agent_from_config(
         pin_recent_turns: config.agents.defaults.pin_recent_turns,
         context_collapse_after_messages: config.agents.defaults.context_collapse_after_messages,
         model_context_window: window,
+        tool_profile_context: if flags.spawned {
+            crate::domain::tool::ToolProfileContext::Child
+        } else {
+            crate::domain::tool::ToolProfileContext::Parent
+        },
     })
     .with_max_tool_iterations(
         flags
@@ -419,6 +437,7 @@ pub(crate) fn build_agent_from_config(
         workflow_state,
         provider_reload,
         provider_reload_inputs,
+        workspace,
     })
 }
 
@@ -427,7 +446,7 @@ use agent_tool_registry::{ToolRegistryArgs, ToolRegistryBuild, build_tool_regist
 
 pub(crate) fn run_agent_session(
     base_dir: &std::path::Path,
-    agent: AgentLoopImpl,
+    mut agent: AgentLoopImpl,
     flags: &AgentFlags,
     out: &mut AgentOutput<'_>,
 ) -> i32 {
@@ -481,7 +500,7 @@ pub(crate) fn run_agent_session(
     messages.push(Message::user(message.to_string()));
 
     let agent_result = if let Some(secs) = flags.max_time {
-        match run_with_deadline(&rt, &agent, &mut messages, secs) {
+        match run_with_deadline(&rt, &mut agent, &mut messages, secs) {
             DeadlineResult::Completed(inner) => inner,
             DeadlineResult::TimedOut => {
                 out.stderr.push_str("max-time exceeded\n");
@@ -537,7 +556,7 @@ use crate::interface::shared::scrub_ephemeral_spill;
 /// per-tool and HTTP client timeouts), then the scope exits.
 pub(crate) fn run_with_deadline(
     rt: &tokio::runtime::Runtime,
-    agent: &AgentLoopImpl,
+    agent: &mut AgentLoopImpl,
     messages: &mut Vec<Message>,
     timeout_secs: u64,
 ) -> DeadlineResult {
@@ -560,11 +579,7 @@ pub(crate) fn run_with_deadline(
 }
 
 /// Resolve the UDS session key. Ephemeral → empty (no persistence). An explicit
-/// `--session` keeps the `cli:` namespace so internal sessions (sub-agents,
-/// agent-manager) stay out of the user-facing `/resume` list. With no
-/// `--session`, start a fresh per-launch user chat (`chat-` namespace) so each
-/// interactive launch is a distinct, resumable conversation (PRD: new chat per
-/// launch).
+/// Resolve UDS persistence key.
 fn resolve_uds_session_key(ephemeral: bool, session_name: Option<&str>) -> String {
     if ephemeral {
         String::new()
@@ -671,6 +686,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     let code = crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
         agent,
         base_dir: &base_dir,
+        workspace: &build.workspace,
         session_key,
         model,
         ephemeral,

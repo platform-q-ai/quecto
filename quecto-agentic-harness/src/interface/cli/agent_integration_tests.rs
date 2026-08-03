@@ -67,6 +67,7 @@ fn test_flags(msg: Option<&str>, session: Option<&str>, sys: Option<&str>) -> Ag
         workflow_guards: false,
         workflow_disabled: false,
         workflow_spec_path: None,
+        inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
     }
@@ -85,7 +86,6 @@ fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
         workspace,
         sandbox,
         Default::default(),
-        false,
     );
     AgentLoopImpl::new(AgentLoopConfig {
         provider,
@@ -104,6 +104,7 @@ fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1)
 }
@@ -485,9 +486,8 @@ fn test_run_with_deadline_completes_before_timeout() {
         workspace,
         sandbox,
         Default::default(),
-        false,
     );
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
         model: "test-model".to_string(),
@@ -504,12 +504,13 @@ fn test_run_with_deadline_completes_before_timeout() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
     let rt = crate::interface::cli::build_tokio_runtime().unwrap();
     let mut messages = vec![Message::user("test")];
-    let result = run_with_deadline(&rt, &agent, &mut messages, 30);
+    let result = run_with_deadline(&rt, &mut agent, &mut messages, 30);
     match result {
         DeadlineResult::Completed(inner) => {
             assert!(inner.is_err(), "expected provider error");
@@ -523,10 +524,10 @@ fn test_run_with_deadline_completes_before_timeout() {
 #[test]
 fn test_run_with_deadline_exercises_timeout_path() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let agent = make_test_agent(tmp.path());
+    let mut agent = make_test_agent(tmp.path());
     let rt = crate::interface::cli::build_tokio_runtime().unwrap();
     let mut messages = vec![Message::user("test")];
-    let result = run_with_deadline(&rt, &agent, &mut messages, 1);
+    let result = run_with_deadline(&rt, &mut agent, &mut messages, 1);
     match result {
         DeadlineResult::Completed(inner) => {
             assert!(inner.is_err());

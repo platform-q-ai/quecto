@@ -19,7 +19,7 @@ async fn retries_retryable_provider_failures_before_returning_success() {
             crate::infrastructure::providers::retry::RetryConfig::no_delay(4),
         ),
     );
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: retrying,
         tool_registry: Box::new(MockRegistry::default()),
         model: "test".into(),
@@ -36,6 +36,7 @@ async fn retries_retryable_provider_failures_before_returning_success() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -56,7 +57,7 @@ async fn retries_streaming_provider_failures_before_any_output() {
             "stream recovered",
         ))],
     ]));
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: provider.clone(),
         tool_registry: Box::new(MockRegistry::default()),
         model: "test".into(),
@@ -73,6 +74,7 @@ async fn retries_streaming_provider_failures_before_any_output() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -89,7 +91,7 @@ async fn does_not_retry_streaming_provider_failures_after_output() {
         crate::domain::provider::StreamEvent::TextDelta("partial".to_string()),
         crate::domain::provider::StreamEvent::Error("HTTP 503 from Codex".to_string()),
     ]]));
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: provider.clone(),
         tool_registry: Box::new(MockRegistry::default()),
         model: "test".into(),
@@ -106,6 +108,7 @@ async fn does_not_retry_streaming_provider_failures_after_output() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -127,7 +130,7 @@ async fn does_not_retry_non_streaming_openai_insufficient_quota_429() {
             crate::infrastructure::providers::retry::RetryConfig::no_delay(4),
         ),
     );
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: retrying,
         tool_registry: Box::new(MockRegistry::default()),
         model: "test".into(),
@@ -144,6 +147,7 @@ async fn does_not_retry_non_streaming_openai_insufficient_quota_429() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -162,7 +166,7 @@ async fn does_not_retry_streaming_openai_insufficient_quota_429() {
             r#"HTTP 429 from OpenAI: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}"#.to_string(),
         ),
     ]]));
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: provider.clone(),
         tool_registry: Box::new(MockRegistry::default()),
         model: "test".into(),
@@ -179,6 +183,7 @@ async fn does_not_retry_streaming_openai_insufficient_quota_429() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -196,7 +201,7 @@ async fn provider_context_limit_errors_are_actionable() {
         "HTTP 400 from OpenAI: maximum context length is 100000 tokens; requested 100001 tokens"
             .to_string(),
     ))]));
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(MockRegistry::default()),
         model: "test".into(),
@@ -213,6 +218,7 @@ async fn provider_context_limit_errors_are_actionable() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -241,7 +247,7 @@ async fn retries_empty_streaming_done_before_success() {
             "stream recovered",
         ))],
     ]));
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: provider.clone(),
         tool_registry: Box::new(MockRegistry::default()),
         model: "test".into(),
@@ -258,6 +264,7 @@ async fn retries_empty_streaming_done_before_success() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 
@@ -279,7 +286,7 @@ async fn empty_streaming_done_with_max_tokens_preserves_stop_reason() {
             thinking_blocks: vec![],
         }),
     ]]));
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: provider.clone(),
         tool_registry: Box::new(MockRegistry::default()),
         model: "test".into(),
@@ -296,6 +303,7 @@ async fn empty_streaming_done_with_max_tokens_preserves_stop_reason() {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(1);
 

@@ -31,6 +31,7 @@ fn make_repl() -> (ReplLoop<Cursor<Vec<u8>>, Vec<u8>>, tempfile::TempDir) {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
     let session_store = FileSessionStore::new(tmp.path());
     let session = ReplSession {

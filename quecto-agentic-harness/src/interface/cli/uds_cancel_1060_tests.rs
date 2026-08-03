@@ -344,6 +344,7 @@ async fn run_turn(
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
     let mut messages: Vec<Message> = vec![];
     let mut session = AgentSession::new("stub".into(), "cli:test-1060".into());
@@ -399,6 +400,7 @@ async fn run_streaming_turn(deltas: Vec<&str>, response: &str, prompt: &str) -> 
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
     let mut messages: Vec<Message> = vec![];
     let mut session = AgentSession::new("stub".into(), "cli:test-1060".into());

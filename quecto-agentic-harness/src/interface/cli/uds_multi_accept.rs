@@ -26,6 +26,7 @@ pub(super) struct AcceptLoopArgs {
     /// Live workflow engine (#914): read mid-turn so a busy `get_state` reports
     /// current step progress, not the turn-boundary frozen snapshot.
     pub(super) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
+    pub(super) workspace_path: std::path::PathBuf,
 }
 
 /// Spawn the accept loop that listens for new client connections.
@@ -46,6 +47,7 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
         busy,
         subagent_registry,
         workflow_state,
+        workspace_path,
     } = args;
     tokio::spawn(async move {
         loop {
@@ -73,15 +75,27 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                     super::uds_ext_protocol::register_client_writer(
                         &client_tool_registry,
                         client_id,
-                        targeted_tx,
+                        targeted_tx.clone(),
                     );
 
                     let broadcast_rx = broadcast_tx.subscribe();
-                    // The busy-connect snapshot is pushed BEFORE the client
-                    // has spoken, i.e. before its framing is negotiated, so
-                    // it is written as legacy NDJSON for the deprecation
-                    // window — framed clients sniff each incoming message
-                    // (#1059 / ADR-0008 part 1).
+                    let workspace_line = super::protocol::AgentEvent::Workspace {
+                        path: workspace_path.display().to_string(),
+                    }
+                    .to_json_line()
+                        + "\n";
+                    // Connect-time events are pushed BEFORE the client has
+                    // spoken, i.e. before its framing is negotiated, so they
+                    // are written as legacy NDJSON for the deprecation window
+                    // — framed clients sniff each incoming message (#1059 /
+                    // ADR-0008 part 1).
+                    {
+                        use tokio::io::AsyncWriteExt;
+                        if let Err(e) = stream.write_all(workspace_line.as_bytes()).await {
+                            tracing::debug!("connect-time workspace event not delivered: {e}");
+                            continue;
+                        }
+                    }
                     if busy.load(std::sync::atomic::Ordering::SeqCst) {
                         use tokio::io::AsyncWriteExt;
                         let snapshot_lines = super::uds_snapshots::busy_connect_snapshot_lines(

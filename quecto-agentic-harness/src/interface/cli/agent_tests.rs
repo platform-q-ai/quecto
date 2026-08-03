@@ -426,6 +426,7 @@ fn test_build_agent_from_config_no_config_file() {
         workflow_guards: false,
         workflow_disabled: false,
         workflow_spec_path: None,
+        inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
     };
@@ -475,6 +476,7 @@ fn test_build_agent_from_config_explicit_missing_errors() {
         workflow_guards: false,
         workflow_disabled: false,
         workflow_spec_path: None,
+        inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
     };
@@ -509,6 +511,7 @@ fn test_build_agent_from_config_invalid_json() {
         workflow_guards: false,
         workflow_disabled: false,
         workflow_spec_path: None,
+        inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
     };
@@ -545,6 +548,7 @@ fn test_build_agent_from_config_no_providers() {
         workflow_guards: false,
         workflow_disabled: false,
         workflow_spec_path: None,
+        inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
     };
@@ -581,6 +585,7 @@ fn test_build_agent_from_config_with_model_override() {
         workflow_guards: false,
         workflow_disabled: false,
         workflow_spec_path: None,
+        inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
     };

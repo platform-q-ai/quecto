@@ -7,14 +7,17 @@
 //! on newline framing for agents that did not announce protocol v2. The
 //! client is async (tokio) and designed to run in a background task, feeding
 //! events to the TUI's main render loop.
-
 use quecto_line_io::{FrameError, WireMode, read_frame_or_legacy_line_into, write_message};
 use serde::{Deserialize, Serialize};
+#[path = "client_policy_types.rs"]
+mod client_policy_types;
+pub use client_policy_types::{
+    ToolCatalogueEntry, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyResult, ToolScope,
+};
 use std::path::Path;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
-
 /// Maximum line size from the agent — derived from the shared protocol cap
 /// (`quecto_line_io::PROTOCOL_LINE_CAP_BYTES`, 8 MiB) so the harness emitter
 /// and this reader can never disagree (#1047 review).
@@ -22,18 +25,14 @@ use tokio::sync::mpsc;
 /// Public so out-of-crate tests (the harness BDD suite) can build boundary
 /// frames against the real cap instead of a duplicated literal.
 pub const MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
-
 /// Bound on the ordered outbound command writer FIFO (`Client::connect`).
 ///
 /// Sized for bursty fan-in (subagent polls, recovery `get_message` batches)
 /// while staying bounded. Entries are owned serialized `String`s; the wire
 /// per-message cap is still [`MAX_LINE_BYTES`] at write time (#1238).
 pub const COMMAND_WRITER_QUEUE_CAPACITY: usize = 4096;
-
 pub use client_classes::{COMMAND_WRITER_INTERACTIVE_FLOOR, COMMAND_WRITER_USER_RESERVED};
-
 // ─── Protocol types (subset matching quecto's wire format) ────────────────────
-
 /// A command sent from the TUI to the agent.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -97,6 +96,17 @@ pub enum Command {
     GetSessionStats {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+    },
+    GetToolCatalogue {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    SetToolPolicy {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        mutations: Vec<ToolPolicyMutation>,
+        mode: ToolPolicyApplyMode,
     },
     ListModels {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -168,12 +178,14 @@ pub enum Command {
         since_rev: u64,
     },
 }
-
 /// An event received from the agent.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     AgentStart,
+    Workspace {
+        path: String,
+    },
     /// Agent finished. Full message content is not re-carried (#1060); optional
     /// `messageRefs` identify this run's messages for fetch-on-miss recovery.
     AgentEnd {
@@ -225,9 +237,12 @@ pub enum Event {
     },
     #[serde(rename_all = "camelCase")]
     ToolCatalogueChanged {
+        #[serde(default)]
         changed_tools: Vec<String>,
-        before: Vec<serde_json::Value>,
-        after: Vec<serde_json::Value>,
+        #[serde(default)]
+        before: Vec<ToolCatalogueEntry>,
+        #[serde(default)]
+        after: Vec<ToolCatalogueEntry>,
         reason: String,
     },
     /// Subagent state changed — full list replacement (#525).
@@ -284,11 +299,19 @@ pub enum Event {
         #[serde(rename = "availableTemplates", default)]
         available_templates: Option<Vec<serde_json::Value>>,
     },
+    #[serde(rename_all = "camelCase")]
+    ToolPolicyChanged {
+        #[serde(default)]
+        changed_tools: Vec<String>,
+        #[serde(default)]
+        results: Vec<ToolPolicyResult>,
+        apply_mode: String,
+        reason: String,
+    },
     /// Catch-all for unknown/future event types (forward-compatible).
     #[serde(other)]
     Unknown,
 }
-
 /// Wire-format subagent info from `subagent_state_changed` event (#524/#525).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -315,7 +338,6 @@ pub struct SubagentInfoEvent {
     #[serde(default)]
     pub read_only: bool,
 }
-
 /// Workflow snapshot mirror carried on a subagent entry (PRD Stage B).
 /// Field names match the server's snake_case `WorkflowSnapshot` serialization.
 #[derive(Debug, Clone, Deserialize)]
@@ -324,9 +346,7 @@ pub struct SubagentWorkflow {
     pub steps_completed: u32,
     pub steps_total: u32,
 }
-
 // ─── Result text extraction ───────────────────────────────────────────────────
-
 /// Extract the first text content from a tool result JSON value.
 ///
 /// The server sends tool results as:
@@ -347,9 +367,7 @@ pub fn extract_result_text(result: &serde_json::Value) -> String {
         .unwrap_or("")
         .to_string()
 }
-
 // ─── Client ───────────────────────────────────────────────────────────────────
-
 /// Error type for client operations.
 #[derive(Debug)]
 pub enum ClientError {
@@ -361,7 +379,6 @@ pub enum ClientError {
     /// command was not enqueued. See [`CommandSender::try_send`].
     Backpressure,
 }
-
 impl std::fmt::Display for ClientError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -372,19 +389,16 @@ impl std::fmt::Display for ClientError {
         }
     }
 }
-
 impl From<std::io::Error> for ClientError {
     fn from(e: std::io::Error) -> Self {
         Self::Io(e)
     }
 }
-
 impl From<serde_json::Error> for ClientError {
     fn from(e: serde_json::Error) -> Self {
         Self::Json(e)
     }
 }
-
 /// A cloneable sender for commands to the agent.
 ///
 /// Multiple tasks can hold a `CommandSender` to send commands concurrently.
@@ -392,7 +406,6 @@ impl From<serde_json::Error> for ClientError {
 pub struct CommandSender {
     tx: mpsc::Sender<String>,
 }
-
 impl Command {
     /// Non-sensitive command kind for user-facing diagnostics.
     pub fn kind(&self) -> &'static str {
@@ -406,6 +419,8 @@ impl Command {
             Self::GetMessagesTail { .. } => "get_messages_tail",
             Self::GetMessage { .. } => "get_message",
             Self::GetSessionStats { .. } => "get_session_stats",
+            Self::GetToolCatalogue { .. } => "get_tool_catalogue",
+            Self::SetToolPolicy { .. } => "set_tool_policy",
             Self::ListModels { .. } => "list_models",
             Self::ListSessions { .. } => "list_sessions",
             Self::NewSession { .. } => "new_session",
@@ -421,7 +436,6 @@ impl Command {
         }
     }
 }
-
 /// Serialize a command to its JSON-lines wire form (JSON + trailing newline).
 ///
 /// Both [`CommandSender::send`] and [`Client::send`] write the same framed wire
@@ -431,7 +445,6 @@ fn serialize_command(cmd: &Command) -> Result<String, ClientError> {
     json.push('\n');
     Ok(json)
 }
-
 impl CommandSender {
     /// Send a command to the agent.
     pub async fn send(&mut self, cmd: &Command) -> Result<(), ClientError> {
@@ -440,7 +453,6 @@ impl CommandSender {
             .await
             .map_err(|_| ClientError::Disconnected)
     }
-
     /// Enqueue a command onto the ordered writer channel WITHOUT awaiting.
     ///
     /// A sequence of `try_send` calls from a single caller preserves its call
@@ -492,7 +504,6 @@ impl CommandSender {
             })
     }
 }
-
 /// A UDS client connection to a quecto agent.
 ///
 /// The client provides:
@@ -511,21 +522,18 @@ pub struct Client {
     /// session silently appearing frozen (#1047).
     dropped_oversized: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
-
 impl Client {
     /// Connect to a quecto agent at the given socket path, speaking
     /// length-prefixed frames (protocol v2, #1059).
     pub async fn connect(socket_path: &Path) -> Result<Self, ClientError> {
         Self::connect_with_wire_mode(socket_path, WireMode::Framed).await
     }
-
     /// Connect to an agent that did NOT announce protocol v2 in its socket
     /// announcement: commands are written as legacy NDJSON lines for the
     /// deprecation window (ADR-0008).
     pub async fn connect_legacy(socket_path: &Path) -> Result<Self, ClientError> {
         Self::connect_with_wire_mode(socket_path, WireMode::LegacyLine).await
     }
-
     async fn connect_with_wire_mode(
         socket_path: &Path,
         mode: WireMode,
@@ -536,7 +544,6 @@ impl Client {
         let connect_dispatch = tracing::dispatcher::get_default(Clone::clone);
         let stream = UnixStream::connect(socket_path).await?;
         let (read_half, mut write_half) = tokio::io::split(stream);
-
         // Command writer task: receives serialized JSON lines and writes them
         // in the negotiated framing. In framed mode an empty hello frame
         // announces the framing up front so the agent replies framed even
@@ -553,7 +560,6 @@ impl Client {
         // embedder installed only a thread-scoped subscriber. The TUI itself
         // installs none, so these events remain no-ops in the shipped binary.
         use tracing::instrument::WithSubscriber;
-
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(COMMAND_WRITER_QUEUE_CAPACITY);
         let writer_task = async move {
             if mode == WireMode::Framed
@@ -585,11 +591,9 @@ impl Client {
             }
         };
         tokio::spawn(writer_task.with_subscriber(connect_dispatch.clone()));
-
         let (tx, rx) = mpsc::channel(256);
         let dropped_oversized = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let dropped_counter = std::sync::Arc::clone(&dropped_oversized);
-
         // Spawn background event reader. Each incoming message is sniffed as
         // a length-prefixed frame or a legacy NDJSON line (deprecation
         // window, #1059), with over-cap messages rejected while reading —
@@ -653,21 +657,18 @@ impl Client {
             }
         };
         tokio::spawn(reader_task.with_subscriber(connect_dispatch));
-
         Ok(Self {
             cmd_tx,
             event_rx: rx,
             dropped_oversized,
         })
     }
-
     /// How many event lines the reader has dropped for exceeding
     /// [`MAX_LINE_BYTES`] (#1047). The UI polls this to surface the drop.
     pub fn dropped_oversized_events(&self) -> u64 {
         self.dropped_oversized
             .load(std::sync::atomic::Ordering::Relaxed)
     }
-
     /// Test-only: simulate the reader recording `n` oversized-line drops, so
     /// UI-surfacing tests don't need to stream a >8 MiB frame.
     #[cfg(any(test, feature = "test-harness"))]
@@ -675,7 +676,6 @@ impl Client {
         self.dropped_oversized
             .fetch_add(n, std::sync::atomic::Ordering::Relaxed);
     }
-
     /// Send a command to the agent.
     pub async fn send(&mut self, cmd: &Command) -> Result<(), ClientError> {
         self.cmd_tx
@@ -683,27 +683,23 @@ impl Client {
             .await
             .map_err(|_| ClientError::Disconnected)
     }
-
     /// Get a cloneable command sender for use in spawned tasks.
     pub fn clone_sender(&self) -> CommandSender {
         CommandSender {
             tx: self.cmd_tx.clone(),
         }
     }
-
     /// Receive the next event from the agent.
     ///
     /// Returns `None` if the connection is closed.
     pub async fn recv(&mut self) -> Option<Event> {
         self.event_rx.recv().await
     }
-
     /// Try to receive an event without blocking (tests only).
     #[cfg(test)]
     pub fn try_recv(&mut self) -> Option<Event> {
         self.event_rx.try_recv().ok()
     }
-
     #[cfg(any(test, feature = "test-harness"))]
     pub fn disconnected_for_tests() -> Self {
         let (cmd_tx, cmd_rx) = mpsc::channel::<String>(1);
@@ -716,34 +712,32 @@ impl Client {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "client_defence_tests.rs"]
-mod client_defence_tests;
-
-#[cfg(test)]
-#[path = "client_tests.rs"]
-mod tests;
-
-#[cfg(test)]
-#[path = "client_sync_tests.rs"]
-mod client_sync_tests;
-
 #[cfg(test)]
 #[path = "client_1060_tests.rs"]
 mod client_1060_tests;
-
 #[cfg(test)]
 #[path = "client_1094_tests.rs"]
 mod client_1094_tests;
-
-#[path = "client_classes.rs"]
-mod client_classes;
-
 #[cfg(test)]
 #[path = "client_1238_tests.rs"]
 mod client_1238_tests;
-
+#[path = "client_classes.rs"]
+mod client_classes;
+#[cfg(test)]
+#[path = "client_defence_tests.rs"]
+mod client_defence_tests;
 #[cfg(test)]
 #[path = "client_legacy_tests.rs"]
 mod client_legacy_tests;
+#[cfg(test)]
+#[path = "client_policy_tests.rs"]
+mod client_policy_tests;
+#[cfg(test)]
+#[path = "client_sync_tests.rs"]
+mod client_sync_tests;
+#[cfg(test)]
+#[path = "client_workspace_tests.rs"]
+mod client_workspace_tests;
+#[cfg(test)]
+#[path = "client_tests.rs"]
+mod tests;

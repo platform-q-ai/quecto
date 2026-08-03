@@ -15,6 +15,7 @@ pub(super) struct ToolRegistryBuild {
     pub(super) subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     pub(super) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
+    pub(super) workspace: std::path::PathBuf,
 }
 
 pub(super) struct ToolRegistryArgs<'a> {
@@ -91,10 +92,14 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
     let runtime = crate::interface::shared::build_tool_runtime(
         crate::interface::shared::ToolRuntimeBuildArgs {
             entrypoint,
+            profile_context:
+                crate::interface::tool_runtime::ToolRuntimeProfileContext::from_spawned(
+                    flags.spawned,
+                ),
             base_dir,
             config,
             http_client,
-            workspace,
+            workspace: workspace.clone(),
             sandbox,
             exec_options,
             session_key,
@@ -102,6 +107,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             restrict_to_workspace,
             parent_session_name: flags.session_name.clone(),
             disabled_tools: &flags.disabled_tools,
+            inherited_tool_policy: flags.inherited_tool_policy.clone(),
             workflow: crate::interface::shared::ToolRuntimeWorkflowPolicy {
                 workflow_disabled: flags.workflow_disabled,
                 workflow_guards: flags.workflow_guards,
@@ -135,6 +141,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         notification_rx: runtime.notification_rx,
         subagent_registry: runtime.subagent_registry,
         workflow_state: runtime.workflow_state,
+        workspace,
     })
 }
 

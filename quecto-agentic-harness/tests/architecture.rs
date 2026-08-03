@@ -1159,7 +1159,11 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// The child-progress-freeze fix (2026-07-29) added two test-harness probe
 /// sites in `shell/tui_harness_probes.rs` (full-channel child feed setup for
 /// the refused-Sync BDD scenarios) — probe-only, no production growth.
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 99;
+/// PR #1367's tool-policy work adds catalogue/policy DTO seams in shell code;
+/// keep them ratcheted so future changes cannot grow usage silently.
+/// #1350 adds one required workspace wire event handler in the TUI shell so
+/// socket clients can resolve the harness workspace instead of their CWD.
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 116;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///

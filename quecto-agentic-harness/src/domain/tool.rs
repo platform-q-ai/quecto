@@ -3,7 +3,9 @@ use std::future::Future;
 use std::pin::Pin;
 
 use super::error::DomainError;
-use super::tool_descriptor::{ToolAvailability, ToolCatalogueEntry, ToolDescriptor};
+use super::tool_descriptor::{
+    ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolDescriptor,
+};
 
 /// Metadata describing a tool for the LLM.
 ///
@@ -70,6 +72,28 @@ pub trait Tool: Send + Sync {
     /// Notify stateful tools that the active session key changed.
     fn set_session_key(&self, _session_key: String) {}
 
+    /// Update a stateful spawn-like tool with the current child policy ceiling.
+    fn set_inherited_child_policy_snapshot_for_spawn(
+        &self,
+        _snapshot: std::collections::BTreeMap<
+            String,
+            crate::domain::tool_descriptor::ProfileAvailabilityScope,
+        >,
+    ) {
+    }
+
+    /// Inspect a stateful spawn-like tool's current child policy ceiling.
+    fn inherited_child_policy_snapshot_for_spawn(
+        &self,
+    ) -> Option<
+        std::collections::BTreeMap<
+            String,
+            crate::domain::tool_descriptor::ProfileAvailabilityScope,
+        >,
+    > {
+        None
+    }
+
     /// Execute the tool with JSON-encoded arguments.
     ///
     /// See the trait-level docs for the error-handling contract:
@@ -97,9 +121,20 @@ pub trait ToolGuard: Send + Sync {
 ///
 /// Use this role when callers only need schema/name visibility and should not
 /// execute or mutate the registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolProfileContext {
+    Parent,
+    Child,
+}
+
 pub trait ToolCatalog: Send + Sync {
     /// Return enabled tool definitions visible to the model.
     fn definitions(&self) -> &[ToolDefinition];
+
+    /// Return enabled tool definitions visible to the requested profile context.
+    fn definitions_for(&self, _context: ToolProfileContext) -> &[ToolDefinition] {
+        self.definitions()
+    }
 
     /// Return descriptors for all registered tools, including disabled tools
     /// hidden from model-visible definitions.
@@ -149,6 +184,7 @@ pub trait ToolExecutor: Send + Sync {
 pub struct ToolPolicyMutation {
     pub name: String,
     pub availability: ToolAvailability,
+    pub scope: ProfileAvailabilityScope,
     pub reason: String,
 }
 
@@ -157,6 +193,7 @@ impl ToolPolicyMutation {
         Self {
             name: name.into(),
             availability: ToolAvailability::Enabled,
+            scope: ProfileAvailabilityScope::Both,
             reason: reason.into(),
         }
     }
@@ -165,18 +202,44 @@ impl ToolPolicyMutation {
         Self {
             name: name.into(),
             availability: ToolAvailability::Disabled,
+            scope: ProfileAvailabilityScope::None,
+            reason: reason.into(),
+        }
+    }
+
+    pub fn set_scope(
+        name: impl Into<String>,
+        scope: ProfileAvailabilityScope,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            availability: ToolAvailability::from(scope),
+            scope,
             reason: reason.into(),
         }
     }
 }
 
+impl From<ProfileAvailabilityScope> for ToolAvailability {
+    fn from(scope: ProfileAvailabilityScope) -> Self {
+        if matches!(scope, ProfileAvailabilityScope::None) {
+            Self::Disabled
+        } else {
+            Self::Enabled
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum ToolPolicyApplyMode {
     ImmediateIfIdle,
     AtNextTurnBoundary,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum ToolPolicyMutationStatus {
     Applied,
     AlreadyInState,
@@ -185,9 +248,11 @@ pub enum ToolPolicyMutationStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolPolicyMutationResult {
     pub name: String,
     pub requested_availability: ToolAvailability,
+    pub requested_scope: ProfileAvailabilityScope,
     pub status: ToolPolicyMutationStatus,
     pub before: Option<ToolCatalogueEntry>,
     pub after: Option<ToolCatalogueEntry>,
@@ -195,6 +260,7 @@ pub struct ToolPolicyMutationResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolPolicyReconciliation {
     pub mode: ToolPolicyApplyMode,
     pub results: Vec<ToolPolicyMutationResult>,
@@ -214,6 +280,7 @@ pub trait ToolPolicyMutator: Send + Sync {
                 .map(|mutation| ToolPolicyMutationResult {
                     name: mutation.name.clone(),
                     requested_availability: mutation.availability,
+                    requested_scope: mutation.scope,
                     status: ToolPolicyMutationStatus::UnknownTool,
                     before: None,
                     after: None,

@@ -25,6 +25,7 @@ fn flags_for_wiring_test() -> AgentFlags {
         workflow_guards: false,
         workflow_disabled: false,
         workflow_spec_path: None,
+        inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
     }

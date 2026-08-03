@@ -76,8 +76,8 @@ impl quecto::domain::tool::ToolPolicyMutator for EmptyRegistry {}
 
 impl quecto::domain::tool::ToolRegistry for EmptyRegistry {}
 
-fn agent_loop(reply: &str) -> Arc<dyn AgentLoop> {
-    Arc::new(AgentLoopImpl::new(AgentLoopConfig {
+fn agent_loop(reply: &str) -> Box<dyn AgentLoop> {
+    Box::new(AgentLoopImpl::new(AgentLoopConfig {
         provider: Arc::new(TextProvider {
             reply: reply.into(),
         }),
@@ -96,6 +96,7 @@ fn agent_loop(reply: &str) -> Arc<dyn AgentLoop> {
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     }))
 }
 
@@ -133,8 +134,8 @@ impl AuditSink for RecordingSink {
     }
 }
 
-fn failing_agent_loop(body: &str, sink: Arc<dyn AuditSink>) -> Arc<dyn AgentLoop> {
-    Arc::new(AgentLoopImpl::new(AgentLoopConfig {
+fn failing_agent_loop(body: &str, sink: Arc<dyn AuditSink>) -> Box<dyn AgentLoop> {
+    Box::new(AgentLoopImpl::new(AgentLoopConfig {
         provider: Arc::new(FailingProvider { body: body.into() }),
         tool_registry: Box::new(EmptyRegistry),
         model: "test-model".into(),
@@ -151,6 +152,7 @@ fn failing_agent_loop(body: &str, sink: Arc<dyn AuditSink>) -> Arc<dyn AgentLoop
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
     }))
 }
 
@@ -166,7 +168,7 @@ async fn terminal_provider_failure_persists_full_redacted_body_via_audit() {
     );
 
     let sink = Arc::new(RecordingSink::default());
-    let agent = failing_agent_loop(&body, sink.clone());
+    let mut agent = failing_agent_loop(&body, sink.clone());
     let mut messages = vec![Message::user("hi")];
 
     let result = agent.process(&mut messages).await;
@@ -243,7 +245,7 @@ async fn info_surfaces_tool_count() {
 
 #[tokio::test]
 async fn process_appends_assistant_response_and_reports_zero_tool_iterations() {
-    let agent = agent_loop("hello there");
+    let mut agent = agent_loop("hello there");
     let mut messages = vec![Message::user("hi")];
 
     let result = agent
@@ -267,8 +269,8 @@ async fn process_appends_assistant_response_and_reports_zero_tool_iterations() {
 async fn process_is_idempotent_within_a_fresh_loop() {
     // Two independent agent instances processing the same prompt must
     // produce the same response shape (given the same provider behaviour).
-    let a = agent_loop("same");
-    let b = agent_loop("same");
+    let mut a = agent_loop("same");
+    let mut b = agent_loop("same");
     let mut ma = vec![Message::user("x")];
     let mut mb = vec![Message::user("x")];
     let ra = a.process(&mut ma).await.unwrap();

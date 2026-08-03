@@ -79,6 +79,7 @@ impl AgentGateway for MockGateway {
                 AgentCommand::Abort => "abort",
                 AgentCommand::GetSubagents => "get_subagents",
                 AgentCommand::GetToolCatalogue => "get_tool_catalogue",
+                AgentCommand::SetToolPolicy { .. } => "set_tool_policy",
                 AgentCommand::GetState => "get_state",
                 AgentCommand::GetMessages { before } => {
                     if let Some(before) = before {
@@ -154,6 +155,7 @@ impl AgentGateway for MockGateway {
                 AgentCommand::FollowUp { .. } => "follow_up",
                 AgentCommand::GetSubagents => "get_subagents",
                 AgentCommand::GetToolCatalogue => "get_tool_catalogue",
+                AgentCommand::SetToolPolicy { .. } => "set_tool_policy",
             };
             Ok(AgentEvent::Response {
                 id: Some("mock-enqueued-id".to_string()),

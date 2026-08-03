@@ -1,3 +1,6 @@
+pub(super) use super::app_render_helpers::{
+    strip_ansi, subagent_activity_line, subagent_idle_line,
+};
 use super::app_selection::{SelectionAnchor, apply_selection_highlight, display_col_to_char_idx};
 use super::*;
 use crate::components::select_list::route_overlay_key;
@@ -81,6 +84,7 @@ impl App {
              \x20 Ctrl+C         Clear editor first, abort if empty\n\
              \x20 Ctrl+D         Exit\n\
              \x20 Ctrl+L         Open model selector\n\
+             \x20 Ctrl+T         Open tool policy selector\n\
              \x20 Ctrl+O         Toggle tool output expansion\n\
              \x20 Ctrl+Shift+A   Toggle workflow auto-continue\n\
              \x20 Ctrl+Shift+N   Toggle workflow completion nudge\n\
@@ -483,6 +487,17 @@ impl App {
                 build_rewind_selector_overlay(selector, width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
+        if let Some(modal) = &mut self.tool_policy_modal {
+            let (selector_lines, overlay_width) =
+                crate::components::selectable_item_modal::build_selectable_item_modal_overlay(
+                    "Tool Policy",
+                    "Ctrl+Shift+A allow all • Ctrl+Shift+D disable matches",
+                    modal,
+                    width,
+                    height,
+                );
+            Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
+        }
         if let Some(selector) = &mut self.inference.model_selector {
             let (selector_lines, overlay_width) =
                 build_select_overlay(width, height, |content_width| {
@@ -718,33 +733,4 @@ impl App {
 
         result
     }
-}
-
-/// Animated "N subagent(s) working…" line shown in the reserved spinner slot
-/// while the parent is idle but children are still active.
-pub(super) fn subagent_activity_line(active: usize, frame: usize) -> String {
-    use crate::components::theme::SPINNER_FRAMES;
-    let spin = theme::spinner(SPINNER_FRAMES[frame % SPINNER_FRAMES.len()]);
-    let noun = if active == 1 { "subagent" } else { "subagents" };
-    format!(
-        "  {} {}",
-        spin,
-        theme::muted(&format!("{active} {noun} working..."))
-    )
-}
-
-/// Visible tracked-child idle placeholder; preserves chat height without a blank row.
-pub(super) fn subagent_idle_line(tracked: usize) -> String {
-    let noun = if tracked == 1 {
-        "subagent"
-    } else {
-        "subagents"
-    };
-    format!("    {}", theme::muted(&format!("{tracked} {noun} idle")))
-}
-
-/// Strip ANSI escape sequences (CSI + OSC) for the render-log diagnostic and
-/// the headless test harness.
-pub(super) fn strip_ansi(s: &str) -> String {
-    crate::components::ansi::strip_ansi(s)
 }

@@ -53,6 +53,7 @@ impl ActEnv {
                     pin_recent_turns: 2,
                     context_collapse_after_messages: u32::MAX,
                     model_context_window: None,
+                    tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
                 },
             ),
             messages: Vec::new(),
@@ -146,7 +147,7 @@ async fn test_926_single_completion_drives_a_parent_turn() {
     let surfaced = ctx
         .messages
         .iter()
-        .any(|m| m.role == Role::System && m.content.contains("researcher"));
+        .any(|m| m.role == Role::User && m.content.contains("researcher"));
     assert!(
         surfaced,
         "the completion note must be delivered into the parent's context, got: {:?}",

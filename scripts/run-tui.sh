@@ -11,4 +11,3 @@ quecto --version >/dev/null 2>&1 || true
 exec quecto-tui \
   --no-sandbox \
   "$@" \
-  --no-workflow

@@ -1,3 +1,4 @@
+use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 use serde::{Deserialize, Serialize};
 
 // ─── Commands (stdin) ────────────────────────────────────────────────────────
@@ -130,6 +131,15 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Mutate profile-owned live tool policy through the catalogue-backed path.
+    #[serde(rename_all = "camelCase")]
+    SetToolPolicy {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        mutations: Vec<ToolPolicyMutationCommand>,
+        #[serde(default = "default_tool_policy_apply_mode")]
+        mode: ToolPolicyApplyModeCommand,
+    },
     /// Force a provider/model config reload.
     Reload {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -231,6 +241,35 @@ pub struct ToolRegistration {
 fn default_params_schema() -> String {
     r#"{"type":"object"}"#.to_string()
 }
+
+/// One requested catalogue-backed tool policy mutation.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolPolicyMutationCommand {
+    /// Stable catalogue id when known by the caller. Current registry mutation
+    /// keys are tool names, so this is accepted as an alias for `name` until the
+    /// domain mutator grows stable-id addressing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub scope: ProfileAvailabilityScope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Wire spelling for live tool policy reconciliation timing.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ToolPolicyApplyModeCommand {
+    ImmediateIfIdle,
+    AtNextTurnBoundary,
+}
+
+fn default_tool_policy_apply_mode() -> ToolPolicyApplyModeCommand {
+    ToolPolicyApplyModeCommand::ImmediateIfIdle
+}
+
 impl AgentCommand {
     /// Return the optional correlation id.
     pub fn id(&self) -> Option<&str> {
@@ -243,6 +282,7 @@ impl AgentCommand {
             Self::GetMessages { id, .. } => id.as_deref(),
             Self::Sync { id, .. } => id.as_deref(),
             Self::GetToolCatalogue { id } => id.as_deref(),
+            Self::SetToolPolicy { id, .. } => id.as_deref(),
             Self::Reload { id } => id.as_deref(),
             Self::GetMessagesTail { id, .. } => id.as_deref(),
             Self::GetSessionStats { id } => id.as_deref(),
@@ -282,6 +322,7 @@ impl AgentCommand {
             Self::SetModel { .. } => "set_model",
             Self::SetEffort { .. } => "set_effort",
             Self::GetToolCatalogue { .. } => "get_tool_catalogue",
+            Self::SetToolPolicy { .. } => "set_tool_policy",
             Self::Reload { .. } => "reload",
             Self::RegisterTools { .. } => "register_tools",
             Self::UnregisterTools { .. } => "unregister_tools",

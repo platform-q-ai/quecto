@@ -243,9 +243,16 @@ pub(crate) fn recovered_chat_entries(
         let role = message.role();
         let content = message.content();
         match role {
-            "user" if !content.is_empty() => entries.push(ChatEntry::User {
-                text: content.to_string(),
-            }),
+            // Sub-agent notes are user-role turns on the wire but operator
+            // status in the UI; the live event path already renders them (#1338).
+            "user"
+                if !content.is_empty()
+                    && !crate::protocol::presentation_payloads::is_subagent_note(content) =>
+            {
+                entries.push(ChatEntry::User {
+                    text: content.to_string(),
+                })
+            }
             "assistant" => {
                 for call in message.tool_calls() {
                     let id = call.id().to_string();

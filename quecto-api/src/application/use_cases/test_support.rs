@@ -109,6 +109,7 @@ fn command_name(cmd: &AgentCommand) -> &'static str {
         AgentCommand::ClearHistory => "clear_history",
         AgentCommand::GetSubagents => "get_subagents",
         AgentCommand::GetToolCatalogue => "get_tool_catalogue",
+        AgentCommand::SetToolPolicy { .. } => "set_tool_policy",
     }
 }
 

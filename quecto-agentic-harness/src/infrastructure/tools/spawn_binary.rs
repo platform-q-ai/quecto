@@ -85,6 +85,12 @@ where
 }
 
 pub(super) fn resolve_child_binary() -> Result<PathBuf, DomainError> {
+    if let Some(path) = std::env::var_os("QUECTO_CHILD_BINARY") {
+        let path = PathBuf::from(path);
+        if is_executable_file(&path) {
+            return Ok(path);
+        }
+    }
     resolve_child_binary_with(std::env::current_exe, std::env::args_os(), || {
         std::env::var_os("PATH")
     })

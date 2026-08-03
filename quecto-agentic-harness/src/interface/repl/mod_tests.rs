@@ -192,6 +192,7 @@ fn make_repl_loop(
         pin_recent_turns: 2,
         context_collapse_after_messages: u32::MAX,
         model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
     let session_store = FileSessionStore::new(base_dir);
     let session = ReplSession {

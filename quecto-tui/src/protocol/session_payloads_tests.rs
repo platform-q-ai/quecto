@@ -226,3 +226,31 @@ fn parse_resumed_messages_rejects_non_array_messages() {
         Err(ResumeMessagesError::MalformedMessages)
     );
 }
+
+/// Sub-agent notes travel as user-role turns so the model answers them (#1338),
+/// but they are harness status, not operator input — a resumed transcript must
+/// not redraw them as messages the user typed.
+#[test]
+fn resumed_messages_skip_subagent_notes() {
+    let messages = parse_resumed_messages(&json!({
+        "messages": [
+            {"role": "user", "content": "write a poem"},
+            {"role": "user", "content": "<subagent_notification source=\"spawn_tool\" agent_id=\"poet\" sequence=\"1\">\nSub-agent 'poet' ended a turn (status: idle).\n</subagent_notification>"},
+            {"role": "assistant", "content": "done"}
+        ]
+    }))
+    .expect("payload should parse");
+
+    let user_texts: Vec<&str> = messages
+        .iter()
+        .filter_map(|m| match m {
+            ResumedChatMessage::User { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        user_texts,
+        vec!["write a poem"],
+        "the injected sub-agent note must not resume as a user message"
+    );
+}

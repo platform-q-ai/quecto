@@ -23,6 +23,7 @@ fn uds_workflow_flags(workflow: bool, workflow_disabled: bool) -> AgentFlags {
         workflow_guards: false,
         workflow_disabled,
         workflow_spec_path: None,
+        inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
     }

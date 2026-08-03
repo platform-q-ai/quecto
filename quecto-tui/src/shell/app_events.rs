@@ -1,4 +1,13 @@
 use super::*;
+use crate::protocol::client::{ToolCatalogueEntry, ToolScope};
+
+fn effective_profile_scope(entry: &ToolCatalogueEntry) -> Option<ToolScope> {
+    entry.profile_scope.or_else(|| {
+        entry
+            .profile_enabled
+            .map(super::tool_policy::legacy_profile_enabled_scope)
+    })
+}
 
 #[cfg(test)]
 pub(super) use super::app_message_recovery::recovered_chat_entries;
@@ -7,6 +16,16 @@ impl App {
     pub(super) fn handle_event(&mut self, event: Event) {
         match event {
             Event::AgentStart => self.handle_agent_start(),
+            Event::Workspace { path } => {
+                let root = std::path::PathBuf::from(path);
+                if self.workspace.root.as_ref() != Some(&root) {
+                    self.workspace.files_autocomplete.invalidate_loaded_files();
+                }
+                self.workspace.root = Some(root.clone());
+                self.workspace.git_repo = Some(root.clone());
+                self.master_session.footer.set_pwd_path(&root);
+                self.apply_git_branch(app_git::read_git_branch_from(&root));
+            }
             Event::Token { token } => self.master_session.chat.append_token(&token),
             Event::TurnStart => {}
             Event::TurnEnd { message } => self.handle_turn_end(message),
@@ -55,8 +74,63 @@ impl App {
                 active_template,
                 available_templates,
             }),
+            Event::ToolCatalogueChanged { after, .. } => self.merge_tool_catalogue_event(after),
+            Event::ToolPolicyChanged { results, .. } => self.merge_tool_policy_results(results),
             _ => {}
         }
+    }
+
+    pub(super) fn merge_tool_catalogue_event(&mut self, entries: Vec<ToolCatalogueEntry>) {
+        self.merge_tool_catalogue_entries(entries);
+        if self.tool_policy_modal_pending_catalogue_id.is_none() {
+            self.open_pending_tool_policy_modal_after_catalogue_update();
+        }
+    }
+
+    fn merge_tool_catalogue_entries(&mut self, entries: Vec<ToolCatalogueEntry>) {
+        for mut entry in entries {
+            let key = tool_catalogue_key(&entry);
+            if entry.profile_scope.is_none() && entry.profile_enabled.is_none() {
+                if let Some(scope) = self
+                    .tool_catalogue
+                    .get(&key)
+                    .and_then(effective_profile_scope)
+                {
+                    entry.profile_scope = Some(scope);
+                    entry.profile_enabled = Some(scope != ToolScope::None);
+                }
+            }
+            self.tool_catalogue.insert(key, entry);
+        }
+    }
+
+    pub(super) fn replace_tool_catalogue(&mut self, entries: Vec<ToolCatalogueEntry>) {
+        let previous = &self.tool_catalogue;
+        self.tool_catalogue = entries
+            .into_iter()
+            .map(|mut entry| {
+                let key = tool_catalogue_key(&entry);
+                if entry.profile_scope.is_none() && entry.profile_enabled.is_none() {
+                    if let Some(scope) = previous.get(&key).and_then(effective_profile_scope) {
+                        entry.profile_scope = Some(scope);
+                        entry.profile_enabled = Some(scope != ToolScope::None);
+                    }
+                }
+                (key, entry)
+            })
+            .collect();
+        self.open_pending_tool_policy_modal_after_catalogue_update();
+    }
+
+    pub(super) fn merge_tool_policy_results(
+        &mut self,
+        results: Vec<crate::protocol::client::ToolPolicyResult>,
+    ) {
+        let entries = results
+            .into_iter()
+            .filter_map(|result| result.after)
+            .collect();
+        self.merge_tool_catalogue_entries(entries);
     }
 
     fn handle_agent_start(&mut self) {
@@ -359,6 +433,14 @@ pub(super) fn build_workflow_state(
         event["availableTemplates"] = serde_json::json!(templates);
     }
     workflow_bar::parse_workflow_event(&event)
+}
+
+fn tool_catalogue_key(entry: &ToolCatalogueEntry) -> String {
+    if entry.stable_id.is_empty() {
+        entry.name.clone()
+    } else {
+        entry.stable_id.clone()
+    }
 }
 
 struct WorkflowStateEvent {

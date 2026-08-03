@@ -184,7 +184,7 @@ impl AgentCmdTool {
                     .get("message")
                     .and_then(|v| v.as_str())
                     .ok_or("steer command requires a message field")?;
-                serde_json::json!({"type": "steer", "message": message, "ack": "accept"})
+                serde_json::json!({"type": "prompt", "message": message, "streamingBehavior": "steer", "ack": "accept"})
             }
             "follow_up" => {
                 let message = args

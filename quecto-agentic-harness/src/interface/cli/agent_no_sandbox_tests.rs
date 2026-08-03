@@ -107,6 +107,7 @@ fn test_build_agent_no_sandbox_emits_warning() {
         workflow_guards: false,
         workflow_disabled: false,
         workflow_spec_path: None,
+        inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
     };
@@ -189,6 +190,7 @@ fn test_build_agent_with_sandbox_enabled_no_warning() {
         workflow_guards: false,
         workflow_disabled: false,
         workflow_spec_path: None,
+        inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
     };

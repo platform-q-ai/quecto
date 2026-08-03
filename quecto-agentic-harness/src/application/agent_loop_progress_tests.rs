@@ -3,7 +3,7 @@ use crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
 
 #[tokio::test]
 async fn test_progress_callback_tool_started_fired_for_each_tool_call() {
-    let (agent, _, events) = make_agent_with_callback(
+    let (mut agent, _, events) = make_agent_with_callback(
         vec![
             tool_call_response("bash", r#"{"command":"echo hi"}"#),
             text_response("done"),
@@ -27,7 +27,7 @@ async fn test_progress_callback_tool_started_fired_for_each_tool_call() {
 
 #[tokio::test]
 async fn test_progress_callback_tool_finished_fired_after_tool_executes() {
-    let (agent, _, events) = make_agent_with_callback(
+    let (mut agent, _, events) = make_agent_with_callback(
         vec![
             tool_call_response("bash", r#"{"command":"echo hi"}"#),
             text_response("done"),
@@ -50,7 +50,7 @@ async fn test_progress_callback_tool_finished_fired_after_tool_executes() {
 
 #[tokio::test]
 async fn test_progress_callback_event_order_thinking_tool_started_tool_finished_done() {
-    let (agent, _, events) = make_agent_with_callback(
+    let (mut agent, _, events) = make_agent_with_callback(
         vec![
             tool_call_response("bash", r#"{"command":"echo hi"}"#),
             text_response("done"),
@@ -99,7 +99,7 @@ async fn test_progress_callback_event_order_thinking_tool_started_tool_finished_
 
 #[tokio::test]
 async fn test_progress_callback_tool_finished_captures_duration_and_error_flag() {
-    let (agent, _, events) = make_agent_with_callback(
+    let (mut agent, _, events) = make_agent_with_callback(
         vec![
             tool_call_response("bash", r#"{"command":"echo hi"}"#),
             text_response("done"),
@@ -208,7 +208,7 @@ async fn ok_tool_result_is_error_propagates_to_message_and_progress() {
     let callback: crate::domain::agent::ProgressCallback =
         Arc::new(move |ev| events_clone.lock().unwrap().push(ev));
     let audit = Arc::new(RecordingAudit::default());
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         progress_callback: Some(callback),
         audit_log: Some(audit.clone()),
         ..test_config(provider, Box::new(registry))
@@ -259,7 +259,7 @@ async fn ok_tool_result_is_error_propagates_to_message_and_progress() {
 
 #[tokio::test]
 async fn test_progress_callback_multiple_tool_calls_all_reported() {
-    let (agent, _, events) = make_agent_with_callback(
+    let (mut agent, _, events) = make_agent_with_callback(
         vec![
             tool_call_response("read", r#"{"path":"a.txt"}"#),
             tool_call_response("write", r#"{"path":"b.txt","content":"x"}"#),
@@ -296,7 +296,7 @@ async fn test_progress_callback_multiple_tool_calls_all_reported() {
 #[tokio::test]
 async fn test_progress_callback_none_does_not_panic() {
     // Verify that having no callback at all does not change behaviour
-    let (agent, _) = make_agent(vec![text_response("ok")], vec![]);
+    let (mut agent, _) = make_agent(vec![text_response("ok")], vec![]);
     let mut messages = vec![Message::user("hi")];
     let result = agent.run_loop(&mut messages).await.unwrap();
     assert_eq!(result.response, "ok");
@@ -304,7 +304,7 @@ async fn test_progress_callback_none_does_not_panic() {
 
 #[tokio::test]
 async fn test_progress_callback_tool_started_includes_arguments() {
-    let (agent, _, events) = make_agent_with_callback(
+    let (mut agent, _, events) = make_agent_with_callback(
         vec![
             tool_call_response("bash", r#"{"command":"echo hello world"}"#),
             text_response("done"),
@@ -357,7 +357,7 @@ async fn test_tool_count_empty() {
 
 #[tokio::test]
 async fn test_progress_callback_tool_started_includes_tool_call_id() {
-    let (agent, _, events) = make_agent_with_callback(
+    let (mut agent, _, events) = make_agent_with_callback(
         vec![
             tool_call_response("bash", r#"{"command":"echo hi"}"#),
             text_response("done"),
@@ -388,7 +388,7 @@ async fn test_progress_callback_tool_started_includes_tool_call_id() {
 
 #[tokio::test]
 async fn test_progress_callback_tool_finished_includes_tool_call_id() {
-    let (agent, _, events) = make_agent_with_callback(
+    let (mut agent, _, events) = make_agent_with_callback(
         vec![
             tool_call_response("bash", r#"{"command":"echo hi"}"#),
             text_response("done"),
@@ -420,7 +420,7 @@ async fn test_progress_callback_tool_finished_includes_tool_call_id() {
 #[tokio::test]
 async fn test_progress_callback_tool_finished_preview_handles_mid_codepoint_cap() {
     let multibyte = "€".repeat(DEFAULT_OUTPUT_CAP_BYTES / "€".len() + 1);
-    let (agent, _, events) = make_agent_with_callback(
+    let (mut agent, _, events) = make_agent_with_callback(
         vec![
             tool_call_response("bash", r#"{"command":"emit multibyte"}"#),
             text_response("done"),

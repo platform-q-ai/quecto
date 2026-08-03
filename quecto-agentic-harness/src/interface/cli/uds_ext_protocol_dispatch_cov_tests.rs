@@ -12,7 +12,6 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
         tmp.path().to_path_buf(),
         sandbox,
         Default::default(),
-        false,
     );
     assert!(registry.disable_tool("bash"));
     assert!(

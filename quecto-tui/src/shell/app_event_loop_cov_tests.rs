@@ -21,11 +21,11 @@ async fn files_autocomplete_lazy_load_request_is_spawned_once_and_applied() {
     assert!(in_flight, "second request while in-flight must be a no-op");
     drop(tx);
 
-    let files = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+    let (root, files) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
         .await
         .expect("file load worker should respond")
         .expect("worker should send a file list");
-    a.workspace.files_autocomplete.apply_loaded_files(files);
+    assert!(a.apply_files_autocomplete_load(root, files));
     assert!(
         in_flight,
         "worker completion normally clears this flag in the event loop"
@@ -76,4 +76,46 @@ async fn files_autocomplete_loaded_files_are_accepted_by_tab_completion() {
     a.handle_key(crate::shell::keys::Key::Tab);
 
     assert_eq!(a.editor.text(), "open @first.rs ");
+}
+
+#[tokio::test]
+async fn stale_files_autocomplete_load_from_previous_workspace_is_discarded() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    let old_root = tempfile::tempdir().expect("old workspace tempdir");
+    let new_root = tempfile::tempdir().expect("new workspace tempdir");
+    a.workspace.root = Some(new_root.path().to_path_buf());
+    a.workspace
+        .files_autocomplete
+        .apply_loaded_files(vec!["new.rs".into()]);
+
+    let applied = a.apply_files_autocomplete_load(
+        old_root.path().to_path_buf(),
+        vec!["stale-from-old-workspace.rs".into()],
+    );
+
+    assert!(!applied, "stale worker result must not be applied");
+    a.editor.set_text("open @stale");
+    a.refresh_files_autocomplete_from_editor();
+    assert!(
+        a.workspace.files_autocomplete.render(80).is_empty(),
+        "old workspace files must not appear after switching roots"
+    );
+}
+
+#[tokio::test]
+async fn files_autocomplete_load_for_current_workspace_is_applied() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    let root = tempfile::tempdir().expect("workspace tempdir");
+    a.workspace.root = Some(root.path().to_path_buf());
+
+    let applied =
+        a.apply_files_autocomplete_load(root.path().to_path_buf(), vec!["current.rs".into()]);
+
+    assert!(applied, "current workspace worker result should be applied");
+    a.editor.set_text("open @cur");
+    a.refresh_files_autocomplete_from_editor();
+    let rendered = a.workspace.files_autocomplete.render(80).join("\n");
+    assert!(rendered.contains("current.rs"));
 }

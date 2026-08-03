@@ -103,7 +103,7 @@ async fn top_level_toc_includes_quick_start() {
 /// #1319: spawned children omit quick-start from the TOC.
 #[tokio::test]
 async fn spawned_toc_omits_quick_start() {
-    let tool = DocsTool::for_spawned();
+    let tool = DocsTool::for_child_content();
     let result = tool.execute("{}").await.unwrap();
     assert!(!result.is_error);
     assert!(
@@ -121,7 +121,7 @@ async fn spawned_toc_omits_quick_start() {
 /// #1319: direct retrieval of quick-start is rejected for spawned children.
 #[tokio::test]
 async fn spawned_rejects_direct_quick_start() {
-    let tool = DocsTool::for_spawned();
+    let tool = DocsTool::for_child_content();
     let result = tool.execute(r#"{"name":"quick-start"}"#).await.unwrap();
     assert!(result.is_error);
     assert!(result.content.contains("No embedded doc named"));
@@ -134,7 +134,7 @@ async fn spawned_rejects_direct_quick_start() {
 /// #1319: aliases like docs/quick-start.md are also rejected when spawned.
 #[tokio::test]
 async fn spawned_rejects_quick_start_aliases() {
-    let tool = DocsTool::for_spawned();
+    let tool = DocsTool::for_child_content();
     for name in [
         "quick-start.md",
         "docs/quick-start.md",
@@ -158,16 +158,16 @@ async fn spawned_rejects_quick_start_aliases() {
 /// #1319: non-parent pages remain readable for spawned children.
 #[tokio::test]
 async fn spawned_can_read_other_manual_pages() {
-    let tool = DocsTool::for_spawned();
+    let tool = DocsTool::for_child_content();
     let result = tool.execute(r#"{"name":"workflow"}"#).await.unwrap();
     assert!(!result.is_error);
-    assert!(!result.content.is_empty());
+    assert!(result.content.contains("# Workflow"));
 }
 
 /// #1319: top-level direct retrieval of quick-start is unchanged.
 #[tokio::test]
 async fn top_level_quick_start_still_available() {
-    let tool = DocsTool::with_spawned(false);
+    let tool = DocsTool::with_content_policy(DocsContentPolicy::Parent);
     let result = tool.execute(r#"{"name":"quick-start"}"#).await.unwrap();
     assert!(!result.is_error);
     assert!(result.content.contains("Parent versus subagent"));

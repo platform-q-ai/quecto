@@ -634,7 +634,7 @@ Return the current list of spawned subagents and their live status (#524).
 | `type` | `"get_subagents"` | yes | |
 | `id` | string | no | Correlation ID |
 
-**Response data:** an array of subagent snapshots. Each entry includes `agentId`, `status` (`starting` / `idle` / `running` / `error` / `exited`), optional `lastTool` / `lastError`, `pid`, optional `socketPath`, optional `parentId`, optional `workflow`, and `readOnly` (observer spawn with write/edit disabled).
+**Response data:** an array of subagent snapshots. Each entry includes `agentId`, `status` (`starting` / `idle` / `running` / `error` / `exited`), optional `lastTool` / `lastError`, `pid`, optional `socketPath`, optional `parentId`, optional `workflow`, and `readOnly` (observer spawn with write/edit disabled). `status:error` and `lastError` are terminal/run-level failure signals (for example `agent_error`), not recoverable child tool `isError` results.
 
 **Example:**
 
