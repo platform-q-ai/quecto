@@ -51,7 +51,6 @@ fn when_agent_processes_tool_call(world: &mut QuectoWorld) {
     let registry = world.tool_registry.take().expect("registry not set");
 
     let mut agent = AgentLoopImpl::new(quecto::application::agent_loop::AgentLoopConfig {
-        tool_policy_child_propagator: None,
         provider: mock_llm,
         tool_registry: Box::new(registry),
         model: "test-model".to_string(),

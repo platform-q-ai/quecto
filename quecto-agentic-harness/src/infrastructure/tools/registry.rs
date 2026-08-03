@@ -488,11 +488,7 @@ impl ToolRegistryImpl {
             });
         }
         self.refresh_spawn_inherited_child_policy_snapshot();
-        ToolPolicyReconciliation {
-            mode,
-            results,
-            child_propagation: Vec::new(),
-        }
+        ToolPolicyReconciliation { mode, results }
     }
 
     /// Runtime-disable a registered tool without removing its descriptor.

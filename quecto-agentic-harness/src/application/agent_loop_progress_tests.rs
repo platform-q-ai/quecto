@@ -209,7 +209,6 @@ async fn ok_tool_result_is_error_propagates_to_message_and_progress() {
         Arc::new(move |ev| events_clone.lock().unwrap().push(ev));
     let audit = Arc::new(RecordingAudit::default());
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
-        tool_policy_child_propagator: None,
         progress_callback: Some(callback),
         audit_log: Some(audit.clone()),
         ..test_config(provider, Box::new(registry))

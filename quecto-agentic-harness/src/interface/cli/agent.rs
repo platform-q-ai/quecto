@@ -9,13 +9,17 @@ use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::model_registry::ModelRegistry;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
-use crate::infrastructure::tools::subagent_policy_gateway::SubagentPolicyGateway;
 
+/// Max byte length for `--socket` paths.  Linux allows 108, macOS 104;
+/// we use the stricter limit for portability.
+const MAX_SOCKET_PATH_BYTES: usize = 104;
+/// Bundles the stdout/stderr pair passed through the agent pipeline.
 pub(crate) struct AgentOutput<'a> {
     pub(crate) stdout: &'a mut String,
     pub(crate) stderr: &'a mut String,
 }
 
+/// Outcome of a deadline-bounded agent run.
 pub(crate) enum DeadlineResult {
     /// Agent completed (successfully or with error) within the deadline.
     Completed(Result<crate::domain::agent::AgentResult, crate::domain::error::DomainError>),
@@ -393,9 +397,6 @@ pub(crate) fn build_agent_from_config(
     let (cap, window) = ModelRegistry::model_limits_from_base_dir(base_dir, &model);
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
-        tool_policy_child_propagator: Some(Arc::new(SubagentPolicyGateway::new(
-            subagent_registry.clone(),
-        ))),
         tool_registry: Box::new(registry),
         model: model.clone(),
         max_tokens: config.agents.defaults.max_tokens,
@@ -417,14 +418,13 @@ pub(crate) fn build_agent_from_config(
         } else {
             crate::domain::tool::ToolProfileContext::Parent
         },
-    });
-    let agent = agent
-        .with_max_tool_iterations(
-            flags
-                .max_iterations
-                .unwrap_or(config.agents.defaults.max_tool_iterations),
-        )
-        .with_model_max_tokens(cap);
+    })
+    .with_max_tool_iterations(
+        flags
+            .max_iterations
+            .unwrap_or(config.agents.defaults.max_tool_iterations),
+    )
+    .with_model_max_tokens(cap);
 
     Some(AgentBuildResult {
         agent,
@@ -595,7 +595,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     // doing any I/O (config load, agent build).  Auto-generated paths are
     // always short, so we only gate on explicitly provided paths here.
     if let Some(ref p) = flags.socket_path {
-        if p.as_os_str().len() > 104 {
+        if p.as_os_str().len() > MAX_SOCKET_PATH_BYTES {
             stderr
                 .push_str("agent: --socket path exceeds the Unix socket path limit (104 bytes)\n");
             return 1;

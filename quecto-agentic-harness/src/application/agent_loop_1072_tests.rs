@@ -79,7 +79,6 @@ fn agent_with(
 ) -> AgentLoopImpl {
     AgentLoopImpl::new(AgentLoopConfig {
         provider: Arc::new(provider),
-        tool_policy_child_propagator: None,
         tool_registry: Box::new(registry),
         model: "test-model".to_string(),
         max_tokens: 1024,

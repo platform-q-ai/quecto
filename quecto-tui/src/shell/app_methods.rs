@@ -491,7 +491,7 @@ impl App {
             let (selector_lines, overlay_width) =
                 crate::components::selectable_item_modal::build_selectable_item_modal_overlay(
                     "Tool Policy",
-                    "Ctrl+Shift+A allow all • Ctrl+Shift+D disable matches",
+                    "Ctrl+Shift+A allow all • Ctrl+Shift+D disable matches • New agents only",
                     modal,
                     width,
                     height,

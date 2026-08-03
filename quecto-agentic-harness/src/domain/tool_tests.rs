@@ -163,7 +163,6 @@ fn tool_policy_mutation_result_wire_uses_camel_case_fields_and_status() {
 
     let reconciliation = ToolPolicyReconciliation {
         mode: ToolPolicyApplyMode::ImmediateIfIdle,
-        child_propagation: Vec::new(),
         results: vec![ToolPolicyMutationResult {
             name: "beta".into(),
             requested_availability: ToolAvailability::Disabled,

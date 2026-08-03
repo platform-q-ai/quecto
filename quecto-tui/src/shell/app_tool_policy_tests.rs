@@ -720,5 +720,6 @@ async fn tool_policy_modal_help_mentions_bulk_shortcuts() {
     let frame = crate::components::ansi::strip_ansi(&h.app_mut().compose_frame().join("\n"));
     assert!(frame.contains("Ctrl+Shift+A allow all"), "{frame}");
     assert!(frame.contains("Ctrl+Shift+D disable matches"), "{frame}");
+    assert!(frame.contains("New agents only"), "{frame}");
     assert!(!frame.contains("disable visible"), "{frame}");
 }

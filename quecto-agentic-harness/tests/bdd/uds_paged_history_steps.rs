@@ -663,7 +663,6 @@ fn seed_stub_session(world: &mut QuectoWorld) {
     let messages = rt.block_on(async {
         spill_store.clear(&session_key).await.expect("clear spill");
         let mut agent = AgentLoopImpl::new(AgentLoopConfig {
-            tool_policy_child_propagator: None,
             provider: Arc::new(StubSeedProvider),
             tool_registry: Box::new(ToolRegistryImpl::new()),
             model: "paged-stub-seed".into(),
@@ -880,7 +879,6 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
     let session_key = Session::build_key("cli", session_name);
     let model = config.agents.defaults.model.clone();
     let agent = AgentLoopImpl::new(AgentLoopConfig {
-        tool_policy_child_propagator: None,
         provider,
         tool_registry: Box::new(registry),
         model: model.clone(),
@@ -918,8 +916,8 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
             session_store_override: None,
             ext_registry: Some(ext_reg),
             persist: true,
-            subagent_registry: None,
             notification_rx: None,
+            subagent_registry: None,
             workflow_state: None,
             workflow_config: None,
             broadcast_tx: None,

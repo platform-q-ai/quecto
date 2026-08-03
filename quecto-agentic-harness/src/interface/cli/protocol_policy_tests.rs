@@ -38,7 +38,6 @@ fn tool_policy_apply_mode_wire_uses_camel_case() {
     let reconciliation = crate::domain::tool::ToolPolicyReconciliation {
         mode: crate::domain::tool::ToolPolicyApplyMode::AtNextTurnBoundary,
         results: vec![],
-        child_propagation: Vec::new(),
     };
     let wire = serde_json::to_value(&reconciliation).expect("serialize reconciliation");
     assert_eq!(wire["mode"], "atNextTurnBoundary");

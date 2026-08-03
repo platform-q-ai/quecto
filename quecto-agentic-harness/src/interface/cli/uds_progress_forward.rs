@@ -61,11 +61,6 @@ pub(crate) async fn forward_event(ev: AgentProgressEvent, sink: &mut EventSink<'
                     .map(|r| r.name.clone())
                     .collect(),
                 results: reconciliation.results.into_iter().map(to_json).collect(),
-                child_propagation: reconciliation
-                    .child_propagation
-                    .into_iter()
-                    .map(to_json)
-                    .collect(),
                 apply_mode: match reconciliation.mode {
                     crate::domain::tool::ToolPolicyApplyMode::ImmediateIfIdle => {
                         "immediateIfIdle".to_string()

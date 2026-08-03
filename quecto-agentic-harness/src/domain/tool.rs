@@ -268,44 +268,6 @@ pub struct ToolPolicyMutationResult {
 pub struct ToolPolicyReconciliation {
     pub mode: ToolPolicyApplyMode,
     pub results: Vec<ToolPolicyMutationResult>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub child_propagation: Vec<ChildToolPolicyPropagation>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ChildToolPolicyPropagationStatus {
-    Applied,
-    Queued,
-    Disconnected,
-    Timeout,
-    BlockedByCeiling,
-    UnknownTool,
-    Error,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ChildToolPolicyPropagation {
-    pub agent_id: String,
-    pub status: ChildToolPolicyPropagationStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reconciliation: Option<Box<ToolPolicyReconciliation>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-/// Port: propagates applied live runtime policy mutations to existing children.
-pub trait ToolPolicyChildPropagator: Send + Sync {
-    fn has_children(&self) -> bool {
-        false
-    }
-
-    fn propagate_tool_policy_to_children(
-        &self,
-        mutations: &[ToolPolicyMutation],
-        mode: ToolPolicyApplyMode,
-    ) -> Vec<ChildToolPolicyPropagation>;
 }
 
 /// Port: live runtime policy mutation for registered tools.
@@ -317,7 +279,6 @@ pub trait ToolPolicyMutator: Send + Sync {
     ) -> ToolPolicyReconciliation {
         ToolPolicyReconciliation {
             mode,
-            child_propagation: Vec::new(),
             results: mutations
                 .iter()
                 .map(|mutation| ToolPolicyMutationResult {

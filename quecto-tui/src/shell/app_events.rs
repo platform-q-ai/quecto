@@ -1,5 +1,5 @@
 use super::*;
-use crate::protocol::client::{ToolCatalogueEntry, ToolScope, summarize_child_policy_propagation};
+use crate::protocol::client::{ToolCatalogueEntry, ToolScope};
 
 fn effective_profile_scope(entry: &ToolCatalogueEntry) -> Option<ToolScope> {
     entry.profile_scope.or_else(|| {
@@ -75,25 +75,7 @@ impl App {
                 available_templates,
             }),
             Event::ToolCatalogueChanged { after, .. } => self.merge_tool_catalogue_event(after),
-            Event::ToolPolicyChanged {
-                results,
-                child_propagation,
-                ..
-            } => {
-                self.merge_tool_policy_results(results);
-                if !child_propagation.is_empty() {
-                    let (ok_count, failed_count) =
-                        summarize_child_policy_propagation(&child_propagation);
-                    let message = if failed_count == 0 {
-                        format!("Tool policy queued/applied for {ok_count} child agent(s)")
-                    } else {
-                        format!(
-                            "{failed_count} child policy update failed; {ok_count} queued/applied"
-                        )
-                    };
-                    self.handle_subagent_notification("tool_policy".to_string(), message);
-                }
-            }
+            Event::ToolPolicyChanged { results, .. } => self.merge_tool_policy_results(results),
             _ => {}
         }
     }
@@ -513,9 +495,6 @@ pub(super) fn uuid_like() -> String {
     format!("{nanos:x}-{seq:x}")
 }
 
-#[cfg(test)]
-#[path = "app_events_policy_tests.rs"]
-mod policy_tests;
 #[cfg(test)]
 #[path = "app_events_tests.rs"]
 mod tests;

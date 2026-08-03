@@ -1477,7 +1477,6 @@ fn complete_text_only_prompt(world: &mut QuectoWorld, reply: &str) {
         thinking_blocks: vec![],
     });
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
-        tool_policy_child_propagator: None,
         provider: mock,
         tool_registry: Box::new(quecto::infrastructure::tools::registry::ToolRegistryImpl::new()),
         model: "test-model".into(),
@@ -1938,7 +1937,6 @@ fn when_agent_completes_over_budget_prompt(world: &mut QuectoWorld) {
     });
     let sink = Arc::new(RecordingAuditSink::default());
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
-        tool_policy_child_propagator: None,
         provider: mock,
         tool_registry: Box::new(quecto::infrastructure::tools::registry::ToolRegistryImpl::new()),
         model: "test-model".into(),
@@ -2006,7 +2004,6 @@ fn given_model_unknown_window(world: &mut QuectoWorld) {
 fn when_agent_derives_effective_budget(world: &mut QuectoWorld) {
     let provider = Arc::new(MockLlmProvider::new());
     let agent = AgentLoopImpl::new(quecto::application::agent_loop::AgentLoopConfig {
-        tool_policy_child_propagator: None,
         provider,
         tool_registry: Box::new(ToolRegistryImpl::new()),
         model: "test-model".to_string(),
@@ -2074,7 +2071,6 @@ fn run_prompt_through_loop(
         mock.push_response(r);
     }
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
-        tool_policy_child_propagator: None,
         provider: mock,
         tool_registry: Box::new(quecto::infrastructure::tools::registry::ToolRegistryImpl::new()),
         model: "test-model".into(),
