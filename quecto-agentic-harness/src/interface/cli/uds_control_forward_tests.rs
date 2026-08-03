@@ -43,12 +43,13 @@ fn flagged_follow_up_forwards_follow_up() {
 }
 
 #[test]
-fn flagged_steer_forwards_steer() {
+fn flagged_steer_forwards_prompt_with_steer_streaming_behavior() {
     let line = r#"{"type":"steer","message":"turn left","ack":"accept","id":"r3"}"#;
     let got = intercept_control_forward(line).expect("flagged steer is intercepted");
     assert_eq!(ack_json(&got.ack_line)["command"], "steer");
     let fwd: serde_json::Value = serde_json::from_str(&got.forward_line.unwrap()).unwrap();
-    assert_eq!(fwd["type"], "steer");
+    assert_eq!(fwd["type"], "prompt");
+    assert_eq!(fwd["streamingBehavior"], "steer");
     assert_eq!(fwd["message"], "turn left");
 }
 

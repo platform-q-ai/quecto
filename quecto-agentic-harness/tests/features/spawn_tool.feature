@@ -422,3 +422,49 @@ Feature: SpawnTool — child agent process spawning
     Then the spawn result should not be an error
     And the subagent registry entry "observer" should be read-only
     And the spawn broadcast should list "observer" as read-only
+
+  # --- Live end-to-end regression coverage for spawn.task + agent_cmd ---
+
+  @mock-llm
+  Scenario: Live spawn initial task reaches child transcript
+    Given a live SpawnTool and AgentCmdTool backed by a mock LLM child
+    When I live-spawn subagent "live-task-e2e" with initial task "LIVE_INITIAL_TASK_MARKER"
+    Then the spawn result should not be an error
+    And live agent_cmd get_messages for "live-task-e2e" should contain "LIVE_INITIAL_TASK_MARKER"
+
+  @mock-llm
+  Scenario: Live agent_cmd prompt reaches child transcript after spawn
+    Given a live SpawnTool and AgentCmdTool backed by a mock LLM child
+    When I live-spawn subagent "live-prompt-e2e" with initial task "LIVE_BOOTSTRAP_MARKER"
+    And I run live agent_cmd for "live-prompt-e2e" with '{"command":"prompt","message":"LIVE_PROMPT_MARKER"}'
+    Then live agent_cmd get_messages for "live-prompt-e2e" should contain "LIVE_PROMPT_MARKER"
+
+  @mock-llm
+  Scenario: Live agent_cmd follow_up reaches child transcript after spawn
+    Given a live SpawnTool and AgentCmdTool backed by a mock LLM child
+    When I live-spawn subagent "live-follow-e2e" with initial task "LIVE_BOOTSTRAP_MARKER"
+    And I run live agent_cmd for "live-follow-e2e" with '{"command":"follow_up","message":"LIVE_FOLLOWUP_MARKER"}'
+    Then live agent_cmd get_messages for "live-follow-e2e" should contain "LIVE_FOLLOWUP_MARKER"
+
+  @mock-llm
+  Scenario: Live agent_cmd steer reaches child transcript after spawn
+    Given a live SpawnTool and AgentCmdTool backed by a mock LLM child
+    When I live-spawn subagent "live-steer-e2e" with initial task "LIVE_BOOTSTRAP_MARKER"
+    And I run live agent_cmd for "live-steer-e2e" with '{"command":"prompt","message":"LIVE_STEER_BUSYING_PROMPT"}'
+    And I run live agent_cmd for "live-steer-e2e" with '{"command":"steer","message":"LIVE_STEER_MARKER"}'
+    Then live agent_cmd get_messages for "live-steer-e2e" should contain "LIVE_STEER_MARKER"
+
+  @mock-llm
+  Scenario: Live agent_cmd state stats catalogue history and kill work end-to-end
+    Given a live SpawnTool and AgentCmdTool backed by a mock LLM child
+    When I live-spawn subagent "live-control-e2e" with initial task "LIVE_CONTROL_BOOTSTRAP"
+    And I run live agent_cmd for "live-control-e2e" with '{"command":"get_state"}'
+    Then the agent_cmd result should not be an error
+    When I run live agent_cmd for "live-control-e2e" with '{"command":"get_session_stats"}'
+    Then the agent_cmd result should not be an error
+    When I run live agent_cmd for "live-control-e2e" with '{"command":"get_tool_catalogue"}'
+    Then the agent_cmd result should not be an error
+    When I run live agent_cmd for "live-control-e2e" with '{"command":"clear_history"}'
+    Then the agent_cmd result should not be an error
+    When I run live agent_cmd for "live-control-e2e" with '{"command":"kill"}'
+    Then the agent_cmd result should not be an error

@@ -1,4 +1,5 @@
 use super::*;
+use quecto::infrastructure::tools::agent_cmd::AgentCmdTool;
 
 // SpawnTool BDD Steps (#401)
 // ===========================================================================
@@ -598,3 +599,108 @@ fn then_spawn_tool_schema_includes_property(world: &mut QuectoWorld, property: S
 }
 
 // ===========================================================================
+
+// --- Live spawn + agent_cmd end-to-end regression steps ---
+
+#[given("a live SpawnTool and AgentCmdTool backed by a mock LLM child")]
+fn given_live_spawn_agent_cmd_mock_child(world: &mut QuectoWorld) {
+    ensure_temp_dir(world);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = rt.block_on(wiremock::MockServer::start());
+    let uri = server.uri();
+    rt.block_on(async {
+        let body = serde_json::json!({
+            "id": "chatcmpl-live-spawn-bdd",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "LIVE_CHILD_OK"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13}
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+    });
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let child_binary = manifest_dir
+        .parent()
+        .unwrap()
+        .join("target")
+        .join("debug")
+        .join("quecto");
+    assert!(
+        child_binary.exists(),
+        "build the quecto binary before this scenario: cargo build -p quecto-agentic-harness --bin quecto"
+    );
+    // SAFETY: BDD scenarios are run with explicit single-scenario process isolation where this environment override is set before the SpawnTool launches any child process.
+    unsafe { std::env::set_var("QUECTO_CHILD_BINARY", &child_binary) };
+
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+    let config_path = base.join("config.json");
+    let config = serde_json::json!({
+        "providers": {"openai": {"api_key": "sk-test-key", "api_base": uri}},
+        "agents": {"defaults": {"model": "openai/gpt-4o-mini", "workspace": workspace}}
+    });
+    std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+
+    let registry = AgentCmdTool::new_registry();
+    let socket_dir = base.join("sockets");
+    std::fs::create_dir_all(&socket_dir).expect("create socket dir");
+    world.spawn_tool = Some(
+        SpawnTool::with_base_dir(vec![], true, base.clone())
+            .with_socket_dir(socket_dir)
+            .with_registry(registry.clone()),
+    );
+    world.agent_cmd_tool = Some(AgentCmdTool::new(registry.clone()));
+    world.agent_cmd_registry = Some(registry);
+    world.config_path = Some(config_path.to_string_lossy().to_string());
+    world._wiremock_server_uri = Some(uri);
+    std::mem::forget(server);
+    std::mem::forget(rt);
+}
+
+#[when(expr = "I live-spawn subagent {string} with initial task {string}")]
+fn when_live_spawn_subagent_with_task(world: &mut QuectoWorld, agent_id: String, task: String) {
+    let config_path = world.config_path.clone().expect("config path");
+    let args = serde_json::json!({
+        "agent_id": agent_id,
+        "task": task,
+        "config": config_path,
+        "read_only": true
+    });
+    let tool = world.spawn_tool.as_ref().expect("spawn tool");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    world.spawn_result = Some(rt.block_on(tool.execute(&args.to_string())).unwrap());
+}
+
+#[when(expr = "I run live agent_cmd for {string} with {string}")]
+fn when_run_live_agent_cmd(world: &mut QuectoWorld, agent_id: String, args: String) {
+    let mut v: serde_json::Value = serde_json::from_str(&args).expect("agent_cmd JSON");
+    v["agent_id"] = serde_json::Value::String(agent_id);
+    let tool = world.agent_cmd_tool.as_ref().expect("agent_cmd tool");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    world.agent_cmd_result = Some(rt.block_on(tool.execute(&v.to_string())).unwrap());
+}
+
+#[then(expr = "live agent_cmd get_messages for {string} should contain {string}")]
+fn then_live_get_messages_contains(world: &mut QuectoWorld, agent_id: String, expected: String) {
+    std::thread::sleep(std::time::Duration::from_secs(5));
+    let args = serde_json::json!({"agent_id": agent_id, "command": "get_messages", "count": 10});
+    let tool = world.agent_cmd_tool.as_ref().expect("agent_cmd tool");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt.block_on(tool.execute(&args.to_string())).unwrap();
+    assert!(!result.is_error, "get_messages failed: {}", result.content);
+    assert!(
+        result.content.contains(&expected),
+        "expected get_messages to contain {expected:?}, got: {}",
+        result.content
+    );
+    world.agent_cmd_result = Some(result);
+}

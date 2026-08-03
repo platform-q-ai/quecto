@@ -183,12 +183,21 @@ pub(super) async fn handle_steer(
     type_name: &str,
     message: String,
 ) -> bool {
-    if ctx.session.is_streaming() {
-        // Reader task already fires cancel eagerly — do NOT fire again here (#512).
-        ctx.session.prepend_pending(message);
-    } else {
-        ctx.session.enqueue_pending(message);
+    if !ctx.session.is_streaming() {
+        ctx.turn_control.clear_steer();
+        return super::handle_prompt(
+            ctx,
+            super::PromptCommand {
+                id: id.map(str::to_owned),
+                type_name: type_name.to_owned(),
+                message,
+                streaming_behavior: None,
+            },
+        )
+        .await;
     }
+    // Reader task already fires cancel eagerly — do NOT fire again here (#512).
+    ctx.session.prepend_pending(message);
     // #896: this steer is now being handled, so release the pending-steer gate —
     // the workflow auto-continue nudge may resume AFTER the steer runs, not
     // before it. Clearing here (rather than in the reader) keeps the nudge
@@ -196,11 +205,6 @@ pub(super) async fn handle_steer(
     ctx.turn_control.clear_steer();
     let ev = AgentEvent::ok(id, type_name, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
-    // When idle (e.g. the steered turn was just cancelled and unwound), drive the
-    // steered instruction now so it isn't stranded waiting for the next prompt.
-    if !ctx.session.is_streaming() {
-        super::drain_pending_and_nudge(ctx).await;
-    }
     false
 }
 
