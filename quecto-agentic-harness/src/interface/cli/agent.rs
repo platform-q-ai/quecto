@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use super::CliContext;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
@@ -14,7 +13,6 @@ use crate::infrastructure::persistence::session_store::FileSessionStore;
 /// Max byte length for `--socket` paths.  Linux allows 108, macOS 104;
 /// we use the stricter limit for portability.
 const MAX_SOCKET_PATH_BYTES: usize = 104;
-
 /// Bundles the stdout/stderr pair passed through the agent pipeline.
 pub(crate) struct AgentOutput<'a> {
     pub(crate) stdout: &'a mut String,
@@ -283,6 +281,7 @@ pub(crate) struct AgentBuildResult {
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub provider_reload: crate::interface::cli::provider_reload::ProviderReload,
     pub provider_reload_inputs: crate::interface::cli::provider_reload::ProviderReloadInputs,
+    pub workspace: std::path::PathBuf,
 }
 
 pub(crate) fn build_agent_from_config(
@@ -334,8 +333,7 @@ pub(crate) fn build_agent_from_config(
         http_client.clone(),
     );
 
-    // Workflow template discovery (slice 2) resolves against the process
-    // working directory and the user's home directory.
+    // Workflow templates resolve against CWD and home.
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let home_dir = crate::infrastructure::tools::path_utils::home_dir();
     let ToolRegistryBuild {
@@ -348,6 +346,7 @@ pub(crate) fn build_agent_from_config(
         notification_rx,
         subagent_registry,
         workflow_state,
+        workspace,
     } = match build_tool_registry(ToolRegistryArgs {
         base_dir,
         config: &config,
@@ -438,6 +437,7 @@ pub(crate) fn build_agent_from_config(
         workflow_state,
         provider_reload,
         provider_reload_inputs,
+        workspace,
     })
 }
 
@@ -686,6 +686,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     let code = crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
         agent,
         base_dir: &base_dir,
+        workspace: &build.workspace,
         session_key,
         model,
         ephemeral,

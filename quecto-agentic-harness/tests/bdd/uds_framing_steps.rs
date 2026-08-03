@@ -101,8 +101,14 @@ pub fn parse_wire_events(world: &QuectoWorld, response_bytes: &[u8]) -> Vec<Stri
             block_on(async {
                 let mut reader = tokio::io::BufReader::new(response_bytes);
                 loop {
-                    match quecto_line_io::read_frame(&mut reader, PROTOCOL_FRAME_CAP_BYTES).await {
-                        Ok(Some(payload)) => {
+                    match quecto_line_io::read_frame_or_legacy_line(
+                        &mut reader,
+                        PROTOCOL_FRAME_CAP_BYTES,
+                    )
+                    .await
+                    {
+                        Ok(Some(quecto_line_io::Incoming::Frame(payload)))
+                        | Ok(Some(quecto_line_io::Incoming::LegacyLine(payload))) => {
                             let text = String::from_utf8_lossy(&payload).into_owned();
                             if !text.is_empty() {
                                 events.push(text);
@@ -110,8 +116,8 @@ pub fn parse_wire_events(world: &QuectoWorld, response_bytes: &[u8]) -> Vec<Stri
                         }
                         Ok(None) => break,
                         Err(e) => panic!(
-                            "a framed client's replies must decode as frames \
-                             (the agent must answer in the client's framing): {e}"
+                            "a framed client's replies must decode as frames or the legacy \
+                             connect-time prelude during negotiation: {e}"
                         ),
                     }
                 }

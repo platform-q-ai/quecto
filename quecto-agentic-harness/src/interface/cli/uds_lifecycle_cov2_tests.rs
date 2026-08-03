@@ -60,6 +60,7 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
     UdsLoopArgs {
         agent: make_agent(),
         base_dir: base,
+        workspace: base,
         session_key: "cli:life".into(),
         model: "stub".into(),
         ephemeral: true,
@@ -186,6 +187,13 @@ async fn uds_loop_async_binds_multi_socket_serves_get_state_and_exits() {
         .unwrap()
         .unwrap();
     let event: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(event["type"], "workspace");
+    let line = tokio::time::timeout(std::time::Duration::from_secs(2), lines.next_line())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let event: serde_json::Value = serde_json::from_str(&line).unwrap();
     assert_eq!(event["type"], "response");
     assert_eq!(event["id"], "multi-state");
     assert_eq!(event["command"], "get_state");
@@ -225,6 +233,7 @@ async fn single_client_socket_override_serves_get_state() {
                 SingleClientArgs {
                     agent: make_agent(),
                     base_dir: dir.path(),
+                    workspace: dir.path(),
                     messages: Vec::new(),
                     model: "stub".into(),
                     session_key: "cli:single".into(),
@@ -255,6 +264,13 @@ async fn single_client_socket_override_serves_get_state() {
         .await
         .unwrap();
     write_half.flush().await.unwrap();
+    let line = tokio::time::timeout(std::time::Duration::from_secs(2), lines.next_line())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let event: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(event["type"], "workspace");
     let line = tokio::time::timeout(std::time::Duration::from_secs(2), lines.next_line())
         .await
         .unwrap()

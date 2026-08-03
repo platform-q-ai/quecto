@@ -218,17 +218,38 @@ impl App {
         });
     }
 
-    fn start_files_autocomplete_load(&self, tx: &mpsc::Sender<Vec<String>>, in_flight: &mut bool) {
+    fn files_autocomplete_root(&self) -> PathBuf {
+        self.workspace
+            .root
+            .clone()
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| PathBuf::from("."))
+    }
+
+    fn start_files_autocomplete_load(
+        &self,
+        tx: &mpsc::Sender<(PathBuf, Vec<String>)>,
+        in_flight: &mut bool,
+    ) {
         if *in_flight {
             return;
         }
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let root = self.files_autocomplete_root();
         *in_flight = true;
         let tx = tx.clone();
         tokio::task::spawn_blocking(move || {
-            let files = list_workspace_files(&cwd);
-            let _ = tx.blocking_send(files);
+            let files = list_workspace_files(&root);
+            let _ = tx.blocking_send((root, files));
         });
+    }
+
+    fn apply_files_autocomplete_load(&mut self, root: PathBuf, files: Vec<String>) -> bool {
+        if self.files_autocomplete_root() != root {
+            return false;
+        }
+        self.workspace.files_autocomplete.apply_loaded_files(files);
+        self.refresh_files_autocomplete_from_editor();
+        true
     }
 
     fn refresh_files_autocomplete_from_editor(&mut self) {

@@ -1584,6 +1584,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
         run_uds_loop(UdsLoopArgs {
             agent,
             base_dir: &base_for_thread,
+            workspace: &base_for_thread,
             session_key,
             model,
             ephemeral,

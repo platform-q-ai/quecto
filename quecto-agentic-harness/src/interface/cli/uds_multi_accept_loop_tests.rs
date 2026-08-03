@@ -74,6 +74,7 @@ fn make_args(
         busy: busy_flag,
         subagent_registry,
         workflow_state: None,
+        workspace_path: std::env::current_dir().unwrap(),
     };
     (args, broadcast_tx, cmd_tx, cmd_rx)
 }
@@ -190,11 +191,11 @@ async fn busy_accept_loop_pushes_session_stats_and_extensions_snapshots() {
     assert_eq!(list[0]["name"], "weather");
 }
 
-/// IDLE accept loop: a newly connected client receives NO unsolicited bytes
-/// (no get_subagents snapshot), so idle clients see no protocol change and the
-/// dispatch loop answers their explicit requests in FIFO order.
+/// IDLE accept loop: a newly connected client receives the workspace event but
+/// no busy-only snapshot bytes, so the dispatch loop still answers explicit
+/// requests in FIFO order after the connect-time prelude.
 #[tokio::test]
-async fn idle_accept_loop_pushes_nothing() {
+async fn idle_accept_loop_pushes_workspace_before_client_input() {
     let dir = tempfile::tempdir().expect("tempdir");
     let socket_path = dir.path().join("idle.sock");
 
@@ -208,17 +209,23 @@ async fn idle_accept_loop_pushes_nothing() {
     let mut client = tokio::net::UnixStream::connect(&socket_path)
         .await
         .expect("connect to idle accept loop");
-    // Send nothing; the idle loop must not write any unsolicited snapshot bytes.
+    // Send nothing; the idle loop must still announce the workspace before any
+    // client input, but must not include busy-only snapshot responses.
     let received = read_available(&mut client, std::time::Duration::from_millis(300)).await;
 
     // Keep the writer half from triggering an early EOF-driven read.
     let _ = client.flush().await;
     handle.abort();
 
-    assert!(
-        received.is_empty(),
-        "idle client must receive no unsolicited snapshot bytes, got: {received}"
+    let lines: Vec<_> = received.lines().collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "idle client got unexpected events: {received}"
     );
+    let workspace: serde_json::Value = serde_json::from_str(lines[0]).expect("workspace json");
+    assert_eq!(workspace["type"], "workspace");
+    assert!(workspace["path"].as_str().is_some());
 }
 
 // --- bounded read at read time (#1003) ---

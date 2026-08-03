@@ -324,6 +324,7 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
         run_uds_loop(UdsLoopArgs {
             agent,
             base_dir: &base_for_thread,
+            workspace: &base_for_thread,
             session_key,
             model,
             ephemeral: false,

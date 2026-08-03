@@ -155,7 +155,8 @@ impl App {
 
         // @files autocomplete workspace enumeration. Loading can shell out to git
         // or walk the filesystem, so keep it off the input/render loop.
-        let (files_autocomplete_tx, mut files_autocomplete_rx) = mpsc::channel::<Vec<String>>(1);
+        let (files_autocomplete_tx, mut files_autocomplete_rx) =
+            mpsc::channel::<(PathBuf, Vec<String>)>(1);
         let mut files_autocomplete_load_in_flight = false;
 
         // Timeout for incomplete escape sequences (matches Quecto TUI's 10ms).
@@ -249,11 +250,11 @@ impl App {
                     self.route_subagent_event(&agent_id, ev);
                     self.render_stream_event(&mut stream_render_coalescer, is_token);
                 }
-                Some(files) = files_autocomplete_rx.recv() => {
+                Some((root, files)) = files_autocomplete_rx.recv() => {
                     files_autocomplete_load_in_flight = false;
-                    self.workspace.files_autocomplete.apply_loaded_files(files);
-                    self.refresh_files_autocomplete_from_editor();
-                    self.render_and_note(&mut stream_render_coalescer);
+                    if self.apply_files_autocomplete_load(root, files) {
+                        self.render_and_note(&mut stream_render_coalescer);
+                    }
                 }
                 // Deferred stream paint: fires at the coalescer's pending frame
                 // deadline so a stalled burst still gets its final paint.

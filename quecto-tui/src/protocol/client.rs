@@ -183,6 +183,9 @@ pub enum Command {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     AgentStart,
+    Workspace {
+        path: String,
+    },
     /// Agent finished. Full message content is not re-carried (#1060); optional
     /// `messageRefs` identify this run's messages for fetch-on-miss recovery.
     AgentEnd {
@@ -732,6 +735,9 @@ mod client_policy_tests;
 #[cfg(test)]
 #[path = "client_sync_tests.rs"]
 mod client_sync_tests;
+#[cfg(test)]
+#[path = "client_workspace_tests.rs"]
+mod client_workspace_tests;
 #[cfg(test)]
 #[path = "client_tests.rs"]
 mod tests;
