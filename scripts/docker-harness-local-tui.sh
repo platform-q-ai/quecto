@@ -354,14 +354,17 @@ if [[ -n "$QUECTO_SSH_AUTH_SOCK" ]]; then
   cat >>"$COMPOSE_OVERRIDE" <<EOF
     environment:
       SSH_AUTH_SOCK: /ssh-agent
-    volumes:
+EOF
+fi
+if [[ -n "$QUECTO_SSH_AUTH_SOCK" || -n "$QUECTO_CONFIG_SEED_PATH" || -n "$QUECTO_CREDENTIALS_SEED_PATH" || -n "$QUECTO_GH_CONFIG_SEED_DIR" ]]; then
+  echo "    volumes:" >>"$COMPOSE_OVERRIDE"
+  if [[ -n "$QUECTO_SSH_AUTH_SOCK" ]]; then
+    cat >>"$COMPOSE_OVERRIDE" <<EOF
       - type: bind
         source: ${QUECTO_SSH_AUTH_SOCK}
         target: /ssh-agent
 EOF
-fi
-if [[ -n "$QUECTO_CONFIG_SEED_PATH" || -n "$QUECTO_CREDENTIALS_SEED_PATH" || -n "$QUECTO_GH_CONFIG_SEED_DIR" ]]; then
-  echo "    volumes:" >>"$COMPOSE_OVERRIDE"
+  fi
   if [[ -n "$QUECTO_CONFIG_SEED_PATH" ]]; then
     cat >>"$COMPOSE_OVERRIDE" <<EOF
       - type: bind
@@ -457,8 +460,12 @@ if [[ "$TRANSPORT" == "direct" ]]; then
     exit 1
   }
 else
+  tcp_bridge_ready=0
   for _ in $(seq 1 "$SOCKET_TIMEOUT"); do
-    if (echo >/dev/tcp/127.0.0.1/"$PROXY_PORT") >/dev/null 2>&1; then break; fi
+    if (echo >/dev/tcp/127.0.0.1/"$PROXY_PORT") >/dev/null 2>&1; then
+      tcp_bridge_ready=1
+      break
+    fi
     if ! kill -0 "$COMPOSE_PID" >/dev/null 2>&1; then
       echo "harness compose service exited before TCP bridge was ready" >&2
       wait "$COMPOSE_PID" || true
@@ -466,6 +473,11 @@ else
     fi
     sleep 1
   done
+  if [[ "$tcp_bridge_ready" != "1" ]]; then
+    echo "timed out after ${SOCKET_TIMEOUT}s waiting for TCP bridge 127.0.0.1:$PROXY_PORT" >&2
+    echo "The first run can take several minutes because the container entrypoint cargo-installs Quecto packages." >&2
+    exit 1
+  fi
   LOCAL_PROXY_SOCKET="$RUNTIME_DIR/quecto-proxy.sock"
   socat UNIX-LISTEN:"$LOCAL_PROXY_SOCKET",fork,unlink-early TCP:127.0.0.1:"$PROXY_PORT" &
   SOCAT_PID=$!

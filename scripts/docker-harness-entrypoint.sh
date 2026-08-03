@@ -8,11 +8,12 @@ set -euo pipefail
 RUN_AS=()
 if [[ "$(id -u)" == "0" && -n "${HOST_UID:-}" ]]; then
   HOST_GID="${HOST_GID:-$HOST_UID}"
-  if ! getent group "$HOST_GID" >/dev/null 2>&1; then
-    addgroup -g "$HOST_GID" -S appuser >/dev/null 2>&1 || true
+  if ! group_name="$(getent group "$HOST_GID" | cut -d: -f1)"; then
+    addgroup -g "$HOST_GID" -S appuser >/dev/null
+    group_name="appuser"
   fi
   if ! getent passwd "$HOST_UID" >/dev/null 2>&1; then
-    adduser -S -D -H -h /home/appuser -u "$HOST_UID" -G appuser appuser >/dev/null 2>&1 || true
+    adduser -S -D -H -h /home/appuser -u "$HOST_UID" -G "$group_name" appuser >/dev/null
   fi
   RUN_AS=(su-exec "$HOST_UID:$HOST_GID")
 fi
