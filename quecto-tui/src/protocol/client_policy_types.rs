@@ -2,6 +2,28 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChildToolPolicyPropagation {
+    #[serde(default)]
+    pub agent_id: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
+pub fn summarize_child_policy_propagation(
+    child_propagation: &[ChildToolPolicyPropagation],
+) -> (usize, usize) {
+    child_propagation
+        .iter()
+        .fold((0, 0), |(ok, failed), item| match item.status.as_str() {
+            "applied" | "queued" => (ok + 1, failed),
+            _ => (ok, failed + 1),
+        })
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ToolPolicyResult {
     #[serde(default)]
     pub after: Option<ToolCatalogueEntry>,

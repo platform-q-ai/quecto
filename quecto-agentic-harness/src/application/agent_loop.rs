@@ -15,8 +15,8 @@ use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent
 use crate::domain::provider_error::classify_provider_error;
 use crate::domain::session::ContextSpillStore;
 use crate::domain::tool::{
-    RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor,
-    ToolPolicyChildPropagator, ToolPolicyMutation, ToolProfileContext, ToolRegistry,
+    ChildToolPolicyPropagation, RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog,
+    ToolExecutor, ToolPolicyChildPropagator, ToolPolicyMutation, ToolProfileContext, ToolRegistry,
 };
 use std::pin::Pin;
 use std::sync::Arc;
@@ -113,13 +113,13 @@ pub struct AgentLoopImpl {
     /// #1072: latched by `apply_context_pruning` whenever a pass mutated
     /// existing history (in-place stub demotion, tool-result collapse, or a
     /// physical drop). Outcome-independent: it stays set across an Error or
-    /// Cancelled turn so persistence can still reconcile. Consumed via
-    /// [`Self::take_durable_prefix_dirty`].
+    /// Cancelled turn so persistence can still reconcile.
     durable_prefix_dirty: std::sync::atomic::AtomicBool,
-    /// Context-management boundary for pruning, spilling, dirty-prefix, and
-    /// user-facing context gauge decisions.
     context_manager: ContextManager,
     pub(super) pending_tool_policy_mutations: std::sync::Mutex<Vec<ToolPolicyMutation>>,
+    pub(super) pending_tool_policy_child_propagation:
+        std::sync::Mutex<Vec<ChildToolPolicyPropagation>>,
+    pub(super) pending_tool_policy_last_child_propagation_count: std::sync::Mutex<usize>,
     pub(super) tool_policy_state: std::sync::Mutex<ToolPolicyState>,
     pub(super) turn_in_flight: std::sync::atomic::AtomicBool,
     pub(super) tool_profile_context: ToolProfileContext,
@@ -168,6 +168,8 @@ impl AgentLoopImpl {
             durable_prefix_dirty: std::sync::atomic::AtomicBool::new(false),
             context_manager,
             pending_tool_policy_mutations: std::sync::Mutex::new(Vec::new()),
+            pending_tool_policy_child_propagation: std::sync::Mutex::new(Vec::new()),
+            pending_tool_policy_last_child_propagation_count: std::sync::Mutex::new(0),
             tool_policy_state: std::sync::Mutex::new(ToolPolicyState::default()),
             turn_in_flight: std::sync::atomic::AtomicBool::new(false),
             tool_profile_context: config.tool_profile_context,
@@ -536,6 +538,7 @@ impl AgentLoopImpl {
     /// Run the LLM-tool loop.
     async fn run_loop(&mut self, messages: &mut Vec<Message>) -> Result<AgentResult, DomainError> {
         self.mark_turn_in_flight();
+        self.drain_tool_policy_mutations_at_internal_boundary();
         let mut tool_defs = self.current_tool_definitions();
         let mut iterations: u32 = 0;
         let mut current_turn: u32 = 1;

@@ -110,6 +110,8 @@ pub enum AgentEvent {
     ToolPolicyChanged {
         changed_tools: Vec<String>,
         results: Vec<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        child_propagation: Vec<serde_json::Value>,
         apply_mode: String,
         reason: String,
     },
