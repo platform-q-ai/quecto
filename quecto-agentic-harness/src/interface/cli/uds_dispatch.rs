@@ -142,7 +142,7 @@ pub(super) async fn handle_set_tool_policy(
 ) -> bool {
     let mut domain_mutations = Vec::with_capacity(mutations.len());
     for mutation in mutations {
-        let Some(name) = mutation.name.or(mutation.tool_id) else {
+        let Some(name) = mutation.tool_id.or(mutation.name) else {
             let ev = AgentEvent::err(
                 id,
                 type_name,

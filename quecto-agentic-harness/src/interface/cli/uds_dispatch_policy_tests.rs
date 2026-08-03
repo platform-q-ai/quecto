@@ -64,3 +64,87 @@ async fn dispatch_set_tool_policy_applies_and_catalogue_reflects_scope() {
     assert!(!alpha.effective_parent_enabled);
     assert!(alpha.effective_child_enabled);
 }
+
+#[tokio::test]
+async fn dispatch_set_tool_policy_prefers_tool_id_when_name_also_present() {
+    let mut fx = cov_tests::Fixture::new();
+    fx.agent
+        .register_runtime_tool(std::sync::Arc::new(NamedTool("alpha")));
+    fx.agent
+        .register_runtime_tool(std::sync::Arc::new(NamedTool("beta")));
+    let beta_id = fx
+        .agent
+        .tool_catalogue_entries()
+        .into_iter()
+        .find(|entry| entry.name == "beta")
+        .expect("beta entry")
+        .stable_id
+        .into_owned();
+
+    let cmd = AgentCommand::SetToolPolicy {
+        id: Some("pol".into()),
+        mutations: vec![crate::interface::cli::protocol::ToolPolicyMutationCommand {
+            tool_id: Some(beta_id),
+            name: Some("alpha".into()),
+            scope: ProfileAvailabilityScope::Child,
+            reason: Some("test".into()),
+        }],
+        mode: ToolPolicyApplyModeCommand::ImmediateIfIdle,
+    };
+    {
+        let mut ctx = fx.ctx();
+        assert!(!dispatch_command(cmd, &mut ctx).await);
+    }
+
+    let entries = fx.agent.tool_catalogue_entries();
+    let alpha = entries
+        .iter()
+        .find(|entry| entry.name == "alpha")
+        .expect("alpha entry");
+    let beta = entries
+        .iter()
+        .find(|entry| entry.name == "beta")
+        .expect("beta entry");
+    assert_eq!(alpha.profile_scope, None);
+    assert_eq!(alpha.effective_scope, ProfileAvailabilityScope::Both);
+    assert_eq!(beta.profile_scope, Some(ProfileAvailabilityScope::Child));
+    assert_eq!(beta.effective_scope, ProfileAvailabilityScope::Child);
+}
+
+#[tokio::test]
+async fn dispatch_set_tool_policy_tool_id_only_still_applies() {
+    let mut fx = cov_tests::Fixture::new();
+    fx.agent
+        .register_runtime_tool(std::sync::Arc::new(NamedTool("alpha")));
+    let alpha_id = fx
+        .agent
+        .tool_catalogue_entries()
+        .into_iter()
+        .find(|entry| entry.name == "alpha")
+        .expect("alpha entry")
+        .stable_id
+        .into_owned();
+
+    let cmd = AgentCommand::SetToolPolicy {
+        id: Some("pol".into()),
+        mutations: vec![crate::interface::cli::protocol::ToolPolicyMutationCommand {
+            tool_id: Some(alpha_id),
+            name: None,
+            scope: ProfileAvailabilityScope::Child,
+            reason: Some("test".into()),
+        }],
+        mode: ToolPolicyApplyModeCommand::ImmediateIfIdle,
+    };
+    {
+        let mut ctx = fx.ctx();
+        assert!(!dispatch_command(cmd, &mut ctx).await);
+    }
+    let alpha = fx
+        .agent
+        .tool_catalogue_entries()
+        .into_iter()
+        .find(|entry| entry.name == "alpha")
+        .expect("alpha entry");
+    assert_eq!(alpha.profile_scope, Some(ProfileAvailabilityScope::Child));
+    assert_eq!(alpha.effective_scope, ProfileAvailabilityScope::Child);
+}
