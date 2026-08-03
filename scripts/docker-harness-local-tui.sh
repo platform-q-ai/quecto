@@ -231,7 +231,11 @@ if [[ "$API_ENABLED" == "1" ]]; then
   fi
 fi
 if [[ "$TRANSPORT" == "tcp-proxy" ]]; then
-  resolve_port proxy PROXY_PORT "$PROXY_PORT_PINNED" "$API_PORT"
+  proxy_avoid_ports=()
+  if [[ "$API_ENABLED" == "1" ]]; then
+    proxy_avoid_ports+=("$API_PORT")
+  fi
+  resolve_port proxy PROXY_PORT "$PROXY_PORT_PINNED" "${proxy_avoid_ports[@]}"
 fi
 
 command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 1; }
@@ -465,6 +469,21 @@ else
   LOCAL_PROXY_SOCKET="$RUNTIME_DIR/quecto-proxy.sock"
   socat UNIX-LISTEN:"$LOCAL_PROXY_SOCKET",fork,unlink-early TCP:127.0.0.1:"$PROXY_PORT" &
   SOCAT_PID=$!
+  for _ in $(seq 1 5); do
+    if [[ -S "$LOCAL_PROXY_SOCKET" ]] && kill -0 "$SOCAT_PID" >/dev/null 2>&1; then
+      break
+    fi
+    if ! kill -0 "$SOCAT_PID" >/dev/null 2>&1; then
+      echo "local socat bridge exited before Unix socket was ready" >&2
+      wait "$SOCAT_PID" || true
+      exit 1
+    fi
+    sleep 1
+  done
+  if [[ ! -S "$LOCAL_PROXY_SOCKET" ]]; then
+    echo "timed out waiting for local socat bridge socket $LOCAL_PROXY_SOCKET" >&2
+    exit 1
+  fi
   LOCAL_SOCKET="$LOCAL_PROXY_SOCKET"
 fi
 
