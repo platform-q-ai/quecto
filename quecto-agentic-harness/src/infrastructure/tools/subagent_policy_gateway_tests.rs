@@ -21,6 +21,32 @@ async fn synchronous_gateway_is_safe_inside_active_tokio_runtime() {
 }
 
 #[test]
+fn gateway_has_children_reflects_non_exited_registry_entries() {
+    let empty_gateway = SubagentPolicyGateway::new(None);
+    assert!(!empty_gateway.has_children());
+
+    let registry = Arc::new(Mutex::new(HashMap::from([("child-1".to_string(), {
+        let mut entry = SubagentEntry::new(PathBuf::from("/tmp/idle.sock"), 0);
+        entry.status = SubagentStatus::Idle;
+        entry
+    })])));
+    let gateway = SubagentPolicyGateway::new(Some(registry));
+    assert!(gateway.has_children());
+}
+
+#[test]
+fn gateway_has_children_ignores_exited_registry_entries() {
+    let registry = Arc::new(Mutex::new(HashMap::from([("child-1".to_string(), {
+        let mut entry = SubagentEntry::new(PathBuf::from("/tmp/exited.sock"), 0);
+        entry.status = SubagentStatus::Exited;
+        entry
+    })])));
+    let gateway = SubagentPolicyGateway::new(Some(registry));
+
+    assert!(!gateway.has_children());
+}
+
+#[test]
 fn no_registry_has_no_child_propagation_results() {
     let results = snapshot_targets(&None);
     assert!(results.is_empty());
@@ -179,4 +205,51 @@ fn invalid_json_child_response_maps_to_error() {
     let result = map_child_response("child-1".to_string(), Ok("not json".to_string()));
 
     assert_eq!(result.status, ChildToolPolicyPropagationStatus::Error);
+    assert!(result.error.unwrap().contains("invalid child response"));
+}
+
+#[test]
+fn disconnected_error_maps_to_disconnected_status() {
+    let result = map_child_response(
+        "child-1".to_string(),
+        Err(DomainError::Other("connection refused".into())),
+    );
+
+    assert_eq!(
+        result.status,
+        ChildToolPolicyPropagationStatus::Disconnected
+    );
+    assert_eq!(result.error.as_deref(), Some("connection refused"));
+}
+
+#[test]
+fn malformed_success_response_without_reconciliation_maps_to_error() {
+    let result = map_child_response(
+        "child-1".to_string(),
+        Ok(r#"{"ok":true,"data":{"ignored":true}}"#.to_string()),
+    );
+
+    assert_eq!(result.status, ChildToolPolicyPropagationStatus::Error);
+    assert!(result.reconciliation.is_none());
+    assert!(result.error.is_none());
+}
+
+#[test]
+fn parse_reconciliation_rejects_unknown_mode() {
+    let value = serde_json::json!({"mode":"later","results":[]});
+
+    assert!(parse_reconciliation(&value).is_none());
+}
+
+#[test]
+fn parse_mutation_result_rejects_unknown_availability() {
+    let value = serde_json::json!({
+        "name": "bash",
+        "requestedAvailability": "hidden",
+        "requestedScope": "none",
+        "status": "applied",
+        "reason": "bad availability"
+    });
+
+    assert!(parse_mutation_result(&value).is_none());
 }
