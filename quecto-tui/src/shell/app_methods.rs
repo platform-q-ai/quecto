@@ -439,10 +439,15 @@ impl App {
         let main_pane_workflow = self.render_main_pane_workflow(width, main_box_width, now);
         lines.extend(main_pane_workflow);
 
-        // Chat uses all space above bottom; top-pad short transcripts so the
-        // latest output sits directly above the input bar.
+        // Chat uses all space above bottom, with one blank separator above the
+        // streaming area so it does not sit tight against the master idle
+        // timer/title area (#1323). The bottom stack already reserves the blank
+        // separator before the working spinner. Top-pad short transcripts so the
+        // latest output sits directly above that lower separator.
         let top_chrome_height = lines.len();
-        let chat_height = height.saturating_sub(bottom_height + top_chrome_height);
+        let streaming_vertical_padding = 1;
+        let chat_height =
+            height.saturating_sub(bottom_height + top_chrome_height + streaming_vertical_padding);
         let chat = self.active_chat_mut();
         chat.set_viewport_height(chat_height);
         let mut chat_lines = chat.render(width);
@@ -455,11 +460,12 @@ impl App {
         while chat_lines.len() < chat_height {
             chat_lines.insert(0, String::new());
         }
+        lines.push(String::new());
         lines.extend(chat_lines);
 
         let available = height.saturating_sub(bottom_height);
         while lines.len() < available {
-            lines.insert(top_chrome_height, String::new());
+            lines.insert(top_chrome_height + 1, String::new());
         }
 
         // ── Append bottom section ───────────────────────────────────

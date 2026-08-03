@@ -2,6 +2,7 @@
 
 use crate::{TuiParityHarness, TuiWorld};
 use cucumber::{given, then, when};
+use quecto_tui::components::ansi::strip_ansi;
 use quecto_tui::components::chat::Chat;
 use quecto_tui::components::component::Component;
 use quecto_tui::components::utils::visible_width;
@@ -229,6 +230,57 @@ fn when_tui_presents_streaming_response(world: &mut TuiWorld) {
         h.full_frame_raw()
     });
     world.stdout = frame;
+}
+
+fn main_pane_text(line: &str) -> &str {
+    line.rsplit('│').next().unwrap_or(line)
+}
+
+#[then("the streaming content is separated from the master idle area by one blank line")]
+fn then_streaming_content_separated_from_master_idle(world: &mut TuiWorld) {
+    let stripped = strip_ansi(&world.stdout);
+    let lines: Vec<&str> = stripped.lines().map(main_pane_text).collect();
+    let streaming_line = lines
+        .iter()
+        .position(|line| line.contains("streaming"))
+        .expect("streaming content should be visible");
+    assert!(
+        streaming_line > 0,
+        "streaming content needs a preceding line"
+    );
+    assert_eq!(
+        lines[streaming_line - 1].trim(),
+        "",
+        "streaming content should have exactly one blank line above it: {:?}",
+        world.stdout
+    );
+}
+
+#[then("the streaming content is separated from the working area by one blank line")]
+fn then_streaming_content_separated_from_working_area(world: &mut TuiWorld) {
+    let stripped = strip_ansi(&world.stdout);
+    let lines: Vec<&str> = stripped.lines().map(main_pane_text).collect();
+    let streaming_line = lines
+        .iter()
+        .position(|line| line.contains("streaming"))
+        .expect("streaming content should be visible");
+    let next = lines
+        .get(streaming_line + 1)
+        .expect("streaming content needs a following line");
+    assert_eq!(
+        next.trim(),
+        "",
+        "streaming content should have exactly one blank line below it: {:?}",
+        world.stdout
+    );
+    if let Some(after_gap) = lines.get(streaming_line + 2) {
+        assert_ne!(
+            after_gap.trim(),
+            "",
+            "streaming content should not have more than one blank line below it: {:?}",
+            world.stdout
+        );
+    }
 }
 
 #[then("the editor cursor and assistant streaming indicator remain visible")]
