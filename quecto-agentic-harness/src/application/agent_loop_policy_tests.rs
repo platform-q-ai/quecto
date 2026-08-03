@@ -118,7 +118,11 @@ impl crate::domain::tool::ToolPolicyMutator for MockRegistry {
                 reason: mutation.reason.clone(),
             });
         }
-        ToolPolicyReconciliation { mode, results }
+        ToolPolicyReconciliation {
+            mode,
+            results,
+            child_propagation: Vec::new(),
+        }
     }
 }
 impl ToolRegistry for MockRegistry {}
@@ -175,6 +179,7 @@ impl crate::domain::tool::ToolPolicyMutator for RestrictedMockRegistry {
     ) -> ToolPolicyReconciliation {
         ToolPolicyReconciliation {
             mode,
+            child_propagation: Vec::new(),
             results: mutations
                 .iter()
                 .map(|mutation| ToolPolicyMutationResult {

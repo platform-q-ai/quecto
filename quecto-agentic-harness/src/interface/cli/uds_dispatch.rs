@@ -161,9 +161,18 @@ pub(super) async fn handle_set_tool_policy(
         ToolPolicyApplyModeCommand::ImmediateIfIdle => ToolPolicyApplyMode::ImmediateIfIdle,
         ToolPolicyApplyModeCommand::AtNextTurnBoundary => ToolPolicyApplyMode::AtNextTurnBoundary,
     };
-    let reconciliation = ctx
+    let mut reconciliation = ctx
         .agent
         .request_tool_policy_mutation(&domain_mutations, apply_mode);
+    if let Some(parent_reconciliation) = reconciliation.as_mut() {
+        parent_reconciliation.child_propagation =
+            crate::infrastructure::tools::subagent_policy_gateway::propagate_tool_policy_to_children(
+                &ctx.subagent_registry,
+                &domain_mutations,
+                apply_mode,
+            )
+            .await;
+    }
     let data = match reconciliation {
         Some(reconciliation) => serde_json::to_value(&reconciliation).unwrap_or_default(),
         None => serde_json::json!({
