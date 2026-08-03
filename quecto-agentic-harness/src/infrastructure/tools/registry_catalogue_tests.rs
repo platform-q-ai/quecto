@@ -88,7 +88,7 @@ fn catalogue_entries_distinguish_runtime_lifecycle_and_effective_state() {
     assert_eq!(uds.health, ToolHealth::Ok);
 
     let serialized = serde_json::to_value(uds).unwrap();
-    assert_eq!(serialized["stableId"], "uds_tool");
+    assert_eq!(serialized["stableId"], "tool.v1:uds:uds:client-1:uds_tool");
     assert_eq!(serialized["source"], "uds");
     assert_eq!(serialized["lifecycle"], "runtime-loadable");
     assert_eq!(serialized["runtimeAvailability"], "enabled");
