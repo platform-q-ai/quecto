@@ -5,7 +5,7 @@ Feature: Stable tool identifiers
   Scenario: Bundled native tools expose provider-qualified stable identifiers
     Given a bundled native tool named "bash" from provider "quecto:official-tools"
     When the tool catalogue is requested
-    Then the catalogue entry for "bash" should have stable id "tool.v1:bundled-native:quecto:official-tools:bash"
+    Then the catalogue entry for "bash" should have stable id "tool.v1:bundled-native:21:quecto:official-tools:bash"
 
   Scenario: Legacy name-backed policy identifiers resolve safely
     Given a bundled native tool named "bash" from provider "quecto:official-tools"
@@ -24,10 +24,10 @@ Feature: Stable tool identifiers
 
   Scenario: Provider namespace collisions do not alias tools
     Given UDS tools named "weather" from providers "uds:client-a" and "uds:client-b"
-    When policy disables stable tool id "tool.v1:uds:uds:client-a:weather"
+    When policy disables stable tool id "tool.v1:uds:12:uds:client-a:weather"
     Then only provider "uds:client-a" tool "weather" should be disabled
 
   Scenario: Unknown stable identifiers remain safe
     Given a bundled native tool named "bash" from provider "quecto:official-tools"
-    When policy disables stable tool id "tool.v1:bundled-native:quecto:official-tools:missing"
+    When policy disables stable tool id "tool.v1:bundled-native:21:quecto:official-tools:missing"
     Then the unknown policy id should be reported

@@ -46,7 +46,7 @@ fn two_providers_register_same_stable_id(world: &mut QuectoWorld) {
         registry.register_with_metadata(
             Arc::new(MockBddTool::new("weather_v2", "ok")),
             ToolRegistration::uds_owner("uds:client-b")
-                .with_stable_id("tool.v1:uds:uds:client-a:weather"),
+                .with_stable_id("tool.v1:uds:12:uds:client-a:weather"),
         ),
     );
     world.tool_registry = Some(registry);
