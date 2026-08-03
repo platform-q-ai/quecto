@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -10,7 +11,9 @@ use crate::domain::tool::{
     ToolExecutor, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyReconciliation,
     ToolProfileContext, ToolResult,
 };
-use crate::domain::tool_descriptor::{ToolCatalogueEntry, ToolDescriptor};
+use crate::domain::tool_descriptor::{
+    ProfileAvailabilityScope, ToolCatalogueEntry, ToolDescriptor,
+};
 
 impl ToolCatalog for ToolRegistryImpl {
     fn definitions(&self) -> &[ToolDefinition] {
@@ -81,6 +84,15 @@ impl RuntimeToolLifecycleRegistry for ToolRegistryImpl {
 
     fn disable_tool(&mut self, name: &str) -> bool {
         self.disable_tool(name)
+    }
+
+    fn set_inherited_child_policy_snapshot_for_spawn(
+        &self,
+        snapshot: BTreeMap<String, ProfileAvailabilityScope>,
+    ) {
+        if let Some(spawn) = self.tools.get("spawn") {
+            spawn.set_inherited_child_policy_snapshot_for_spawn(snapshot);
+        }
     }
 }
 

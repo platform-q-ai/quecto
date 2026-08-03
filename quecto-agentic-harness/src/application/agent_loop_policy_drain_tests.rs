@@ -39,9 +39,10 @@ fn queued_drain_keeps_registry_catalogue_and_event_after_consistent() {
     assert!(agent.current_tool_definitions().is_empty());
     assert!(
         agent
-            .runtime_disabled_tools
+            .tool_policy_state
             .lock()
             .unwrap()
+            .disabled_tools
             .contains("alpha"),
         "overlay records only Applied mutations"
     );
@@ -67,20 +68,19 @@ fn queued_drain_keeps_registry_catalogue_and_event_after_consistent() {
 fn blocked_queued_mutation_does_not_mutate_overlays() {
     let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
     {
-        let mut disabled = agent.runtime_disabled_tools.lock().unwrap();
-        disabled.insert("alpha".to_string());
+        let mut policy = agent.tool_policy_state.lock().unwrap();
+        policy.disabled_tools.insert("alpha".to_string());
     }
     agent.swap_registry(Box::new(RestrictedMockRegistry::new("alpha")));
     {
-        let mut enabled = agent.runtime_enabled_tools.lock().unwrap();
-        enabled.insert("alpha".to_string());
-        let mut scopes = agent.runtime_policy_scopes.lock().unwrap();
-        scopes.insert("alpha".to_string(), ProfileAvailabilityScope::Both);
+        let mut policy = agent.tool_policy_state.lock().unwrap();
+        policy.enabled_tools.insert("alpha".to_string());
+        policy
+            .scopes
+            .insert("alpha".to_string(), ProfileAvailabilityScope::Both);
     }
 
-    let disabled_before = agent.runtime_disabled_tools.lock().unwrap().clone();
-    let enabled_before = agent.runtime_enabled_tools.lock().unwrap().clone();
-    let scopes_before = agent.runtime_policy_scopes.lock().unwrap().clone();
+    let policy_before = agent.tool_policy_state.lock().unwrap().clone();
 
     agent.queue_tool_policy_mutation(&[ToolPolicyMutation::enable("alpha", "blocked enable")]);
     let reconciliation = agent
@@ -92,19 +92,23 @@ fn blocked_queued_mutation_does_not_mutate_overlays() {
         ToolPolicyMutationStatus::BlockedByRestriction
     );
     assert_eq!(
-        *agent.runtime_disabled_tools.lock().unwrap(),
-        disabled_before,
+        agent.tool_policy_state.lock().unwrap().disabled_tools,
+        policy_before.disabled_tools,
         "blocked queued mutations must not rewrite disabled overlay"
     );
     assert_eq!(
-        *agent.runtime_enabled_tools.lock().unwrap(),
-        enabled_before,
+        agent.tool_policy_state.lock().unwrap().enabled_tools,
+        policy_before.enabled_tools,
         "blocked queued mutations must not rewrite enabled overlay"
     );
     assert_eq!(
-        *agent.runtime_policy_scopes.lock().unwrap(),
-        scopes_before,
+        agent.tool_policy_state.lock().unwrap().scopes,
+        policy_before.scopes,
         "blocked queued mutations must not rewrite scope overlay"
+    );
+    assert!(
+        agent.current_tool_definitions().is_empty(),
+        "pre-existing overlays must not make explicitly restricted tools visible"
     );
 }
 
@@ -129,16 +133,18 @@ fn immediate_child_scope_mutation_does_not_enter_parent_enabled_overlay() {
     );
     assert!(
         !agent
-            .runtime_enabled_tools
+            .tool_policy_state
             .lock()
             .unwrap()
+            .enabled_tools
             .contains("alpha")
     );
     assert!(
         agent
-            .runtime_disabled_tools
+            .tool_policy_state
             .lock()
             .unwrap()
+            .disabled_tools
             .contains("alpha")
     );
     assert!(agent.current_tool_definitions().is_empty());
@@ -172,16 +178,18 @@ fn queued_child_scope_mutation_reports_and_applies_child_scope() {
     assert!(after.effective_child_enabled);
     assert!(
         !agent
-            .runtime_enabled_tools
+            .tool_policy_state
             .lock()
             .unwrap()
+            .enabled_tools
             .contains("alpha")
     );
     assert!(
         agent
-            .runtime_disabled_tools
+            .tool_policy_state
             .lock()
             .unwrap()
+            .disabled_tools
             .contains("alpha")
     );
     assert!(agent.current_tool_definitions().is_empty());
@@ -227,18 +235,20 @@ fn parent_only_applied_mutation_stays_hidden_on_child_profile_agent() {
     // tool into Child-profile catalogues / definitions.
     assert_eq!(
         agent
-            .runtime_policy_scopes
+            .tool_policy_state
             .lock()
             .unwrap()
+            .scopes
             .get("alpha")
             .copied(),
         Some(ProfileAvailabilityScope::Parent)
     );
     assert!(
         !agent
-            .runtime_enabled_tools
+            .tool_policy_state
             .lock()
             .unwrap()
+            .enabled_tools
             .contains("alpha"),
         "parent-only Applied must not enter runtime_enabled_tools"
     );
@@ -287,9 +297,10 @@ fn both_scope_applied_mutation_enters_enabled_overlay_and_stays_visible() {
     );
     assert!(
         agent
-            .runtime_enabled_tools
+            .tool_policy_state
             .lock()
             .unwrap()
+            .enabled_tools
             .contains("alpha"),
         "Both Applied may enter runtime_enabled_tools"
     );

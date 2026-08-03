@@ -4,45 +4,145 @@ use crate::domain::tool::{
     ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus,
     ToolPolicyReconciliation,
 };
-use crate::domain::tool_descriptor::ToolCatalogueEntry;
+use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolCatalogueEntry};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::Ordering;
 
+#[derive(Debug, Default, Clone)]
+pub(super) struct ToolPolicyState {
+    pub(super) disabled_tools: HashSet<String>,
+    pub(super) enabled_tools: HashSet<String>,
+    pub(super) scopes: HashMap<String, ProfileAvailabilityScope>,
+}
+
+impl ToolPolicyState {
+    pub(super) fn is_model_visible(
+        &self,
+        name: &str,
+        profile: crate::domain::tool::ToolProfileContext,
+        catalogue_entry: Option<&ToolCatalogueEntry>,
+    ) -> bool {
+        if let Some(entry) = catalogue_entry
+            && entry.explicit_restriction.is_some()
+        {
+            return false;
+        }
+        if let Some(scope) = self.scopes.get(name) {
+            return Self::scope_allows(*scope, profile);
+        }
+        if let Some(entry) = catalogue_entry {
+            let profile_enabled = match profile {
+                crate::domain::tool::ToolProfileContext::Parent => entry.effective_parent_enabled,
+                crate::domain::tool::ToolProfileContext::Child => entry.effective_child_enabled,
+            };
+            return (profile_enabled || self.enabled_tools.contains(name))
+                && entry.explicit_restriction.is_none()
+                && (entry.profile_scope.is_some() || !self.disabled_tools.contains(name));
+        }
+        !self.disabled_tools.contains(name) || self.enabled_tools.contains(name)
+    }
+
+    pub(super) fn blocks_execution(
+        &self,
+        name: &str,
+        profile: crate::domain::tool::ToolProfileContext,
+    ) -> bool {
+        self.scopes.get(name).map_or_else(
+            || self.disabled_tools.contains(name),
+            |scope| !Self::scope_allows(*scope, profile),
+        )
+    }
+
+    pub(super) fn record_applied(&mut self, name: &str, scope: ProfileAvailabilityScope) {
+        self.scopes.insert(name.to_string(), scope);
+        match scope {
+            ProfileAvailabilityScope::Both => {
+                self.disabled_tools.remove(name);
+                self.enabled_tools.insert(name.to_string());
+            }
+            ProfileAvailabilityScope::Parent => {
+                self.disabled_tools.remove(name);
+                self.enabled_tools.remove(name);
+            }
+            ProfileAvailabilityScope::Child | ProfileAvailabilityScope::None => {
+                self.disabled_tools.insert(name.to_string());
+                self.enabled_tools.remove(name);
+            }
+        }
+    }
+
+    pub(super) fn apply_to_catalogue_entry(&self, entry: &mut ToolCatalogueEntry) {
+        let name = entry.name.as_ref();
+        let scope = self.scopes.get(name).copied().or_else(|| {
+            if self.disabled_tools.contains(name) {
+                Some(ProfileAvailabilityScope::None)
+            } else if self.enabled_tools.contains(name) {
+                Some(ProfileAvailabilityScope::Both)
+            } else {
+                None
+            }
+        });
+        if let Some(scope) = scope {
+            entry.session_enabled = Some(scope.is_enabled());
+            entry.effective_scope = scope;
+            entry.effective_parent_enabled = scope.allows_parent();
+            entry.effective_child_enabled = scope.allows_child();
+            entry.effective_enabled = scope.is_enabled();
+            entry.runtime_availability = if scope.is_enabled() {
+                crate::domain::tool_descriptor::ToolAvailability::Enabled
+            } else {
+                crate::domain::tool_descriptor::ToolAvailability::Disabled
+            };
+            entry.health = if scope.is_enabled() {
+                crate::domain::tool_descriptor::ToolHealth::Ok
+            } else {
+                crate::domain::tool_descriptor::ToolHealth::Disabled
+            };
+        }
+    }
+
+    fn scope_allows(
+        scope: ProfileAvailabilityScope,
+        profile: crate::domain::tool::ToolProfileContext,
+    ) -> bool {
+        match profile {
+            crate::domain::tool::ToolProfileContext::Parent => scope.allows_parent(),
+            crate::domain::tool::ToolProfileContext::Child => scope.allows_child(),
+        }
+    }
+}
+
 impl AgentLoopImpl {
+    pub fn tool_catalogue_entries(
+        &self,
+    ) -> Vec<crate::domain::tool_descriptor::ToolCatalogueEntry> {
+        let mut entries = self.tool_catalog().catalogue_entries();
+        let policy = self
+            .tool_policy_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for entry in &mut entries {
+            policy.apply_to_catalogue_entry(entry);
+        }
+        entries
+    }
+
     pub(super) fn current_tool_definitions(&self) -> Vec<ToolDefinition> {
-        let disabled = self
-            .runtime_disabled_tools
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let enabled = self
-            .runtime_enabled_tools
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let scopes = self
-            .runtime_policy_scopes
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
         let catalogue_entries = self.tool_catalogue_entries();
+        let policy = self
+            .tool_policy_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if catalogue_entries.is_empty() {
             return self
                 .tool_catalog()
                 .definitions_for(self.tool_profile_context)
                 .iter()
                 .filter(|definition| {
-                    // Scope overlays are authoritative for profile visibility.
-                    // `runtime_enabled_tools` must not resurrect parent-only
-                    // (or otherwise out-of-profile) tools under the wrong profile.
-                    scopes.get(definition.name.as_ref()).map_or_else(
-                        || {
-                            !disabled.contains(definition.name.as_ref())
-                                || enabled.contains(definition.name.as_ref())
-                        },
-                        |scope| match self.tool_profile_context {
-                            crate::domain::tool::ToolProfileContext::Parent => {
-                                scope.allows_parent()
-                            }
-                            crate::domain::tool::ToolProfileContext::Child => scope.allows_child(),
-                        },
+                    policy.is_model_visible(
+                        definition.name.as_ref(),
+                        self.tool_profile_context,
+                        None,
                     )
                 })
                 .cloned()
@@ -51,27 +151,7 @@ impl AgentLoopImpl {
         catalogue_entries
             .into_iter()
             .filter(|entry| {
-                let scoped = scopes.get(entry.name.as_ref());
-                let profile_enabled = scoped.map_or_else(
-                    || match self.tool_profile_context {
-                        crate::domain::tool::ToolProfileContext::Parent => {
-                            entry.effective_parent_enabled
-                        }
-                        crate::domain::tool::ToolProfileContext::Child => {
-                            entry.effective_child_enabled
-                        }
-                    },
-                    |scope| match self.tool_profile_context {
-                        crate::domain::tool::ToolProfileContext::Parent => scope.allows_parent(),
-                        crate::domain::tool::ToolProfileContext::Child => scope.allows_child(),
-                    },
-                );
-                // Force-enable only when no scope overlay is present; a Parent
-                // scope must not leak into Child-profile definitions via enabled.
-                let force_enabled = scoped.is_none() && enabled.contains(entry.name.as_ref());
-                (profile_enabled || force_enabled)
-                    && entry.explicit_restriction.is_none()
-                    && (entry.profile_scope.is_some() || !disabled.contains(entry.name.as_ref()))
+                policy.is_model_visible(entry.name.as_ref(), self.tool_profile_context, Some(entry))
             })
             .map(|entry| ToolDefinition {
                 name: entry.name,
@@ -97,6 +177,16 @@ impl AgentLoopImpl {
             after,
             reason: reason.to_string(),
         });
+    }
+
+    pub(super) fn refresh_spawn_inherited_child_policy_snapshot(&self) {
+        let snapshot: BTreeMap<_, _> = self
+            .tool_catalogue_entries()
+            .into_iter()
+            .map(|tool| (tool.name.into_owned(), tool.effective_scope))
+            .collect();
+        self.extension_tool_registry()
+            .set_inherited_child_policy_snapshot_for_spawn(snapshot);
     }
 
     pub(super) fn notify_tool_policy_changed(
@@ -137,45 +227,19 @@ impl AgentLoopImpl {
             .tool_registry
             .apply_tool_policy_mutations(mutations, mode);
         self.record_applied_tool_policy_overlay(&reconciliation);
+        self.refresh_spawn_inherited_child_policy_snapshot();
         self.notify_tool_policy_changed(&reconciliation, "immediate");
         Some(reconciliation)
     }
 
     fn record_applied_tool_policy_overlay(&self, reconciliation: &ToolPolicyReconciliation) {
-        let mut disabled = self
-            .runtime_disabled_tools
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut enabled = self
-            .runtime_enabled_tools
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut scopes = self
-            .runtime_policy_scopes
+        let mut policy = self
+            .tool_policy_state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         for result in &reconciliation.results {
-            if result.status != ToolPolicyMutationStatus::Applied {
-                continue;
-            }
-            scopes.insert(result.name.to_string(), result.requested_scope);
-            // `runtime_enabled_tools` is a profile-agnostic force-enable. Only
-            // Both (visible on every profile) may enter it. Parent-only must
-            // rely on the scope overlay so Child-profile agents stay hidden.
-            match result.requested_scope {
-                crate::domain::tool_descriptor::ProfileAvailabilityScope::Both => {
-                    disabled.remove(result.name.as_str());
-                    enabled.insert(result.name.to_string());
-                }
-                crate::domain::tool_descriptor::ProfileAvailabilityScope::Parent => {
-                    disabled.remove(result.name.as_str());
-                    enabled.remove(result.name.as_str());
-                }
-                crate::domain::tool_descriptor::ProfileAvailabilityScope::Child
-                | crate::domain::tool_descriptor::ProfileAvailabilityScope::None => {
-                    disabled.insert(result.name.to_string());
-                    enabled.remove(result.name.as_str());
-                }
+            if result.status == ToolPolicyMutationStatus::Applied {
+                policy.record_applied(result.name.as_ref(), result.requested_scope);
             }
         }
     }
@@ -209,13 +273,11 @@ impl AgentLoopImpl {
             self.clear_turn_in_flight();
         }
 
-        // Apply through the same registry path as immediate mutations so
-        // catalogue entries, runtime availability, and event `after` snapshots
-        // stay consistent. Overlays are updated only for Applied results.
         let reconciliation = self
             .tool_registry
             .apply_tool_policy_mutations(&mutations, ToolPolicyApplyMode::AtNextTurnBoundary);
         self.record_applied_tool_policy_overlay(&reconciliation);
+        self.refresh_spawn_inherited_child_policy_snapshot();
         self.notify_tool_policy_changed(&reconciliation, "turn_boundary");
         Some(reconciliation)
     }

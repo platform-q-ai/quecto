@@ -73,6 +73,10 @@ pub trait Tool: Send + Sync {
     fn set_session_key(&self, _session_key: String) {}
 
     /// Update a stateful spawn-like tool with the current child policy ceiling.
+    ///
+    /// Agent-loop callers can route through `set_inherited_child_policy_snapshot_for_spawn`
+    /// on `RuntimeToolLifecycleRegistry` so the snapshot is derived from the
+    /// authoritative `ToolPolicyState` overlay, not stale registry catalogue state.
     fn set_inherited_child_policy_snapshot_for_spawn(
         &self,
         _snapshot: std::collections::BTreeMap<
@@ -373,6 +377,20 @@ pub trait RuntimeToolLifecycleRegistry: Send + Sync {
     /// Compatibility name for the legacy UDS lifecycle API.
     fn can_register_uds_extension_for_owner(&self, name: &str, owner: &str) -> bool {
         self.can_register_uds_tool_for_owner(name, owner)
+    }
+
+    /// Update a stateful spawn-like tool with a child policy ceiling snapshot.
+    fn set_inherited_child_policy_snapshot_for_spawn(
+        &self,
+        _snapshot: std::collections::BTreeMap<String, ProfileAvailabilityScope>,
+    ) {
+    }
+
+    #[cfg(test)]
+    fn captured_spawn_snapshot(
+        &self,
+    ) -> Option<std::collections::BTreeMap<String, ProfileAvailabilityScope>> {
+        None
     }
 
     /// Compatibility name for the legacy UDS lifecycle API.

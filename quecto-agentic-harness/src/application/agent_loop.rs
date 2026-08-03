@@ -1,3 +1,4 @@
+use crate::application::agent_loop_policy::ToolPolicyState;
 use crate::application::agent_loop_stream::{
     StreamProviderError, TurnEnd, empty_stream_error_message, is_empty_streamed_response,
 };
@@ -17,8 +18,6 @@ use crate::domain::tool::{
     RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolPolicyMutation,
     ToolProfileContext, ToolRegistry,
 };
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
-use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::Arc;
 #[path = "agent_loop_clamp.rs"]
@@ -119,9 +118,7 @@ pub struct AgentLoopImpl {
     /// user-facing context gauge decisions.
     context_manager: ContextManager,
     pub(super) pending_tool_policy_mutations: std::sync::Mutex<Vec<ToolPolicyMutation>>,
-    pub(super) runtime_disabled_tools: std::sync::Mutex<HashSet<String>>,
-    pub(super) runtime_enabled_tools: std::sync::Mutex<HashSet<String>>,
-    pub(super) runtime_policy_scopes: std::sync::Mutex<HashMap<String, ProfileAvailabilityScope>>,
+    pub(super) tool_policy_state: std::sync::Mutex<ToolPolicyState>,
     pub(super) turn_in_flight: std::sync::atomic::AtomicBool,
     pub(super) tool_profile_context: ToolProfileContext,
 }
@@ -164,9 +161,7 @@ impl AgentLoopImpl {
             durable_prefix_dirty: std::sync::atomic::AtomicBool::new(false),
             context_manager,
             pending_tool_policy_mutations: std::sync::Mutex::new(Vec::new()),
-            runtime_disabled_tools: std::sync::Mutex::new(HashSet::new()),
-            runtime_enabled_tools: std::sync::Mutex::new(HashSet::new()),
-            runtime_policy_scopes: std::sync::Mutex::new(HashMap::new()),
+            tool_policy_state: std::sync::Mutex::new(ToolPolicyState::default()),
             turn_in_flight: std::sync::atomic::AtomicBool::new(false),
             tool_profile_context: config.tool_profile_context,
         }
@@ -295,14 +290,6 @@ impl AgentLoopImpl {
         self.tool_catalog().descriptors()
     }
 
-    /// Return rich additive catalogue/effective-policy state from the live
-    /// registry for TUI/API callers.
-    pub fn tool_catalogue_entries(
-        &self,
-    ) -> Vec<crate::domain::tool_descriptor::ToolCatalogueEntry> {
-        self.tool_catalog().catalogue_entries()
-    }
-
     pub fn register_runtime_tool(
         &mut self,
         tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
@@ -373,7 +360,7 @@ impl AgentLoopImpl {
         &*self.tool_registry
     }
 
-    fn extension_tool_registry(&self) -> &dyn RuntimeToolLifecycleRegistry {
+    pub(super) fn extension_tool_registry(&self) -> &dyn RuntimeToolLifecycleRegistry {
         &*self.tool_registry
     }
 
