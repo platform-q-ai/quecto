@@ -43,6 +43,21 @@ impl ToolIdentity {
             aliases,
         }
     }
+
+    pub fn resolver_inputs(&self) -> Vec<Cow<'_, str>> {
+        let mut inputs = vec![
+            Cow::Borrowed(self.stable_id.as_ref()),
+            Cow::Borrowed(self.legacy_name_id.as_ref()),
+        ];
+        if let Some(name) = self.legacy_name_id.strip_prefix(LEGACY_NAME_PREFIX_V0) {
+            inputs.push(Cow::Borrowed(name));
+        }
+        for alias in &self.aliases {
+            inputs.push(Cow::Borrowed(alias.as_ref()));
+            inputs.push(Cow::Owned(legacy_name_tool_id(alias.as_ref())));
+        }
+        inputs
+    }
 }
 
 pub fn stable_tool_id(source: ToolSource, provider_id: &str, name: &str) -> String {
@@ -65,14 +80,8 @@ impl ToolIdResolver {
         if !self.canonical_ids.insert(canonical.clone()) {
             return Err(ToolIdResolveError::Duplicate(canonical));
         }
-        self.insert_alias(identity.stable_id.as_ref(), &canonical)?;
-        self.insert_alias(identity.legacy_name_id.as_ref(), &canonical)?;
-        if let Some(name) = identity.legacy_name_id.strip_prefix(LEGACY_NAME_PREFIX_V0) {
-            self.insert_alias(name, &canonical)?;
-        }
-        for alias in &identity.aliases {
-            self.insert_alias(alias.as_ref(), &canonical)?;
-            self.insert_alias(&legacy_name_tool_id(alias.as_ref()), &canonical)?;
+        for input in identity.resolver_inputs() {
+            self.insert_alias(&input, &canonical)?;
         }
         Ok(())
     }

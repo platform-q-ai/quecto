@@ -156,6 +156,24 @@ fn unknown_policy_ids_are_reported() {
 }
 
 #[test]
+fn pre_registration_legacy_alias_policy_id_blocks_later_renamed_tool() {
+    let mut reg = ToolRegistryImpl::new();
+
+    let warnings = reg.apply_startup_tool_restrictions(&["tool.name.v0:view".into()]);
+
+    assert_eq!(warnings, vec!["tool.name.v0:view"]);
+    assert!(
+        !reg.register_with_metadata(
+            Arc::new(DummyTestTool::new("read")),
+            ToolRegistration::official_native()
+                .with_provider_id("quecto:official-tools")
+                .with_alias("view"),
+        )
+    );
+    assert!(reg.catalogue_entries().is_empty());
+}
+
+#[test]
 fn unknown_stable_policy_id_blocks_later_matching_provider_registration() {
     let mut reg = ToolRegistryImpl::new();
 
