@@ -15,6 +15,7 @@ use crate::domain::tool_descriptor::{
     ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolDescriptor,
     ToolRestrictionReason,
 };
+use crate::domain::tool_id::ToolIdResolveError;
 use crate::infrastructure::config::Config;
 
 /// Registry of all available tools, keyed by name.
@@ -154,10 +155,18 @@ impl ToolRegistryImpl {
     ) -> Vec<String> {
         let mut warnings = Vec::new();
         let mut rebuild_needed = false;
-        for name in names {
-            self.deny_registration_name(name);
-            if !self.tools.contains_key(name) {
-                warnings.push(name.clone());
+        for policy_id in names {
+            let name = match self.resolve_tool_policy_id(policy_id) {
+                Ok(name) => name,
+                Err(_) => {
+                    self.deny_registration_name(policy_id);
+                    warnings.push(policy_id.clone());
+                    continue;
+                }
+            };
+            self.deny_registration_name(&name);
+            if !self.tools.contains_key(&name) {
+                warnings.push(policy_id.clone());
                 continue;
             }
             let metadata = self
@@ -204,6 +213,14 @@ impl ToolRegistryImpl {
             }
         }
         let mut metadata = metadata;
+        match self.registration_identity_is_available(&name, &metadata) {
+            Ok(()) => {}
+            Err(ToolIdResolveError::Duplicate(id)) => {
+                tracing::warn!(tool = %name, duplicate_id = %id, "register rejected: duplicate stable tool id or alias");
+                return false;
+            }
+            Err(ToolIdResolveError::Unknown(_)) => unreachable!("register does not resolve ids"),
+        }
         if let Some(scope) = self
             .inherited_policy_scopes
             .get(&name)
@@ -457,7 +474,10 @@ impl ToolRegistryImpl {
     ) -> ToolPolicyReconciliation {
         let mut results = Vec::with_capacity(mutations.len());
         for mutation in mutations {
-            let before = self.catalogue_entry(&mutation.name);
+            let resolved_name = self
+                .resolve_tool_policy_id(&mutation.name)
+                .unwrap_or_else(|_| mutation.name.clone());
+            let before = self.catalogue_entry(&resolved_name);
             let status = match before.as_ref() {
                 None => ToolPolicyMutationStatus::UnknownTool,
                 Some(entry) if !mutation.scope.is_subset_of(self.restriction_ceiling(entry)) => {
@@ -472,11 +492,11 @@ impl ToolRegistryImpl {
                     ToolPolicyMutationStatus::AlreadyInState
                 }
                 Some(_) => {
-                    self.set_profile_scope(&mutation.name, mutation.scope);
+                    self.set_profile_scope(&resolved_name, mutation.scope);
                     ToolPolicyMutationStatus::Applied
                 }
             };
-            let after = self.catalogue_entry(&mutation.name);
+            let after = self.catalogue_entry(&resolved_name);
             results.push(ToolPolicyMutationResult {
                 name: mutation.name.clone(),
                 requested_availability: mutation.availability,
@@ -706,3 +726,6 @@ mod inherited_tool_policy_tests;
 #[cfg(test)]
 #[path = "registry_policy_tests.rs"]
 mod policy_tests;
+#[cfg(test)]
+#[path = "registry_stable_id_tests.rs"]
+mod stable_id_tests;

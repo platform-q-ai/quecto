@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use crate::domain::tool_descriptor::{
     ProfileAvailabilityScope, ToolAvailability, ToolRestrictionReason, ToolSource,
 };
+use crate::domain::tool_id::ToolIdentity;
 
 /// Ownership and lifecycle metadata supplied when a tool enters the common
 /// registry. Delivery adapters (bundled native, UDS, future sources) differ only
@@ -25,6 +26,8 @@ pub struct ToolRegistration {
     /// removing/denying the stable tool name. UDS tools are unloadable when their
     /// connection unregisters or disconnects; bundled native tools are not.
     pub unloadable: bool,
+    pub aliases: Vec<Cow<'static, str>>,
+    pub stable_id_override: Option<Cow<'static, str>>,
 }
 
 impl ToolRegistration {
@@ -42,6 +45,8 @@ impl ToolRegistration {
             inherited_scope: None,
             explicit_restriction: None,
             unloadable: false,
+            aliases: Vec::new(),
+            stable_id_override: None,
         }
     }
 
@@ -64,6 +69,8 @@ impl ToolRegistration {
             inherited_scope: None,
             explicit_restriction: None,
             unloadable: true,
+            aliases: Vec::new(),
+            stable_id_override: None,
         }
     }
 
@@ -82,6 +89,8 @@ impl ToolRegistration {
             inherited_scope: None,
             explicit_restriction: None,
             unloadable: true,
+            aliases: Vec::new(),
+            stable_id_override: None,
         }
     }
 
@@ -131,5 +140,28 @@ impl ToolRegistration {
     pub fn unloadable(mut self, unloadable: bool) -> Self {
         self.unloadable = unloadable;
         self
+    }
+
+    pub fn with_alias(mut self, alias: impl Into<Cow<'static, str>>) -> Self {
+        self.aliases.push(alias.into());
+        self
+    }
+
+    pub fn with_stable_id(mut self, stable_id: impl Into<Cow<'static, str>>) -> Self {
+        self.stable_id_override = Some(stable_id.into());
+        self
+    }
+
+    pub fn identity_for_name(&self, name: &str) -> ToolIdentity {
+        let mut identity = ToolIdentity::new(
+            self.source,
+            self.provider_id.as_ref(),
+            name,
+            self.aliases.clone(),
+        );
+        if let Some(stable_id) = &self.stable_id_override {
+            identity.stable_id = stable_id.clone();
+        }
+        identity
     }
 }

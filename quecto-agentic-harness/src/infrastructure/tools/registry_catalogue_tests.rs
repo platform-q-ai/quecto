@@ -34,7 +34,10 @@ fn catalogue_entries_distinguish_runtime_lifecycle_and_effective_state() {
     let reg = registry_with_startup_disabled_native_and_uds();
     let entries = reg.catalogue_entries();
     let native = entries.iter().find(|entry| entry.name == "native").unwrap();
-    assert_eq!(native.stable_id, "native");
+    assert_eq!(
+        native.stable_id,
+        "tool.v1:bundled-native:quecto:test-native:native"
+    );
     assert_eq!(native.source, ToolSource::BundledNative);
     assert_eq!(native.owner, "quecto:official-tools");
     assert_eq!(native.provider_id, "quecto:test-native");
@@ -65,7 +68,7 @@ fn catalogue_entries_distinguish_runtime_lifecycle_and_effective_state() {
         .iter()
         .find(|entry| entry.name == "uds_tool")
         .unwrap();
-    assert_eq!(uds.stable_id, "uds_tool");
+    assert_eq!(uds.stable_id, "tool.v1:uds:uds:client-1:uds_tool");
     assert_eq!(uds.source, ToolSource::Uds);
     assert_eq!(uds.owner, "uds:client-1");
     assert_eq!(uds.provider_id, "uds:client-1");
