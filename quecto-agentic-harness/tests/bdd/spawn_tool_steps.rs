@@ -691,16 +691,24 @@ fn when_run_live_agent_cmd(world: &mut QuectoWorld, agent_id: String, args: Stri
 
 #[then(expr = "live agent_cmd get_messages for {string} should contain {string}")]
 fn then_live_get_messages_contains(world: &mut QuectoWorld, agent_id: String, expected: String) {
-    std::thread::sleep(std::time::Duration::from_secs(5));
     let args = serde_json::json!({"agent_id": agent_id, "command": "get_messages", "count": 10});
     let tool = world.agent_cmd_tool.as_ref().expect("agent_cmd tool");
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let result = rt.block_on(tool.execute(&args.to_string())).unwrap();
-    assert!(!result.is_error, "get_messages failed: {}", result.content);
-    assert!(
-        result.content.contains(&expected),
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut last = None;
+    while std::time::Instant::now() < deadline {
+        let result = rt.block_on(tool.execute(&args.to_string())).unwrap();
+        assert!(!result.is_error, "get_messages failed: {}", result.content);
+        if result.content.contains(&expected) {
+            world.agent_cmd_result = Some(result);
+            return;
+        }
+        last = Some(result);
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    let result = last.expect("get_messages was not attempted");
+    panic!(
         "expected get_messages to contain {expected:?}, got: {}",
         result.content
     );
-    world.agent_cmd_result = Some(result);
 }

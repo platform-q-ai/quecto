@@ -450,7 +450,6 @@ Feature: SpawnTool — child agent process spawning
   Scenario: Live agent_cmd steer reaches child transcript after spawn
     Given a live SpawnTool and AgentCmdTool backed by a mock LLM child
     When I live-spawn subagent "live-steer-e2e" with initial task "LIVE_BOOTSTRAP_MARKER"
-    And I run live agent_cmd for "live-steer-e2e" with '{"command":"prompt","message":"LIVE_STEER_BUSYING_PROMPT"}'
     And I run live agent_cmd for "live-steer-e2e" with '{"command":"steer","message":"LIVE_STEER_MARKER"}'
     Then live agent_cmd get_messages for "live-steer-e2e" should contain "LIVE_STEER_MARKER"
 

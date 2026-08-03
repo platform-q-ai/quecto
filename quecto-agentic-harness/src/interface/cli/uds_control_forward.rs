@@ -53,18 +53,29 @@ pub(super) fn intercept_control_forward(line: &str) -> Option<AcceptedControl> {
     if obj.get("ack").and_then(|v| v.as_str()) != Some("accept") {
         return None;
     }
-    let cmd_type = obj.get("type").and_then(|v| v.as_str())?;
+    let raw_cmd_type = obj.get("type").and_then(|v| v.as_str())?;
+    let is_prompt_steer = raw_cmd_type == "prompt"
+        && obj.get("streamingBehavior").and_then(|v| v.as_str()) == Some("steer");
+    let cmd_type = if is_prompt_steer {
+        "steer"
+    } else {
+        raw_cmd_type
+    };
     // Echo the parent's stamped correlation id on the ack so its reader matches
     // this reply and never rides the timeout (#835). A forward with no id falls
     // back to a None id (first-response correlation on the parent).
     let id = obj.get("id").and_then(|v| v.as_str());
     let message = obj.get("message").and_then(|v| v.as_str());
 
-    let forward_line = match cmd_type {
+    let forward_line = match raw_cmd_type {
         // A fresh prompt or an explicit follow_up both become a queued follow-up:
         // an idle child runs it immediately, a busy child enqueues it for the
         // next turn — never the "agent is running; provide streamingBehavior"
         // rejection a raw `prompt` would hit on a busy child.
+        "prompt" if is_prompt_steer => Some(
+            serde_json::json!({ "type": "prompt", "message": message?, "streamingBehavior": "steer" })
+                .to_string(),
+        ),
         "prompt" | "follow_up" => {
             Some(serde_json::json!({ "type": "follow_up", "message": message? }).to_string())
         }
