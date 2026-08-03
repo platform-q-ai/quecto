@@ -702,6 +702,18 @@ fn then_agent_cmd_sent_type(world: &mut QuectoWorld, expected_type: String) {
     );
 }
 
+#[then(expr = "the agent_cmd should have sent streaming behavior {string}")]
+fn then_agent_cmd_sent_streaming_behavior(world: &mut QuectoWorld, expected_behavior: String) {
+    let cmd = last_agent_cmd_sent_json(world);
+    assert_eq!(
+        cmd["streamingBehavior"].as_str(),
+        Some(expected_behavior.as_str()),
+        "expected streamingBehavior '{}', got: {}",
+        expected_behavior,
+        cmd
+    );
+}
+
 #[then(expr = "the agent_cmd should have sent ack {string}")]
 fn then_agent_cmd_sent_ack(world: &mut QuectoWorld, expected_ack: String) {
     let cmd = last_agent_cmd_sent_json(world);
