@@ -21,7 +21,7 @@ fn legacy_name_policy_id_disables_canonical_tool() {
     let entry = reg.catalogue_entries().pop().unwrap();
     assert_eq!(
         entry.stable_id,
-        "tool.v1:bundled-native:quecto:official-tools:bash"
+        "tool.v1:bundled-native:21:quecto:official-tools:bash"
     );
     assert_eq!(entry.runtime_availability, ToolAvailability::Disabled);
 }
@@ -59,7 +59,7 @@ fn duplicate_stable_ids_are_rejected() {
         !reg.register_with_metadata(
             Arc::new(DummyTestTool::new("weather_v2")),
             ToolRegistration::uds_owner("uds:client-b")
-                .with_stable_id("tool.v1:uds:uds:client-a:weather"),
+                .with_stable_id("tool.v1:uds:12:uds:client-a:weather"),
         )
     );
 }
@@ -76,7 +76,7 @@ fn same_tool_names_from_different_providers_get_distinct_stable_ids() {
             Arc::new(DummyTestTool::new("weather_other")),
             ToolRegistration::uds_owner("uds:client-b")
                 .with_provider_id("uds:client-b")
-                .with_stable_id("tool.v1:uds:uds:client-b:weather"),
+                .with_stable_id("tool.v1:uds:12:uds:client-b:weather"),
         )
     );
 
@@ -85,8 +85,8 @@ fn same_tool_names_from_different_providers_get_distinct_stable_ids() {
         .iter()
         .map(|entry| entry.stable_id.as_ref())
         .collect();
-    assert!(ids.contains(&"tool.v1:uds:uds:client-a:weather"));
-    assert!(ids.contains(&"tool.v1:uds:uds:client-b:weather"));
+    assert!(ids.contains(&"tool.v1:uds:12:uds:client-a:weather"));
+    assert!(ids.contains(&"tool.v1:uds:12:uds:client-b:weather"));
 }
 
 #[test]
@@ -101,12 +101,12 @@ fn provider_namespace_collision_keeps_stable_ids_distinct() {
             Arc::new(DummyTestTool::new("weather_other")),
             ToolRegistration::uds_owner("uds:client-b")
                 .with_provider_id("uds:client-b")
-                .with_stable_id("tool.v1:uds:uds:client-b:weather"),
+                .with_stable_id("tool.v1:uds:12:uds:client-b:weather"),
         )
     );
 
     assert!(
-        reg.apply_startup_tool_restrictions(&["tool.v1:uds:uds:client-a:weather".into()])
+        reg.apply_startup_tool_restrictions(&["tool.v1:uds:12:uds:client-a:weather".into()])
             .is_empty()
     );
 
@@ -132,12 +132,12 @@ fn unknown_policy_ids_are_reported() {
     ));
 
     let warnings = reg.apply_startup_tool_restrictions(&[
-        "tool.v1:bundled-native:quecto:official-tools:missing".into(),
+        "tool.v1:bundled-native:21:quecto:official-tools:missing".into(),
     ]);
 
     assert_eq!(
         warnings,
-        vec!["tool.v1:bundled-native:quecto:official-tools:missing"]
+        vec!["tool.v1:bundled-native:21:quecto:official-tools:missing"]
     );
     assert_eq!(
         reg.catalogue_entries()[0].runtime_availability,
@@ -145,7 +145,7 @@ fn unknown_policy_ids_are_reported() {
     );
     assert!(!reg.register_with_metadata(
         Arc::new(DummyTestTool::new(
-            "tool.v1:bundled-native:quecto:official-tools:missing"
+            "tool.v1:bundled-native:21:quecto:official-tools:missing"
         )),
         ToolRegistration::official_native().with_provider_id("quecto:official-tools"),
     ));
@@ -178,9 +178,9 @@ fn unknown_stable_policy_id_blocks_later_matching_provider_registration() {
     let mut reg = ToolRegistryImpl::new();
 
     let warnings =
-        reg.apply_startup_tool_restrictions(&["tool.v1:uds:uds:client-a:weather".into()]);
+        reg.apply_startup_tool_restrictions(&["tool.v1:uds:12:uds:client-a:weather".into()]);
 
-    assert_eq!(warnings, vec!["tool.v1:uds:uds:client-a:weather"]);
+    assert_eq!(warnings, vec!["tool.v1:uds:12:uds:client-a:weather"]);
     assert!(!reg.register_with_metadata(
         Arc::new(DummyTestTool::new("weather")),
         ToolRegistration::uds_owner("uds:client-a").with_provider_id("uds:client-a"),
@@ -190,7 +190,7 @@ fn unknown_stable_policy_id_blocks_later_matching_provider_registration() {
             Arc::new(DummyTestTool::new("weather_other")),
             ToolRegistration::uds_owner("uds:client-b")
                 .with_provider_id("uds:client-b")
-                .with_stable_id("tool.v1:uds:uds:client-b:weather"),
+                .with_stable_id("tool.v1:uds:12:uds:client-b:weather"),
         )
     );
 }
@@ -227,13 +227,13 @@ fn live_policy_mutations_resolve_stable_legacy_alias_and_unknown_ids() {
     let reconciliation = reg.apply_tool_policy_mutations(
         &[
             ToolPolicyMutation::disable(
-                "tool.v1:bundled-native:quecto:official-tools:bash",
+                "tool.v1:bundled-native:21:quecto:official-tools:bash",
                 "stable",
             ),
             ToolPolicyMutation::disable("tool.name.v0:read", "legacy"),
             ToolPolicyMutation::disable("view", "alias"),
             ToolPolicyMutation::disable(
-                "tool.v1:bundled-native:quecto:official-tools:missing",
+                "tool.v1:bundled-native:21:quecto:official-tools:missing",
                 "missing",
             ),
         ],
@@ -255,5 +255,22 @@ fn live_policy_mutations_resolve_stable_legacy_alias_and_unknown_ids() {
     assert_eq!(
         reconciliation.results[3].status,
         ToolPolicyMutationStatus::UnknownTool
+    );
+}
+
+#[test]
+fn unknown_raw_name_policy_id_blocks_later_legacy_alias_registration() {
+    let mut reg = ToolRegistryImpl::new();
+
+    let warnings = reg.apply_startup_tool_restrictions(&["view".into()]);
+
+    assert_eq!(warnings, vec!["view"]);
+    assert!(
+        !reg.register_with_metadata(
+            Arc::new(DummyTestTool::new("read")),
+            ToolRegistration::official_native()
+                .with_provider_id("quecto:official-tools")
+                .with_alias("view"),
+        )
     );
 }

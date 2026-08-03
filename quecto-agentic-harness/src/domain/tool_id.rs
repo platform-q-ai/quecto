@@ -62,9 +62,10 @@ impl ToolIdentity {
 
 pub fn stable_tool_id(source: ToolSource, provider_id: &str, name: &str) -> String {
     format!(
-        "{}:{}:{}:{}",
+        "{}:{}:{}:{}:{}",
         TOOL_ID_SCHEME_V1,
         source.as_str(),
+        provider_id.len(),
         provider_id,
         name
     )
@@ -72,6 +73,16 @@ pub fn stable_tool_id(source: ToolSource, provider_id: &str, name: &str) -> Stri
 
 pub fn legacy_name_tool_id(name: &str) -> String {
     format!("{LEGACY_NAME_PREFIX_V0}{name}")
+}
+
+pub fn equivalent_policy_inputs(policy_id: &str) -> BTreeSet<String> {
+    let mut inputs = BTreeSet::from([policy_id.to_string()]);
+    if let Some(name) = policy_id.strip_prefix(LEGACY_NAME_PREFIX_V0) {
+        inputs.insert(name.to_string());
+    } else if !policy_id.starts_with(&format!("{TOOL_ID_SCHEME_V1}:")) {
+        inputs.insert(legacy_name_tool_id(policy_id));
+    }
+    inputs
 }
 
 impl ToolIdResolver {

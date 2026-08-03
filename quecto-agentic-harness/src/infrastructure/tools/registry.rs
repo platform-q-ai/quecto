@@ -15,7 +15,7 @@ use crate::domain::tool_descriptor::{
     ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolDescriptor,
     ToolRestrictionReason,
 };
-use crate::domain::tool_id::ToolIdResolveError;
+use crate::domain::tool_id::{ToolIdResolveError, equivalent_policy_inputs};
 use crate::infrastructure::config::Config;
 
 /// Registry of all available tools, keyed by name.
@@ -135,7 +135,8 @@ impl ToolRegistryImpl {
     }
 
     fn deny_policy_id(&mut self, policy_id: &str) {
-        self.denied_policy_ids.insert(policy_id.to_string());
+        self.denied_policy_ids
+            .extend(equivalent_policy_inputs(policy_id));
     }
 
     /// Apply startup `--disable-tool` policy.
