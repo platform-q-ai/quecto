@@ -91,7 +91,6 @@ fn make_repl(base_dir: &std::path::Path) -> ReplLoop<Cursor<Vec<u8>>, Vec<u8>> {
     let provider: Arc<dyn LlmProvider> = Arc::new(StubProvider);
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
-        tool_policy_child_propagator: None,
         tool_registry: Box::new(EmptyRegistry),
         model: "test-model".to_string(),
         max_tokens: 1024,

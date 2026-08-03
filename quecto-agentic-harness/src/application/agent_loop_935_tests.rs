@@ -23,7 +23,6 @@ fn agent_with_caps(
     let provider = Arc::new(MockProvider::new(vec![text_response("done")]));
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: provider.clone(),
-        tool_policy_child_propagator: None,
         tool_registry: Box::new(MockRegistry::new()),
         model: "fireworks/qwen3p7-plus".to_string(),
         max_tokens: configured_max_tokens,
@@ -102,7 +101,6 @@ async fn set_model_max_tokens_re_clamps_for_subsequent_turns() {
         text_response("turn-2"),
     ]));
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
-        tool_policy_child_propagator: None,
         provider: provider.clone(),
         tool_registry: Box::new(MockRegistry::new()),
         model: "fireworks/big-model".to_string(),

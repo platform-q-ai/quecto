@@ -34,11 +34,6 @@ Then start the TUI and let it spawn the kernel automatically:
 quecto-tui
 ```
 
-After reinstalling `quecto` or `quecto-tui`, restart any already-running TUI and
-kernel processes. On Unix, an active process may keep executing an old `(deleted)`
-binary image after `cargo install` replaces it; diagnose with `ps`/`lsof` if new
-policy or protocol behavior seems absent immediately after reinstall.
-
 Workflow-driven launch:
 
 ```bash

@@ -555,7 +555,6 @@ mod context_settings {
     ) -> AgentLoopImpl {
         AgentLoopImpl::new(AgentLoopConfig {
             provider: crate::interface::test_support::make_stub_provider(),
-            tool_policy_child_propagator: None,
             tool_registry: Box::new(ToolRegistryImpl::new()),
             model: "stub".into(),
             max_tokens: 100,

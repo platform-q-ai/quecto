@@ -193,7 +193,6 @@ fn seed_collapsed_session(world: &mut QuectoWorld, include_spill: bool) {
         // spill id, entry, or collapsed shape: production assigns the id,
         // persists the full content under the active key, and emits the stub.
         let mut agent = AgentLoopImpl::new(AgentLoopConfig {
-            tool_policy_child_propagator: None,
             provider: Arc::new(Issue1093SeedProvider),
             tool_registry: Box::new(ToolRegistryImpl::new()),
             model: "issue-1093-seed".into(),
@@ -298,7 +297,6 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
     let session_key = Session::build_key("cli", ISSUE_1093_SESSION);
     let model = config.agents.defaults.model.clone();
     let agent = AgentLoopImpl::new(AgentLoopConfig {
-        tool_policy_child_propagator: None,
         provider,
         tool_registry: Box::new(registry),
         model: model.clone(),
@@ -336,8 +334,8 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
             session_store_override: None,
             ext_registry: Some(ext_reg),
             persist: true,
-            subagent_registry: None,
             notification_rx: None,
+            subagent_registry: None,
             workflow_state: None,
             workflow_config: None,
             broadcast_tx: None,

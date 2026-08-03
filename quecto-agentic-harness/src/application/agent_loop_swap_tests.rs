@@ -10,7 +10,6 @@ fn test_swap_registry_replaces_tool_registry() {
     reg_a.register(Arc::new(MockTool::new("tool_a", "ok")));
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: provider.clone(),
-        tool_policy_child_propagator: None,
         tool_registry: Box::new(reg_a),
         model: "m".into(),
         max_tokens: 100,
@@ -52,7 +51,6 @@ fn test_swap_registry_info_reflects_new_count() {
     let provider = Arc::new(MockProvider::new(vec![]));
     let reg = MockRegistry::new();
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
-        tool_policy_child_propagator: None,
         provider,
         tool_registry: Box::new(reg),
         model: "m".into(),
@@ -151,7 +149,6 @@ fn enhance_provider_error_leaves_non_provider_unchanged() {
 /// Minimal agent for exercising instance methods like `finalize_text_response`.
 fn bare_agent() -> AgentLoopImpl {
     AgentLoopImpl::new(AgentLoopConfig {
-        tool_policy_child_propagator: None,
         provider: Arc::new(MockProvider::new(vec![])),
         tool_registry: Box::new(MockRegistry::new()),
         model: "m".into(),

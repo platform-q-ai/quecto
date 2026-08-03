@@ -131,7 +131,6 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         config.agents.defaults.max_tool_iterations
     };
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
-        tool_policy_child_propagator: None,
         provider,
         tool_registry: Box::new(registry),
         model: model.clone(),
@@ -349,8 +348,8 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
             session_store_override: None,
             ext_registry: Some(ext_registry),
             persist: false,
-            subagent_registry: None,
             notification_rx: None,
+            subagent_registry: None,
             workflow_state,
             workflow_config,
             broadcast_tx: None,
@@ -1773,8 +1772,8 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             session_store_override: None,
             ext_registry: Some(ext_registry),
             persist: false,
-            subagent_registry: None,
             notification_rx: None,
+            subagent_registry: None,
             workflow_state,
             workflow_config,
             broadcast_tx: None,
@@ -2187,8 +2186,8 @@ fn mc_spawn_agent(
             session_store_override: None,
             ext_registry: Some(ext_registry),
             persist,
-            subagent_registry: None,
             notification_rx: None,
+            subagent_registry: None,
             workflow_state,
             workflow_config,
             broadcast_tx,

@@ -12,8 +12,7 @@ use serde::{Deserialize, Serialize};
 #[path = "client_policy_types.rs"]
 mod client_policy_types;
 pub use client_policy_types::{
-    ChildToolPolicyPropagation, ToolCatalogueEntry, ToolPolicyApplyMode, ToolPolicyMutation,
-    ToolPolicyResult, ToolScope, summarize_child_policy_propagation,
+    ToolCatalogueEntry, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyResult, ToolScope,
 };
 use std::path::Path;
 use tokio::io::BufReader;
@@ -26,7 +25,6 @@ use tokio::sync::mpsc;
 /// Public so out-of-crate tests (the harness BDD suite) can build boundary
 /// frames against the real cap instead of a duplicated literal.
 pub const MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
-
 /// Bound on the ordered outbound command writer FIFO (`Client::connect`).
 ///
 /// Sized for bursty fan-in (subagent polls, recovery `get_message` batches)
@@ -307,8 +305,6 @@ pub enum Event {
         changed_tools: Vec<String>,
         #[serde(default)]
         results: Vec<ToolPolicyResult>,
-        #[serde(default)]
-        child_propagation: Vec<ChildToolPolicyPropagation>,
         apply_mode: String,
         reason: String,
     },

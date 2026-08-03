@@ -72,7 +72,6 @@ fn when_user_sends_through_pruning_agent(world: &mut QuectoWorld, text: String) 
         world.watermark_budget
     };
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
-        tool_policy_child_propagator: None,
         provider,
         tool_registry: Box::new(registry),
         model: "test-model".to_string(),

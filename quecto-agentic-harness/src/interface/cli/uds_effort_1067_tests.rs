@@ -29,7 +29,6 @@ fn protocol_parses_set_effort_command() {
 fn make_effort_test_agent(effort: Option<EffortLevel>) -> AgentLoopImpl {
     AgentLoopImpl::new(AgentLoopConfig {
         provider: crate::interface::test_support::make_stub_provider(),
-        tool_policy_child_propagator: None,
         tool_registry: Box::new(crate::infrastructure::tools::registry::ToolRegistryImpl::new()),
         model: "stub".into(),
         max_tokens: 100,
@@ -107,9 +106,9 @@ impl EffortFx {
             broadcast_tx: None,
             _ext_registry: None,
             client_tool_registry: new_client_tool_registry(),
-            subagent_registry: None,
             current_client_id: 0,
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
+            subagent_registry: None,
             notification_rx: None,
             workflow_state: None,
             workflow_config: None,
