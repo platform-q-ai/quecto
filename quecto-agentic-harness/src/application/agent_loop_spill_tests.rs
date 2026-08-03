@@ -98,6 +98,7 @@ async fn test_spill_preserves_message_content_after_spill() {
 
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
+        tool_policy_child_propagator: None,
         tool_registry: Box::new(registry),
         model: "test-model".to_string(),
         max_tokens: 1024,
@@ -142,6 +143,7 @@ fn tight_budget_agent(
 ) -> AgentLoopImpl {
     let provider = Arc::new(MockProvider::new(vec![text_response("done")]));
     AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider,
         tool_registry: Box::new(MockRegistry::new()),
         model: "test-model".to_string(),
@@ -341,6 +343,7 @@ async fn failed_tool_spill_leaves_no_spill_id_and_blocks_collapse() {
     registry.register(Arc::new(MockTool::new("bash", "irreplaceable output")));
 
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider,
         tool_registry: Box::new(registry),
         model: "test-model".to_string(),
@@ -401,6 +404,7 @@ async fn ephemeral_session_spills_both_tool_output_and_conversation_messages() {
     registry.register(Arc::new(MockTool::new("bash", "big output here")));
 
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider,
         tool_registry: Box::new(registry),
         model: "test-model".to_string(),

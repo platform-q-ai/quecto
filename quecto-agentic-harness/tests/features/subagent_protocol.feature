@@ -11,6 +11,16 @@ Feature: Subagent protocol commands (#524)
     Then the subagent info list should be empty
 
   @done
+  Scenario: live policy propagation gateway detects active children
+    Given a registry with subagent "policy-child" status "idle" last_tool "" pid 123
+    Then the live policy propagation gateway should report children
+
+  @done
+  Scenario: live policy propagation gateway ignores exited children
+    Given a registry with subagent "policy-child" status "exited" last_tool "" pid 123
+    Then the live policy propagation gateway should report no children
+
+  @done
   Scenario: get_subagents identifies read-only observers
     Given a read-only observer sub-agent "reviewer" is registered
     And a read-write sub-agent "formatter" is registered

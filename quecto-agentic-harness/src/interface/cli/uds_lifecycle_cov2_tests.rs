@@ -37,6 +37,7 @@ impl LlmProvider for ReadOnlyProvider {
 fn make_agent() -> AgentLoopImpl {
     AgentLoopImpl::new(AgentLoopConfig {
         provider: Arc::new(ReadOnlyProvider),
+        tool_policy_child_propagator: None,
         tool_registry: Box::new(ToolRegistryImpl::new()),
         model: "stub".into(),
         max_tokens: 32,
@@ -70,8 +71,8 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
         session_store_override: None,
         ext_registry: None,
         persist: false,
-        notification_rx: None,
         subagent_registry: None,
+        notification_rx: None,
         workflow_state: None,
         workflow_config: None,
         broadcast_tx: None,

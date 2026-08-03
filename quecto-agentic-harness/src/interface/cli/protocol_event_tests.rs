@@ -24,6 +24,7 @@ fn tool_policy_changed_event_serializes_apply_mode_and_results() {
         results: vec![
             json!({"name":"alpha","status":"applied","after":{"name":"alpha","profileScope":"child","effectiveScope":"child","effectiveParentEnabled":false,"effectiveChildEnabled":true}}),
         ],
+        child_propagation: vec![json!({"agentId":"child-1","status":"queued"})],
         apply_mode: "atNextTurnBoundary".to_string(),
         reason: "queued".to_string(),
     };
@@ -34,5 +35,6 @@ fn tool_policy_changed_event_serializes_apply_mode_and_results() {
     assert_eq!(value["results"][0]["status"], "applied");
     assert_eq!(value["results"][0]["after"]["profileScope"], "child");
     assert_eq!(value["results"][0]["after"]["effectiveScope"], "child");
+    assert_eq!(value["childPropagation"][0]["status"], "queued");
     assert_eq!(value["reason"], "queued");
 }

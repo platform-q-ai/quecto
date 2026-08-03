@@ -69,6 +69,8 @@ pub enum AgentEvent {
         changed_tools: Vec<String>,
         #[serde(default)]
         results: Vec<serde_json::Value>,
+        #[serde(default)]
+        child_propagation: Vec<serde_json::Value>,
         apply_mode: String,
         reason: String,
     },

@@ -166,11 +166,18 @@ pub(super) async fn handle_set_tool_policy(
         .request_tool_policy_mutation(&domain_mutations, apply_mode);
     let data = match reconciliation {
         Some(reconciliation) => serde_json::to_value(&reconciliation).unwrap_or_default(),
-        None => serde_json::json!({
-            "mode": "atNextTurnBoundary",
-            "queued": true,
-            "results": [],
-        }),
+        None => {
+            let child_propagation = ctx
+                .agent
+                .recent_tool_policy_child_propagation_for_response()
+                .unwrap_or_default();
+            serde_json::json!({
+                "mode": "atNextTurnBoundary",
+                "queued": true,
+                "results": [],
+                "childPropagation": child_propagation,
+            })
+        }
     };
     let ev = AgentEvent::ok(id, type_name, Some(data));
     emit_event_to_broadcast_or_writer(ctx, &ev).await;

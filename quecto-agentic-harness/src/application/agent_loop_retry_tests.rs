@@ -21,6 +21,7 @@ async fn retries_retryable_provider_failures_before_returning_success() {
     );
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: retrying,
+        tool_policy_child_propagator: None,
         tool_registry: Box::new(MockRegistry::default()),
         model: "test".into(),
         max_tokens: 1024,
@@ -58,6 +59,7 @@ async fn retries_streaming_provider_failures_before_any_output() {
         ))],
     ]));
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider: provider.clone(),
         tool_registry: Box::new(MockRegistry::default()),
         model: "test".into(),
@@ -92,6 +94,7 @@ async fn does_not_retry_streaming_provider_failures_after_output() {
         crate::domain::provider::StreamEvent::Error("HTTP 503 from Codex".to_string()),
     ]]));
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider: provider.clone(),
         tool_registry: Box::new(MockRegistry::default()),
         model: "test".into(),
@@ -131,6 +134,7 @@ async fn does_not_retry_non_streaming_openai_insufficient_quota_429() {
         ),
     );
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider: retrying,
         tool_registry: Box::new(MockRegistry::default()),
         model: "test".into(),
@@ -167,6 +171,7 @@ async fn does_not_retry_streaming_openai_insufficient_quota_429() {
         ),
     ]]));
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider: provider.clone(),
         tool_registry: Box::new(MockRegistry::default()),
         model: "test".into(),
@@ -202,6 +207,7 @@ async fn provider_context_limit_errors_are_actionable() {
             .to_string(),
     ))]));
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider,
         tool_registry: Box::new(MockRegistry::default()),
         model: "test".into(),
@@ -248,6 +254,7 @@ async fn retries_empty_streaming_done_before_success() {
         ))],
     ]));
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider: provider.clone(),
         tool_registry: Box::new(MockRegistry::default()),
         model: "test".into(),
@@ -287,6 +294,7 @@ async fn empty_streaming_done_with_max_tokens_preserves_stop_reason() {
         }),
     ]]));
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider: provider.clone(),
         tool_registry: Box::new(MockRegistry::default()),
         model: "test".into(),

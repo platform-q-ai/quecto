@@ -177,6 +177,7 @@ fn make_repl_loop(
     let registry = ToolRegistryImpl::new();
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
+        tool_policy_child_propagator: None,
         tool_registry: Box::new(registry),
         model: "test-model".to_string(),
         max_tokens: 1024,

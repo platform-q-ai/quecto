@@ -20,6 +20,7 @@ use crate::interface::cli::uds_session::{AgentSession, compute_session_stats};
 fn make_agent() -> AgentLoopImpl {
     AgentLoopImpl::new(AgentLoopConfig {
         provider: crate::interface::test_support::make_stub_provider(),
+        tool_policy_child_propagator: None,
         tool_registry: Box::new(crate::infrastructure::tools::registry::ToolRegistryImpl::new()),
         model: "stub".into(),
         max_tokens: 100,

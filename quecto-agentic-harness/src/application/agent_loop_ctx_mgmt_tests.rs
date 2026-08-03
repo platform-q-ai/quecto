@@ -103,6 +103,7 @@ fn agent(
 ) -> AgentLoopImpl {
     AgentLoopImpl::new(AgentLoopConfig {
         provider: Arc::new(MockProvider::new(responses)),
+        tool_policy_child_propagator: None,
         tool_registry: Box::new(MockRegistry::new()),
         model: "test-model".to_string(),
         max_tokens: 1024,
@@ -486,6 +487,7 @@ fn agent_loop_config_carries_context_knobs_as_constructor_fields() {
     // — so a construction site cannot omit them (no post-construction builder
     // patching required for correctness).
     let agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider: Arc::new(MockProvider::new(vec![text_response("hi")])),
         tool_registry: Box::new(MockRegistry::new()),
         model: "test-model".into(),

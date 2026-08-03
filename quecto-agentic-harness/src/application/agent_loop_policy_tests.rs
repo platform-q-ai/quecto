@@ -118,7 +118,11 @@ impl crate::domain::tool::ToolPolicyMutator for MockRegistry {
                 reason: mutation.reason.clone(),
             });
         }
-        ToolPolicyReconciliation { mode, results }
+        ToolPolicyReconciliation {
+            mode,
+            results,
+            child_propagation: Vec::new(),
+        }
     }
 }
 impl ToolRegistry for MockRegistry {}
@@ -175,6 +179,7 @@ impl crate::domain::tool::ToolPolicyMutator for RestrictedMockRegistry {
     ) -> ToolPolicyReconciliation {
         ToolPolicyReconciliation {
             mode,
+            child_propagation: Vec::new(),
             results: mutations
                 .iter()
                 .map(|mutation| ToolPolicyMutationResult {
@@ -226,7 +231,7 @@ fn queued_tool_policy_mutations_apply_once_at_turn_boundary() {
 }
 
 #[test]
-fn at_next_turn_boundary_queues_even_when_idle() {
+fn at_next_turn_boundary_applies_immediately_when_idle() {
     let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
 
     let immediate = agent.request_tool_policy_mutation(
@@ -234,15 +239,9 @@ fn at_next_turn_boundary_queues_even_when_idle() {
         ToolPolicyApplyMode::AtNextTurnBoundary,
     );
 
-    assert!(
-        immediate.is_none(),
-        "atNextTurnBoundary must not apply synchronously while idle"
-    );
-    assert_eq!(agent.current_tool_definitions()[0].name.as_ref(), "alpha");
+    let reconciliation = immediate.expect("idle boundary mutation applies before next turn");
+    assert!(agent.current_tool_definitions().is_empty());
 
-    let reconciliation = agent
-        .drain_tool_policy_mutations_at_boundary()
-        .expect("queued idle mutation drains at boundary");
     assert_eq!(reconciliation.mode, ToolPolicyApplyMode::AtNextTurnBoundary);
     assert_eq!(
         reconciliation.results[0].status,
@@ -306,6 +305,33 @@ fn immediate_if_idle_queues_when_a_turn_is_in_flight() {
             .after
             .as_ref()
             .is_some_and(|entry| !entry.effective_enabled)
+    );
+}
+
+#[tokio::test]
+async fn queued_boundary_policy_applies_before_next_provider_request() {
+    let (mut agent, provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
+
+    agent.mark_turn_in_flight();
+    assert!(
+        agent
+            .request_tool_policy_mutation(
+                &[ToolPolicyMutation::disable("alpha", "running child policy")],
+                ToolPolicyApplyMode::AtNextTurnBoundary,
+            )
+            .is_none()
+    );
+    agent.clear_turn_in_flight();
+
+    let mut messages = vec![Message::user("next turn")];
+    agent
+        .process(&mut messages)
+        .await
+        .expect("next provider request");
+
+    assert!(
+        provider.last_tool_defs().is_empty(),
+        "queued boundary policy must drain before model-visible tools are built for the next provider request"
     );
 }
 
@@ -571,6 +597,7 @@ async fn first_turn_uses_configured_profile_for_model_visible_tools() {
         definitions: vec![],
     };
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         tool_profile_context: ToolProfileContext::Child,
         ..test_config(provider.clone(), Box::new(registry))
     });
@@ -599,6 +626,7 @@ async fn first_turn_parent_profile_keeps_parent_tools_model_visible() {
         definitions: vec![],
     };
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         tool_profile_context: ToolProfileContext::Parent,
         ..test_config(provider.clone(), Box::new(registry))
     });
@@ -661,6 +689,7 @@ async fn direct_execution_honors_runtime_profile_scope() {
         let mut registry = MockRegistry::new();
         registry.register(Arc::new(MockTool::new("alpha", "executed")));
         let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+            tool_policy_child_propagator: None,
             tool_profile_context: context,
             ..test_config(provider, Box::new(registry))
         });

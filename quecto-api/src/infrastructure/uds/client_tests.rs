@@ -496,11 +496,13 @@ fn tool_policy_changed_is_modeled_not_unknown() {
         AgentEvent::ToolPolicyChanged {
             changed_tools,
             results,
+            child_propagation,
             apply_mode,
             reason,
         } => {
             assert_eq!(changed_tools, &vec!["alpha".to_string()]);
             assert_eq!(results[0]["after"]["effectiveScope"], "child");
+            assert!(child_propagation.is_empty());
             assert_eq!(apply_mode, "immediateIfIdle");
             assert_eq!(reason, "set_tool_policy");
         }

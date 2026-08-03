@@ -71,6 +71,7 @@ impl Tool for TinyExtensionTool {
 fn make_agent() -> AgentLoopImpl {
     AgentLoopImpl::new(AgentLoopConfig {
         provider: Arc::new(NeverUsedProvider),
+        tool_policy_child_propagator: None,
         tool_registry: Box::new(ToolRegistryImpl::new()),
         model: "stub".into(),
         max_tokens: 32,
@@ -102,8 +103,8 @@ fn multi_args<'a>(base: &'a std::path::Path) -> MultiClientArgs<'a> {
         system_prompt: "system from test".into(),
         ext_registry: None,
         persist: false,
-        notification_rx: None,
         subagent_registry: None,
+        notification_rx: None,
         workflow_state: None,
         workflow_config: None,
         broadcast_tx: None,

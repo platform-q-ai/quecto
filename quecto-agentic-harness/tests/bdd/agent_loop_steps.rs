@@ -43,6 +43,7 @@ fn build_agent_loop_with_callback(
     };
 
     let mut agent = AgentLoopImpl::new(quecto::application::agent_loop::AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider,
         tool_registry: Box::new(registry),
         model: "test-model".to_string(),

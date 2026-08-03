@@ -15,8 +15,8 @@ use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent
 use crate::domain::provider_error::classify_provider_error;
 use crate::domain::session::ContextSpillStore;
 use crate::domain::tool::{
-    RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolPolicyMutation,
-    ToolProfileContext, ToolRegistry,
+    ChildToolPolicyPropagation, RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog,
+    ToolExecutor, ToolPolicyChildPropagator, ToolPolicyMutation, ToolProfileContext, ToolRegistry,
 };
 use std::pin::Pin;
 use std::sync::Arc;
@@ -56,6 +56,7 @@ const MAX_MALFORMED_REQUEST_RETRIES: u32 = 3;
 pub struct AgentLoopConfig {
     pub provider: Arc<dyn LlmProvider>,
     pub tool_registry: Box<dyn ToolRegistry>,
+    pub tool_policy_child_propagator: Option<Arc<dyn ToolPolicyChildPropagator>>,
     pub model: String,
     pub max_tokens: u32,
     pub temperature: f32,
@@ -88,6 +89,7 @@ pub struct AgentLoopConfig {
 pub struct AgentLoopImpl {
     provider: Arc<dyn LlmProvider>,
     pub(super) tool_registry: Box<dyn ToolRegistry>,
+    pub(crate) tool_policy_child_propagator: Option<Arc<dyn ToolPolicyChildPropagator>>,
     model: String,
     max_tokens: u32,
     /// Per-model registry output cap, if known; see `agent_loop_clamp` (#935).
@@ -111,13 +113,13 @@ pub struct AgentLoopImpl {
     /// #1072: latched by `apply_context_pruning` whenever a pass mutated
     /// existing history (in-place stub demotion, tool-result collapse, or a
     /// physical drop). Outcome-independent: it stays set across an Error or
-    /// Cancelled turn so persistence can still reconcile. Consumed via
-    /// [`Self::take_durable_prefix_dirty`].
+    /// Cancelled turn so persistence can still reconcile.
     durable_prefix_dirty: std::sync::atomic::AtomicBool,
-    /// Context-management boundary for pruning, spilling, dirty-prefix, and
-    /// user-facing context gauge decisions.
     context_manager: ContextManager,
     pub(super) pending_tool_policy_mutations: std::sync::Mutex<Vec<ToolPolicyMutation>>,
+    pub(super) pending_tool_policy_child_propagation:
+        std::sync::Mutex<Vec<ChildToolPolicyPropagation>>,
+    pub(super) pending_tool_policy_last_child_propagation_count: std::sync::Mutex<usize>,
     pub(super) tool_policy_state: std::sync::Mutex<ToolPolicyState>,
     pub(super) turn_in_flight: std::sync::atomic::AtomicBool,
     pub(super) tool_profile_context: ToolProfileContext,
@@ -126,6 +128,10 @@ impl std::fmt::Debug for AgentLoopImpl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AgentLoopImpl")
             .field("provider", &self.provider.name())
+            .field(
+                "tool_policy_child_propagator",
+                &self.tool_policy_child_propagator.is_some(),
+            )
             .field("model", &self.model)
             .field("max_tool_iterations", &self.max_tool_iterations)
             .finish()
@@ -145,6 +151,7 @@ impl AgentLoopImpl {
         Self {
             provider: config.provider,
             tool_registry: config.tool_registry,
+            tool_policy_child_propagator: config.tool_policy_child_propagator,
             model: config.model.clone(),
             max_tokens: config.max_tokens,
             model_max_tokens: None,
@@ -161,6 +168,8 @@ impl AgentLoopImpl {
             durable_prefix_dirty: std::sync::atomic::AtomicBool::new(false),
             context_manager,
             pending_tool_policy_mutations: std::sync::Mutex::new(Vec::new()),
+            pending_tool_policy_child_propagation: std::sync::Mutex::new(Vec::new()),
+            pending_tool_policy_last_child_propagation_count: std::sync::Mutex::new(0),
             tool_policy_state: std::sync::Mutex::new(ToolPolicyState::default()),
             turn_in_flight: std::sync::atomic::AtomicBool::new(false),
             tool_profile_context: config.tool_profile_context,
@@ -529,6 +538,7 @@ impl AgentLoopImpl {
     /// Run the LLM-tool loop.
     async fn run_loop(&mut self, messages: &mut Vec<Message>) -> Result<AgentResult, DomainError> {
         self.mark_turn_in_flight();
+        self.drain_tool_policy_mutations_at_internal_boundary();
         let mut tool_defs = self.current_tool_definitions();
         let mut iterations: u32 = 0;
         let mut current_turn: u32 = 1;
@@ -717,6 +727,9 @@ mod issue_1072_tests;
 #[cfg(test)]
 #[path = "agent_loop_993_tests.rs"]
 mod issue_993_tests;
+#[cfg(test)]
+#[path = "agent_loop_policy_child_propagation_tests.rs"]
+mod policy_child_propagation_tests;
 #[cfg(test)]
 #[path = "agent_loop_policy_tests.rs"]
 mod policy_tests;

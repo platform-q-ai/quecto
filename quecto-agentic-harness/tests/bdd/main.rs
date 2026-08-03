@@ -1336,6 +1336,7 @@ mod spawn_tool_steps;
 mod subagent_bar_fixes_steps;
 mod subagent_monitor_steps;
 mod subagent_notify_steps;
+mod subagent_policy_gateway_steps;
 mod subagent_protocol_steps;
 mod subagent_steps;
 mod subagent_widget_steps;

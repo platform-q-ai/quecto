@@ -190,6 +190,7 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
                 text_response("final answer"),
             ]),
         }),
+        tool_policy_child_propagator: None,
         tool_registry: Box::new(registry),
         model: "stub".into(),
         max_tokens: 100,
@@ -325,6 +326,7 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
 #[tokio::test]
 async fn under_budget_turn_reports_prefix_clean_on_its_outcome() {
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider: Arc::new(ScriptedProvider {
             responses: Mutex::new(vec![text_response("ok")]),
         }),

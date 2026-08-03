@@ -1,8 +1,8 @@
 use super::agent_loop::AgentLoopImpl;
 use crate::domain::agent::AgentProgressEvent;
 use crate::domain::tool::{
-    ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus,
-    ToolPolicyReconciliation,
+    ChildToolPolicyPropagation, ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation,
+    ToolPolicyMutationStatus, ToolPolicyReconciliation,
 };
 use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolCatalogueEntry};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -216,16 +216,35 @@ impl AgentLoopImpl {
         mutations: &[ToolPolicyMutation],
         mode: ToolPolicyApplyMode,
     ) -> Option<ToolPolicyReconciliation> {
-        if mode == ToolPolicyApplyMode::AtNextTurnBoundary
-            || (mode == ToolPolicyApplyMode::ImmediateIfIdle
-                && self.turn_in_flight.load(Ordering::SeqCst))
-        {
+        let in_flight = self.turn_in_flight.load(Ordering::SeqCst);
+        let should_queue = (mode == ToolPolicyApplyMode::AtNextTurnBoundary && in_flight)
+            || (mode == ToolPolicyApplyMode::ImmediateIfIdle && in_flight);
+        if should_queue {
             self.queue_tool_policy_mutation(mutations);
+            if let Some(propagator) = &self.tool_policy_child_propagator {
+                let child_propagation = propagator.propagate_tool_policy_to_children(
+                    mutations,
+                    ToolPolicyApplyMode::AtNextTurnBoundary,
+                );
+                let child_propagation_count = child_propagation.len();
+                self.pending_tool_policy_child_propagation
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .extend(child_propagation);
+                *self
+                    .pending_tool_policy_last_child_propagation_count
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = child_propagation_count;
+            }
             return None;
         }
-        let reconciliation = self
+        let mut reconciliation = self
             .tool_registry
             .apply_tool_policy_mutations(mutations, mode);
+        if let Some(propagator) = &self.tool_policy_child_propagator {
+            reconciliation.child_propagation =
+                propagator.propagate_tool_policy_to_children(mutations, mode);
+        }
         self.record_applied_tool_policy_overlay(&reconciliation);
         self.refresh_spawn_inherited_child_policy_snapshot();
         self.notify_tool_policy_changed(&reconciliation, "immediate");
@@ -242,6 +261,24 @@ impl AgentLoopImpl {
                 policy.record_applied(result.name.as_ref(), result.requested_scope);
             }
         }
+    }
+
+    pub fn recent_tool_policy_child_propagation_for_response(
+        &self,
+    ) -> Option<Vec<ChildToolPolicyPropagation>> {
+        let child_propagation = self
+            .pending_tool_policy_child_propagation
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let count = *self
+            .pending_tool_policy_last_child_propagation_count
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if child_propagation.is_empty() || count == 0 {
+            return None;
+        }
+        let start = child_propagation.len().saturating_sub(count);
+        Some(child_propagation[start..].to_vec())
     }
 
     pub fn queue_tool_policy_mutation(&self, mutations: &[ToolPolicyMutation]) {
@@ -273,9 +310,25 @@ impl AgentLoopImpl {
             self.clear_turn_in_flight();
         }
 
-        let reconciliation = self
+        let mut reconciliation = self
             .tool_registry
             .apply_tool_policy_mutations(&mutations, ToolPolicyApplyMode::AtNextTurnBoundary);
+        let prompt_child_propagation = std::mem::take(
+            &mut *self
+                .pending_tool_policy_child_propagation
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
+        if prompt_child_propagation.is_empty() {
+            if let Some(propagator) = &self.tool_policy_child_propagator {
+                reconciliation.child_propagation = propagator.propagate_tool_policy_to_children(
+                    &mutations,
+                    ToolPolicyApplyMode::AtNextTurnBoundary,
+                );
+            }
+        } else {
+            reconciliation.child_propagation = prompt_child_propagation;
+        }
         self.record_applied_tool_policy_overlay(&reconciliation);
         self.refresh_spawn_inherited_child_policy_snapshot();
         self.notify_tool_policy_changed(&reconciliation, "turn_boundary");

@@ -53,6 +53,7 @@ fn make_buf_repl_with_provider<'a>(
 ) -> ReplLoop<BufReader<&'a [u8]>, Vec<u8>> {
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
+        tool_policy_child_propagator: None,
         tool_registry: Box::new(ToolRegistryImpl::new()),
         model: "test-model".to_string(),
         max_tokens: 1024,

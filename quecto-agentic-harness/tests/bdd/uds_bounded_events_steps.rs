@@ -1553,6 +1553,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
         Session::build_key("cli", world.session_name.as_deref().unwrap_or("default"))
     };
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider,
         tool_registry: Box::new(registry),
         model: model.clone(),
@@ -1594,8 +1595,8 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
             session_store_override: None,
             ext_registry: Some(ext_reg),
             persist,
-            notification_rx: None,
             subagent_registry: None,
+            notification_rx: None,
             workflow_state: None,
             workflow_config: None,
             broadcast_tx: None,

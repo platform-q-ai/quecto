@@ -507,6 +507,7 @@ async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest()
     let mut fx = Fixture::new().with_system_prompt("be helpful");
     fx.agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
+        tool_policy_child_propagator: None,
         tool_registry: Box::new(registry),
         model: "stub".into(),
         max_tokens: 100,
