@@ -416,8 +416,8 @@ async fn queued_policy_disable_blocks_stale_post_boundary_tool_call() {
 fn queued_policy_enable_preserves_restricted_status() {
     let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
     {
-        let mut disabled = agent.runtime_disabled_tools.lock().unwrap();
-        disabled.insert("alpha".to_string());
+        let mut policy = agent.tool_policy_state.lock().unwrap();
+        policy.disabled_tools.insert("alpha".to_string());
     }
     agent.swap_registry(Box::new(RestrictedMockRegistry::new("alpha")));
 
@@ -432,9 +432,10 @@ fn queued_policy_enable_preserves_restricted_status() {
     );
     assert!(
         agent
-            .runtime_disabled_tools
+            .tool_policy_state
             .lock()
             .unwrap()
+            .disabled_tools
             .contains("alpha")
     );
 }
