@@ -24,3 +24,4 @@ Package-specific source, tests, docs, and fixtures are colocated under each pack
 - HTTP/WebSocket gateway: [`quecto-api/README.md`](quecto-api/README.md)
 - Terminal UI: [`quecto-tui/README.md`](quecto-tui/README.md)
 - MCP bridge: [`quecto-mcp/README.md`](quecto-mcp/README.md)
+- Docker harness for local TUI development: [`docs/docker-harness.md`](docs/docker-harness.md)

@@ -1,0 +1,54 @@
+services:
+  quecto-harness:
+    build:
+      context: .
+      dockerfile: docker/quecto-harness.Dockerfile
+    image: ${QUECTO_DOCKER_IMAGE:-quecto-harness:local}
+    user: "0:0"
+    environment:
+      CONTAINER_SOCKET: /socket/quecto.sock
+      API_ENABLED: ${QUECTO_DOCKER_API:-0}
+      API_PORT: ${QUECTO_DOCKER_API_PORT:-8080}
+      TRANSPORT: ${QUECTO_DOCKER_TRANSPORT:-direct}
+      PROXY_PORT: ${QUECTO_DOCKER_PROXY_PORT:-17777}
+      QUECTO_SOCKET_TIMEOUT: ${QUECTO_SOCKET_TIMEOUT:-900}
+      QUECTO_AGENT_ARGS: ${QUECTO_AGENT_ARGS:-}
+      QUECTO_BASE_DIR: /home/appuser/.quecto
+      QUECTO_DEV_REPO_DIR: /workspace/quecto
+      QUECTO_DEV_CLONE: ${QUECTO_DEV_CLONE:-1}
+      QUECTO_REPO_URL: ${QUECTO_REPO_URL:-git@github.com:platform-q-ai/quecto.git}
+      QUECTO_REPO_REF: ${QUECTO_REPO_REF:-master}
+      QUECTO_INSTALL: ${QUECTO_INSTALL:-1}
+      QUECTO_INSTALL_PACKAGES: ${QUECTO_INSTALL_PACKAGES:-quecto-agentic-harness}
+      QUECTO_INSTALL_ROOT: ${QUECTO_INSTALL_ROOT:-/workspace/.cargo-install}
+      HOME: /home/appuser
+      HOST_UID: ${HOST_UID:-1000}
+      HOST_GID: ${HOST_GID:-1000}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CODEX_API_KEY: ${CODEX_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GH_TOKEN: ${GH_TOKEN:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS: ${QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS:-}
+      RUST_LOG: ${RUST_LOG:-}
+      GIT_SSH_COMMAND: ${GIT_SSH_COMMAND:-ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null}
+      QUECTO_CONFIG_SEED_PATH: ${QUECTO_CONFIG_SEED_PATH:-}
+      QUECTO_CREDENTIALS_SEED_PATH: ${QUECTO_CREDENTIALS_SEED_PATH:-}
+      QUECTO_GH_CONFIG_SEED_DIR: ${QUECTO_GH_CONFIG_SEED_DIR:-}
+    volumes:
+      - quecto-workspace:/workspace
+      - quecto-home:/home/appuser/.quecto
+      - type: bind
+        source: ${QUECTO_SOCKET_HOST:?QUECTO_SOCKET_HOST must point at the temporary host socket directory}
+        target: /socket
+      - type: bind
+        source: ${QUECTO_SSH_DIR:?QUECTO_SSH_DIR must point at a read-only SSH directory or temporary empty dir}
+        target: /home/appuser/.ssh
+        read_only: true
+
+volumes:
+  quecto-workspace:
+    name: ${QUECTO_WORKSPACE_VOLUME:-quecto-workspace}
+  quecto-home:
+    name: ${QUECTO_HOME_VOLUME:-quecto-home}
