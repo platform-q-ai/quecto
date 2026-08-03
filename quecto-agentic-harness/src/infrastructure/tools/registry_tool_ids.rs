@@ -39,6 +39,23 @@ impl ToolRegistryImpl {
         metadata: &ToolRegistration,
     ) -> Result<(), ToolIdResolveError> {
         let identity = metadata.identity_for_name(name);
+        if self.denied_policy_ids.iter().any(|denied| {
+            denied == identity.stable_id.as_ref() || denied == identity.legacy_name_id.as_ref()
+        }) {
+            return Err(ToolIdResolveError::Duplicate(
+                identity.stable_id.into_owned(),
+            ));
+        }
+        if self.denied_policy_ids.iter().any(|denied| {
+            identity
+                .aliases
+                .iter()
+                .any(|alias| denied == alias.as_ref())
+        }) {
+            return Err(ToolIdResolveError::Duplicate(
+                identity.stable_id.into_owned(),
+            ));
+        }
         self.tool_id_resolver_excluding(Some(name))?
             .register(&identity)
     }

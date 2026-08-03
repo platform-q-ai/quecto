@@ -34,6 +34,7 @@ pub struct ToolRegistryImpl {
     /// unregistering existing tools, so disabled names remain described but UDS
     /// and other runtime registration paths cannot reintroduce or shadow them.
     denied_names: std::collections::HashSet<String>,
+    pub(super) denied_policy_ids: std::collections::HashSet<String>,
     pub(super) inherited_policy_scopes: HashMap<String, ProfileAvailabilityScope>,
     pub(super) inherited_policy_default_scope: Option<ProfileAvailabilityScope>,
 }
@@ -69,6 +70,7 @@ impl ToolRegistryImpl {
             execution_profile_context: None,
             guards: Vec::new(),
             denied_names: std::collections::HashSet::new(),
+            denied_policy_ids: std::collections::HashSet::new(),
             inherited_policy_scopes: HashMap::new(),
             inherited_policy_default_scope: None,
         }
@@ -132,6 +134,10 @@ impl ToolRegistryImpl {
         self.denied_names.insert(name.to_string());
     }
 
+    fn deny_policy_id(&mut self, policy_id: &str) {
+        self.denied_policy_ids.insert(policy_id.to_string());
+    }
+
     /// Apply startup `--disable-tool` policy.
     ///
     /// Existing tools are disabled but remain registered/described. Every named
@@ -160,11 +166,13 @@ impl ToolRegistryImpl {
                 Ok(name) => name,
                 Err(_) => {
                     self.deny_registration_name(policy_id);
+                    self.deny_policy_id(policy_id);
                     warnings.push(policy_id.clone());
                     continue;
                 }
             };
             self.deny_registration_name(&name);
+            self.deny_policy_id(policy_id);
             if !self.tools.contains_key(&name) {
                 warnings.push(policy_id.clone());
                 continue;

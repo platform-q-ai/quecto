@@ -149,6 +149,32 @@ fn unknown_policy_ids_are_reported() {
         )),
         ToolRegistration::official_native().with_provider_id("quecto:official-tools"),
     ));
+    assert!(!reg.register_with_metadata(
+        Arc::new(DummyTestTool::new("missing")),
+        ToolRegistration::official_native().with_provider_id("quecto:official-tools"),
+    ));
+}
+
+#[test]
+fn unknown_stable_policy_id_blocks_later_matching_provider_registration() {
+    let mut reg = ToolRegistryImpl::new();
+
+    let warnings =
+        reg.apply_startup_tool_restrictions(&["tool.v1:uds:uds:client-a:weather".into()]);
+
+    assert_eq!(warnings, vec!["tool.v1:uds:uds:client-a:weather"]);
+    assert!(!reg.register_with_metadata(
+        Arc::new(DummyTestTool::new("weather")),
+        ToolRegistration::uds_owner("uds:client-a").with_provider_id("uds:client-a"),
+    ));
+    assert!(
+        reg.register_with_metadata(
+            Arc::new(DummyTestTool::new("weather_other")),
+            ToolRegistration::uds_owner("uds:client-b")
+                .with_provider_id("uds:client-b")
+                .with_stable_id("tool.v1:uds:uds:client-b:weather"),
+        )
+    );
 }
 
 #[test]
