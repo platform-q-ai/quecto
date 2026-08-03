@@ -445,9 +445,9 @@ impl App {
         // separator before the working spinner. Top-pad short transcripts so the
         // latest output sits directly above that lower separator.
         let top_chrome_height = lines.len();
-        let streaming_vertical_padding = 1;
-        let chat_height =
-            height.saturating_sub(bottom_height + top_chrome_height + streaming_vertical_padding);
+        let unpadded_chat_height = height.saturating_sub(bottom_height + top_chrome_height);
+        let streaming_vertical_padding = usize::from(unpadded_chat_height > 1);
+        let chat_height = unpadded_chat_height.saturating_sub(streaming_vertical_padding);
         let chat = self.active_chat_mut();
         chat.set_viewport_height(chat_height);
         let mut chat_lines = chat.render(width);
