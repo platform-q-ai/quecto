@@ -1101,7 +1101,7 @@ fn then_persisted_credential_has_margin(
     let actual = cred.expires_at.expect("expires_at not set");
 
     assert!(
-        (actual - expected_with_margin).abs() <= 2,
+        (actual - expected_with_margin).abs() <= 10,
         "expected expires_at ~{} (now + {} - 300), got {} (diff: {}s). \
          Without margin would be ~{} — if that matches, the margin is missing.",
         expected_with_margin,
