@@ -78,6 +78,7 @@ impl quecto::domain::tool::ToolRegistry for EmptyRegistry {}
 
 fn agent_loop(reply: &str) -> Box<dyn AgentLoop> {
     Box::new(AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider: Arc::new(TextProvider {
             reply: reply.into(),
         }),
@@ -136,6 +137,7 @@ impl AuditSink for RecordingSink {
 
 fn failing_agent_loop(body: &str, sink: Arc<dyn AuditSink>) -> Box<dyn AgentLoop> {
     Box::new(AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider: Arc::new(FailingProvider { body: body.into() }),
         tool_registry: Box::new(EmptyRegistry),
         model: "test-model".into(),

@@ -310,6 +310,7 @@ fn make_handle() -> CancelHandle {
 async fn cancelled_prompt_keeps_user_message_in_conversation() {
     let mut agent = AgentLoopImpl::new(crate::application::agent_loop::AgentLoopConfig {
         provider: crate::interface::test_support::make_stub_provider(),
+        tool_policy_child_propagator: None,
         tool_registry: Box::new(crate::infrastructure::tools::registry::ToolRegistryImpl::new()),
         model: "stub".into(),
         max_tokens: 100,

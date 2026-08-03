@@ -379,6 +379,7 @@ fn when_agent_processes_failing_turn(world: &mut QuectoWorld) {
     let body = world.audit_json.take().expect("no provider body");
     let sink = std::sync::Arc::new(LoopRecordingSink::default());
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider: std::sync::Arc::new(LoopFailingProvider { body }),
         tool_registry: Box::new(LoopEmptyRegistry),
         model: "test-model".into(),

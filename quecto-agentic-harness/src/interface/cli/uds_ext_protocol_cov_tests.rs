@@ -100,6 +100,7 @@ pub(super) fn cov_agent_with_registry(
     crate::application::agent_loop::AgentLoopImpl::new(
         crate::application::agent_loop::AgentLoopConfig {
             provider: std::sync::Arc::new(CovProvider),
+            tool_policy_child_propagator: None,
             tool_registry: Box::new(registry),
             model: "stub".into(),
             max_tokens: 100,

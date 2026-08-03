@@ -52,6 +52,7 @@ pub(super) fn make_dispatch_test_agent(
     crate::application::agent_loop::AgentLoopImpl::new(
         crate::application::agent_loop::AgentLoopConfig {
             provider,
+            tool_policy_child_propagator: None,
             tool_registry: Box::new(
                 crate::infrastructure::tools::registry::ToolRegistryImpl::new(),
             ),

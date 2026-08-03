@@ -112,6 +112,7 @@ async fn test_malformed_tool_call_api_rejection_is_addressable_not_fatal() {
     let registry = MockRegistry::new();
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: provider.clone(),
+        tool_policy_child_propagator: None,
         tool_registry: Box::new(registry),
         model: "test-model".to_string(),
         max_tokens: 1024,
@@ -182,6 +183,7 @@ async fn test_terminal_auth_error_fails_the_turn_with_classified_message() {
     ))];
     let provider = Arc::new(MockProvider::new_results(responses));
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider: provider.clone(),
         tool_registry: Box::new(MockRegistry::new()),
         model: "test-model".to_string(),
@@ -225,6 +227,7 @@ async fn test_terminal_server_error_fails_the_turn_after_retries() {
         .collect();
     let provider = Arc::new(MockProvider::new_results(responses));
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider: provider.clone(),
         tool_registry: Box::new(MockRegistry::new()),
         model: "test-model".to_string(),

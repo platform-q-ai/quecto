@@ -69,6 +69,7 @@ async fn streaming_result_context_tokens_uses_provider_reported_occupancy() {
     )]]));
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
+        tool_policy_child_propagator: None,
         tool_registry: Box::new(MockRegistry::new()),
         model: "test-model".to_string(),
         max_tokens: 1024,

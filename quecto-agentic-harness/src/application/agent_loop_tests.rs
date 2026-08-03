@@ -240,14 +240,13 @@ impl crate::domain::tool::Tool for MockTool {
     }
 }
 
-/// Baseline test config; override individual fields with functional-update
-/// syntax (`AgentLoopConfig { field: ..., ..test_config(...) }`).
 pub(super) fn test_config(
     provider: Arc<dyn crate::domain::provider::LlmProvider>,
     tool_registry: Box<dyn crate::domain::tool::ToolRegistry>,
 ) -> AgentLoopConfig {
     AgentLoopConfig {
         provider,
+        tool_policy_child_propagator: None,
         tool_registry,
         model: "test-model".to_string(),
         max_tokens: 1024,
@@ -600,6 +599,7 @@ fn make_agent_with_callback(
         events_clone.lock().unwrap().push(ev);
     });
     let agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         progress_callback: Some(callback),
         ..test_config(provider.clone(), Box::new(registry))
     });
@@ -646,6 +646,7 @@ fn new_threads_context_knobs_and_model_window_into_observable_budget() {
     let provider = Arc::new(MockProvider::new(vec![]));
     let registry = MockRegistry::new();
     let agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         pin_recent_turns: 7,
         context_collapse_after_messages: 11,
         max_context_tokens: 10_000,

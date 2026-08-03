@@ -15,8 +15,8 @@ use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent
 use crate::domain::provider_error::classify_provider_error;
 use crate::domain::session::ContextSpillStore;
 use crate::domain::tool::{
-    RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolPolicyMutation,
-    ToolProfileContext, ToolRegistry,
+    RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor,
+    ToolPolicyChildPropagator, ToolPolicyMutation, ToolProfileContext, ToolRegistry,
 };
 use std::pin::Pin;
 use std::sync::Arc;
@@ -56,6 +56,7 @@ const MAX_MALFORMED_REQUEST_RETRIES: u32 = 3;
 pub struct AgentLoopConfig {
     pub provider: Arc<dyn LlmProvider>,
     pub tool_registry: Box<dyn ToolRegistry>,
+    pub tool_policy_child_propagator: Option<Arc<dyn ToolPolicyChildPropagator>>,
     pub model: String,
     pub max_tokens: u32,
     pub temperature: f32,
@@ -88,6 +89,7 @@ pub struct AgentLoopConfig {
 pub struct AgentLoopImpl {
     provider: Arc<dyn LlmProvider>,
     pub(super) tool_registry: Box<dyn ToolRegistry>,
+    pub(crate) tool_policy_child_propagator: Option<Arc<dyn ToolPolicyChildPropagator>>,
     model: String,
     max_tokens: u32,
     /// Per-model registry output cap, if known; see `agent_loop_clamp` (#935).
@@ -126,6 +128,10 @@ impl std::fmt::Debug for AgentLoopImpl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AgentLoopImpl")
             .field("provider", &self.provider.name())
+            .field(
+                "tool_policy_child_propagator",
+                &self.tool_policy_child_propagator.is_some(),
+            )
             .field("model", &self.model)
             .field("max_tool_iterations", &self.max_tool_iterations)
             .finish()
@@ -145,6 +151,7 @@ impl AgentLoopImpl {
         Self {
             provider: config.provider,
             tool_registry: config.tool_registry,
+            tool_policy_child_propagator: config.tool_policy_child_propagator,
             model: config.model.clone(),
             max_tokens: config.max_tokens,
             model_max_tokens: None,
@@ -717,6 +724,9 @@ mod issue_1072_tests;
 #[cfg(test)]
 #[path = "agent_loop_993_tests.rs"]
 mod issue_993_tests;
+#[cfg(test)]
+#[path = "agent_loop_policy_child_propagation_tests.rs"]
+mod policy_child_propagation_tests;
 #[cfg(test)]
 #[path = "agent_loop_policy_tests.rs"]
 mod policy_tests;

@@ -168,6 +168,7 @@ fn budgeted_agent(
 ) -> AgentLoopImpl {
     AgentLoopImpl::new(AgentLoopConfig {
         provider,
+        tool_policy_child_propagator: None,
         tool_registry: Box::new(crate::infrastructure::tools::registry::ToolRegistryImpl::new()),
         model: "stub".into(),
         max_tokens: 100,

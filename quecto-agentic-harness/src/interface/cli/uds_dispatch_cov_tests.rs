@@ -134,6 +134,7 @@ pub(super) fn make_agent_with(
 ) -> AgentLoopImpl {
     AgentLoopImpl::new(AgentLoopConfig {
         provider: crate::interface::test_support::make_stub_provider(),
+        tool_policy_child_propagator: None,
         tool_registry,
         model: "stub".into(),
         max_tokens: 100,

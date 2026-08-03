@@ -106,6 +106,7 @@ async fn run_loop_emits_audit_for_non_streaming_text_response() {
     }]));
     let audit = Arc::new(RecordingAudit::default());
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         audit_log: Some(audit.clone()),
         ..test_config(provider, Box::new(MockRegistry::new()))
     });

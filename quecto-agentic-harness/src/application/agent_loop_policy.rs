@@ -216,16 +216,20 @@ impl AgentLoopImpl {
         mutations: &[ToolPolicyMutation],
         mode: ToolPolicyApplyMode,
     ) -> Option<ToolPolicyReconciliation> {
-        if mode == ToolPolicyApplyMode::AtNextTurnBoundary
+        let should_queue = mode == ToolPolicyApplyMode::AtNextTurnBoundary
             || (mode == ToolPolicyApplyMode::ImmediateIfIdle
-                && self.turn_in_flight.load(Ordering::SeqCst))
-        {
+                && self.turn_in_flight.load(Ordering::SeqCst));
+        if should_queue {
             self.queue_tool_policy_mutation(mutations);
             return None;
         }
-        let reconciliation = self
+        let mut reconciliation = self
             .tool_registry
             .apply_tool_policy_mutations(mutations, mode);
+        if let Some(propagator) = &self.tool_policy_child_propagator {
+            reconciliation.child_propagation =
+                propagator.propagate_tool_policy_to_children(mutations, mode);
+        }
         self.record_applied_tool_policy_overlay(&reconciliation);
         self.refresh_spawn_inherited_child_policy_snapshot();
         self.notify_tool_policy_changed(&reconciliation, "immediate");
@@ -273,9 +277,15 @@ impl AgentLoopImpl {
             self.clear_turn_in_flight();
         }
 
-        let reconciliation = self
+        let mut reconciliation = self
             .tool_registry
             .apply_tool_policy_mutations(&mutations, ToolPolicyApplyMode::AtNextTurnBoundary);
+        if let Some(propagator) = &self.tool_policy_child_propagator {
+            reconciliation.child_propagation = propagator.propagate_tool_policy_to_children(
+                &mutations,
+                ToolPolicyApplyMode::AtNextTurnBoundary,
+            );
+        }
         self.record_applied_tool_policy_overlay(&reconciliation);
         self.refresh_spawn_inherited_child_policy_snapshot();
         self.notify_tool_policy_changed(&reconciliation, "turn_boundary");

@@ -576,6 +576,7 @@ async fn first_turn_uses_configured_profile_for_model_visible_tools() {
         definitions: vec![],
     };
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         tool_profile_context: ToolProfileContext::Child,
         ..test_config(provider.clone(), Box::new(registry))
     });
@@ -604,6 +605,7 @@ async fn first_turn_parent_profile_keeps_parent_tools_model_visible() {
         definitions: vec![],
     };
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         tool_profile_context: ToolProfileContext::Parent,
         ..test_config(provider.clone(), Box::new(registry))
     });
@@ -666,6 +668,7 @@ async fn direct_execution_honors_runtime_profile_scope() {
         let mut registry = MockRegistry::new();
         registry.register(Arc::new(MockTool::new("alpha", "executed")));
         let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+            tool_policy_child_propagator: None,
             tool_profile_context: context,
             ..test_config(provider, Box::new(registry))
         });

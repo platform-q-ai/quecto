@@ -89,6 +89,7 @@ fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
     );
     AgentLoopImpl::new(AgentLoopConfig {
         provider,
+        tool_policy_child_propagator: None,
         tool_registry: Box::new(registry),
         model: "test-model".to_string(),
         max_tokens: 100,
@@ -488,6 +489,7 @@ fn test_run_with_deadline_completes_before_timeout() {
         Default::default(),
     );
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider,
         tool_registry: Box::new(registry),
         model: "test-model".to_string(),

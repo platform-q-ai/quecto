@@ -295,6 +295,19 @@ pub struct ChildToolPolicyPropagation {
     pub error: Option<String>,
 }
 
+/// Port: propagates applied live runtime policy mutations to existing children.
+pub trait ToolPolicyChildPropagator: Send + Sync {
+    fn has_children(&self) -> bool {
+        false
+    }
+
+    fn propagate_tool_policy_to_children(
+        &self,
+        mutations: &[ToolPolicyMutation],
+        mode: ToolPolicyApplyMode,
+    ) -> Vec<ChildToolPolicyPropagation>;
+}
+
 /// Port: live runtime policy mutation for registered tools.
 pub trait ToolPolicyMutator: Send + Sync {
     fn apply_tool_policy_mutations(

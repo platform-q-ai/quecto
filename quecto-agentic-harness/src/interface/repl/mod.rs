@@ -359,6 +359,7 @@ pub fn run_repl<R: BufRead, W: Write>(
         );
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: ctx.provider.clone(),
+        tool_policy_child_propagator: None,
         tool_registry: Box::new(registry),
         model,
         max_tokens: ctx.config.agents.defaults.max_tokens,

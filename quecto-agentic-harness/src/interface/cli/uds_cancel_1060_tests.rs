@@ -329,6 +329,7 @@ async fn run_turn(
         provider: Arc::new(ScriptedProvider {
             responses: Mutex::new(responses),
         }),
+        tool_policy_child_propagator: None,
         tool_registry: Box::new(registry),
         model: "stub".into(),
         max_tokens: 100,
@@ -384,6 +385,7 @@ async fn run_streaming_turn(deltas: Vec<&str>, response: &str, prompt: &str) -> 
         response: text_response(response),
     });
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        tool_policy_child_propagator: None,
         provider,
         tool_registry: Box::new(crate::infrastructure::tools::registry::ToolRegistryImpl::new()),
         model: "stub".into(),

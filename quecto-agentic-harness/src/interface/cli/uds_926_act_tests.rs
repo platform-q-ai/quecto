@@ -36,6 +36,7 @@ impl ActEnv {
             agent: crate::application::agent_loop::AgentLoopImpl::new(
                 crate::application::agent_loop::AgentLoopConfig {
                     provider: crate::interface::test_support::make_stub_provider(),
+                    tool_policy_child_propagator: None,
                     tool_registry: Box::new(
                         crate::infrastructure::tools::registry::ToolRegistryImpl::new(),
                     ),
