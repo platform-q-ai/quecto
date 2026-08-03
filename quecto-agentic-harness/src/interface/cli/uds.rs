@@ -34,11 +34,24 @@ pub(super) fn is_cancel_command(trimmed: &str) -> bool {
 /// Reader-side classification so the eager cancel and the abort/steer control
 /// flag are set together, before the command is dispatched (#895/#896).
 pub(super) fn is_abort_command(trimmed: &str) -> bool {
-    trimmed.contains("\"type\":\"abort\"")
+    command_type_is(trimmed, "abort")
 }
 
 pub(super) fn is_steer_command(trimmed: &str) -> bool {
-    trimmed.contains("\"type\":\"steer\"")
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        return false;
+    };
+    v.get("type").and_then(|t| t.as_str()) == Some("steer")
+        || (v.get("type").and_then(|t| t.as_str()) == Some("prompt")
+            && v.get("streamingBehavior").and_then(|b| b.as_str()) == Some("steer"))
+}
+
+fn command_type_is(trimmed: &str, expected: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(trimmed)
+        .ok()
+        .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(str::to_owned))
+        .as_deref()
+        == Some(expected)
 }
 
 pub(super) enum LineResult {
@@ -300,8 +313,6 @@ async fn persist_user_prompt_before_run(
 }
 
 pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
-    // A prompt clears any stale substring-detected steer gate (#896 AC3).
-    ctx.turn_control.clear_steer();
     let PromptCommand {
         id,
         type_name,
@@ -310,9 +321,15 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
     } = cmd;
     if ctx.session.is_streaming() {
         match streaming_behavior {
-            Some(StreamingBehavior::FollowUp) | Some(StreamingBehavior::Steer) => {
+            Some(StreamingBehavior::FollowUp) => {
                 ctx.session.enqueue_pending(message);
                 let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
+                emit_event_to_broadcast_or_writer(ctx, &ev).await;
+            }
+            Some(StreamingBehavior::Steer) => {
+                ctx.session.prepend_pending(message);
+                ctx.turn_control.clear_steer();
+                let ev = AgentEvent::ok(id.as_deref(), "steer", None);
                 emit_event_to_broadcast_or_writer(ctx, &ev).await;
             }
             None => {
@@ -324,7 +341,11 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         return false;
     }
     super::uds_reload::poll_provider_reload_for_ctx(ctx).await;
-    let Some(cancel_rx) = arm_cancel(&ctx.cancel_handle) else {
+    let cancel_rx = arm_prompt_cancel(
+        ctx,
+        matches!(streaming_behavior, Some(StreamingBehavior::Steer)),
+    );
+    let Some(cancel_rx) = cancel_rx else {
         emit_pre_cancelled(ctx).await; // Stale abort (#483).
         drain_and_run_pending(ctx).await;
         return false;
@@ -352,6 +373,20 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         tracing::warn!("failed to persist session after turn: {err}");
     }
     false
+}
+
+fn arm_prompt_cancel(
+    ctx: &mut DispatchCtx<'_>,
+    is_steer_prompt: bool,
+) -> Option<tokio::sync::oneshot::Receiver<()>> {
+    match arm_cancel(&ctx.cancel_handle) {
+        Some(rx) => Some(rx),
+        None if is_steer_prompt => {
+            ctx.turn_control.clear_steer();
+            arm_cancel(&ctx.cancel_handle)
+        }
+        None => None,
+    }
 }
 
 /// Hard bound on nudged turns per idle drain, so a misbehaving model isn't

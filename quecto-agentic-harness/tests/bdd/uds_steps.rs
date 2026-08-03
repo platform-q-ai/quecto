@@ -812,6 +812,21 @@ fn when_send_steer(world: &mut QuectoWorld, message: String, id: String) {
     world.uds_commands.push(cmd.to_string());
 }
 
+#[when(expr = "I send prompt with steer streaming behavior {string} and id {string}")]
+fn when_send_prompt_with_steer_streaming_behavior(
+    world: &mut QuectoWorld,
+    message: String,
+    id: String,
+) {
+    let cmd = serde_json::json!({
+        "type": "prompt",
+        "id": id,
+        "message": message,
+        "streamingBehavior": "steer"
+    });
+    world.uds_commands.push(cmd.to_string());
+}
+
 #[when(expr = "I send get_messages_tail with count {int} and id {string}")]
 fn when_send_get_messages_tail(world: &mut QuectoWorld, count: usize, id: String) {
     let cmd = serde_json::json!({"type": "get_messages_tail", "id": id, "count": count});
@@ -4233,4 +4248,176 @@ fn then_post_register_lists_tool_owner(world: &mut QuectoWorld, name: String) {
         owner.starts_with("uds:client:"),
         "expected UDS client owner for {name:?}; got {owner:?}"
     );
+}
+
+#[given(
+    expr = "the mock LLM delays first response {int} seconds then returns steered text {string}"
+)]
+fn given_mock_llm_delays_first_then_steered(
+    world: &mut QuectoWorld,
+    delay_secs: u64,
+    steered: String,
+) {
+    assert!(
+        world._wiremock_server_uri.is_some(),
+        "mock server URI not set"
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+        let original_body = serde_json::json!({
+            "id": "chatcmpl-original-delayed",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": "ORIGINAL_SHOULD_BE_CANCELLED" },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+        });
+        let steered_body = serde_json::json!({
+            "id": "chatcmpl-steered",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": steered },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(original_body)
+                    .set_delay(std::time::Duration::from_secs(delay_secs)),
+            )
+            .with_priority(1)
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(steered_body))
+            .with_priority(2)
+            .mount(&server)
+            .await;
+        e2e_steps::rewrite_config_to_uri(world, &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+#[then(expr = "the agent output should contain text {string}")]
+fn then_agent_output_should_contain_text(world: &mut QuectoWorld, expected: String) {
+    execute_uds(world);
+    let joined = world.agent_events.join("\n");
+    assert!(
+        joined.contains(&expected),
+        "expected output to contain {expected:?}, events:\n{joined}"
+    );
+}
+
+#[then(expr = "the agent output should not contain text {string}")]
+fn then_agent_output_should_not_contain_text(world: &mut QuectoWorld, unexpected: String) {
+    execute_uds(world);
+    let joined = world.agent_events.join("\n");
+    assert!(
+        !joined.contains(&unexpected),
+        "expected output not to contain {unexpected:?}, events:\n{joined}"
+    );
+}
+
+#[when(expr = "I run a live delayed steer from prompt {string} to {string}")]
+fn when_run_live_delayed_steer(world: &mut QuectoWorld, original: String, steer: String) {
+    let base = world
+        .cli_context
+        .base_dir
+        .clone()
+        .expect("no base dir — add 'Given a temp base directory'");
+    let ctx = build_uds_agent(world, &base).expect("build UDS agent");
+    let socket_path = base.join("live-steer-test.sock");
+    let _ = std::fs::remove_file(&socket_path);
+    let (handle, socket_path) =
+        mc_spawn_agent(ctx, &base, socket_path, String::new()).expect("spawn UDS agent");
+
+    let mut stream = None;
+    for _ in 0..100 {
+        match std::os::unix::net::UnixStream::connect(&socket_path) {
+            Ok(s) => {
+                stream = Some(s);
+                break;
+            }
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(20)),
+        }
+    }
+    let mut stream = stream.expect("connect to UDS socket");
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_millis(250)))
+        .unwrap();
+    use std::io::{BufRead, BufReader, Write};
+    let prompt = serde_json::json!({"type":"prompt","message":original}).to_string();
+    stream.write_all(format!("{prompt}\n").as_bytes()).unwrap();
+    stream.flush().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    let mut steer_stream = std::os::unix::net::UnixStream::connect(&socket_path).unwrap();
+    steer_stream
+        .set_read_timeout(Some(std::time::Duration::from_millis(250)))
+        .unwrap();
+    let steer = serde_json::json!({
+        "type":"prompt",
+        "id":"st-live-cancel-1",
+        "message":steer,
+        "streamingBehavior":"steer"
+    })
+    .to_string();
+    steer_stream
+        .write_all(format!("{steer}\n").as_bytes())
+        .unwrap();
+    steer_stream.flush().unwrap();
+
+    let mut events = Vec::new();
+    let mut reader = BufReader::new(&stream);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    while std::time::Instant::now() < deadline {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                let line = line.trim().to_string();
+                if !line.is_empty() {
+                    events.push(line.clone());
+                }
+                if line.contains("STEERED_RESPONSE_COMMITTED") {
+                    break;
+                }
+            }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(_) => break,
+        }
+    }
+    let mut steer_reader = BufReader::new(&steer_stream);
+    for _ in 0..8 {
+        let mut line = String::new();
+        match steer_reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                let line = line.trim().to_string();
+                if !line.is_empty() {
+                    events.push(line);
+                }
+            }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(_) => break,
+        }
+    }
+    let _ = stream.shutdown(std::net::Shutdown::Both);
+    let _ = steer_stream.shutdown(std::net::Shutdown::Both);
+    world.agent_events = events;
+    world.uds_exit_code = Some(handle.join().unwrap_or(1));
 }

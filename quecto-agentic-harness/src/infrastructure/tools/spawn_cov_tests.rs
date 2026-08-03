@@ -328,25 +328,44 @@ async fn send_initial_prompt_errors_when_socket_absent() {
         .await
         .unwrap_err();
     assert!(
-        err.to_string().contains("failed to connect to subagent"),
+        err.to_string().contains("connect to subagent"),
         "got: {err}"
     );
 }
 
-// --- send_initial_prompt: success path writes and shuts down ---
+// --- send_initial_prompt: success path sends an accepted framed command ---
 
 #[tokio::test]
 async fn send_initial_prompt_writes_to_listening_socket() {
-    use tokio::io::AsyncReadExt;
     let dir = tempfile::TempDir::new().unwrap();
     let socket_path = dir.path().join("live.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
 
     let accept = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        let mut buf = String::new();
-        stream.read_to_string(&mut buf).await.unwrap();
-        buf
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut reader = tokio::io::BufReader::new(stream);
+        let payload =
+            quecto_line_io::read_frame(&mut reader, quecto_line_io::PROTOCOL_FRAME_CAP_BYTES)
+                .await
+                .unwrap()
+                .unwrap();
+        let text = String::from_utf8_lossy(&payload).to_string();
+        let sent: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let ack = serde_json::json!({
+            "type":"response",
+            "command":"prompt",
+            "id": sent["id"].clone(),
+            "success":true
+        })
+        .to_string();
+        quecto_line_io::write_frame(
+            reader.get_mut(),
+            ack.as_bytes(),
+            quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
+        )
+        .await
+        .unwrap();
+        text
     });
 
     let tool = SpawnTool::new(vec![], true);

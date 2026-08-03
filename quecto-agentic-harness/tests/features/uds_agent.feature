@@ -1021,3 +1021,12 @@ Feature: UDS mode for headless agent operation
     And every emitted event line should fit within the event line cap
     And the agent output should contain an event of type "turn_end"
     And the agent output should contain an event of type "agent_end"
+
+  @done @steer-abort
+  Scenario: steer while running cancels the in-flight provider response before it is committed
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM delays first response 3 seconds then returns steered text "STEERED_RESPONSE_COMMITTED"
+    When I run a live delayed steer from prompt "original task" to "new direction"
+    Then the agent output should contain text "STEERED_RESPONSE_COMMITTED"
+    And the agent output should not contain text "ORIGINAL_SHOULD_BE_CANCELLED"

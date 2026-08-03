@@ -636,21 +636,15 @@ impl SpawnTool {
         socket_path: &std::path::Path,
         task: &str,
     ) -> Result<(), DomainError> {
-        use tokio::io::AsyncWriteExt;
-        let mut stream = tokio::net::UnixStream::connect(socket_path)
-            .await
-            .map_err(|e| DomainError::Tool(format!("failed to connect to subagent: {e}")))?;
-        let cmd = serde_json::json!({"type": "prompt", "message": task});
-        let line = format!("{}\n", cmd);
-        stream
-            .write_all(line.as_bytes())
-            .await
-            .map_err(|e| DomainError::Tool(format!("failed to send prompt to subagent: {e}")))?;
-        stream
-            .shutdown()
-            .await
-            .map_err(|e| DomainError::Tool(format!("failed to shutdown stream: {e}")))?;
-        Ok(())
+        let cmd = serde_json::json!({"type": "prompt", "message": task, "ack": "accept"});
+        super::subagent_registry::send_subagent_uds_command_with_timeout(
+            socket_path,
+            &cmd.to_string(),
+            super::subagent_registry::INSPECTOR_RESPONSE_TIMEOUT,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|e| DomainError::Tool(format!("failed to send prompt to subagent: {e}")))
     }
 }
 

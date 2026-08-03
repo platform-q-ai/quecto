@@ -97,10 +97,11 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     Then the agent_cmd result should be an error
     And the agent_cmd result should contain "message"
 
-  Scenario: steer command sends message
+  Scenario: steer command sends transcript-visible steer prompt
     Given an AgentCmdTool with a mock registry entry "w1"
     When I execute agent_cmd with '{"agent_id":"w1","command":"steer","message":"Change direction"}'
-    Then the agent_cmd should have sent command type "steer"
+    Then the agent_cmd should have sent command type "prompt"
+    And the agent_cmd should have sent streaming behavior "steer"
 
   Scenario: abort command is built correctly
     Given an AgentCmdTool with a mock registry entry "w1"

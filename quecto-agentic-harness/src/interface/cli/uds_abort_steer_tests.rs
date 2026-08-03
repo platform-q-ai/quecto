@@ -179,11 +179,10 @@ async fn steer_marker_is_obeyed_after_mid_turn_cancel() {
     );
 }
 
-/// Regression for the stuck-steer-gate hazard: the reader marks `steer_pending`
-/// from a loose `"type":"steer"` substring match, so a non-steer command whose
-/// body merely quotes the protocol can leave the gate stuck `true`. A genuine
-/// `follow_up` must clear it so the auto-continue nudge is not permanently
-/// suppressed (#896 AC3 — no regression to workflow progress).
+/// Regression for the stuck-steer-gate hazard: if the reader previously marked
+/// `steer_pending`, a genuine `follow_up` must clear it so the auto-continue
+/// nudge is not permanently suppressed (#896 AC3 — no regression to workflow
+/// progress).
 #[tokio::test]
 async fn follow_up_clears_stuck_steer_gate() {
     let mut env = Env::with_selected_feature();

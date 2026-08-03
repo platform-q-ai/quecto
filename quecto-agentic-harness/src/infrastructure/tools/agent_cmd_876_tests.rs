@@ -27,7 +27,7 @@ fn control_commands_carry_accept_marker() {
         ),
         (
             r#"{"agent_id":"w1","command":"steer","message":"m"}"#,
-            "steer",
+            "prompt",
         ),
         (
             r#"{"agent_id":"w1","command":"follow_up","message":"m"}"#,
@@ -50,6 +50,11 @@ fn control_commands_carry_accept_marker() {
             "{ty} must carry the acceptance marker (#876)"
         );
     }
+    let steer = parsed(
+        &tool,
+        r#"{"agent_id":"w1","command":"steer","message":"m"}"#,
+    );
+    assert_eq!(steer["streamingBehavior"], "steer");
 }
 
 #[test]
