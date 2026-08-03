@@ -274,3 +274,62 @@ fn unknown_raw_name_policy_id_blocks_later_legacy_alias_registration() {
         )
     );
 }
+
+#[test]
+fn remove_registered_stable_id_tool_blocks_reintroducing_same_stable_id_under_new_name() {
+    let mut reg = ToolRegistryImpl::new();
+    assert!(reg.register_with_metadata(
+        Arc::new(DummyTestTool::new("weather")),
+        ToolRegistration::uds_owner("uds:client-a"),
+    ));
+
+    assert!(reg.remove("weather"));
+
+    assert!(
+        !reg.register_with_metadata(
+            Arc::new(DummyTestTool::new("weather_v2")),
+            ToolRegistration::uds_owner("uds:client-b")
+                .with_stable_id("tool.v1:uds:12:uds:client-a:weather"),
+        )
+    );
+}
+
+#[test]
+fn remove_all_registered_alias_tool_blocks_reintroducing_removed_alias() {
+    let mut reg = ToolRegistryImpl::new();
+    assert!(
+        reg.register_with_metadata(
+            Arc::new(DummyTestTool::new("read")),
+            ToolRegistration::official_native()
+                .with_provider_id("quecto:official-tools")
+                .with_alias("view"),
+        )
+    );
+
+    assert!(reg.remove_all(&["read".into()]).is_empty());
+
+    assert!(
+        !reg.register_with_metadata(
+            Arc::new(DummyTestTool::new("open")),
+            ToolRegistration::official_native()
+                .with_provider_id("quecto:official-tools")
+                .with_alias("view"),
+        )
+    );
+}
+
+#[test]
+fn remove_unknown_raw_name_blocks_later_legacy_alias_registration() {
+    let mut reg = ToolRegistryImpl::new();
+
+    assert!(!reg.remove("view"));
+
+    assert!(
+        !reg.register_with_metadata(
+            Arc::new(DummyTestTool::new("read")),
+            ToolRegistration::official_native()
+                .with_provider_id("quecto:official-tools")
+                .with_alias("view"),
+        )
+    );
+}

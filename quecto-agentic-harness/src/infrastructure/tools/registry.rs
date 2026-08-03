@@ -33,7 +33,7 @@ pub struct ToolRegistryImpl {
     /// their descriptors. Startup policy restrictions add names here without
     /// unregistering existing tools, so disabled names remain described but UDS
     /// and other runtime registration paths cannot reintroduce or shadow them.
-    denied_names: std::collections::HashSet<String>,
+    pub(super) denied_names: std::collections::HashSet<String>,
     pub(super) denied_policy_ids: std::collections::HashSet<String>,
     pub(super) inherited_policy_scopes: HashMap<String, ProfileAvailabilityScope>,
     pub(super) inherited_policy_default_scope: Option<ProfileAvailabilityScope>,
@@ -98,7 +98,7 @@ impl ToolRegistryImpl {
     /// The name is added to the denylist so bundled native and runtime-loadable
     /// registration paths will reject it.
     pub fn remove(&mut self, name: &str) -> bool {
-        self.denied_names.insert(name.to_string());
+        self.reserve_removed_tool_identity(name);
         if self.tools.remove(name).is_some() {
             self.metadata.remove(name);
             self.rebuild_definitions();
@@ -112,7 +112,7 @@ impl ToolRegistryImpl {
     pub fn remove_all(&mut self, names: &[String]) -> Vec<String> {
         let mut warnings = Vec::new();
         for name in names {
-            self.denied_names.insert(name.clone());
+            self.reserve_removed_tool_identity(name);
             if self.tools.remove(name.as_str()).is_none() {
                 warnings.push(name.clone());
             }

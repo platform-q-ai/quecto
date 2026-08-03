@@ -1,8 +1,26 @@
+use std::borrow::Cow;
+
 use super::registration::ToolRegistration;
 use super::registry::ToolRegistryImpl;
 use crate::domain::tool_id::{ToolIdResolveError, ToolIdResolver};
 
 impl ToolRegistryImpl {
+    pub(super) fn reserve_removed_tool_identity(&mut self, name: &str) {
+        self.denied_names.insert(name.to_string());
+        match self.metadata.get(name) {
+            Some(metadata) => self.denied_policy_ids.extend(
+                metadata
+                    .identity_for_name(name)
+                    .resolver_inputs()
+                    .into_iter()
+                    .map(Cow::into_owned),
+            ),
+            None => self
+                .denied_policy_ids
+                .extend(crate::domain::tool_id::equivalent_policy_inputs(name)),
+        }
+    }
+
     pub(super) fn tool_id_resolver(&self) -> Result<ToolIdResolver, ToolIdResolveError> {
         self.tool_id_resolver_excluding(None)
     }
