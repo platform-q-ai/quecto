@@ -256,13 +256,25 @@ fn parse_mutation_result_rejects_unknown_availability() {
 }
 
 #[tokio::test]
-async fn live_policy_propagates_to_all_four_direct_children_independently() {
+async fn live_policy_updates_four_direct_children_without_accidental_grandchild_cascade() {
     use tokio::io::{AsyncWriteExt, BufReader};
 
     let temp = tempfile::tempdir().unwrap();
     let mut registry_entries = HashMap::new();
     let received = Arc::new(Mutex::new(Vec::new()));
     let mut tasks = Vec::new();
+    let mut grandchild_listeners = Vec::new();
+
+    // Reproduce the reported topology with four already-spawned direct
+    // children, each of which already has a child of its own. The parent
+    // gateway is scoped to its direct registry only: grandchildren are present
+    // and listening, but they must not receive parent-originated propagation.
+    for index in 0..4 {
+        let grandchild_id = format!("grandchild-{}", index + 1);
+        let grandchild_socket_path = temp.path().join(format!("{grandchild_id}.sock"));
+        let grandchild_listener = tokio::net::UnixListener::bind(&grandchild_socket_path).unwrap();
+        grandchild_listeners.push((grandchild_id, grandchild_listener));
+    }
 
     for index in 0..4 {
         let agent_id = format!("child-{}", index + 1);
@@ -354,5 +366,14 @@ async fn live_policy_propagates_to_all_four_direct_children_independently() {
         assert_eq!(command["type"], "set_tool_policy");
         assert_eq!(command["propagated"], true);
         assert_eq!(command["mutations"][0]["name"], "bash");
+    }
+
+    for (grandchild_id, listener) in grandchild_listeners {
+        let accept_result =
+            tokio::time::timeout(std::time::Duration::from_millis(25), listener.accept()).await;
+        assert!(
+            accept_result.is_err(),
+            "{grandchild_id} must not receive parent-originated direct-child propagation"
+        );
     }
 }
