@@ -341,24 +341,14 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         return false;
     }
     super::uds_reload::poll_provider_reload_for_ctx(ctx).await;
-    let cancel_rx = match arm_cancel(&ctx.cancel_handle) {
-        Some(rx) => rx,
-        None if matches!(streaming_behavior, Some(StreamingBehavior::Steer)) => {
-            ctx.turn_control.clear_steer();
-            match arm_cancel(&ctx.cancel_handle) {
-                Some(rx) => rx,
-                None => {
-                    emit_pre_cancelled(ctx).await;
-                    drain_and_run_pending(ctx).await;
-                    return false;
-                }
-            }
-        }
-        None => {
-            emit_pre_cancelled(ctx).await; // Stale abort (#483).
-            drain_and_run_pending(ctx).await;
-            return false;
-        }
+    let cancel_rx = arm_prompt_cancel(
+        ctx,
+        matches!(streaming_behavior, Some(StreamingBehavior::Steer)),
+    );
+    let Some(cancel_rx) = cancel_rx else {
+        emit_pre_cancelled(ctx).await; // Stale abort (#483).
+        drain_and_run_pending(ctx).await;
+        return false;
     };
     let message = Message::user(message);
     if let Err(err) = persist_user_prompt_before_run(ctx, &message).await {
@@ -383,6 +373,20 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         tracing::warn!("failed to persist session after turn: {err}");
     }
     false
+}
+
+fn arm_prompt_cancel(
+    ctx: &mut DispatchCtx<'_>,
+    is_steer_prompt: bool,
+) -> Option<tokio::sync::oneshot::Receiver<()>> {
+    match arm_cancel(&ctx.cancel_handle) {
+        Some(rx) => Some(rx),
+        None if is_steer_prompt => {
+            ctx.turn_control.clear_steer();
+            arm_cancel(&ctx.cancel_handle)
+        }
+        None => None,
+    }
 }
 
 /// Hard bound on nudged turns per idle drain, so a misbehaving model isn't
