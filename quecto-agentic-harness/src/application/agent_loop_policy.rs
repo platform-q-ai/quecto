@@ -5,7 +5,7 @@ use crate::domain::tool::{
     ToolPolicyReconciliation,
 };
 use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolCatalogueEntry};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::Ordering;
 
 #[derive(Debug, Default, Clone)]
@@ -71,6 +71,36 @@ impl ToolPolicyState {
         }
     }
 
+    pub(super) fn apply_to_catalogue_entry(&self, entry: &mut ToolCatalogueEntry) {
+        let name = entry.name.as_ref();
+        let scope = self.scopes.get(name).copied().or_else(|| {
+            if self.disabled_tools.contains(name) {
+                Some(ProfileAvailabilityScope::None)
+            } else if self.enabled_tools.contains(name) {
+                Some(ProfileAvailabilityScope::Both)
+            } else {
+                None
+            }
+        });
+        if let Some(scope) = scope {
+            entry.session_enabled = Some(scope.is_enabled());
+            entry.effective_scope = scope;
+            entry.effective_parent_enabled = scope.allows_parent();
+            entry.effective_child_enabled = scope.allows_child();
+            entry.effective_enabled = scope.is_enabled();
+            entry.runtime_availability = if scope.is_enabled() {
+                crate::domain::tool_descriptor::ToolAvailability::Enabled
+            } else {
+                crate::domain::tool_descriptor::ToolAvailability::Disabled
+            };
+            entry.health = if scope.is_enabled() {
+                crate::domain::tool_descriptor::ToolHealth::Ok
+            } else {
+                crate::domain::tool_descriptor::ToolHealth::Disabled
+            };
+        }
+    }
+
     fn scope_allows(
         scope: ProfileAvailabilityScope,
         profile: crate::domain::tool::ToolProfileContext,
@@ -83,6 +113,20 @@ impl ToolPolicyState {
 }
 
 impl AgentLoopImpl {
+    pub fn tool_catalogue_entries(
+        &self,
+    ) -> Vec<crate::domain::tool_descriptor::ToolCatalogueEntry> {
+        let mut entries = self.tool_catalog().catalogue_entries();
+        let policy = self
+            .tool_policy_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for entry in &mut entries {
+            policy.apply_to_catalogue_entry(entry);
+        }
+        entries
+    }
+
     pub(super) fn current_tool_definitions(&self) -> Vec<ToolDefinition> {
         let catalogue_entries = self.tool_catalogue_entries();
         let policy = self
@@ -135,6 +179,16 @@ impl AgentLoopImpl {
         });
     }
 
+    pub(super) fn refresh_spawn_inherited_child_policy_snapshot(&self) {
+        let snapshot: BTreeMap<_, _> = self
+            .tool_catalogue_entries()
+            .into_iter()
+            .map(|tool| (tool.name.into_owned(), tool.effective_scope))
+            .collect();
+        self.extension_tool_registry()
+            .set_inherited_child_policy_snapshot_for_spawn(snapshot);
+    }
+
     pub(super) fn notify_tool_policy_changed(
         &self,
         reconciliation: &ToolPolicyReconciliation,
@@ -173,6 +227,7 @@ impl AgentLoopImpl {
             .tool_registry
             .apply_tool_policy_mutations(mutations, mode);
         self.record_applied_tool_policy_overlay(&reconciliation);
+        self.refresh_spawn_inherited_child_policy_snapshot();
         self.notify_tool_policy_changed(&reconciliation, "immediate");
         Some(reconciliation)
     }
@@ -222,6 +277,7 @@ impl AgentLoopImpl {
             .tool_registry
             .apply_tool_policy_mutations(&mutations, ToolPolicyApplyMode::AtNextTurnBoundary);
         self.record_applied_tool_policy_overlay(&reconciliation);
+        self.refresh_spawn_inherited_child_policy_snapshot();
         self.notify_tool_policy_changed(&reconciliation, "turn_boundary");
         Some(reconciliation)
     }

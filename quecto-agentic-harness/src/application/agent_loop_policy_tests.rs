@@ -3,8 +3,9 @@ use super::*;
 use crate::domain::agent::AgentLoop;
 use crate::domain::message::Role;
 use crate::domain::tool::{
-    ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationResult,
-    ToolPolicyMutationStatus, ToolPolicyReconciliation, ToolProfileContext, ToolRegistry,
+    RuntimeToolLifecycleRegistry, ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation,
+    ToolPolicyMutationResult, ToolPolicyMutationStatus, ToolPolicyReconciliation,
+    ToolProfileContext, ToolRegistry,
 };
 use crate::domain::tool_descriptor::{
     ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolHealth, ToolLifecycleKind,
@@ -509,6 +510,30 @@ impl RuntimeToolLifecycleRegistry for CatalogueOnlyRegistry {}
 impl SessionAwareTools for CatalogueOnlyRegistry {}
 impl crate::domain::tool::ToolPolicyMutator for CatalogueOnlyRegistry {}
 impl ToolRegistry for CatalogueOnlyRegistry {}
+
+#[test]
+fn tool_catalogue_entries_apply_runtime_policy_overlay() {
+    let provider = Arc::new(MockProvider::new(vec![]));
+    let registry = CatalogueOnlyRegistry {
+        entries: vec![mock_catalogue_entry("alpha", true)],
+        definitions: vec![],
+    };
+    let agent = AgentLoopImpl::new(test_config(provider, Box::new(registry)));
+    {
+        let mut policy = agent.tool_policy_state.lock().unwrap();
+        policy.record_applied("alpha", ProfileAvailabilityScope::Child);
+    }
+
+    let entry = agent
+        .tool_catalogue_entries()
+        .into_iter()
+        .find(|entry| entry.name.as_ref() == "alpha")
+        .expect("alpha catalogue entry");
+
+    assert_eq!(entry.effective_scope, ProfileAvailabilityScope::Child);
+    assert!(!entry.effective_parent_enabled);
+    assert!(entry.effective_child_enabled);
+}
 
 #[test]
 fn current_tool_definitions_hide_child_only_scope_from_parent_requests() {

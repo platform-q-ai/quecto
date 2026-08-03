@@ -290,14 +290,6 @@ impl AgentLoopImpl {
         self.tool_catalog().descriptors()
     }
 
-    /// Return rich additive catalogue/effective-policy state from the live
-    /// registry for TUI/API callers.
-    pub fn tool_catalogue_entries(
-        &self,
-    ) -> Vec<crate::domain::tool_descriptor::ToolCatalogueEntry> {
-        self.tool_catalog().catalogue_entries()
-    }
-
     pub fn register_runtime_tool(
         &mut self,
         tool: std::sync::Arc<dyn crate::domain::tool::Tool>,
@@ -368,7 +360,7 @@ impl AgentLoopImpl {
         &*self.tool_registry
     }
 
-    fn extension_tool_registry(&self) -> &dyn RuntimeToolLifecycleRegistry {
+    pub(super) fn extension_tool_registry(&self) -> &dyn RuntimeToolLifecycleRegistry {
         &*self.tool_registry
     }
 
