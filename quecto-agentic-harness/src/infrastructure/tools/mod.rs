@@ -15,6 +15,7 @@ pub mod registration;
 pub mod registry;
 mod registry_catalogue;
 mod registry_inherited_policy;
+mod registry_tool_ids;
 pub mod spawn;
 mod spawn_binary;
 mod spawn_inherited_policy;

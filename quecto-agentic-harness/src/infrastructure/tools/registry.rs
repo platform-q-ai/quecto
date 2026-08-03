@@ -15,6 +15,7 @@ use crate::domain::tool_descriptor::{
     ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolDescriptor,
     ToolRestrictionReason,
 };
+use crate::domain::tool_id::{ToolIdResolveError, equivalent_policy_inputs};
 use crate::infrastructure::config::Config;
 
 /// Registry of all available tools, keyed by name.
@@ -32,7 +33,8 @@ pub struct ToolRegistryImpl {
     /// their descriptors. Startup policy restrictions add names here without
     /// unregistering existing tools, so disabled names remain described but UDS
     /// and other runtime registration paths cannot reintroduce or shadow them.
-    denied_names: std::collections::HashSet<String>,
+    pub(super) denied_names: std::collections::HashSet<String>,
+    pub(super) denied_policy_ids: std::collections::HashSet<String>,
     pub(super) inherited_policy_scopes: HashMap<String, ProfileAvailabilityScope>,
     pub(super) inherited_policy_default_scope: Option<ProfileAvailabilityScope>,
 }
@@ -68,6 +70,7 @@ impl ToolRegistryImpl {
             execution_profile_context: None,
             guards: Vec::new(),
             denied_names: std::collections::HashSet::new(),
+            denied_policy_ids: std::collections::HashSet::new(),
             inherited_policy_scopes: HashMap::new(),
             inherited_policy_default_scope: None,
         }
@@ -95,7 +98,7 @@ impl ToolRegistryImpl {
     /// The name is added to the denylist so bundled native and runtime-loadable
     /// registration paths will reject it.
     pub fn remove(&mut self, name: &str) -> bool {
-        self.denied_names.insert(name.to_string());
+        self.reserve_removed_tool_identity(name);
         if self.tools.remove(name).is_some() {
             self.metadata.remove(name);
             self.rebuild_definitions();
@@ -109,7 +112,7 @@ impl ToolRegistryImpl {
     pub fn remove_all(&mut self, names: &[String]) -> Vec<String> {
         let mut warnings = Vec::new();
         for name in names {
-            self.denied_names.insert(name.clone());
+            self.reserve_removed_tool_identity(name);
             if self.tools.remove(name.as_str()).is_none() {
                 warnings.push(name.clone());
             }
@@ -129,6 +132,11 @@ impl ToolRegistryImpl {
     /// exists, its descriptor and concrete implementation remain registered.
     fn deny_registration_name(&mut self, name: &str) {
         self.denied_names.insert(name.to_string());
+    }
+
+    fn deny_policy_id(&mut self, policy_id: &str) {
+        self.denied_policy_ids
+            .extend(equivalent_policy_inputs(policy_id));
     }
 
     /// Apply startup `--disable-tool` policy.
@@ -154,10 +162,20 @@ impl ToolRegistryImpl {
     ) -> Vec<String> {
         let mut warnings = Vec::new();
         let mut rebuild_needed = false;
-        for name in names {
-            self.deny_registration_name(name);
-            if !self.tools.contains_key(name) {
-                warnings.push(name.clone());
+        for policy_id in names {
+            let name = match self.resolve_tool_policy_id(policy_id) {
+                Ok(name) => name,
+                Err(_) => {
+                    self.deny_registration_name(policy_id);
+                    self.deny_policy_id(policy_id);
+                    warnings.push(policy_id.clone());
+                    continue;
+                }
+            };
+            self.reserve_removed_tool_identity(&name);
+            self.deny_policy_id(policy_id);
+            if !self.tools.contains_key(&name) {
+                warnings.push(policy_id.clone());
                 continue;
             }
             let metadata = self
@@ -204,6 +222,14 @@ impl ToolRegistryImpl {
             }
         }
         let mut metadata = metadata;
+        match self.registration_identity_is_available(&name, &metadata) {
+            Ok(()) => {}
+            Err(ToolIdResolveError::Duplicate(id)) => {
+                tracing::warn!(tool = %name, duplicate_id = %id, "register rejected: duplicate stable tool id or alias");
+                return false;
+            }
+            Err(ToolIdResolveError::Unknown(_)) => unreachable!("register does not resolve ids"),
+        }
         if let Some(scope) = self
             .inherited_policy_scopes
             .get(&name)
@@ -457,7 +483,10 @@ impl ToolRegistryImpl {
     ) -> ToolPolicyReconciliation {
         let mut results = Vec::with_capacity(mutations.len());
         for mutation in mutations {
-            let before = self.catalogue_entry(&mutation.name);
+            let resolved_name = self
+                .resolve_tool_policy_id(&mutation.name)
+                .unwrap_or_else(|_| mutation.name.clone());
+            let before = self.catalogue_entry(&resolved_name);
             let status = match before.as_ref() {
                 None => ToolPolicyMutationStatus::UnknownTool,
                 Some(entry) if !mutation.scope.is_subset_of(self.restriction_ceiling(entry)) => {
@@ -472,11 +501,11 @@ impl ToolRegistryImpl {
                     ToolPolicyMutationStatus::AlreadyInState
                 }
                 Some(_) => {
-                    self.set_profile_scope(&mutation.name, mutation.scope);
+                    self.set_profile_scope(&resolved_name, mutation.scope);
                     ToolPolicyMutationStatus::Applied
                 }
             };
-            let after = self.catalogue_entry(&mutation.name);
+            let after = self.catalogue_entry(&resolved_name);
             results.push(ToolPolicyMutationResult {
                 name: mutation.name.clone(),
                 requested_availability: mutation.availability,
@@ -706,3 +735,6 @@ mod inherited_tool_policy_tests;
 #[cfg(test)]
 #[path = "registry_policy_tests.rs"]
 mod policy_tests;
+#[cfg(test)]
+#[path = "registry_stable_id_tests.rs"]
+mod stable_id_tests;

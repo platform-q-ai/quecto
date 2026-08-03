@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use crate::domain::tool_descriptor::{
     ProfileAvailabilityScope, ToolCatalogueEntry, ToolHealth, ToolLifecycleKind,
 };
@@ -22,7 +20,7 @@ impl ToolRegistryImpl {
                 let effective_scope = Self::effective_scope(&metadata);
                 let effective_enabled = effective_scope != ProfileAvailabilityScope::None;
                 ToolCatalogueEntry {
-                    stable_id: Cow::Owned(name.clone()),
+                    stable_id: metadata.identity_for_name(name).stable_id,
                     name: definition.name.clone(),
                     label: definition.name.clone(),
                     description: definition.description.clone(),
