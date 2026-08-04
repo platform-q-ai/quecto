@@ -202,6 +202,11 @@ impl SubagentEntry {
 /// Resolve a caller-supplied agent reference (live display label or UUID) to
 /// the durable registry key. Prefer exact UUID key hits (including exited
 /// entries), then fall back to live-only display-name resolution (#1378).
+///
+/// Live-only display resolution keeps dead agents non-targetable for NEW
+/// commands (socket lookup / await arming). Await-dedupe uses
+/// [`resolve_registry_key_for_await_dedupe`] so an exit note that still shows
+/// the display label can coalesce against a retained Exited entry.
 pub fn resolve_registry_key(
     entries: &HashMap<String, SubagentEntry>,
     agent_ref: &str,
@@ -209,24 +214,81 @@ pub fn resolve_registry_key(
     if entries.contains_key(agent_ref) {
         return Ok(agent_ref.to_string());
     }
-    let resolution_entries: Vec<_> = entries
+    let resolution_entries = display_resolution_entries(entries);
+    resolve_live_display_name(&resolution_entries, agent_ref).map(|uuid| uuid.into_string())
+}
+
+/// Like [`resolve_registry_key`], but display-label fallback also matches a
+/// unique retained **exited** entry. Used only for await-dedupe coalescing so
+/// notes that embed the user-facing label still suppress after `mark_exited`
+/// (#1378 adversarial re-review). Does not re-arm sockets or resume sessions.
+pub fn resolve_registry_key_for_await_dedupe(
+    entries: &HashMap<String, SubagentEntry>,
+    agent_ref: &str,
+) -> Result<String, crate::domain::subagent::DisplayNameResolveError> {
+    if entries.contains_key(agent_ref) {
+        return Ok(agent_ref.to_string());
+    }
+    let resolution_entries = display_resolution_entries(entries);
+    match resolve_live_display_name(&resolution_entries, agent_ref) {
+        Ok(uuid) => Ok(uuid.into_string()),
+        Err(crate::domain::subagent::DisplayNameResolveError::NoLiveMatch { .. }) => {
+            resolve_unique_retained_display_name(&resolution_entries, agent_ref)
+                .map(|uuid| uuid.into_string())
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn display_resolution_entries(
+    entries: &HashMap<String, SubagentEntry>,
+) -> Vec<DisplayNameResolutionEntry> {
+    entries
         .iter()
         .map(|(key, entry)| DisplayNameResolutionEntry {
             agent_uuid: entry.agent_uuid.clone(),
             display_name: entry.effective_display_name(key).to_string(),
             live: entry.status != SubagentStatus::Exited,
         })
-        .collect();
-    resolve_live_display_name(&resolution_entries, agent_ref).map(|uuid| uuid.into_string())
+        .collect()
+}
+
+/// Unique retained display-name match across live **and** exited entries.
+/// Prefers not to invent multi-match semantics: zero → NoLiveMatch, 2+ →
+/// AmbiguousLiveMatch (same error vocabulary as live resolve).
+fn resolve_unique_retained_display_name(
+    entries: &[DisplayNameResolutionEntry],
+    display_name: &str,
+) -> Result<crate::domain::ids::AgentUuid, crate::domain::subagent::DisplayNameResolveError> {
+    let mut matches = entries
+        .iter()
+        .filter(|entry| entry.display_name == display_name)
+        .map(|entry| entry.agent_uuid.clone());
+
+    let Some(first) = matches.next() else {
+        return Err(
+            crate::domain::subagent::DisplayNameResolveError::NoLiveMatch {
+                display_name: display_name.to_string(),
+            },
+        );
+    };
+    if matches.next().is_some() {
+        return Err(
+            crate::domain::subagent::DisplayNameResolveError::AmbiguousLiveMatch {
+                display_name: display_name.to_string(),
+            },
+        );
+    }
+    Ok(first)
 }
 
 /// Mark `agent_ref`'s entry as having had its current-run terminal completion
 /// consumed by a manual `await` (auto-await dedupe). `agent_ref` may be a live
-/// display label or UUID; the flag is always stored on the UUID-keyed entry
-/// (#1378). No-op if the entry no longer exists.
+/// display label, retained exited display label, or UUID; the flag is always
+/// stored on the UUID-keyed entry (#1378). No-op if the entry no longer exists.
 pub fn mark_completion_consumed_by_await(registry: &SubagentRegistry, agent_ref: &str) {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    let Ok(key) = resolve_registry_key(&entries, agent_ref) else {
+    let Ok(key) = resolve_registry_key_for_await_dedupe(&entries, agent_ref) else {
         return;
     };
     if let Some(entry) = entries.get_mut(&key) {
@@ -244,10 +306,10 @@ pub fn mark_completion_consumed_by_await(registry: &SubagentRegistry, agent_ref:
 /// future re-run still notifies. Returns `false` otherwise. Race-free against
 /// `execute_await`: the UDS dispatch loop is single-threaded, so the await tool
 /// call sets the flag before the loop processes the queued notification.
-/// `agent_ref` may be a live display label or UUID (#1378).
+/// `agent_ref` may be a live / retained-exited display label or UUID (#1378).
 pub fn take_completion_consumed_by_await(registry: &SubagentRegistry, agent_ref: &str) -> bool {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    let Ok(key) = resolve_registry_key(&entries, agent_ref) else {
+    let Ok(key) = resolve_registry_key_for_await_dedupe(&entries, agent_ref) else {
         return false;
     };
     if let Some(entry) = entries.get_mut(&key) {

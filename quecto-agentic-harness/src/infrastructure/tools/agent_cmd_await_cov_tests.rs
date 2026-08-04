@@ -265,6 +265,40 @@ async fn await_timeout_preserves_busy_child_lifecycle() {
     assert_eq!(entry.status, SubagentStatus::Running);
 }
 
+/// #1378: wall-timeout lifecycle bookkeeping must use the resolved UUID key
+/// even when the caller awaits by display label (production registry shape).
+#[tokio::test]
+async fn await_timeout_applies_lifecycle_on_uuid_keyed_entry_via_display_label() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("uuid-busy.sock");
+    let _listener = tokio::net::UnixListener::bind(&socket).unwrap();
+
+    let registry = new_registry();
+    let uuid = crate::domain::ids::AgentUuid::new("44444444-4444-4444-8444-444444444444");
+    let mut entry = SubagentEntry::with_identity(uuid.clone(), "busy".into(), socket, 123);
+    entry.lifecycle = SubagentLifecycleState::from_status(&SubagentStatus::Running);
+    entry.status = SubagentStatus::Running;
+    registry.lock().unwrap().insert(uuid.to_string(), entry);
+    let tool = AgentCmdTool::new(registry.clone());
+
+    let got = parse_result(
+        tool.execute_await(r#"{"agent_id":"busy","timeout":0}"#)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(got.status, "timeout");
+    assert_eq!(got.agent_id, "busy");
+
+    let entry = registry.lock().unwrap().get(uuid.as_str()).unwrap().clone();
+    assert_eq!(
+        entry.last_lifecycle_event,
+        Some(SubagentLifecycleEvent::AwaitTimedOut),
+        "timeout path must get_mut the UUID-keyed entry, not the display label"
+    );
+    assert_eq!(entry.lifecycle, SubagentLifecycleState::Busy);
+    assert_eq!(entry.status, SubagentStatus::Running);
+}
+
 #[tokio::test]
 async fn execute_await_exited_status_uses_signal_reason_from_registry() {
     let tmp = tempfile::TempDir::new().unwrap();

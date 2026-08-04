@@ -143,6 +143,42 @@ fn lookup_and_await_dedupe_resolve_live_display_name_to_uuid_key() {
     assert!(take_completion_consumed_by_await(&registry, "worker"));
 }
 
+/// #1378 adversarial re-review: monitor marks exited THEN emits a note whose
+/// `agent_id` is the display label. Await-dedupe must still resolve that label
+/// onto the retained UUID entry so the passive exit note is suppressed.
+#[test]
+fn await_dedupe_resolves_display_label_for_retained_exited_entry() {
+    let registry = new_registry();
+    let uuid = crate::domain::ids::AgentUuid::new("22222222-2222-4222-8222-222222222222");
+    let mut entry = SubagentEntry::with_identity(
+        uuid.clone(),
+        "worker".into(),
+        std::path::PathBuf::from("/tmp/worker-exited.sock"),
+        9,
+    );
+    // Mirror notify_child_exited order: mark_exited first, then note uses label.
+    entry.status = SubagentStatus::Exited;
+    entry.completion_consumed_by_await = true;
+    registry.lock().unwrap().insert(uuid.to_string(), entry);
+
+    // Dead agents stay non-targetable for NEW command socket lookup even while
+    // the retained exited entry still carries the display label.
+    let err = lookup_subagent_socket(&registry, "worker").unwrap_err();
+    assert!(
+        err.contains("no live subagent") || err.contains("not found"),
+        "exited display label must not open a command socket: {err}"
+    );
+
+    assert!(
+        take_completion_consumed_by_await(&registry, "worker"),
+        "exited-note display label must resolve for await-dedupe coalescing"
+    );
+    assert!(
+        !take_completion_consumed_by_await(&registry, "worker"),
+        "flag must be single-shot even after exited display resolve"
+    );
+}
+
 /// #1378: user-facing completion notes carry the display label so parents can
 /// copy the token into agent_cmd without knowing the UUID.
 #[test]

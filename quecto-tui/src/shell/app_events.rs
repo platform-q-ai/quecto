@@ -374,11 +374,9 @@ impl App {
                 if entry.info.display_name.is_none() {
                     entry.info.display_name = Some(sanitized.clone());
                 }
-                // Keep selection/active pointer coherent across the rekey.
-                if self.subagents.active_agent_id.as_deref() == Some(sanitized.as_str()) {
-                    self.subagents.active_agent_id = Some(uuid_key.clone());
-                }
-                self.subagents.tracked.insert(uuid_key, entry);
+                self.subagents.tracked.insert(uuid_key.clone(), entry);
+                // Rekey sessions/feeds/session_order/active with tracked (#1378).
+                self.rekey_agent_collections(&sanitized, &uuid_key);
                 return;
             }
             // Already keyed by UUID (or no optimistic row) — just flip status.

@@ -111,7 +111,8 @@ impl AgentCmdTool {
             if tokio::time::Instant::now() >= deadline {
                 {
                     let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-                    if let Some(entry) = entries.get_mut(&agent_id) {
+                    // Registry is UUID-keyed; never get_mut the raw display label (#1378).
+                    if let Some(entry) = entries.get_mut(&registry_key) {
                         entry.status = apply_lifecycle_event_to_entry(
                             entry,
                             SubagentLifecycleEvent::AwaitTimedOut,
