@@ -1,6 +1,10 @@
 pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
 use crate::domain::error::DomainError;
-use crate::domain::subagent::{SubagentConfig, validate_agent_id};
+use crate::domain::ids::AgentUuid;
+use crate::domain::subagent::{
+    DisplayNameResolutionEntry, DisplayNameResolveError, SubagentConfig,
+    assert_display_name_available_for_spawn, validate_agent_id,
+};
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 use std::collections::{BTreeMap, HashMap};
@@ -10,51 +14,15 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use super::spawn_entry::{
+    InitialRegistryEntrySpec, effective_config_path, inherited_runtime_config_path,
+    initial_registry_entry,
+};
 use super::spawn_launch_args::write_private_new;
 pub use super::spawn_registry::{register_and_broadcast, shutdown_all, shutdown_all_with_count};
-use super::subagent_lifecycle::{SubagentLifecycleEvent, apply_lifecycle_event};
 #[cfg(test)]
 pub use super::subagent_registry::SubagentStatus;
-use super::subagent_registry::{ExitSignal, ExitSignalTx, NotificationTx, new_exit_signal_channel};
-
-/// Build the registry entry used at spawn registration (production after socket
-/// ready, and stub mode). Shared so the task-dependent initial status (#1049)
-/// cannot drift between branches.
-fn initial_registry_entry(
-    socket_path: PathBuf,
-    pid: u32,
-    parent_id: Option<String>,
-    config: &SubagentConfig,
-    exit_signal_tx: Option<ExitSignalTx>,
-) -> SubagentEntry {
-    let mut entry = SubagentEntry::new(socket_path, pid);
-    entry.exit_signal_tx = exit_signal_tx;
-    // Stamp the child's parent as THIS agent's own id (#820 panel tree).
-    entry.parent_id = parent_id;
-    // Record whether this child is a read-only observer (#966 / #957).
-    entry.read_only = config.read_only;
-    if config.task.is_none() {
-        // #1049: task-less → Idle (cascade/TUI); with-task stays Starting.
-        entry.status =
-            apply_lifecycle_event(&mut entry.lifecycle, SubagentLifecycleEvent::RunEnded);
-    }
-    super::subagent_registry::seed_bound_workflow(&mut entry, config.workflow_spec.as_ref());
-    entry
-}
-
-fn inherited_runtime_config_path() -> Option<PathBuf> {
-    std::env::var("QUECTO_RUNTIME_CONFIG_PATH")
-        .ok()
-        .filter(|path| !path.trim().is_empty())
-        .map(PathBuf::from)
-}
-
-fn effective_config_path(
-    explicit_config_path: Option<&PathBuf>,
-    inherited_config_path: Option<PathBuf>,
-) -> Option<PathBuf> {
-    explicit_config_path.cloned().or(inherited_config_path)
-}
+use super::subagent_registry::{ExitSignal, NotificationTx, new_exit_signal_channel};
 
 /// Compute the effective set of tools to disable in the child registry (#957):
 /// the explicit `disable_tools` array unioned with the `read_only` convenience
@@ -317,17 +285,31 @@ impl SpawnTool {
 
         {
             let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-            if entries.contains_key(session_name) {
+            let resolution_entries: Vec<_> = entries
+                .iter()
+                .map(|(key, entry)| DisplayNameResolutionEntry {
+                    agent_uuid: entry.agent_uuid.clone(),
+                    display_name: entry.effective_display_name(key).to_string(),
+                    live: entry.status != super::subagent_registry::SubagentStatus::Exited,
+                })
+                .collect();
+            if let Err(DisplayNameResolveError::AmbiguousLiveMatch { display_name })
+            | Err(DisplayNameResolveError::NoLiveMatch { display_name }) =
+                assert_display_name_available_for_spawn(&resolution_entries, session_name)
+            {
                 return Ok(ToolResult {
                     content: format!(
-                        "Failed to spawn subagent: agent '{}' is already running",
-                        session_name
+                        "Failed to spawn subagent: duplicate live subagent display label '{}'",
+                        display_name
                     ),
                     is_error: true,
                     image_blocks: vec![],
                 });
             }
         }
+
+        let agent_uuid = AgentUuid::mint();
+        let registry_key = agent_uuid.to_string();
 
         let socket_path = self
             .socket_dir
@@ -438,13 +420,15 @@ impl SpawnTool {
         // a terminal event — without this a child that begins a long first turn
         // stays invisible in the side panel until it finishes (#866).
         {
-            let entry = initial_registry_entry(
-                socket_path.clone(),
+            let entry = initial_registry_entry(InitialRegistryEntrySpec {
+                agent_uuid: agent_uuid.clone(),
+                display_name: session_name.to_string(),
+                socket_path: socket_path.clone(),
                 pid,
-                self.parent_id.clone(),
+                parent_id: self.parent_id.clone(),
                 config,
-                Some(exit_tx.clone()),
-            );
+                exit_signal_tx: Some(exit_tx.clone()),
+            });
             register_and_broadcast(
                 &self.registry,
                 self.broadcast_tx.as_ref(),
@@ -456,7 +440,7 @@ impl SpawnTool {
         // Start a persistent monitor task to track child events in real-time (#522).
         // Pass the notification sender so the monitor can auto-notify the parent (#523).
         let monitor_handle = super::subagent_monitor::spawn_monitor_task(
-            session_name.to_string(),
+            registry_key.clone(),
             socket_path.clone(),
             self.registry.clone(),
             self.notify_tx.clone(),
@@ -467,7 +451,7 @@ impl SpawnTool {
         // Store the monitor handle so it can be aborted on shutdown.
         {
             let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(entry) = entries.get_mut(session_name) {
+            if let Some(entry) = entries.get_mut(&registry_key) {
                 entry.monitor_handle = Some(std::sync::Arc::new(monitor_handle));
             }
         }
@@ -477,7 +461,7 @@ impl SpawnTool {
         // The reaper also aborts the monitor task to prevent leaks (#522),
         // and signals any waiting `await` calls with the exit status (#612).
         let reaper_registry = self.registry.clone();
-        let reaper_name = session_name.to_string();
+        let reaper_name = registry_key.clone();
         let reaper_exit_tx = exit_tx;
         let reaper_broadcast = self.broadcast_tx.clone();
         tokio::spawn(async move {
@@ -691,16 +675,38 @@ impl Tool for SpawnTool {
                     if self.base_dir.as_os_str().is_empty() {
                         let session_name = config.agent_id.as_deref().unwrap_or("subagent");
 
+                        {
+                            let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+                            if entries.values().any(|entry| {
+                                entry.display_name == session_name
+                                    && entry.status
+                                        != super::subagent_registry::SubagentStatus::Exited
+                            }) {
+                                return Ok(ToolResult {
+                                    content: format!(
+                                        "Failed to spawn subagent: duplicate live subagent display label '{}'",
+                                        session_name
+                                    ),
+                                    is_error: true,
+                                    image_blocks: vec![],
+                                });
+                            }
+                        }
+
                         // Stub registration uses the same entry builder as the
                         // real post-socket-ready path so status/parent/read_only
                         // and #1049 cannot drift (#866 broadcast still applies).
-                        let stub_entry = initial_registry_entry(
-                            PathBuf::from(format!("/stub/quecto-agent-{session_name}.sock")),
-                            0,
-                            self.parent_id.clone(),
-                            &config,
-                            None,
-                        );
+                        let stub_entry = initial_registry_entry(InitialRegistryEntrySpec {
+                            agent_uuid: AgentUuid::mint(),
+                            display_name: session_name.to_string(),
+                            socket_path: PathBuf::from(format!(
+                                "/stub/quecto-agent-{session_name}.sock"
+                            )),
+                            pid: 0,
+                            parent_id: self.parent_id.clone(),
+                            config: &config,
+                            exit_signal_tx: None,
+                        });
                         register_and_broadcast(
                             &self.registry,
                             self.broadcast_tx.as_ref(),

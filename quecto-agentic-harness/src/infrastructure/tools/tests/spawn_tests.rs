@@ -25,7 +25,8 @@ async fn workflow_spec_seeds_binding_before_first_monitor_event() {
         .expect("stub spawn must succeed");
     let registry = tool.registry.lock().unwrap();
     let workflow = registry
-        .get("bound")
+        .values()
+        .find(|entry| entry.display_name == "bound")
         .and_then(|entry| entry.workflow.as_ref())
         .expect("bound workflow metadata must exist at registration");
     assert_eq!(workflow.mode, "active");
@@ -99,7 +100,8 @@ async fn execute_stub_mode_registers_read_only_observer() {
         .unwrap();
     let registry = tool.registry.lock().unwrap();
     let entry = registry
-        .get("reviewer")
+        .values()
+        .find(|entry| entry.display_name == "reviewer")
         .expect("spawned read-only sub-agent should be registered");
     assert!(
         entry.read_only,
@@ -237,7 +239,13 @@ fn test_with_registry_shares_state() {
         "test".to_string(),
         SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 123),
     );
-    assert!(tool.registry.lock().unwrap().contains_key("test"));
+    assert!(
+        tool.registry
+            .lock()
+            .unwrap()
+            .values()
+            .any(|entry| entry.display_name == "test")
+    );
 }
 #[test]
 fn register_and_broadcast_emits_immediate_state_changed() {
@@ -248,7 +256,13 @@ fn register_and_broadcast_emits_immediate_state_changed() {
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
     let entry = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), 0);
     super::register_and_broadcast(&registry, Some(&tx), "worker", entry);
-    assert!(registry.lock().unwrap().contains_key("worker"));
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .values()
+            .any(|e| e.display_name == "worker")
+    );
     let line = rx
         .try_recv()
         .expect("#866: spawn registration must broadcast immediately");
@@ -264,7 +278,13 @@ fn register_and_broadcast_without_channel_still_registers() {
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let entry = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), 0);
     super::register_and_broadcast(&registry, None, "worker", entry);
-    assert!(registry.lock().unwrap().contains_key("worker"));
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .values()
+            .any(|e| e.display_name == "worker")
+    );
 }
 
 // ─── #1049: task-less spawn settles to Idle on registration ──────────────────
@@ -293,13 +313,15 @@ fn sample_config(task: Option<&str>) -> crate::domain::subagent::SubagentConfig 
 #[test]
 fn initial_entry_taskless_is_idle() {
     // Shared builder used by production after socket ready (#1049).
-    let entry = super::initial_registry_entry(
-        PathBuf::from("/tmp/ready.sock"),
-        42,
-        Some("parent".into()),
-        &sample_config(None),
-        None,
-    );
+    let entry = super::initial_registry_entry(super::InitialRegistryEntrySpec {
+        agent_uuid: crate::domain::ids::AgentUuid::new("00000000-0000-4000-8000-000000000101"),
+        display_name: "ready".to_string(),
+        socket_path: PathBuf::from("/tmp/ready.sock"),
+        pid: 42,
+        parent_id: Some("parent".into()),
+        config: &sample_config(None),
+        exit_signal_tx: None,
+    });
     assert_eq!(entry.status, SubagentStatus::Idle);
     assert_eq!(entry.parent_id.as_deref(), Some("parent"));
     assert_eq!(entry.pid, 42);
@@ -308,13 +330,15 @@ fn initial_entry_taskless_is_idle() {
 
 #[test]
 fn initial_entry_with_task_stays_starting() {
-    let entry = super::initial_registry_entry(
-        PathBuf::from("/tmp/ready.sock"),
-        7,
-        None,
-        &sample_config(Some("do work")),
-        None,
-    );
+    let entry = super::initial_registry_entry(super::InitialRegistryEntrySpec {
+        agent_uuid: crate::domain::ids::AgentUuid::new("00000000-0000-4000-8000-000000000102"),
+        display_name: "ready".to_string(),
+        socket_path: PathBuf::from("/tmp/ready.sock"),
+        pid: 7,
+        parent_id: None,
+        config: &sample_config(Some("do work")),
+        exit_signal_tx: None,
+    });
     assert_eq!(
         entry.status,
         SubagentStatus::Starting,
@@ -328,13 +352,15 @@ fn initial_entry_taskless_broadcasts_idle_via_register() {
     // snapshot (same event production emits after socket readiness).
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
-    let entry = super::initial_registry_entry(
-        PathBuf::from("/tmp/ready.sock"),
-        1,
-        None,
-        &sample_config(None),
-        None,
-    );
+    let entry = super::initial_registry_entry(super::InitialRegistryEntrySpec {
+        agent_uuid: crate::domain::ids::AgentUuid::new("00000000-0000-4000-8000-000000000103"),
+        display_name: "ready".to_string(),
+        socket_path: PathBuf::from("/tmp/ready.sock"),
+        pid: 1,
+        parent_id: None,
+        config: &sample_config(None),
+        exit_signal_tx: None,
+    });
     super::register_and_broadcast(&registry, Some(&tx), "idle-worker", entry);
     let line = rx
         .try_recv()
@@ -358,7 +384,8 @@ async fn taskless_stub_spawn_registers_as_idle() {
         .expect("stub spawn must succeed");
     let registry = tool.registry.lock().unwrap();
     let entry = registry
-        .get("idle-worker")
+        .values()
+        .find(|entry| entry.display_name == "idle-worker")
         .expect("task-less child must be registered");
     assert_eq!(
         entry.status,
@@ -377,7 +404,8 @@ async fn with_task_stub_spawn_stays_starting() {
     {
         let registry = tool.registry.lock().unwrap();
         let entry = registry
-            .get("busy-worker")
+            .values()
+            .find(|entry| entry.display_name == "busy-worker")
             .expect("with-task child must be registered");
         assert_eq!(
             entry.status,

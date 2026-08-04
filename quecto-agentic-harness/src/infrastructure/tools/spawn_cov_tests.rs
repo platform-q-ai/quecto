@@ -196,17 +196,20 @@ async fn execute_parse_error_returns_llm_addressable_tool_error() {
 }
 
 #[tokio::test]
-async fn stub_spawn_duplicate_id_replaces_existing_entry_without_panic() {
+async fn stub_spawn_duplicate_id_rejects_live_duplicate_without_panic() {
     let tool = SpawnTool::new(vec![], true);
     tool.execute(r#"{"agent_id":"dup"}"#).await.unwrap();
-    tool.execute(r#"{"agent_id":"dup","task":"now busy"}"#)
+    let duplicate = tool
+        .execute(r#"{"agent_id":"dup","task":"now busy"}"#)
         .await
         .unwrap();
     let registry = tool.registry.lock().unwrap();
     assert_eq!(registry.len(), 1);
-    assert_eq!(
-        registry.get("dup").unwrap().status,
-        SubagentStatus::Starting
+    assert!(duplicate.is_error);
+    assert!(
+        duplicate
+            .content
+            .contains("duplicate live subagent display label 'dup'")
     );
 }
 
@@ -217,17 +220,25 @@ async fn register_and_broadcast_sends_state_changed_event() {
     let cfg = SpawnTool::new(vec![], true)
         .parse_args(r#"{"agent_id":"child","read_only":true}"#)
         .unwrap();
-    let entry = initial_registry_entry(
-        PathBuf::from("/tmp/child.sock"),
-        123,
-        Some("parent".to_string()),
-        &cfg,
-        None,
-    );
+    let entry = initial_registry_entry(InitialRegistryEntrySpec {
+        agent_uuid: crate::domain::ids::AgentUuid::new("00000000-0000-4000-8000-000000000104"),
+        display_name: "child".to_string(),
+        socket_path: PathBuf::from("/tmp/child.sock"),
+        pid: 123,
+        parent_id: Some("parent".to_string()),
+        config: &cfg,
+        exit_signal_tx: None,
+    });
 
     register_and_broadcast(&registry, Some(&tx), "child", entry);
 
-    assert!(registry.lock().unwrap().contains_key("child"));
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .values()
+            .any(|e| e.display_name == "child")
+    );
     let event = rx.recv().await.unwrap();
     assert!(event.contains("state_changed"), "{event}");
     assert!(event.contains("child"), "{event}");
@@ -266,7 +277,11 @@ async fn launch_uds_agent_duplicate_id_fails_before_spawning() {
     let cfg = tool.parse_args(r#"{"agent_id":"taken"}"#).unwrap();
     let result = tool.launch_uds_agent(&cfg).await.unwrap();
     assert!(result.is_error);
-    assert!(result.content.contains("already running"));
+    assert!(
+        result
+            .content
+            .contains("duplicate live subagent display label")
+    );
 }
 
 // --- write_private_new error branch (non-AlreadyExists) ---
@@ -406,11 +421,25 @@ async fn register_and_broadcast_closed_receiver_still_inserts_entry() {
     let cfg = SpawnTool::new(vec![], true)
         .parse_args(r#"{"agent_id":"closed"}"#)
         .unwrap();
-    let entry = initial_registry_entry(PathBuf::from("/tmp/closed.sock"), 0, None, &cfg, None);
+    let entry = initial_registry_entry(InitialRegistryEntrySpec {
+        agent_uuid: crate::domain::ids::AgentUuid::new("00000000-0000-4000-8000-000000000105"),
+        display_name: "closed".to_string(),
+        socket_path: PathBuf::from("/tmp/closed.sock"),
+        pid: 0,
+        parent_id: None,
+        config: &cfg,
+        exit_signal_tx: None,
+    });
 
     register_and_broadcast(&registry, Some(&tx), "closed", entry);
 
-    assert!(registry.lock().unwrap().contains_key("closed"));
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .values()
+            .any(|e| e.display_name == "closed")
+    );
 }
 
 #[tokio::test]
@@ -425,13 +454,22 @@ async fn spawn_registry_poison_recovery_paths_do_not_drop_entries() {
         &registry,
         None,
         "poison",
-        initial_registry_entry(PathBuf::from("/tmp/poison.sock"), 0, None, &cfg, None),
+        initial_registry_entry(InitialRegistryEntrySpec {
+            agent_uuid: crate::domain::ids::AgentUuid::new("00000000-0000-4000-8000-000000000106"),
+            display_name: "poison".to_string(),
+            socket_path: PathBuf::from("/tmp/poison.sock"),
+            pid: 0,
+            parent_id: None,
+            config: &cfg,
+            exit_signal_tx: None,
+        }),
     );
     assert!(
         registry
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .contains_key("poison")
+            .values()
+            .any(|e| e.display_name == "poison")
     );
 
     shutdown_all(&registry);
@@ -528,7 +566,9 @@ async fn launch_uds_agent_duplicate_with_poisoned_registry_recovers() {
 
     assert!(result.is_error);
     assert!(
-        result.content.contains("already running"),
+        result
+            .content
+            .contains("duplicate live subagent display label"),
         "{}",
         result.content
     );

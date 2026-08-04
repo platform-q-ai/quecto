@@ -19,9 +19,7 @@ pub fn register_and_broadcast(
     let event = {
         let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
         let mut entry = entry;
-        if entry.display_name.is_empty() {
-            entry.display_name = session_name.to_string();
-        }
+        entry.display_name = session_name.to_string();
         guard.insert(entry.agent_uuid.to_string(), entry);
         broadcast_tx.map(|_| {
             crate::infrastructure::tools::subagent_cascade::build_state_changed_event_locked(&guard)
