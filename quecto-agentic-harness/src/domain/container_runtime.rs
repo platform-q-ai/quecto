@@ -125,9 +125,9 @@ impl SpawnContainerRequest {
         Ok(Some(resolve_script_set(config, name)?))
     }
 
-    pub fn resolve_default_script<'a>(
-        config: &'a ContainerScriptsConfig,
-    ) -> Result<(&'a str, &'a ContainerScriptSet), String> {
+    pub fn resolve_default_script(
+        config: &ContainerScriptsConfig,
+    ) -> Result<(&str, &ContainerScriptSet), String> {
         let name = config
             .default
             .as_deref()

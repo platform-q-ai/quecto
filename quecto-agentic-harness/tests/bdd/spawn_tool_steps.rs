@@ -156,6 +156,28 @@ fn then_agent_id_64(world: &mut QuectoWorld) {
     );
 }
 
+#[then("the parsed config should request a new container")]
+fn then_parsed_config_requests_new_container(world: &mut QuectoWorld) {
+    let config = world
+        .subagent_config
+        .as_ref()
+        .expect("spawn args should parse into production SubagentConfig");
+    assert!(
+        matches!(
+            config.container,
+            quecto::domain::container_runtime::SpawnContainerRequest::New { .. }
+        ),
+        "expected a new container request, got {:?}",
+        config.container
+    );
+    let result = world.spawn_result.as_ref().expect("no spawn result");
+    assert!(
+        !result.is_error,
+        "stub parse path should not reject container schema: {}",
+        result.content
+    );
+}
+
 #[then(expr = "the parse should fail with {string}")]
 fn then_parse_fails_with(world: &mut QuectoWorld, expected: String) {
     let result = world.spawn_result.as_ref().expect("no spawn result");

@@ -37,10 +37,10 @@ Feature: Container-backed subagent orchestration
     Then the backend rejects the container launch request
 
   @done
-  Scenario: SpawnTool rejects non-local container requests before launch
+  Scenario: SpawnTool parses container requests without launching locally
     Given a SpawnTool with empty allowlist and restrict_to_workspace true
     When I parse spawn arguments '{"task":"work","container":{"mode":"new"}}'
-    Then the parse should fail with "container-backed spawning is not wired yet; use local spawn"
+    Then the parsed config should request a new container
 
   @pending
   Scenario: The configured default deterministically creates an isolated environment
