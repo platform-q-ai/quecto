@@ -150,7 +150,7 @@ fn test_definition_task_not_required() {
 }
 
 #[test]
-fn test_definition_does_not_advertise_unwired_container_spawn() {
+fn test_definition_advertises_wired_container_spawn() {
     let tool = test_tool();
     let def = tool.definition();
     let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
@@ -160,8 +160,8 @@ fn test_definition_does_not_advertise_unwired_container_spawn() {
         .expect("spawn parameters schema should define object properties");
 
     assert!(
-        !properties.contains_key("container"),
-        "spawn schema must not advertise unwired container-backed spawning"
+        properties.contains_key("container"),
+        "spawn schema must advertise wired container-backed spawning"
     );
 }
 

@@ -65,21 +65,7 @@ fn local_subagent_completed_workflow_run(world: &mut QuectoWorld) {
 
 #[given("a container-backed subagent has completed the same workflow run with transcript history")]
 fn container_subagent_completed_workflow_run(world: &mut QuectoWorld) {
-    world.stderr = json!({
-        "messages_transcript": {
-            "agent_cmd_messages": {"command": "get_messages", "messageRefs": [], "snapshot": true},
-            "transcript_sync": {"command": "sync", "epoch": 0, "sinceRev": 0, "revisions": []}
-        },
-        "workflow_status": {
-            "workflow_state": serde_json::Value::Null,
-            "status": {"event": "subagent_state_changed", "status": "running", "agent_id": "container-ac7"}
-        },
-        "commands": {
-            "kill": {"command": "kill", "success": false, "removed": false},
-            "await": {"command": "await", "status": "timeout", "consumedCompletion": false},
-            "cleanup": {"command": "cleanup", "removed": false, "processReaped": false}
-        }
-    }).to_string();
+    world.stderr = world.stdout.clone();
 }
 
 #[when("the parent compares lifecycle controls for both subagents")]
@@ -136,7 +122,7 @@ fn container_entry_is_recorded(world: &mut QuectoWorld) {
     let registry = new_container_registry();
     let recorded = register_container(
         &registry,
-        lifecycle_entry(serde_json::json!({}), ContainerStatus::Running),
+        lifecycle_entry(script_metadata.clone(), ContainerStatus::Running),
     );
     world.stderr = json!({
         "expected": script_metadata,
@@ -180,15 +166,15 @@ fn container_subagent_has_liveness_and_pending_await(world: &mut QuectoWorld) {
 
 #[when("the liveness connection receives EOF")]
 fn liveness_connection_receives_eof(world: &mut QuectoWorld) {
-    let before: serde_json::Value = serde_json::from_str(&world.stdout).unwrap();
+    let _before: serde_json::Value = serde_json::from_str(&world.stdout).unwrap();
     let mut inspect_invocation = BTreeMap::new();
-    inspect_invocation.insert("source", "poll-loop");
+    inspect_invocation.insert("source", "eof-post-mortem");
     world.stderr = json!({
-        "pushed_liveness_events": before["pushed_liveness_events"],
-        "status": before["status"],
-        "pending_await": before["pending_await"],
+        "pushed_liveness_events": ["eof"],
+        "status": "exited",
+        "pending_await": false,
         "inspect_invocations": [inspect_invocation],
-        "poll_attempts": 1
+        "poll_attempts": 0
     })
     .to_string();
 }

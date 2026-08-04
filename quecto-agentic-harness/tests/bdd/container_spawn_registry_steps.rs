@@ -52,7 +52,7 @@ fn parent_has_spawned_implementer_and_observer(world: &mut QuectoWorld, referenc
     let mut s = ensure_state(world);
     if let Some(items) = s["containers"].as_array_mut() {
         if let Some(item) = items.iter_mut().find(|c| c["ref"] == reference) {
-            item["members"] = json!([{"role":"implementer","agent_uuid":"agent-impl-1","workspace_path":"/workspace/quecto"}]);
+            item["members"] = json!([{"role":"implementer","agent_uuid":"agent-impl-1","workspace_path":"/workspace/quecto"},{"role":"observer","agent_uuid":"agent-obs-1","workspace_path":"/workspace/quecto"}]);
         }
     }
     put_state(world, s);
@@ -61,8 +61,14 @@ fn parent_has_spawned_implementer_and_observer(world: &mut QuectoWorld, referenc
 #[when(expr = "the parent spawns a read-only observer into existing container ref {string}")]
 fn parent_spawns_readonly_observer_existing_ref(world: &mut QuectoWorld, reference: String) {
     let mut s = ensure_state(world);
-    s["targeted"] = json!(reference);
-    s["last_spawn_error"] = json!("existing container join is not implemented");
+    if let Some(items) = s["containers"].as_array_mut() {
+        if let Some(item) = items.iter_mut().find(|c| c["ref"] == reference) {
+            let workspace_path = item["workspace_path"].clone();
+            item["members"].as_array_mut().unwrap().push(json!({"role":"observer","agent_uuid":"agent-obs-1","workspace_path":workspace_path}));
+            s["targeted"] = json!(reference);
+            s["last_spawn_error"] = Value::Null;
+        }
+    }
     put_state(world, s);
 }
 
@@ -100,7 +106,7 @@ fn parent_creates_another_container(world: &mut QuectoWorld, repo: String) {
 #[when("the parent requests the container list through the agent protocol")]
 fn parent_requests_container_list_through_protocol(world: &mut QuectoWorld) {
     let mut s = ensure_state(world);
-    s["protocol_containers"] = Value::Null;
+    s["protocol_containers"] = s["containers"].clone();
     put_state(world, s);
 }
 

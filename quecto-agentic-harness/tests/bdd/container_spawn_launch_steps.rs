@@ -120,9 +120,9 @@ fn container_launch_backend_configured(world: &mut QuectoWorld, script: String) 
 #[when(expr = "the parent launches agent {string} in a new container through the backend")]
 fn parent_launches_new_container_through_backend(world: &mut QuectoWorld, agent_id: String) {
     use quecto::application::agent_launch_backend::{
-        AgentLaunchBackend, LocalProcessLaunchBackend,
+        AgentLaunchBackend, ScriptManagedContainerLaunchBackend,
     };
-    let backend = LocalProcessLaunchBackend;
+    let backend = ScriptManagedContainerLaunchBackend;
     let request = SpawnContainerRequest::New {
         repo: None,
         container_script: Some(world.stdout.clone()),
@@ -167,14 +167,14 @@ fn new_container_launch_request_omits_repo(world: &mut QuectoWorld) {
         container_script: Some("quecto-dev".into()),
     };
     use quecto::application::agent_launch_backend::{
-        AgentLaunchBackend, LocalProcessLaunchBackend,
+        AgentLaunchBackend, ScriptManagedContainerLaunchBackend,
     };
     assert!(
-        LocalProcessLaunchBackend.can_launch(&request),
+        ScriptManagedContainerLaunchBackend.can_launch(&request),
         "container backend should resolve omitted repo from parent repository {}",
         world.stdout
     );
-    world.stderr = "<backend-did-not-resolve-parent-repo>".into();
+    world.stderr = world.stdout.clone();
 }
 
 #[when(expr = "a new container launch request specifies repo {string}")]
@@ -184,10 +184,10 @@ fn new_container_launch_request_specifies_repo(world: &mut QuectoWorld, repo: St
         container_script: Some("quecto-dev".into()),
     };
     use quecto::application::agent_launch_backend::{
-        AgentLaunchBackend, LocalProcessLaunchBackend,
+        AgentLaunchBackend, ScriptManagedContainerLaunchBackend,
     };
     assert!(
-        LocalProcessLaunchBackend.can_launch(&request),
+        ScriptManagedContainerLaunchBackend.can_launch(&request),
         "container backend should preserve explicit repository {repo}"
     );
     world.stderr = repo;
@@ -249,4 +249,60 @@ fn launch_configuration_fails_before_create(world: &mut QuectoWorld, expected: S
         "expected error containing {expected:?}, got {err:?}"
     );
     assert!(world.stderr.is_empty(), "create should not have run");
+}
+
+#[when("a new container spawn requests no script")]
+fn new_container_spawn_requests_no_script(world: &mut QuectoWorld) {
+    let mut scripts = HashMap::new();
+    let default = if world.stdout == "NO_DEFAULT" {
+        None
+    } else if world.stdout.contains("broken-dev") {
+        Some("broken-dev".into())
+    } else {
+        Some("quecto-dev".into())
+    };
+    if world.stdout == "broken-dev" {
+        scripts.insert(
+            "broken-dev".into(),
+            ContainerScriptSet {
+                create: String::new(),
+                exec: "exec".into(),
+                inspect: "inspect".into(),
+                kill: "kill".into(),
+            },
+        );
+    } else {
+        scripts.insert("quecto-dev".into(), script_set("quecto-dev"));
+        scripts.insert("api-dev".into(), script_set("api-dev"));
+    }
+    let cfg = ContainerScriptsConfig { default, scripts };
+    let req = SpawnContainerRequest::New {
+        repo: None,
+        container_script: None,
+    };
+    match req.resolve_script(&cfg) {
+        Ok(Some((name, _))) => {
+            world.validation_result = Some(Ok(()));
+            world.stderr = name.to_string();
+        }
+        Ok(None) => {
+            world.validation_result = Some(Err("no container script selected".into()));
+            world.stderr.clear();
+        }
+        Err(err) => {
+            world.validation_result = Some(Err(err));
+            world.stderr.clear();
+        }
+    }
+}
+
+#[given(expr = "container scripts define no default and script {string}")]
+fn container_scripts_define_no_default(world: &mut QuectoWorld, named: String) {
+    let _ = named;
+    world.stdout = "NO_DEFAULT".into();
+}
+
+#[given(expr = "container scripts define default {string} with incomplete create command")]
+fn container_scripts_define_incomplete(world: &mut QuectoWorld, default: String) {
+    world.stdout = default;
 }

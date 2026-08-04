@@ -16,3 +16,19 @@ impl AgentLaunchBackend for LocalProcessLaunchBackend {
         matches!(request, SpawnContainerRequest::Local)
     }
 }
+
+#[derive(Debug, Default)]
+pub struct ScriptManagedContainerLaunchBackend;
+
+impl AgentLaunchBackend for ScriptManagedContainerLaunchBackend {
+    fn backend_name(&self) -> &'static str {
+        "container-script"
+    }
+
+    fn can_launch(&self, request: &SpawnContainerRequest) -> bool {
+        matches!(
+            request,
+            SpawnContainerRequest::New { .. } | SpawnContainerRequest::Existing { .. }
+        )
+    }
+}

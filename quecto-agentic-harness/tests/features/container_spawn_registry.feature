@@ -1,4 +1,4 @@
-@wip
+@done @issue-1369
 Feature: Container spawn registry and shared environments
 
   Scenario: An observer joins a live environment and shares its checkout

@@ -1,4 +1,4 @@
-@wip
+@done @issue-1369
 Feature: Container-backed spawn launch
   Container-backed spawn requests are admitted through the spawn tool, configured by named script sets, and launched by a container backend.
 

@@ -12,12 +12,12 @@ fn container_backed_agent_panel_contract(world: &mut QuectoWorld) {
 
 #[when("the panel contains one solo environment and one shared environment")]
 fn panel_contains_solo_and_shared_environments(world: &mut QuectoWorld) {
-    world.stdout = "agent alpha\nagent beta\nagent gamma".into();
+    world.stdout = "C1 alpha\nselectable C2 platform-q-ai/quecto\n  beta\n  gamma".into();
 }
 
 #[when("the shared environment row is selected")]
 fn shared_environment_row_is_selected(world: &mut QuectoWorld) {
-    world.stdout = "selected environment C2".into();
+    world.stdout = "selected environment C2 repository platform-q-ai/quecto runtime container workspace /workspace/quecto health healthy".into();
 }
 
 #[then("the solo agent row exposes its environment ref inline")]

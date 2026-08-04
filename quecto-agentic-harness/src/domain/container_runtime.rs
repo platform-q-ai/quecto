@@ -58,11 +58,28 @@ impl SpawnContainerRequest {
                 })
                 .transpose()
         };
+        let container_script_field = || -> Result<Option<String>, String> {
+            match (obj.get("container_script"), obj.get("containerScript")) {
+                (Some(_), Some(_)) => Err(
+                    "container accepts either container_script or containerScript, not both"
+                        .to_string(),
+                ),
+                (Some(v), None) => v
+                    .as_str()
+                    .map(|s| Some(s.to_string()))
+                    .ok_or_else(|| "container.container_script must be a string".to_string()),
+                (None, Some(v)) => v
+                    .as_str()
+                    .map(|s| Some(s.to_string()))
+                    .ok_or_else(|| "container.containerScript must be a string".to_string()),
+                (None, None) => Ok(None),
+            }
+        };
         let mode = string_field("mode")?.unwrap_or_else(|| "new".to_string());
         match mode.as_str() {
             "new" => Ok(Self::New {
                 repo: string_field("repo")?,
-                container_script: string_field("container_script")?,
+                container_script: container_script_field()?,
             }),
             "existing" => {
                 let by_ref = string_field("ref")?;
