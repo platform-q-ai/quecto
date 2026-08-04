@@ -352,3 +352,60 @@ async fn send_subagent_command_non_object_accepts_first_response() {
     assert!(response.contains(r#""ok":true"#), "{response}");
     server.await.unwrap();
 }
+
+/// #1378 adversarial re-review: if await consumes generation A, kill/cascade_remove
+/// deletes A, and a same-label generation B is spawned before A's queued note
+/// drains, the stamped UUID makes the late A note suppress/fail closed instead
+/// of resolving the display label onto B.
+#[test]
+fn await_dedupe_stamped_removed_generation_does_not_resolve_to_respawn() {
+    let registry = new_registry();
+    let old_uuid = crate::domain::ids::AgentUuid::new("55555555-5555-4555-8555-555555555555");
+    let new_uuid = crate::domain::ids::AgentUuid::new("66666666-6666-4666-8666-666666666666");
+
+    let mut old_entry = SubagentEntry::with_identity(
+        old_uuid.clone(),
+        "worker".into(),
+        std::path::PathBuf::from("/tmp/old-worker-removed.sock"),
+        10,
+    );
+    old_entry.completion_consumed_by_await = true;
+    registry
+        .lock()
+        .unwrap()
+        .insert(old_uuid.to_string(), old_entry);
+
+    // Simulate cascade_remove: generation A is gone before its queued display-label
+    // completion notification drains.
+    assert!(registry.lock().unwrap().remove(old_uuid.as_str()).is_some());
+
+    let new_entry = SubagentEntry::with_identity(
+        new_uuid.clone(),
+        "worker".into(),
+        std::path::PathBuf::from("/tmp/new-worker-respawn.sock"),
+        11,
+    );
+    registry
+        .lock()
+        .unwrap()
+        .insert(new_uuid.to_string(), new_entry);
+
+    let late_old_note = SequencedSubagentNotification::new_for_agent(
+        7,
+        SubagentNotification::Completed {
+            agent_id: "worker".into(),
+        },
+        old_uuid,
+    );
+    assert_eq!(late_old_note.dedupe_key().0, "worker");
+    assert_ne!(late_old_note.await_dedupe_key().0, "worker");
+
+    assert!(
+        !consume_await_dedupe(&Some(registry.clone()), &late_old_note.dedupe_key().0),
+        "pre-fix display-only routing resolves the stale note to the respawn and fails"
+    );
+    assert!(
+        !registry.lock().unwrap()[new_uuid.as_str()].completion_consumed_by_await,
+        "new generation must remain untouched by stale display-label notification"
+    );
+}

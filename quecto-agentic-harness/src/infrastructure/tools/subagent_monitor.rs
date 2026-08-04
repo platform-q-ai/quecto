@@ -189,7 +189,6 @@ pub fn spawn_monitor_task(
     })
 }
 
-/// Mark the child as exited in the registry and notify listeners.
 fn notify_child_exited(
     registry: &SubagentRegistry,
     agent_id: &str,
@@ -197,11 +196,13 @@ fn notify_child_exited(
 ) {
     let sequence = update_entry_next_sequence(registry, agent_id, mark_exited);
     let label = notification_display_label(registry, agent_id);
+    let agent_uuid = notification_agent_uuid(registry, agent_id);
     send_notification(
         notify_tx,
-        super::subagent_registry::SequencedSubagentNotification::new(
+        super::subagent_registry::SequencedSubagentNotification::new_for_agent(
             sequence,
             SubagentNotification::Exited { agent_id: label },
+            agent_uuid,
         ),
     );
 }
@@ -215,6 +216,17 @@ fn notification_display_label(registry: &SubagentRegistry, agent_id: &str) -> St
         .get(agent_id)
         .map(|entry| entry.effective_display_name(agent_id).to_string())
         .unwrap_or_else(|| agent_id.to_string())
+}
+
+fn notification_agent_uuid(
+    registry: &SubagentRegistry,
+    agent_id: &str,
+) -> crate::domain::ids::AgentUuid {
+    let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    entries
+        .get(agent_id)
+        .map(|entry| entry.agent_uuid.clone())
+        .unwrap_or_else(|| crate::domain::ids::AgentUuid::new(agent_id))
 }
 
 /// Internal monitor loop: connect → read lines → apply events → detect close.
@@ -534,7 +546,14 @@ pub fn maybe_notify(notify_tx: Option<&NotificationTx>, agent_id: &str, line: &s
     let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
         return;
     };
-    notify_from_parsed(Some(tx), agent_id, 0, &value, None);
+    notify_from_parsed(
+        Some(tx),
+        agent_id,
+        0,
+        &value,
+        None,
+        crate::domain::ids::AgentUuid::new(agent_id),
+    );
 }
 
 /// Apply a parsed event to the registry entry and fire any notification it
@@ -585,12 +604,14 @@ fn apply_and_notify(
         return;
     }
     let note_label = notification_display_label(registry, agent_id);
+    let agent_uuid = notification_agent_uuid(registry, agent_id);
     notify_from_parsed(
         notify_tx,
         &note_label,
         sequence,
         value,
         workflow_mode.as_deref(),
+        agent_uuid,
     );
 }
 
@@ -625,6 +646,7 @@ fn notify_from_parsed(
     sequence: u64,
     value: &serde_json::Value,
     workflow_mode: Option<&str>,
+    agent_uuid: crate::domain::ids::AgentUuid,
 ) {
     let Some(tx) = notify_tx else { return };
     let event_type = match value.get("type").and_then(|v| v.as_str()) {
@@ -664,7 +686,9 @@ fn notify_from_parsed(
     if let Some(n) = notification {
         send_notification(
             Some(tx),
-            super::subagent_registry::SequencedSubagentNotification::new(sequence, n),
+            super::subagent_registry::SequencedSubagentNotification::new_for_agent(
+                sequence, n, agent_uuid,
+            ),
         );
     }
 }

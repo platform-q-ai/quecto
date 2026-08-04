@@ -612,7 +612,7 @@ fn collect_notification(
         Some(tx) => forward_notification_broadcast(notif.clone(), tx, subagent_registry),
         None => !crate::infrastructure::tools::subagent_registry::consume_await_dedupe(
             subagent_registry,
-            &notif.dedupe_key().0,
+            &notif.await_dedupe_key().0,
         ),
     };
     if delivered {
@@ -635,9 +635,10 @@ pub(in crate::interface::cli) fn forward_notification_broadcast(
     subagent_registry: &Option<SubagentRegistry>,
 ) -> bool {
     let (agent_id, sequence) = notif.dedupe_key();
+    let (dedupe_ref, _) = notif.await_dedupe_key();
     let suppress = crate::infrastructure::tools::subagent_registry::consume_await_dedupe(
         subagent_registry,
-        &agent_id,
+        &dedupe_ref,
     );
     if !suppress {
         tracing::info!(

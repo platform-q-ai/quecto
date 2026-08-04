@@ -1,7 +1,3 @@
-// Shared subagent registry types for spawn + agent_cmd tools (#421).
-// Extended with live status tracking for persistent monitor (#522).
-// Extended with await signaling for agent_cmd await (#612).
-
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::PathBuf;
@@ -342,10 +338,8 @@ pub fn consume_await_dedupe(registry: &Option<SubagentRegistry>, agent_id: &str)
         .is_some_and(|reg| take_completion_consumed_by_await(reg, agent_id))
 }
 
-/// Shared registry of spawned subagents (agent_id → entry).
 pub type SubagentRegistry = Arc<Mutex<HashMap<String, SubagentEntry>>>;
 
-/// Create a new empty registry.
 pub fn new_registry() -> SubagentRegistry {
     Arc::new(Mutex::new(HashMap::new()))
 }
@@ -597,12 +591,9 @@ pub struct ExitSignal {
     pub signal: Option<i32>,
 }
 
-/// Channel for signaling process exit to a waiting `await` call.
 pub type ExitSignalTx = tokio::sync::watch::Sender<Option<ExitSignal>>;
-/// Receiver for process exit signals.
 pub type ExitSignalRx = tokio::sync::watch::Receiver<Option<ExitSignal>>;
 
-/// Create a new exit signal channel (initially no signal).
 pub fn new_exit_signal_channel() -> (ExitSignalTx, ExitSignalRx) {
     tokio::sync::watch::channel(None)
 }
@@ -642,6 +633,8 @@ pub enum SubagentNotification {
 pub struct SequencedSubagentNotification {
     pub sequence: u64,
     pub notification: SubagentNotification,
+    /// Hidden generation identity for internal routing (#1378).
+    pub agent_uuid: Option<AgentUuid>,
 }
 
 impl SequencedSubagentNotification {
@@ -649,6 +642,19 @@ impl SequencedSubagentNotification {
         Self {
             sequence,
             notification,
+            agent_uuid: None,
+        }
+    }
+
+    pub fn new_for_agent(
+        sequence: u64,
+        notification: SubagentNotification,
+        agent_uuid: AgentUuid,
+    ) -> Self {
+        Self {
+            sequence,
+            notification,
+            agent_uuid: Some(agent_uuid),
         }
     }
 
@@ -662,6 +668,14 @@ impl SequencedSubagentNotification {
         (agent_id, self.sequence)
     }
 
+    /// Internal await-dedupe reference: UUID when stamped, else display label.
+    pub fn await_dedupe_key(&self) -> (String, u64) {
+        self.agent_uuid
+            .as_ref()
+            .map(|uuid| (uuid.to_string(), self.sequence))
+            .unwrap_or_else(|| self.dedupe_key())
+    }
+
     pub fn to_message(&self) -> String {
         self.notification.to_message()
     }
@@ -673,11 +687,9 @@ impl SequencedSubagentNotification {
 }
 
 impl SubagentNotification {
-    /// Format this notification as a human-readable message suitable for
-    /// injection into the parent LLM's conversation.
+    /// Format this notification as a human-readable parent message.
     pub fn to_message(&self) -> String {
-        // One line; output inspected via `agent_cmd get_messages`. Soft, not
-        // imperative (#894); #926-AC2 note-actionability DEFERRED (open design Q).
+        // One line; soft, not imperative (#894); #926-AC2 actionability deferred.
         match self {
             Self::Completed { agent_id, .. } => format!(
                 "Sub-agent '{agent_id}' ended a turn (status: idle). Inspect agent_cmd get_messages before treating its work as complete."

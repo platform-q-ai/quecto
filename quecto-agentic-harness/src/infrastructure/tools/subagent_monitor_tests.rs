@@ -385,7 +385,14 @@ fn test_maybe_notify_non_state_event_is_noop() {
 fn test_notify_from_parsed_unknown_event_is_noop() {
     let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
     let value = serde_json::json!({"type": "token", "token": "hi"});
-    notify_from_parsed(Some(&tx), "worker", 1, &value, None);
+    notify_from_parsed(
+        Some(&tx),
+        "worker",
+        1,
+        &value,
+        None,
+        crate::domain::ids::AgentUuid::new("worker"),
+    );
     assert!(rx.try_recv().is_err());
 }
 
@@ -393,7 +400,14 @@ fn test_notify_from_parsed_unknown_event_is_noop() {
 fn test_notify_from_parsed_no_type_is_noop() {
     let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
     let value = serde_json::json!({"data": "something"});
-    notify_from_parsed(Some(&tx), "worker", 1, &value, None);
+    notify_from_parsed(
+        Some(&tx),
+        "worker",
+        1,
+        &value,
+        None,
+        crate::domain::ids::AgentUuid::new("worker"),
+    );
     assert!(rx.try_recv().is_err());
 }
 
