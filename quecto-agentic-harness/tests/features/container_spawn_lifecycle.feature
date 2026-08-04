@@ -7,7 +7,9 @@ Feature: Container-backed spawn lifecycle parity
     Given a local subagent has completed a workflow run with transcript history
     And a container-backed subagent has completed the same workflow run with transcript history
     When the parent compares lifecycle controls for both subagents
-    Then agent_cmd messages, workflow state, status, transcript, kill, await, and cleanup are equivalent
+    Then agent_cmd messages and transcript sync are equivalent
+    And workflow state and status updates are equivalent
+    And kill, await, and cleanup commands are equivalent
 
   # AC8
   @wip @issue-1369-ac7-ac9
@@ -22,6 +24,7 @@ Feature: Container-backed spawn lifecycle parity
   Scenario: Socket EOF updates status and pending awaits after one post-mortem inspect
     Given a container-backed subagent has a liveness connection and a pending await
     When the liveness connection receives EOF
-    Then the subagent is marked exited from the pushed liveness signal
+    Then EOF is treated as a pushed liveness signal
+    And the subagent is marked exited from the pushed liveness signal
     And exactly one post-mortem inspect is requested
     And the pending await completes without polling
