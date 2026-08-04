@@ -87,3 +87,16 @@ fn registry_operations_recover_from_poisoned_mutex() {
     assert_eq!(resolve_live_ref(&reg, "C1").unwrap(), "one");
     assert_eq!(list_containers(&reg).len(), 1);
 }
+
+#[test]
+fn registry_types_support_diagnostics_and_value_semantics() {
+    let original = entry("diag", ContainerStatus::Unhealthy);
+    let cloned = original.clone();
+    assert_eq!(original, cloned);
+    assert!(format!("{original:?}").contains("diag"));
+    assert_eq!(format!("{:?}", ContainerStatus::Running), "Running");
+    assert_eq!(
+        format!("{:?}", ContainerRegistryState::default()),
+        "ContainerRegistryState { next_ref: 0, entries: {}, refs: {} }"
+    );
+}
