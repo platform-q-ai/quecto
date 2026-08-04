@@ -557,9 +557,11 @@ impl SpawnTool {
         }
 
         Ok(ToolResult {
+            // Include durable uuid so TUI optimistic rows can rekey off display
+            // labels before the first UUID-keyed snapshot arrives (#1378).
             content: format!(
-                "Subagent '{}' is running. Use agent_cmd to interact.",
-                session_name
+                "Subagent '{}' is running (uuid={}). Use agent_cmd to interact.",
+                session_name, agent_uuid
             ),
             is_error: false,
             image_blocks: vec![],
@@ -716,8 +718,8 @@ impl Tool for SpawnTool {
                         );
 
                         let msg = format!(
-                            "Subagent '{}' is running. Use agent_cmd to interact.",
-                            session_name,
+                            "Subagent '{}' is running (uuid={}). Use agent_cmd to interact.",
+                            session_name, agent_uuid,
                         );
                         Ok(ToolResult {
                             content: msg,

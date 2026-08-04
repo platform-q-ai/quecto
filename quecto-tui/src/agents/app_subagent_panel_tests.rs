@@ -74,6 +74,49 @@ async fn panel_appears_on_subagent_spawn() {
     assert!(frame.contains("worker"), "panel lists sub-agents:\n{frame}");
 }
 
+/// #1378: roster is UUID-keyed but the panel must paint display labels, not
+/// raw UUIDs, in both the left list and the main-pane title.
+#[tokio::test]
+async fn panel_renders_display_label_not_uuid_key() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    let uuid = "44444444-4444-4444-8444-444444444444";
+    h.event(Event::SubagentStateChanged {
+        subagents: vec![SubagentInfoEvent {
+            agent_uuid: Some(uuid.to_string()),
+            display_name: Some("reviewer".into()),
+            agent_id: "reviewer".into(),
+            status: "running".into(),
+            last_tool: None,
+            last_error: None,
+            pid: 1,
+            socket_path: None,
+            parent_id: None,
+            workflow: Some(SubagentWorkflow {
+                mode: "active".into(),
+                steps_completed: 1,
+                steps_total: 2,
+            }),
+            read_only: false,
+        }],
+    });
+    // Selection/identity is UUID-keyed.
+    assert!(
+        h.app_mut().subagents.tracked.contains_key(uuid),
+        "roster must key by UUID"
+    );
+    h.app_mut().select_agent(Some(uuid));
+    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        frame.contains("reviewer"),
+        "panel/title must paint display label:\n{frame}"
+    );
+    assert!(
+        !frame.contains(uuid),
+        "panel/title must not leak raw UUID key:\n{frame}"
+    );
+}
+
 #[tokio::test]
 async fn master_is_active_by_default() {
     let mut h = with_two_subagents().await;

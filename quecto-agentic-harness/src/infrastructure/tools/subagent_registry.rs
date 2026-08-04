@@ -199,12 +199,37 @@ impl SubagentEntry {
     }
 }
 
-/// Mark `agent_id`'s entry as having had its current-run terminal completion
-/// consumed by a manual `await` (auto-await dedupe). Called by `execute_await`
-/// on each terminal return path. No-op if the entry no longer exists.
-pub fn mark_completion_consumed_by_await(registry: &SubagentRegistry, agent_id: &str) {
+/// Resolve a caller-supplied agent reference (live display label or UUID) to
+/// the durable registry key. Prefer exact UUID key hits (including exited
+/// entries), then fall back to live-only display-name resolution (#1378).
+pub fn resolve_registry_key(
+    entries: &HashMap<String, SubagentEntry>,
+    agent_ref: &str,
+) -> Result<String, crate::domain::subagent::DisplayNameResolveError> {
+    if entries.contains_key(agent_ref) {
+        return Ok(agent_ref.to_string());
+    }
+    let resolution_entries: Vec<_> = entries
+        .iter()
+        .map(|(key, entry)| DisplayNameResolutionEntry {
+            agent_uuid: entry.agent_uuid.clone(),
+            display_name: entry.effective_display_name(key).to_string(),
+            live: entry.status != SubagentStatus::Exited,
+        })
+        .collect();
+    resolve_live_display_name(&resolution_entries, agent_ref).map(|uuid| uuid.into_string())
+}
+
+/// Mark `agent_ref`'s entry as having had its current-run terminal completion
+/// consumed by a manual `await` (auto-await dedupe). `agent_ref` may be a live
+/// display label or UUID; the flag is always stored on the UUID-keyed entry
+/// (#1378). No-op if the entry no longer exists.
+pub fn mark_completion_consumed_by_await(registry: &SubagentRegistry, agent_ref: &str) {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(entry) = entries.get_mut(agent_id) {
+    let Ok(key) = resolve_registry_key(&entries, agent_ref) else {
+        return;
+    };
+    if let Some(entry) = entries.get_mut(&key) {
         entry.completion_consumed_by_await = true;
         entry.status = super::subagent_lifecycle::apply_lifecycle_event(
             &mut entry.lifecycle,
@@ -213,15 +238,19 @@ pub fn mark_completion_consumed_by_await(registry: &SubagentRegistry, agent_id: 
     }
 }
 
-/// Check-and-consume the await-dedupe flag for `agent_id`. Returns `true` when
+/// Check-and-consume the await-dedupe flag for `agent_ref`. Returns `true` when
 /// the passive completion note should be SUPPRESSED because a manual `await`
 /// already reported this terminal result; in that case the flag is cleared so a
 /// future re-run still notifies. Returns `false` otherwise. Race-free against
 /// `execute_await`: the UDS dispatch loop is single-threaded, so the await tool
 /// call sets the flag before the loop processes the queued notification.
-pub fn take_completion_consumed_by_await(registry: &SubagentRegistry, agent_id: &str) -> bool {
+/// `agent_ref` may be a live display label or UUID (#1378).
+pub fn take_completion_consumed_by_await(registry: &SubagentRegistry, agent_ref: &str) -> bool {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(entry) = entries.get_mut(agent_id) {
+    let Ok(key) = resolve_registry_key(&entries, agent_ref) else {
+        return false;
+    };
+    if let Some(entry) = entries.get_mut(&key) {
         if entry.completion_consumed_by_await {
             entry.completion_consumed_by_await = false;
             entry.status = super::subagent_lifecycle::apply_lifecycle_event(
@@ -277,28 +306,16 @@ pub fn lookup_subagent_socket(
     agent_id: &str,
 ) -> Result<PathBuf, String> {
     let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    let resolution_entries: Vec<_> = entries
-        .iter()
-        .map(|(key, entry)| DisplayNameResolutionEntry {
-            agent_uuid: entry.agent_uuid.clone(),
-            display_name: entry.effective_display_name(key).to_string(),
-            live: entry.status != SubagentStatus::Exited,
-        })
-        .collect();
-    let uuid =
-        resolve_live_display_name(&resolution_entries, agent_id).map_err(|err| match err {
-            crate::domain::subagent::DisplayNameResolveError::NoLiveMatch { display_name } => {
-                format!("no live subagent named '{display_name}' (not found)")
-            }
-            crate::domain::subagent::DisplayNameResolveError::AmbiguousLiveMatch {
-                display_name,
-            } => {
-                format!("duplicate live subagent display label '{display_name}'")
-            }
-        })?;
+    let key = resolve_registry_key(&entries, agent_id).map_err(|err| match err {
+        crate::domain::subagent::DisplayNameResolveError::NoLiveMatch { display_name } => {
+            format!("no live subagent named '{display_name}' (not found)")
+        }
+        crate::domain::subagent::DisplayNameResolveError::AmbiguousLiveMatch { display_name } => {
+            format!("duplicate live subagent display label '{display_name}'")
+        }
+    })?;
     entries
-        .get(uuid.as_str())
-        .or_else(|| entries.values().find(|entry| entry.agent_uuid == uuid))
+        .get(&key)
         .map(|e| e.socket_path.clone())
         .ok_or_else(|| format!("subagent '{}' not found in registry", agent_id))
 }

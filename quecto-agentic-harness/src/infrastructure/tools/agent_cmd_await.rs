@@ -3,7 +3,7 @@ use crate::infrastructure::tools::subagent_lifecycle::{
     SubagentLifecycleEvent, apply_lifecycle_event_to_entry,
 };
 use crate::infrastructure::tools::subagent_registry::{
-    SubagentStatus, mark_completion_consumed_by_await,
+    ExitSignalRx, SubagentStatus, mark_completion_consumed_by_await, resolve_registry_key,
 };
 
 fn await_tool_result(
@@ -88,80 +88,12 @@ impl AgentCmdTool {
 
         let start = tokio::time::Instant::now();
 
-        // Check if agent exists in registry.
-        let (socket_path, exit_signal_rx) = {
-            let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-            match entries.get(&agent_id) {
-                Some(entry) => {
-                    let rx = entry.exit_signal_tx.as_ref().map(|tx| tx.subscribe());
-                    (entry.socket_path.clone(), rx)
-                }
-                None => {
-                    return Ok(await_tool_result(
-                        "error",
-                        Some("agent_not_found"),
-                        agent_id.clone(),
-                        0,
-                        None,
-                    ));
-                }
-            }
-        };
-
-        // Check for duplicate awaiters.
-        {
-            let mut active = self.active_awaits.lock().unwrap_or_else(|e| e.into_inner());
-            if active.contains(&agent_id) {
-                return Ok(await_tool_result(
-                    "error",
-                    Some("another_await_active"),
-                    agent_id.clone(),
-                    0,
-                    None,
-                ));
-            }
-            active.insert(agent_id.clone());
-        }
-
-        // Ensure we remove from active_awaits when done (RAII guard).
-        let _guard = AwaitGuard {
-            active_awaits: self.active_awaits.clone(),
-            agent_id: agent_id.clone(),
-        };
-
-        // Check if socket is connectable (detect stale sockets early).
-        // Use a synchronous non-blocking connect to avoid issues with tokio
-        // single-threaded runtimes where async connect may not yield properly.
-        let connectable = if socket_path.exists() {
-            std::os::unix::net::UnixStream::connect(&socket_path).is_ok()
-        } else {
-            false
-        };
-        if !connectable {
-            // Check if the entry is still in the registry (might have been
-            // removed by the reaper between our lookup and here).
-            let still_registered = {
-                let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-                entries.contains_key(&agent_id)
+        // Resolve display→UUID, arm active-await, and validate the socket (#1378).
+        let (registry_key, exit_signal_rx, _guard) =
+            match self.prepare_await_session(&agent_id, start) {
+                Ok(prepared) => prepared,
+                Err(result) => return Ok(result),
             };
-            if still_registered {
-                return Ok(await_tool_result(
-                    "error",
-                    Some("connection_failed"),
-                    agent_id.clone(),
-                    elapsed_ms(start),
-                    None,
-                ));
-            } else {
-                return Ok(await_tool_result(
-                    "error",
-                    Some("agent_not_found"),
-                    agent_id.clone(),
-                    elapsed_ms(start),
-                    None,
-                ));
-            }
-        }
 
         // Main await loop: poll status + listen for exit signals.
         // Uses `tokio::select!` to wake instantly on exit signals while
@@ -221,7 +153,7 @@ impl AgentCmdTool {
                         } else {
                             Some("exit_code_0".to_string())
                         };
-                        mark_completion_consumed_by_await(&self.registry, &agent_id);
+                        mark_completion_consumed_by_await(&self.registry, &registry_key);
                         return Ok(await_tool_result(
                             "exited",
                             reason.as_deref(),
@@ -233,11 +165,11 @@ impl AgentCmdTool {
                 }
             }
 
-            // Poll the registry for current status.
+            // Poll the registry for current status (UUID key).
             let current_status = {
                 let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
                 entries
-                    .get(&agent_id)
+                    .get(&registry_key)
                     .map(|e| (e.status.clone(), e.run_error.clone()))
             };
 
@@ -249,7 +181,7 @@ impl AgentCmdTool {
                     let reason = {
                         let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
                         entries
-                            .get(&agent_id)
+                            .get(&registry_key)
                             .and_then(|e| e.exit_signal_tx.as_ref())
                             .and_then(|tx| {
                                 let rx = tx.subscribe();
@@ -266,7 +198,7 @@ impl AgentCmdTool {
                             })
                             .or(Some("exit_code_0".into()))
                     };
-                    mark_completion_consumed_by_await(&self.registry, &agent_id);
+                    mark_completion_consumed_by_await(&self.registry, &registry_key);
                     return Ok(await_tool_result(
                         "exited",
                         reason.as_deref(),
@@ -283,7 +215,7 @@ impl AgentCmdTool {
                             idle_since = Some(now);
                             if idle_timeout_secs == 0 {
                                 let workflow = self.fetch_workflow_snapshot(&agent_id).await;
-                                mark_completion_consumed_by_await(&self.registry, &agent_id);
+                                mark_completion_consumed_by_await(&self.registry, &registry_key);
                                 return Ok(await_tool_result(
                                     "idle",
                                     Some("idle"),
@@ -296,7 +228,7 @@ impl AgentCmdTool {
                         Some(since) => {
                             if now.duration_since(since) >= Duration::from_secs(idle_timeout_secs) {
                                 let workflow = self.fetch_workflow_snapshot(&agent_id).await;
-                                mark_completion_consumed_by_await(&self.registry, &agent_id);
+                                mark_completion_consumed_by_await(&self.registry, &registry_key);
                                 return Ok(await_tool_result(
                                     "idle",
                                     Some("idle"),
@@ -328,7 +260,7 @@ impl AgentCmdTool {
                             || elapsed_idle >= Duration::from_secs(idle_timeout_secs)
                         {
                             let workflow = self.fetch_workflow_snapshot(&agent_id).await;
-                            mark_completion_consumed_by_await(&self.registry, &agent_id);
+                            mark_completion_consumed_by_await(&self.registry, &registry_key);
                             return Ok(await_tool_result_with_error(
                                 "error",
                                 Some("agent_error"),
@@ -354,7 +286,7 @@ impl AgentCmdTool {
                             || elapsed_idle >= Duration::from_secs(idle_timeout_secs)
                         {
                             let workflow = self.fetch_workflow_snapshot(&agent_id).await;
-                            mark_completion_consumed_by_await(&self.registry, &agent_id);
+                            mark_completion_consumed_by_await(&self.registry, &registry_key);
                             return Ok(await_tool_result(
                                 "idle",
                                 Some("idle"),
@@ -367,6 +299,104 @@ impl AgentCmdTool {
                 }
             }
         }
+    }
+
+    /// Resolve display→UUID, arm the active-await set, and validate the child's
+    /// socket is connectable. On failure returns a ready-made tool result so
+    /// `execute_await` stays under the line budget (#1378).
+    fn prepare_await_session(
+        &self,
+        agent_id: &str,
+        start: tokio::time::Instant,
+    ) -> Result<(String, Option<ExitSignalRx>, AwaitGuard), ToolResult> {
+        // Resolve live display label → UUID registry key before any await /
+        // dedupe bookkeeping. User-facing `agent_id` stays the display label.
+        let registry_key = {
+            let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+            match resolve_registry_key(&entries, agent_id) {
+                Ok(key) => key,
+                Err(_) => {
+                    return Err(await_tool_result(
+                        "error",
+                        Some("agent_not_found"),
+                        agent_id.to_string(),
+                        0,
+                        None,
+                    ));
+                }
+            }
+        };
+
+        let (socket_path, exit_signal_rx) = {
+            let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+            match entries.get(&registry_key) {
+                Some(entry) => {
+                    let rx = entry.exit_signal_tx.as_ref().map(|tx| tx.subscribe());
+                    (entry.socket_path.clone(), rx)
+                }
+                None => {
+                    return Err(await_tool_result(
+                        "error",
+                        Some("agent_not_found"),
+                        agent_id.to_string(),
+                        0,
+                        None,
+                    ));
+                }
+            }
+        };
+
+        // Duplicate awaiters are keyed by durable UUID identity.
+        {
+            let mut active = self.active_awaits.lock().unwrap_or_else(|e| e.into_inner());
+            if active.contains(&registry_key) {
+                return Err(await_tool_result(
+                    "error",
+                    Some("another_await_active"),
+                    agent_id.to_string(),
+                    0,
+                    None,
+                ));
+            }
+            active.insert(registry_key.clone());
+        }
+
+        let guard = AwaitGuard {
+            active_awaits: self.active_awaits.clone(),
+            agent_id: registry_key.clone(),
+        };
+
+        // Synchronous non-blocking connect to detect stale sockets early.
+        let connectable = if socket_path.exists() {
+            std::os::unix::net::UnixStream::connect(&socket_path).is_ok()
+        } else {
+            false
+        };
+        if !connectable {
+            let still_registered = {
+                let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+                entries.contains_key(&registry_key)
+            };
+            return Err(if still_registered {
+                await_tool_result(
+                    "error",
+                    Some("connection_failed"),
+                    agent_id.to_string(),
+                    elapsed_ms(start),
+                    None,
+                )
+            } else {
+                await_tool_result(
+                    "error",
+                    Some("agent_not_found"),
+                    agent_id.to_string(),
+                    elapsed_ms(start),
+                    None,
+                )
+            });
+        }
+
+        Ok((registry_key, exit_signal_rx, guard))
     }
 
     /// Fetch workflow state from a subagent via UDS `get_state` command.

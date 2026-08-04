@@ -196,15 +196,25 @@ fn notify_child_exited(
     notify_tx: Option<&NotificationTx>,
 ) {
     let sequence = update_entry_next_sequence(registry, agent_id, mark_exited);
+    let label = notification_display_label(registry, agent_id);
     send_notification(
         notify_tx,
         super::subagent_registry::SequencedSubagentNotification::new(
             sequence,
-            SubagentNotification::Exited {
-                agent_id: agent_id.to_string(),
-            },
+            SubagentNotification::Exited { agent_id: label },
         ),
     );
+}
+
+/// User-facing label for completion notes: prefer the entry's display name so
+/// parents can `agent_cmd` with the same token they see in the note. Falls back
+/// to the registry key (UUID) when the entry is already gone (#1378).
+fn notification_display_label(registry: &SubagentRegistry, agent_id: &str) -> String {
+    let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    entries
+        .get(agent_id)
+        .map(|entry| entry.effective_display_name(agent_id).to_string())
+        .unwrap_or_else(|| agent_id.to_string())
 }
 
 /// Internal monitor loop: connect → read lines → apply events → detect close.
@@ -574,9 +584,10 @@ fn apply_and_notify(
         classify_workflow_idle_stall(registry, notify_tx, agent_id, sequence, value);
         return;
     }
+    let note_label = notification_display_label(registry, agent_id);
     notify_from_parsed(
         notify_tx,
-        agent_id,
+        &note_label,
         sequence,
         value,
         workflow_mode.as_deref(),
@@ -629,6 +640,8 @@ fn notify_from_parsed(
             // pointer (see SubagentNotification::to_message) — no per-child
             // summary is derived or displayed, so agent_end.messages being
             // empty (refs-based) is fine here.
+            // #1378: `agent_id` is already the display label (resolved by
+            // `apply_and_notify`); lookups accept both display and UUID.
             Some(SubagentNotification::Completed {
                 agent_id: agent_id.to_string(),
             })

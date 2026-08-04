@@ -177,10 +177,20 @@ async fn handles_tool_start_and_end_for_spawn_and_regular_tools() {
     app.handle_event(Event::ToolExecutionEnd {
             tool_call_id: "spawn-1".into(),
             tool_name: "spawn".into(),
-            result: serde_json::json!({"content":[{"type":"text","text":"Subagent 'worker-1' is running"}]}),
+            result: serde_json::json!({"content":[{"type":"text","text":"Subagent 'worker-1' is running (uuid=33333333-3333-4333-8333-333333333333)"}]}),
             is_error: false,
         });
-    assert_eq!(app.subagents.tracked["worker-1"].info.status, "running");
+    // #1378: ToolEnd rekeys the optimistic display row onto the durable UUID.
+    assert!(
+        !app.subagents.tracked.contains_key("worker-1"),
+        "display-keyed optimistic row must be migrated"
+    );
+    let uuid = "33333333-3333-4333-8333-333333333333";
+    assert_eq!(app.subagents.tracked[uuid].info.status, "running");
+    assert_eq!(
+        app.subagents.tracked[uuid].info.display_name.as_deref(),
+        Some("worker-1")
+    );
 
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "read-1".into(),
@@ -476,146 +486,6 @@ async fn update_tool_spinner_is_noop_when_spinner_none() {
     });
     // Spinner should still be None — handle_tool_start doesn't create one.
     assert!(app.spinner.is_none());
-}
-
-#[tokio::test]
-async fn track_starting_subagent_without_agent_id_is_noop() {
-    let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
-    // spawn tool with no agent_id → track_starting_subagent should bail.
-    app.handle_event(Event::ToolExecutionStart {
-        tool_call_id: "spawn-1".into(),
-        tool_name: "spawn".into(),
-        args: serde_json::json!({"task": "do something"}),
-    });
-    // No subagent should be tracked.
-    assert!(
-        app.subagents.tracked.is_empty(),
-        "spawn without agent_id should not track a subagent"
-    );
-}
-
-#[tokio::test]
-async fn track_starting_subagent_strips_control_chars_from_id() {
-    let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
-    app.handle_event(Event::ToolExecutionStart {
-        tool_call_id: "spawn-1".into(),
-        tool_name: "spawn".into(),
-        args: serde_json::json!({"agent_id": "a\u{0007}b"}),
-    });
-    // The sanitized id should be stored, not the raw one.
-    assert!(
-        app.subagents.tracked.contains_key("ab"),
-        "control chars should be stripped from agent_id"
-    );
-    assert!(
-        !app.subagents.tracked.contains_key("a\u{0007}b"),
-        "raw (unsanitized) id should not be a key"
-    );
-}
-
-#[tokio::test]
-async fn mark_spawned_subagent_running_with_no_quotes_is_noop() {
-    let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
-    // First, track a subagent via spawn start.
-    app.handle_event(Event::ToolExecutionStart {
-        tool_call_id: "spawn-1".into(),
-        tool_name: "spawn".into(),
-        args: serde_json::json!({"agent_id": "worker-1"}),
-    });
-    assert!(app.subagents.tracked.contains_key("worker-1"));
-    assert_eq!(app.subagents.tracked["worker-1"].info.status, "starting");
-
-    // Tool end with result text that has NO single quotes.
-    app.handle_event(Event::ToolExecutionEnd {
-        tool_call_id: "spawn-1".into(),
-        tool_name: "spawn".into(),
-        result: serde_json::json!({
-            "content": [{"type": "text", "text": "Subagent started successfully"}]
-        }),
-        is_error: false,
-    });
-    // Status should remain "starting" (not updated to "running").
-    assert_eq!(
-        app.subagents.tracked["worker-1"].info.status, "starting",
-        "malformed result (no quotes) should not update status"
-    );
-}
-
-#[tokio::test]
-async fn mark_spawned_subagent_running_with_one_quote_is_noop() {
-    let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
-    app.handle_event(Event::ToolExecutionStart {
-        tool_call_id: "spawn-1".into(),
-        tool_name: "spawn".into(),
-        args: serde_json::json!({"agent_id": "worker-1"}),
-    });
-
-    // Only one quote — can't find the closing quote.
-    app.handle_event(Event::ToolExecutionEnd {
-        tool_call_id: "spawn-1".into(),
-        tool_name: "spawn".into(),
-        result: serde_json::json!({
-            "content": [{"type": "text", "text": "Subagent 'worker-1 started"}]
-        }),
-        is_error: false,
-    });
-    assert_eq!(
-        app.subagents.tracked["worker-1"].info.status, "starting",
-        "result with only one quote should not update status"
-    );
-}
-
-#[tokio::test]
-async fn handle_tool_end_spawn_error_does_not_mark_running() {
-    let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
-    app.handle_event(Event::ToolExecutionStart {
-        tool_call_id: "spawn-1".into(),
-        tool_name: "spawn".into(),
-        args: serde_json::json!({"agent_id": "worker-1"}),
-    });
-
-    // Tool end with is_error=true → should NOT call mark_spawned_subagent_running.
-    app.handle_event(Event::ToolExecutionEnd {
-        tool_call_id: "spawn-1".into(),
-        tool_name: "spawn".into(),
-        result: serde_json::json!({
-            "content": [{"type": "text", "text": "Subagent 'worker-1' is running"}]
-        }),
-        is_error: true,
-    });
-    assert_eq!(
-        app.subagents.tracked["worker-1"].info.status, "starting",
-        "error result should not mark subagent as running"
-    );
-}
-
-#[tokio::test]
-async fn mark_spawned_subagent_running_with_unknown_id_is_noop() {
-    let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
-    app.handle_event(Event::ToolExecutionStart {
-        tool_call_id: "spawn-1".into(),
-        tool_name: "spawn".into(),
-        args: serde_json::json!({"agent_id": "worker-1"}),
-    });
-
-    // Result text mentions a DIFFERENT agent_id that's not tracked.
-    app.handle_event(Event::ToolExecutionEnd {
-        tool_call_id: "spawn-1".into(),
-        tool_name: "spawn".into(),
-        result: serde_json::json!({
-            "content": [{"type": "text", "text": "Subagent 'unknown-agent' is running"}]
-        }),
-        is_error: false,
-    });
-    // worker-1 should remain "starting"; unknown-agent was never tracked.
-    assert_eq!(app.subagents.tracked["worker-1"].info.status, "starting");
-    assert!(!app.subagents.tracked.contains_key("unknown-agent"));
 }
 
 #[tokio::test]

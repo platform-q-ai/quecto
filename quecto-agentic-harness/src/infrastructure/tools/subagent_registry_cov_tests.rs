@@ -113,6 +113,54 @@ fn missing_lookup_and_dedupe_helpers_are_safe() {
     assert!(registry.lock().unwrap().is_empty());
 }
 
+/// #1378: registry is UUID-keyed; lookups and await-dedupe must resolve live
+/// display labels onto the durable key so notes that show "worker" still work.
+#[test]
+fn lookup_and_await_dedupe_resolve_live_display_name_to_uuid_key() {
+    let registry = new_registry();
+    let uuid = crate::domain::ids::AgentUuid::new("11111111-1111-4111-8111-111111111111");
+    let entry = SubagentEntry::with_identity(
+        uuid.clone(),
+        "worker".into(),
+        std::path::PathBuf::from("/tmp/worker.sock"),
+        7,
+    );
+    registry.lock().unwrap().insert(uuid.to_string(), entry);
+
+    assert_eq!(
+        lookup_subagent_socket(&registry, "worker").unwrap(),
+        std::path::PathBuf::from("/tmp/worker.sock")
+    );
+    assert_eq!(
+        lookup_subagent_socket(&registry, uuid.as_str()).unwrap(),
+        std::path::PathBuf::from("/tmp/worker.sock")
+    );
+
+    // Arm by display label, consume by UUID (and vice versa).
+    mark_completion_consumed_by_await(&registry, "worker");
+    assert!(take_completion_consumed_by_await(&registry, uuid.as_str()));
+    mark_completion_consumed_by_await(&registry, uuid.as_str());
+    assert!(take_completion_consumed_by_await(&registry, "worker"));
+}
+
+/// #1378: user-facing completion notes carry the display label so parents can
+/// copy the token into agent_cmd without knowing the UUID.
+#[test]
+fn completion_note_embeds_display_label_not_uuid() {
+    let note = SubagentNotification::Completed {
+        agent_id: "worker".into(),
+    };
+    let msg = note.to_message();
+    assert!(
+        msg.contains("worker"),
+        "note must name the display label: {msg}"
+    );
+    assert!(
+        !msg.contains("11111111"),
+        "note must not leak a UUID when a display label is available: {msg}"
+    );
+}
+
 #[test]
 fn registry_lock_poison_recovery_helpers_still_work() {
     let registry = new_registry();

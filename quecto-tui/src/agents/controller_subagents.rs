@@ -108,6 +108,36 @@ impl App {
             candidates.insert(sanitize_agent_id(identity), s);
         }
 
+        // #1378: if an optimistic spawn row is still keyed by display label
+        // while the authoritative snapshot arrives under UUID, migrate the
+        // optimistic entry onto the UUID key before merge so we never keep
+        // dual rows for the optimistic grace window.
+        for (uuid_key, info) in &candidates {
+            let display = info
+                .display_name
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or(info.agent_id.as_str());
+            let display_key = sanitize_agent_id(display);
+            if display_key == *uuid_key {
+                continue;
+            }
+            if let Some(entry) = self.subagents.tracked.get(&display_key) {
+                if entry.optimistic && !self.subagents.tracked.contains_key(uuid_key) {
+                    if let Some(mut migrated) = self.subagents.tracked.remove(&display_key) {
+                        migrated.info.agent_uuid = Some(uuid_key.clone());
+                        if migrated.info.display_name.is_none() {
+                            migrated.info.display_name = Some(display_key.clone());
+                        }
+                        if self.subagents.active_agent_id.as_deref() == Some(display_key.as_str()) {
+                            self.subagents.active_agent_id = Some(uuid_key.clone());
+                        }
+                        self.subagents.tracked.insert(uuid_key.clone(), migrated);
+                    }
+                }
+            }
+        }
+
         crate::agents::roster::apply_roster_snapshot(
             &mut self.subagents.tracked,
             source_agent_id.as_deref(),
