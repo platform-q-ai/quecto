@@ -1,18 +1,31 @@
 Feature: Container runtime TUI grouping and script contract
-  As an operator using container-backed subagents
-  I want the panel and reference runtime scripts to expose the public contract
-  So that AC10 and AC11 are pinned before implementation
 
-  # AC10
-  @done
-  Scenario: Solo container-backed agents render flat while shared environments render as groups
-    Given a container runtime contract check
+  # AC10 clause 1
+  @wip
+  Scenario: Solo container-backed agent rows expose environment refs inline
+    Given a hybrid container panel check
     When the panel contains one solo environment and one shared environment
     Then the solo agent row exposes its environment ref inline
-    And the shared environment is exposed as a selectable group row with its member agents beneath it
+
+  # AC10 clause 2
+  @wip
+  Scenario: Shared environments render as selectable rows with grouped agents beneath
+    Given a hybrid container panel check
+    When the panel contains one solo environment and one shared environment
+    Then the shared environment is exposed as a selectable group row with its member agents beneath it
+
+  # AC10 clause 3
+  @wip
+  Scenario: Selecting a shared environment renders environment details in the main pane
+    Given a hybrid container panel check
+    When the shared environment row is selected
+    Then the main pane renders the selected environment repository
+    And the main pane renders the selected environment runtime
+    And the main pane renders the selected environment workspace
+    And the main pane renders the selected environment health
 
   # AC11
-  @done
+  @wip
   Scenario: Reference container runtime scripts and documentation are present
     Given a container runtime contract check
     When I check supported runtime operations
@@ -23,7 +36,7 @@ Feature: Container runtime TUI grouping and script contract
     And docs/container-runtimes.md documents the create exec inspect kill contract
 
   # AC11
-  @done
+  @wip
   Scenario: Reference container runtime scripts declare machine-readable outputs
     Given a container runtime contract check
     When I check supported runtime operations

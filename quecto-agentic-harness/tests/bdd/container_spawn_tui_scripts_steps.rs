@@ -15,6 +15,11 @@ fn panel_contains_solo_and_shared_environments(world: &mut QuectoWorld) {
     world.stdout = "agent alpha\nagent beta\nagent gamma".into();
 }
 
+#[when("the shared environment row is selected")]
+fn shared_environment_row_is_selected(world: &mut QuectoWorld) {
+    world.stdout = "selected environment C2".into();
+}
+
 #[then("the solo agent row exposes its environment ref inline")]
 fn solo_agent_row_exposes_environment_ref_inline(world: &mut QuectoWorld) {
     assert!(
@@ -34,6 +39,42 @@ fn shared_environment_exposed_as_selectable_group(world: &mut QuectoWorld) {
             && world.stdout.contains("beta")
             && world.stdout.contains("gamma"),
         "shared environments must render as selectable groups; panel was:\n{}",
+        world.stdout
+    );
+}
+
+#[then("the main pane renders the selected environment repository")]
+fn main_pane_renders_selected_environment_repository(world: &mut QuectoWorld) {
+    assert!(
+        world.stdout.contains("repository") && world.stdout.contains("platform-q-ai/quecto"),
+        "selected environment details must render repository; pane was:\n{}",
+        world.stdout
+    );
+}
+
+#[then("the main pane renders the selected environment runtime")]
+fn main_pane_renders_selected_environment_runtime(world: &mut QuectoWorld) {
+    assert!(
+        world.stdout.contains("runtime") && world.stdout.contains("container"),
+        "selected environment details must render runtime; pane was:\n{}",
+        world.stdout
+    );
+}
+
+#[then("the main pane renders the selected environment workspace")]
+fn main_pane_renders_selected_environment_workspace(world: &mut QuectoWorld) {
+    assert!(
+        world.stdout.contains("workspace") && world.stdout.contains("/workspace/quecto"),
+        "selected environment details must render workspace; pane was:\n{}",
+        world.stdout
+    );
+}
+
+#[then("the main pane renders the selected environment health")]
+fn main_pane_renders_selected_environment_health(world: &mut QuectoWorld) {
+    assert!(
+        world.stdout.contains("health") && world.stdout.contains("healthy"),
+        "selected environment details must render health; pane was:\n{}",
         world.stdout
     );
 }
