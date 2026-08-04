@@ -1314,6 +1314,7 @@ mod codex_provider_steps;
 mod config_steps;
 mod container_spawn_launch_steps;
 mod container_spawn_lifecycle_steps;
+mod container_spawn_registry_steps;
 mod container_spawn_steps;
 mod container_spawn_tui_scripts_steps;
 mod context_pruning_steps;
