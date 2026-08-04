@@ -3,13 +3,66 @@
 use std::path::PathBuf;
 
 use super::error::DomainError;
+use super::ids::AgentUuid;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplayNameResolutionEntry {
+    pub agent_uuid: AgentUuid,
+    pub display_name: String,
+    pub live: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DisplayNameResolveError {
+    NoLiveMatch { display_name: String },
+    AmbiguousLiveMatch { display_name: String },
+}
+
+pub fn resolve_live_display_name(
+    entries: &[DisplayNameResolutionEntry],
+    display_name: &str,
+) -> Result<AgentUuid, DisplayNameResolveError> {
+    let mut matches = entries
+        .iter()
+        .filter(|entry| entry.live && entry.display_name == display_name)
+        .map(|entry| entry.agent_uuid.clone());
+
+    let Some(first) = matches.next() else {
+        return Err(DisplayNameResolveError::NoLiveMatch {
+            display_name: display_name.to_string(),
+        });
+    };
+
+    if matches.next().is_some() {
+        return Err(DisplayNameResolveError::AmbiguousLiveMatch {
+            display_name: display_name.to_string(),
+        });
+    }
+
+    Ok(first)
+}
+
+pub fn assert_display_name_available_for_spawn(
+    entries: &[DisplayNameResolutionEntry],
+    display_name: &str,
+) -> Result<(), DisplayNameResolveError> {
+    match resolve_live_display_name(entries, display_name) {
+        Ok(_) | Err(DisplayNameResolveError::AmbiguousLiveMatch { .. }) => {
+            Err(DisplayNameResolveError::AmbiguousLiveMatch {
+                display_name: display_name.to_string(),
+            })
+        }
+        Err(DisplayNameResolveError::NoLiveMatch { .. }) => Ok(()),
+    }
+}
 
 /// Configuration for spawning a subagent.
 #[derive(Debug, Clone)]
 pub struct SubagentConfig {
     /// The task to execute (optional — agent starts idle if omitted).
     pub task: Option<String>,
-    /// Optional target agent ID.
+    /// Optional user-facing display label (`agent_id` on the compatibility wire).
+    /// This is not durable identity and must not key persistence or sockets.
     pub agent_id: Option<String>,
     /// Whether the subagent should restrict to workspace.
     pub restrict_to_workspace: bool,

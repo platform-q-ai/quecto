@@ -25,6 +25,8 @@ const GLYPHS: &[&str] = &["●", "✓", "✗", "○", "•"];
 /// A `SubagentInfoEvent` with an explicit status and parent (no socket).
 fn child(id: &str, status: &str, parent: Option<&str>) -> SubagentInfoEvent {
     SubagentInfoEvent {
+        agent_uuid: None,
+        display_name: None,
         agent_id: id.to_string(),
         status: status.to_string(),
         last_tool: None,

@@ -7,6 +7,8 @@ async fn harness() -> TuiHarness {
 
 fn subagent(id: &str) -> SubagentInfoEvent {
     SubagentInfoEvent {
+        agent_uuid: None,
+        display_name: None,
         agent_id: id.into(),
         status: "running".into(),
         last_tool: None,

@@ -190,3 +190,38 @@ fn child_launch_args_include_internal_inherited_tool_policy_snapshot_flag() {
         .expect("policy snapshot flag is forwarded");
     assert_eq!(strs[pos + 1], "/run/policy.json");
 }
+
+/// #1378: `-s` is the durable session key (AgentUuid), not the display label.
+/// The child's `Session::build_key("cli", name)` therefore cannot resume a
+/// previous label-named session when the same display name is reused.
+#[test]
+fn child_session_flag_uses_uuid_key_not_display_label() {
+    let cfg = base_config();
+    let uuid = "11111111-2222-4333-8444-555555555555";
+    let socket = format!("/run/quecto-agent-{uuid}.sock");
+    let s = ChildLaunchSpec {
+        session_name: uuid,
+        socket_path: Path::new(&socket),
+        config: &cfg,
+        effective_config: None,
+        parent_id: None,
+        restrict_to_workspace: true,
+        workflow_spec_path: None,
+        inherited_tool_policy_path: None,
+    };
+    let strs = as_strings(&build_child_cli_args(&s));
+    let s_pos = strs
+        .iter()
+        .position(|a| a == "-s")
+        .expect("-s session flag must be present");
+    assert_eq!(strs[s_pos + 1], uuid, "session key must be the AgentUuid");
+    assert!(
+        !strs.iter().any(|a| a == "w1" || a == "reviewer"),
+        "display labels must not appear in child CLI args, got {strs:?}"
+    );
+    let sock_pos = strs
+        .iter()
+        .position(|a| a == "--socket")
+        .expect("--socket must be present");
+    assert_eq!(strs[sock_pos + 1], socket);
+}

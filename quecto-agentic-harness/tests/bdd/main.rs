@@ -407,6 +407,12 @@ pub struct QuectoWorld {
     pub agent_allowlist: Vec<String>,
     /// Result of agent_id validation
     pub agent_id_validation: Option<Result<(), String>>,
+    /// #1378 BDD: old and new hidden subagent identities for label-reuse checks.
+    pub subagent_old_uuid: Option<quecto::domain::ids::AgentUuid>,
+    pub subagent_new_uuid: Option<quecto::domain::ids::AgentUuid>,
+    pub subagent_old_session_key: Option<String>,
+    pub subagent_new_session_key: Option<String>,
+    pub subagent_display_label: Option<String>,
     /// Wiremock server URI (kept alive via Box leak)
     pub _wiremock_server_uri: Option<String>,
     /// Provider protocol currently backed by the generic mock provider helpers.

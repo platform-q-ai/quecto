@@ -80,6 +80,8 @@ pub fn subagent_with_socket(
     socket_path: Option<std::path::PathBuf>,
 ) -> SubagentInfoEvent {
     SubagentInfoEvent {
+        agent_uuid: None,
+        display_name: None,
         agent_id: id.to_string(),
         status: status.to_string(),
         last_tool: None,

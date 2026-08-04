@@ -160,7 +160,10 @@ pub fn build_state_changed_event_locked(guard: &HashMap<String, SubagentEntry>) 
             .into_iter()
             .map(|(id, entry)| {
                 let mut obj = serde_json::Map::new();
-                obj.insert("agentId".into(), serde_json::json!(id));
+                let display_name = entry.effective_display_name(id);
+                obj.insert("agentId".into(), serde_json::json!(display_name));
+                obj.insert("displayName".into(), serde_json::json!(display_name));
+                obj.insert("agentUuid".into(), serde_json::json!(entry.agent_uuid));
                 obj.insert(
                     "status".into(),
                     serde_json::json!(entry.status.to_wire_str()),

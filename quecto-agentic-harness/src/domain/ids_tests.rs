@@ -45,3 +45,21 @@ fn identifier_newtypes_are_string_wire_compatible() {
         assert_eq!(CommandId::new(value).into_string(), value);
     }
 }
+
+#[test]
+fn agent_uuid_is_string_wire_compatible() {
+    let value = "00000000-0000-4000-8000-000000000001";
+    assert_string_round_trip::<AgentUuid>(value);
+    assert_accessors::<AgentUuid>(value);
+    assert_eq!(AgentUuid::new(value).into_string(), value);
+}
+
+#[test]
+fn agent_uuid_mint_is_unique_uuid_string() {
+    let first = AgentUuid::mint();
+    let second = AgentUuid::mint();
+
+    assert_ne!(first, second);
+    uuid::Uuid::parse_str(first.as_str()).expect("first minted UUID parses");
+    uuid::Uuid::parse_str(second.as_str()).expect("second minted UUID parses");
+}

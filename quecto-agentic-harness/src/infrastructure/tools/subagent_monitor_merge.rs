@@ -76,19 +76,48 @@ fn merge_descendants(
     let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
     let mut pushed_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     for d in descendants.iter().take(MAX_FORWARDED_SUBAGENTS) {
-        let Some(agent_id) = d.get("agentId").and_then(|v| v.as_str()) else {
+        // Prefer additive agentUuid for durable registry keys; wire agentId is
+        // the display label only (#1378). Fall back to agentId for legacy
+        // snapshots that predate dual identity.
+        let display_label = d
+            .get("displayName")
+            .and_then(|v| v.as_str())
+            .or_else(|| d.get("agentId").and_then(|v| v.as_str()))
+            .unwrap_or("");
+        if display_label.is_empty() && d.get("agentUuid").and_then(|v| v.as_str()).is_none() {
             continue;
+        }
+        let registry_key = d
+            .get("agentUuid")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                d.get("agentId")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| crate::domain::ids::AgentUuid::mint().into_string());
+        let display_name = if display_label.is_empty() {
+            registry_key.clone()
+        } else {
+            display_label.to_string()
         };
-        pushed_ids.insert(agent_id.to_string());
+        pushed_ids.insert(registry_key.clone());
         let socket_path = d
             .get("socketPath")
             .and_then(|v| v.as_str())
             .map(std::path::PathBuf::from)
             .unwrap_or_default();
         let pid = d.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let entry = guard
-            .entry(agent_id.to_string())
-            .or_insert_with(|| SubagentEntry::new(socket_path.clone(), pid));
+        let agent_uuid = crate::domain::ids::AgentUuid::new(registry_key.clone());
+        let entry = guard.entry(registry_key.clone()).or_insert_with(|| {
+            SubagentEntry::with_identity(agent_uuid, display_name.clone(), socket_path.clone(), pid)
+        });
+        // Keep identity fields authoritative from the child's snapshot.
+        entry.agent_uuid = crate::domain::ids::AgentUuid::new(registry_key.clone());
+        entry.display_name = display_name;
         if let Some(status) = d
             .get("status")
             .and_then(|v| v.as_str())
@@ -112,7 +141,9 @@ fn merge_descendants(
         entry.parent_id = d
             .get("parentId")
             .and_then(|v| v.as_str())
-            .map(str::to_string);
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| Some(forwarding_child_id.to_string()));
         entry.workflow = d
             .get("workflow")
             .and_then(|w| serde_json::from_value(w.clone()).ok());

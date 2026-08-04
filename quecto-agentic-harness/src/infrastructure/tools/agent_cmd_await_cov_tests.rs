@@ -265,6 +265,40 @@ async fn await_timeout_preserves_busy_child_lifecycle() {
     assert_eq!(entry.status, SubagentStatus::Running);
 }
 
+/// #1378: wall-timeout lifecycle bookkeeping must use the resolved UUID key
+/// even when the caller awaits by display label (production registry shape).
+#[tokio::test]
+async fn await_timeout_applies_lifecycle_on_uuid_keyed_entry_via_display_label() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("uuid-busy.sock");
+    let _listener = tokio::net::UnixListener::bind(&socket).unwrap();
+
+    let registry = new_registry();
+    let uuid = crate::domain::ids::AgentUuid::new("44444444-4444-4444-8444-444444444444");
+    let mut entry = SubagentEntry::with_identity(uuid.clone(), "busy".into(), socket, 123);
+    entry.lifecycle = SubagentLifecycleState::from_status(&SubagentStatus::Running);
+    entry.status = SubagentStatus::Running;
+    registry.lock().unwrap().insert(uuid.to_string(), entry);
+    let tool = AgentCmdTool::new(registry.clone());
+
+    let got = parse_result(
+        tool.execute_await(r#"{"agent_id":"busy","timeout":0}"#)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(got.status, "timeout");
+    assert_eq!(got.agent_id, "busy");
+
+    let entry = registry.lock().unwrap().get(uuid.as_str()).unwrap().clone();
+    assert_eq!(
+        entry.last_lifecycle_event,
+        Some(SubagentLifecycleEvent::AwaitTimedOut),
+        "timeout path must get_mut the UUID-keyed entry, not the display label"
+    );
+    assert_eq!(entry.lifecycle, SubagentLifecycleState::Busy);
+    assert_eq!(entry.status, SubagentStatus::Running);
+}
+
 #[tokio::test]
 async fn execute_await_exited_status_uses_signal_reason_from_registry() {
     let tmp = tempfile::TempDir::new().unwrap();
@@ -323,6 +357,56 @@ async fn execute_await_recoverable_error_without_run_error_returns_idle() {
     assert_eq!(wf.mode, "active");
     assert_eq!(wf.steps_completed, 0);
     assert_eq!(wf.steps_total, 0);
+}
+
+/// #1378: await must resolve a live display label onto the UUID-keyed registry
+/// entry (and arm/consume dedupe on that durable key).
+#[tokio::test]
+async fn execute_await_resolves_display_name_to_uuid_keyed_entry() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let socket = tmp.path().join("display-await.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let accept = tokio::spawn(async move {
+        let _ = listener.accept().await;
+    });
+
+    let uuid = crate::domain::ids::AgentUuid::new("22222222-2222-4222-8222-222222222222");
+    let active = new_active_awaits();
+    let registry = new_registry();
+    let mut entry = SubagentEntry::with_identity(uuid.clone(), "worker".into(), socket, 9);
+    entry.status = SubagentStatus::Idle;
+    registry.lock().unwrap().insert(uuid.to_string(), entry);
+
+    let tool = AgentCmdTool::with_active_awaits(registry.clone(), active.clone());
+    let got = parse_result(
+        tool.execute_await(r#"{"agent_id":"worker","timeout":1,"idle_timeout":0}"#)
+            .await
+            .unwrap(),
+    );
+    accept.abort();
+
+    assert_eq!(got.status, "idle");
+    assert_eq!(got.agent_id, "worker", "user-facing agent_id stays display");
+    // Await must have armed dedupe on the UUID-keyed entry (not a display key).
+    assert!(
+        registry.lock().unwrap()[uuid.as_str()].completion_consumed_by_await,
+        "dedupe flag must land on the UUID registry key"
+    );
+    assert!(
+        !registry.lock().unwrap().contains_key("worker"),
+        "must not create a display-keyed registry entry"
+    );
+    // Cross-token consume: arm by display, take by UUID.
+    crate::infrastructure::tools::subagent_registry::mark_completion_consumed_by_await(
+        &registry, "worker",
+    );
+    assert!(
+        crate::infrastructure::tools::subagent_registry::take_completion_consumed_by_await(
+            &registry,
+            uuid.as_str()
+        )
+    );
+    let _ = active;
 }
 
 #[tokio::test]

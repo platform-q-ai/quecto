@@ -28,6 +28,7 @@ fn merge_descendants_upserts_updates_and_scoped_prunes_omitted_descendants() {
     let forwarded = merge_and_forward_state_changed(&event, &registry, "child").unwrap();
     assert!(forwarded.ends_with('\n'));
     let guard = registry.lock().unwrap();
+    // Legacy snapshots without agentUuid still key by agentId for back-compat.
     assert!(guard.contains_key("grand"));
     assert!(guard.contains_key("sibling"));
     assert!(!guard.contains_key("old-grand"));
@@ -38,6 +39,44 @@ fn merge_descendants_upserts_updates_and_scoped_prunes_omitted_descendants() {
     );
     assert_eq!(guard["grand"].pid, 42);
     assert_eq!(guard["grand"].workflow.as_ref().unwrap().steps_total, 2);
+}
+
+/// #1378: nested merge prefers additive agentUuid as the durable registry key
+/// and keeps wire agentId / displayName as the human label.
+#[test]
+fn merge_descendants_keys_by_agent_uuid_and_keeps_display_label() {
+    let registry = new_registry();
+    let child_uuid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    add(&registry, child_uuid, None);
+    let grand_uuid = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    let event = serde_json::json!({"type":"subagent_state_changed","subagents":[{
+        "agentId":"grand-label",
+        "displayName":"grand-label",
+        "agentUuid": grand_uuid,
+        "parentId": child_uuid,
+        "status":"running",
+        "pid":99,
+        "socketPath":"/tmp/grand.sock"
+    }]});
+
+    merge_and_forward_state_changed(&event, &registry, child_uuid).unwrap();
+    let guard = registry.lock().unwrap();
+    assert!(
+        guard.contains_key(grand_uuid),
+        "nested entry must be keyed by agentUuid, got keys: {:?}",
+        guard.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        !guard.contains_key("grand-label"),
+        "must not key nested entries by display label"
+    );
+    assert_eq!(guard[grand_uuid].display_name, "grand-label");
+    assert_eq!(guard[grand_uuid].agent_uuid.as_str(), grand_uuid);
+    assert_eq!(
+        guard[grand_uuid].parent_id.as_deref(),
+        Some(child_uuid),
+        "parent_id must stay the forwarding child's durable id"
+    );
 }
 
 #[test]

@@ -18,6 +18,7 @@ mod registry_inherited_policy;
 mod registry_tool_ids;
 pub mod spawn;
 mod spawn_binary;
+mod spawn_entry;
 mod spawn_inherited_policy;
 mod spawn_launch_args;
 mod spawn_registry;

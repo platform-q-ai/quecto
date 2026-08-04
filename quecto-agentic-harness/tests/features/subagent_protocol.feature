@@ -62,6 +62,21 @@ Feature: Subagent protocol commands (#524)
     Then the JSON should contain key "lastTool" with null value
 
   @done
+  Scenario: Subagent state preserves the legacy display-label field
+    Given a registry subagent with display name "worker" and hidden identity "00000000-0000-4000-8000-000000000001"
+    When I build a SubagentInfo list from the registry
+    And I serialize the first subagent info
+    Then the JSON should contain key "agentId" with value "worker"
+
+  @done
+  Scenario: Subagent state includes dual identity
+    Given a registry subagent with display name "worker" and hidden identity "00000000-0000-4000-8000-000000000001"
+    When I build a SubagentInfo list from the registry
+    And I serialize the first subagent info
+    Then the JSON should contain key "displayName" with value "worker"
+    And the JSON should contain key "agentUuid" with value "00000000-0000-4000-8000-000000000001"
+
+  @done
   Scenario: SubagentInfo serializes lastError when present
     Given a SubagentInfo with agentId "err" status "error" lastTool "" pid 0
     And the SubagentInfo has lastError "connection refused"

@@ -18,6 +18,8 @@ fn given_bar_with_agents(world: &mut QuectoWorld, step: &cucumber::gherkin::Step
         .iter()
         .skip(1)
         .map(|row| SubagentInfo {
+            agent_uuid: None,
+            display_name: None,
             agent_id: row[0].clone(),
             status: row[1].clone(),
             last_tool: if row[2].is_empty() {

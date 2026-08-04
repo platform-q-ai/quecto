@@ -162,10 +162,18 @@ pub(super) fn classify_workflow_idle_stall(
     }
     let snapshot = take_stalled_snapshot(registry, agent_id);
     if let (Some(tx), Some(workflow)) = (notify_tx, snapshot) {
+        // User-facing stall notes carry the display label (#1378).
+        let label = {
+            let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+            entries
+                .get(agent_id)
+                .map(|entry| entry.effective_display_name(agent_id).to_string())
+                .unwrap_or_else(|| agent_id.to_string())
+        };
         let notification = super::subagent_registry::SequencedSubagentNotification::new(
             sequence,
             super::subagent_registry::SubagentNotification::Stalled {
-                agent_id: agent_id.to_string(),
+                agent_id: label,
                 workflow_mode: workflow.mode,
                 steps_completed: u64::from(workflow.steps_completed),
                 steps_total: u64::from(workflow.steps_total),

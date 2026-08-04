@@ -257,6 +257,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `agents/controller_ledger_sync.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/controller_subagent_feed.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/controller_subagent_panel.rs` | `agents` (relocated, #1257 Phase 4) |
+| `agents/controller_subagent_panel_helpers.rs` | `agents` (panel free helpers split, #1378) |
 | `agents/controller_subagent_stream.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/controller_subagents.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/feed.rs` | `agents` (relocated, #1257 Phase 4) |

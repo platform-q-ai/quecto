@@ -13,6 +13,8 @@ pub(super) async fn harness() -> TuiHarness {
 
 pub(super) fn info(id: &str, status: &str) -> crate::protocol::client::SubagentInfoEvent {
     crate::protocol::client::SubagentInfoEvent {
+        agent_uuid: None,
+        display_name: None,
         agent_id: id.to_string(),
         status: status.to_string(),
         last_tool: None,
@@ -33,6 +35,8 @@ fn info_with_workflow(
     total: u32,
 ) -> crate::protocol::client::SubagentInfoEvent {
     crate::protocol::client::SubagentInfoEvent {
+        agent_uuid: None,
+        display_name: None,
         agent_id: id.to_string(),
         status: status.to_string(),
         last_tool: None,

@@ -25,7 +25,8 @@ async fn workflow_spec_seeds_binding_before_first_monitor_event() {
         .expect("stub spawn must succeed");
     let registry = tool.registry.lock().unwrap();
     let workflow = registry
-        .get("bound")
+        .values()
+        .find(|entry| entry.display_name == "bound")
         .and_then(|entry| entry.workflow.as_ref())
         .expect("bound workflow metadata must exist at registration");
     assert_eq!(workflow.mode, "active");
@@ -99,7 +100,8 @@ async fn execute_stub_mode_registers_read_only_observer() {
         .unwrap();
     let registry = tool.registry.lock().unwrap();
     let entry = registry
-        .get("reviewer")
+        .values()
+        .find(|entry| entry.display_name == "reviewer")
         .expect("spawned read-only sub-agent should be registered");
     assert!(
         entry.read_only,
@@ -237,7 +239,13 @@ fn test_with_registry_shares_state() {
         "test".to_string(),
         SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 123),
     );
-    assert!(tool.registry.lock().unwrap().contains_key("test"));
+    assert!(
+        tool.registry
+            .lock()
+            .unwrap()
+            .values()
+            .any(|entry| entry.display_name == "test")
+    );
 }
 #[test]
 fn register_and_broadcast_emits_immediate_state_changed() {
@@ -248,7 +256,13 @@ fn register_and_broadcast_emits_immediate_state_changed() {
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
     let entry = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), 0);
     super::register_and_broadcast(&registry, Some(&tx), "worker", entry);
-    assert!(registry.lock().unwrap().contains_key("worker"));
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .values()
+            .any(|e| e.display_name == "worker")
+    );
     let line = rx
         .try_recv()
         .expect("#866: spawn registration must broadcast immediately");
@@ -264,7 +278,13 @@ fn register_and_broadcast_without_channel_still_registers() {
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let entry = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), 0);
     super::register_and_broadcast(&registry, None, "worker", entry);
-    assert!(registry.lock().unwrap().contains_key("worker"));
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .values()
+            .any(|e| e.display_name == "worker")
+    );
 }
 
 // ─── #1049: task-less spawn settles to Idle on registration ──────────────────
@@ -293,13 +313,15 @@ fn sample_config(task: Option<&str>) -> crate::domain::subagent::SubagentConfig 
 #[test]
 fn initial_entry_taskless_is_idle() {
     // Shared builder used by production after socket ready (#1049).
-    let entry = super::initial_registry_entry(
-        PathBuf::from("/tmp/ready.sock"),
-        42,
-        Some("parent".into()),
-        &sample_config(None),
-        None,
-    );
+    let entry = super::initial_registry_entry(super::InitialRegistryEntrySpec {
+        agent_uuid: crate::domain::ids::AgentUuid::new("00000000-0000-4000-8000-000000000101"),
+        display_name: "ready".to_string(),
+        socket_path: PathBuf::from("/tmp/ready.sock"),
+        pid: 42,
+        parent_id: Some("parent".into()),
+        config: &sample_config(None),
+        exit_signal_tx: None,
+    });
     assert_eq!(entry.status, SubagentStatus::Idle);
     assert_eq!(entry.parent_id.as_deref(), Some("parent"));
     assert_eq!(entry.pid, 42);
@@ -308,13 +330,15 @@ fn initial_entry_taskless_is_idle() {
 
 #[test]
 fn initial_entry_with_task_stays_starting() {
-    let entry = super::initial_registry_entry(
-        PathBuf::from("/tmp/ready.sock"),
-        7,
-        None,
-        &sample_config(Some("do work")),
-        None,
-    );
+    let entry = super::initial_registry_entry(super::InitialRegistryEntrySpec {
+        agent_uuid: crate::domain::ids::AgentUuid::new("00000000-0000-4000-8000-000000000102"),
+        display_name: "ready".to_string(),
+        socket_path: PathBuf::from("/tmp/ready.sock"),
+        pid: 7,
+        parent_id: None,
+        config: &sample_config(Some("do work")),
+        exit_signal_tx: None,
+    });
     assert_eq!(
         entry.status,
         SubagentStatus::Starting,
@@ -328,13 +352,15 @@ fn initial_entry_taskless_broadcasts_idle_via_register() {
     // snapshot (same event production emits after socket readiness).
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
-    let entry = super::initial_registry_entry(
-        PathBuf::from("/tmp/ready.sock"),
-        1,
-        None,
-        &sample_config(None),
-        None,
-    );
+    let entry = super::initial_registry_entry(super::InitialRegistryEntrySpec {
+        agent_uuid: crate::domain::ids::AgentUuid::new("00000000-0000-4000-8000-000000000103"),
+        display_name: "ready".to_string(),
+        socket_path: PathBuf::from("/tmp/ready.sock"),
+        pid: 1,
+        parent_id: None,
+        config: &sample_config(None),
+        exit_signal_tx: None,
+    });
     super::register_and_broadcast(&registry, Some(&tx), "idle-worker", entry);
     let line = rx
         .try_recv()
@@ -358,7 +384,8 @@ async fn taskless_stub_spawn_registers_as_idle() {
         .expect("stub spawn must succeed");
     let registry = tool.registry.lock().unwrap();
     let entry = registry
-        .get("idle-worker")
+        .values()
+        .find(|entry| entry.display_name == "idle-worker")
         .expect("task-less child must be registered");
     assert_eq!(
         entry.status,
@@ -377,7 +404,8 @@ async fn with_task_stub_spawn_stays_starting() {
     {
         let registry = tool.registry.lock().unwrap();
         let entry = registry
-            .get("busy-worker")
+            .values()
+            .find(|entry| entry.display_name == "busy-worker")
             .expect("with-task child must be registered");
         assert_eq!(
             entry.status,
@@ -394,5 +422,109 @@ async fn with_task_stub_spawn_stays_starting() {
     assert_eq!(
         v["subagents"][0]["status"], "starting",
         "#1049: with-task broadcast must carry starting, not idle"
+    );
+}
+
+// ─── #1378: sockets / child session keys use AgentUuid, not display label ───
+
+#[tokio::test]
+async fn stub_spawn_keys_socket_by_uuid_not_display_label() {
+    // Surviving adversarial finding on PR #1386: socket paths still used the
+    // display label (`quecto-agent-reviewer.sock`), so respawning the same label
+    // could collide with a stale socket or resume `cli:reviewer`.
+    let tool = SpawnTool::new(vec![], true);
+    tool.execute(r#"{"agent_id":"reviewer"}"#)
+        .await
+        .expect("stub spawn must succeed");
+
+    let registry = tool.registry.lock().unwrap();
+    let (key, entry) = registry
+        .iter()
+        .find(|(_, entry)| entry.display_name == "reviewer")
+        .expect("reviewer must be registered");
+
+    assert_eq!(
+        key.as_str(),
+        entry.agent_uuid.as_str(),
+        "registry must be keyed by AgentUuid"
+    );
+    let sock = entry.socket_path.to_string_lossy();
+    assert!(
+        sock.contains(entry.agent_uuid.as_str()),
+        "socket path must include AgentUuid, got {sock}"
+    );
+    assert!(
+        !sock.contains("reviewer"),
+        "socket path must not use the display label, got {sock}"
+    );
+    assert!(
+        sock.ends_with(&format!("quecto-agent-{}.sock", entry.agent_uuid.as_str()))
+            || sock.ends_with(&format!("/quecto-agent-{}.sock", entry.agent_uuid.as_str())),
+        "expected quecto-agent-<uuid>.sock, got {sock}"
+    );
+}
+
+#[tokio::test]
+async fn stub_respawn_same_display_label_mints_fresh_uuid_and_socket() {
+    let tool = SpawnTool::new(vec![], true);
+    tool.execute(r#"{"agent_id":"reviewer"}"#)
+        .await
+        .expect("first spawn must succeed");
+    {
+        let mut registry = tool.registry.lock().unwrap();
+        for entry in registry.values_mut() {
+            if entry.display_name == "reviewer" {
+                entry.status = SubagentStatus::Exited;
+            }
+        }
+    }
+    tool.execute(r#"{"agent_id":"reviewer"}"#)
+        .await
+        .expect("respawn after exit must succeed");
+
+    let registry = tool.registry.lock().unwrap();
+    let reviewers: Vec<_> = registry
+        .values()
+        .filter(|entry| entry.display_name == "reviewer")
+        .collect();
+    assert_eq!(reviewers.len(), 2, "both generations remain registered");
+    assert_ne!(
+        reviewers[0].agent_uuid, reviewers[1].agent_uuid,
+        "each spawn must mint a fresh AgentUuid"
+    );
+    assert_ne!(
+        reviewers[0].socket_path, reviewers[1].socket_path,
+        "each spawn must get a distinct UUID-keyed socket path"
+    );
+    for entry in reviewers {
+        let sock = entry.socket_path.to_string_lossy();
+        assert!(
+            sock.contains(entry.agent_uuid.as_str()),
+            "socket must track its own UUID, got {sock}"
+        );
+        assert!(
+            !sock.contains("reviewer"),
+            "socket must not use display label"
+        );
+    }
+}
+
+#[test]
+fn child_runtime_paths_are_uuid_keyed() {
+    use crate::domain::ids::AgentUuid;
+    let uuid = AgentUuid::new("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+    let dir = PathBuf::from("/run/user/1000");
+    let socket = super::child_socket_path(&dir, &uuid);
+    assert_eq!(
+        socket,
+        PathBuf::from("/run/user/1000/quecto-agent-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.sock")
+    );
+    assert_eq!(
+        super::child_session_key(&uuid),
+        "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    );
+    assert_eq!(
+        super::child_sidecar_filename("quecto-wfspec", &uuid, 4242),
+        "quecto-wfspec-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee-4242.json"
     );
 }

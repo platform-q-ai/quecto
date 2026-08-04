@@ -120,9 +120,7 @@ redundant work:
 - use `follow_up` to queue related work after its current run;
 - use `steer` to interrupt and redirect active work;
 - spawn a new child for a new independent scope;
-- after a child has exited, deliberately reusing the same `agent_id` resumes
-  its persisted session, while a different `agent_id` creates a separate
-  context.
+- after a child has exited, deliberately reusing the same `agent_id` display label starts a fresh child session under a new hidden identity; use `get_messages` before cleanup if you need the previous result.
 
 Do not reuse stale child context merely to avoid a new session; use it only
 when its prior context is relevant and safe for the new assignment.
@@ -186,7 +184,7 @@ process in UDS mode (`--mode uds --persist`). The child process:
 - Uses the same quecto binary (`std::env::current_exe()`)
 - Inherits the parent's `QUECTO_BASE_DIR` (config, credentials, sessions)
 - Inherits the parent's sandbox posture (`--no-sandbox`)
-- Gets its own session (default name: `subagent`, or a custom `agent_id`)
+- Gets its own hidden session identity minted per spawn; `agent_id` remains the display label used by parent tools for live subagents
 - Listens on a Unix domain socket for commands
 - Runs in the background — the parent is **not blocked**
 
@@ -207,7 +205,7 @@ connects to the child's UDS socket directly from Rust.
     },
     "agent_id": {
       "type": "string",
-      "description": "Session name for the subagent (used to address it via agent_cmd)"
+      "description": "Display label for the subagent (used to address live subagents via agent_cmd)"
     },
     "system": {
       "type": "string",
@@ -246,7 +244,7 @@ connects to the child's UDS socket directly from Rust.
 ```
 
 - **`task` is optional.** Omitting it creates an idle agent ready for prompts via `agent_cmd`.
-- **`agent_id`** must be unique. Spawning with an already-running ID returns an error.
+- **`agent_id`** is a display label and must be unique among live subagents. Spawning with an already-live label returns an error; reusing it after exit starts a fresh hidden identity.
 - Returns immediately (< 1 second) after the child's socket is ready.
 - **`workflow_spec` vs `workflow`.** `workflow: true` makes the workflow tool available so the *child* picks a template; `workflow_spec` hands the child a specific template **by value** and binds it. They are independent of `config`, which supplies the child's runtime (providers/model/default template library).
 - **`model` (optional).** Sets the child's model at launch — accepts either a full `provider/model` string (e.g. `openai/gpt-5.5`) or a `provider` + `model_id` pair, the same format(s) as `agent_cmd set_model` (and validated by the same logic). It is forwarded to the child as `--model`, so the child's **first turn** (if `task` is given) already runs on the chosen model — no follow-up `set_model` round-trip needed. **Precedence:** an explicit `model` arg wins over any model from a forwarded `--config`, which wins over the built-in default. An invalid combination (e.g. `provider` without `model_id`) is a clear spawn error rather than a silent fall-back to the default.
@@ -378,7 +376,7 @@ output (see [Notification model](#notification-model)).
   "properties": {
     "agent_id": {
       "type": "string",
-      "description": "ID of the spawned subagent"
+      "description": "Display label of a live spawned subagent"
     },
     "command": {
       "type": "string",
@@ -659,10 +657,10 @@ doc (`docs {"name":"uds-protocol"}`) for the wire shape.
 
 Each subagent gets its own session, persisted under `<base_dir>/sessions/`.
 
-- **Default session**: `subagent` (if no `agent_id` is provided)
-- **Custom session**: The `agent_id` value is used as the session name
-- Sessions persist across spawns — a subsequent spawn with the same `agent_id`
-  continues the same conversation (after the previous child has exited)
+- **Default display label**: `subagent` (if no `agent_id` is provided)
+- **Custom display label**: The `agent_id` value is a user-facing label, not durable identity
+- **Hidden session identity**: each spawn mints a fresh hidden UUID used for the child session, registry, socket bookkeeping, and monitor/reaper keys
+- Reusing a display label after the previous child exits starts a clean session under a new hidden identity
 
 ### Session name validation
 
@@ -706,7 +704,7 @@ that need to restrict which subagents can be spawned.
 1. `spawn` launches the child with `quecto agent --mode uds --socket <path> --persist`
 2. Polls for socket readiness (100ms intervals, 10s timeout)
 3. If the socket does not become ready, the child is killed and an error is returned
-4. Registers the child in the shared `SubagentRegistry` (agent_id → socket path + PID)
+4. Registers the child in the shared `SubagentRegistry` by hidden UUID while retaining `agent_id` as the display label
 5. If `task` was provided, sends it as the initial `prompt` via UDS (fire-and-forget)
 
 ### Running
@@ -727,10 +725,10 @@ that need to restrict which subagents can be spawned.
 
 ### Duplicate prevention
 
-Spawning with an `agent_id` that is already in the registry returns an error:
+Spawning with a display label that is already live returns an error:
 
 ```
-Failed to spawn subagent: agent 'worker-1' is already running
+Failed to spawn subagent: duplicate live subagent display label 'worker-1'
 ```
 
 Wait for the existing agent to finish (check with `agent_cmd get_state`) or
@@ -783,10 +781,10 @@ Parent Agent Process
   │
   ├── SpawnTool::execute()
   │     ├── Validates agent_id format + allowlist
-  │     ├── Rejects if agent_id already running
+  │     ├── Rejects if the display label is already live
   │     ├── Launches: quecto agent --mode uds --socket <path> --persist
   │     ├── Polls for socket readiness (up to 10s)
-  │     ├── Registers in SubagentRegistry (agent_id → socket_path + PID)
+  │     ├── Registers in SubagentRegistry (hidden UUID → socket_path + PID + display label)
   │     ├── Sends initial task as UDS prompt (if provided)
   │     ├── Spawns background reaper task
   │     └── Returns immediately: "Subagent 'reviewer' is running."
@@ -795,13 +793,13 @@ Parent Agent Process
   │
   ├── AgentCmdTool::execute()
   │     ├── Validates agent_id format
-  │     ├── Looks up socket path in SubagentRegistry
+  │     ├── Resolves the live display label to a hidden UUID registry entry
   │     ├── Connects to UDS socket
   │     ├── Sends JSON command, reads response (300s timeout)
   │     └── Returns structured response to LLM
   │
   └── Child Agent Process (reviewer)
-        ├── Listening on /run/user/1000/quecto-agent-reviewer.sock
+        ├── Listening on /run/user/1000/quecto-agent-<agent-uuid>.sock
         ├── Loads config from QUECTO_BASE_DIR/config.json
         ├── Has its own LLM context (no shared state with parent)
         ├── Processes prompts via UDS protocol
@@ -818,8 +816,9 @@ Parent Agent Process
    environments where external tools may not be available.
 
 3. **Shared registry**: `SubagentRegistry` (`Arc<Mutex<HashMap>>`) maps
-   agent_id to socket path + PID. Shared between `spawn` and `agent_cmd`
-   via `Arc`. Entries are auto-removed when children exit.
+   hidden UUID to socket path + PID + display label. Shared between `spawn` and
+   `agent_cmd` via `Arc`; `agent_cmd` resolves live display labels through the
+   registry before connecting. Entries are auto-removed when children exit.
 
 4. **Process isolation**: Each subagent is a separate OS process. There is no
    shared memory, no shared LLM context, and no shared tool state.

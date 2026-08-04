@@ -193,7 +193,14 @@ fn w5_monitor_poisoned_registry_and_notification_edges() {
 #[test]
 fn w5_notify_from_parsed_error_defaults_and_channel_full_drop() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-    notify_from_parsed(Some(&tx), "bot", 1, &serde_json::json!({}), None);
+    notify_from_parsed(
+        Some(&tx),
+        "bot",
+        1,
+        &serde_json::json!({}),
+        None,
+        crate::domain::ids::AgentUuid::new("bot"),
+    );
     assert!(rx.try_recv().is_err());
 
     notify_from_parsed(
@@ -202,6 +209,7 @@ fn w5_notify_from_parsed_error_defaults_and_channel_full_drop() {
         2,
         &serde_json::json!({"type":"response","command":"agent_error"}),
         None,
+        crate::domain::ids::AgentUuid::new("bot"),
     );
     assert!(rx.try_recv().unwrap().to_message().contains("agent error"));
 
@@ -218,6 +226,7 @@ fn w5_notify_from_parsed_error_defaults_and_channel_full_drop() {
         4,
         &serde_json::json!({"type":"tool_execution_end","isError":true}),
         None,
+        crate::domain::ids::AgentUuid::new("bot"),
     );
     assert_eq!(rx.try_recv().unwrap().sequence, 3);
     assert!(rx.try_recv().is_err());

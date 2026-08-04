@@ -19,7 +19,6 @@ fn given_empty_registry(world: &mut QuectoWorld) {
 }
 
 #[given(expr = "a registry with subagent {string} status {string} last_tool {string} pid {int}")]
-#[allow(clippy::too_many_arguments)]
 fn given_registry_with_subagent(
     world: &mut QuectoWorld,
     agent_id: String,
@@ -33,7 +32,6 @@ fn given_registry_with_subagent(
 #[given(
     expr = "a registry with read-only subagent {string} status {string} last_tool {string} pid {int}"
 )]
-#[allow(clippy::too_many_arguments)]
 fn given_registry_with_readonly_subagent(
     world: &mut QuectoWorld,
     agent_id: String,
@@ -52,6 +50,23 @@ fn given_registered_observer(world: &mut QuectoWorld, agent_id: String) {
 #[given(expr = "a read-write sub-agent {string} is registered")]
 fn given_registered_readwrite(world: &mut QuectoWorld, agent_id: String) {
     insert_registry_subagent(world, agent_id, "idle".into(), "".into(), 5678, false);
+}
+
+#[given(expr = "a registry subagent with display name {string} and hidden identity {string}")]
+fn given_registry_subagent_with_dual_identity(
+    world: &mut QuectoWorld,
+    display_name: String,
+    hidden_identity: String,
+) {
+    insert_registry_subagent_with_key(
+        world,
+        hidden_identity,
+        display_name,
+        "idle".into(),
+        "".into(),
+        1234,
+        false,
+    );
 }
 
 fn insert_registry_subagent(
@@ -80,7 +95,57 @@ fn insert_registry_subagent(
     if !last_tool.is_empty() {
         entry.last_tool = Some(last_tool);
     }
-    guard.insert(agent_id, entry);
+    let display_name = agent_id.clone();
+    insert_registry_subagent_with_key_parts(&mut guard, agent_id, display_name, entry);
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "BDD registry helper mirrors scenario data"
+)]
+fn insert_registry_subagent_with_key(
+    world: &mut QuectoWorld,
+    key: String,
+    display_name: String,
+    status: String,
+    last_tool: String,
+    pid: i32,
+    read_only: bool,
+) {
+    if world.subagent_protocol_registry.is_none() {
+        world.subagent_protocol_registry = Some(new_registry());
+    }
+    let reg = world.subagent_protocol_registry.as_ref().unwrap();
+    let mut guard = reg.lock().unwrap();
+    let mut entry = SubagentEntry::with_identity(
+        quecto::domain::ids::AgentUuid::new(key.clone()),
+        display_name.clone(),
+        "/tmp/test.sock".into(),
+        pid as u32,
+    );
+    entry.status = match status.as_str() {
+        "starting" => SubagentStatus::Starting,
+        "idle" => SubagentStatus::Idle,
+        "running" => SubagentStatus::Running,
+        "error" => SubagentStatus::Error,
+        "exited" => SubagentStatus::Exited,
+        _ => panic!("unknown status: {status}"),
+    };
+    entry.read_only = read_only;
+    if !last_tool.is_empty() {
+        entry.last_tool = Some(last_tool);
+    }
+    insert_registry_subagent_with_key_parts(&mut guard, key, display_name, entry);
+}
+
+fn insert_registry_subagent_with_key_parts(
+    guard: &mut std::collections::HashMap<String, SubagentEntry>,
+    key: String,
+    display_name: String,
+    mut entry: SubagentEntry,
+) {
+    entry.display_name = display_name;
+    guard.insert(key, entry);
 }
 
 #[given(expr = "subagent {string} has last_error {string}")]
@@ -242,7 +307,6 @@ fn then_subagent_info_list_has_mixed_observer_states(world: &mut QuectoWorld) {
 // ─── SubagentInfo serialization steps ─────────────────────────────────────────
 
 #[given(expr = "a SubagentInfo with agentId {string} status {string} lastTool {string} pid {int}")]
-#[allow(clippy::too_many_arguments)]
 fn given_subagent_info(
     world: &mut QuectoWorld,
     agent_id: String,
@@ -251,6 +315,8 @@ fn given_subagent_info(
     pid: i32,
 ) {
     world.subagent_info_single = Some(SubagentInfo {
+        agent_uuid: None,
+        display_name: None,
         agent_id,
         status,
         last_tool: if last_tool.is_empty() {
@@ -349,6 +415,8 @@ fn then_command_id_absent(world: &mut QuectoWorld) {
 fn given_state_changed_event(world: &mut QuectoWorld, count: usize) {
     let subagents: Vec<SubagentInfo> = (0..count)
         .map(|i| SubagentInfo {
+            agent_uuid: None,
+            display_name: None,
             agent_id: format!("agent-{i}"),
             status: "idle".to_string(),
             last_tool: None,
@@ -372,6 +440,8 @@ fn given_state_changed_one(
 ) {
     world.protocol_event = Some(AgentEvent::SubagentStateChanged {
         subagents: vec![SubagentInfo {
+            agent_uuid: None,
+            display_name: None,
             agent_id,
             status,
             last_tool: None,
@@ -396,6 +466,8 @@ fn given_state_changed_observer_and_readwrite(
     world.protocol_event = Some(AgentEvent::SubagentStateChanged {
         subagents: vec![
             SubagentInfo {
+                agent_uuid: None,
+                display_name: None,
                 agent_id: observer,
                 status: "running".to_string(),
                 last_tool: None,
@@ -407,6 +479,8 @@ fn given_state_changed_observer_and_readwrite(
                 read_only: true,
             },
             SubagentInfo {
+                agent_uuid: None,
+                display_name: None,
                 agent_id: readwrite,
                 status: "idle".to_string(),
                 last_tool: None,

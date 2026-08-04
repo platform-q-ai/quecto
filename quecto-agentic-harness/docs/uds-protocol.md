@@ -634,7 +634,7 @@ Return the current list of spawned subagents and their live status (#524).
 | `type` | `"get_subagents"` | yes | |
 | `id` | string | no | Correlation ID |
 
-**Response data:** an array of subagent snapshots. Each entry includes `agentId`, `status` (`starting` / `idle` / `running` / `error` / `exited`), optional `lastTool` / `lastError`, `pid`, optional `socketPath`, optional `parentId`, optional `workflow`, and `readOnly` (observer spawn with write/edit disabled). `status:error` and `lastError` are terminal/run-level failure signals (for example `agent_error`), not recoverable child tool `isError` results.
+**Response data:** an array of subagent snapshots. Each entry includes compatibility `agentId` (the user-facing display label), additive `agentUuid` (hidden durable identity for this spawn), additive `displayName` (explicit display-label alias), `status` (`starting` / `idle` / `running` / `error` / `exited`), optional `lastTool` / `lastError`, `pid`, optional `socketPath`, optional `parentId`, optional `workflow`, and `readOnly` (observer spawn with write/edit disabled). Parent tools continue to accept display labels for live subagents; clients should key durable UI/API state by `agentUuid` when present and render `displayName` / `agentId`. `status:error` and `lastError` are terminal/run-level failure signals (for example `agent_error`), not recoverable child tool `isError` results.
 
 **Example:**
 
@@ -964,7 +964,7 @@ Passive child-agent notification for human/UI visibility (completion, error, exi
 Broadcast replacement snapshot of all spawned subagent statuses (clients do a simple replace). Entries match the `get_subagents` shape, including `readOnly`.
 
 ```json
-{"type":"subagent_state_changed","subagents":[{"agentId":"reviewer","status":"idle","pid":1234,"readOnly":true}]}
+{"type":"subagent_state_changed","subagents":[{"agentId":"reviewer","agentUuid":"f47ac10b-58cc-4372-a567-0e02b2c3d479","displayName":"reviewer","status":"idle","pid":1234,"readOnly":true}]}
 ```
 
 ### `subagent_messages_appended`

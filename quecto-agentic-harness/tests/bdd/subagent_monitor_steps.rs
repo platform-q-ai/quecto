@@ -281,7 +281,9 @@ fn then_registry_entry_status(world: &mut QuectoWorld, agent_id: String, expecte
     let registry = tool.registry();
     let entries = registry.lock().unwrap();
     let entry = entries
-        .get(&agent_id)
+        .iter()
+        .find(|(key, entry)| key.as_str() == agent_id || entry.display_name == agent_id)
+        .map(|(_, entry)| entry)
         .unwrap_or_else(|| panic!("agent '{}' not found in registry", agent_id));
     let actual = format!("{}", entry.status);
     assert_eq!(
@@ -305,7 +307,10 @@ fn then_monitor_cancelled(world: &mut QuectoWorld) {
 #[given(
     expr = "a root registry with parent {string}, child {string} under {string}, and grandchild {string} under {string}, plus a live agent {string}"
 )]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "cucumber step mirrors feature parameters"
+)]
 fn given_root_registry_tree(
     world: &mut QuectoWorld,
     parent: String,

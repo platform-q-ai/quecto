@@ -19,7 +19,7 @@ You already have `spawn` and `agent_cmd` tool schemas — use those for paramete
 
 ## Reuse
 
-- Live idle child → `prompt`. Active → `steer` or `follow_up`. Same `agent_id` after exit resumes the session; new id = new context.
+- Live idle child → `prompt`. Active → `steer` or `follow_up`. `agent_id` is only a display label: the same label after exit starts a fresh hidden UUID / clean session, not a resume.
 
 ## See also
 

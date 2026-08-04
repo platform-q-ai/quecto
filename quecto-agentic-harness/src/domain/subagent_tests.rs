@@ -1,5 +1,13 @@
 use super::*;
 
+fn resolution_entry(display_name: &str, uuid: &str, live: bool) -> DisplayNameResolutionEntry {
+    DisplayNameResolutionEntry {
+        agent_uuid: AgentUuid::new(uuid),
+        display_name: display_name.to_string(),
+        live,
+    }
+}
+
 #[test]
 fn test_validate_agent_id_allowed() {
     let allowlist = vec!["news-bot".to_string(), "weather-bot".to_string()];
@@ -118,4 +126,68 @@ fn test_parse_model_arg_full_takes_precedence_over_pair() {
         .unwrap()
         .unwrap();
     assert_eq!(arg, ModelArg::Full("a/b".to_string()));
+}
+
+#[test]
+fn resolve_live_display_name_returns_unique_live_match() {
+    let entries = vec![
+        resolution_entry("worker", "00000000-0000-4000-8000-000000000001", false),
+        resolution_entry("worker", "00000000-0000-4000-8000-000000000002", true),
+    ];
+
+    let uuid = resolve_live_display_name(&entries, "worker").unwrap();
+
+    assert_eq!(uuid.as_str(), "00000000-0000-4000-8000-000000000002");
+}
+
+#[test]
+fn resolve_live_display_name_errors_when_only_exited_match_exists() {
+    let entries = vec![resolution_entry(
+        "worker",
+        "00000000-0000-4000-8000-000000000001",
+        false,
+    )];
+
+    assert!(matches!(
+        resolve_live_display_name(&entries, "worker"),
+        Err(DisplayNameResolveError::NoLiveMatch { .. })
+    ));
+}
+
+#[test]
+fn resolve_live_display_name_errors_on_ambiguous_live_matches() {
+    let entries = vec![
+        resolution_entry("worker", "00000000-0000-4000-8000-000000000001", true),
+        resolution_entry("worker", "00000000-0000-4000-8000-000000000002", true),
+    ];
+
+    assert!(matches!(
+        resolve_live_display_name(&entries, "worker"),
+        Err(DisplayNameResolveError::AmbiguousLiveMatch { .. })
+    ));
+}
+
+#[test]
+fn spawn_display_name_policy_allows_reuse_after_exit() {
+    let exited = vec![resolution_entry(
+        "worker",
+        "00000000-0000-4000-8000-000000000001",
+        false,
+    )];
+
+    assert!(assert_display_name_available_for_spawn(&exited, "worker").is_ok());
+}
+
+#[test]
+fn spawn_display_name_policy_rejects_live_duplicate() {
+    let live = vec![resolution_entry(
+        "worker",
+        "00000000-0000-4000-8000-000000000002",
+        true,
+    )];
+
+    assert!(matches!(
+        assert_display_name_available_for_spawn(&live, "worker"),
+        Err(DisplayNameResolveError::AmbiguousLiveMatch { display_name }) if display_name == "worker"
+    ));
 }

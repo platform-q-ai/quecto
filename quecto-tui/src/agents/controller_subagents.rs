@@ -50,6 +50,62 @@ impl App {
         self.notify("Deleting all subagents", NotifyLevel::Info);
     }
 
+    /// Move every agent-keyed collection from `from` → `to` together (#1378).
+    /// Keeps dual-identity gaps from orphaning sessions/feeds when an optimistic
+    /// display row collapses onto a durable UUID. No-op when keys match.
+    ///
+    /// When `to` already holds a value, that destination wins and the `from`
+    /// value is dropped (feeds abort) so we never create dual rows.
+    pub(super) fn rekey_agent_collections(&mut self, from: &str, to: &str) {
+        if from == to || from.is_empty() || to.is_empty() {
+            return;
+        }
+
+        if let Some(session) = self.subagents.sessions.remove(from) {
+            self.subagents
+                .sessions
+                .entry(to.to_string())
+                .or_insert(session);
+        }
+
+        if let Some(feed) = self.subagents.feeds.remove(from) {
+            if self.subagents.feeds.contains_key(to) {
+                feed.handle.abort();
+            } else {
+                self.subagents.feeds.insert(to.to_string(), feed);
+            }
+        }
+
+        let mut saw_to = false;
+        self.subagents.session_order.retain_mut(|id| {
+            if id == from {
+                if saw_to {
+                    return false;
+                }
+                *id = to.to_string();
+                saw_to = true;
+                true
+            } else if id == to {
+                if saw_to {
+                    return false;
+                }
+                saw_to = true;
+                true
+            } else {
+                true
+            }
+        });
+
+        if self.subagents.active_agent_id.as_deref() == Some(from) {
+            self.subagents.active_agent_id = Some(to.to_string());
+        }
+        if self.subagents.awaited_agent_id.as_deref() == Some(from) {
+            self.subagents.awaited_agent_id = Some(to.to_string());
+        }
+
+        self.sync_panel_selection_to_active();
+    }
+
     /// Update a session's OWN footer (context-window / cost / model) from a
     /// forwarded sub-agent event, mirroring the master footer path (#805):
     /// `get_state` carries the model and window, `turn_end` the live context
@@ -104,7 +160,41 @@ impl App {
             if !usable_socket_path(s.socket_path.as_deref()) {
                 s.socket_path = None;
             }
-            candidates.insert(sanitize_agent_id(&s.agent_id), s);
+            let identity = s.agent_uuid.as_deref().unwrap_or(&s.agent_id);
+            candidates.insert(sanitize_agent_id(identity), s);
+        }
+
+        // #1378: if an optimistic spawn row is still keyed by display label
+        // while the authoritative snapshot arrives under UUID, migrate the
+        // optimistic entry onto the UUID key before merge so we never keep
+        // dual rows for the optimistic grace window. Move sessions/feeds/
+        // session_order/active with the tracked key.
+        let mut pending_rekeys = Vec::new();
+        for (uuid_key, info) in &candidates {
+            let display = info
+                .display_name
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or(info.agent_id.as_str());
+            let display_key = sanitize_agent_id(display);
+            if display_key == *uuid_key {
+                continue;
+            }
+            if let Some(entry) = self.subagents.tracked.get(&display_key) {
+                if entry.optimistic && !self.subagents.tracked.contains_key(uuid_key) {
+                    if let Some(mut migrated) = self.subagents.tracked.remove(&display_key) {
+                        migrated.info.agent_uuid = Some(uuid_key.clone());
+                        if migrated.info.display_name.is_none() {
+                            migrated.info.display_name = Some(display_key.clone());
+                        }
+                        self.subagents.tracked.insert(uuid_key.clone(), migrated);
+                        pending_rekeys.push((display_key, uuid_key.clone()));
+                    }
+                }
+            }
+        }
+        for (from, to) in pending_rekeys {
+            self.rekey_agent_collections(&from, &to);
         }
 
         crate::agents::roster::apply_roster_snapshot(

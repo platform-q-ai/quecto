@@ -300,6 +300,8 @@ impl App {
             return;
         }
         let mut tracked = TrackedSubagent::new(crate::protocol::client::SubagentInfoEvent {
+            agent_uuid: None,
+            display_name: None,
             agent_id: sanitized.clone(),
             status: "starting".to_string(),
             last_tool: None,
@@ -352,8 +354,46 @@ impl App {
         };
         let agent_id = &result_text[start + 1..start + 1 + end];
         let sanitized = crate::components::ansi::sanitize_control(agent_id);
+        // Prefer durable UUID identity when the spawn result includes it so the
+        // optimistic row reconciles with UUID-keyed snapshots (#1378).
+        let uuid = result_text
+            .find("uuid=")
+            .map(|i| &result_text[i + 5..])
+            .and_then(|rest| {
+                let end = rest
+                    .find(|c: char| c == ',' || c == ')' || c.is_whitespace())
+                    .unwrap_or(rest.len());
+                let candidate = rest[..end].trim();
+                (!candidate.is_empty()).then(|| candidate.to_string())
+            })
+            .map(|u| crate::components::ansi::sanitize_control(&u));
+        if let Some(uuid_key) = uuid {
+            if let Some(mut entry) = self.subagents.tracked.remove(&sanitized) {
+                entry.info.status = "running".to_string();
+                entry.info.agent_uuid = Some(uuid_key.clone());
+                if entry.info.display_name.is_none() {
+                    entry.info.display_name = Some(sanitized.clone());
+                }
+                self.subagents.tracked.insert(uuid_key.clone(), entry);
+                // Rekey sessions/feeds/session_order/active with tracked (#1378).
+                self.rekey_agent_collections(&sanitized, &uuid_key);
+                return;
+            }
+            // Already keyed by UUID (or no optimistic row) — just flip status.
+            if let Some(entry) = self.subagents.tracked.get_mut(&uuid_key) {
+                entry.info.status = "running".to_string();
+                entry.info.agent_uuid = Some(uuid_key);
+                if entry.info.display_name.is_none() {
+                    entry.info.display_name = Some(sanitized);
+                }
+            }
+            return;
+        }
         if let Some(entry) = self.subagents.tracked.get_mut(&sanitized) {
             entry.info.status = "running".to_string();
+            if entry.info.display_name.is_none() {
+                entry.info.display_name = Some(sanitized);
+            }
         }
     }
 
@@ -495,6 +535,9 @@ pub(super) fn uuid_like() -> String {
     format!("{nanos:x}-{seq:x}")
 }
 
+#[cfg(test)]
+#[path = "app_events_spawn_tests.rs"]
+mod spawn_tests;
 #[cfg(test)]
 #[path = "app_events_tests.rs"]
 mod tests;

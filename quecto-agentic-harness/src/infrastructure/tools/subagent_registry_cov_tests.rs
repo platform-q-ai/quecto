@@ -113,6 +113,137 @@ fn missing_lookup_and_dedupe_helpers_are_safe() {
     assert!(registry.lock().unwrap().is_empty());
 }
 
+/// #1378: registry is UUID-keyed; lookups and await-dedupe must resolve live
+/// display labels onto the durable key so notes that show "worker" still work.
+#[test]
+fn lookup_and_await_dedupe_resolve_live_display_name_to_uuid_key() {
+    let registry = new_registry();
+    let uuid = crate::domain::ids::AgentUuid::new("11111111-1111-4111-8111-111111111111");
+    let entry = SubagentEntry::with_identity(
+        uuid.clone(),
+        "worker".into(),
+        std::path::PathBuf::from("/tmp/worker.sock"),
+        7,
+    );
+    registry.lock().unwrap().insert(uuid.to_string(), entry);
+
+    assert_eq!(
+        lookup_subagent_socket(&registry, "worker").unwrap(),
+        std::path::PathBuf::from("/tmp/worker.sock")
+    );
+    assert_eq!(
+        lookup_subagent_socket(&registry, uuid.as_str()).unwrap(),
+        std::path::PathBuf::from("/tmp/worker.sock")
+    );
+
+    // Arm by display label, consume by UUID (and vice versa).
+    mark_completion_consumed_by_await(&registry, "worker");
+    assert!(take_completion_consumed_by_await(&registry, uuid.as_str()));
+    mark_completion_consumed_by_await(&registry, uuid.as_str());
+    assert!(take_completion_consumed_by_await(&registry, "worker"));
+}
+
+/// #1378 adversarial re-review: monitor marks exited THEN emits a note whose
+/// `agent_id` is the display label. Await-dedupe must still resolve that label
+/// onto the retained UUID entry so the passive exit note is suppressed.
+#[test]
+fn await_dedupe_resolves_display_label_for_retained_exited_entry() {
+    let registry = new_registry();
+    let uuid = crate::domain::ids::AgentUuid::new("22222222-2222-4222-8222-222222222222");
+    let mut entry = SubagentEntry::with_identity(
+        uuid.clone(),
+        "worker".into(),
+        std::path::PathBuf::from("/tmp/worker-exited.sock"),
+        9,
+    );
+    // Mirror notify_child_exited order: mark_exited first, then note uses label.
+    entry.status = SubagentStatus::Exited;
+    entry.completion_consumed_by_await = true;
+    registry.lock().unwrap().insert(uuid.to_string(), entry);
+
+    // Dead agents stay non-targetable for NEW command socket lookup even while
+    // the retained exited entry still carries the display label.
+    let err = lookup_subagent_socket(&registry, "worker").unwrap_err();
+    assert!(
+        err.contains("no live subagent") || err.contains("not found"),
+        "exited display label must not open a command socket: {err}"
+    );
+
+    assert!(
+        take_completion_consumed_by_await(&registry, "worker"),
+        "exited-note display label must resolve for await-dedupe coalescing"
+    );
+    assert!(
+        !take_completion_consumed_by_await(&registry, "worker"),
+        "flag must be single-shot even after exited display resolve"
+    );
+}
+
+/// #1378 review: after kill/cascade_remove and same-label respawn, a late
+/// display-label exit note from the removed generation must not resolve to the
+/// new live generation. Await-dedupe routing prefers the entry carrying the
+/// pending dedupe flag, so suppression consumes gen-N and leaves gen-N+1 intact.
+#[test]
+fn await_dedupe_prefers_pending_flag_over_new_live_same_label() {
+    let registry = new_registry();
+    let old_uuid = crate::domain::ids::AgentUuid::new("33333333-3333-4333-8333-333333333333");
+    let new_uuid = crate::domain::ids::AgentUuid::new("44444444-4444-4444-8444-444444444444");
+    let mut old_entry = SubagentEntry::with_identity(
+        old_uuid.clone(),
+        "worker".into(),
+        std::path::PathBuf::from("/tmp/old-worker.sock"),
+        10,
+    );
+    old_entry.status = SubagentStatus::Exited;
+    old_entry.completion_consumed_by_await = true;
+    let new_entry = SubagentEntry::with_identity(
+        new_uuid.clone(),
+        "worker".into(),
+        std::path::PathBuf::from("/tmp/new-worker.sock"),
+        11,
+    );
+    registry
+        .lock()
+        .unwrap()
+        .insert(old_uuid.to_string(), old_entry);
+    registry
+        .lock()
+        .unwrap()
+        .insert(new_uuid.to_string(), new_entry);
+
+    assert!(
+        take_completion_consumed_by_await(&registry, "worker"),
+        "late display-label note should suppress against pending old generation"
+    );
+    let entries = registry.lock().unwrap();
+    assert!(
+        !entries[old_uuid.as_str()].completion_consumed_by_await,
+        "old generation flag must be consumed"
+    );
+    assert!(
+        !entries[new_uuid.as_str()].completion_consumed_by_await,
+        "new live generation must not be mistaken for the late note"
+    );
+}
+
+/// #1378: user-facing completion notes carry the display label so parents can
+/// copy the token into agent_cmd without knowing the UUID.
+#[test]
+fn completion_note_embeds_display_label_not_uuid() {
+    let note = SubagentNotification::Completed {
+        agent_id: "worker".into(),
+    };
+    let msg = note.to_message();
+    assert!(
+        msg.contains("worker"),
+        "note must name the display label: {msg}"
+    );
+    assert!(
+        !msg.contains("11111111"),
+        "note must not leak a UUID when a display label is available: {msg}"
+    );
+}
+
 #[test]
 fn registry_lock_poison_recovery_helpers_still_work() {
     let registry = new_registry();
@@ -220,4 +351,61 @@ async fn send_subagent_command_non_object_accepts_first_response() {
     .unwrap();
     assert!(response.contains(r#""ok":true"#), "{response}");
     server.await.unwrap();
+}
+
+/// #1378 adversarial re-review: if await consumes generation A, kill/cascade_remove
+/// deletes A, and a same-label generation B is spawned before A's queued note
+/// drains, the stamped UUID makes the late A note suppress/fail closed instead
+/// of resolving the display label onto B.
+#[test]
+fn await_dedupe_stamped_removed_generation_does_not_resolve_to_respawn() {
+    let registry = new_registry();
+    let old_uuid = crate::domain::ids::AgentUuid::new("55555555-5555-4555-8555-555555555555");
+    let new_uuid = crate::domain::ids::AgentUuid::new("66666666-6666-4666-8666-666666666666");
+
+    let mut old_entry = SubagentEntry::with_identity(
+        old_uuid.clone(),
+        "worker".into(),
+        std::path::PathBuf::from("/tmp/old-worker-removed.sock"),
+        10,
+    );
+    old_entry.completion_consumed_by_await = true;
+    registry
+        .lock()
+        .unwrap()
+        .insert(old_uuid.to_string(), old_entry);
+
+    // Simulate cascade_remove: generation A is gone before its queued display-label
+    // completion notification drains.
+    assert!(registry.lock().unwrap().remove(old_uuid.as_str()).is_some());
+
+    let new_entry = SubagentEntry::with_identity(
+        new_uuid.clone(),
+        "worker".into(),
+        std::path::PathBuf::from("/tmp/new-worker-respawn.sock"),
+        11,
+    );
+    registry
+        .lock()
+        .unwrap()
+        .insert(new_uuid.to_string(), new_entry);
+
+    let late_old_note = SequencedSubagentNotification::new_for_agent(
+        7,
+        SubagentNotification::Completed {
+            agent_id: "worker".into(),
+        },
+        old_uuid,
+    );
+    assert_eq!(late_old_note.dedupe_key().0, "worker");
+    assert_ne!(late_old_note.await_dedupe_key().0, "worker");
+
+    assert!(
+        !consume_await_dedupe(&Some(registry.clone()), &late_old_note.dedupe_key().0),
+        "pre-fix display-only routing resolves the stale note to the respawn and fails"
+    );
+    assert!(
+        !registry.lock().unwrap()[new_uuid.as_str()].completion_consumed_by_await,
+        "new generation must remain untouched by stale display-label notification"
+    );
 }

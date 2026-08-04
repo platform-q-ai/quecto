@@ -345,6 +345,7 @@ async fn run_dispatch_loop(
             }
             DispatchMsg::Notification(notif) => {
                 let (agent_id, sequence) = notif.dedupe_key();
+                let (dedupe_ref, _) = notif.await_dedupe_key();
                 tracing::info!(%agent_id, sequence, "recording subagent completion note");
                 // Auto-await dedupe: if a manual `await` already reported this
                 // terminal completion (flag set on the registry entry), CONSUME
@@ -357,7 +358,7 @@ async fn run_dispatch_loop(
                 let suppress =
                     crate::infrastructure::tools::subagent_registry::consume_await_dedupe(
                         &ctx.subagent_registry,
-                        &agent_id,
+                        &dedupe_ref,
                     );
                 let mut should_deliver = false;
                 if !suppress {
