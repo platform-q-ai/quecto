@@ -164,3 +164,32 @@ fn inherited_spawn_snapshot_uses_stable_ids_for_uds_tools() {
         "inherited child policy should persist the stable id rather than the transient UDS name"
     );
 }
+
+#[test]
+fn inherited_spawn_snapshot_includes_name_alias_for_legacy_uds_generated_stable_id() {
+    let (mut reg, _tmp) = test_registry();
+    assert!(reg.register_with_metadata(
+        Arc::new(DummyTestTool::new("weather")),
+        ToolRegistration::uds_owner("uds:parent-client"),
+    ));
+
+    reg.apply_tool_policy_mutations(
+        &[ToolPolicyMutation::set_scope(
+            "weather",
+            ProfileAvailabilityScope::Child,
+            "inherit legacy UDS name fallback",
+        )],
+        ToolPolicyApplyMode::ImmediateIfIdle,
+    );
+
+    let spawn = reg.inherited_child_policy_snapshot_tools();
+    assert_eq!(
+        spawn.get("tool.v1:uds:17:uds:parent-client:weather"),
+        Some(&ProfileAvailabilityScope::Child)
+    );
+    assert_eq!(
+        spawn.get("weather"),
+        Some(&ProfileAvailabilityScope::Child),
+        "legacy/name-only UDS tools need raw-name fallback when child owner generates a different stable id"
+    );
+}

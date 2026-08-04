@@ -5,6 +5,7 @@ use crate::domain::tool::{
     ToolPolicyReconciliation,
 };
 use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolCatalogueEntry};
+use crate::domain::tool_id::stable_tool_id;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::Ordering;
 
@@ -180,11 +181,18 @@ impl AgentLoopImpl {
     }
 
     pub(super) fn refresh_spawn_inherited_child_policy_snapshot(&self) {
-        let snapshot: BTreeMap<_, _> = self
-            .tool_catalogue_entries()
-            .into_iter()
-            .map(|tool| (tool.stable_id.into_owned(), tool.effective_scope))
-            .collect();
+        let mut snapshot = BTreeMap::new();
+        for tool in self.tool_catalogue_entries() {
+            let name = tool.name.into_owned();
+            let stable_id = tool.stable_id.into_owned();
+            let scope = tool.effective_scope;
+            let is_generated_legacy_stable_id =
+                stable_id == stable_tool_id(tool.source, tool.provider_id.as_ref(), &name);
+            snapshot.insert(stable_id, scope);
+            if is_generated_legacy_stable_id {
+                snapshot.insert(name, scope);
+            }
+        }
         self.extension_tool_registry()
             .set_inherited_child_policy_snapshot_for_spawn(snapshot);
     }

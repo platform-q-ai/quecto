@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use crate::domain::tool_id::stable_tool_id;
 use crate::infrastructure::tools::registration::ToolRegistration;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
@@ -58,9 +59,10 @@ impl ToolRegistryImpl {
             let name = tool.name.into_owned();
             let stable_id = tool.stable_id.into_owned();
             let scope = tool.effective_scope;
-            let is_legacy_name_alias = stable_id.starts_with("tool.v1:bundled-native:");
+            let is_generated_legacy_stable_id =
+                stable_id == stable_tool_id(tool.source, tool.provider_id.as_ref(), &name);
             snapshot.insert(stable_id, scope);
-            if is_legacy_name_alias {
+            if is_generated_legacy_stable_id {
                 snapshot.insert(name, scope);
             }
         }
