@@ -311,6 +311,14 @@ impl App {
             parent_id: None,
             workflow: None,
             read_only: spawn_args_are_read_only(args),
+            runtime_backend: "local".to_string(),
+            container_uuid: None,
+            container_ref: None,
+            container_name: None,
+            repo_url: None,
+            environment_id: None,
+            workspace_path: None,
+            environment_health: None,
         });
         // Mark this as an unconfirmed local guess: the kernel has not registered
         // the child yet, so a snapshot taken in that window must not evict it

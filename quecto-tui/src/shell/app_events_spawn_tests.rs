@@ -143,6 +143,14 @@ async fn optimistic_display_row_reconciles_to_uuid_snapshot_without_dual_rows() 
         parent_id: None,
         workflow: None,
         read_only: false,
+        runtime_backend: "local".to_string(),
+        container_uuid: None,
+        container_ref: None,
+        container_name: None,
+        repo_url: None,
+        environment_id: None,
+        workspace_path: None,
+        environment_health: None,
     }]);
 
     assert!(
@@ -310,6 +318,14 @@ async fn snapshot_uuid_migrate_moves_sessions_feeds_and_session_order() {
         parent_id: None,
         workflow: None,
         read_only: false,
+        runtime_backend: "local".to_string(),
+        container_uuid: None,
+        container_ref: None,
+        container_name: None,
+        repo_url: None,
+        environment_id: None,
+        workspace_path: None,
+        environment_health: None,
     }]);
 
     assert!(!app.subagents.sessions.contains_key("worker-1"));

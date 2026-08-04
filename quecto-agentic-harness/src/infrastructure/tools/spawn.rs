@@ -88,6 +88,7 @@ pub struct SpawnTool {
     /// workflow_state events onto the parent's stream (PRD Stage B / R-B2).
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     parent_id: Option<String>,
+    container_launch: Option<super::container_launch::ContainerLaunchContext>,
     inherited_tool_policy: super::spawn_inherited_policy::InheritedToolPolicyState,
 }
 
@@ -102,6 +103,7 @@ impl SpawnTool {
             notify_tx: None,
             broadcast_tx: None,
             parent_id: None,
+            container_launch: None,
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
         }
     }
@@ -120,6 +122,7 @@ impl SpawnTool {
             notify_tx: None,
             broadcast_tx: None,
             parent_id: None,
+            container_launch: None,
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
         }
     }
@@ -127,6 +130,14 @@ impl SpawnTool {
     /// Set the directory for child agent UDS sockets.
     pub fn with_socket_dir(mut self, socket_dir: PathBuf) -> Self {
         self.socket_dir = socket_dir;
+        self
+    }
+
+    pub fn with_container_launch(
+        mut self,
+        context: super::container_launch::ContainerLaunchContext,
+    ) -> Self {
+        self.container_launch = Some(context);
         self
     }
 
@@ -303,6 +314,29 @@ impl SpawnTool {
         }
 
         let agent_uuid = AgentUuid::mint();
+        if let Some(ctx) = &self.container_launch {
+            if !matches!(
+                config.container,
+                crate::domain::container_runtime::SpawnContainerRequest::Local
+            ) {
+                super::container_launch::validate_container_request(ctx, config)
+                    .map_err(DomainError::Tool)?;
+            }
+        }
+        let container_launch = if let Some(ctx) = &self.container_launch {
+            super::container_launch::prepare_container_launch(ctx, config, &agent_uuid).await?
+        } else if matches!(
+            config.container,
+            crate::domain::container_runtime::SpawnContainerRequest::Local
+        ) {
+            None
+        } else {
+            return Ok(ToolResult {
+                content: "Failed to spawn subagent: container-backed launch requires a configured script runtime; refusing to fall back to local spawn".into(),
+                is_error: true,
+                image_blocks: vec![],
+            });
+        };
         let registry_key = agent_uuid.to_string();
 
         let socket_path = child_socket_path(&self.socket_dir, &agent_uuid);
@@ -371,8 +405,33 @@ impl SpawnTool {
         );
 
         let binary = super::spawn_binary::resolve_child_binary()?;
-        let mut cmd = tokio::process::Command::new(&binary);
-        cmd.args(&cli_args);
+        let mut cmd = if let Some(ref launch) = container_launch {
+            let mut c = tokio::process::Command::new("sh");
+            c.arg("-c").arg(&launch.exec_command);
+            c.env("QUECTO_CONTAINER_REF", &launch.entry.container_ref);
+            c.env("QUECTO_ENVIRONMENT_UUID", &launch.entry.environment_id);
+            c.env("QUECTO_WORKSPACE_PATH", &launch.entry.workspace_path);
+            c.env("QUECTO_AGENT_UUID", agent_uuid.to_string());
+            if let Some(parent) = &self.parent_id {
+                c.env("QUECTO_PARENT_AGENT_UUID", parent);
+            }
+            if let Some(repo) = &launch.entry.repo_url {
+                c.env("QUECTO_REPO_URL", repo);
+            }
+            c.env("QUECTO_SOCKET_PATH", socket_path.as_os_str());
+            c.env("QUECTO_CHILD_BINARY", &binary);
+            let child_args = cli_args
+                .iter()
+                .map(|arg| arg.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ");
+            c.env("QUECTO_CHILD_ARGS", child_args);
+            c
+        } else {
+            let mut c = tokio::process::Command::new(&binary);
+            c.args(&cli_args);
+            c
+        };
 
         if !self.base_dir.as_os_str().is_empty() {
             cmd.env("QUECTO_BASE_DIR", &self.base_dir);
@@ -414,7 +473,7 @@ impl SpawnTool {
         // a terminal event — without this a child that begins a long first turn
         // stays invisible in the side panel until it finishes (#866).
         {
-            let entry = initial_registry_entry(InitialRegistryEntrySpec {
+            let mut entry = initial_registry_entry(InitialRegistryEntrySpec {
                 agent_uuid: agent_uuid.clone(),
                 display_name: session_name.to_string(),
                 socket_path: socket_path.clone(),
@@ -423,6 +482,23 @@ impl SpawnTool {
                 config,
                 exit_signal_tx: Some(exit_tx.clone()),
             });
+            if let Some(launch) = &container_launch {
+                entry.runtime_backend = "container".to_string();
+                entry.container_uuid = Some(launch.entry.container_uuid.clone());
+                entry.container_ref = Some(launch.entry.container_ref.clone());
+                entry.container_name = launch.entry.container_name.clone();
+                entry.repo_url = launch.entry.repo_url.clone();
+                entry.environment_id = Some(launch.entry.environment_id.clone());
+                entry.environment_health = Some(
+                    match launch.entry.status {
+                        super::container_registry::ContainerStatus::Running => "running",
+                        super::container_registry::ContainerStatus::Stopped => "stopped",
+                        super::container_registry::ContainerStatus::Unhealthy => "unhealthy",
+                    }
+                    .to_string(),
+                );
+                entry.workspace_path = Some(launch.entry.workspace_path.clone());
+            }
             register_and_broadcast(
                 &self.registry,
                 self.broadcast_tx.as_ref(),
@@ -666,18 +742,6 @@ impl Tool for SpawnTool {
         Box::pin(async move {
             match self.parse_args(&args) {
                 Ok(config) => {
-                    if !self.base_dir.as_os_str().is_empty()
-                        && !matches!(
-                            config.container,
-                            crate::domain::container_runtime::SpawnContainerRequest::Local
-                        )
-                    {
-                        return Ok(ToolResult {
-                            content: "Failed to spawn subagent: container-backed launch requires a configured script runtime; refusing to fall back to local spawn".into(),
-                            is_error: true,
-                            image_blocks: vec![],
-                        });
-                    }
                     if self.base_dir.as_os_str().is_empty() {
                         let session_name = config.agent_id.as_deref().unwrap_or("subagent");
 

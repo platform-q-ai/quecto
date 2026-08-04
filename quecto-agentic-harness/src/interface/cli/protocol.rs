@@ -224,6 +224,26 @@ pub struct SubagentInfo {
     /// The TUI renders an observer marker next to its name when true (#966).
     #[serde(default)]
     pub read_only: bool,
+    #[serde(default = "default_runtime_backend")]
+    pub runtime_backend: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_health: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
+}
+
+fn default_runtime_backend() -> String {
+    "local".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -302,6 +322,14 @@ pub fn build_subagent_info_list(
                     parent_id: entry.parent_id.clone(),
                     workflow: entry.workflow.clone(),
                     read_only: entry.read_only,
+                    runtime_backend: entry.runtime_backend.clone(),
+                    container_uuid: entry.container_uuid.clone(),
+                    container_ref: entry.container_ref.clone(),
+                    container_name: entry.container_name.clone(),
+                    repo_url: entry.repo_url.clone(),
+                    environment_id: entry.environment_id.clone(),
+                    environment_health: entry.environment_health.clone(),
+                    workspace_path: entry.workspace_path.clone(),
                 }
             })
             .collect()

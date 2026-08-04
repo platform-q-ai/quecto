@@ -342,6 +342,30 @@ pub struct SubagentInfoEvent {
     /// for older kernels that did not surface the field.
     #[serde(default)]
     pub read_only: bool,
+    /// Runtime backend for this agent: `local` or `container`.
+    #[serde(default = "default_runtime_backend")]
+    pub runtime_backend: String,
+    /// Hidden stable container/environment UUID for container-backed agents.
+    #[serde(default)]
+    pub container_uuid: Option<String>,
+    /// Session-scoped visible environment ref (for example `C1`).
+    #[serde(default)]
+    pub container_ref: Option<String>,
+    /// Optional descriptive environment name surfaced by the registry/scripts.
+    #[serde(default)]
+    pub container_name: Option<String>,
+    #[serde(default)]
+    pub repo_url: Option<String>,
+    #[serde(default)]
+    pub environment_id: Option<String>,
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+    #[serde(default)]
+    pub environment_health: Option<String>,
+}
+
+fn default_runtime_backend() -> String {
+    "local".to_string()
 }
 /// Workflow snapshot mirror carried on a subagent entry (PRD Stage B).
 /// Field names match the server's snake_case `WorkflowSnapshot` serialization.

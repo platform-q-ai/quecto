@@ -201,6 +201,18 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Return container/environment records known through spawned agents (#1369).
+    GetContainers {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+    /// Terminate agents using a container/environment ref, then report the target (#1369).
+    KillContainer {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(alias = "containerRef", alias = "container_id")]
+        container_ref: String,
+    },
     /// Terminate and remove every tracked sub-agent.
     DeleteAllSubagents {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -301,6 +313,8 @@ impl AgentCommand {
             Self::RewindTo { id, .. } => id.as_deref(),
             Self::SetWorkflowAutomation { id, .. } => id.as_deref(),
             Self::GetSubagents { id } => id.as_deref(),
+            Self::GetContainers { id } => id.as_deref(),
+            Self::KillContainer { id, .. } => id.as_deref(),
             Self::DeleteAllSubagents { id } => id.as_deref(),
             Self::GetMessage { id, .. } => id.as_deref(),
         }
@@ -333,6 +347,8 @@ impl AgentCommand {
             Self::RewindTo { .. } => "rewind_to",
             Self::SetWorkflowAutomation { .. } => "set_workflow_automation",
             Self::GetSubagents { .. } => "get_subagents",
+            Self::GetContainers { .. } => "get_containers",
+            Self::KillContainer { .. } => "kill_container",
             Self::DeleteAllSubagents { .. } => "delete_all_subagents",
             Self::GetMessage { .. } => "get_message",
         }

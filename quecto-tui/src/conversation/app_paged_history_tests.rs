@@ -159,6 +159,14 @@ async fn subagent_older_history_request_is_disabled_after_legacy_backfill_remova
             parent_id: None,
             workflow: None,
             read_only: false,
+            runtime_backend: "local".to_string(),
+            container_uuid: None,
+            container_ref: None,
+            container_name: None,
+            repo_url: None,
+            environment_id: None,
+            workspace_path: None,
+            environment_health: None,
         }],
     });
     h.app_mut().select_agent(Some("worker"));

@@ -20,6 +20,14 @@ fn subagent(id: &str, status: &str) -> crate::protocol::client::SubagentInfoEven
         parent_id: None,
         workflow: None,
         read_only: false,
+        runtime_backend: "local".to_string(),
+        container_uuid: None,
+        container_ref: None,
+        container_name: None,
+        repo_url: None,
+        environment_id: None,
+        workspace_path: None,
+        environment_health: None,
     }
 }
 

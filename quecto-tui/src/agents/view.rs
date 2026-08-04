@@ -33,6 +33,30 @@ impl RosterInfo for SubagentInfoEvent {
         if self.parent_id.is_none() {
             self.parent_id = previous.parent_id.clone();
         }
+        if self.runtime_backend == "local" && previous.runtime_backend != "local" {
+            self.runtime_backend = previous.runtime_backend.clone();
+        }
+        if self.container_uuid.is_none() {
+            self.container_uuid = previous.container_uuid.clone();
+        }
+        if self.container_ref.is_none() {
+            self.container_ref = previous.container_ref.clone();
+        }
+        if self.container_name.is_none() {
+            self.container_name = previous.container_name.clone();
+        }
+        if self.repo_url.is_none() {
+            self.repo_url = previous.repo_url.clone();
+        }
+        if self.environment_id.is_none() {
+            self.environment_id = previous.environment_id.clone();
+        }
+        if self.workspace_path.is_none() {
+            self.workspace_path = previous.workspace_path.clone();
+        }
+        if self.environment_health.is_none() {
+            self.environment_health = previous.environment_health.clone();
+        }
     }
 }
 
@@ -122,6 +146,8 @@ pub(crate) struct SubagentUi {
     pub(crate) session_order: Vec<String>,
     /// The agent whose session is shown in the main body. `None` = master.
     pub(crate) active_agent_id: Option<String>,
+    /// Selected container row, if the side panel is focused on environment details.
+    pub(crate) active_container_uuid: Option<String>,
     /// Left-panel selection cursor over the flattened (master + tree) rows.
     pub(crate) panel_nav: ListNavigator,
     /// Fan-in for events from direct sub-agent connections (#800).
@@ -156,6 +182,7 @@ impl SubagentUi {
             sessions: BTreeMap::new(),
             session_order: Vec::new(),
             active_agent_id: None,
+            active_container_uuid: None,
             panel_nav: ListNavigator::new(),
             event_tx,
             event_rx,

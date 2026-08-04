@@ -323,6 +323,14 @@ async fn forwarded_child_workflow_state_does_not_clobber_parent_bar() {
             parent_id: None,
             workflow: None,
             read_only: false,
+            runtime_backend: "local".to_string(),
+            container_uuid: None,
+            container_ref: None,
+            container_name: None,
+            repo_url: None,
+            environment_id: None,
+            workspace_path: None,
+            environment_health: None,
         }],
     });
     // A workflow_state forwarded up from the child (agent_id = "child", a
@@ -429,6 +437,14 @@ async fn handles_subagent_workflow_and_error_events() {
         parent_id: None,
         workflow: None,
         read_only: false,
+        runtime_backend: "local".to_string(),
+        container_uuid: None,
+        container_ref: None,
+        container_name: None,
+        repo_url: None,
+        environment_id: None,
+        workspace_path: None,
+        environment_health: None,
     };
     app.handle_event(Event::SubagentStateChanged {
         subagents: vec![info.clone()],

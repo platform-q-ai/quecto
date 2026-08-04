@@ -330,6 +330,14 @@ fn given_subagent_info(
         parent_id: None,
         workflow: None,
         read_only: false,
+        runtime_backend: "local".to_string(),
+        container_uuid: None,
+        container_ref: None,
+        container_name: None,
+        repo_url: None,
+        environment_id: None,
+        environment_health: None,
+        workspace_path: None,
     });
 }
 
@@ -426,6 +434,14 @@ fn given_state_changed_event(world: &mut QuectoWorld, count: usize) {
             parent_id: None,
             workflow: None,
             read_only: false,
+            runtime_backend: "local".to_string(),
+            container_uuid: None,
+            container_ref: None,
+            container_name: None,
+            repo_url: None,
+            environment_id: None,
+            environment_health: None,
+            workspace_path: None,
         })
         .collect();
     world.protocol_event = Some(AgentEvent::SubagentStateChanged { subagents });
@@ -451,6 +467,14 @@ fn given_state_changed_one(
             parent_id: None,
             workflow: None,
             read_only: false,
+            runtime_backend: "local".to_string(),
+            container_uuid: None,
+            container_ref: None,
+            container_name: None,
+            repo_url: None,
+            environment_id: None,
+            environment_health: None,
+            workspace_path: None,
         }],
     });
 }
@@ -477,6 +501,14 @@ fn given_state_changed_observer_and_readwrite(
                 parent_id: None,
                 workflow: None,
                 read_only: true,
+                runtime_backend: "local".to_string(),
+                container_uuid: None,
+                container_ref: None,
+                container_name: None,
+                repo_url: None,
+                environment_id: None,
+                environment_health: None,
+                workspace_path: None,
             },
             SubagentInfo {
                 agent_uuid: None,
@@ -490,6 +522,14 @@ fn given_state_changed_observer_and_readwrite(
                 parent_id: None,
                 workflow: None,
                 read_only: false,
+                runtime_backend: "local".to_string(),
+                container_uuid: None,
+                container_ref: None,
+                container_name: None,
+                repo_url: None,
+                environment_id: None,
+                environment_health: None,
+                workspace_path: None,
             },
         ],
     });

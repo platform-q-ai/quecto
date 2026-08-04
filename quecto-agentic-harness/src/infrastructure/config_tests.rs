@@ -747,3 +747,37 @@ fn test_load_config_io_error_reports_path() {
     assert!(text.contains("failed to read config file"), "{text}");
     assert!(text.contains(dir.path().to_str().unwrap()), "{text}");
 }
+
+#[test]
+fn loads_top_level_container_scripts_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.json");
+    std::fs::write(
+        &config_path,
+        r#"{
+          "container_scripts": {
+            "default": "quecto-dev",
+            "scripts": {
+              "quecto-dev": {
+                "create": "/opt/quecto/create.sh",
+                "exec": "/opt/quecto/exec.sh",
+                "inspect": "/opt/quecto/inspect.sh",
+                "kill": "/opt/quecto/kill.sh"
+              }
+            }
+          }
+        }"#,
+    )
+    .unwrap();
+
+    let config = Config::load(config_path.to_str().unwrap()).unwrap();
+    assert_eq!(
+        config.container_scripts.default.as_deref(),
+        Some("quecto-dev")
+    );
+    let set = config.container_scripts.scripts.get("quecto-dev").unwrap();
+    assert_eq!(set.create, "/opt/quecto/create.sh");
+    assert_eq!(set.exec, "/opt/quecto/exec.sh");
+    assert_eq!(set.inspect, "/opt/quecto/inspect.sh");
+    assert_eq!(set.kill, "/opt/quecto/kill.sh");
+}

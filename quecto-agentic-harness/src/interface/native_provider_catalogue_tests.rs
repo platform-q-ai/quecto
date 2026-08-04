@@ -25,6 +25,7 @@ fn bundled_native_registration_preserves_provider_ids() {
             broadcast_tx: None,
             parent_session_name: None,
             inherited_tool_policy: None,
+            container_scripts: Default::default(),
         })
         .extensions,
     );

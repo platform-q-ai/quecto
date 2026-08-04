@@ -170,6 +170,7 @@ pub struct AgentControlToolDeps {
     pub parent_session_name: Option<String>,
     pub inherited_tool_policy:
         Option<crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot>,
+    pub container_scripts: crate::domain::container_runtime::ContainerScriptsConfig,
 }
 
 pub struct AgentControlToolBuild {
@@ -187,11 +188,23 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
     let mut spawn = crate::infrastructure::tools::spawn::SpawnTool::with_base_dir(
         Vec::new(),
         deps.restrict_to_workspace,
-        deps.base_dir,
+        deps.base_dir.clone(),
     )
-    .with_socket_dir(deps.socket_dir);
+    .with_socket_dir(deps.socket_dir.clone());
     if let Some(snapshot) = deps.inherited_tool_policy {
         spawn = spawn.with_inherited_tool_policy(snapshot);
+    }
+    if !deps.container_scripts.scripts.is_empty() {
+        spawn = spawn.with_container_launch(
+            crate::infrastructure::tools::container_launch::ContainerLaunchContext {
+                registry: crate::infrastructure::tools::container_registry::new_container_registry(
+                ),
+                scripts: deps.container_scripts,
+                parent_repo: crate::infrastructure::tools::container_launch::default_parent_repo(
+                    &deps.base_dir,
+                ),
+            },
+        );
     }
     let spawn = spawn
         .with_registry(registry.clone())

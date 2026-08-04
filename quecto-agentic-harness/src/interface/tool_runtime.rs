@@ -235,6 +235,7 @@ pub(crate) fn build_tool_runtime(
         broadcast_tx: workflow.broadcast_tx.clone(),
         parent_session_name,
         inherited_tool_policy: None,
+        container_scripts: config.container_scripts.clone(),
     });
     register_bundled_native_tools_with_scope(&mut registry, agent_control.extensions, None);
     let notify_rx = agent_control.notification_rx;

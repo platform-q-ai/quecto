@@ -119,6 +119,24 @@ pub struct SubagentEntry {
     /// Surfaced through `get_subagents` so the TUI can mark it as an observer
     /// (#966). Display flag only; enforcement is #957.
     pub read_only: bool,
+    /// Runtime backend used for this agent. Local agents keep this as `local`;
+    /// container-backed agents carry a container UUID/ref separately so agent
+    /// identity never doubles as environment identity (#1369).
+    pub runtime_backend: String,
+    /// Hidden container/environment identity for container-backed agents.
+    pub container_uuid: Option<String>,
+    /// Session-scoped, user-facing container alias (for example `C1`).
+    pub container_ref: Option<String>,
+    /// Optional script/runtime descriptive name for the associated container.
+    pub container_name: Option<String>,
+    /// Repository checked out in the container, if known.
+    pub repo_url: Option<String>,
+    /// Environment id reported by runtime scripts, if distinct from UUID.
+    pub environment_id: Option<String>,
+    /// Last known container health/status string.
+    pub environment_health: Option<String>,
+    /// Workspace mounted in the container, if known.
+    pub workspace_path: Option<String>,
     /// Last lifecycle event applied to this entry. This is internal observability
     /// for race-focused tests; parent-facing behavior continues to use `status`.
     #[cfg(test)]
@@ -189,6 +207,14 @@ impl SubagentEntry {
             stalled_armed: true,
             pending_stall: None,
             read_only: false,
+            runtime_backend: "local".to_string(),
+            container_uuid: None,
+            container_ref: None,
+            container_name: None,
+            repo_url: None,
+            environment_id: None,
+            environment_health: None,
+            workspace_path: None,
             #[cfg(test)]
             last_lifecycle_event: None,
         }

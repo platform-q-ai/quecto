@@ -153,6 +153,9 @@ impl App {
 
     pub(super) fn select_agent(&mut self, agent_id: Option<&str>) {
         let new_active = agent_id.map(str::to_string);
+        if new_active.is_some() {
+            self.subagents.active_container_uuid = None;
+        }
         if new_active == self.subagents.active_agent_id {
             return;
         }
@@ -329,11 +332,18 @@ impl App {
     /// Commit the highlighted panel row: switch the active session to that agent
     /// (the master when row 1 is highlighted) and open its connection (#802).
     pub(super) fn commit_panel_selection(&mut self) {
-        let target = self
+        let row = self
             .panel_rows()
             .get(self.subagents.panel_nav.selected())
-            .and_then(|r| r.id.clone());
-        self.select_agent(target.as_deref());
+            .map(|r| match &r.kind {
+                PanelRowKind::Master => (None, None),
+                PanelRowKind::Agent(id) => (Some(id.clone()), None),
+                PanelRowKind::Container(uuid) => (None, Some(uuid.clone())),
+            });
+        if let Some((agent, container)) = row {
+            self.subagents.active_container_uuid = container;
+            self.select_agent(agent.as_deref());
+        }
     }
 
     /// Keep the panel cursor pointing at the active agent (or the master row)
@@ -380,12 +390,17 @@ impl App {
             (wf.total > 0).then_some((wf.done, wf.total))
         };
         let mut rows = vec![PanelRow {
+            kind: PanelRowKind::Master,
             id: None,
             prefix: String::new(),
             label: "Master Agent".to_string(),
             status: self.master_status().to_string(),
             workflow: master_wf,
         }];
+        let shared_containers = self.shared_container_rows();
+        for env in shared_containers {
+            rows.push(env);
+        }
         for (id, prefix) in self.subagent_tree_order() {
             let info = self.subagents.tracked.get(&id).map(|t| &t.info);
             let workflow = info
@@ -403,7 +418,16 @@ impl App {
                         .to_string()
                 })
                 .unwrap_or_else(|| id.clone());
+            let label = info
+                .and_then(|i| {
+                    i.container_ref
+                        .as_deref()
+                        .filter(|_| !self.container_is_shared(i))
+                        .map(|r| format!("{label} · {r}"))
+                })
+                .unwrap_or(label);
             rows.push(PanelRow {
+                kind: PanelRowKind::Agent(id.clone()),
                 label,
                 status: info.map(|i| i.status.clone()).unwrap_or_default(),
                 workflow,
@@ -418,6 +442,59 @@ impl App {
     /// sub-agents (no in-map parent) sit under the master; `tree_prefix` is the
     /// connector stalk (`├ `/`└ ` with `│ `/`  ` ancestor continuation) so the
     /// panel draws tree lines back up to each parent. Order follows sorted ids.
+    fn shared_container_rows(&self) -> Vec<PanelRow> {
+        use std::collections::BTreeMap;
+        let mut by_uuid: BTreeMap<String, Vec<&crate::protocol::client::SubagentInfoEvent>> =
+            BTreeMap::new();
+        for tracked in self.subagents.tracked.values() {
+            if tracked.info.runtime_backend == "container" {
+                if let Some(uuid) = tracked.info.container_uuid.clone() {
+                    by_uuid.entry(uuid).or_default().push(&tracked.info);
+                }
+            }
+        }
+        by_uuid
+            .into_iter()
+            .filter_map(|(uuid, infos)| {
+                (infos.len() > 1).then(|| {
+                    let first = infos[0];
+                    let label = format!(
+                        "{} {}",
+                        first.container_ref.as_deref().unwrap_or("env"),
+                        first
+                            .container_name
+                            .as_deref()
+                            .or(first.repo_url.as_deref())
+                            .unwrap_or("shared environment")
+                    );
+                    PanelRow {
+                        kind: PanelRowKind::Container(uuid),
+                        id: None,
+                        prefix: String::new(),
+                        label,
+                        status: first
+                            .environment_health
+                            .clone()
+                            .unwrap_or_else(|| "container".into()),
+                        workflow: None,
+                    }
+                })
+            })
+            .collect()
+    }
+
+    fn container_is_shared(&self, info: &crate::protocol::client::SubagentInfoEvent) -> bool {
+        let Some(uuid) = info.container_uuid.as_deref() else {
+            return false;
+        };
+        self.subagents
+            .tracked
+            .values()
+            .filter(|t| t.info.container_uuid.as_deref() == Some(uuid))
+            .count()
+            > 1
+    }
+
     fn subagent_tree_order(&self) -> Vec<(String, String)> {
         use std::collections::BTreeMap;
         let mut children: BTreeMap<Option<String>, Vec<String>> = BTreeMap::new();
@@ -474,7 +551,13 @@ impl App {
             .enumerate()
             .map(|(i, row)| {
                 let sel = i == selected;
-                let is_active = row.id.as_deref() == active;
+                let is_active = match &row.kind {
+                    PanelRowKind::Agent(id) => Some(id.as_str()) == active,
+                    PanelRowKind::Master => active.is_none(),
+                    PanelRowKind::Container(uuid) => {
+                        self.subagents.active_container_uuid.as_deref() == Some(uuid.as_str())
+                    }
+                };
                 let mut block =
                     vec![self.panel_name_line(row, sel && focused, is_active, width, now)];
                 if let Some((done, total)) = row.workflow {
@@ -642,23 +725,45 @@ impl App {
         state: &workflow_bar::WorkflowBarState,
         now: tokio::time::Instant,
     ) -> String {
-        let (name, status) = match self.subagents.active_agent_id.as_deref() {
-            None => ("Master".to_string(), self.master_status().to_string()),
-            Some(id) => {
-                // Selection is UUID-keyed; paint the human display label (#1378).
-                let tracked = self.subagents.tracked.get(id);
-                let label = tracked
-                    .map(|t| {
-                        t.info
-                            .display_name
-                            .as_deref()
-                            .filter(|s| !s.is_empty())
-                            .unwrap_or(t.info.agent_id.as_str())
-                            .to_string()
-                    })
-                    .unwrap_or_else(|| id.to_string());
-                let status = tracked.map(|t| t.info.status.clone()).unwrap_or_default();
-                (label, status)
+        let (name, status) = if let Some(uuid) = self.subagents.active_container_uuid.as_deref() {
+            let info = self
+                .subagents
+                .tracked
+                .values()
+                .find(|t| t.info.container_uuid.as_deref() == Some(uuid))
+                .map(|t| &t.info);
+            let title = info
+                .map(|i| {
+                    format!(
+                        "Env {} repo:{} runtime:{} workspace:{} health:{}",
+                        i.container_ref.as_deref().unwrap_or("?"),
+                        i.repo_url.as_deref().unwrap_or("unknown"),
+                        i.runtime_backend.as_str(),
+                        i.workspace_path.as_deref().unwrap_or("unknown"),
+                        i.environment_health.as_deref().unwrap_or("unknown")
+                    )
+                })
+                .unwrap_or_else(|| "Environment".to_string());
+            (title, "selected".to_string())
+        } else {
+            match self.subagents.active_agent_id.as_deref() {
+                None => ("Master".to_string(), self.master_status().to_string()),
+                Some(id) => {
+                    // Selection is UUID-keyed; paint the human display label (#1378).
+                    let tracked = self.subagents.tracked.get(id);
+                    let label = tracked
+                        .map(|t| {
+                            t.info
+                                .display_name
+                                .as_deref()
+                                .filter(|s| !s.is_empty())
+                                .unwrap_or(t.info.agent_id.as_str())
+                                .to_string()
+                        })
+                        .unwrap_or_else(|| id.to_string());
+                    let status = tracked.map(|t| t.info.status.clone()).unwrap_or_default();
+                    (label, status)
+                }
             }
         };
         let elapsed = self.panel_row_elapsed(self.subagents.active_agent_id.as_deref(), now);
@@ -687,7 +792,14 @@ impl App {
     }
 }
 
+enum PanelRowKind {
+    Master,
+    Agent(String),
+    Container(String),
+}
+
 struct PanelRow {
+    kind: PanelRowKind,
     id: Option<String>,
     /// Tree connector stalk drawn before the name (`├ `/`└ ` + ancestor `│ `).
     prefix: String,

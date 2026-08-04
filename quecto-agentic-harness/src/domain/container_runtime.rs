@@ -18,7 +18,7 @@ pub enum ExistingContainerRef {
     Name(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ContainerScriptSet {
     pub create: String,
     pub exec: String,
@@ -26,9 +26,11 @@ pub struct ContainerScriptSet {
     pub kill: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ContainerScriptsConfig {
+    #[serde(default)]
     pub default: Option<String>,
+    #[serde(default)]
     pub scripts: HashMap<String, ContainerScriptSet>,
 }
 
@@ -120,17 +122,31 @@ impl SpawnContainerRequest {
             .ok_or(
                 "container spawn requires container_scripts.default or container.container_script",
             )?;
-        let set = config
-            .scripts
-            .get(name)
-            .ok_or_else(|| format!("container script set '{name}' is not configured"))?;
-        if set.create.is_empty()
-            || set.exec.is_empty()
-            || set.inspect.is_empty()
-            || set.kill.is_empty()
-        {
-            return Err(format!("container script set '{name}' is incomplete"));
-        }
-        Ok(Some((name, set)))
+        Ok(Some(resolve_script_set(config, name)?))
     }
+
+    pub fn resolve_default_script<'a>(
+        config: &'a ContainerScriptsConfig,
+    ) -> Result<(&'a str, &'a ContainerScriptSet), String> {
+        let name = config
+            .default
+            .as_deref()
+            .ok_or("existing container spawn requires container_scripts.default")?;
+        resolve_script_set(config, name)
+    }
+}
+
+fn resolve_script_set<'a>(
+    config: &'a ContainerScriptsConfig,
+    name: &'a str,
+) -> Result<(&'a str, &'a ContainerScriptSet), String> {
+    let set = config
+        .scripts
+        .get(name)
+        .ok_or_else(|| format!("container script set '{name}' is not configured"))?;
+    if set.create.is_empty() || set.exec.is_empty() || set.inspect.is_empty() || set.kill.is_empty()
+    {
+        return Err(format!("container script set '{name}' is incomplete"));
+    }
+    Ok((name, set))
 }

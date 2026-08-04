@@ -284,6 +284,14 @@ fn test_subagent_state_changed_event_serializes() {
             parent_id: None,
             workflow: None,
             read_only: false,
+            runtime_backend: "local".to_string(),
+            container_uuid: None,
+            container_ref: None,
+            container_name: None,
+            repo_url: None,
+            environment_id: None,
+            environment_health: None,
+            workspace_path: None,
         }],
     };
     let json = ev.to_json_line();
@@ -320,6 +328,14 @@ fn test_subagent_info_null_fields_omitted() {
         parent_id: None,
         workflow: None,
         read_only: false,
+        runtime_backend: "local".to_string(),
+        container_uuid: None,
+        container_ref: None,
+        container_name: None,
+        repo_url: None,
+        environment_id: None,
+        environment_health: None,
+        workspace_path: None,
     };
     let json = serde_json::to_string(&info).unwrap();
     assert!(!json.contains("lastTool"));
@@ -340,6 +356,14 @@ fn test_subagent_info_with_error() {
         parent_id: None,
         workflow: None,
         read_only: false,
+        runtime_backend: "local".to_string(),
+        container_uuid: None,
+        container_ref: None,
+        container_name: None,
+        repo_url: None,
+        environment_id: None,
+        environment_health: None,
+        workspace_path: None,
     };
     let json = serde_json::to_string(&info).unwrap();
     assert!(json.contains("\"lastError\":\"connection refused\""));

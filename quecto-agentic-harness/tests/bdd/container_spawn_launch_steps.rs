@@ -127,7 +127,7 @@ fn parent_launches_new_container_through_backend(world: &mut QuectoWorld, agent_
     use quecto::application::agent_launch_backend::{
         AgentLaunchBackend, ScriptManagedContainerLaunchBackend,
     };
-    let backend = ScriptManagedContainerLaunchBackend;
+    let backend = ScriptManagedContainerLaunchBackend::default();
     let request = SpawnContainerRequest::New {
         repo: None,
         container_script: Some(world.stdout.clone()),
@@ -175,7 +175,7 @@ fn new_container_launch_request_omits_repo(world: &mut QuectoWorld) {
         AgentLaunchBackend, ScriptManagedContainerLaunchBackend,
     };
     assert!(
-        ScriptManagedContainerLaunchBackend.can_launch(&request),
+        ScriptManagedContainerLaunchBackend::default().can_launch(&request),
         "container backend should resolve omitted repo from parent repository {}",
         world.stdout
     );
@@ -192,7 +192,7 @@ fn new_container_launch_request_specifies_repo(world: &mut QuectoWorld, repo: St
         AgentLaunchBackend, ScriptManagedContainerLaunchBackend,
     };
     assert!(
-        ScriptManagedContainerLaunchBackend.can_launch(&request),
+        ScriptManagedContainerLaunchBackend::default().can_launch(&request),
         "container backend should preserve explicit repository {repo}"
     );
     world.stderr = repo;

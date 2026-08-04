@@ -63,15 +63,50 @@ pub fn resolve_live_ref(
     let uuid = state
         .refs
         .get(container_ref)
-        .ok_or_else(|| format!("unknown container ref '{container_ref}'"))?;
+        .cloned()
+        .or_else(|| {
+            state.entries.values().find_map(|entry| {
+                (entry.container_name.as_deref() == Some(container_ref))
+                    .then(|| entry.container_uuid.clone())
+            })
+        })
+        .ok_or_else(|| format!("unknown container ref or name '{container_ref}'"))?;
     let entry = state
         .entries
-        .get(uuid)
-        .ok_or_else(|| format!("unknown container ref '{container_ref}'"))?;
+        .get(&uuid)
+        .ok_or_else(|| format!("unknown container ref or name '{container_ref}'"))?;
     if entry.status != ContainerStatus::Running {
-        return Err(format!("container ref '{container_ref}' is not live"));
+        return Err(format!(
+            "container ref or name '{container_ref}' is not live"
+        ));
     }
     Ok(entry.container_uuid.clone())
+}
+
+pub fn mark_container_stopped(
+    registry: &ContainerRegistry,
+    container_ref: &str,
+) -> Result<ContainerEntry, String> {
+    let mut state = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let uuid = state
+        .refs
+        .get(container_ref)
+        .cloned()
+        .or_else(|| {
+            state.entries.values().find_map(|entry| {
+                (entry.container_uuid == container_ref
+                    || entry.environment_id == container_ref
+                    || entry.container_name.as_deref() == Some(container_ref))
+                .then(|| entry.container_uuid.clone())
+            })
+        })
+        .ok_or_else(|| format!("unknown container ref, id, or name '{container_ref}'"))?;
+    let entry = state
+        .entries
+        .get_mut(&uuid)
+        .ok_or_else(|| format!("unknown container ref, id, or name '{container_ref}'"))?;
+    entry.status = ContainerStatus::Stopped;
+    Ok(entry.clone())
 }
 
 pub fn list_containers(registry: &ContainerRegistry) -> Vec<ContainerEntry> {

@@ -125,6 +125,59 @@ pub(super) fn query_response_data(
             let list = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
             Some(serde_json::json!({ "subagents": list }))
         }
+        AgentCommand::GetContainers { .. } => {
+            let agents = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
+            let mut containers = std::collections::BTreeMap::new();
+            for agent in agents
+                .into_iter()
+                .filter(|a| a.runtime_backend == "container")
+            {
+                let key = agent
+                    .container_uuid
+                    .clone()
+                    .unwrap_or_else(|| agent.agent_id.clone());
+                let entry = containers.entry(key.clone()).or_insert_with(|| {
+                    serde_json::json!({
+                        "container_uuid": key,
+                        "container_id": agent.container_uuid,
+                        "container_ref": agent.container_ref,
+                        "container_name": agent.container_name,
+                        "environment_id": agent.environment_id,
+                        "environment_health": agent.environment_health,
+                        "repo_url": agent.repo_url,
+                        "workspace_path": agent.workspace_path,
+                        "agents": [],
+                        "members": [],
+                    })
+                });
+                if let Some(arr) = entry.get_mut("agents").and_then(|v| v.as_array_mut()) {
+                    arr.push(serde_json::Value::String(agent.agent_id.clone()));
+                }
+                if let Some(arr) = entry.get_mut("members").and_then(|v| v.as_array_mut()) {
+                    arr.push(serde_json::json!({"agent_id": agent.agent_id, "agent_uuid": agent.agent_uuid}));
+                }
+            }
+            Some(serde_json::json!({ "containers": containers.into_values().collect::<Vec<_>>() }))
+        }
+        AgentCommand::KillContainer { container_ref, .. } => {
+            // Protocol surface: resolve by live agent/container refs. Actual process teardown
+            // remains routed through agent control; this command reports matched members for
+            // clients that need a stable container namespace (#1369).
+            let agents = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
+            let matched: Vec<_> = agents
+                .into_iter()
+                .filter(|a| {
+                    a.container_ref.as_deref() == Some(container_ref.as_str())
+                        || a.container_uuid.as_deref() == Some(container_ref.as_str())
+                })
+                .map(|a| a.agent_id)
+                .collect();
+            if matched.is_empty() {
+                None
+            } else {
+                Some(serde_json::json!({ "container_ref": container_ref, "agents": matched }))
+            }
+        }
         AgentCommand::DeleteAllSubagents { .. } => {
             Some(super::uds_delete_all_subagents::response_data(ctx))
         }

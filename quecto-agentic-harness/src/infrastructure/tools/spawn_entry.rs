@@ -64,6 +64,12 @@ pub(super) fn initial_registry_entry(spec: InitialRegistryEntrySpec<'_>) -> Suba
     entry.parent_id = spec.parent_id;
     // Record whether this child is a read-only observer (#966 / #957).
     entry.read_only = spec.config.read_only;
+    if !matches!(
+        spec.config.container,
+        crate::domain::container_runtime::SpawnContainerRequest::Local
+    ) {
+        entry.runtime_backend = "container".to_string();
+    }
     if spec.config.task.is_none() {
         // #1049: task-less → Idle (cascade/TUI); with-task stays Starting.
         entry.status =

@@ -4,6 +4,7 @@ use std::path::{Component, Path, PathBuf};
 
 const MAX_WORKFLOW_STEP_FILE_BYTES: u64 = 64 * 1024;
 
+use crate::domain::container_runtime::ContainerScriptsConfig;
 use crate::domain::workflow::WorkflowConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -16,6 +17,8 @@ pub struct Config {
     pub tools: ToolsConfig,
     #[serde(default)]
     pub workflow: WorkflowConfig,
+    #[serde(default)]
+    pub container_scripts: ContainerScriptsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

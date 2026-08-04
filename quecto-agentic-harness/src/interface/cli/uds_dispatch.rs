@@ -115,6 +115,8 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         // Exhaustive: variants handled above; agent-targeted history/sync by pre-router.
         AgentCommand::ClearHistory { .. }
         | AgentCommand::DeleteAllSubagents { .. }
+        | AgentCommand::GetContainers { .. }
+        | AgentCommand::KillContainer { .. }
         | AgentCommand::ListModels { .. }
         | AgentCommand::GetToolCatalogue { .. }
         | AgentCommand::GetSubagents { .. }
