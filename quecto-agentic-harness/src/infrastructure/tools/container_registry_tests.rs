@@ -72,3 +72,18 @@ fn stale_or_unknown_refs_error_without_guessing() {
             .contains("unknown")
     );
 }
+
+#[test]
+fn registry_operations_recover_from_poisoned_mutex() {
+    let reg = new_container_registry();
+    let poisoned = reg.clone();
+    let _ = std::panic::catch_unwind(move || {
+        let _guard = poisoned.lock().unwrap();
+        panic!("poison registry");
+    });
+
+    let registered = register_container(&reg, entry("one", ContainerStatus::Running));
+    assert_eq!(registered.container_ref, "C1");
+    assert_eq!(resolve_live_ref(&reg, "C1").unwrap(), "one");
+    assert_eq!(list_containers(&reg).len(), 1);
+}
