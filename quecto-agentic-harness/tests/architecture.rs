@@ -1163,7 +1163,8 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// keep them ratcheted so future changes cannot grow usage silently.
 /// #1350 adds one required workspace wire event handler in the TUI shell so
 /// socket clients can resolve the harness workspace instead of their CWD.
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 116;
+/// #1369 adds required container runtime metadata fields to TUI agent rows.
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 120;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///
