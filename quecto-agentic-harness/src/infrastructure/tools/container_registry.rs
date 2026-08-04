@@ -25,9 +25,9 @@ pub struct ContainerEntry {
 
 #[derive(Debug, Default)]
 pub struct ContainerRegistryState {
-    next_ref: u64,
-    entries: HashMap<String, ContainerEntry>,
-    refs: HashMap<String, String>,
+    pub(crate) next_ref: u64,
+    pub(crate) entries: HashMap<String, ContainerEntry>,
+    pub(crate) refs: HashMap<String, String>,
 }
 
 pub type ContainerRegistry = Arc<Mutex<ContainerRegistryState>>;

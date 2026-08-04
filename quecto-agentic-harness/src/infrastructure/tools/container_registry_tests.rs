@@ -29,6 +29,32 @@ fn refs_are_session_scoped_and_never_reused() {
         register_container(&reg, entry("one", ContainerStatus::Running)).container_ref,
         "C1"
     );
+    let listed = list_containers(&reg);
+    assert_eq!(
+        listed
+            .iter()
+            .map(|e| e.container_ref.as_str())
+            .collect::<Vec<_>>(),
+        vec!["C1", "C2"]
+    );
+    assert_eq!(listed[0].status, ContainerStatus::Stopped);
+}
+
+#[test]
+fn list_containers_sorts_unparseable_refs_last() {
+    let reg = new_container_registry();
+    register_container(&reg, entry("one", ContainerStatus::Running));
+    {
+        let mut state = reg.lock().unwrap();
+        let mut weird = entry("weird", ContainerStatus::Unhealthy);
+        weird.container_ref = "custom".into();
+        state.entries.insert(weird.container_uuid.clone(), weird);
+    }
+    let refs: Vec<_> = list_containers(&reg)
+        .into_iter()
+        .map(|e| e.container_ref)
+        .collect();
+    assert_eq!(refs, vec!["C1", "custom"]);
 }
 
 #[test]
