@@ -141,3 +141,40 @@ fn parent_spawns_into_that_ref(_world: &mut QuectoWorld) {}
 fn spawn_fails_without_guessing(world: &mut QuectoWorld) {
     assert!(world.stderr.contains("unknown") || world.stderr.contains("not live"));
 }
+
+#[given("the local launch backend is selected")]
+fn local_launch_backend_selected(world: &mut QuectoWorld) {
+    use quecto::application::agent_launch_backend::AgentLaunchBackend;
+    let backend = quecto::application::agent_launch_backend::LocalProcessLaunchBackend;
+    world.stdout = backend.backend_name().into();
+    assert!(backend.can_launch(&SpawnContainerRequest::Local));
+}
+
+#[when("the parent requests a new isolated environment from that backend")]
+fn parent_requests_new_environment_from_local_backend(world: &mut QuectoWorld) {
+    use quecto::application::agent_launch_backend::AgentLaunchBackend;
+    let backend = quecto::application::agent_launch_backend::LocalProcessLaunchBackend;
+    let request = SpawnContainerRequest::New {
+        repo: None,
+        container_script: None,
+    };
+    world.validation_result = Some(if backend.can_launch(&request) {
+        Ok(())
+    } else {
+        Err("container launch rejected by local backend".into())
+    });
+}
+
+#[then("the backend rejects the container launch request")]
+fn backend_rejects_container_launch_request(world: &mut QuectoWorld) {
+    assert_eq!(world.stdout, "local");
+    assert!(
+        world
+            .validation_result
+            .as_ref()
+            .unwrap()
+            .as_ref()
+            .unwrap_err()
+            .contains("rejected")
+    );
+}

@@ -31,6 +31,12 @@ Feature: Container-backed subagent orchestration
     Then the agent runs in the parent's local environment
 
   @done
+  Scenario: The local launch backend rejects isolated environments
+    Given the local launch backend is selected
+    When the parent requests a new isolated environment from that backend
+    Then the backend rejects the container launch request
+
+  @done
   Scenario: The configured default deterministically creates an isolated environment
     Given a parent agent has a valid default container script set
     When the parent spawns an agent in a new container
