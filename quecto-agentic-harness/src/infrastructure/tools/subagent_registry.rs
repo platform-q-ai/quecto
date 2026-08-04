@@ -288,7 +288,7 @@ pub fn lookup_subagent_socket(
     let uuid =
         resolve_live_display_name(&resolution_entries, agent_id).map_err(|err| match err {
             crate::domain::subagent::DisplayNameResolveError::NoLiveMatch { display_name } => {
-                format!("no live subagent named '{display_name}'")
+                format!("no live subagent named '{display_name}' (not found)")
             }
             crate::domain::subagent::DisplayNameResolveError::AmbiguousLiveMatch {
                 display_name,
