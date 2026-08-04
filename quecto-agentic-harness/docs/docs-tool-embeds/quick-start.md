@@ -108,9 +108,9 @@ Reuse a child that already owns the relevant context instead of starting redunda
 - use `follow_up` to queue related work after its current run;
 - use `steer` to interrupt and redirect active work;
 - spawn a new child for a new independent scope;
-- after a child has exited, deliberately reusing the same `agent_id` resumes its persisted session, while a different `agent_id` creates a separate context.
+- `agent_id` is a user-facing display label, not durable identity; after a child has exited, reusing the same `agent_id` starts a fresh hidden UUID / clean child session rather than resuming prior context.
 
-Do not reuse stale child context merely to avoid a new session; use it only when its prior context is relevant and safe for the new assignment.
+Do not expect stale child context to carry over across label reuse; pass needed context explicitly in the new task.
 
 ## Non-blocking execution and result recovery
 

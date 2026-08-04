@@ -179,6 +179,53 @@ fn await_dedupe_resolves_display_label_for_retained_exited_entry() {
     );
 }
 
+/// #1378 review: after kill/cascade_remove and same-label respawn, a late
+/// display-label exit note from the removed generation must not resolve to the
+/// new live generation. Await-dedupe routing prefers the entry carrying the
+/// pending dedupe flag, so suppression consumes gen-N and leaves gen-N+1 intact.
+#[test]
+fn await_dedupe_prefers_pending_flag_over_new_live_same_label() {
+    let registry = new_registry();
+    let old_uuid = crate::domain::ids::AgentUuid::new("33333333-3333-4333-8333-333333333333");
+    let new_uuid = crate::domain::ids::AgentUuid::new("44444444-4444-4444-8444-444444444444");
+    let mut old_entry = SubagentEntry::with_identity(
+        old_uuid.clone(),
+        "worker".into(),
+        std::path::PathBuf::from("/tmp/old-worker.sock"),
+        10,
+    );
+    old_entry.status = SubagentStatus::Exited;
+    old_entry.completion_consumed_by_await = true;
+    let new_entry = SubagentEntry::with_identity(
+        new_uuid.clone(),
+        "worker".into(),
+        std::path::PathBuf::from("/tmp/new-worker.sock"),
+        11,
+    );
+    registry
+        .lock()
+        .unwrap()
+        .insert(old_uuid.to_string(), old_entry);
+    registry
+        .lock()
+        .unwrap()
+        .insert(new_uuid.to_string(), new_entry);
+
+    assert!(
+        take_completion_consumed_by_await(&registry, "worker"),
+        "late display-label note should suppress against pending old generation"
+    );
+    let entries = registry.lock().unwrap();
+    assert!(
+        !entries[old_uuid.as_str()].completion_consumed_by_await,
+        "old generation flag must be consumed"
+    );
+    assert!(
+        !entries[new_uuid.as_str()].completion_consumed_by_await,
+        "new live generation must not be mistaken for the late note"
+    );
+}
+
 /// #1378: user-facing completion notes carry the display label so parents can
 /// copy the token into agent_cmd without knowing the UUID.
 #[test]

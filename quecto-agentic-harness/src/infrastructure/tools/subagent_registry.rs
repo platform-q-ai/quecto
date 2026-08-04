@@ -229,6 +229,12 @@ pub fn resolve_registry_key_for_await_dedupe(
     if entries.contains_key(agent_ref) {
         return Ok(agent_ref.to_string());
     }
+    if let Some((key, _)) = entries.iter().find(|(key, entry)| {
+        entry.effective_display_name(key) == agent_ref && entry.completion_consumed_by_await
+    }) {
+        return Ok(key.clone());
+    }
+
     let resolution_entries = display_resolution_entries(entries);
     match resolve_live_display_name(&resolution_entries, agent_ref) {
         Ok(uuid) => Ok(uuid.into_string()),

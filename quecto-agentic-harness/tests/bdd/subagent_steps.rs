@@ -1,4 +1,15 @@
 use super::*;
+use quecto::domain::ids::AgentUuid;
+use quecto::domain::subagent::{
+    DisplayNameResolutionEntry, assert_display_name_available_for_spawn,
+};
+use quecto::infrastructure::tools::subagent_registry::{
+    SubagentEntry, SubagentStatus, new_registry, resolve_registry_key,
+};
+
+fn bdd_child_session_key(agent_uuid: &AgentUuid) -> String {
+    agent_uuid.as_str().to_string()
+}
 
 // Subagent Steps
 // ===========================================================================
@@ -124,7 +135,21 @@ fn then_validation_succeeds(world: &mut QuectoWorld) {
 }
 
 #[given(expr = "a subagent named {string} has exited")]
-fn given_subagent_named_exited(world: &mut QuectoWorld, _name: String) {
+fn given_subagent_named_exited(world: &mut QuectoWorld, name: String) {
+    let old_uuid = AgentUuid::new("11111111-1111-4111-8111-111111111111");
+    let mut entry = SubagentEntry::with_identity(
+        old_uuid.clone(),
+        name.clone(),
+        std::path::PathBuf::from("/tmp/bdd-old.sock"),
+        1,
+    );
+    entry.status = SubagentStatus::Exited;
+    let registry = new_registry();
+    registry.lock().unwrap().insert(old_uuid.to_string(), entry);
+    world.agent_cmd_registry = Some(registry);
+    world.subagent_old_session_key = Some(bdd_child_session_key(&old_uuid));
+    world.subagent_old_uuid = Some(old_uuid);
+    world.subagent_display_label = Some(name);
     world.subagent_context = Some(SubagentContext {
         task: "".into(),
         messages: vec![Message::user("previous context")],
@@ -134,31 +159,99 @@ fn given_subagent_named_exited(world: &mut QuectoWorld, _name: String) {
 
 #[given(expr = "a live subagent named {string}")]
 fn given_live_subagent_named(world: &mut QuectoWorld, name: String) {
-    world.agent_id_validation = Some(Err(format!(
-        "duplicate live subagent display label '{name}'"
-    )));
+    let uuid = AgentUuid::new("22222222-2222-4222-8222-222222222222");
+    let entry = SubagentEntry::with_identity(
+        uuid.clone(),
+        name.clone(),
+        std::path::PathBuf::from("/tmp/bdd-live.sock"),
+        2,
+    );
+    let registry = new_registry();
+    registry.lock().unwrap().insert(uuid.to_string(), entry);
+    world.agent_cmd_registry = Some(registry);
+    world.subagent_new_uuid = Some(uuid);
+    world.subagent_display_label = Some(name);
 }
 
 #[when(expr = "a parent spawns a subagent named {string}")]
-fn when_parent_spawns_named(world: &mut QuectoWorld, _name: String) {
-    world.subagent_context = Some(SubagentContext {
-        task: "".into(),
-        messages: Vec::new(),
-        restrict_to_workspace: false,
-    });
+fn when_parent_spawns_named(world: &mut QuectoWorld, name: String) {
+    let entries = world
+        .agent_cmd_registry
+        .as_ref()
+        .map(|registry| {
+            registry
+                .lock()
+                .unwrap()
+                .values()
+                .map(|entry| DisplayNameResolutionEntry {
+                    agent_uuid: entry.agent_uuid.clone(),
+                    display_name: entry.display_name.clone(),
+                    live: entry.status != SubagentStatus::Exited,
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    match assert_display_name_available_for_spawn(&entries, &name) {
+        Ok(()) => {
+            // BDD keeps this at production-policy/helper level rather than launching
+            // a child process: #1378 acceptance only requires the spawn identity,
+            // session-key, clean-context, and live-label policy invariants.
+            let new_uuid = AgentUuid::mint();
+            world.subagent_new_session_key = Some(bdd_child_session_key(&new_uuid));
+            world.subagent_new_uuid = Some(new_uuid);
+            world.subagent_display_label = Some(name);
+            world.agent_id_validation = Some(Ok(()));
+            world.subagent_context = Some(SubagentContext {
+                task: "".into(),
+                messages: Vec::new(),
+                restrict_to_workspace: false,
+            });
+        }
+        Err(err) => {
+            world.agent_id_validation = Some(Err(match err {
+                quecto::domain::subagent::DisplayNameResolveError::NoLiveMatch { display_name } => {
+                    format!("no live subagent named '{display_name}'")
+                }
+                quecto::domain::subagent::DisplayNameResolveError::AmbiguousLiveMatch {
+                    display_name,
+                } => {
+                    format!("duplicate live subagent display label '{display_name}'")
+                }
+            }))
+        }
+    }
 }
 
 #[when(expr = "a parent tool targets display label {string}")]
 fn when_parent_tool_targets_exited_label(world: &mut QuectoWorld, name: String) {
-    world.agent_id_validation = Some(Err(format!("no live subagent named '{name}'")));
+    let registry = world
+        .agent_cmd_registry
+        .as_ref()
+        .expect("subagent registry not set");
+    let result = {
+        let entries = registry.lock().unwrap();
+        resolve_registry_key(&entries, &name)
+    };
+    world.agent_id_validation = Some(result.map(|_| ()).map_err(|err| match err {
+        quecto::domain::subagent::DisplayNameResolveError::NoLiveMatch { display_name } => {
+            format!("no live subagent named '{display_name}'")
+        }
+        quecto::domain::subagent::DisplayNameResolveError::AmbiguousLiveMatch { display_name } => {
+            format!("duplicate live subagent display label '{display_name}'")
+        }
+    }));
 }
 
 #[then("the spawned subagent should have a new hidden identity")]
 fn then_spawned_has_new_hidden_identity(world: &mut QuectoWorld) {
-    assert!(
-        world.subagent_context.is_some(),
-        "expected spawned subagent context to exist"
+    let old_uuid = world.subagent_old_uuid.as_ref().expect("old uuid missing");
+    let new_uuid = world.subagent_new_uuid.as_ref().expect("new uuid missing");
+    assert_ne!(
+        old_uuid, new_uuid,
+        "label reuse must mint a fresh hidden AgentUuid"
     );
+    assert_eq!(world.subagent_display_label.as_deref(), Some("worker"));
 }
 
 #[then("the spawned subagent should have a clean conversation history")]
@@ -171,6 +264,10 @@ fn then_spawned_has_clean_history(world: &mut QuectoWorld) {
         ctx.messages.is_empty(),
         "expected empty conversation history, got {} messages",
         ctx.messages.len()
+    );
+    assert_ne!(
+        world.subagent_old_session_key, world.subagent_new_session_key,
+        "child session key must be the new hidden AgentUuid, not reused display-label history"
     );
 }
 
