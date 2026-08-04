@@ -3,6 +3,8 @@ pub mod audit;
 pub mod constants;
 pub mod container_runtime;
 #[cfg(test)]
+mod container_runtime_launch_tests;
+#[cfg(test)]
 mod container_runtime_tests;
 pub mod error;
 pub mod extension;

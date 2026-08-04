@@ -1312,6 +1312,7 @@ mod audit_log_steps;
 mod auth_steps;
 mod codex_provider_steps;
 mod config_steps;
+mod container_spawn_launch_steps;
 mod container_spawn_lifecycle_steps;
 mod container_spawn_steps;
 mod context_pruning_steps;
