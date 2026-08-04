@@ -89,8 +89,20 @@ fn new_container_spawn_requests_script(world: &mut QuectoWorld, script: String) 
         repo: None,
         container_script: Some(script),
     };
-    world.validation_result = Some(req.resolve_script(&cfg).map(|_| ()));
-    world.stderr = req.resolve_script(&cfg).unwrap().unwrap().0.to_string();
+    match req.resolve_script(&cfg) {
+        Ok(Some((name, _))) => {
+            world.validation_result = Some(Ok(()));
+            world.stderr = name.to_string();
+        }
+        Ok(None) => {
+            world.validation_result = Some(Err("no container script selected".into()));
+            world.stderr.clear();
+        }
+        Err(err) => {
+            world.validation_result = Some(Err(err));
+            world.stderr.clear();
+        }
+    }
 }
 
 #[then(expr = "the launch configuration selects container script {string}")]
@@ -140,4 +152,101 @@ fn backend_records_launched_ref(world: &mut QuectoWorld) {
         "missing container ref: {}",
         world.stderr
     );
+}
+
+#[given(expr = "the parent repository is {string}")]
+fn parent_repository_is(world: &mut QuectoWorld, repo: String) {
+    world.stdout = repo;
+    world.stderr.clear();
+}
+
+#[when("a new container launch request omits repo")]
+fn new_container_launch_request_omits_repo(world: &mut QuectoWorld) {
+    let request = SpawnContainerRequest::New {
+        repo: None,
+        container_script: Some("quecto-dev".into()),
+    };
+    use quecto::application::agent_launch_backend::{
+        AgentLaunchBackend, LocalProcessLaunchBackend,
+    };
+    assert!(
+        LocalProcessLaunchBackend.can_launch(&request),
+        "container backend should resolve omitted repo from parent repository {}",
+        world.stdout
+    );
+    world.stderr = "<backend-did-not-resolve-parent-repo>".into();
+}
+
+#[when(expr = "a new container launch request specifies repo {string}")]
+fn new_container_launch_request_specifies_repo(world: &mut QuectoWorld, repo: String) {
+    let request = SpawnContainerRequest::New {
+        repo: Some(repo.clone()),
+        container_script: Some("quecto-dev".into()),
+    };
+    use quecto::application::agent_launch_backend::{
+        AgentLaunchBackend, LocalProcessLaunchBackend,
+    };
+    assert!(
+        LocalProcessLaunchBackend.can_launch(&request),
+        "container backend should preserve explicit repository {repo}"
+    );
+    world.stderr = repo;
+}
+
+#[then(expr = "the launch request uses repository {string}")]
+fn launch_request_uses_repository(world: &mut QuectoWorld, expected: String) {
+    assert_eq!(world.stderr, expected);
+}
+
+#[when(expr = "the parent asks SpawnTool to spawn agent {string} without a container field")]
+async fn parent_asks_spawn_tool_without_container(world: &mut QuectoWorld, agent_id: String) {
+    let tool = SpawnTool::new(vec![], true);
+    let args = serde_json::json!({"agent_id": agent_id, "task": "stay local"});
+    world.tool_result = Some(
+        tool.execute(&args.to_string())
+            .await
+            .map_err(|e| e.to_string()),
+    );
+}
+
+#[when(expr = "the parent asks SpawnTool to spawn agent {string} with container false")]
+async fn parent_asks_spawn_tool_with_container_false(world: &mut QuectoWorld, agent_id: String) {
+    let tool = SpawnTool::new(vec![], true);
+    let args = serde_json::json!({"agent_id": agent_id, "task": "stay local", "container": false});
+    world.tool_result = Some(
+        tool.execute(&args.to_string())
+            .await
+            .map_err(|e| e.to_string()),
+    );
+}
+
+#[then("SpawnTool reaches the local launch path")]
+fn spawn_tool_reaches_local_launch_path(world: &mut QuectoWorld) {
+    let result = world.tool_result.as_ref().expect("spawn tool executed");
+    let tool_result = result.as_ref().expect("local spawn should execute");
+    assert!(
+        !tool_result.is_error,
+        "omitted/false container should use local spawn path: {}",
+        tool_result.content
+    );
+    assert!(
+        !tool_result
+            .content
+            .contains("container-backed spawning is not wired yet")
+    );
+}
+
+#[then(expr = "launch configuration fails before create with {string}")]
+fn launch_configuration_fails_before_create(world: &mut QuectoWorld, expected: String) {
+    let err = world
+        .validation_result
+        .as_ref()
+        .expect("script selection attempted")
+        .as_ref()
+        .expect_err("script selection must fail");
+    assert!(
+        err.contains(&expected),
+        "expected error containing {expected:?}, got {err:?}"
+    );
+    assert!(world.stderr.is_empty(), "create should not have run");
 }
