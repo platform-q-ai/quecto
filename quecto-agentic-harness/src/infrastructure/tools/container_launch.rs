@@ -34,6 +34,7 @@ pub struct ContainerLaunchContext {
 #[derive(Debug, Clone)]
 pub struct PreparedContainerLaunch {
     pub entry: ContainerEntry,
+    pub is_new: bool,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -88,11 +89,15 @@ pub async fn prepare_container_launch(
                 .map_err(DomainError::Tool)?
                 .ok_or_else(|| DomainError::Tool("container script selection missing".into()))?;
             let repo = repo.clone().or_else(|| ctx.parent_repo.clone());
+            reject_unsafe_repo(repo.as_deref())?;
             let out = run_script_json(&set.create, repo.as_deref(), None, agent_uuid).await?;
             let mut entry = entry_from_script(out, repo, agent_uuid.clone(), name, set);
             let registered = register_container(&ctx.registry, entry.clone());
             entry.container_ref = registered.container_ref.clone();
-            Ok(Some(PreparedContainerLaunch { entry }))
+            Ok(Some(PreparedContainerLaunch {
+                entry,
+                is_new: true,
+            }))
         }
         SpawnContainerRequest::Existing { reference } => {
             let ref_text = match reference {
@@ -120,7 +125,10 @@ pub async fn prepare_container_launch(
                 .unwrap_or_else(|e| e.into_inner())
                 .entries
                 .insert(uuid, entry.clone());
-            Ok(Some(PreparedContainerLaunch { entry }))
+            Ok(Some(PreparedContainerLaunch {
+                entry,
+                is_new: false,
+            }))
         }
     }
 }
@@ -132,11 +140,11 @@ pub struct ContainerExecSpec<'a> {
     pub requested_socket_path: &'a std::path::Path,
     pub child_binary: &'a std::path::Path,
     pub child_args: &'a [std::ffi::OsString],
+    pub prepend_child_binary: bool,
 }
 
 pub fn build_container_exec_command(spec: ContainerExecSpec<'_>) -> tokio::process::Command {
-    let mut c = tokio::process::Command::new("sh");
-    c.arg("-c").arg(&spec.entry.exec_command);
+    let mut c = tokio::process::Command::new(&spec.entry.exec_command);
     c.env("QUECTO_CONTAINER_REF", &spec.entry.container_ref);
     c.env("QUECTO_ENVIRONMENT_UUID", &spec.entry.environment_id);
     c.env("QUECTO_WORKSPACE_PATH", &spec.entry.workspace_path);
@@ -149,14 +157,23 @@ pub fn build_container_exec_command(spec: ContainerExecSpec<'_>) -> tokio::proce
     }
     c.env("QUECTO_SOCKET_PATH", spec.requested_socket_path.as_os_str());
     c.env("QUECTO_CHILD_BINARY", spec.child_binary);
-    let child_args = spec
-        .child_args
-        .iter()
-        .map(|arg| arg.to_string_lossy())
-        .collect::<Vec<_>>()
-        .join(" ");
-    c.env("QUECTO_CHILD_ARGS", child_args);
+    c.arg("--");
+    if spec.prepend_child_binary {
+        c.arg(spec.child_binary);
+    }
+    c.args(spec.child_args);
     c
+}
+
+fn reject_unsafe_repo(repo: Option<&str>) -> Result<(), DomainError> {
+    if let Some(repo) = repo {
+        if repo.starts_with('-') {
+            return Err(DomainError::Tool(
+                "repository URL must not start with '-'".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 async fn run_script_json(

@@ -1,3 +1,16 @@
+use super::container_script_cleanup::{
+    invoke_container_inspect_script, invoke_container_kill_script,
+};
+use super::spawn_entry::{
+    InitialRegistryEntrySpec, child_session_key, child_sidecar_filename, child_socket_path,
+    effective_config_path, inherited_runtime_config_path, initial_registry_entry,
+};
+use super::spawn_launch_args::write_private_new;
+use super::spawn_parse::parse_disable_tools;
+pub use super::spawn_registry::{register_and_broadcast, shutdown_all, shutdown_all_with_count};
+#[cfg(test)]
+pub use super::subagent_registry::SubagentStatus;
+use super::subagent_registry::{ExitSignal, NotificationTx, new_exit_signal_channel};
 pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
 use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
@@ -13,21 +26,11 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-
-use super::container_script_cleanup::{
-    invoke_container_inspect_script, invoke_container_kill_script,
-};
-use super::spawn_entry::{
-    InitialRegistryEntrySpec, child_session_key, child_sidecar_filename, child_socket_path,
-    effective_config_path, inherited_runtime_config_path, initial_registry_entry,
-};
-use super::spawn_launch_args::write_private_new;
-use super::spawn_parse::parse_disable_tools;
-pub use super::spawn_registry::{register_and_broadcast, shutdown_all, shutdown_all_with_count};
-#[cfg(test)]
-pub use super::subagent_registry::SubagentStatus;
-use super::subagent_registry::{ExitSignal, NotificationTx, new_exit_signal_channel};
-
+fn kill_container_owner(entry: &SubagentEntry) {
+    if entry.parent_id.is_none() {
+        invoke_container_kill_script(entry);
+    }
+}
 fn validate_config_path(s: &str) -> Result<PathBuf, String> {
     let p = PathBuf::from(s);
     for component in p.components() {
@@ -40,7 +43,6 @@ fn validate_config_path(s: &str) -> Result<PathBuf, String> {
     }
     Ok(p)
 }
-
 /// Tool that spawns a child `quecto agent` process in UDS mode.
 ///
 /// When executed, validates the request, launches the child as a
@@ -61,7 +63,6 @@ pub struct SpawnTool {
     container_launch: Option<super::container_launch::ContainerLaunchContext>,
     inherited_tool_policy: super::spawn_inherited_policy::InheritedToolPolicyState,
 }
-
 impl SpawnTool {
     pub fn new(allowed_agents: Vec<String>, restrict_to_workspace: bool) -> Self {
         Self {
@@ -77,7 +78,6 @@ impl SpawnTool {
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
         }
     }
-
     pub fn with_base_dir(
         allowed_agents: Vec<String>,
         restrict_to_workspace: bool,
@@ -96,12 +96,10 @@ impl SpawnTool {
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
         }
     }
-
     pub fn with_socket_dir(mut self, socket_dir: PathBuf) -> Self {
         self.socket_dir = socket_dir;
         self
     }
-
     pub fn with_container_launch(
         mut self,
         context: super::container_launch::ContainerLaunchContext,
@@ -109,7 +107,6 @@ impl SpawnTool {
         self.container_launch = Some(context);
         self
     }
-
     pub(crate) fn with_inherited_tool_policy(
         self,
         snapshot: super::inherited_tool_policy::InheritedToolPolicySnapshot,
@@ -117,19 +114,16 @@ impl SpawnTool {
         super::spawn_inherited_policy::replace_state(&self.inherited_tool_policy, snapshot);
         self
     }
-
     /// Inject a shared subagent registry (used when wiring spawn + agent_cmd together).
     pub fn with_registry(mut self, registry: SubagentRegistry) -> Self {
         self.registry = registry;
         self
     }
-
     /// Set the notification sender for auto-notifying the parent LLM (#523).
     pub fn with_notify_tx(mut self, tx: NotificationTx) -> Self {
         self.notify_tx = Some(tx);
         self
     }
-
     /// Set the parent's broadcast channel + own id so spawned children forward
     /// their workflow_state events onto the parent's stream (PRD Stage B).
     pub fn with_event_forwarding(
@@ -141,12 +135,10 @@ impl SpawnTool {
         self.parent_id = parent_id;
         self
     }
-
     /// Return a reference to the shared registry (for testing / wiring).
     pub fn registry(&self) -> &SubagentRegistry {
         &self.registry
     }
-
     /// Parse spawn arguments and return the resulting config.
     /// Available in tests and the `test-support` feature so BDD steps can
     /// inspect parsed values without promoting the method to the full public API.
@@ -154,46 +146,37 @@ impl SpawnTool {
     pub fn parse_args_for_test(&self, arguments: &str) -> Result<SubagentConfig, String> {
         self.parse_args(arguments)
     }
-
     /// Parse the tool arguments and create a SubagentConfig.
     fn parse_args(&self, arguments: &str) -> Result<SubagentConfig, String> {
         let args: serde_json::Value =
             serde_json::from_str(arguments).map_err(|e| format!("invalid JSON: {}", e))?;
-
         let task = args.get("task").and_then(|v| v.as_str()).map(String::from);
-
         let agent_id = args
             .get("agent_id")
             .and_then(|v| v.as_str())
             .map(String::from);
-
         let system = args
             .get("system")
             .and_then(|v| v.as_str())
             .map(String::from);
-
         let config_path = args
             .get("config")
             .and_then(|v| v.as_str())
             .map(validate_config_path)
             .transpose()?;
-
         let workflow = args
             .get("workflow")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-
         let workflow_guards = args
             .get("workflow_guards")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-
         // workflow_guards requires workflow — reject early rather than letting the
         // child process fail with an opaque CLI error.
         if workflow_guards && !workflow {
             return Err("workflow_guards requires workflow to also be true".to_string());
         }
-
         // Borrow-deserialize into the domain type so malformed by-value specs
         // fail here clearly and raw JSON never leaks into the launch pipeline.
         let workflow_spec = match args.get("workflow_spec") {
@@ -205,7 +188,6 @@ impl SpawnTool {
             }
             _ => None,
         };
-
         // #881: share set_model parsing so accepted forms cannot diverge;
         // explicit model > forwarded --config > built-in default.
         let model_arg = crate::domain::subagent::parse_model_arg(
@@ -215,28 +197,22 @@ impl SpawnTool {
         )
         .map_err(|e| format!("invalid model: {e}"))?;
         let model = model_arg.map(|m| m.to_model_string());
-
         let effort =
             super::spawn_launch_args::parse_effort_arg(args.get("effort"), model.as_deref())?;
-
         if let Some(ref id) = agent_id {
             super::subagent_registry::validate_agent_id_format(id)?;
             if !self.allowed_agents.is_empty() {
                 validate_agent_id(id, &self.allowed_agents).map_err(|e| e.to_string())?;
             }
         }
-
         let disable_tools = parse_disable_tools(&args)?;
-
         // Observer sub-agents have both mutation tools disabled (#966).
         let read_only = {
             let has = |name: &str| disable_tools.iter().any(|t| t == name);
             has("write") && has("edit")
         };
-
         let container =
             crate::domain::container_runtime::SpawnContainerRequest::parse(args.get("container"))?;
-
         Ok(SubagentConfig {
             task,
             agent_id,
@@ -253,10 +229,8 @@ impl SpawnTool {
             container,
         })
     }
-
     async fn launch_uds_agent(&self, config: &SubagentConfig) -> Result<ToolResult, DomainError> {
         let session_name = config.agent_id.as_deref().unwrap_or("subagent");
-
         {
             let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
             let resolution_entries: Vec<_> = entries
@@ -281,7 +255,6 @@ impl SpawnTool {
                 });
             }
         }
-
         let agent_uuid = AgentUuid::mint();
         if let Some(ctx) = &self.container_launch {
             if !matches!(
@@ -307,17 +280,10 @@ impl SpawnTool {
             });
         };
         let registry_key = agent_uuid.to_string();
-
         let requested_socket_path = child_socket_path(&self.socket_dir, &agent_uuid);
         let socket_path = container_launch
             .as_ref()
-            .and_then(|launch| {
-                launch
-                    .entry
-                    .socket_path
-                    .as_ref()
-                    .or(launch.entry.socket_proxy.as_ref())
-            })
+            .and_then(|launch| launch.entry.socket_path.as_ref())
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| requested_socket_path.clone());
 
@@ -386,6 +352,10 @@ impl SpawnTool {
 
         let binary = super::spawn_binary::resolve_child_binary()?;
         let mut cmd = if let Some(ref launch) = container_launch {
+            let argv_args: Vec<std::ffi::OsString> =
+                std::iter::once(binary.as_os_str().to_os_string())
+                    .chain(cli_args.iter().cloned())
+                    .collect();
             super::container_launch::build_container_exec_command(
                 super::container_launch::ContainerExecSpec {
                     entry: &launch.entry,
@@ -393,7 +363,8 @@ impl SpawnTool {
                     parent_id: self.parent_id.as_deref(),
                     requested_socket_path: &requested_socket_path,
                     child_binary: &binary,
-                    child_args: &cli_args,
+                    child_args: if launch.is_new { &argv_args } else { &cli_args },
+                    prepend_child_binary: !launch.is_new,
                 },
             )
         } else {
@@ -566,13 +537,13 @@ impl SpawnTool {
             for (id, entry) in &removed {
                 if id == &reaper_name {
                     invoke_container_inspect_script(entry);
-                    invoke_container_kill_script(entry);
+                    kill_container_owner(entry);
                     if let Some(ref handle) = entry.monitor_handle {
                         handle.abort();
                     }
                     continue;
                 }
-                invoke_container_kill_script(entry);
+                kill_container_owner(entry);
                 if let Some(ref tx) = entry.exit_signal_tx {
                     let _ = tx.send(Some(ExitSignal {
                         exit_code: None,

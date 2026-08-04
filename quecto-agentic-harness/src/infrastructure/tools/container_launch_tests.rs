@@ -182,3 +182,105 @@ async fn existing_container_spawn_reuses_registered_environment_and_exec_command
     assert_eq!(launch.entry.workspace_path, "/workspace/repo");
     assert_eq!(launch.entry.exec_command, "echo reuse");
 }
+
+#[tokio::test]
+async fn container_exec_command_passes_structured_argv_without_joined_env_or_shell() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("capture.py");
+    let log = dir.path().join("argv.json");
+    std::fs::write(&script, format!("#!/usr/bin/env python3\nimport json, os, sys\nwith open({:?}, 'w') as f:\n    json.dump({{'argv': sys.argv[1:], 'joined': os.environ.get('QUECTO_CHILD_ARGS')}}, f)\n", log)).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let entry = ContainerEntry {
+        container_uuid: "env-argv".into(),
+        container_ref: "C1".into(),
+        container_name: None,
+        environment_id: "env-argv".into(),
+        repo_url: None,
+        workspace_path: dir.path().to_string_lossy().into_owned(),
+        status: ContainerStatus::Running,
+        agents: vec![],
+        script_name: "dev".into(),
+        exec_command: script.to_string_lossy().into_owned(),
+        inspect_command: "true".into(),
+        kill_command: "true".into(),
+        socket_path: None,
+        socket_proxy: None,
+        metadata: serde_json::json!({}),
+    };
+    let mut cmd = build_container_exec_command(ContainerExecSpec {
+        entry: &entry,
+        agent_uuid: &AgentUuid::new("agent-argv"),
+        parent_id: None,
+        requested_socket_path: &dir.path().join("agent.sock"),
+        child_binary: std::path::Path::new("/bin/echo"),
+        child_args: &["hello".into(), "two words".into(), "$(touch pwn)".into()],
+        prepend_child_binary: true,
+    });
+    assert!(cmd.status().await.unwrap().success());
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(log).unwrap()).unwrap();
+    assert_eq!(v["joined"], serde_json::Value::Null);
+    assert_eq!(
+        v["argv"],
+        serde_json::json!(["--", "/bin/echo", "hello", "two words", "$(touch pwn)"])
+    );
+}
+
+#[test]
+fn reference_create_rejects_leading_dash_repo_before_git_clone() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("scripts/container-runtime/create.sh");
+    let output = std::process::Command::new("bash")
+        .arg(script)
+        .env("QUECTO_CONTAINER_ROOT", dir.path())
+        .env("QUECTO_AGENT_UUID", "malrepo")
+        .arg("--repo")
+        .arg("--upload-pack=/tmp/pwn")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unsafe repository"), "{stderr}");
+    assert!(!dir.path().join("quecto-malrepo/workspace").exists());
+}
+
+#[test]
+fn reference_kill_rejects_workspace_outside_managed_root() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let victim = outside.path().join("victim.txt");
+    std::fs::write(&victim, "keep").unwrap();
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("scripts/container-runtime/kill.sh");
+    let output = std::process::Command::new("bash")
+        .arg(script)
+        .env("QUECTO_CONTAINER_ROOT", root.path())
+        .env("QUECTO_ENVIRONMENT_UUID", "env-safe")
+        .env("QUECTO_WORKSPACE_PATH", outside.path().join("workspace"))
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("outside managed root"), "{stderr}");
+    assert_eq!(std::fs::read_to_string(victim).unwrap(), "keep");
+}
+
+#[test]
+fn spawn_reaper_only_kills_container_for_environment_owner() {
+    let source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/infrastructure/tools/spawn.rs"),
+    )
+    .unwrap();
+    assert!(source.contains("if entry.parent_id.is_none()"));
+    assert!(source.contains("kill_container_owner(entry)"));
+}
