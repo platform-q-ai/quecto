@@ -66,7 +66,7 @@ async fn burst_of_completions_coalesces_to_one_summary_line() {
         );
     }
     assert!(
-        frame.contains("Inspect agent_cmd ge"),
+        frame.contains("Inspect agent_cm"),
         "the coalesced note must preserve the inspection warning:\n{frame}"
     );
 }

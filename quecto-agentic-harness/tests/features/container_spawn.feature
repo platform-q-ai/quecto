@@ -24,13 +24,13 @@ Feature: Container-backed subagent orchestration
   # AC11 The reference scripts satisfy the documented create, exec, inspect, and kill
   #      contract without embedding Docker assumptions in the agent runtime.
 
-  @pending
+  @done
   Scenario: Local execution remains the default
     Given a parent agent is configured with container scripts
     When the parent spawns an agent without a container request
     Then the agent runs in the parent's local environment
 
-  @pending
+  @done
   Scenario: The configured default deterministically creates an isolated environment
     Given a parent agent has a valid default container script set
     When the parent spawns an agent in a new container
@@ -66,13 +66,13 @@ Feature: Container-backed subagent orchestration
     When the parent spawns an agent in a new container for an explicit repository
     Then the isolated environment uses the requested repository
 
-  @pending
+  @done
   Scenario: An observer joins an existing environment
     Given a live isolated environment contains an implementing agent
     When the parent spawns a read-only agent into that environment
     Then both agents share the environment checkout
 
-  @pending
+  @done
   Scenario Outline: An unavailable environment ref is never guessed
     Given an environment ref is <availability>
     When the parent spawns an agent into that environment ref
@@ -83,7 +83,7 @@ Feature: Container-backed subagent orchestration
       | unknown      |
       | dead         |
 
-  @pending
+  @done
   Scenario: Environment refs are never reused
     Given an isolated environment has stopped
     When the parent creates another isolated environment
