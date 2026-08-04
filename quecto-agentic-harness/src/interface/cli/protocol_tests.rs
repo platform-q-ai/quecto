@@ -273,6 +273,8 @@ fn test_parse_get_subagents_without_id() {
 fn test_subagent_state_changed_event_serializes() {
     let ev = AgentEvent::SubagentStateChanged {
         subagents: vec![SubagentInfo {
+            agent_uuid: None,
+            display_name: None,
             agent_id: "test".to_string(),
             status: "running".to_string(),
             last_tool: Some("bash".to_string()),
@@ -307,6 +309,8 @@ fn test_subagent_messages_appended_event_serializes() {
 #[test]
 fn test_subagent_info_null_fields_omitted() {
     let info = SubagentInfo {
+        agent_uuid: None,
+        display_name: None,
         agent_id: "idle-agent".to_string(),
         status: "idle".to_string(),
         last_tool: None,
@@ -325,6 +329,8 @@ fn test_subagent_info_null_fields_omitted() {
 #[test]
 fn test_subagent_info_with_error() {
     let info = SubagentInfo {
+        agent_uuid: None,
+        display_name: None,
         agent_id: "err".to_string(),
         status: "error".to_string(),
         last_tool: None,

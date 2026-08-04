@@ -19,7 +19,6 @@ fn given_empty_registry(world: &mut QuectoWorld) {
 }
 
 #[given(expr = "a registry with subagent {string} status {string} last_tool {string} pid {int}")]
-#[allow(clippy::too_many_arguments)]
 fn given_registry_with_subagent(
     world: &mut QuectoWorld,
     agent_id: String,
@@ -33,7 +32,6 @@ fn given_registry_with_subagent(
 #[given(
     expr = "a registry with read-only subagent {string} status {string} last_tool {string} pid {int}"
 )]
-#[allow(clippy::too_many_arguments)]
 fn given_registry_with_readonly_subagent(
     world: &mut QuectoWorld,
     agent_id: String,
@@ -242,7 +240,6 @@ fn then_subagent_info_list_has_mixed_observer_states(world: &mut QuectoWorld) {
 // ─── SubagentInfo serialization steps ─────────────────────────────────────────
 
 #[given(expr = "a SubagentInfo with agentId {string} status {string} lastTool {string} pid {int}")]
-#[allow(clippy::too_many_arguments)]
 fn given_subagent_info(
     world: &mut QuectoWorld,
     agent_id: String,
@@ -251,6 +248,8 @@ fn given_subagent_info(
     pid: i32,
 ) {
     world.subagent_info_single = Some(SubagentInfo {
+        agent_uuid: None,
+        display_name: None,
         agent_id,
         status,
         last_tool: if last_tool.is_empty() {
@@ -349,6 +348,8 @@ fn then_command_id_absent(world: &mut QuectoWorld) {
 fn given_state_changed_event(world: &mut QuectoWorld, count: usize) {
     let subagents: Vec<SubagentInfo> = (0..count)
         .map(|i| SubagentInfo {
+            agent_uuid: None,
+            display_name: None,
             agent_id: format!("agent-{i}"),
             status: "idle".to_string(),
             last_tool: None,
@@ -372,6 +373,8 @@ fn given_state_changed_one(
 ) {
     world.protocol_event = Some(AgentEvent::SubagentStateChanged {
         subagents: vec![SubagentInfo {
+            agent_uuid: None,
+            display_name: None,
             agent_id,
             status,
             last_tool: None,
@@ -396,6 +399,8 @@ fn given_state_changed_observer_and_readwrite(
     world.protocol_event = Some(AgentEvent::SubagentStateChanged {
         subagents: vec![
             SubagentInfo {
+                agent_uuid: None,
+                display_name: None,
                 agent_id: observer,
                 status: "running".to_string(),
                 last_tool: None,
@@ -407,6 +412,8 @@ fn given_state_changed_observer_and_readwrite(
                 read_only: true,
             },
             SubagentInfo {
+                agent_uuid: None,
+                display_name: None,
                 agent_id: readwrite,
                 status: "idle".to_string(),
                 last_tool: None,

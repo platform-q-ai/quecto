@@ -361,6 +361,8 @@ fn get_subagents_command_parses_without_id() {
 #[test]
 fn subagent_info_camel_case_serialization() {
     let info = SubagentInfo {
+        agent_uuid: None,
+        display_name: None,
         agent_id: "test-agent".into(),
         status: "running".into(),
         last_tool: Some("bash".into()),
@@ -384,6 +386,8 @@ fn subagent_info_camel_case_serialization() {
 #[test]
 fn subagent_info_null_fields_omitted() {
     let info = SubagentInfo {
+        agent_uuid: None,
+        display_name: None,
         agent_id: "idle".into(),
         status: "idle".into(),
         last_tool: None,
@@ -402,6 +406,8 @@ fn subagent_info_null_fields_omitted() {
 #[test]
 fn subagent_info_with_error_field() {
     let info = SubagentInfo {
+        agent_uuid: None,
+        display_name: None,
         agent_id: "err".into(),
         status: "error".into(),
         last_tool: None,
@@ -421,6 +427,8 @@ fn subagent_state_changed_event_matches_spec() {
     let ev = AgentEvent::SubagentStateChanged {
         subagents: vec![
             SubagentInfo {
+                agent_uuid: None,
+                display_name: None,
                 agent_id: "reviewer".into(),
                 status: "running".into(),
                 last_tool: Some("bash: cargo test".into()),
@@ -432,6 +440,8 @@ fn subagent_state_changed_event_matches_spec() {
                 read_only: false,
             },
             SubagentInfo {
+                agent_uuid: None,
+                display_name: None,
                 agent_id: "formatter".into(),
                 status: "idle".into(),
                 last_tool: None,
@@ -461,6 +471,8 @@ fn subagent_state_changed_event_matches_spec() {
 fn subagent_state_changed_event_roundtrip() {
     let ev = AgentEvent::SubagentStateChanged {
         subagents: vec![SubagentInfo {
+            agent_uuid: None,
+            display_name: None,
             agent_id: "test".into(),
             status: "exited".into(),
             last_tool: None,

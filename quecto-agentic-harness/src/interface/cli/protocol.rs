@@ -191,8 +191,14 @@ pub enum WorkflowIdleReason {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentInfo {
-    /// Unique agent identifier (matches the spawn `agent_id`).
+    /// Compatibility field: user-facing display label (spawn `agent_id`).
     pub agent_id: String,
+    /// Hidden durable identity minted for this spawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_uuid: Option<String>,
+    /// User-facing display label, explicit alias for `agent_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     /// Live status: "starting", "idle", "running", "error", "exited".
     pub status: String,
     /// Name of the last tool being executed, or `None`.
@@ -282,16 +288,21 @@ pub fn build_subagent_info_list(
         let guard = reg.lock().unwrap_or_else(|e| e.into_inner());
         guard
             .iter()
-            .map(|(id, entry)| SubagentInfo {
-                agent_id: id.clone(),
-                status: entry.status.to_wire_str().to_string(),
-                last_tool: entry.last_tool.clone(),
-                last_error: entry.last_error.clone(),
-                pid: entry.pid,
-                socket_path: Some(entry.socket_path.to_string_lossy().into_owned()),
-                parent_id: entry.parent_id.clone(),
-                workflow: entry.workflow.clone(),
-                read_only: entry.read_only,
+            .map(|(id, entry)| {
+                let display_name = entry.effective_display_name(id).to_string();
+                SubagentInfo {
+                    agent_id: display_name.clone(),
+                    agent_uuid: Some(entry.agent_uuid.to_string()),
+                    display_name: Some(display_name),
+                    status: entry.status.to_wire_str().to_string(),
+                    last_tool: entry.last_tool.clone(),
+                    last_error: entry.last_error.clone(),
+                    pid: entry.pid,
+                    socket_path: Some(entry.socket_path.to_string_lossy().into_owned()),
+                    parent_id: entry.parent_id.clone(),
+                    workflow: entry.workflow.clone(),
+                    read_only: entry.read_only,
+                }
             })
             .collect()
     }; // guard dropped here — sort happens outside critical section

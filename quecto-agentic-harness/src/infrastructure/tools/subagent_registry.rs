@@ -8,6 +8,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use crate::domain::ids::AgentUuid;
+use crate::domain::subagent::{DisplayNameResolutionEntry, resolve_live_display_name};
+
 use super::subagent_lifecycle::{SubagentLifecycleEvent, SubagentLifecycleState};
 
 /// Live status of a spawned subagent, updated by the monitor task (#522).
@@ -68,6 +71,11 @@ impl fmt::Display for SubagentStatus {
 /// Entry for a spawned subagent in the shared registry.
 #[derive(Debug, Clone)]
 pub struct SubagentEntry {
+    /// Hidden durable identity for this spawn. Registry/storage/socket owners use
+    /// this value as the stable agent identity; display labels remain wire/UI names.
+    pub agent_uuid: AgentUuid,
+    /// User-facing display label (`agent_id` on the compatibility wire).
+    pub display_name: String,
     /// Path to the child's UDS socket.
     pub socket_path: PathBuf,
     /// Child process PID (0 in stub mode).
@@ -136,9 +144,37 @@ pub(super) fn seed_bound_workflow(
 }
 
 impl SubagentEntry {
+    /// Display label to expose for this entry. Legacy tests and hand-built
+    /// registries may still be keyed by display name; UUID-keyed production
+    /// entries carry an explicit display_name.
+    pub fn effective_display_name<'a>(&'a self, registry_key: &'a str) -> &'a str {
+        if self.display_name.is_empty() || registry_key != self.agent_uuid.as_str() {
+            registry_key
+        } else {
+            self.display_name.as_str()
+        }
+    }
+
     /// Create a new entry with `Starting` status.
     pub fn new(socket_path: PathBuf, pid: u32) -> Self {
+        let display_name = socket_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_default()
+            .to_string();
+        Self::with_identity(AgentUuid::mint(), display_name, socket_path, pid)
+    }
+
+    /// Create a new entry with explicit hidden identity and display label.
+    pub fn with_identity(
+        agent_uuid: AgentUuid,
+        display_name: String,
+        socket_path: PathBuf,
+        pid: u32,
+    ) -> Self {
         Self {
+            agent_uuid,
+            display_name,
             socket_path,
             pid,
             lifecycle: SubagentLifecycleState::Launched,
@@ -241,8 +277,28 @@ pub fn lookup_subagent_socket(
     agent_id: &str,
 ) -> Result<PathBuf, String> {
     let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let resolution_entries: Vec<_> = entries
+        .iter()
+        .map(|(key, entry)| DisplayNameResolutionEntry {
+            agent_uuid: entry.agent_uuid.clone(),
+            display_name: entry.effective_display_name(key).to_string(),
+            live: entry.status != SubagentStatus::Exited,
+        })
+        .collect();
+    let uuid =
+        resolve_live_display_name(&resolution_entries, agent_id).map_err(|err| match err {
+            crate::domain::subagent::DisplayNameResolveError::NoLiveMatch { display_name } => {
+                format!("no live subagent named '{display_name}'")
+            }
+            crate::domain::subagent::DisplayNameResolveError::AmbiguousLiveMatch {
+                display_name,
+            } => {
+                format!("duplicate live subagent display label '{display_name}'")
+            }
+        })?;
     entries
-        .get(agent_id)
+        .get(uuid.as_str())
+        .or_else(|| entries.values().find(|entry| entry.agent_uuid == uuid))
         .map(|e| e.socket_path.clone())
         .ok_or_else(|| format!("subagent '{}' not found in registry", agent_id))
 }
