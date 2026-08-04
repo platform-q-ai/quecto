@@ -1315,6 +1315,7 @@ mod config_steps;
 mod container_spawn_launch_steps;
 mod container_spawn_lifecycle_steps;
 mod container_spawn_steps;
+mod container_spawn_tui_scripts_steps;
 mod context_pruning_steps;
 mod e2e_steps;
 mod edit_tool_steps;
