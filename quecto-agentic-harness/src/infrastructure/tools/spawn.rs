@@ -666,8 +666,18 @@ impl Tool for SpawnTool {
         Box::pin(async move {
             match self.parse_args(&args) {
                 Ok(config) => {
-                    // Only spawn subprocess when base_dir is configured (CLI agent mode).
-                    // Otherwise return a stub result (unit test / isolated mode).
+                    if !self.base_dir.as_os_str().is_empty()
+                        && !matches!(
+                            config.container,
+                            crate::domain::container_runtime::SpawnContainerRequest::Local
+                        )
+                    {
+                        return Ok(ToolResult {
+                            content: "Failed to spawn subagent: container-backed launch requires a configured script runtime; refusing to fall back to local spawn".into(),
+                            is_error: true,
+                            image_blocks: vec![],
+                        });
+                    }
                     if self.base_dir.as_os_str().is_empty() {
                         let session_name = config.agent_id.as_deref().unwrap_or("subagent");
 
@@ -689,11 +699,6 @@ impl Tool for SpawnTool {
                             }
                         }
 
-                        // Stub registration uses the same entry builder as the
-                        // real post-socket-ready path so status/parent/read_only
-                        // and #1049 cannot drift (#866 broadcast still applies).
-                        // #1378: socket path is UUID-keyed even in stub mode so
-                        // tests catch display-label collisions before launch.
                         let agent_uuid = AgentUuid::mint();
                         let stub_entry = initial_registry_entry(InitialRegistryEntrySpec {
                             agent_uuid: agent_uuid.clone(),
@@ -711,18 +716,10 @@ impl Tool for SpawnTool {
                             stub_entry,
                         );
 
-                        let msg = match config.container {
-                            crate::domain::container_runtime::SpawnContainerRequest::Local => {
-                                format!(
-                                    "Subagent '{}' is running (uuid={}). Use agent_cmd to interact.",
-                                    session_name, agent_uuid,
-                                )
-                            }
-                            _ => format!(
-                                "Subagent '{}' is running in container C1 (uuid={}). Use agent_cmd to interact.",
-                                session_name, agent_uuid,
-                            ),
-                        };
+                        let msg = format!(
+                            "Subagent '{}' is running (uuid={}). Use agent_cmd to interact.",
+                            session_name, agent_uuid,
+                        );
                         Ok(ToolResult {
                             content: msg,
                             is_error: false,

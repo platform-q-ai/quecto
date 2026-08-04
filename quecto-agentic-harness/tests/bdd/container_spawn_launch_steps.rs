@@ -30,7 +30,7 @@ async fn parent_asks_spawn_tool_for_new_container(
     agent_id: String,
     script: String,
 ) {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::with_base_dir(vec![], true, std::env::current_dir().unwrap());
     let args = serde_json::json!({
         "agent_id": agent_id,
         "task": "build in isolation",
@@ -43,16 +43,21 @@ async fn parent_asks_spawn_tool_for_new_container(
     );
 }
 
-#[then("SpawnTool accepts the container request for launch")]
-fn spawn_tool_accepts_container_request(world: &mut QuectoWorld) {
+#[then("SpawnTool rejects the container request without falling back to local launch")]
+fn spawn_tool_rejects_container_request_without_local_fallback(world: &mut QuectoWorld) {
     let result = world.tool_result.as_ref().expect("spawn tool executed");
     let tool_result = result
         .as_ref()
         .expect("container spawn should reach launch seam");
     assert!(
-        !tool_result.is_error,
-        "container spawn should not be rejected before launch: {}",
+        tool_result.is_error,
+        "container spawn without script-runtime wiring must fail closed rather than fall back locally: {}",
         tool_result.content
+    );
+    assert!(
+        tool_result
+            .content
+            .contains("refusing to fall back to local spawn")
     );
 }
 

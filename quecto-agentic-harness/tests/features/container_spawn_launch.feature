@@ -13,10 +13,10 @@ Feature: Container-backed spawn launch
     Then SpawnTool reaches the local launch path
 
   # Wiring coverage, not AC1
-  Scenario: SpawnTool accepts a new container request instead of rejecting before launch
+  Scenario: SpawnTool fails closed for container requests until a script runtime is configured
     Given the spawn tool has container-backed launching enabled
     When the parent asks SpawnTool to spawn agent "builder" in a new container using script "quecto-dev"
-    Then SpawnTool accepts the container request for launch
+    Then SpawnTool rejects the container request without falling back to local launch
 
   # AC2
   Scenario: Default container script selection uses configured default
