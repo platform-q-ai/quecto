@@ -60,8 +60,7 @@ declare -A OVERSIZED_BASELINE=(
     ["quecto-tui/src/protocol/client.rs"]=772
     ["quecto-tui/src/agents/app_subagent_first_tests.rs"]=754
     ["quecto-tui/src/agents/controller_subagent_panel.rs"]=811
-    ["quecto-agentic-harness/src/infrastructure/tools/subagent_registry.rs"]=775
-    ["quecto-agentic-harness/src/infrastructure/tools/spawn.rs"]=811
+    ["quecto-agentic-harness/src/infrastructure/tools/spawn.rs"]=775
     ["quecto-agentic-harness/src/infrastructure/config_tests.rs"]=783
     ["quecto-agentic-harness/src/interface/cli/protocol_tests.rs"]=770
 )

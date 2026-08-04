@@ -9,6 +9,9 @@ use std::process::Stdio;
 pub trait AgentLaunchBackend: Send + Sync {
     fn backend_name(&self) -> &'static str;
     fn can_launch(&self, request: &SpawnContainerRequest) -> bool;
+    fn build_exec_command(&self) -> Option<&str> {
+        None
+    }
 }
 
 #[derive(Debug, Default)]
@@ -245,5 +248,9 @@ impl AgentLaunchBackend for ScriptManagedContainerLaunchBackend {
             request,
             SpawnContainerRequest::New { .. } | SpawnContainerRequest::Existing { .. }
         )
+    }
+
+    fn build_exec_command(&self) -> Option<&str> {
+        Some("script-managed-container")
     }
 }

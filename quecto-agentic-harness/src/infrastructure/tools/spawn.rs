@@ -14,49 +14,19 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use super::container_script_cleanup::{
+    invoke_container_inspect_script, invoke_container_kill_script,
+};
 use super::spawn_entry::{
     InitialRegistryEntrySpec, child_session_key, child_sidecar_filename, child_socket_path,
     effective_config_path, inherited_runtime_config_path, initial_registry_entry,
 };
 use super::spawn_launch_args::write_private_new;
+use super::spawn_parse::parse_disable_tools;
 pub use super::spawn_registry::{register_and_broadcast, shutdown_all, shutdown_all_with_count};
 #[cfg(test)]
 pub use super::subagent_registry::SubagentStatus;
 use super::subagent_registry::{ExitSignal, NotificationTx, new_exit_signal_channel};
-
-/// Compute the effective set of tools to disable in the child registry (#957):
-/// the explicit `disable_tools` array unioned with the `read_only` convenience
-/// (which expands to `write` + `edit`), de-duplicated (read-only tools first). A
-/// non-string entry is an LLM-addressable error, not a silent skip.
-fn parse_disable_tools(args: &serde_json::Value) -> Result<Vec<String>, String> {
-    let mut tools: Vec<String> = Vec::new();
-    let push_unique = |name: &str, tools: &mut Vec<String>| {
-        if !tools.iter().any(|t| t == name) {
-            tools.push(name.to_string());
-        }
-    };
-
-    // Treat a malformed read_only safety flag as an error rather than silently
-    // dropping it; valid true expands first, then unions disable_tools.
-    if let Some(v) = args.get("read_only").filter(|v| !v.is_null()) {
-        if v.as_bool().ok_or("read_only must be a boolean")? {
-            push_unique("write", &mut tools);
-            push_unique("edit", &mut tools);
-        }
-    }
-    if let Some(v) = args.get("disable_tools").filter(|v| !v.is_null()) {
-        let arr = v
-            .as_array()
-            .ok_or("disable_tools must be an array of tool names")?;
-        for entry in arr {
-            let name = entry
-                .as_str()
-                .ok_or("disable_tools entries must be strings (tool names)")?;
-            push_unique(name, &mut tools);
-        }
-    }
-    Ok(tools)
-}
 
 fn validate_config_path(s: &str) -> Result<PathBuf, String> {
     let p = PathBuf::from(s);
@@ -127,7 +97,6 @@ impl SpawnTool {
         }
     }
 
-    /// Set the directory for child agent UDS sockets.
     pub fn with_socket_dir(mut self, socket_dir: PathBuf) -> Self {
         self.socket_dir = socket_dir;
         self
@@ -339,7 +308,18 @@ impl SpawnTool {
         };
         let registry_key = agent_uuid.to_string();
 
-        let socket_path = child_socket_path(&self.socket_dir, &agent_uuid);
+        let requested_socket_path = child_socket_path(&self.socket_dir, &agent_uuid);
+        let socket_path = container_launch
+            .as_ref()
+            .and_then(|launch| {
+                launch
+                    .entry
+                    .socket_path
+                    .as_ref()
+                    .or(launch.entry.socket_proxy.as_ref())
+            })
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| requested_socket_path.clone());
 
         // A by-value workflow assignment is written to a file next to the
         // socket and forwarded as `--workflow-spec <path>`; the inline template
@@ -406,27 +386,16 @@ impl SpawnTool {
 
         let binary = super::spawn_binary::resolve_child_binary()?;
         let mut cmd = if let Some(ref launch) = container_launch {
-            let mut c = tokio::process::Command::new("sh");
-            c.arg("-c").arg(&launch.exec_command);
-            c.env("QUECTO_CONTAINER_REF", &launch.entry.container_ref);
-            c.env("QUECTO_ENVIRONMENT_UUID", &launch.entry.environment_id);
-            c.env("QUECTO_WORKSPACE_PATH", &launch.entry.workspace_path);
-            c.env("QUECTO_AGENT_UUID", agent_uuid.to_string());
-            if let Some(parent) = &self.parent_id {
-                c.env("QUECTO_PARENT_AGENT_UUID", parent);
-            }
-            if let Some(repo) = &launch.entry.repo_url {
-                c.env("QUECTO_REPO_URL", repo);
-            }
-            c.env("QUECTO_SOCKET_PATH", socket_path.as_os_str());
-            c.env("QUECTO_CHILD_BINARY", &binary);
-            let child_args = cli_args
-                .iter()
-                .map(|arg| arg.to_string_lossy())
-                .collect::<Vec<_>>()
-                .join(" ");
-            c.env("QUECTO_CHILD_ARGS", child_args);
-            c
+            super::container_launch::build_container_exec_command(
+                super::container_launch::ContainerExecSpec {
+                    entry: &launch.entry,
+                    agent_uuid: &agent_uuid,
+                    parent_id: self.parent_id.as_deref(),
+                    requested_socket_path: &requested_socket_path,
+                    child_binary: &binary,
+                    child_args: &cli_args,
+                },
+            )
         } else {
             let mut c = tokio::process::Command::new(&binary);
             c.args(&cli_args);
@@ -498,6 +467,8 @@ impl SpawnTool {
                     .to_string(),
                 );
                 entry.workspace_path = Some(launch.entry.workspace_path.clone());
+                entry.container_kill_command = Some(launch.entry.kill_command.clone());
+                entry.container_inspect_command = Some(launch.entry.inspect_command.clone());
             }
             register_and_broadcast(
                 &self.registry,
@@ -518,7 +489,6 @@ impl SpawnTool {
             self.parent_id.clone(),
         );
 
-        // Store the monitor handle so it can be aborted on shutdown.
         {
             let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(entry) = entries.get_mut(&registry_key) {
@@ -593,22 +563,16 @@ impl SpawnTool {
                 }
             }
 
-            // Clean up the removed sub-tree. The dead agent itself was already
-            // wait()ed, so we only abort its monitor (the aborted monitor will
-            // NOT emit its EOF->Exited notification — that is why we announced the
-            // exit above rather than relying on it, #831). For DESCENDANTS we also
-            // SIGTERM their processes: when a parent exits its children are
-            // orphaned and would otherwise leak as untracked processes that
-            // `shutdown_all` can no longer reach (#831 security review). We do NOT
-            // re-signal the dead agent's own pid (already reaped; avoids a
-            // pid-reuse TOCTOU race).
             for (id, entry) in &removed {
                 if id == &reaper_name {
+                    invoke_container_inspect_script(entry);
+                    invoke_container_kill_script(entry);
                     if let Some(ref handle) = entry.monitor_handle {
                         handle.abort();
                     }
                     continue;
                 }
+                invoke_container_kill_script(entry);
                 if let Some(ref tx) = entry.exit_signal_tx {
                     let _ = tx.send(Some(ExitSignal {
                         exit_code: None,
@@ -619,19 +583,19 @@ impl SpawnTool {
             }
         });
 
-        // If the caller provided an initial task, send it as the first prompt.
-        // Fire-and-forget: the child acks the prompt internally, but we don't
-        // read the response here. Use agent_cmd get_messages to check output.
         if let Some(ref task) = config.task {
             self.send_initial_prompt(&socket_path, task).await?;
         }
 
         Ok(ToolResult {
-            // Include durable uuid so TUI optimistic rows can rekey off display
-            // labels before the first UUID-keyed snapshot arrives (#1378).
             content: format!(
-                "Subagent '{}' is running (uuid={}). Use agent_cmd to interact.",
-                session_name, agent_uuid
+                "Subagent '{}' is running (uuid={}){}. Use agent_cmd to interact.",
+                session_name,
+                agent_uuid,
+                container_launch
+                    .as_ref()
+                    .map(|launch| format!(" in container {}", launch.entry.container_ref))
+                    .unwrap_or_default()
             ),
             is_error: false,
             image_blocks: vec![],

@@ -28,6 +28,12 @@ fn entry(id: &str, status: ContainerStatus) -> ContainerEntry {
         workspace_path: "/workspace".into(),
         status,
         agents: vec![],
+        script_name: "dev".into(),
+        exec_command: "true".into(),
+        inspect_command: "true".into(),
+        kill_command: "true".into(),
+        socket_path: None,
+        socket_proxy: None,
         metadata: serde_json::json!({"runtime":"docker-script"}),
     }
 }

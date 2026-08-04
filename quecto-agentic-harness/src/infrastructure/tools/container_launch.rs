@@ -34,7 +34,6 @@ pub struct ContainerLaunchContext {
 #[derive(Debug, Clone)]
 pub struct PreparedContainerLaunch {
     pub entry: ContainerEntry,
-    pub exec_command: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -42,6 +41,10 @@ struct ScriptResult {
     environment_id: String,
     #[serde(default)]
     workspace_path: Option<String>,
+    #[serde(default)]
+    socket_path: Option<String>,
+    #[serde(default)]
+    socket_proxy: Option<String>,
     #[serde(default)]
     container_ref: Option<String>,
     #[serde(default)]
@@ -79,20 +82,17 @@ pub async fn prepare_container_launch(
     match &config.container {
         SpawnContainerRequest::Local => Ok(None),
         SpawnContainerRequest::New { repo, .. } => {
-            let (_name, set) = config
+            let (name, set) = config
                 .container
                 .resolve_script(&ctx.scripts)
                 .map_err(DomainError::Tool)?
                 .ok_or_else(|| DomainError::Tool("container script selection missing".into()))?;
             let repo = repo.clone().or_else(|| ctx.parent_repo.clone());
             let out = run_script_json(&set.create, repo.as_deref(), None, agent_uuid).await?;
-            let mut entry = entry_from_script(out, repo, agent_uuid.clone());
+            let mut entry = entry_from_script(out, repo, agent_uuid.clone(), name, set);
             let registered = register_container(&ctx.registry, entry.clone());
             entry.container_ref = registered.container_ref.clone();
-            Ok(Some(PreparedContainerLaunch {
-                entry,
-                exec_command: set.exec.clone(),
-            }))
+            Ok(Some(PreparedContainerLaunch { entry }))
         }
         SpawnContainerRequest::Existing { reference } => {
             let ref_text = match reference {
@@ -106,7 +106,7 @@ pub async fn prepare_container_launch(
                     resolve_live_name(&ctx.registry, ref_text).map_err(DomainError::Tool)?
                 }
             };
-            let entry = ctx
+            let mut entry = ctx
                 .registry
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -114,29 +114,49 @@ pub async fn prepare_container_launch(
                 .get(&uuid)
                 .cloned()
                 .ok_or_else(|| DomainError::Tool(format!("unknown container ref '{ref_text}'")))?;
-            let (_name, set) = SpawnContainerRequest::resolve_default_script(&ctx.scripts)
-                .map_err(DomainError::Tool)?;
-            Ok(Some(PreparedContainerLaunch {
-                entry,
-                exec_command: set.exec.clone(),
-            }))
+            entry.agents.push(agent_uuid.clone());
+            ctx.registry
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .entries
+                .insert(uuid, entry.clone());
+            Ok(Some(PreparedContainerLaunch { entry }))
         }
     }
 }
 
-pub async fn exec_container_command(
-    command: &str,
-    entry: &ContainerEntry,
-    agent_uuid: &AgentUuid,
-) -> Result<(), DomainError> {
-    let _ = run_script_json(
-        command,
-        entry.repo_url.as_deref(),
-        Some(&entry.container_ref),
-        agent_uuid,
-    )
-    .await?;
-    Ok(())
+pub struct ContainerExecSpec<'a> {
+    pub entry: &'a ContainerEntry,
+    pub agent_uuid: &'a AgentUuid,
+    pub parent_id: Option<&'a str>,
+    pub requested_socket_path: &'a std::path::Path,
+    pub child_binary: &'a std::path::Path,
+    pub child_args: &'a [std::ffi::OsString],
+}
+
+pub fn build_container_exec_command(spec: ContainerExecSpec<'_>) -> tokio::process::Command {
+    let mut c = tokio::process::Command::new("sh");
+    c.arg("-c").arg(&spec.entry.exec_command);
+    c.env("QUECTO_CONTAINER_REF", &spec.entry.container_ref);
+    c.env("QUECTO_ENVIRONMENT_UUID", &spec.entry.environment_id);
+    c.env("QUECTO_WORKSPACE_PATH", &spec.entry.workspace_path);
+    c.env("QUECTO_AGENT_UUID", spec.agent_uuid.to_string());
+    if let Some(parent) = spec.parent_id {
+        c.env("QUECTO_PARENT_AGENT_UUID", parent);
+    }
+    if let Some(repo) = &spec.entry.repo_url {
+        c.env("QUECTO_REPO_URL", repo);
+    }
+    c.env("QUECTO_SOCKET_PATH", spec.requested_socket_path.as_os_str());
+    c.env("QUECTO_CHILD_BINARY", spec.child_binary);
+    let child_args = spec
+        .child_args
+        .iter()
+        .map(|arg| arg.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(" ");
+    c.env("QUECTO_CHILD_ARGS", child_args);
+    c
 }
 
 async fn run_script_json(
@@ -174,6 +194,8 @@ fn entry_from_script(
     result: ScriptResult,
     repo: Option<String>,
     agent_uuid: AgentUuid,
+    script_name: &str,
+    set: &crate::domain::container_runtime::ContainerScriptSet,
 ) -> ContainerEntry {
     let status = match result.status.as_deref() {
         Some("stopped") => ContainerStatus::Stopped,
@@ -200,14 +222,28 @@ fn entry_from_script(
             .unwrap_or_else(|| "/workspace/quecto".into()),
         status,
         agents: vec![agent_uuid],
+        script_name: script_name.to_string(),
+        exec_command: set.exec.clone(),
+        inspect_command: set.inspect.clone(),
+        kill_command: set.kill.clone(),
+        socket_path: result.socket_path,
+        socket_proxy: result.socket_proxy,
         metadata,
     }
 }
 
 pub fn default_parent_repo(base_dir: &std::path::Path) -> Option<String> {
     if base_dir.as_os_str().is_empty() {
-        None
-    } else {
-        Some(base_dir.to_string_lossy().to_string())
+        return None;
     }
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(base_dir)
+        .args(["config", "--get", "remote.origin.url"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }

@@ -88,7 +88,7 @@ async fn new_container_spawn_runs_create_script_and_defaults_repo_from_parent() 
     );
     assert_eq!(launch.entry.workspace_path, "/workspace/repo");
     assert_eq!(launch.entry.container_name.as_deref(), Some("devbox"));
-    assert_eq!(launch.exec_command, "echo exec");
+    assert_eq!(launch.entry.exec_command, "echo exec");
 }
 
 #[tokio::test]
@@ -159,6 +159,12 @@ async fn existing_container_spawn_reuses_registered_environment_and_exec_command
             workspace_path: "/workspace/repo".into(),
             status: ContainerStatus::Running,
             agents: vec![],
+            script_name: "dev".into(),
+            exec_command: "echo reuse".into(),
+            inspect_command: "true".into(),
+            kill_command: "true".into(),
+            socket_path: None,
+            socket_proxy: None,
             metadata: serde_json::json!({}),
         },
     );
@@ -174,5 +180,5 @@ async fn existing_container_spawn_reuses_registered_environment_and_exec_command
     assert_eq!(launch.entry.container_uuid, "env-1");
     assert_eq!(launch.entry.container_ref, "C1");
     assert_eq!(launch.entry.workspace_path, "/workspace/repo");
-    assert_eq!(launch.exec_command, "echo reuse");
+    assert_eq!(launch.entry.exec_command, "echo reuse");
 }

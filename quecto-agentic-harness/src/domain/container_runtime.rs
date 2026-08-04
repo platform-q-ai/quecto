@@ -78,6 +78,14 @@ impl SpawnContainerRequest {
             }
         };
         let mode = string_field("mode")?.unwrap_or_else(|| "new".to_string());
+        let allowed: &[&str] = match mode.as_str() {
+            "new" => &["mode", "repo", "container_script", "containerScript"],
+            "existing" => &["mode", "ref", "name"],
+            _ => &["mode"],
+        };
+        if let Some(key) = obj.keys().find(|key| !allowed.contains(&key.as_str())) {
+            return Err(format!("unknown container field '{key}'"));
+        }
         match mode.as_str() {
             "new" => Ok(Self::New {
                 repo: string_field("repo")?,

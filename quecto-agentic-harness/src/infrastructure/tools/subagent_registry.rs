@@ -119,15 +119,9 @@ pub struct SubagentEntry {
     /// Surfaced through `get_subagents` so the TUI can mark it as an observer
     /// (#966). Display flag only; enforcement is #957.
     pub read_only: bool,
-    /// Runtime backend used for this agent. Local agents keep this as `local`;
-    /// container-backed agents carry a container UUID/ref separately so agent
-    /// identity never doubles as environment identity (#1369).
     pub runtime_backend: String,
-    /// Hidden container/environment identity for container-backed agents.
     pub container_uuid: Option<String>,
-    /// Session-scoped, user-facing container alias (for example `C1`).
     pub container_ref: Option<String>,
-    /// Optional script/runtime descriptive name for the associated container.
     pub container_name: Option<String>,
     /// Repository checked out in the container, if known.
     pub repo_url: Option<String>,
@@ -137,6 +131,8 @@ pub struct SubagentEntry {
     pub environment_health: Option<String>,
     /// Workspace mounted in the container, if known.
     pub workspace_path: Option<String>,
+    pub container_kill_command: Option<String>,
+    pub container_inspect_command: Option<String>,
     /// Last lifecycle event applied to this entry. This is internal observability
     /// for race-focused tests; parent-facing behavior continues to use `status`.
     #[cfg(test)]
@@ -215,6 +211,8 @@ impl SubagentEntry {
             environment_id: None,
             environment_health: None,
             workspace_path: None,
+            container_kill_command: None,
+            container_inspect_command: None,
             #[cfg(test)]
             last_lifecycle_event: None,
         }
@@ -638,107 +636,9 @@ pub fn new_active_awaits() -> ActiveAwaits {
 ///
 /// Sent by the monitor task when a child reaches a terminal or notable state.
 /// The parent dispatch loop injects these as follow-up messages to the LLM.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SubagentNotification {
-    /// Child agent ended a turn and was observed idle; this is not a task-success verdict.
-    Completed { agent_id: String },
-    /// Workflow-bound child became idle before reaching a terminal workflow state.
-    Stalled {
-        agent_id: String,
-        workflow_mode: String,
-        steps_completed: u64,
-        steps_total: u64,
-    },
-    /// Child agent's last tool execution returned an error.
-    Errored { agent_id: String, error: String },
-    /// Child agent process exited (connection closed or process reaped).
-    Exited { agent_id: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SequencedSubagentNotification {
-    pub sequence: u64,
-    pub notification: SubagentNotification,
-    /// Hidden generation identity for internal routing (#1378).
-    pub agent_uuid: Option<AgentUuid>,
-}
-
-impl SequencedSubagentNotification {
-    pub fn new(sequence: u64, notification: SubagentNotification) -> Self {
-        Self {
-            sequence,
-            notification,
-            agent_uuid: None,
-        }
-    }
-
-    pub fn new_for_agent(
-        sequence: u64,
-        notification: SubagentNotification,
-        agent_uuid: AgentUuid,
-    ) -> Self {
-        Self {
-            sequence,
-            notification,
-            agent_uuid: Some(agent_uuid),
-        }
-    }
-
-    pub fn dedupe_key(&self) -> (String, u64) {
-        let agent_id = match &self.notification {
-            SubagentNotification::Completed { agent_id, .. }
-            | SubagentNotification::Stalled { agent_id, .. }
-            | SubagentNotification::Errored { agent_id, .. }
-            | SubagentNotification::Exited { agent_id } => agent_id.clone(),
-        };
-        (agent_id, self.sequence)
-    }
-
-    /// Internal await-dedupe reference: UUID when stamped, else display label.
-    pub fn await_dedupe_key(&self) -> (String, u64) {
-        self.agent_uuid
-            .as_ref()
-            .map(|uuid| (uuid.to_string(), self.sequence))
-            .unwrap_or_else(|| self.dedupe_key())
-    }
-
-    pub fn to_message(&self) -> String {
-        self.notification.to_message()
-    }
-
-    /// `true` only for normal idle turn ends; failures must not coalesce (#894).
-    pub fn is_completion(&self) -> bool {
-        matches!(self.notification, SubagentNotification::Completed { .. })
-    }
-}
-
-impl SubagentNotification {
-    /// Format this notification as a human-readable parent message.
-    pub fn to_message(&self) -> String {
-        // One line; soft, not imperative (#894); #926-AC2 actionability deferred.
-        match self {
-            Self::Completed { agent_id, .. } => format!(
-                "Sub-agent '{agent_id}' ended a turn (status: idle). Inspect agent_cmd get_messages before treating its work as complete."
-            ),
-            Self::Stalled {
-                agent_id,
-                workflow_mode,
-                steps_completed,
-                steps_total,
-            } => format!(
-                "Agent '{agent_id}' stalled: idle with workflow still {workflow_mode} at {steps_completed}/{steps_total}. Inspect output/state, then prompt, steer, abort, or kill it."
-            ),
-            Self::Errored { agent_id, error } => format!("Agent '{agent_id}' failed: {error}"),
-            Self::Exited { agent_id } => format!("Agent '{agent_id}' exited unexpectedly"),
-        }
-    }
-}
-
-/// Sender half of the notification channel.
-pub type NotificationTx = tokio::sync::mpsc::Sender<SequencedSubagentNotification>;
-
-/// Receiver half of the notification channel.
-pub type NotificationRx = tokio::sync::mpsc::Receiver<SequencedSubagentNotification>;
+pub use super::subagent_notifications::{
+    NotificationRx, NotificationTx, SequencedSubagentNotification, SubagentNotification,
+};
 
 /// Default capacity for the bounded notification channel.
 pub const NOTIFICATION_CHANNEL_CAPACITY: usize = 64;

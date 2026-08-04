@@ -20,6 +20,12 @@ pub struct ContainerEntry {
     pub workspace_path: String,
     pub status: ContainerStatus,
     pub agents: Vec<AgentUuid>,
+    pub script_name: String,
+    pub exec_command: String,
+    pub inspect_command: String,
+    pub kill_command: String,
+    pub socket_path: Option<String>,
+    pub socket_proxy: Option<String>,
     pub metadata: serde_json::Value,
 }
 

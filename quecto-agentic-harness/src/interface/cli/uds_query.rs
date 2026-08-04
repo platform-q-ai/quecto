@@ -6,6 +6,7 @@ use super::uds_session::{
 };
 use crate::domain::ids::{CommandId, MessageId, ToolCallId};
 use crate::domain::message::Message;
+use crate::infrastructure::tools::subagent_cascade;
 
 fn user_visible_messages(messages: &[Message], system_prompt: &str) -> Vec<Message> {
     messages
@@ -160,23 +161,63 @@ pub(super) fn query_response_data(
             Some(serde_json::json!({ "containers": containers.into_values().collect::<Vec<_>>() }))
         }
         AgentCommand::KillContainer { container_ref, .. } => {
-            // Protocol surface: resolve by live agent/container refs. Actual process teardown
-            // remains routed through agent control; this command reports matched members for
-            // clients that need a stable container namespace (#1369).
-            let agents = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
-            let matched: Vec<_> = agents
-                .into_iter()
-                .filter(|a| {
-                    a.container_ref.as_deref() == Some(container_ref.as_str())
-                        || a.container_uuid.as_deref() == Some(container_ref.as_str())
-                })
-                .map(|a| a.agent_id)
-                .collect();
+            let registry = ctx.subagent_registry.as_ref()?;
+            let matched: Vec<_> = {
+                let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+                entries
+                    .iter()
+                    .filter(|(_, entry)| {
+                        entry.container_ref.as_deref() == Some(container_ref.as_str())
+                            || entry.container_uuid.as_deref() == Some(container_ref.as_str())
+                    })
+                    .map(|(id, entry)| (id.clone(), entry.clone()))
+                    .collect()
+            };
             if matched.is_empty() {
-                None
-            } else {
-                Some(serde_json::json!({ "container_ref": container_ref, "agents": matched }))
+                return None;
             }
+            let kill_command = matched
+                .iter()
+                .find_map(|(_, entry)| entry.container_kill_command.clone());
+            if let Some(command) = kill_command {
+                let mut cmd = std::process::Command::new("sh");
+                cmd.arg("-c").arg(command);
+                cmd.env("QUECTO_CONTAINER_REF", container_ref);
+                if let Some((_, entry)) = matched.first() {
+                    if let Some(environment_id) = &entry.environment_id {
+                        cmd.env("QUECTO_ENVIRONMENT_UUID", environment_id);
+                    }
+                    if let Some(workspace_path) = &entry.workspace_path {
+                        cmd.env("QUECTO_WORKSPACE_PATH", workspace_path);
+                    }
+                }
+                let _ = cmd.output();
+            }
+            let agents: Vec<_> = matched.iter().map(|(id, _)| id.clone()).collect();
+            for (_, entry) in &matched {
+                if let Some(ref tx) = entry.exit_signal_tx {
+                    let _ = tx.send(Some(
+                        crate::infrastructure::tools::subagent_registry::ExitSignal {
+                            exit_code: None,
+                            signal: Some(15),
+                        },
+                    ));
+                }
+                subagent_cascade::terminate_removed_entry(entry);
+            }
+            {
+                let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+                for (id, _) in &matched {
+                    if let Some(entry) = entries.get_mut(id) {
+                        entry.status =
+                            crate::infrastructure::tools::subagent_registry::SubagentStatus::Exited;
+                        entry.environment_health = Some("stopped".into());
+                    }
+                }
+            }
+            Some(
+                serde_json::json!({ "container_ref": container_ref, "agents": agents, "status": "stopped" }),
+            )
         }
         AgentCommand::DeleteAllSubagents { .. } => {
             Some(super::uds_delete_all_subagents::response_data(ctx))

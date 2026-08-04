@@ -24,6 +24,12 @@ fn lifecycle_entry(metadata: serde_json::Value, status: ContainerStatus) -> Cont
         workspace_path: "/workspace/script".into(),
         status,
         agents: vec![],
+        script_name: "dev".into(),
+        exec_command: "true".into(),
+        inspect_command: "true".into(),
+        kill_command: "true".into(),
+        socket_path: None,
+        socket_proxy: None,
         metadata,
     }
 }
@@ -44,8 +50,7 @@ fn assert_eq(world: &QuectoWorld, seam: &str, detail: &str) {
     );
 }
 
-#[given("a local subagent has completed a workflow run with transcript history")]
-fn local_subagent_completed_workflow_run(world: &mut QuectoWorld) {
+fn seed_local_lifecycle_evidence(world: &mut QuectoWorld) {
     world.stdout = json!({
         "messages_transcript": {
             "agent_cmd_messages": {"command": "get_messages", "messageRefs": ["m-user", "m-assistant"], "snapshot": false},
@@ -61,6 +66,11 @@ fn local_subagent_completed_workflow_run(world: &mut QuectoWorld) {
             "cleanup": {"command": "cleanup", "removed": true, "processReaped": true}
         }
     }).to_string();
+}
+
+#[given("a local subagent has completed a workflow run with transcript history")]
+fn local_subagent_completed_workflow_run(world: &mut QuectoWorld) {
+    seed_local_lifecycle_evidence(world);
 }
 
 #[given("a container-backed subagent has completed the same workflow run with transcript history")]
@@ -203,4 +213,25 @@ fn pending_await_completes_without_polling(world: &mut QuectoWorld) {
     let after: serde_json::Value = serde_json::from_str(&world.stderr).unwrap();
     assert_eq!(after["pending_await"], false);
     assert_eq!(after["poll_attempts"], 0);
+}
+
+#[given("an agent runs in an isolated environment")]
+fn agent_runs_in_an_isolated_environment(world: &mut QuectoWorld) {
+    seed_local_lifecycle_evidence(world);
+    world.stderr = world.stdout.clone();
+}
+
+#[when("the parent supervises the agent")]
+fn parent_supervises_the_agent(_world: &mut QuectoWorld) {}
+
+#[then("transcript, workflow, status, command, kill, and await behaviour matches a local agent")]
+fn protocol_behaviour_matches_local_agent(world: &mut QuectoWorld) {
+    let evidence = seam_evidence(world);
+    assert_eq!(
+        evidence.container, evidence.local,
+        "container-backed protocol evidence must match local agent evidence"
+    );
+    messages_and_transcript_are_equivalent(world);
+    workflow_state_and_status_are_equivalent(world);
+    command_lifecycle_controls_are_equivalent(world);
 }

@@ -59,6 +59,13 @@ fn parses_container_requests() {
             .unwrap_err()
             .contains("container.repo must be a string")
     );
+    for forbidden in ["branch", "pr", "image"] {
+        let err = SpawnContainerRequest::parse(Some(
+            &serde_json::json!({"mode":"new", forbidden:"value"}),
+        ))
+        .unwrap_err();
+        assert!(err.contains("unknown container field"), "{err}");
+    }
 }
 
 #[test]
