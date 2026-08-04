@@ -54,6 +54,11 @@ fn parses_container_requests() {
             .unwrap_err()
             .contains("unsupported")
     );
+    assert!(
+        SpawnContainerRequest::parse(Some(&serde_json::json!({"mode":"new","repo":123})))
+            .unwrap_err()
+            .contains("container.repo must be a string")
+    );
 }
 
 #[test]

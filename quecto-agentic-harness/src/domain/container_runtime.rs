@@ -49,18 +49,24 @@ impl SpawnContainerRequest {
         let obj = value
             .as_object()
             .ok_or("container must be a boolean or object")?;
-        let mode = obj.get("mode").and_then(|v| v.as_str()).unwrap_or("new");
-        match mode {
+        let string_field = |name: &str| -> Result<Option<String>, String> {
+            obj.get(name)
+                .map(|v| {
+                    v.as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| format!("container.{name} must be a string"))
+                })
+                .transpose()
+        };
+        let mode = string_field("mode")?.unwrap_or_else(|| "new".to_string());
+        match mode.as_str() {
             "new" => Ok(Self::New {
-                repo: obj.get("repo").and_then(|v| v.as_str()).map(str::to_string),
-                container_script: obj
-                    .get("container_script")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string),
+                repo: string_field("repo")?,
+                container_script: string_field("container_script")?,
             }),
             "existing" => {
-                let by_ref = obj.get("ref").and_then(|v| v.as_str()).map(str::to_string);
-                let by_name = obj.get("name").and_then(|v| v.as_str()).map(str::to_string);
+                let by_ref = string_field("ref")?;
+                let by_name = string_field("name")?;
                 match (by_ref, by_name) {
                     (Some(r), None) => Ok(Self::Existing {
                         reference: ExistingContainerRef::Ref(r),

@@ -25,6 +25,10 @@ fn refs_are_session_scoped_and_never_reused() {
         register_container(&reg, entry("two", ContainerStatus::Running)).container_ref,
         "C2"
     );
+    assert_eq!(
+        register_container(&reg, entry("one", ContainerStatus::Running)).container_ref,
+        "C1"
+    );
 }
 
 #[test]

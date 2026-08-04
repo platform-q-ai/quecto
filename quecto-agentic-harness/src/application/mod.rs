@@ -1,3 +1,4 @@
+pub mod agent_launch_backend;
 pub mod agent_loop;
 mod agent_loop_lifecycle_compat;
 mod agent_loop_policy;

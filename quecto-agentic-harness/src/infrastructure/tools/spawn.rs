@@ -76,26 +76,17 @@ fn validate_config_path(s: &str) -> Result<PathBuf, String> {
 /// When executed, validates the request, launches the child as a
 /// `--mode uds --persist` background process, waits for the UDS socket
 /// to become ready, and registers the child in a shared [`SubagentRegistry`]
-/// so the companion [`super::agent_cmd::AgentCmdTool`] can interact with it.
 #[derive(Debug)]
 pub struct SpawnTool {
-    /// Allowlist of agent IDs that can be spawned.
     allowed_agents: Vec<String>,
-    /// Whether workspace restriction should be inherited.
     restrict_to_workspace: bool,
-    /// Base directory for the child agent process.
     base_dir: PathBuf,
-    /// Directory for UDS sockets (e.g. `$XDG_RUNTIME_DIR` or temp).
     socket_dir: PathBuf,
-    /// Shared registry of spawned subagents.
     registry: SubagentRegistry,
-    /// Optional notification sender for parent LLM auto-notify (#523).
     notify_tx: Option<NotificationTx>,
     /// Parent's broadcast channel, so the child monitor can forward the child's
     /// workflow_state events onto the parent's stream (PRD Stage B / R-B2).
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    /// This (parent) agent's own id, stamped as the `parent_id` on forwarded
-    /// child events (PRD Stage B).
     parent_id: Option<String>,
     inherited_tool_policy: super::spawn_inherited_policy::InheritedToolPolicyState,
 }
@@ -115,7 +106,6 @@ impl SpawnTool {
         }
     }
 
-    /// Create with a base directory for subprocess spawning.
     pub fn with_base_dir(
         allowed_agents: Vec<String>,
         restrict_to_workspace: bool,
@@ -266,6 +256,12 @@ impl SpawnTool {
 
         let container =
             crate::domain::container_runtime::SpawnContainerRequest::parse(args.get("container"))?;
+        if !matches!(
+            container,
+            crate::domain::container_runtime::SpawnContainerRequest::Local
+        ) {
+            return Err("container-backed spawning is not wired yet; use local spawn".to_string());
+        }
 
         Ok(SubagentConfig {
             task,
@@ -744,6 +740,9 @@ impl Tool for SpawnTool {
     }
 }
 
+#[cfg(test)]
+#[path = "spawn_cov_tests.rs"]
+mod cov_tests;
 #[cfg(test)]
 #[path = "tests/spawn_tests.rs"]
 mod tests;

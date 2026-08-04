@@ -27,6 +27,7 @@ pub struct ContainerEntry {
 pub struct ContainerRegistryState {
     next_ref: u64,
     entries: HashMap<String, ContainerEntry>,
+    refs: HashMap<String, String>,
 }
 
 pub type ContainerRegistry = Arc<Mutex<ContainerRegistryState>>;
@@ -40,8 +41,14 @@ pub fn register_container(
     mut entry: ContainerEntry,
 ) -> ContainerEntry {
     let mut state = registry.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(existing) = state.entries.get(&entry.container_uuid) {
+        return existing.clone();
+    }
     state.next_ref += 1;
     entry.container_ref = format!("C{}", state.next_ref);
+    state
+        .refs
+        .insert(entry.container_ref.clone(), entry.container_uuid.clone());
     state
         .entries
         .insert(entry.container_uuid.clone(), entry.clone());
@@ -53,10 +60,13 @@ pub fn resolve_live_ref(
     container_ref: &str,
 ) -> Result<String, String> {
     let state = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let uuid = state
+        .refs
+        .get(container_ref)
+        .ok_or_else(|| format!("unknown container ref '{container_ref}'"))?;
     let entry = state
         .entries
-        .values()
-        .find(|e| e.container_ref == container_ref)
+        .get(uuid)
         .ok_or_else(|| format!("unknown container ref '{container_ref}'"))?;
     if entry.status != ContainerStatus::Running {
         return Err(format!("container ref '{container_ref}' is not live"));
