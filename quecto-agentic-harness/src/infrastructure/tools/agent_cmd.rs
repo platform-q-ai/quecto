@@ -339,11 +339,36 @@ impl AgentCmdTool {
     /// Kill a specific subagent by ID: SIGTERM + cascade-remove its sub-tree from
     /// the registry, then broadcast the survivor set (#559, #831).
     fn kill_agent(&self, agent_id: &str) -> ToolResult {
+        let registry_key = {
+            let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+            entries
+                .iter()
+                .find(|(key, entry)| {
+                    key.as_str() == agent_id
+                        || (entry.display_name == agent_id
+                            && entry.status != super::subagent_registry::SubagentStatus::Exited)
+                })
+                .map(|(key, _)| key.clone())
+        };
+        let Some(registry_key) = registry_key else {
+            return ToolResult {
+                content: format!(
+                    "agent_cmd error: subagent '{}' not found in registry",
+                    agent_id
+                ),
+                is_error: true,
+                image_blocks: vec![],
+            };
+        };
+
         // Cascade-remove the agent AND every descendant in one shot, getting back
         // the removed entries (for process cleanup) and a survivor-only
         // `subagent_state_changed` event (#831).
         let super::subagent_cascade::CascadeOutcome { removed, event } =
-            super::subagent_cascade::cascade_remove_and_state_changed(&self.registry, agent_id);
+            super::subagent_cascade::cascade_remove_and_state_changed(
+                &self.registry,
+                &registry_key,
+            );
 
         if removed.is_empty() {
             return ToolResult {
@@ -386,7 +411,7 @@ impl AgentCmdTool {
                 super::subagent_registry::SubagentStatus::Exited,
                 "kill must project to the existing exited status"
             );
-            if id == agent_id {
+            if id == &registry_key {
                 killed_pid = entry.pid;
             }
             // Signal any waiting `await` call so it returns "exited" instead of

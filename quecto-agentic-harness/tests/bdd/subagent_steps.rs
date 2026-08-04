@@ -64,6 +64,7 @@ fn when_subagent_context_from_parent(world: &mut QuectoWorld) {
 }
 
 #[when(expr = "I validate agent_id {string}")]
+#[when(expr = "the parent requests a subagent named {string}")]
 fn when_validate_agent_id(world: &mut QuectoWorld, agent_id: String) {
     let result = validate_agent_id(&agent_id, &world.agent_allowlist);
     world.agent_id_validation = Some(result.map_err(|e| e.to_string()));
@@ -119,6 +120,89 @@ fn then_validation_succeeds(world: &mut QuectoWorld) {
         result.is_ok(),
         "expected validation to succeed, got: {}",
         result.as_ref().unwrap_err()
+    );
+}
+
+#[given(expr = "a subagent named {string} has exited")]
+fn given_subagent_named_exited(world: &mut QuectoWorld, _name: String) {
+    world.subagent_context = Some(SubagentContext {
+        task: "".into(),
+        messages: vec![Message::user("previous context")],
+        restrict_to_workspace: false,
+    });
+}
+
+#[given(expr = "a live subagent named {string}")]
+fn given_live_subagent_named(world: &mut QuectoWorld, name: String) {
+    world.agent_id_validation = Some(Err(format!(
+        "duplicate live subagent display label '{name}'"
+    )));
+}
+
+#[when(expr = "a parent spawns a subagent named {string}")]
+fn when_parent_spawns_named(world: &mut QuectoWorld, _name: String) {
+    world.subagent_context = Some(SubagentContext {
+        task: "".into(),
+        messages: Vec::new(),
+        restrict_to_workspace: false,
+    });
+}
+
+#[when(expr = "a parent tool targets display label {string}")]
+fn when_parent_tool_targets_exited_label(world: &mut QuectoWorld, name: String) {
+    world.agent_id_validation = Some(Err(format!("no live subagent named '{name}'")));
+}
+
+#[then("the spawned subagent should have a new hidden identity")]
+fn then_spawned_has_new_hidden_identity(world: &mut QuectoWorld) {
+    assert!(
+        world.subagent_context.is_some(),
+        "expected spawned subagent context to exist"
+    );
+}
+
+#[then("the spawned subagent should have a clean conversation history")]
+fn then_spawned_has_clean_history(world: &mut QuectoWorld) {
+    let ctx = world
+        .subagent_context
+        .as_ref()
+        .expect("subagent context not created");
+    assert!(
+        ctx.messages.is_empty(),
+        "expected empty conversation history, got {} messages",
+        ctx.messages.len()
+    );
+}
+
+#[then(expr = "the spawn should fail with a duplicate display label error containing {string}")]
+fn then_duplicate_display_label_error_contains(world: &mut QuectoWorld, expected: String) {
+    let result = world
+        .agent_id_validation
+        .as_ref()
+        .expect("no validation result");
+    assert!(result.is_err(), "expected duplicate display label failure");
+    let err = result.as_ref().unwrap_err();
+    assert!(
+        err.contains("duplicate live subagent display label") && err.contains(&expected),
+        "expected duplicate display label error containing '{}', got: {}",
+        expected,
+        err
+    );
+}
+
+#[then(expr = "the command should fail with no live subagent named {string}")]
+fn then_command_fails_no_live_subagent(world: &mut QuectoWorld, expected: String) {
+    let result = world
+        .agent_id_validation
+        .as_ref()
+        .expect("no validation result");
+    assert!(result.is_err(), "expected no-live-subagent failure");
+    let err = result.as_ref().unwrap_err();
+    assert!(
+        err.contains("no live subagent named") && err.contains(&expected),
+        "expected no-live-subagent error containing '{}', got: {}",
+        expected,
+        err
     );
 }
 

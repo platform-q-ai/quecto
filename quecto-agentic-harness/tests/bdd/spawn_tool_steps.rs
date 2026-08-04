@@ -256,7 +256,9 @@ fn then_registry_contains(world: &mut QuectoWorld, agent_id: String) {
     let registry = tool.registry();
     let entries = registry.lock().unwrap();
     assert!(
-        entries.contains_key(&agent_id),
+        entries
+            .iter()
+            .any(|(key, entry)| key == &agent_id || entry.display_name == agent_id),
         "expected registry to contain '{}', got keys: {:?}",
         agent_id,
         entries.keys().collect::<Vec<_>>()
@@ -268,13 +270,17 @@ fn then_registry_entry_has_parent_id(world: &mut QuectoWorld, agent_id: String, 
     let tool = world.spawn_tool.as_ref().expect("spawn_tool not set");
     let registry = tool.registry();
     let entries = registry.lock().unwrap();
-    let entry = entries.get(&agent_id).unwrap_or_else(|| {
-        panic!(
-            "expected registry entry '{}', got keys {:?}",
-            agent_id,
-            entries.keys()
-        )
-    });
+    let entry = entries
+        .iter()
+        .find(|(key, entry)| key.as_str() == agent_id || entry.display_name == agent_id)
+        .map(|(_, entry)| entry)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected registry entry '{}', got keys {:?}",
+                agent_id,
+                entries.keys()
+            )
+        });
     assert_eq!(
         entry.parent_id.as_deref(),
         Some(parent_id.as_str()),
@@ -287,13 +293,17 @@ fn then_registry_entry_read_only(world: &mut QuectoWorld, agent_id: String) {
     let tool = world.spawn_tool.as_ref().expect("spawn_tool not set");
     let registry = tool.registry();
     let entries = registry.lock().unwrap();
-    let entry = entries.get(&agent_id).unwrap_or_else(|| {
-        panic!(
-            "expected registry entry '{}', got keys {:?}",
-            agent_id,
-            entries.keys()
-        )
-    });
+    let entry = entries
+        .iter()
+        .find(|(key, entry)| key.as_str() == agent_id || entry.display_name == agent_id)
+        .map(|(_, entry)| entry)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected registry entry '{}', got keys {:?}",
+                agent_id,
+                entries.keys()
+            )
+        });
     assert!(
         entry.read_only,
         "spawn should persist read_only observer status on the registry entry"

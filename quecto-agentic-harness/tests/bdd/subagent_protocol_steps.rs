@@ -52,6 +52,23 @@ fn given_registered_readwrite(world: &mut QuectoWorld, agent_id: String) {
     insert_registry_subagent(world, agent_id, "idle".into(), "".into(), 5678, false);
 }
 
+#[given(expr = "a registry subagent with display name {string} and hidden identity {string}")]
+fn given_registry_subagent_with_dual_identity(
+    world: &mut QuectoWorld,
+    display_name: String,
+    hidden_identity: String,
+) {
+    insert_registry_subagent_with_key(
+        world,
+        hidden_identity,
+        display_name,
+        "idle".into(),
+        "".into(),
+        1234,
+        false,
+    );
+}
+
 fn insert_registry_subagent(
     world: &mut QuectoWorld,
     agent_id: String,
@@ -78,7 +95,57 @@ fn insert_registry_subagent(
     if !last_tool.is_empty() {
         entry.last_tool = Some(last_tool);
     }
-    guard.insert(agent_id, entry);
+    let display_name = agent_id.clone();
+    insert_registry_subagent_with_key_parts(&mut guard, agent_id, display_name, entry);
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "BDD registry helper mirrors scenario data"
+)]
+fn insert_registry_subagent_with_key(
+    world: &mut QuectoWorld,
+    key: String,
+    display_name: String,
+    status: String,
+    last_tool: String,
+    pid: i32,
+    read_only: bool,
+) {
+    if world.subagent_protocol_registry.is_none() {
+        world.subagent_protocol_registry = Some(new_registry());
+    }
+    let reg = world.subagent_protocol_registry.as_ref().unwrap();
+    let mut guard = reg.lock().unwrap();
+    let mut entry = SubagentEntry::with_identity(
+        quecto::domain::ids::AgentUuid::new(key.clone()),
+        display_name.clone(),
+        "/tmp/test.sock".into(),
+        pid as u32,
+    );
+    entry.status = match status.as_str() {
+        "starting" => SubagentStatus::Starting,
+        "idle" => SubagentStatus::Idle,
+        "running" => SubagentStatus::Running,
+        "error" => SubagentStatus::Error,
+        "exited" => SubagentStatus::Exited,
+        _ => panic!("unknown status: {status}"),
+    };
+    entry.read_only = read_only;
+    if !last_tool.is_empty() {
+        entry.last_tool = Some(last_tool);
+    }
+    insert_registry_subagent_with_key_parts(&mut guard, key, display_name, entry);
+}
+
+fn insert_registry_subagent_with_key_parts(
+    guard: &mut std::collections::HashMap<String, SubagentEntry>,
+    key: String,
+    display_name: String,
+    mut entry: SubagentEntry,
+) {
+    entry.display_name = display_name;
+    guard.insert(key, entry);
 }
 
 #[given(expr = "subagent {string} has last_error {string}")]
