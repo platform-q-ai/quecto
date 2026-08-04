@@ -64,6 +64,7 @@ pub(crate) struct Fx {
     store: FileSessionStore,
     _tmp: tempfile::TempDir,
     writer: tokio::io::Sink,
+    subagent_registry: Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 }
 
 impl Fx {
@@ -100,6 +101,7 @@ impl Fx {
             store: FileSessionStore::new(tmp.path()),
             _tmp: tmp,
             writer: tokio::io::sink(),
+            subagent_registry: None,
         }
     }
 
@@ -138,7 +140,7 @@ impl Fx {
             _ext_registry: None,
             client_tool_registry: new_client_tool_registry(),
             current_client_id: 0,
-            subagent_registry: None,
+            subagent_registry: self.subagent_registry.clone(),
             notification_rx: None,
             workflow_state: None,
             workflow_config: None,
@@ -574,4 +576,88 @@ fn query_metadata_commands_are_shaped_or_deferred() {
         query_response_data(&AgentCommand::GetSubagents { id: None }, &ctx).unwrap()["subagents"]
             .is_array()
     );
+}
+
+#[test]
+fn kill_container_invokes_script_marks_members_stopped_and_signals_exit() {
+    use crate::domain::ids::AgentUuid;
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_exit_signal_channel, new_registry,
+    };
+
+    let mut fx = Fx::new();
+    let marker = fx._tmp.path().join("killed.txt");
+    let registry = new_registry();
+    let (tx, rx) = new_exit_signal_channel();
+    let uuid = AgentUuid::mint();
+    let mut entry = SubagentEntry::with_identity(
+        uuid.clone(),
+        "agent-c1".into(),
+        fx._tmp.path().join("agent.sock"),
+        0,
+    );
+    entry.status = SubagentStatus::Running;
+    entry.runtime_backend = "container-script".into();
+    entry.container_ref = Some("C1".into());
+    entry.container_uuid = Some("env-1".into());
+    entry.environment_id = Some("env-1".into());
+    entry.workspace_path = Some(fx._tmp.path().to_string_lossy().to_string());
+    entry.container_kill_command = Some(format!(
+        "printf '%s' \"$QUECTO_CONTAINER_REF:$QUECTO_ENVIRONMENT_UUID\" > {}",
+        marker.display()
+    ));
+    entry.exit_signal_tx = Some(tx);
+    registry.lock().unwrap().insert(uuid.to_string(), entry);
+    fx.subagent_registry = Some(registry.clone());
+
+    let response = query_response_data(
+        &AgentCommand::KillContainer {
+            id: None,
+            container_ref: "C1".into(),
+        },
+        &fx.ctx(),
+    )
+    .expect("kill_container response");
+
+    assert_eq!(response["status"], "stopped");
+    assert_eq!(response["agents"].as_array().unwrap().len(), 1);
+    assert_eq!(std::fs::read_to_string(marker).unwrap(), "C1:env-1");
+    let entries = registry.lock().unwrap();
+    let stopped = entries.get(uuid.as_str()).unwrap();
+    assert_eq!(stopped.status, SubagentStatus::Exited);
+    assert_eq!(stopped.environment_health.as_deref(), Some("stopped"));
+    drop(entries);
+    assert!(rx.borrow().is_some());
+}
+
+#[test]
+fn kill_container_reports_script_failure_without_pretending_success() {
+    use crate::domain::ids::AgentUuid;
+    use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+
+    let mut fx = Fx::new();
+    let registry = new_registry();
+    let uuid = AgentUuid::mint();
+    let mut entry = SubagentEntry::with_identity(
+        uuid.clone(),
+        "agent-c1".into(),
+        fx._tmp.path().join("agent.sock"),
+        0,
+    );
+    entry.container_ref = Some("C1".into());
+    entry.container_kill_command = Some("printf boom >&2; exit 7".into());
+    registry.lock().unwrap().insert(uuid.to_string(), entry);
+    fx.subagent_registry = Some(registry);
+
+    let response = query_response_data(
+        &AgentCommand::KillContainer {
+            id: None,
+            container_ref: "C1".into(),
+        },
+        &fx.ctx(),
+    )
+    .expect("kill_container response");
+
+    assert_eq!(response["status"], "error");
+    assert!(response["error"].as_str().unwrap().contains("boom"));
 }

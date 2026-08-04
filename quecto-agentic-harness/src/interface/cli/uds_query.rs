@@ -179,6 +179,7 @@ pub(super) fn query_response_data(
             let kill_command = matched
                 .iter()
                 .find_map(|(_, entry)| entry.container_kill_command.clone());
+            let mut kill_error = None;
             if let Some(command) = kill_command {
                 let mut cmd = std::process::Command::new("sh");
                 cmd.arg("-c").arg(command);
@@ -191,7 +192,17 @@ pub(super) fn query_response_data(
                         cmd.env("QUECTO_WORKSPACE_PATH", workspace_path);
                     }
                 }
-                let _ = cmd.output();
+                match cmd.output() {
+                    Ok(output) if output.status.success() => {}
+                    Ok(output) => {
+                        kill_error = Some(format!(
+                            "kill script exited with status {}: {}",
+                            output.status,
+                            String::from_utf8_lossy(&output.stderr).trim()
+                        ));
+                    }
+                    Err(err) => kill_error = Some(format!("kill script failed to start: {err}")),
+                }
             }
             let agents: Vec<_> = matched.iter().map(|(id, _)| id.clone()).collect();
             for (_, entry) in &matched {
@@ -215,9 +226,12 @@ pub(super) fn query_response_data(
                     }
                 }
             }
-            Some(
-                serde_json::json!({ "container_ref": container_ref, "agents": agents, "status": "stopped" }),
-            )
+            let mut response = serde_json::json!({ "container_ref": container_ref, "agents": agents, "status": "stopped" });
+            if let Some(error) = kill_error {
+                response["status"] = serde_json::Value::String("error".into());
+                response["error"] = serde_json::Value::String(error);
+            }
+            Some(response)
         }
         AgentCommand::DeleteAllSubagents { .. } => {
             Some(super::uds_delete_all_subagents::response_data(ctx))
