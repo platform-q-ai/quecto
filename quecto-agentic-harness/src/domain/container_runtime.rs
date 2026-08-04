@@ -117,16 +117,3 @@ impl SpawnContainerRequest {
         Ok(Some((name, set)))
     }
 }
-
-pub trait AgentLaunchBackend: Send + Sync {
-    fn backend_name(&self) -> &'static str;
-}
-
-#[derive(Debug, Default)]
-pub struct LocalProcessLaunchBackend;
-
-impl AgentLaunchBackend for LocalProcessLaunchBackend {
-    fn backend_name(&self) -> &'static str {
-        "local"
-    }
-}
