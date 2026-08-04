@@ -799,7 +799,7 @@ Parent Agent Process
   │     └── Returns structured response to LLM
   │
   └── Child Agent Process (reviewer)
-        ├── Listening on /run/user/1000/quecto-agent-reviewer.sock
+        ├── Listening on /run/user/1000/quecto-agent-<agent-uuid>.sock
         ├── Loads config from QUECTO_BASE_DIR/config.json
         ├── Has its own LLM context (no shared state with parent)
         ├── Processes prompts via UDS protocol

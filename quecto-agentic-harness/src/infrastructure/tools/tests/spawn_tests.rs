@@ -424,3 +424,107 @@ async fn with_task_stub_spawn_stays_starting() {
         "#1049: with-task broadcast must carry starting, not idle"
     );
 }
+
+// ─── #1378: sockets / child session keys use AgentUuid, not display label ───
+
+#[tokio::test]
+async fn stub_spawn_keys_socket_by_uuid_not_display_label() {
+    // Surviving adversarial finding on PR #1386: socket paths still used the
+    // display label (`quecto-agent-reviewer.sock`), so respawning the same label
+    // could collide with a stale socket or resume `cli:reviewer`.
+    let tool = SpawnTool::new(vec![], true);
+    tool.execute(r#"{"agent_id":"reviewer"}"#)
+        .await
+        .expect("stub spawn must succeed");
+
+    let registry = tool.registry.lock().unwrap();
+    let (key, entry) = registry
+        .iter()
+        .find(|(_, entry)| entry.display_name == "reviewer")
+        .expect("reviewer must be registered");
+
+    assert_eq!(
+        key.as_str(),
+        entry.agent_uuid.as_str(),
+        "registry must be keyed by AgentUuid"
+    );
+    let sock = entry.socket_path.to_string_lossy();
+    assert!(
+        sock.contains(entry.agent_uuid.as_str()),
+        "socket path must include AgentUuid, got {sock}"
+    );
+    assert!(
+        !sock.contains("reviewer"),
+        "socket path must not use the display label, got {sock}"
+    );
+    assert!(
+        sock.ends_with(&format!("quecto-agent-{}.sock", entry.agent_uuid.as_str()))
+            || sock.ends_with(&format!("/quecto-agent-{}.sock", entry.agent_uuid.as_str())),
+        "expected quecto-agent-<uuid>.sock, got {sock}"
+    );
+}
+
+#[tokio::test]
+async fn stub_respawn_same_display_label_mints_fresh_uuid_and_socket() {
+    let tool = SpawnTool::new(vec![], true);
+    tool.execute(r#"{"agent_id":"reviewer"}"#)
+        .await
+        .expect("first spawn must succeed");
+    {
+        let mut registry = tool.registry.lock().unwrap();
+        for entry in registry.values_mut() {
+            if entry.display_name == "reviewer" {
+                entry.status = SubagentStatus::Exited;
+            }
+        }
+    }
+    tool.execute(r#"{"agent_id":"reviewer"}"#)
+        .await
+        .expect("respawn after exit must succeed");
+
+    let registry = tool.registry.lock().unwrap();
+    let reviewers: Vec<_> = registry
+        .values()
+        .filter(|entry| entry.display_name == "reviewer")
+        .collect();
+    assert_eq!(reviewers.len(), 2, "both generations remain registered");
+    assert_ne!(
+        reviewers[0].agent_uuid, reviewers[1].agent_uuid,
+        "each spawn must mint a fresh AgentUuid"
+    );
+    assert_ne!(
+        reviewers[0].socket_path, reviewers[1].socket_path,
+        "each spawn must get a distinct UUID-keyed socket path"
+    );
+    for entry in reviewers {
+        let sock = entry.socket_path.to_string_lossy();
+        assert!(
+            sock.contains(entry.agent_uuid.as_str()),
+            "socket must track its own UUID, got {sock}"
+        );
+        assert!(
+            !sock.contains("reviewer"),
+            "socket must not use display label"
+        );
+    }
+}
+
+#[test]
+fn child_runtime_paths_are_uuid_keyed() {
+    use crate::domain::ids::AgentUuid;
+    let uuid = AgentUuid::new("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+    let dir = PathBuf::from("/run/user/1000");
+    let socket = super::child_socket_path(&dir, &uuid);
+    assert_eq!(
+        socket,
+        PathBuf::from("/run/user/1000/quecto-agent-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.sock")
+    );
+    assert_eq!(
+        super::child_session_key(&uuid),
+        "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    );
+    assert_eq!(
+        super::child_sidecar_filename("quecto-wfspec", &uuid, 4242),
+        "quecto-wfspec-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee-4242.json"
+    );
+}

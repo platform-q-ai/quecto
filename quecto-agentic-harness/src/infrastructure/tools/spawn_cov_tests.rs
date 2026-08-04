@@ -609,3 +609,82 @@ async fn launch_uds_agent_maps_workflow_spec_write_failure() {
     let msg = err.to_string();
     assert!(msg.contains("failed to write workflow spec"), "got: {msg}");
 }
+
+#[tokio::test]
+async fn launch_uds_agent_uses_uuid_not_display_label_for_socket_and_session_paths() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let child = dir.path().join("fake-child.py");
+    let args_file = dir.path().join("args.json");
+    std::fs::write(
+        &child,
+        format!(
+            r#"#!/usr/bin/env python3
+import json, os, socket, sys, time
+with open({args_file:?}, "w") as f:
+    json.dump(sys.argv[1:], f)
+sock_path = sys.argv[sys.argv.index("--socket") + 1]
+try:
+    os.unlink(sock_path)
+except FileNotFoundError:
+    pass
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.bind(sock_path)
+s.listen(1)
+time.sleep(0.2)
+"#,
+            args_file = args_file.to_string_lossy().to_string()
+        ),
+    )
+    .expect("write fake child");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&child).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&child, perms).unwrap();
+    }
+
+    // SAFETY: this test runs in-process and restores QUECTO_CHILD_BINARY before returning.
+    unsafe { std::env::set_var("QUECTO_CHILD_BINARY", &child) };
+    let tool = SpawnTool::with_base_dir(vec![], true, dir.path().to_path_buf())
+        .with_socket_dir(dir.path().to_path_buf());
+    let mut cfg = tool.parse_args(r#"{"agent_id":"worker"}"#).unwrap();
+    cfg.workflow_spec = Some(crate::domain::workflow::WorkflowSpec {
+        template: crate::domain::workflow::WorkflowTemplate {
+            id: "wf".into(),
+            label: "Workflow".into(),
+            description: "small valid spec".into(),
+            when_to_use: None,
+            steps: vec![],
+            guards: vec![],
+        },
+    });
+
+    let result = tool.launch_uds_agent(&cfg).await.expect("spawn succeeds");
+    // SAFETY: paired cleanup for the test-scoped environment override above.
+    unsafe { std::env::remove_var("QUECTO_CHILD_BINARY") };
+    assert!(!result.is_error, "{}", result.content);
+
+    let args: Vec<String> =
+        serde_json::from_str(&std::fs::read_to_string(&args_file).unwrap()).unwrap();
+    let session = args[args.iter().position(|arg| arg == "-s").unwrap() + 1].clone();
+    let socket = args[args.iter().position(|arg| arg == "--socket").unwrap() + 1].clone();
+    assert_ne!(
+        session, "worker",
+        "child persist session key must be UUID, not display label"
+    );
+    assert!(
+        uuid::Uuid::parse_str(&session).is_ok(),
+        "session should be UUID: {session}"
+    );
+    assert!(
+        socket.contains(&session),
+        "socket should be derived from UUID session {session}: {socket}"
+    );
+    assert!(
+        !socket.contains("worker"),
+        "socket path must not contain display label: {socket}"
+    );
+
+    super::shutdown_all(tool.registry());
+}

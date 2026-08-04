@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use crate::domain::ids::AgentUuid;
+use crate::domain::subagent::SubagentConfig;
 
 pub(super) fn inherited_runtime_config_path() -> Option<PathBuf> {
     std::env::var("QUECTO_RUNTIME_CONFIG_PATH")
@@ -14,8 +17,24 @@ pub(super) fn effective_config_path(
     explicit_config_path.cloned().or(inherited_config_path)
 }
 
-use crate::domain::ids::AgentUuid;
-use crate::domain::subagent::SubagentConfig;
+/// Durable child session key used for `-s` / `Session::build_key` (#1378).
+/// Always the minted AgentUuid — never the user-facing display label.
+pub(super) fn child_session_key(agent_uuid: &AgentUuid) -> &str {
+    agent_uuid.as_str()
+}
+
+/// Socket path for a spawned child, keyed by AgentUuid (#1378).
+pub(super) fn child_socket_path(socket_dir: &Path, agent_uuid: &AgentUuid) -> PathBuf {
+    socket_dir.join(format!(
+        "quecto-agent-{}.sock",
+        child_session_key(agent_uuid)
+    ))
+}
+
+/// Sidecar filename (workflow-spec / inherited policy) next to the socket.
+pub(super) fn child_sidecar_filename(prefix: &str, agent_uuid: &AgentUuid, pid: u32) -> String {
+    format!("{prefix}-{}-{pid}.json", child_session_key(agent_uuid))
+}
 
 use super::subagent_lifecycle::{SubagentLifecycleEvent, apply_lifecycle_event};
 use super::subagent_registry::{ExitSignalTx, SubagentEntry};

@@ -9,14 +9,14 @@ use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::spawn_entry::{
-    InitialRegistryEntrySpec, effective_config_path, inherited_runtime_config_path,
-    initial_registry_entry,
+    InitialRegistryEntrySpec, child_session_key, child_sidecar_filename, child_socket_path,
+    effective_config_path, inherited_runtime_config_path, initial_registry_entry,
 };
 use super::spawn_launch_args::write_private_new;
 pub use super::spawn_registry::{register_and_broadcast, shutdown_all, shutdown_all_with_count};
@@ -311,9 +311,7 @@ impl SpawnTool {
         let agent_uuid = AgentUuid::mint();
         let registry_key = agent_uuid.to_string();
 
-        let socket_path = self
-            .socket_dir
-            .join(format!("quecto-agent-{session_name}.sock"));
+        let socket_path = child_socket_path(&self.socket_dir, &agent_uuid);
 
         // A by-value workflow assignment is written to a file next to the
         // socket and forwarded as `--workflow-spec <path>`; the inline template
@@ -333,9 +331,10 @@ impl SpawnTool {
             // Unique per spawn (pid + session) and created privately with
             // O_CREAT|O_EXCL + mode 0600 so a pre-planted symlink at the path
             // cannot be followed/overwritten and the contents are owner-only.
-            let spec_path = self.socket_dir.join(format!(
-                "quecto-wfspec-{session_name}-{}.json",
-                std::process::id()
+            let spec_path = self.socket_dir.join(child_sidecar_filename(
+                "quecto-wfspec",
+                &agent_uuid,
+                std::process::id(),
             ));
             write_private_new(&spec_path, spec_json.as_bytes())
                 .map_err(|e| DomainError::Tool(format!("failed to write workflow spec: {e}")))?;
@@ -347,9 +346,10 @@ impl SpawnTool {
         let inherited_tool_policy =
             super::spawn_inherited_policy::snapshot(&self.inherited_tool_policy);
         let inherited_tool_policy_path = if let Some(snapshot) = inherited_tool_policy.as_ref() {
-            let path = self.socket_dir.join(format!(
-                "quecto-tool-policy-{session_name}-{}.json",
-                std::process::id()
+            let path = self.socket_dir.join(child_sidecar_filename(
+                "quecto-tool-policy",
+                &agent_uuid,
+                std::process::id(),
             ));
             super::inherited_tool_policy::write_snapshot(&path, snapshot).map_err(|e| {
                 DomainError::Tool(format!("failed to write inherited tool policy: {e}"))
@@ -365,7 +365,7 @@ impl SpawnTool {
             effective_config_path(config.config_path.as_ref(), inherited_runtime_config_path());
         let cli_args = super::spawn_launch_args::build_child_cli_args(
             &super::spawn_launch_args::ChildLaunchSpec {
-                session_name,
+                session_name: child_session_key(&agent_uuid),
                 socket_path: &socket_path,
                 config,
                 effective_config: effective_config.as_deref(),
@@ -696,12 +696,13 @@ impl Tool for SpawnTool {
                         // Stub registration uses the same entry builder as the
                         // real post-socket-ready path so status/parent/read_only
                         // and #1049 cannot drift (#866 broadcast still applies).
+                        // #1378: socket path is UUID-keyed even in stub mode so
+                        // tests catch display-label collisions before launch.
+                        let agent_uuid = AgentUuid::mint();
                         let stub_entry = initial_registry_entry(InitialRegistryEntrySpec {
-                            agent_uuid: AgentUuid::mint(),
+                            agent_uuid: agent_uuid.clone(),
                             display_name: session_name.to_string(),
-                            socket_path: PathBuf::from(format!(
-                                "/stub/quecto-agent-{session_name}.sock"
-                            )),
+                            socket_path: child_socket_path(Path::new("/stub"), &agent_uuid),
                             pid: 0,
                             parent_id: self.parent_id.clone(),
                             config: &config,
