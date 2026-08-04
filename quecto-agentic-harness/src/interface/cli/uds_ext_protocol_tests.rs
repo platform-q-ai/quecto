@@ -12,6 +12,7 @@ fn tool_reg(name: &str, desc: &str) -> ToolRegistration {
         name: name.into(),
         description: desc.into(),
         parameters_schema: r#"{"type":"object"}"#.into(),
+        stable_id: None,
     }
 }
 

@@ -16,21 +16,28 @@ impl ToolRegistryImpl {
             .collect();
         self.inherited_policy_default_scope =
             Some(crate::domain::tool_descriptor::ProfileAvailabilityScope::None);
-        for (name, scope) in &snapshot.tools {
-            if !self.tools.contains_key(name) {
-                warnings.push(name.clone());
+        for (policy_id, scope) in &snapshot.tools {
+            let Some(name) = self.resolve_tool_policy_id(policy_id).ok().or_else(|| {
+                self.tools
+                    .contains_key(policy_id)
+                    .then(|| policy_id.clone())
+            }) else {
+                warnings.push(policy_id.clone());
                 continue;
-            }
+            };
             let metadata = self
                 .metadata
-                .entry(name.clone())
+                .entry(name)
                 .or_insert_with(ToolRegistration::official_native);
             metadata.inherited_scope = Some(*scope);
             metadata.profile_scope = Some(*scope);
             metadata.profile_enabled = Some(scope.is_enabled());
         }
         for (name, metadata) in self.metadata.iter_mut() {
-            if !snapshot.tools.contains_key(name) {
+            let identity = metadata.identity_for_name(name);
+            if !snapshot.tools.contains_key(identity.stable_id.as_ref())
+                && !snapshot.tools.contains_key(name)
+            {
                 metadata.inherited_scope =
                     Some(crate::domain::tool_descriptor::ProfileAvailabilityScope::None);
                 metadata.profile_scope =
@@ -43,12 +50,25 @@ impl ToolRegistryImpl {
         warnings
     }
 
+    pub(crate) fn inherited_child_policy_snapshot_tools(
+        &self,
+    ) -> BTreeMap<String, crate::domain::tool_descriptor::ProfileAvailabilityScope> {
+        let mut snapshot = BTreeMap::new();
+        for tool in self.catalogue_entries() {
+            let name = tool.name.into_owned();
+            let stable_id = tool.stable_id.into_owned();
+            let scope = tool.effective_scope;
+            let is_legacy_name_alias = stable_id.starts_with("tool.v1:bundled-native:");
+            snapshot.insert(stable_id, scope);
+            if is_legacy_name_alias {
+                snapshot.insert(name, scope);
+            }
+        }
+        snapshot
+    }
+
     pub(crate) fn refresh_spawn_inherited_child_policy_snapshot(&self) {
-        let snapshot: BTreeMap<_, _> = self
-            .catalogue_entries()
-            .into_iter()
-            .map(|tool| (tool.name.into_owned(), tool.effective_scope))
-            .collect();
+        let snapshot = self.inherited_child_policy_snapshot_tools();
         if let Some(spawn) = self.tools.get("spawn") {
             spawn.set_inherited_child_policy_snapshot_for_spawn(snapshot);
         }

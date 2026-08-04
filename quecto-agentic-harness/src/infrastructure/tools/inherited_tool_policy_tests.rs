@@ -7,6 +7,7 @@ use crate::domain::tool::{
 };
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 use crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot;
+use crate::infrastructure::tools::registration::ToolRegistration;
 
 #[test]
 fn inherited_snapshot_hides_child_denied_tools_and_blocks_widen() {
@@ -87,5 +88,79 @@ fn inherited_snapshot_is_closed_for_omitted_and_late_registered_tools() {
     assert_eq!(
         reconciliation.results[0].status,
         ToolPolicyMutationStatus::BlockedByRestriction
+    );
+}
+
+#[test]
+fn inherited_snapshot_matches_uds_registration_by_stable_id_before_name() {
+    let (mut reg, _tmp) = test_registry();
+    reg.set_execution_profile_context(ToolProfileContext::Child);
+    assert!(reg.register_with_metadata(
+        Arc::new(DummyTestTool::new("weather")),
+        ToolRegistration::uds_owner("uds:client-a").with_stable_id("com.example.weather.v1"),
+    ));
+    let snapshot = InheritedToolPolicySnapshot::new(BTreeMap::from([(
+        "com.example.weather.v1".to_string(),
+        ProfileAvailabilityScope::Child,
+    )]));
+
+    assert!(
+        reg.apply_inherited_tool_policy_snapshot(&snapshot)
+            .is_empty()
+    );
+    let entry = reg.catalogue_entry("weather").unwrap();
+    assert_eq!(entry.profile_scope, Some(ProfileAvailabilityScope::Child));
+    assert!(entry.effective_child_enabled);
+    assert!(!entry.effective_parent_enabled);
+
+    let late_snapshot = InheritedToolPolicySnapshot::new(BTreeMap::from([(
+        "com.example.renamed-weather.v1".to_string(),
+        ProfileAvailabilityScope::Child,
+    )]));
+    assert_eq!(
+        reg.apply_inherited_tool_policy_snapshot(&late_snapshot),
+        vec!["com.example.renamed-weather.v1".to_string()]
+    );
+    assert!(
+        reg.register_with_metadata(
+            Arc::new(DummyTestTool::new("renamed_weather")),
+            ToolRegistration::uds_owner("uds:client-a")
+                .with_stable_id("com.example.renamed-weather.v1"),
+        )
+    );
+    let late_entry = reg.catalogue_entry("renamed_weather").unwrap();
+    assert_eq!(
+        late_entry.profile_scope,
+        Some(ProfileAvailabilityScope::Child)
+    );
+    assert!(late_entry.effective_child_enabled);
+    assert!(!late_entry.effective_parent_enabled);
+}
+
+#[test]
+fn inherited_spawn_snapshot_uses_stable_ids_for_uds_tools() {
+    let (mut reg, _tmp) = test_registry();
+    assert!(reg.register_with_metadata(
+        Arc::new(DummyTestTool::new("weather")),
+        ToolRegistration::uds_owner("uds:client-a").with_stable_id("com.example.weather.v1"),
+    ));
+
+    reg.apply_tool_policy_mutations(
+        &[ToolPolicyMutation::set_scope(
+            "com.example.weather.v1",
+            ProfileAvailabilityScope::Child,
+            "inherit stable id",
+        )],
+        ToolPolicyApplyMode::ImmediateIfIdle,
+    );
+
+    let spawn = reg.inherited_child_policy_snapshot_tools();
+    assert_eq!(
+        spawn.get("com.example.weather.v1"),
+        Some(&ProfileAvailabilityScope::Child)
+    );
+    assert!(
+        !spawn.contains_key("weather"),
+        "inherited child policy should persist the stable id rather than the transient UDS name"
     );
 }

@@ -231,9 +231,7 @@ impl ToolRegistryImpl {
             Err(ToolIdResolveError::Unknown(_)) => unreachable!("register does not resolve ids"),
         }
         if let Some(scope) = self
-            .inherited_policy_scopes
-            .get(&name)
-            .copied()
+            .inherited_scope_for(&name, &metadata)
             .or(self.inherited_policy_default_scope)
         {
             metadata.inherited_scope = Some(scope);
@@ -264,28 +262,6 @@ impl ToolRegistryImpl {
     /// Register a UDS-delivered extension tool.
     pub fn register_uds_tool(&mut self, tool: Arc<dyn Tool>) -> bool {
         self.register_with_metadata(tool, ToolRegistration::uds())
-    }
-
-    /// Return whether a UDS-delivered extension tool with `name` and `owner`
-    /// would be accepted by the registry without mutating it.
-    pub fn can_register_uds_tool_for_owner(&self, name: &str, owner: &str) -> bool {
-        if self.denied_names.contains(name) {
-            return false;
-        }
-        if let Some(existing) = self.metadata.get(name) {
-            existing.unloadable && existing.owner.as_ref() == owner
-        } else {
-            true
-        }
-    }
-
-    /// Register a UDS-delivered extension tool with per-connection ownership.
-    pub fn register_uds_tool_for_owner(
-        &mut self,
-        tool: Arc<dyn Tool>,
-        owner: Cow<'static, str>,
-    ) -> bool {
-        self.register_with_metadata(tool, ToolRegistration::uds_owner(owner))
     }
 
     /// Remove an unloadable tool by name.

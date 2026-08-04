@@ -183,7 +183,7 @@ impl AgentLoopImpl {
         let snapshot: BTreeMap<_, _> = self
             .tool_catalogue_entries()
             .into_iter()
-            .map(|tool| (tool.name.into_owned(), tool.effective_scope))
+            .map(|tool| (tool.stable_id.into_owned(), tool.effective_scope))
             .collect();
         self.extension_tool_registry()
             .set_inherited_child_policy_snapshot_for_spawn(snapshot);
