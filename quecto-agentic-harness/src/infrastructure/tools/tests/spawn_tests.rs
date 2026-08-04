@@ -150,6 +150,22 @@ fn test_definition_task_not_required() {
 }
 
 #[test]
+fn test_definition_does_not_advertise_unwired_container_spawn() {
+    let tool = test_tool();
+    let def = tool.definition();
+    let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
+    let properties = schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+        .expect("spawn parameters schema should define object properties");
+
+    assert!(
+        !properties.contains_key("container"),
+        "spawn schema must not advertise unwired container-backed spawning"
+    );
+}
+
+#[test]
 fn test_parse_valid_task() {
     let tool = test_tool();
     let config = tool.parse_args(r#"{"task":"Summarize news"}"#).unwrap();
