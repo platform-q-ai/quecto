@@ -51,6 +51,18 @@ impl ToolRegistryImpl {
             .ok_or_else(|| ToolIdResolveError::Unknown(policy_id.to_string()))
     }
 
+    pub(super) fn inherited_scope_for(
+        &self,
+        name: &str,
+        metadata: &ToolRegistration,
+    ) -> Option<crate::domain::tool_descriptor::ProfileAvailabilityScope> {
+        let identity = metadata.identity_for_name(name);
+        self.inherited_policy_scopes
+            .get(identity.stable_id.as_ref())
+            .copied()
+            .or_else(|| self.inherited_policy_scopes.get(name).copied())
+    }
+
     pub(super) fn registration_identity_is_available(
         &self,
         name: &str,

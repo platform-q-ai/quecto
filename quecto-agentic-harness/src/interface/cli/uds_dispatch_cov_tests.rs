@@ -245,6 +245,7 @@ pub(super) fn tool_reg(name: &str) -> ToolRegistration {
         name: name.into(),
         description: "desc".into(),
         parameters_schema: r#"{"type":"object"}"#.into(),
+        stable_id: None,
     }
 }
 

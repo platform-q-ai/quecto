@@ -168,12 +168,25 @@ async fn local_tool_and_registry_execute_trait_surface() {
     assert_eq!(registry.tool_count(), 0);
     assert!(registry.runtime_tool_names().is_empty());
     assert!(registry.can_register_uds_tool_for_owner("cov_noop", "uds:client:cov"));
+    assert!(registry.can_register_uds_tool_for_owner_with_stable_id(
+        "cov_noop",
+        "uds:client:cov",
+        Some("com.example.cov-noop.v1"),
+    ));
     assert!(
         !registry.register_uds_tool_for_owner(
             std::sync::Arc::new(CovNoopTool),
             "uds:client:cov".into(),
         ),
         "default owner-specific UDS registration delegates to unsupported legacy path"
+    );
+    assert!(
+        !registry.register_uds_tool_for_owner_with_stable_id(
+            std::sync::Arc::new(CovNoopTool),
+            "uds:client:cov".into(),
+            Some("com.example.cov-noop.v1".into()),
+        ),
+        "default stable-id UDS registration delegates to unsupported legacy path"
     );
     registry.set_session_key("covered");
     registry.register_runtime_tool(std::sync::Arc::new(CovNoopTool));

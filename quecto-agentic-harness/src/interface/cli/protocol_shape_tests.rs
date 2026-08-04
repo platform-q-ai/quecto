@@ -228,6 +228,7 @@ fn register_tools_command_parses() {
             assert_eq!(tools.len(), 1);
             assert_eq!(tools[0].name, "weather");
             assert_eq!(tools[0].description, "Get weather");
+            assert_eq!(tools[0].stable_id, None);
         }
         _ => panic!("expected RegisterTools"),
     }
@@ -235,11 +236,15 @@ fn register_tools_command_parses() {
 
 #[test]
 fn register_tools_with_schema_parses() {
-    let json = r#"{"type":"register_tools","tools":[{"name":"weather","description":"Get weather","parametersSchema":"{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}}}"}]}"#;
+    let json = r#"{"type":"register_tools","tools":[{"name":"weather","description":"Get weather","parametersSchema":"{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}}}","stableId":"com.example.weather.v1"}]}"#;
     let cmd: AgentCommand = serde_json::from_str(json).unwrap();
     match cmd {
         AgentCommand::RegisterTools { tools, .. } => {
             assert!(tools[0].parameters_schema.contains("city"));
+            assert_eq!(
+                tools[0].stable_id.as_deref(),
+                Some("com.example.weather.v1")
+            );
         }
         _ => panic!("expected RegisterTools"),
     }

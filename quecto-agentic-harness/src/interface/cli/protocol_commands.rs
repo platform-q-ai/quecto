@@ -237,6 +237,8 @@ pub struct ToolRegistration {
     pub description: String,
     #[serde(rename = "parametersSchema", default = "default_params_schema")]
     pub parameters_schema: String,
+    #[serde(rename = "stableId", default, skip_serializing_if = "Option::is_none")]
+    pub stable_id: Option<String>,
 }
 fn default_params_schema() -> String {
     r#"{"type":"object"}"#.to_string()

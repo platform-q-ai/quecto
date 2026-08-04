@@ -53,8 +53,11 @@ pub(in crate::interface::cli) async fn dispatch_register_tools(
 
     let owner = format!("uds:client:{}", ctx.current_client_id);
     if let Some(rejected) = tools.iter().find(|tool| {
-        !ctx.agent
-            .can_register_uds_tool_for_owner(&tool.name, &owner)
+        !ctx.agent.can_register_uds_tool_for_owner_with_stable_id(
+            &tool.name,
+            &owner,
+            tool.stable_id.as_deref(),
+        )
     }) {
         let err = AgentEvent::err(
             id,
@@ -80,10 +83,11 @@ pub(in crate::interface::cli) async fn dispatch_register_tools(
     let mut accepted = Vec::new();
     let owner: std::borrow::Cow<'static, str> = std::borrow::Cow::Owned(owner);
     for (tool_reg, tool) in tools.iter().zip(new_tools.iter()) {
-        if ctx
-            .agent
-            .register_uds_tool_for_owner(tool.clone(), owner.clone())
-        {
+        if ctx.agent.register_uds_tool_for_owner_with_stable_id(
+            tool.clone(),
+            owner.clone(),
+            tool_reg.stable_id.clone(),
+        ) {
             accepted.push(tool_reg.name.clone());
         }
     }

@@ -357,3 +357,23 @@ fn remove_unknown_raw_name_blocks_later_legacy_alias_registration() {
         )
     );
 }
+
+#[test]
+fn legacy_uds_registration_preflight_delegates_to_stable_id_path() {
+    let reg = ToolRegistryImpl::new();
+
+    assert!(reg.can_register_uds_tool_for_owner("weather", "uds:client-a"));
+}
+
+#[test]
+fn legacy_uds_registration_stores_legacy_stable_id() {
+    let mut reg = ToolRegistryImpl::new();
+
+    assert!(reg.register_uds_tool_for_owner(
+        Arc::new(DummyTestTool::new("weather")),
+        std::borrow::Cow::Borrowed("uds:client-a"),
+    ));
+
+    let entry = reg.catalogue_entry("weather").unwrap();
+    assert_eq!(entry.stable_id, "tool.v1:uds:12:uds:client-a:weather");
+}

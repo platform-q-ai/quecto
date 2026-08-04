@@ -39,6 +39,8 @@ mod agent_loop_tool_exec;
 mod agent_loop_turn;
 #[path = "agent_loop_turn_flow.rs"]
 mod agent_loop_turn_flow;
+#[path = "agent_loop_uds_tools.rs"]
+mod agent_loop_uds_tools;
 use agent_loop_errors::{
     append_malformed_feedback, enhance_provider_error, is_context_or_output_limit_error,
     provider_failure_audit_event,

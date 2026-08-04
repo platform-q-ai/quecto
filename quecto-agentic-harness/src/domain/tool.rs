@@ -361,6 +361,15 @@ pub trait RuntimeToolLifecycleRegistry: Send + Sync {
         true
     }
 
+    fn can_register_uds_tool_for_owner_with_stable_id(
+        &self,
+        name: &str,
+        owner: &str,
+        _stable_id: Option<&str>,
+    ) -> bool {
+        self.can_register_uds_tool_for_owner(name, owner)
+    }
+
     /// Register a UDS-delivered runtime-loadable tool owned by a specific UDS
     /// client/connection.
     ///
@@ -372,6 +381,15 @@ pub trait RuntimeToolLifecycleRegistry: Send + Sync {
         _owner: std::borrow::Cow<'static, str>,
     ) -> bool {
         self.register_uds_tool(tool)
+    }
+
+    fn register_uds_tool_for_owner_with_stable_id(
+        &mut self,
+        tool: std::sync::Arc<dyn Tool>,
+        owner: std::borrow::Cow<'static, str>,
+        _stable_id: Option<String>,
+    ) -> bool {
+        self.register_uds_tool_for_owner(tool, owner)
     }
 
     /// Compatibility name for the legacy UDS lifecycle API.
