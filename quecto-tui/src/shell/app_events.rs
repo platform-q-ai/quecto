@@ -300,6 +300,8 @@ impl App {
             return;
         }
         let mut tracked = TrackedSubagent::new(crate::protocol::client::SubagentInfoEvent {
+            agent_uuid: None,
+            display_name: None,
             agent_id: sanitized.clone(),
             status: "starting".to_string(),
             last_tool: None,

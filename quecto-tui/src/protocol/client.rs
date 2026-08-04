@@ -316,7 +316,12 @@ pub enum Event {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentInfoEvent {
+    /// Compatibility display label from legacy `agentId`.
     pub agent_id: String,
+    #[serde(default)]
+    pub agent_uuid: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
     pub status: String,
     pub last_tool: Option<String>,
     pub last_error: Option<String>,

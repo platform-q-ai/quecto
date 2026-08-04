@@ -104,7 +104,8 @@ impl App {
             if !usable_socket_path(s.socket_path.as_deref()) {
                 s.socket_path = None;
             }
-            candidates.insert(sanitize_agent_id(&s.agent_id), s);
+            let identity = s.agent_uuid.as_deref().unwrap_or(&s.agent_id);
+            candidates.insert(sanitize_agent_id(identity), s);
         }
 
         crate::agents::roster::apply_roster_snapshot(

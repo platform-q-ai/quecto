@@ -4,6 +4,8 @@ use crate::protocol::client::SubagentInfoEvent;
 
 fn tracked_child() -> SubagentInfoEvent {
     SubagentInfoEvent {
+        agent_uuid: None,
+        display_name: None,
         agent_id: "child".into(),
         status: "running".into(),
         last_tool: None,

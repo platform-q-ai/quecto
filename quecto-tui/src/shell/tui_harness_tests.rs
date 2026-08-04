@@ -448,6 +448,8 @@ mod workflow_display_regression {
         parent: Option<&str>,
     ) -> SubagentInfoEvent {
         SubagentInfoEvent {
+            agent_uuid: None,
+            display_name: None,
             agent_id: id.into(),
             status: status.into(),
             last_tool: None,

@@ -14,6 +14,8 @@ use crate::shell::keys::Key;
 /// A `SubagentInfoEvent` with an explicit parent (for tree tests) and socket.
 fn child(id: &str, status: &str, parent: Option<&str>) -> SubagentInfoEvent {
     SubagentInfoEvent {
+        agent_uuid: None,
+        display_name: None,
         agent_id: id.to_string(),
         status: status.to_string(),
         last_tool: None,
