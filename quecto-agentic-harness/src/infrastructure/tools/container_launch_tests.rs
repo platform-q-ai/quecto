@@ -45,10 +45,18 @@ fn script_config(create: String, exec: String) -> ContainerScriptsConfig {
 async fn new_container_spawn_runs_create_script_and_defaults_repo_from_parent() {
     let dir = tempfile::tempdir().unwrap();
     let log = dir.path().join("create-env.txt");
-    let script = format!(
-        "printf '%s' \"$QUECTO_REPO_URL\" > {}; printf '%s' '{{\"environment_id\":\"env-1\",\"workspace_path\":\"/workspace/repo\",\"container_name\":\"devbox\"}}'",
-        log.display()
-    );
+    let create = dir.path().join("create.py");
+    std::fs::write(&create, format!(
+        "#!/usr/bin/env python3\nimport json, os\nopen({:?}, 'w').write(os.environ.get('QUECTO_REPO_URL',''))\nprint(json.dumps({{'environment_id':'env-1','workspace_path':'/workspace/repo','container_name':'devbox'}}))\n",
+        log
+    ))
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&create, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let script = create.to_string_lossy().into_owned();
     let ctx = ContainerLaunchContext {
         registry: container_registry::new_container_registry(),
         scripts: script_config(script, "echo exec".into()),
@@ -220,7 +228,8 @@ async fn container_exec_command_passes_structured_argv_without_joined_env_or_she
         child_binary: std::path::Path::new("/bin/echo"),
         child_args: &["hello".into(), "two words".into(), "$(touch pwn)".into()],
         prepend_child_binary: true,
-    });
+    })
+    .unwrap();
     assert!(cmd.status().await.unwrap().success());
     let v: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(log).unwrap()).unwrap();
@@ -278,9 +287,14 @@ fn reference_kill_rejects_workspace_outside_managed_root() {
 #[test]
 fn spawn_reaper_only_kills_container_for_environment_owner() {
     let source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/infrastructure/tools/container_script_cleanup.rs"),
+    )
+    .unwrap();
+    assert!(source.contains("remaining == 0"));
+    let spawn_source = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/infrastructure/tools/spawn.rs"),
     )
     .unwrap();
-    assert!(source.contains("if entry.parent_id.is_none()"));
-    assert!(source.contains("kill_container_owner(entry)"));
+    assert!(spawn_source.contains("kill_container_owner(entry, &removed)"));
 }

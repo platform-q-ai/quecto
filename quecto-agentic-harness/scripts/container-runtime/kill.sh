@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Emits a machine-readable JSON result describing environment_id, workspace_path, container_ref, status/metadata.
 
 env_id="${QUECTO_ENVIRONMENT_UUID:-${QUECTO_CONTAINER_UUID:-${1:-}}}"
 root="${QUECTO_CONTAINER_ROOT:-${TMPDIR:-/tmp}/quecto-containers}"

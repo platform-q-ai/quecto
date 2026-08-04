@@ -176,35 +176,19 @@ pub(super) fn query_response_data(
             if matched.is_empty() {
                 return None;
             }
-            let kill_command = matched
+            let agents: Vec<_> = matched.iter().map(|(id, _)| id.clone()).collect();
+            if let Some((_, owner)) = matched
                 .iter()
-                .find_map(|(_, entry)| entry.container_kill_command.clone());
-            let mut kill_error = None;
-            if let Some(command) = kill_command {
-                let mut cmd = std::process::Command::new("sh");
-                cmd.arg("-c").arg(command);
-                cmd.env("QUECTO_CONTAINER_REF", container_ref);
-                if let Some((_, entry)) = matched.first() {
-                    if let Some(environment_id) = &entry.environment_id {
-                        cmd.env("QUECTO_ENVIRONMENT_UUID", environment_id);
+                .find(|(_, entry)| entry.container_kill_command.is_some())
+            {
+                if let Err(error) = crate::infrastructure::tools::container_script_cleanup::run_container_kill_script(owner) {
+                    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+                    for (id, _) in &matched {
+                        if let Some(entry) = entries.get_mut(id) { entry.environment_health = Some("cleanup_failed".into()); }
                     }
-                    if let Some(workspace_path) = &entry.workspace_path {
-                        cmd.env("QUECTO_WORKSPACE_PATH", workspace_path);
-                    }
-                }
-                match cmd.output() {
-                    Ok(output) if output.status.success() => {}
-                    Ok(output) => {
-                        kill_error = Some(format!(
-                            "kill script exited with status {}: {}",
-                            output.status,
-                            String::from_utf8_lossy(&output.stderr).trim()
-                        ));
-                    }
-                    Err(err) => kill_error = Some(format!("kill script failed to start: {err}")),
+                    return Some(serde_json::json!({ "container_ref": container_ref, "agents": agents, "status": "error", "error": error }));
                 }
             }
-            let agents: Vec<_> = matched.iter().map(|(id, _)| id.clone()).collect();
             for (_, entry) in &matched {
                 if let Some(ref tx) = entry.exit_signal_tx {
                     let _ = tx.send(Some(
@@ -226,12 +210,9 @@ pub(super) fn query_response_data(
                     }
                 }
             }
-            let mut response = serde_json::json!({ "container_ref": container_ref, "agents": agents, "status": "stopped" });
-            if let Some(error) = kill_error {
-                response["status"] = serde_json::Value::String("error".into());
-                response["error"] = serde_json::Value::String(error);
-            }
-            Some(response)
+            Some(
+                serde_json::json!({ "container_ref": container_ref, "agents": agents, "status": "stopped" }),
+            )
         }
         AgentCommand::DeleteAllSubagents { .. } => {
             Some(super::uds_delete_all_subagents::response_data(ctx))

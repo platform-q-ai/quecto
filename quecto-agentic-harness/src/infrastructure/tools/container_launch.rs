@@ -143,8 +143,10 @@ pub struct ContainerExecSpec<'a> {
     pub prepend_child_binary: bool,
 }
 
-pub fn build_container_exec_command(spec: ContainerExecSpec<'_>) -> tokio::process::Command {
-    let mut c = tokio::process::Command::new(&spec.entry.exec_command);
+pub fn build_container_exec_command(
+    spec: ContainerExecSpec<'_>,
+) -> Result<tokio::process::Command, DomainError> {
+    let mut c = command_from_config(&spec.entry.exec_command, "container exec")?;
     c.env("QUECTO_CONTAINER_REF", &spec.entry.container_ref);
     c.env("QUECTO_ENVIRONMENT_UUID", &spec.entry.environment_id);
     c.env("QUECTO_WORKSPACE_PATH", &spec.entry.workspace_path);
@@ -162,18 +164,29 @@ pub fn build_container_exec_command(spec: ContainerExecSpec<'_>) -> tokio::proce
         c.arg(spec.child_binary);
     }
     c.args(spec.child_args);
-    c
+    Ok(c)
 }
 
 fn reject_unsafe_repo(repo: Option<&str>) -> Result<(), DomainError> {
     if let Some(repo) = repo {
-        if repo.starts_with('-') {
+        if repo.starts_with('-') || repo.chars().any(|c| c.is_control()) {
             return Err(DomainError::Tool(
-                "repository URL must not start with '-'".into(),
+                "repository URL must not start with '-' or contain control characters".into(),
             ));
         }
     }
     Ok(())
+}
+
+fn command_from_config(
+    command: &str,
+    context: &str,
+) -> Result<tokio::process::Command, DomainError> {
+    let argv = super::container_script_cleanup::parse_configured_script_command(command)
+        .map_err(|e| DomainError::Tool(format!("{context} command is not argv-safe: {e}")))?;
+    let mut cmd = tokio::process::Command::new(&argv[0]);
+    cmd.args(&argv[1..]);
+    Ok(cmd)
 }
 
 async fn run_script_json(
@@ -182,8 +195,7 @@ async fn run_script_json(
     container_ref: Option<&str>,
     agent_uuid: &AgentUuid,
 ) -> Result<ScriptResult, DomainError> {
-    let mut cmd = tokio::process::Command::new("sh");
-    cmd.arg("-c").arg(command);
+    let mut cmd = command_from_config(command, "container script")?;
     cmd.env("QUECTO_AGENT_UUID", agent_uuid.to_string());
     cmd.env("QUECTO_ENVIRONMENT_UUID", agent_uuid.to_string());
     if let Some(repo) = repo {

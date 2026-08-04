@@ -602,10 +602,17 @@ fn kill_container_invokes_script_marks_members_stopped_and_signals_exit() {
     entry.container_uuid = Some("env-1".into());
     entry.environment_id = Some("env-1".into());
     entry.workspace_path = Some(fx._tmp.path().to_string_lossy().to_string());
-    entry.container_kill_command = Some(format!(
-        "printf '%s' \"$QUECTO_CONTAINER_REF:$QUECTO_ENVIRONMENT_UUID\" > {}",
-        marker.display()
-    ));
+    let kill = fx._tmp.path().join("kill.py");
+    std::fs::write(&kill, format!(
+        "#!/usr/bin/env python3\nimport os\nopen({:?}, 'w').write(os.environ.get('QUECTO_CONTAINER_REF','') + ':' + os.environ.get('QUECTO_ENVIRONMENT_UUID',''))\n",
+        marker
+    )).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&kill, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    entry.container_kill_command = Some(kill.to_string_lossy().into_owned());
     entry.exit_signal_tx = Some(tx);
     registry.lock().unwrap().insert(uuid.to_string(), entry);
     fx.subagent_registry = Some(registry.clone());
@@ -645,7 +652,18 @@ fn kill_container_reports_script_failure_without_pretending_success() {
         0,
     );
     entry.container_ref = Some("C1".into());
-    entry.container_kill_command = Some("printf boom >&2; exit 7".into());
+    let kill = fx._tmp.path().join("fail.py");
+    std::fs::write(
+        &kill,
+        "#!/usr/bin/env python3\nimport sys\nprint('boom', file=sys.stderr)\nsys.exit(7)\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&kill, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    entry.container_kill_command = Some(kill.to_string_lossy().into_owned());
     registry.lock().unwrap().insert(uuid.to_string(), entry);
     fx.subagent_registry = Some(registry);
 
@@ -660,4 +678,61 @@ fn kill_container_reports_script_failure_without_pretending_success() {
 
     assert_eq!(response["status"], "error");
     assert!(response["error"].as_str().unwrap().contains("boom"));
+    let entries = fx.subagent_registry.as_ref().unwrap().lock().unwrap();
+    let failed = entries.get(uuid.as_str()).unwrap();
+    assert_ne!(
+        failed.status,
+        crate::infrastructure::tools::subagent_registry::SubagentStatus::Exited
+    );
+    assert_eq!(failed.environment_health.as_deref(), Some("cleanup_failed"));
+}
+
+#[test]
+fn kill_container_uses_canonical_cleanup_env() {
+    use crate::domain::ids::AgentUuid;
+    use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+
+    let mut fx = Fx::new();
+    let marker = fx._tmp.path().join("env.txt");
+    let registry = new_registry();
+    let uuid = AgentUuid::mint();
+    let mut entry = SubagentEntry::with_identity(
+        uuid.clone(),
+        "agent-c1".into(),
+        fx._tmp.path().join("agent.sock"),
+        0,
+    );
+    entry.container_ref = Some("C-ref".into());
+    entry.container_uuid = Some("uuid-1".into());
+    entry.container_name = Some("name-1".into());
+    entry.environment_id = Some("env-1".into());
+    entry.workspace_path = Some(fx._tmp.path().to_string_lossy().to_string());
+    entry.container_script_name = Some("dev".into());
+    let kill = fx._tmp.path().join("envkill.py");
+    std::fs::write(&kill, format!(
+        "#!/usr/bin/env python3\nimport os\nvals=[os.environ.get(k,'') for k in ['QUECTO_CONTAINER_UUID','QUECTO_CONTAINER_REF','QUECTO_CONTAINER_NAME','QUECTO_ENVIRONMENT_UUID','QUECTO_WORKSPACE_PATH','QUECTO_CONTAINER_SCRIPT']]\nopen({:?}, 'w').write('|'.join(vals))\n",
+        marker
+    )).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&kill, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    entry.container_kill_command = Some(kill.to_string_lossy().into_owned());
+    registry.lock().unwrap().insert(uuid.to_string(), entry);
+    fx.subagent_registry = Some(registry);
+
+    let response = query_response_data(
+        &AgentCommand::KillContainer {
+            id: None,
+            container_ref: "uuid-1".into(),
+        },
+        &fx.ctx(),
+    )
+    .unwrap();
+    assert_eq!(response["status"], "stopped");
+    assert_eq!(
+        std::fs::read_to_string(marker).unwrap(),
+        format!("uuid-1|C-ref|name-1|env-1|{}|dev", fx._tmp.path().display())
+    );
 }

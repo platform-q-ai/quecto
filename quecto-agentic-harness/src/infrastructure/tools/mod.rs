@@ -7,7 +7,7 @@ mod container_launch_tests;
 pub mod container_registry;
 #[cfg(test)]
 mod container_registry_tests;
-mod container_script_cleanup;
+pub(crate) mod container_script_cleanup;
 pub mod docs;
 pub mod filesystem;
 pub mod find;

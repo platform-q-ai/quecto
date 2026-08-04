@@ -131,6 +131,7 @@ pub struct SubagentEntry {
     pub environment_health: Option<String>,
     /// Workspace mounted in the container, if known.
     pub workspace_path: Option<String>,
+    pub container_script_name: Option<String>,
     pub container_kill_command: Option<String>,
     pub container_inspect_command: Option<String>,
     /// Last lifecycle event applied to this entry. This is internal observability
@@ -211,6 +212,7 @@ impl SubagentEntry {
             environment_id: None,
             environment_health: None,
             workspace_path: None,
+            container_script_name: None,
             container_kill_command: None,
             container_inspect_command: None,
             #[cfg(test)]

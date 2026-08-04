@@ -1,6 +1,4 @@
-use super::container_script_cleanup::{
-    invoke_container_inspect_script, invoke_container_kill_script,
-};
+use super::container_script_cleanup::{invoke_container_inspect_script, kill_container_owner};
 use super::spawn_entry::{
     InitialRegistryEntrySpec, child_session_key, child_sidecar_filename, child_socket_path,
     effective_config_path, inherited_runtime_config_path, initial_registry_entry,
@@ -26,11 +24,6 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-fn kill_container_owner(entry: &SubagentEntry) {
-    if entry.parent_id.is_none() {
-        invoke_container_kill_script(entry);
-    }
-}
 fn validate_config_path(s: &str) -> Result<PathBuf, String> {
     let p = PathBuf::from(s);
     for component in p.components() {
@@ -366,7 +359,7 @@ impl SpawnTool {
                     child_args: if launch.is_new { &argv_args } else { &cli_args },
                     prepend_child_binary: !launch.is_new,
                 },
-            )
+            )?
         } else {
             let mut c = tokio::process::Command::new(&binary);
             c.args(&cli_args);
@@ -438,6 +431,7 @@ impl SpawnTool {
                     .to_string(),
                 );
                 entry.workspace_path = Some(launch.entry.workspace_path.clone());
+                entry.container_script_name = Some(launch.entry.script_name.clone());
                 entry.container_kill_command = Some(launch.entry.kill_command.clone());
                 entry.container_inspect_command = Some(launch.entry.inspect_command.clone());
             }
@@ -537,13 +531,13 @@ impl SpawnTool {
             for (id, entry) in &removed {
                 if id == &reaper_name {
                     invoke_container_inspect_script(entry);
-                    kill_container_owner(entry);
+                    kill_container_owner(entry, &removed);
                     if let Some(ref handle) = entry.monitor_handle {
                         handle.abort();
                     }
                     continue;
                 }
-                kill_container_owner(entry);
+                kill_container_owner(entry, &removed);
                 if let Some(ref tx) = entry.exit_signal_tx {
                     let _ = tx.send(Some(ExitSignal {
                         exit_code: None,
