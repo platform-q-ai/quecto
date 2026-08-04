@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+use crate::domain::container_runtime::SpawnContainerRequest;
+
 use super::error::DomainError;
 use super::ids::AgentUuid;
 
@@ -96,6 +98,9 @@ pub struct SubagentConfig {
     /// `disable_tools` set). Surfaced to the TUI so the left panel can mark the
     /// agent as an observer (#966). Purely a display flag; enforcement is #957.
     pub read_only: bool,
+    /// Requested launch runtime. Local remains the default; container variants
+    /// are resolved by the launch backend/registry rather than the agent id.
+    pub container: SpawnContainerRequest,
 }
 
 /// A validated model argument, in either of the two forms accepted by

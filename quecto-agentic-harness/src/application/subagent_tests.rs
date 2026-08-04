@@ -15,6 +15,7 @@ fn test_subagent_context_has_empty_history() {
         effort: None,
         disable_tools: Vec::new(),
         read_only: false,
+        container: crate::domain::container_runtime::SpawnContainerRequest::Local,
     };
     let ctx = SubagentContext::from_config(&config);
     assert_eq!(ctx.task, "Do stuff");
@@ -36,6 +37,7 @@ fn test_subagent_inherits_restrict_true() {
         effort: None,
         disable_tools: Vec::new(),
         read_only: false,
+        container: crate::domain::container_runtime::SpawnContainerRequest::Local,
     };
     let ctx = SubagentContext::from_config(&config);
     assert!(ctx.restrict_to_workspace);
@@ -56,6 +58,7 @@ fn test_subagent_inherits_restrict_false() {
         effort: None,
         disable_tools: Vec::new(),
         read_only: false,
+        container: crate::domain::container_runtime::SpawnContainerRequest::Local,
     };
     let ctx = SubagentContext::from_config(&config);
     assert!(!ctx.restrict_to_workspace);
@@ -76,6 +79,7 @@ fn test_subagent_context_no_task() {
         effort: None,
         disable_tools: Vec::new(),
         read_only: false,
+        container: crate::domain::container_runtime::SpawnContainerRequest::Local,
     };
     let ctx = SubagentContext::from_config(&config);
     assert_eq!(ctx.task, "");

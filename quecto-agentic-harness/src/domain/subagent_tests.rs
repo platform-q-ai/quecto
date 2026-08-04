@@ -37,6 +37,7 @@ fn test_subagent_config_new_fields_default() {
         effort: None,
         disable_tools: Vec::new(),
         read_only: false,
+        container: crate::domain::container_runtime::SpawnContainerRequest::Local,
     };
     assert!(cfg.config_path.is_none());
     assert!(!cfg.workflow);
@@ -58,6 +59,7 @@ fn test_subagent_config_with_config_path() {
         effort: None,
         disable_tools: Vec::new(),
         read_only: false,
+        container: crate::domain::container_runtime::SpawnContainerRequest::Local,
     };
     assert_eq!(cfg.config_path, Some(PathBuf::from("/custom/config.json")));
 }
@@ -77,6 +79,7 @@ fn test_subagent_config_with_workflow() {
         effort: None,
         disable_tools: Vec::new(),
         read_only: false,
+        container: crate::domain::container_runtime::SpawnContainerRequest::Local,
     };
     assert!(cfg.workflow);
     assert!(cfg.workflow_guards);

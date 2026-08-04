@@ -1,6 +1,8 @@
 //! Contract test binary: aggregates every `tests/contracts/{port}.rs` so
 //! `cargo test --test contracts` runs the full port-contract suite.
 
+#[path = "contracts/agent_launch_backend.rs"]
+mod agent_launch_backend;
 #[path = "contracts/agent_loop.rs"]
 mod agent_loop;
 #[path = "contracts/audit_sink.rs"]

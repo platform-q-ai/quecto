@@ -29,6 +29,7 @@ fn given_subagent_spawn_request(world: &mut QuectoWorld, task: String) {
         effort: None,
         disable_tools: Vec::new(),
         read_only: false,
+        container: quecto::domain::container_runtime::SpawnContainerRequest::Local,
     });
 }
 
@@ -48,6 +49,7 @@ fn given_parent_config_restrict(world: &mut QuectoWorld, value: String) {
         effort: None,
         disable_tools: Vec::new(),
         read_only: false,
+        container: quecto::domain::container_runtime::SpawnContainerRequest::Local,
     });
 }
 

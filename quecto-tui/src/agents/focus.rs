@@ -7,7 +7,7 @@ pub(crate) enum Focus {
 }
 
 /// Width of the persistent left sub-agent panel (#800); room for names + a bar.
-pub(crate) const SUBAGENT_PANEL_WIDTH: usize = 30;
+pub(crate) const SUBAGENT_PANEL_WIDTH: usize = 34;
 
 /// Maximum retained sub-agent sessions before the oldest non-active is evicted.
 pub(crate) const MAX_RETAINED_SESSIONS: usize = 16;

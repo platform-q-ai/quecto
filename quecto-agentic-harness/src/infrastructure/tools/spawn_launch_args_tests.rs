@@ -19,6 +19,7 @@ fn base_config() -> SubagentConfig {
         effort: None,
         disable_tools: Vec::new(),
         read_only: false,
+        container: crate::domain::container_runtime::SpawnContainerRequest::Local,
     }
 }
 

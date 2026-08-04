@@ -307,6 +307,7 @@ fn sample_config(task: Option<&str>) -> crate::domain::subagent::SubagentConfig 
         effort: None,
         disable_tools: vec![],
         read_only: false,
+        container: crate::domain::container_runtime::SpawnContainerRequest::Local,
     }
 }
 

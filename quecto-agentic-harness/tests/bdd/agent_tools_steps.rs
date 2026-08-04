@@ -260,6 +260,7 @@ fn given_subagent_inheriting_sandbox(world: &mut QuectoWorld) {
         effort: None,
         disable_tools: Vec::new(),
         read_only: false,
+        container: quecto::domain::container_runtime::SpawnContainerRequest::Local,
     });
     let ctx = SubagentContext::from_config(world.subagent_config.as_ref().unwrap());
     world.subagent_context = Some(ctx);
