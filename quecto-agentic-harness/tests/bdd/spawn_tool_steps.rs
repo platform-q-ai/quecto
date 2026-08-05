@@ -776,8 +776,16 @@ fn given_script_spawn(
 set -euo pipefail
 env_ref="env-bdd"
 echo "{{\"kind\":\"create\",\"script\":\"${{QUECTO_CONTAINER_SCRIPT:-default}}\",\"repo\":\"${{QUECTO_CONTAINER_REPO:-}}\",\"mode\":\"{}\",\"env_ref\":\"$env_ref\"}}" >> '{}'
+socket_path=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--socket" ]; then socket_path="$arg"; break; fi
+  prev="$arg"
+done
+if [ -z "$socket_path" ]; then socket_path="$PWD/script-managed.sock"; fi
 if [ "{}" = "fail" ]; then printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$PWD/missing.sock"; exit 0; fi
-exec "$@"
+"$@" >/dev/null 2>&1 &
+printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$socket_path"
 "#,
         mode,
         log.display(),
