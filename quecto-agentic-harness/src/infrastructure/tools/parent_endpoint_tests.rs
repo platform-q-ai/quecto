@@ -50,7 +50,7 @@ async fn proxy_endpoint_connects_to_proxy_not_requested_uds() {
     let missing_requested_uds = dir.path().join("missing-child.sock");
     let seen = one_response_listener(proxy.clone()).await;
     let response = send_command_with_timeout(
-        &ParentEndpoint::Proxy(proxy.display().to_string()),
+        &ParentEndpoint::Proxy(format!("unix:{}", proxy.display())),
         r#"{"type":"get_state"}"#,
         Duration::from_secs(2),
     )

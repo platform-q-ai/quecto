@@ -80,6 +80,32 @@ fn stale_or_unknown_refs_error_without_guessing() {
 }
 
 #[test]
+fn existing_container_membership_can_roll_back_without_poisoning_live_ref() {
+    let reg = new_container_registry();
+    register_container(&reg, entry("one", ContainerStatus::Running));
+    add_agent_to_live_container(&reg, "one", crate::domain::ids::AgentUuid::new("agent-1"))
+        .unwrap();
+    remove_agent_from_container(&reg, "one", &crate::domain::ids::AgentUuid::new("agent-1"))
+        .unwrap();
+
+    let listed = list_containers(&reg);
+    assert_eq!(
+        listed[0].agents,
+        Vec::<crate::domain::ids::AgentUuid>::new()
+    );
+    assert_eq!(resolve_live_ref(&reg, "C1").unwrap(), "one");
+}
+
+#[test]
+fn existing_container_membership_rollback_is_idempotent() {
+    let reg = new_container_registry();
+    register_container(&reg, entry("one", ContainerStatus::Running));
+    remove_agent_from_container(&reg, "one", &crate::domain::ids::AgentUuid::new("missing"))
+        .unwrap();
+    assert_eq!(resolve_live_ref(&reg, "C1").unwrap(), "one");
+}
+
+#[test]
 fn registry_operations_recover_from_poisoned_mutex() {
     let reg = new_container_registry();
     let poisoned = reg.clone();

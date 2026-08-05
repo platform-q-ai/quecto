@@ -159,11 +159,27 @@ pub(super) fn invoke_container_kill_script(entry: &SubagentEntry) {
     let _ = run_container_kill_script(entry);
 }
 
-fn environment_key(entry: &SubagentEntry) -> Option<&str> {
+pub(crate) fn environment_key(entry: &SubagentEntry) -> Option<&str> {
     entry
-        .environment_id
+        .container_uuid
         .as_deref()
-        .or(entry.container_uuid.as_deref())
+        .or(entry.environment_id.as_deref())
+}
+
+pub(crate) fn invoke_container_kill_scripts_once<'a, I>(entries: I)
+where
+    I: IntoIterator<Item = &'a SubagentEntry>,
+{
+    let mut cleaned = std::collections::HashSet::new();
+    for entry in entries {
+        let Some(env) = environment_key(entry) else {
+            invoke_container_kill_script(entry);
+            continue;
+        };
+        if cleaned.insert(env.to_string()) {
+            invoke_container_kill_script(entry);
+        }
+    }
 }
 
 pub(crate) fn cleanup_container_environments_after_removal(

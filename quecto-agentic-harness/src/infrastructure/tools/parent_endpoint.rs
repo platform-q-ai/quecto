@@ -1,17 +1,21 @@
 use crate::domain::agent_launch_backend::ParentEndpoint;
 use crate::domain::error::DomainError;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub async fn connect(endpoint: &ParentEndpoint) -> Result<tokio::net::UnixStream, DomainError> {
     match endpoint {
         ParentEndpoint::DirectUds(path) => connect_path(path).await,
         // #1310 proxy mechanics expose a host-side Unix socket endpoint for the
-        // parent. Keep it typed as a proxy endpoint for registry/UI semantics,
-        // but connect to the proxy socket itself rather than falling back to the
-        // requested child UDS path.
-        ParentEndpoint::Proxy(proxy) => connect_path(Path::new(proxy)).await,
+        // parent using the explicit unix:<absolute-path> proxy scheme.
+        ParentEndpoint::Proxy(_) => connect_path(&proxy_path(endpoint)?).await,
     }
+}
+
+pub(crate) fn proxy_path(endpoint: &ParentEndpoint) -> Result<PathBuf, DomainError> {
+    endpoint
+        .proxy_unix_path()
+        .ok_or_else(|| DomainError::Tool("unsupported subagent proxy endpoint".into()))
 }
 
 async fn connect_path(path: &Path) -> Result<tokio::net::UnixStream, DomainError> {

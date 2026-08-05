@@ -100,6 +100,65 @@ async fn new_container_spawn_runs_create_script_and_defaults_repo_from_parent() 
 }
 
 #[tokio::test]
+async fn new_container_accepts_typed_unix_socket_proxy() {
+    let dir = tempfile::tempdir().unwrap();
+    let proxy = dir.path().join("proxy.sock");
+    let create = format!(
+        "printf '%s' '{{\"environment_id\":\"env-proxy\",\"workspace_path\":\"/workspace/repo\",\"metadata\":{{}},\"socket_proxy\":\"unix:{}\"}}'",
+        proxy.display()
+    );
+    let ctx = ContainerLaunchContext {
+        registry: container_registry::new_container_registry(),
+        scripts: script_config(create, "echo exec".into()),
+        parent_repo: None,
+    };
+    let config = config_with_container(SpawnContainerRequest::New {
+        container_script: None,
+        repo: None,
+    });
+
+    let launch = prepare_container_launch(&ctx, &config, &AgentUuid::new("agent-proxy"))
+        .await
+        .unwrap()
+        .expect("proxy launch should prepare");
+
+    assert_eq!(
+        launch.entry.socket_proxy.as_deref(),
+        Some(format!("unix:{}", proxy.display()).as_str())
+    );
+}
+
+#[tokio::test]
+async fn new_container_rejects_raw_or_unsafe_socket_proxy_values() {
+    for proxy in [
+        "/tmp/raw.sock",
+        "tcp://127.0.0.1:1",
+        "unix:relative.sock",
+        "unix:/tmp/../evil.sock",
+    ] {
+        let create = format!(
+            "printf '%s' '{{\"environment_id\":\"env-proxy\",\"workspace_path\":\"/workspace/repo\",\"metadata\":{{}},\"socket_proxy\":\"{}\"}}'",
+            proxy
+        );
+        let ctx = ContainerLaunchContext {
+            registry: container_registry::new_container_registry(),
+            scripts: script_config(create, "echo exec".into()),
+            parent_repo: None,
+        };
+        let config = config_with_container(SpawnContainerRequest::New {
+            container_script: None,
+            repo: None,
+        });
+
+        let err = prepare_container_launch(&ctx, &config, &AgentUuid::new("agent-proxy"))
+            .await
+            .expect_err("unsafe proxy must fail")
+            .to_string();
+        assert!(err.contains("socket_proxy"), "{proxy}: {err}");
+    }
+}
+
+#[tokio::test]
 async fn missing_container_script_fails_before_create_script_runs() {
     let dir = tempfile::tempdir().unwrap();
     let marker = dir.path().join("should-not-exist");

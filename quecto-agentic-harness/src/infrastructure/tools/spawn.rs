@@ -25,6 +25,14 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+fn rollback_existing_join(
+    registry: &crate::infrastructure::tools::container_registry::ContainerRegistry,
+    join: Option<&super::spawn_container_existing::ExistingContainerJoin>,
+    agent_uuid: &AgentUuid,
+) {
+    super::spawn_container_existing::rollback_existing_container_join(registry, join, agent_uuid);
+}
+
 fn validate_config_path(s: &str) -> Result<PathBuf, String> {
     let p = PathBuf::from(s);
     for component in p.components() {
@@ -58,6 +66,103 @@ pub struct SpawnTool {
     container_registry: crate::infrastructure::tools::container_registry::ContainerRegistry,
     inherited_tool_policy: super::spawn_inherited_policy::InheritedToolPolicyState,
 }
+fn spawn_reaper_task(
+    mut child: tokio::process::Child,
+    reaper_registry: SubagentRegistry,
+    reaper_name: String,
+    reaper_exit_tx: tokio::sync::watch::Sender<Option<ExitSignal>>,
+    reaper_broadcast: Option<tokio::sync::broadcast::Sender<String>>,
+) {
+    // Spawn a background reaper task so the child process is always
+    // cleaned up (no zombies) even if the parent never calls shutdown_all.
+    // The reaper also aborts the monitor task to prevent leaks (#522),
+    // and signals any waiting `await` calls with the exit status (#612).
+    tokio::spawn(async move {
+        let status = child.wait().await;
+
+        // Build the exit signal from the child's exit status (#612).
+        let exit_signal = match status {
+            Ok(exit_status) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::ExitStatusExt;
+                    if let Some(signal) = exit_status.signal() {
+                        ExitSignal {
+                            exit_code: None,
+                            signal: Some(signal),
+                        }
+                    } else {
+                        ExitSignal {
+                            exit_code: exit_status.code(),
+                            signal: None,
+                        }
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    ExitSignal {
+                        exit_code: exit_status.code(),
+                        signal: None,
+                    }
+                }
+            }
+            Err(_) => ExitSignal {
+                exit_code: None,
+                signal: None,
+            },
+        };
+
+        // Signal any waiting `await` call before removing from registry.
+        let _ = reaper_exit_tx.send(Some(exit_signal));
+
+        // Run postmortem inspect before removal as a reaper-side fallback.
+        // The monitor also attempts this on EOF; the SubagentEntry atomic
+        // guard makes the two lifecycle owners exact-once under races.
+        apply_container_inspect(&reaper_registry, &reaper_name);
+
+        // Cascade-remove the dead agent AND its descendants, then broadcast
+        // the survivor set so every connected client (the TUI panel) drops
+        // them promptly instead of leaving them lingering (#831). The reaper
+        // is a detached task, so the send is best-effort (errors at debug).
+        let crate::infrastructure::tools::subagent_cascade::CascadeOutcome { removed, event } =
+            crate::infrastructure::tools::subagent_cascade::cascade_remove_and_state_changed(
+                &reaper_registry,
+                &reaper_name,
+            );
+        if let Some(event) = event {
+            if let Some(tx) = &reaper_broadcast {
+                if let Err(e) = tx.send(event) {
+                    tracing::debug!(
+                        agent = %reaper_name,
+                        error = %e,
+                        "reaper: no subscribers for cascade state_changed broadcast"
+                    );
+                }
+            }
+        }
+
+        cleanup_container_environments_after_removal(&removed, &reaper_registry);
+
+        for (id, entry) in &removed {
+            if id == &reaper_name {
+                // Monitor EOF and wrapper reaper both call postmortem
+                // inspect; the shared atomic guard guarantees exact-once.
+                if let Some(ref handle) = entry.monitor_handle {
+                    handle.abort();
+                }
+                continue;
+            }
+            if let Some(ref tx) = entry.exit_signal_tx {
+                let _ = tx.send(Some(ExitSignal {
+                    exit_code: None,
+                    signal: Some(15), // SIGTERM
+                }));
+            }
+            crate::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry);
+        }
+    });
+}
+
 impl SpawnTool {
     pub fn new(allowed_agents: Vec<String>, restrict_to_workspace: bool) -> Self {
         Self {
@@ -347,7 +452,7 @@ impl SpawnTool {
         {
             Ok(prepared) => prepared,
             Err(err) => {
-                super::spawn_container_existing::rollback_existing_container_join(
+                rollback_existing_join(
                     &self.container_registry,
                     existing_join.as_ref(),
                     &agent_uuid,
@@ -368,9 +473,17 @@ impl SpawnTool {
         // Detach child stdio — we interact via UDS, not stdout/stderr.
         cmd.stdout(std::process::Stdio::null());
         cmd.stderr(std::process::Stdio::null());
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| DomainError::Tool(format!("failed to spawn subagent: {e}")))?;
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                rollback_existing_join(
+                    &self.container_registry,
+                    existing_join.as_ref(),
+                    &agent_uuid,
+                );
+                return Err(DomainError::Tool(format!("failed to spawn subagent: {e}")));
+            }
+        };
         let pid = child.id().unwrap_or(0);
         // Wait for socket readiness while also observing premature child exit.
         if let Err(e) =
@@ -380,6 +493,11 @@ impl SpawnTool {
             // report failure. If the child already exited, kill/wait are benign.
             let _ = child.kill().await;
             let _ = child.wait().await;
+            rollback_existing_join(
+                &self.container_registry,
+                existing_join.as_ref(),
+                &agent_uuid,
+            );
             return Err(e);
         }
         // Create exit signal channel for `await` support (#612).
@@ -406,12 +524,22 @@ impl SpawnTool {
             });
             if let Some(launch) = &container_launch {
                 let registered_container =
-                    super::spawn_container_register::registered_container_for_launch(
+                    match super::spawn_container_register::registered_container_for_launch(
                         &self.container_registry,
                         launch,
                         &agent_uuid,
                         existing_join.as_ref(),
-                    )?;
+                    ) {
+                        Ok(registered) => registered,
+                        Err(err) => {
+                            rollback_existing_join(
+                                &self.container_registry,
+                                existing_join.as_ref(),
+                                &agent_uuid,
+                            );
+                            return Err(err);
+                        }
+                    };
                 super::spawn_container_register::apply_launch_to_entry(
                     &mut entry,
                     &registered_container,
@@ -443,101 +571,23 @@ impl SpawnTool {
             }
         }
 
-        // Spawn a background reaper task so the child process is always
-        // cleaned up (no zombies) even if the parent never calls shutdown_all.
-        // The reaper also aborts the monitor task to prevent leaks (#522),
-        // and signals any waiting `await` calls with the exit status (#612).
-        let reaper_registry = self.registry.clone();
-        let reaper_name = registry_key.clone();
-        let reaper_exit_tx = exit_tx;
-        let reaper_broadcast = self.broadcast_tx.clone();
-        tokio::spawn(async move {
-            let status = child.wait().await;
-
-            // Build the exit signal from the child's exit status (#612).
-            let exit_signal = match status {
-                Ok(exit_status) => {
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::process::ExitStatusExt;
-                        if let Some(signal) = exit_status.signal() {
-                            ExitSignal {
-                                exit_code: None,
-                                signal: Some(signal),
-                            }
-                        } else {
-                            ExitSignal {
-                                exit_code: exit_status.code(),
-                                signal: None,
-                            }
-                        }
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        ExitSignal {
-                            exit_code: exit_status.code(),
-                            signal: None,
-                        }
-                    }
-                }
-                Err(_) => ExitSignal {
-                    exit_code: None,
-                    signal: None,
-                },
-            };
-
-            // Signal any waiting `await` call before removing from registry.
-            let _ = reaper_exit_tx.send(Some(exit_signal));
-
-            // Run postmortem inspect before removal as a reaper-side fallback.
-            // The monitor also attempts this on EOF; the SubagentEntry atomic
-            // guard makes the two lifecycle owners exact-once under races.
-            apply_container_inspect(&reaper_registry, &reaper_name);
-
-            // Cascade-remove the dead agent AND its descendants, then broadcast
-            // the survivor set so every connected client (the TUI panel) drops
-            // them promptly instead of leaving them lingering (#831). The reaper
-            // is a detached task, so the send is best-effort (errors at debug).
-            let crate::infrastructure::tools::subagent_cascade::CascadeOutcome { removed, event } =
-                crate::infrastructure::tools::subagent_cascade::cascade_remove_and_state_changed(
-                    &reaper_registry,
-                    &reaper_name,
-                );
-            if let Some(event) = event {
-                if let Some(tx) = &reaper_broadcast {
-                    if let Err(e) = tx.send(event) {
-                        tracing::debug!(
-                            agent = %reaper_name,
-                            error = %e,
-                            "reaper: no subscribers for cascade state_changed broadcast"
-                        );
-                    }
-                }
-            }
-
-            cleanup_container_environments_after_removal(&removed, &reaper_registry);
-
-            for (id, entry) in &removed {
-                if id == &reaper_name {
-                    // Monitor EOF and wrapper reaper both call postmortem
-                    // inspect; the shared atomic guard guarantees exact-once.
-                    if let Some(ref handle) = entry.monitor_handle {
-                        handle.abort();
-                    }
-                    continue;
-                }
-                if let Some(ref tx) = entry.exit_signal_tx {
-                    let _ = tx.send(Some(ExitSignal {
-                        exit_code: None,
-                        signal: Some(15), // SIGTERM
-                    }));
-                }
-                crate::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry);
-            }
-        });
+        spawn_reaper_task(
+            child,
+            self.registry.clone(),
+            registry_key.clone(),
+            exit_tx,
+            self.broadcast_tx.clone(),
+        );
 
         if let Some(ref task) = config.task {
-            self.send_initial_prompt(&prepared.endpoint, task).await?;
+            if let Err(err) = self.send_initial_prompt(&prepared.endpoint, task).await {
+                rollback_existing_join(
+                    &self.container_registry,
+                    existing_join.as_ref(),
+                    &agent_uuid,
+                );
+                return Err(err);
+            }
         }
 
         Ok(ToolResult {

@@ -1,4 +1,4 @@
-use super::container_script_cleanup::invoke_container_kill_script;
+use super::container_script_cleanup::invoke_container_kill_scripts_once;
 use super::subagent_registry::{ExitSignal, SubagentEntry, SubagentRegistry};
 
 /// Insert a freshly-spawned child entry into the registry and immediately
@@ -41,8 +41,8 @@ pub fn shutdown_all(registry: &SubagentRegistry) {
 pub fn shutdown_all_with_count(registry: &SubagentRegistry) -> usize {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     let removed = entries.len();
+    invoke_container_kill_scripts_once(entries.values());
     for (name, entry) in entries.iter() {
-        invoke_container_kill_script(entry);
         if let Some(ref tx) = entry.exit_signal_tx {
             let _ = tx.send(Some(ExitSignal {
                 exit_code: None,

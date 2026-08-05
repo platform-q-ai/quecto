@@ -139,18 +139,22 @@ impl Sandbox {
         }
 
         let workspace = self.workspace.as_ref().ok_or(SandboxError::NoWorkspace)?;
+        let textual_path = resolve_path(path);
+        let textual_workspace = resolve_path(workspace);
+        if !textual_path.starts_with(&textual_workspace) {
+            return Err(SandboxError::OutsideWorkspace(
+                textual_path.display().to_string(),
+                textual_workspace.display().to_string(),
+            ));
+        }
 
-        // Canonicalize the workspace lazily on first use, then cache. If it
-        // doesn't exist yet, resolve it textually so the prefix check is still
-        // meaningful, but avoid repeated filesystem work on subsequent calls.
+        // Canonicalize the workspace lazily on first use, then cache. For a
+        // missing workspace, canonicalize the nearest existing ancestor and
+        // append the missing tail only after proving no existing component is a
+        // symlink. This prevents a symlinked parent from textually appearing to
+        // contain the workspace while resolving outside it once created.
         let canonical_workspace = self.canonical_workspace.get_or_init(|| {
-            if workspace.exists() {
-                workspace
-                    .canonicalize()
-                    .unwrap_or_else(|_| resolve_path(workspace))
-            } else {
-                resolve_path(workspace)
-            }
+            trusted_resolve_for_create(workspace).unwrap_or_else(|_| resolve_path(workspace))
         });
 
         // Try to canonicalize the target path to resolve symlinks.
@@ -170,14 +174,14 @@ impl Sandbox {
                     canonical_parent
                 }
             } else {
-                // Neither path nor parent exists — fall back to textual resolution
-                resolve_path(path)
+                trusted_resolve_for_create(path)
+                    .map_err(|e| SandboxError::Io(path.display().to_string(), e))?
             }
         } else {
             resolve_path(path)
         };
 
-        if resolved.starts_with(canonical_workspace) {
+        if resolved.starts_with(canonical_workspace) && resolved.starts_with(&textual_workspace) {
             Ok(resolved)
         } else {
             Err(SandboxError::OutsideWorkspace(
@@ -538,6 +542,46 @@ pub(crate) fn extract_all_command_tokens(command: &str) -> Vec<String> {
     }
 
     tokens
+}
+
+/// Resolve a possibly-missing path for creation by canonicalizing the nearest
+/// existing ancestor and rejecting symlink traversal in the existing prefix.
+fn trusted_resolve_for_create(path: &Path) -> std::io::Result<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut existing = absolute.as_path();
+    let mut missing = Vec::new();
+    while !existing.exists() {
+        if let Some(name) = existing.file_name() {
+            missing.push(name.to_os_string());
+        }
+        existing = existing.parent().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "no existing ancestor")
+        })?;
+    }
+
+    let mut probe = PathBuf::new();
+    for component in existing.components() {
+        probe.push(component.as_os_str());
+        if matches!(component, std::path::Component::Normal(_)) {
+            let meta = std::fs::symlink_metadata(&probe)?;
+            if meta.file_type().is_symlink() {
+                return Err(std::io::Error::other(format!(
+                    "symlink traversal rejected at {}",
+                    probe.display()
+                )));
+            }
+        }
+    }
+
+    let mut resolved = existing.canonicalize()?;
+    for name in missing.into_iter().rev() {
+        resolved.push(name);
+    }
+    Ok(resolve_path(&resolved))
 }
 
 /// Resolve a path by normalizing ".." and "." components without requiring the path to exist.

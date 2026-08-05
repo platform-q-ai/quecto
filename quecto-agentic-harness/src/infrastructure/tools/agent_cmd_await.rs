@@ -328,12 +328,17 @@ impl AgentCmdTool {
             }
         };
 
-        let (socket_path, exit_signal_rx) = {
+        let (endpoint, exit_signal_rx) = {
             let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
             match entries.get(&registry_key) {
                 Some(entry) => {
                     let rx = entry.exit_signal_tx.as_ref().map(|tx| tx.subscribe());
-                    (entry.socket_path.clone(), rx)
+                    let endpoint = entry.parent_endpoint.clone().unwrap_or_else(|| {
+                        crate::domain::agent_launch_backend::ParentEndpoint::DirectUds(
+                            entry.socket_path.clone(),
+                        )
+                    });
+                    (endpoint, rx)
                 }
                 None => {
                     return Err(await_tool_result(
@@ -367,11 +372,16 @@ impl AgentCmdTool {
             agent_id: registry_key.clone(),
         };
 
-        // Synchronous non-blocking connect to detect stale sockets early.
-        let connectable = if socket_path.exists() {
-            std::os::unix::net::UnixStream::connect(&socket_path).is_ok()
-        } else {
-            false
+        // Non-blocking typed endpoint connect detects stale direct/proxy transports early.
+        let connectable = match &endpoint {
+            crate::domain::agent_launch_backend::ParentEndpoint::DirectUds(path) => {
+                std::os::unix::net::UnixStream::connect(path).is_ok()
+            }
+            crate::domain::agent_launch_backend::ParentEndpoint::Proxy(_) => {
+                crate::infrastructure::tools::parent_endpoint::proxy_path(&endpoint)
+                    .ok()
+                    .is_some_and(|path| std::os::unix::net::UnixStream::connect(path).is_ok())
+            }
         };
         if !connectable {
             let still_registered = {

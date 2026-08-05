@@ -91,6 +91,9 @@ pub async fn prepare_container_launch(
             let repo = repo.clone().or_else(|| ctx.parent_repo.clone());
             reject_unsafe_repo(repo.as_deref())?;
             let out = run_script_json(&set.create, repo.as_deref(), None, agent_uuid).await?;
+            if let Some(proxy) = out.socket_proxy.as_deref() {
+                crate::domain::agent_launch_backend::validate_socket_proxy(proxy, name)?;
+            }
             let mut entry = entry_from_script(out, repo, agent_uuid.clone(), name, set);
             let registered = register_container(&ctx.registry, entry.clone());
             entry.container_ref = registered.container_ref.clone();

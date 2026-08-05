@@ -335,7 +335,7 @@ fn validate_path_existing_parent_without_file_joins_filename() {
 }
 
 #[test]
-fn validate_path_missing_directory_uses_textual_resolution() {
+fn validate_path_missing_directory_uses_canonical_existing_ancestor() {
     let tmp = TempDir::new().unwrap();
     let ws = tmp.path().join("future-workspace");
     let sb = Sandbox::new(Some(ws.clone()), true);
@@ -343,7 +343,13 @@ fn validate_path_missing_directory_uses_textual_resolution() {
     let resolved = sb
         .validate_path(ws.join("dir/file.txt").to_str().unwrap())
         .unwrap();
-    assert_eq!(resolved, ws.join("dir/file.txt"));
+    assert_eq!(
+        resolved,
+        tmp.path()
+            .canonicalize()
+            .unwrap()
+            .join("future-workspace/dir/file.txt")
+    );
 }
 
 #[test]

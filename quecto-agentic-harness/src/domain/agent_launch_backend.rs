@@ -17,7 +17,38 @@ pub enum ParentEndpoint {
     Proxy(String),
 }
 
+fn parse_proxy_unix_path(proxy: &str) -> Option<PathBuf> {
+    proxy
+        .strip_prefix("unix://")
+        .or_else(|| proxy.strip_prefix("unix:"))
+        .map(PathBuf::from)
+}
+
+pub fn validate_socket_proxy(proxy: &str, script_name: &str) -> Result<(), DomainError> {
+    let Some(path) = parse_proxy_unix_path(proxy) else {
+        return Err(DomainError::Tool(format!(
+            "container script '{script_name}' socket_proxy must use unix:<absolute-path>"
+        )));
+    };
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(DomainError::Tool(format!(
+            "container script '{script_name}' socket_proxy must be an absolute unix socket path without '..'"
+        )));
+    }
+    Ok(())
+}
+
 impl ParentEndpoint {
+    pub fn proxy_unix_path(&self) -> Option<PathBuf> {
+        match self {
+            Self::Proxy(proxy) => parse_proxy_unix_path(proxy),
+            Self::DirectUds(_) => None,
+        }
+    }
     pub fn socket_path(&self) -> Option<&Path> {
         match self {
             Self::DirectUds(p) => Some(p),
@@ -280,7 +311,8 @@ fn parse_launch_output(
     let socket_path = sf("socket_path").map(PathBuf::from);
     let socket_proxy = sf("socket_proxy");
     match (socket_path.is_some(), socket_proxy.is_some()) {
-        (true, false) | (false, true) => {}
+        (true, false) => {}
+        (false, true) => validate_socket_proxy(socket_proxy.as_deref().unwrap(), script_name)?,
         (false, false) => {
             return Err(DomainError::Tool(format!(
                 "container script '{script_name}' output must include exactly one endpoint: socket_path or socket_proxy"
