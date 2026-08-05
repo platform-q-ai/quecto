@@ -3,6 +3,7 @@
 //! Owns subagent roster, lifecycle, feeds, ledger sync, focus, retention, and
 //! view projection. Feature-owned App extensions are composed by `shell::app`; policy remains in its feature owner.
 
+pub(crate) mod container_panel;
 pub(crate) mod feed;
 pub(crate) mod focus;
 pub(crate) mod ledger;

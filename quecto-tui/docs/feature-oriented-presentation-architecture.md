@@ -254,6 +254,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 
 | Current production file | Target owner |
 |---|---|
+| `agents/container_panel.rs` | `agents` container environment panel policy (#1369) |
 | `agents/controller_ledger_sync.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/controller_subagent_feed.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/controller_subagent_panel.rs` | `agents` (relocated, #1257 Phase 4) |
