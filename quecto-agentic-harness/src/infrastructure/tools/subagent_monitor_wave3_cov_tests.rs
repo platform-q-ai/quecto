@@ -131,6 +131,16 @@ async fn notify_child_exited_missing_agent_sends_sequence_zero_note() {
     assert!(note.to_message().contains("exited unexpectedly"));
 }
 
+#[test]
+fn notification_fallbacks_cover_missing_agent_paths() {
+    let registry = super::super::subagent_registry::new_registry();
+    assert_eq!(notification_display_label(&registry, "ghost"), "ghost");
+    assert_eq!(
+        notification_agent_uuid(&registry, "ghost").as_str(),
+        "ghost"
+    );
+}
+
 #[tokio::test]
 async fn notify_child_exited_claims_script_cleanup_once() {
     let registry = super::super::subagent_registry::new_registry();
