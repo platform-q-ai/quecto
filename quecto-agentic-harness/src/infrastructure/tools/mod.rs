@@ -27,6 +27,7 @@ mod spawn_inherited_policy;
 mod spawn_input;
 mod spawn_launch_args;
 mod spawn_launch_ports;
+mod spawn_reaper;
 mod spawn_registry;
 pub mod subagent_cascade;
 mod subagent_cleanup;

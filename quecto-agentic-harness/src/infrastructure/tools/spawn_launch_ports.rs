@@ -275,76 +275,14 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     entry.monitor_handle = Some(std::sync::Arc::new(monitor_handle));
                 }
             }
-            let mut child = prepared.child.take();
-            let reaper_registry = self.tool.registry.clone();
-            let reaper_name = identity.registry_key.clone();
-            let reaper_exit_tx = exit_tx;
-            let reaper_broadcast = self.tool.broadcast_tx.clone();
-            if child.is_some() {
-                tokio::spawn(async move {
-                    let status = child.as_mut().expect("checked child").wait().await;
-                    let exit_signal = match status {
-                        Ok(exit_status) => {
-                            #[cfg(unix)]
-                            {
-                                use std::os::unix::process::ExitStatusExt;
-                                if let Some(signal) = exit_status.signal() {
-                                    ExitSignal {
-                                        exit_code: None,
-                                        signal: Some(signal),
-                                    }
-                                } else {
-                                    ExitSignal {
-                                        exit_code: exit_status.code(),
-                                        signal: None,
-                                    }
-                                }
-                            }
-                            #[cfg(not(unix))]
-                            {
-                                ExitSignal {
-                                    exit_code: exit_status.code(),
-                                    signal: None,
-                                }
-                            }
-                        }
-                        Err(_) => ExitSignal {
-                            exit_code: None,
-                            signal: None,
-                        },
-                    };
-                    let _ = reaper_exit_tx.send(Some(exit_signal));
-                    super::subagent_cleanup::cleanup_registered_once(
-                        &reaper_registry,
-                        &reaper_name,
-                    )
-                    .await;
-                    let crate::infrastructure::tools::subagent_cascade::CascadeOutcome { removed, event } = crate::infrastructure::tools::subagent_cascade::cascade_remove_and_state_changed(&reaper_registry, &reaper_name);
-                    if let Some(event) = event {
-                        if let Some(tx) = &reaper_broadcast {
-                            let _ = tx.send(event);
-                        }
-                    }
-                    let mut removed = removed;
-                    super::subagent_cleanup::cleanup_removed_entries_once(&mut removed);
-                    for (id, entry) in &removed {
-                        if id == &reaper_name {
-                            if let Some(ref handle) = entry.monitor_handle {
-                                handle.abort();
-                            }
-                            continue;
-                        }
-                        if let Some(ref tx) = entry.exit_signal_tx {
-                            let _ = tx.send(Some(ExitSignal {
-                                exit_code: None,
-                                signal: Some(15),
-                            }));
-                        }
-                        crate::infrastructure::tools::subagent_cascade::terminate_removed_entry(
-                            entry,
-                        );
-                    }
-                });
+            if let Some(child) = prepared.child.take() {
+                super::spawn_reaper::spawn_reaper_task(
+                    child,
+                    self.tool.registry.clone(),
+                    identity.registry_key.clone(),
+                    exit_tx,
+                    self.tool.broadcast_tx.clone(),
+                );
             }
             Ok(RegisteredLaunch {
                 registry_key: identity.registry_key.clone(),
