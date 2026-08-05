@@ -12,14 +12,21 @@ pub(super) struct PreparedChild {
 }
 
 impl PreparedChild {
+    pub fn cleanup_plan(&self) -> (Option<String>, Vec<String>) {
+        (self.environment_ref.clone(), self.cleanup_argv.clone())
+    }
+
     pub async fn rollback_once(&mut self) {
         let _ = self.child.kill().await;
         let _ = self.child.wait().await;
-        if let Some(mut cmd) = cleanup_command(self.environment_ref.as_deref(), &self.cleanup_argv)
-        {
-            let _ = cmd.status().await;
-            self.cleanup_argv.clear();
-        }
+        run_cleanup_once(self.environment_ref.clone(), &mut self.cleanup_argv).await;
+    }
+}
+
+pub(super) async fn run_cleanup_once(env_ref: Option<String>, cleanup_argv: &mut Vec<String>) {
+    if let Some(mut cmd) = cleanup_command(env_ref.as_deref(), cleanup_argv) {
+        let _ = cmd.status().await;
+        cleanup_argv.clear();
     }
 }
 

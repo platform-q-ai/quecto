@@ -401,6 +401,7 @@ impl SpawnTool {
         }
 
         let environment_ref = prepared_child.environment_ref.clone();
+        let (cleanup_environment_ref, mut cleanup_argv) = prepared_child.cleanup_plan();
         let mut child = prepared_child.child;
 
         // Create exit signal channel for `await` support (#612).
@@ -498,6 +499,9 @@ impl SpawnTool {
 
             // Signal any waiting `await` call before removing from registry.
             let _ = reaper_exit_tx.send(Some(exit_signal));
+
+            super::spawn_container::run_cleanup_once(cleanup_environment_ref, &mut cleanup_argv)
+                .await;
 
             // Cascade-remove the dead agent AND its descendants, then broadcast
             // the survivor set so every connected client (the TUI panel) drops
