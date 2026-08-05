@@ -35,7 +35,7 @@ fn drive_monitor_with_lines(
         let listener = tokio::net::UnixListener::bind(&socket_path).expect("bind monitor socket");
         let handle = spawn_monitor_task(
             agent_id.to_string(),
-            socket_path.clone(),
+            quecto::domain::agent_launch_backend::ParentEndpoint::DirectUds(socket_path.clone()),
             registry,
             Some(tx),
             quecto::infrastructure::tools::subagent_monitor::MonitorContext::default(),

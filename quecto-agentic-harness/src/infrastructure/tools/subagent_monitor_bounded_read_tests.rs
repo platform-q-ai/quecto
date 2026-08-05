@@ -29,7 +29,7 @@ async fn monitor_loop_drops_oversized_line_but_keeps_processing_later_events() {
     let (btx, mut brx) = tokio::sync::broadcast::channel::<String>(8);
     let handle = spawn_monitor_task(
         "child".to_string(),
-        sock.clone(),
+        crate::domain::agent_launch_backend::ParentEndpoint::DirectUds(sock.clone()),
         registry.clone(),
         None,
         MonitorContext {

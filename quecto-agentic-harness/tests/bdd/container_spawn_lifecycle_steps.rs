@@ -220,7 +220,7 @@ fn liveness_connection_receives_eof(world: &mut QuectoWorld) {
         registry.lock().unwrap().insert("agent-eof".into(), entry);
         let _handle = quecto::infrastructure::tools::subagent_monitor::spawn_monitor_task(
             "agent-eof".into(),
-            socket_path,
+            quecto::domain::agent_launch_backend::ParentEndpoint::DirectUds(socket_path),
             registry,
             None,
             quecto::infrastructure::tools::subagent_monitor::MonitorContext::default(),

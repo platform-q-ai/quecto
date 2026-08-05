@@ -719,7 +719,7 @@ fn when_subagent_completes_turn_on_parent(world: &mut QuectoWorld) {
         let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
         let monitor = quecto::infrastructure::tools::subagent_monitor::spawn_monitor_task(
             "worker".into(),
-            socket,
+            quecto::domain::agent_launch_backend::ParentEndpoint::DirectUds(socket),
             registry,
             None,
             quecto::infrastructure::tools::subagent_monitor::MonitorContext {

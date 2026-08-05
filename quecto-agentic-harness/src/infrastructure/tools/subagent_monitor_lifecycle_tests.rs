@@ -17,7 +17,7 @@ async fn monitor_connect_failure_marks_socket_readiness_failure() {
 
     let handle = spawn_monitor_task(
         "child".to_string(),
-        sock,
+        crate::domain::agent_launch_backend::ParentEndpoint::DirectUds(sock),
         registry.clone(),
         Some(tx),
         MonitorContext::default(),

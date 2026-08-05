@@ -32,7 +32,6 @@ pub(super) fn rollback_existing_join(
 ) {
     super::spawn_container_existing::rollback_existing_container_join(registry, join, agent_uuid);
 }
-
 fn validate_config_path(s: &str) -> Result<PathBuf, String> {
     let p = PathBuf::from(s);
     for component in p.components() {
@@ -112,7 +111,6 @@ fn spawn_reaper_task(
             },
         };
         let _ = reaper_exit_tx.send(Some(exit_signal));
-
         if let Err(err) = apply_container_inspect(
             &reaper_registry,
             Some(&reaper_container_registry),
@@ -468,11 +466,23 @@ impl SpawnTool {
                 return Err(err);
             }
         };
-        let socket_path = prepared
-            .endpoint
+        let endpoint = prepared.endpoint.clone();
+        let socket_path = endpoint
             .socket_path()
             .map(std::path::Path::to_path_buf)
-            .unwrap_or_else(|| requested_socket_path.clone());
+            .or_else(|| endpoint.proxy_unix_path())
+            .ok_or_else(|| {
+                crate::domain::error::DomainError::Tool(
+                    "unsupported subagent proxy endpoint".into(),
+                )
+            })
+            .inspect_err(|_| {
+                rollback_existing_join(
+                    &self.container_registry,
+                    existing_join.as_ref(),
+                    &agent_uuid,
+                )
+            })?;
         let container_launch = prepared.container.clone();
         let (prepared, mut owned_child, pid) =
             super::spawn_launch_owner::await_prepared_launch_owner(
@@ -539,7 +549,7 @@ impl SpawnTool {
         }
         let monitor_handle = super::subagent_monitor::spawn_monitor_task(
             registry_key.clone(),
-            socket_path.clone(),
+            endpoint.clone(),
             self.registry.clone(),
             self.notify_tx.clone(),
             super::subagent_monitor::MonitorContext {

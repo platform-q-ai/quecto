@@ -172,19 +172,12 @@ pub struct MonitorContext {
 /// completion/error/exit (#523). Returns an abortable `JoinHandle`.
 pub fn spawn_monitor_task(
     agent_id: String,
-    socket_path: std::path::PathBuf,
+    endpoint: crate::domain::agent_launch_backend::ParentEndpoint,
     registry: SubagentRegistry,
     notify_tx: Option<NotificationTx>,
     context: MonitorContext,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let Some(endpoint) = super::parent_endpoint_guard::endpoint_or_record_proxy_failure(
-            &registry,
-            &agent_id,
-            socket_path.clone(),
-        ) else {
-            return;
-        };
         monitor_loop(
             &agent_id,
             &endpoint,
@@ -726,6 +719,10 @@ mod forward_tests;
 #[cfg(test)]
 #[path = "tests/subagent_monitor_completion_tests.rs"]
 mod completion_tests;
+
+#[cfg(test)]
+#[path = "tests/subagent_monitor_captured_endpoint_tests.rs"]
+mod captured_endpoint_tests;
 
 #[cfg(test)]
 #[path = "tests/subagent_monitor_stall_race_tests.rs"]

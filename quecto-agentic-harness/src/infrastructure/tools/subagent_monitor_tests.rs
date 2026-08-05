@@ -544,7 +544,7 @@ async fn monitor_loop_forwards_child_workflow_state_to_broadcast() {
     let (btx, mut brx) = tokio::sync::broadcast::channel::<String>(8);
     let handle = spawn_monitor_task(
         "child".to_string(),
-        sock.clone(),
+        crate::domain::agent_launch_backend::ParentEndpoint::DirectUds(sock.clone()),
         registry.clone(),
         None,
         MonitorContext {
@@ -694,7 +694,7 @@ async fn monitor_loop_broadcasts_state_changed_on_agent_start() {
     let (btx, mut brx) = tokio::sync::broadcast::channel::<String>(8);
     let handle = spawn_monitor_task(
         "child".to_string(),
-        sock.clone(),
+        crate::domain::agent_launch_backend::ParentEndpoint::DirectUds(sock.clone()),
         registry.clone(),
         None,
         MonitorContext {
@@ -739,6 +739,7 @@ async fn response_agent_error_sends_errored_notification() {
             assert_eq!(agent_id, "bot");
             assert_eq!(error, "bad model");
         }
+
         other => panic!("expected errored notification, got {other:?}"),
     }
 }
