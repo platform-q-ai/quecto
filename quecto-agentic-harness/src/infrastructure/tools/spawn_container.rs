@@ -1,4 +1,6 @@
+use serde::Deserialize;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::domain::error::DomainError;
 use crate::domain::subagent::{ContainerSelection, SubagentConfig};
@@ -6,20 +8,27 @@ use crate::infrastructure::config::{Config, ContainerScriptConfig};
 
 #[derive(Debug)]
 pub(super) struct PreparedChild {
-    pub child: tokio::process::Child,
+    pub child: Option<tokio::process::Child>,
     pub environment_ref: Option<String>,
+    pub socket_path: Option<std::path::PathBuf>,
+    cleanup_environment_id: Option<String>,
     cleanup_argv: Vec<String>,
 }
 
 impl PreparedChild {
     pub fn cleanup_plan(&self) -> (Option<String>, Vec<String>) {
-        (self.environment_ref.clone(), self.cleanup_argv.clone())
+        (
+            self.cleanup_environment_id.clone(),
+            self.cleanup_argv.clone(),
+        )
     }
 
     pub async fn rollback_once(&mut self) {
-        let _ = self.child.kill().await;
-        let _ = self.child.wait().await;
-        run_cleanup_once(self.environment_ref.clone(), &mut self.cleanup_argv).await;
+        if let Some(child) = &mut self.child {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+        }
+        run_cleanup_once(self.cleanup_environment_id.clone(), &mut self.cleanup_argv).await;
     }
 }
 
@@ -129,8 +138,10 @@ fn spawn_local_child(
         .spawn()
         .map_err(|e| DomainError::Tool(format!("failed to spawn subagent: {e}")))?;
     Ok(PreparedChild {
-        child,
+        child: Some(child),
         environment_ref: None,
+        socket_path: None,
+        cleanup_environment_id: None,
         cleanup_argv: Vec::new(),
     })
 }
@@ -161,18 +172,87 @@ fn spawn_script_managed_child(
     let script_name = script_name(selected_script, cfg)?;
     let script = script_config(cfg, script_name)?;
     validate_script(script)?;
-    let env_ref = new_environment_ref();
     let mut cmd = create_command(script, binary, cli_args);
-    set_script_env(&mut cmd, config, cfg, script_name, &env_ref);
+    set_script_env(&mut cmd, config, cfg, script_name, "");
     apply_common_child_env(&mut cmd, base_dir);
-    let child = cmd
-        .spawn()
-        .map_err(|e| DomainError::Tool(format!("failed to spawn script-managed subagent: {e}")))?;
+    cmd.stdout(std::process::Stdio::piped());
+    let output = std::process::Command::new(&script.create[0])
+        .args(&script.create[1..])
+        .arg("--")
+        .arg(binary)
+        .args(cli_args)
+        .envs(create_env(config, cfg, script_name))
+        .output()
+        .map_err(|e| DomainError::Tool(format!("failed to invoke script-managed create: {e}")))?;
+    if !output.status.success() {
+        return Err(DomainError::Tool(format!(
+            "script-managed create failed with status {}",
+            output.status
+        )));
+    }
+    let result = parse_create_result(&output.stdout)?;
     Ok(PreparedChild {
-        child,
-        environment_ref: Some(env_ref),
+        child: None,
+        environment_ref: Some(new_environment_ref()),
+        socket_path: Some(result.socket_path),
+        cleanup_environment_id: Some(result.environment_id),
         cleanup_argv: script.cleanup.clone(),
     })
+}
+
+#[derive(serde::Deserialize)]
+struct CreateResultWire {
+    environment_id: String,
+    workspace_path: std::path::PathBuf,
+    metadata: serde_json::Value,
+    socket_path: std::path::PathBuf,
+    #[serde(default)]
+    socket_proxy: Option<serde_json::Value>,
+}
+
+struct CreateResult {
+    environment_id: String,
+    socket_path: std::path::PathBuf,
+}
+
+fn parse_create_result(stdout: &[u8]) -> Result<CreateResult, DomainError> {
+    let text = std::str::from_utf8(stdout).map_err(|e| {
+        DomainError::Tool(format!("script-managed create returned non-UTF8 JSON: {e}"))
+    })?;
+    let mut de = serde_json::Deserializer::from_str(text);
+    let wire = CreateResultWire::deserialize(&mut de).map_err(|e| {
+        DomainError::Tool(format!(
+            "script-managed create returned invalid JSON contract: {e}"
+        ))
+    })?;
+    de.end().map_err(|e| {
+        DomainError::Tool(format!(
+            "script-managed create returned extra JSON data: {e}"
+        ))
+    })?;
+    if wire.environment_id.is_empty()
+        || wire.workspace_path.as_os_str().is_empty()
+        || wire.socket_path.as_os_str().is_empty()
+        || wire.socket_proxy.is_some()
+        || !wire.metadata.is_object()
+    {
+        return Err(DomainError::Tool("script-managed create result must contain environment_id, workspace_path, metadata object, and direct socket_path only".into()));
+    }
+    Ok(CreateResult {
+        environment_id: wire.environment_id,
+        socket_path: wire.socket_path,
+    })
+}
+
+fn create_env(config: &SubagentConfig, cfg: &Config, script_name: &str) -> Vec<(String, String)> {
+    let mut env = vec![(
+        "QUECTO_CONTAINER_SCRIPT".to_string(),
+        script_name.to_string(),
+    )];
+    if let Some(repo) = selected_repo(config, cfg) {
+        env.push(("QUECTO_CONTAINER_REPO".to_string(), repo));
+    }
+    env
 }
 
 fn script_name<'a>(selected: &'a Option<String>, cfg: &'a Config) -> Result<&'a str, DomainError> {
@@ -199,8 +279,10 @@ fn script_config<'a>(
     })
 }
 
+static NEXT_ENVIRONMENT_REF: AtomicU64 = AtomicU64::new(1);
+
 fn new_environment_ref() -> String {
-    format!("C-{}", uuid::Uuid::new_v4())
+    format!("C{}", NEXT_ENVIRONMENT_REF.fetch_add(1, Ordering::Relaxed))
 }
 
 fn create_command(

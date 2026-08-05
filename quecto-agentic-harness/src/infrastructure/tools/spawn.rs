@@ -25,9 +25,6 @@ pub use super::spawn_registry::{register_and_broadcast, shutdown_all, shutdown_a
 pub use super::subagent_registry::SubagentStatus;
 use super::subagent_registry::{ExitSignal, NotificationTx, new_exit_signal_channel};
 
-/// Compute the effective set of tools to disable in the child registry (#957):
-/// the explicit `disable_tools` array unioned with the `read_only` convenience
-/// (which expands to `write` + `edit`), de-duplicated (read-only tools first). A
 /// non-string entry is an LLM-addressable error, not a silent skip.
 fn parse_disable_tools(args: &serde_json::Value) -> Result<Vec<String>, String> {
     let mut tools: Vec<String> = Vec::new();
@@ -37,8 +34,6 @@ fn parse_disable_tools(args: &serde_json::Value) -> Result<Vec<String>, String> 
         }
     };
 
-    // Treat a malformed read_only safety flag as an error rather than silently
-    // dropping it; valid true expands first, then unions disable_tools.
     if let Some(v) = args.get("read_only").filter(|v| !v.is_null()) {
         if v.as_bool().ok_or("read_only must be a boolean")? {
             push_unique("write", &mut tools);
@@ -75,9 +70,6 @@ fn validate_config_path(s: &str) -> Result<PathBuf, String> {
 /// Tool that spawns a child `quecto agent` process in UDS mode.
 ///
 /// When executed, validates the request, launches the child as a
-/// `--mode uds --persist` background process, waits for the UDS socket
-/// to become ready, and registers the child in a shared [`SubagentRegistry`]
-/// so the companion [`super::agent_cmd::AgentCmdTool`] can interact with it.
 #[derive(Debug)]
 pub struct SpawnTool {
     /// Allowlist of agent IDs that can be spawned.
@@ -90,12 +82,8 @@ pub struct SpawnTool {
     socket_dir: PathBuf,
     /// Shared registry of spawned subagents.
     registry: SubagentRegistry,
-    /// Optional notification sender for parent LLM auto-notify (#523).
     notify_tx: Option<NotificationTx>,
-    /// Parent's broadcast channel, so the child monitor can forward the child's
-    /// workflow_state events onto the parent's stream (PRD Stage B / R-B2).
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    /// This (parent) agent's own id, stamped as the `parent_id` on forwarded
     /// child events (PRD Stage B).
     parent_id: Option<String>,
     inherited_tool_policy: super::spawn_inherited_policy::InheritedToolPolicyState,
@@ -149,20 +137,16 @@ impl SpawnTool {
         self
     }
 
-    /// Inject a shared subagent registry (used when wiring spawn + agent_cmd together).
     pub fn with_registry(mut self, registry: SubagentRegistry) -> Self {
         self.registry = registry;
         self
     }
 
-    /// Set the notification sender for auto-notifying the parent LLM (#523).
     pub fn with_notify_tx(mut self, tx: NotificationTx) -> Self {
         self.notify_tx = Some(tx);
         self
     }
 
-    /// Set the parent's broadcast channel + own id so spawned children forward
-    /// their workflow_state events onto the parent's stream (PRD Stage B).
     pub fn with_event_forwarding(
         mut self,
         broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
@@ -173,14 +157,11 @@ impl SpawnTool {
         self
     }
 
-    /// Return a reference to the shared registry (for testing / wiring).
     pub fn registry(&self) -> &SubagentRegistry {
         &self.registry
     }
 
     /// Parse spawn arguments and return the resulting config.
-    /// Available in tests and the `test-support` feature so BDD steps can
-    /// inspect parsed values without promoting the method to the full public API.
     #[cfg(any(test, feature = "test-support"))]
     pub fn parse_args_for_test(&self, arguments: &str) -> Result<SubagentConfig, String> {
         self.parse_args(arguments)
@@ -221,14 +202,11 @@ impl SpawnTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        // workflow_guards requires workflow — reject early rather than letting the
         // child process fail with an opaque CLI error.
         if workflow_guards && !workflow {
             return Err("workflow_guards requires workflow to also be true".to_string());
         }
 
-        // Borrow-deserialize into the domain type so malformed by-value specs
-        // fail here clearly and raw JSON never leaks into the launch pipeline.
         let workflow_spec = match args.get("workflow_spec") {
             Some(v) if !v.is_null() => {
                 use serde::Deserialize;
@@ -239,7 +217,6 @@ impl SpawnTool {
             _ => None,
         };
 
-        // #881: share set_model parsing so accepted forms cannot diverge;
         // explicit model > forwarded --config > built-in default.
         let model_arg = crate::domain::subagent::parse_model_arg(
             args.get("model").and_then(|v| v.as_str()),
@@ -261,7 +238,6 @@ impl SpawnTool {
 
         let disable_tools = parse_disable_tools(&args)?;
 
-        // Observer sub-agents have both mutation tools disabled (#966).
         let read_only = {
             let has = |name: &str| disable_tools.iter().any(|t| t == name);
             has("write") && has("edit")
@@ -317,10 +293,6 @@ impl SpawnTool {
 
         let socket_path = child_socket_path(&self.socket_dir, &agent_uuid);
 
-        // A by-value workflow assignment is written to a file next to the
-        // socket and forwarded as `--workflow-spec <path>`; the inline template
-        // is too large for a bare CLI arg. The child runs it in Active mode
-        // (binding) and deletes the file once read — see agent_tool_registry.
         let workflow_spec_path = if let Some(ref spec) = config.workflow_spec {
             let spec_json = serde_json::to_string(spec).map_err(|e| {
                 DomainError::Tool(format!("failed to serialize workflow spec: {e}"))
@@ -332,9 +304,6 @@ impl SpawnTool {
                     crate::domain::workflow::MAX_WORKFLOW_SPEC_BYTES
                 )));
             }
-            // Unique per spawn (pid + session) and created privately with
-            // O_CREAT|O_EXCL + mode 0600 so a pre-planted symlink at the path
-            // cannot be followed/overwritten and the contents are owner-only.
             let spec_path = self.socket_dir.join(child_sidecar_filename(
                 "quecto-wfspec",
                 &agent_uuid,
@@ -363,7 +332,6 @@ impl SpawnTool {
             None
         };
 
-        // Build the full child argument list (incl. `--model`, #881) via the
         // pure builder so the exact flag set is unit-testable.
         let effective_config =
             effective_config_path(config.config_path.as_ref(), inherited_runtime_config_path());
@@ -389,38 +357,43 @@ impl SpawnTool {
         )
         .await?;
 
-        let pid = prepared_child.child.id().unwrap_or(0);
+        let actual_socket_path = prepared_child
+            .socket_path
+            .clone()
+            .unwrap_or_else(|| socket_path.clone());
+        let pid = prepared_child
+            .child
+            .as_ref()
+            .and_then(|child| child.id())
+            .unwrap_or(0);
 
-        if let Err(e) = self
-            .wait_for_socket_or_child_exit(&socket_path, &mut prepared_child.child)
-            .await
-        {
+        if let Some(child) = &mut prepared_child.child {
+            if let Err(e) = self
+                .wait_for_socket_or_child_exit(&actual_socket_path, child)
+                .await
+            {
+                prepared_child.rollback_once().await;
+                return Err(e);
+            }
+        } else if let Err(e) = self.wait_for_socket(&actual_socket_path).await {
             prepared_child.rollback_once().await;
             return Err(e);
         }
 
         let environment_ref = prepared_child.environment_ref.clone();
         let (cleanup_environment_ref, mut cleanup_argv) = prepared_child.cleanup_plan();
+        let reaper_cleanup_environment_ref = cleanup_environment_ref.clone();
+        let mut reaper_cleanup_argv = cleanup_argv.clone();
         let mut child = prepared_child.child;
 
-        // Create exit signal channel for `await` support (#612).
-        // The receiver is intentionally dropped — `watch` channels remain
-        // functional after the initial receiver is dropped. Await callers
-        // get their own receiver via `tx.subscribe()`. Do NOT switch to
         // `mpsc` or `oneshot` without updating the subscribe pattern.
         let (exit_tx, _exit_rx) = new_exit_signal_channel();
 
-        // Register in shared registry BEFORE starting the monitor task,
-        // so the monitor's update_entry calls find the entry (#522). The insert
-        // also broadcasts the survivor set immediately so the TUI learns of the
-        // new child at once instead of waiting for the next GetSubagents poll or
-        // a terminal event — without this a child that begins a long first turn
-        // stays invisible in the side panel until it finishes (#866).
         {
             let entry = initial_registry_entry(InitialRegistryEntrySpec {
                 agent_uuid: agent_uuid.clone(),
                 display_name: session_name.to_string(),
-                socket_path: socket_path.clone(),
+                socket_path: actual_socket_path.clone(),
                 pid,
                 parent_id: self.parent_id.clone(),
                 config,
@@ -434,11 +407,9 @@ impl SpawnTool {
             );
         }
 
-        // Start a persistent monitor task to track child events in real-time (#522).
-        // Pass the notification sender so the monitor can auto-notify the parent (#523).
         let monitor_handle = super::subagent_monitor::spawn_monitor_task(
             registry_key.clone(),
-            socket_path.clone(),
+            actual_socket_path.clone(),
             self.registry.clone(),
             self.notify_tx.clone(),
             self.broadcast_tx.clone(),
@@ -452,107 +423,102 @@ impl SpawnTool {
             }
         }
 
-        // Spawn a background reaper task so the child process is always
-        // cleaned up (no zombies) even if the parent never calls shutdown_all.
-        // The reaper also aborts the monitor task to prevent leaks (#522),
-        // and signals any waiting `await` calls with the exit status (#612).
         let reaper_registry = self.registry.clone();
         let reaper_name = registry_key.clone();
         let reaper_exit_tx = exit_tx;
         let reaper_broadcast = self.broadcast_tx.clone();
-        tokio::spawn(async move {
-            let status = child.wait().await;
+        if child.is_some() {
+            tokio::spawn(async move {
+                let status = child.as_mut().expect("checked child").wait().await;
 
-            // Build the exit signal from the child's exit status (#612).
-            let exit_signal = match status {
-                Ok(exit_status) => {
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::process::ExitStatusExt;
-                        if let Some(signal) = exit_status.signal() {
-                            ExitSignal {
-                                exit_code: None,
-                                signal: Some(signal),
+                let exit_signal = match status {
+                    Ok(exit_status) => {
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::process::ExitStatusExt;
+                            if let Some(signal) = exit_status.signal() {
+                                ExitSignal {
+                                    exit_code: None,
+                                    signal: Some(signal),
+                                }
+                            } else {
+                                ExitSignal {
+                                    exit_code: exit_status.code(),
+                                    signal: None,
+                                }
                             }
-                        } else {
+                        }
+                        #[cfg(not(unix))]
+                        {
                             ExitSignal {
                                 exit_code: exit_status.code(),
                                 signal: None,
                             }
                         }
                     }
-                    #[cfg(not(unix))]
-                    {
-                        ExitSignal {
-                            exit_code: exit_status.code(),
-                            signal: None,
-                        }
-                    }
-                }
-                Err(_) => ExitSignal {
-                    exit_code: None,
-                    signal: None,
-                },
-            };
+                    Err(_) => ExitSignal {
+                        exit_code: None,
+                        signal: None,
+                    },
+                };
 
-            // Signal any waiting `await` call before removing from registry.
-            let _ = reaper_exit_tx.send(Some(exit_signal));
+                let _ = reaper_exit_tx.send(Some(exit_signal));
 
-            super::spawn_container::run_cleanup_once(cleanup_environment_ref, &mut cleanup_argv)
+                super::spawn_container::run_cleanup_once(
+                    reaper_cleanup_environment_ref,
+                    &mut reaper_cleanup_argv,
+                )
                 .await;
 
-            // Cascade-remove the dead agent AND its descendants, then broadcast
-            // the survivor set so every connected client (the TUI panel) drops
-            // them promptly instead of leaving them lingering (#831). The reaper
-            // is a detached task, so the send is best-effort (errors at debug).
-            let crate::infrastructure::tools::subagent_cascade::CascadeOutcome { removed, event } =
+                let crate::infrastructure::tools::subagent_cascade::CascadeOutcome { removed, event } =
                 crate::infrastructure::tools::subagent_cascade::cascade_remove_and_state_changed(
                     &reaper_registry,
                     &reaper_name,
                 );
-            if let Some(event) = event {
-                if let Some(tx) = &reaper_broadcast {
-                    if let Err(e) = tx.send(event) {
-                        tracing::debug!(
-                            agent = %reaper_name,
-                            error = %e,
-                            "reaper: no subscribers for cascade state_changed broadcast"
-                        );
+                if let Some(event) = event {
+                    if let Some(tx) = &reaper_broadcast {
+                        if let Err(e) = tx.send(event) {
+                            tracing::debug!(
+                                agent = %reaper_name,
+                                error = %e,
+                                "reaper: no subscribers for cascade state_changed broadcast"
+                            );
+                        }
                     }
                 }
-            }
 
-            // Clean up the removed sub-tree. The dead agent itself was already
-            // wait()ed, so we only abort its monitor (the aborted monitor will
-            // NOT emit its EOF->Exited notification — that is why we announced the
-            // exit above rather than relying on it, #831). For DESCENDANTS we also
-            // SIGTERM their processes: when a parent exits its children are
-            // orphaned and would otherwise leak as untracked processes that
-            // `shutdown_all` can no longer reach (#831 security review). We do NOT
-            // re-signal the dead agent's own pid (already reaped; avoids a
-            // pid-reuse TOCTOU race).
-            for (id, entry) in &removed {
-                if id == &reaper_name {
-                    if let Some(ref handle) = entry.monitor_handle {
-                        handle.abort();
+                // pid-reuse TOCTOU race).
+                for (id, entry) in &removed {
+                    if id == &reaper_name {
+                        if let Some(ref handle) = entry.monitor_handle {
+                            handle.abort();
+                        }
+                        continue;
                     }
-                    continue;
+                    if let Some(ref tx) = entry.exit_signal_tx {
+                        let _ = tx.send(Some(ExitSignal {
+                            exit_code: None,
+                            signal: Some(15), // SIGTERM
+                        }));
+                    }
+                    crate::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry);
                 }
-                if let Some(ref tx) = entry.exit_signal_tx {
-                    let _ = tx.send(Some(ExitSignal {
-                        exit_code: None,
-                        signal: Some(15), // SIGTERM
-                    }));
-                }
-                crate::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry);
-            }
-        });
+            });
+        }
 
-        // If the caller provided an initial task, send it as the first prompt.
-        // Fire-and-forget: the child acks the prompt internally, but we don't
-        // read the response here. Use agent_cmd get_messages to check output.
         if let Some(ref task) = config.task {
-            self.send_initial_prompt(&socket_path, task).await?;
+            if let Err(e) = self.send_initial_prompt(&actual_socket_path, task).await {
+                super::spawn_container::run_cleanup_once(
+                    cleanup_environment_ref,
+                    &mut cleanup_argv,
+                )
+                .await;
+                {
+                    let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+                    entries.remove(&registry_key);
+                }
+                return Err(e);
+            }
         }
 
         let env_ref = environment_ref
@@ -560,8 +526,6 @@ impl SpawnTool {
             .map(|r| format!(" environment_ref={r}"))
             .unwrap_or_default();
         Ok(ToolResult {
-            // Include durable uuid so TUI optimistic rows can rekey off display
-            // labels before the first UUID-keyed snapshot arrives (#1378).
             content: format!(
                 "Subagent '{}' is running (uuid={}){}. Use agent_cmd to interact.",
                 session_name, agent_uuid, env_ref
@@ -576,14 +540,12 @@ impl SpawnTool {
         use tokio::time::Instant;
 
         let deadline = Instant::now() + Duration::from_secs(10);
-        // Delay the first probe slightly — the child needs time to start up.
         let mut interval = tokio::time::interval_at(
             Instant::now() + Duration::from_millis(100),
             Duration::from_millis(100),
         );
         loop {
             interval.tick().await;
-            // Just try to connect — no need for a separate exists() check.
             if tokio::net::UnixStream::connect(path).await.is_ok() {
                 return Ok(());
             }
@@ -616,7 +578,6 @@ impl SpawnTool {
         }
     }
 
-    /// Send the initial task as a UDS prompt after the socket is ready.
     /// Fire-and-forget: writes the prompt and closes the connection.
     async fn send_initial_prompt(
         &self,
@@ -673,8 +634,6 @@ impl Tool for SpawnTool {
         Box::pin(async move {
             match self.parse_args(&args) {
                 Ok(config) => {
-                    // Only spawn subprocess when base_dir is configured (CLI agent mode).
-                    // Otherwise return a stub result (unit test / isolated mode).
                     if self.base_dir.as_os_str().is_empty() {
                         let session_name = config.agent_id.as_deref().unwrap_or("subagent");
 
@@ -696,11 +655,6 @@ impl Tool for SpawnTool {
                             }
                         }
 
-                        // Stub registration uses the same entry builder as the
-                        // real post-socket-ready path so status/parent/read_only
-                        // and #1049 cannot drift (#866 broadcast still applies).
-                        // #1378: socket path is UUID-keyed even in stub mode so
-                        // tests catch display-label collisions before launch.
                         let agent_uuid = AgentUuid::mint();
                         let stub_entry = initial_registry_entry(InitialRegistryEntrySpec {
                             agent_uuid: agent_uuid.clone(),

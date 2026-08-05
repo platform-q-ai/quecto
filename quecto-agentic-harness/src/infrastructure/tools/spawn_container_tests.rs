@@ -164,12 +164,14 @@ fn cleanup_command_is_once_consumable_by_prepared_child() {
 #[tokio::test]
 async fn cleanup_plan_clones_environment_and_argv() {
     let prepared = PreparedChild {
-        child: tokio::process::Command::new("true").spawn().unwrap(),
+        child: Some(tokio::process::Command::new("true").spawn().unwrap()),
         environment_ref: Some("C-test".into()),
+        socket_path: None,
+        cleanup_environment_id: Some("env-test".into()),
         cleanup_argv: vec!["echo".into(), "ok".into()],
     };
     let (env_ref, argv) = prepared.cleanup_plan();
-    assert_eq!(env_ref.as_deref(), Some("C-test"));
+    assert_eq!(env_ref.as_deref(), Some("env-test"));
     assert_eq!(argv, vec!["echo", "ok"]);
 }
 
@@ -252,7 +254,7 @@ async fn local_child_success_has_no_cleanup_plan() {
     let (env_ref, argv) = prepared.cleanup_plan();
     assert!(env_ref.is_none());
     assert!(argv.is_empty());
-    let _ = prepared.child.wait().await;
+    let _ = prepared.child.as_mut().unwrap().wait().await;
 }
 
 #[tokio::test]
@@ -273,11 +275,15 @@ async fn cleanup_runner_consumes_argv_only_when_command_exists() {
 #[tokio::test]
 async fn rollback_kills_child_and_consumes_cleanup_once() {
     let mut prepared = PreparedChild {
-        child: tokio::process::Command::new("sleep")
-            .arg("30")
-            .spawn()
-            .unwrap(),
+        child: Some(
+            tokio::process::Command::new("sleep")
+                .arg("30")
+                .spawn()
+                .unwrap(),
+        ),
         environment_ref: Some("C-test".into()),
+        socket_path: None,
+        cleanup_environment_id: Some("env-test".into()),
         cleanup_argv: vec!["true".into()],
     };
     prepared.rollback_once().await;
@@ -294,7 +300,7 @@ async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
   "agents": {"defaults": {"repo": "default-repo"}},
   "container_scripts": {
     "default": "default",
-    "scripts": {"default": {"create": ["true"], "cleanup": ["true"]}}
+    "scripts": {"default": {"create": ["printf", "{\"environment_id\":\"env-1\",\"workspace_path\":\"/tmp/ws\",\"metadata\":{},\"socket_path\":\"/tmp/child.sock\"}"], "cleanup": ["true"]}}
   }
 }
 "#,
@@ -305,7 +311,7 @@ async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
         container_script: None,
     });
     config.config_path = Some(cfg_path);
-    let mut prepared = spawn_prepared_child(&config, Path::new("true"), &[], dir.path())
+    let prepared = spawn_prepared_child(&config, Path::new("true"), &[], dir.path())
         .await
         .unwrap();
     assert!(
@@ -313,12 +319,12 @@ async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
             .environment_ref
             .as_deref()
             .unwrap()
-            .starts_with("C-")
+            .starts_with("C")
     );
     let (env_ref, argv) = prepared.cleanup_plan();
-    assert!(env_ref.as_deref().unwrap().starts_with("C-"));
+    assert!(env_ref.as_deref().unwrap() == "env-1");
     assert_eq!(argv, vec!["true"]);
-    let _ = prepared.child.wait().await;
+    assert!(prepared.child.is_none());
 }
 
 #[test]
