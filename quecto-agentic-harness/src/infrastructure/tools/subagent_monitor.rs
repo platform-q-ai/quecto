@@ -172,9 +172,20 @@ pub fn spawn_monitor_task(
     parent_id: Option<String>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let endpoint = {
+            let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+            entries
+                .get(&agent_id)
+                .and_then(|entry| entry.parent_endpoint.clone())
+                .unwrap_or_else(|| {
+                    crate::domain::agent_launch_backend::ParentEndpoint::DirectUds(
+                        socket_path.clone(),
+                    )
+                })
+        };
         monitor_loop(
             &agent_id,
-            &socket_path,
+            &endpoint,
             &registry,
             notify_tx.as_ref(),
             broadcast_tx.as_ref(),
@@ -227,38 +238,37 @@ fn notification_agent_uuid(
 /// Internal monitor loop: connect → read lines → apply events → detect close.
 async fn monitor_loop(
     agent_id: &str,
-    socket_path: &std::path::Path,
+    endpoint: &crate::domain::agent_launch_backend::ParentEndpoint,
     registry: &SubagentRegistry,
     notify_tx: Option<&NotificationTx>,
     broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
     parent_id: Option<&str>,
 ) {
-    use tokio::io::BufReader;
-
-    // Retry connection with increasing backoff — the socket should already be
+    // Retry connection with increasing backoff — the endpoint should already be
     // ready because spawn waits for it, but there's a tiny race window.
-    let stream = match connect_with_retry(socket_path, 10).await {
-        Some(s) => {
-            update_entry_next_sequence(registry, agent_id, |entry| {
-                entry.status = apply_lifecycle_event(
-                    &mut entry.lifecycle,
-                    SubagentLifecycleEvent::SocketConnected,
-                );
-            });
-            s
-        }
-        None => {
-            tracing::warn!(agent = %agent_id, "monitor: failed to connect to child socket");
-            update_entry_next_sequence(registry, agent_id, |entry| {
-                entry.status = apply_lifecycle_event(
-                    &mut entry.lifecycle,
-                    SubagentLifecycleEvent::SocketConnectFailed,
-                );
-            });
-            notify_child_exited(registry, agent_id, notify_tx);
-            return;
-        }
-    };
+    let stream =
+        match super::subagent_monitor_connect::connect_endpoint_with_retry(endpoint, 10).await {
+            Some(s) => {
+                update_entry_next_sequence(registry, agent_id, |entry| {
+                    entry.status = apply_lifecycle_event(
+                        &mut entry.lifecycle,
+                        SubagentLifecycleEvent::SocketConnected,
+                    );
+                });
+                s
+            }
+            None => {
+                tracing::warn!(agent = %agent_id, "monitor: failed to connect to child socket");
+                update_entry_next_sequence(registry, agent_id, |entry| {
+                    entry.status = apply_lifecycle_event(
+                        &mut entry.lifecycle,
+                        SubagentLifecycleEvent::SocketConnectFailed,
+                    );
+                });
+                notify_child_exited(registry, agent_id, notify_tx);
+                return;
+            }
+        };
 
     // The monitor is otherwise listen-only, so announce framed mode with an
     // empty hello frame (ignored by the dispatch loop) — the child then
@@ -278,7 +288,7 @@ async fn monitor_loop(
 
     // Use a smaller BufReader capacity (1 KiB) since JSON events are
     // typically well under 1 KiB. Default 8 KiB is wasteful per child.
-    let mut reader = BufReader::with_capacity(1024, read_half);
+    let mut reader = tokio::io::BufReader::with_capacity(1024, read_half);
 
     // Reused across the child's whole event stream so each high-volume token
     // line does not allocate (and, on the framed branch, zero-initialize) a
@@ -699,22 +709,6 @@ fn send_notification(
     if let Some(tx) = tx {
         let _ = tx.try_send(notification);
     }
-}
-
-/// Connect to the UDS socket with retries and exponential backoff.
-async fn connect_with_retry(
-    socket_path: &std::path::Path,
-    max_retries: u32,
-) -> Option<tokio::net::UnixStream> {
-    let mut delay_ms = 50u64;
-    for _ in 0..max_retries {
-        if let Ok(stream) = tokio::net::UnixStream::connect(socket_path).await {
-            return Some(stream);
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-        delay_ms = (delay_ms * 2).min(500); // Cap at 500ms
-    }
-    None
 }
 
 #[cfg(test)]

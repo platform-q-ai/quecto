@@ -90,6 +90,54 @@ fn populate_env(cmd: &mut std::process::Command, entry: &SubagentEntry) {
     }
 }
 
+fn require_string(value: &serde_json::Value, field: &str) -> Result<String, String> {
+    value
+        .get(field)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| format!("missing required string field '{field}'"))
+}
+
+fn require_metadata(value: &serde_json::Value) -> Result<(), String> {
+    value
+        .get("metadata")
+        .filter(|v| v.is_object())
+        .map(|_| ())
+        .ok_or_else(|| "missing required object field 'metadata'".to_string())
+}
+
+fn validate_inspect_output(stdout: &[u8]) -> Result<(String, String), String> {
+    let value: serde_json::Value = serde_json::from_slice(stdout)
+        .map_err(|e| format!("inspect script did not return JSON: {e}"))?;
+    require_string(&value, "environment_id")?;
+    let status = require_string(&value, "status")?;
+    let health = require_string(&value, "health")?;
+    require_string(&value, "workspace_path")?;
+    require_string(&value, "container_ref")?;
+    require_metadata(&value)?;
+    Ok((status, health))
+}
+
+fn validate_kill_output(stdout: &[u8]) -> Result<(), String> {
+    let value: serde_json::Value = serde_json::from_slice(stdout)
+        .map_err(|e| format!("kill script did not return JSON: {e}"))?;
+    require_string(&value, "environment_id")?;
+    require_string(&value, "status")?;
+    require_string(&value, "workspace_path")?;
+    require_string(&value, "container_ref")?;
+    require_metadata(&value)?;
+    if !value.get("cleanup").is_some_and(|v| v.is_object())
+        && !value
+            .get("metadata")
+            .and_then(|m| m.get("cleaned"))
+            .is_some()
+    {
+        return Err("kill output missing cleanup result".to_string());
+    }
+    Ok(())
+}
+
 pub(crate) fn run_container_kill_script(entry: &SubagentEntry) -> Result<(), String> {
     let Some(command) = entry.container_kill_command.as_deref() else {
         return Ok(());
@@ -97,7 +145,7 @@ pub(crate) fn run_container_kill_script(entry: &SubagentEntry) -> Result<(), Str
     let mut cmd = command_from_config(command)?;
     populate_env(&mut cmd, entry);
     match cmd.output() {
-        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) if out.status.success() => validate_kill_output(&out.stdout),
         Ok(out) => Err(format!(
             "kill script exited with status {}: {}",
             out.status,
@@ -166,26 +214,19 @@ pub(crate) fn apply_container_inspect(
     if !output.status.success() {
         return;
     }
+    let Ok((status, health)) = validate_inspect_output(&output.stdout) else {
+        return;
+    };
     let Ok(value) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
         return;
     };
-    let status = value
-        .get("status")
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
-    let health = value
-        .get("health")
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
     let workspace = value
         .get("workspace_path")
         .and_then(|v| v.as_str())
         .map(str::to_string);
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(current) = entries.get_mut(agent_id) {
-        if let Some(s) = status.or(health) {
-            current.environment_health = Some(s);
-        }
+        current.environment_health = Some(if health == "healthy" { status } else { health });
         if let Some(w) = workspace {
             current.workspace_path = Some(w);
         }

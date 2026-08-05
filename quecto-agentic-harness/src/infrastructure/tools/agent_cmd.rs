@@ -437,9 +437,25 @@ impl AgentCmdTool {
         }
     }
 
-    /// Look up the socket path for an agent ID.
+    /// Look up the socket path for an agent ID (legacy tests/TUI helpers).
+    #[cfg(test)]
     fn lookup_socket(&self, agent_id: &str) -> Result<std::path::PathBuf, String> {
         super::subagent_registry::lookup_subagent_socket(&self.registry, agent_id)
+    }
+
+    /// Look up the typed parent endpoint for an agent ID.
+    fn lookup_endpoint(
+        &self,
+        agent_id: &str,
+    ) -> Result<crate::domain::agent_launch_backend::ParentEndpoint, String> {
+        let socket_path =
+            super::subagent_registry::lookup_subagent_socket(&self.registry, agent_id)?;
+        let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(entries
+            .values()
+            .find(|entry| entry.socket_path == socket_path)
+            .and_then(|entry| entry.parent_endpoint.clone())
+            .unwrap_or(crate::domain::agent_launch_backend::ParentEndpoint::DirectUds(socket_path)))
     }
 }
 
@@ -456,8 +472,8 @@ impl Drop for AwaitGuard {
     }
 }
 
+#[cfg(test)]
 use super::subagent_registry::send_subagent_uds_command as send_uds_command;
-use super::subagent_registry::send_subagent_uds_command_with_timeout as send_uds_command_with_timeout;
 
 impl Tool for AgentCmdTool {
     fn definition(&self) -> ToolDefinition {
@@ -555,8 +571,10 @@ impl Tool for AgentCmdTool {
                 }
             };
 
-            // Look up the socket.
-            let socket_path = match self.lookup_socket(&agent_id) {
+            // Look up the typed parent endpoint. Proxy-backed containers must
+            // route through the proxy endpoint rather than the requested child
+            // UDS path that may only exist inside the container.
+            let endpoint = match self.lookup_endpoint(&agent_id) {
                 Ok(p) => p,
                 Err(e) => {
                     return Ok(ToolResult {
@@ -573,14 +591,19 @@ impl Tool for AgentCmdTool {
             // for the child's full processing (#876/#880).
             // `command` is threaded from parse_and_build — no second args parse.
             let send = if Self::is_control_command(&command) {
-                send_uds_command_with_timeout(
-                    &socket_path,
+                super::parent_endpoint::send_command_with_timeout(
+                    &endpoint,
                     &json_cmd,
                     super::subagent_registry::INSPECTOR_RESPONSE_TIMEOUT,
                 )
                 .await
             } else {
-                send_uds_command(&socket_path, &json_cmd).await
+                super::parent_endpoint::send_command_with_timeout(
+                    &endpoint,
+                    &json_cmd,
+                    super::subagent_registry::SUBAGENT_RESPONSE_TIMEOUT,
+                )
+                .await
             };
 
             // Send the command via UDS. Lifecycle state comes from the child's

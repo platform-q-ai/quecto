@@ -3,14 +3,14 @@ use std::sync::{Arc, Mutex};
 
 use crate::domain::ids::AgentUuid;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ContainerStatus {
     Running,
     Stopped,
     Unhealthy,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ContainerEntry {
     pub container_uuid: String,
     pub container_ref: String,
@@ -32,7 +32,7 @@ pub struct ContainerEntry {
 #[derive(Debug, Default)]
 pub struct ContainerRegistryState {
     pub(crate) next_ref: u64,
-    pub(crate) entries: HashMap<String, ContainerEntry>,
+    pub entries: HashMap<String, ContainerEntry>,
     pub(crate) refs: HashMap<String, String>,
 }
 

@@ -1,4 +1,6 @@
-use super::container_script_cleanup::cleanup_container_environments_after_removal;
+use super::container_script_cleanup::{
+    apply_container_inspect, cleanup_container_environments_after_removal,
+};
 use super::spawn_entry::{
     InitialRegistryEntrySpec, child_session_key, child_sidecar_filename, child_socket_path,
     effective_config_path, inherited_runtime_config_path, initial_registry_entry,
@@ -23,7 +25,6 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 fn validate_config_path(s: &str) -> Result<PathBuf, String> {
     let p = PathBuf::from(s);
     for component in p.components() {
@@ -324,7 +325,12 @@ impl SpawnTool {
         let backend = self.launch_backends.iter()
             .find(|b| b.can_launch(&config.container))
             .ok_or_else(|| DomainError::Tool("container-backed launch requires a configured script runtime; refusing to fall back to local spawn".into()))?;
-        let prepared = backend
+        let existing_join = super::spawn_container_existing::prepare_existing_container_join(
+            &self.container_registry,
+            &config.container,
+            &agent_uuid,
+        )?;
+        let prepared = match backend
             .prepare_launch(crate::domain::agent_launch_backend::AgentLaunchSpec {
                 request: &config.container,
                 agent_uuid: agent_uuid.as_ref(),
@@ -333,14 +339,27 @@ impl SpawnTool {
                 child_args: &cli_args,
                 requested_socket_path: &requested_socket_path,
                 read_only: config.read_only,
+                existing_environment_id: existing_join
+                    .as_ref()
+                    .and_then(|join| join.environment_id.as_deref()),
             })
-            .await?;
-        let socket_path = match &prepared.endpoint {
-            crate::domain::agent_launch_backend::ParentEndpoint::DirectUds(p) => p.clone(),
-            crate::domain::agent_launch_backend::ParentEndpoint::Proxy(_) => {
-                requested_socket_path.clone()
+            .await
+        {
+            Ok(prepared) => prepared,
+            Err(err) => {
+                super::spawn_container_existing::rollback_existing_container_join(
+                    &self.container_registry,
+                    existing_join.as_ref(),
+                    &agent_uuid,
+                );
+                return Err(err);
             }
         };
+        let socket_path = prepared
+            .endpoint
+            .socket_path()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| requested_socket_path.clone());
         let container_launch = prepared.container.clone();
         let mut cmd = prepared.command;
         if !self.base_dir.as_os_str().is_empty() {
@@ -354,9 +373,8 @@ impl SpawnTool {
             .map_err(|e| DomainError::Tool(format!("failed to spawn subagent: {e}")))?;
         let pid = child.id().unwrap_or(0);
         // Wait for socket readiness while also observing premature child exit.
-        if let Err(e) = self
-            .wait_for_socket_or_child_exit(&socket_path, &mut child)
-            .await
+        if let Err(e) =
+            super::spawn_wait::wait_for_endpoint_or_child_exit(&prepared.endpoint, &mut child).await
         {
             // Socket never became ready — kill the child if it is still alive and
             // report failure. If the child already exited, kill/wait are benign.
@@ -387,43 +405,19 @@ impl SpawnTool {
                 exit_signal_tx: Some(exit_tx.clone()),
             });
             if let Some(launch) = &container_launch {
-                let registered_container = crate::infrastructure::tools::container_registry::register_container(
-                    &self.container_registry,
-                    crate::infrastructure::tools::container_registry::ContainerEntry {
-                        container_uuid: launch.container_id.clone().unwrap_or_else(|| launch.environment_id.clone()),
-                        container_ref: launch.container_ref.clone().unwrap_or_default(),
-                        container_name: launch.container_name.clone(),
-                        environment_id: launch.environment_id.clone(),
-                        repo_url: launch.repository.clone(),
-                        workspace_path: launch.workspace_path.display().to_string(),
-                        status: crate::infrastructure::tools::container_registry::ContainerStatus::Running,
-                        agents: vec![agent_uuid.clone()],
-                        script_name: launch.script_name.clone(),
-                        exec_command: launch.exec_command.clone(),
-                        inspect_command: launch.inspect_command.clone(),
-                        kill_command: launch.kill_command.clone(),
-                        socket_path: launch.socket_path.as_ref().map(|p| p.display().to_string()),
-                        socket_proxy: launch.socket_proxy.clone(),
-                        metadata: launch.metadata.clone(),
-                    },
+                let registered_container =
+                    super::spawn_container_register::registered_container_for_launch(
+                        &self.container_registry,
+                        launch,
+                        &agent_uuid,
+                        existing_join.as_ref(),
+                    )?;
+                super::spawn_container_register::apply_launch_to_entry(
+                    &mut entry,
+                    &registered_container,
+                    launch,
+                    &prepared.endpoint,
                 );
-                entry.runtime_backend = "container".to_string();
-                entry.container_uuid = Some(registered_container.container_uuid.clone());
-                entry.container_ref = Some(registered_container.container_ref.clone());
-                entry.container_name = launch.container_name.clone();
-                entry.repo_url = launch.repository.clone();
-                entry.environment_id = Some(launch.environment_id.clone());
-                entry.environment_health = Some(
-                    launch
-                        .status
-                        .clone()
-                        .unwrap_or_else(|| "running".to_string()),
-                );
-                entry.socket_mode = Some(prepared.endpoint.mode().to_string());
-                entry.workspace_path = Some(launch.workspace_path.display().to_string());
-                entry.container_script_name = Some(launch.script_name.clone());
-                entry.container_kill_command = Some(launch.kill_command.clone());
-                entry.container_inspect_command = Some(launch.inspect_command.clone());
             }
             register_and_broadcast(
                 &self.registry,
@@ -495,6 +489,11 @@ impl SpawnTool {
             // Signal any waiting `await` call before removing from registry.
             let _ = reaper_exit_tx.send(Some(exit_signal));
 
+            // Run postmortem inspect before removal as a reaper-side fallback.
+            // The monitor also attempts this on EOF; the SubagentEntry atomic
+            // guard makes the two lifecycle owners exact-once under races.
+            apply_container_inspect(&reaper_registry, &reaper_name);
+
             // Cascade-remove the dead agent AND its descendants, then broadcast
             // the survivor set so every connected client (the TUI panel) drops
             // them promptly instead of leaving them lingering (#831). The reaper
@@ -520,10 +519,8 @@ impl SpawnTool {
 
             for (id, entry) in &removed {
                 if id == &reaper_name {
-                    // The persistent socket monitor is the lifecycle owner for
-                    // postmortem inspect. The reaper only aborts it after process
-                    // exit; the shared exact-once guard protects races where EOF
-                    // and wrapper exit arrive together.
+                    // Monitor EOF and wrapper reaper both call postmortem
+                    // inspect; the shared atomic guard guarantees exact-once.
                     if let Some(ref handle) = entry.monitor_handle {
                         handle.abort();
                     }
@@ -540,7 +537,7 @@ impl SpawnTool {
         });
 
         if let Some(ref task) = config.task {
-            self.send_initial_prompt(&socket_path, task).await?;
+            self.send_initial_prompt(&prepared.endpoint, task).await?;
         }
 
         Ok(ToolResult {
@@ -564,63 +561,16 @@ impl SpawnTool {
         })
     }
 
-    /// Poll until the UDS socket is connectable (up to 10s).
-    async fn wait_for_socket(&self, path: &std::path::Path) -> Result<(), DomainError> {
-        use tokio::time::Instant;
-
-        let deadline = Instant::now() + Duration::from_secs(10);
-        // Delay the first probe slightly — the child needs time to start up.
-        let mut interval = tokio::time::interval_at(
-            Instant::now() + Duration::from_millis(100),
-            Duration::from_millis(100),
-        );
-        loop {
-            interval.tick().await;
-            // Just try to connect — no need for a separate exists() check.
-            if tokio::net::UnixStream::connect(path).await.is_ok() {
-                return Ok(());
-            }
-            if Instant::now() >= deadline {
-                return Err(DomainError::Tool(format!(
-                    "subagent socket {} did not become ready within 10s",
-                    path.display()
-                )));
-            }
-        }
-    }
-
-    /// Poll until the UDS socket is connectable, but return a specific error if
-    /// the child process exits before its socket becomes ready.
-    async fn wait_for_socket_or_child_exit(
-        &self,
-        path: &std::path::Path,
-        child: &mut tokio::process::Child,
-    ) -> Result<(), DomainError> {
-        tokio::select! {
-            socket_result = self.wait_for_socket(path) => socket_result,
-            child_status = child.wait() => {
-                let detail = match child_status {
-                    Ok(status) => format!(" with status {status}"),
-                    Err(error) => format!(": failed to observe exit status: {error}"),
-                };
-                Err(DomainError::Tool(format!(
-                    "subagent exited before socket ready{}",
-                    detail
-                )))
-            }
-        }
-    }
-
     /// Send the initial task as a UDS prompt after the socket is ready.
     /// Fire-and-forget: writes the prompt and closes the connection.
     async fn send_initial_prompt(
         &self,
-        socket_path: &std::path::Path,
+        endpoint: &crate::domain::agent_launch_backend::ParentEndpoint,
         task: &str,
     ) -> Result<(), DomainError> {
         let cmd = serde_json::json!({"type": "prompt", "message": task, "ack": "accept"});
-        super::subagent_registry::send_subagent_uds_command_with_timeout(
-            socket_path,
+        super::parent_endpoint::send_command_with_timeout(
+            endpoint,
             &cmd.to_string(),
             super::subagent_registry::INSPECTOR_RESPONSE_TIMEOUT,
         )

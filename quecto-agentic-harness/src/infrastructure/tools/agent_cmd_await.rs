@@ -404,13 +404,19 @@ impl AgentCmdTool {
     /// Returns `None` if the fetch fails or workflow is not enabled.
     /// Uses a short timeout (2s) to avoid blocking if the agent is unresponsive.
     async fn fetch_workflow_snapshot(&self, agent_id: &str) -> Option<WorkflowSnapshot> {
-        let socket_path = self.lookup_socket(agent_id).ok()?;
+        let endpoint = self.lookup_endpoint(agent_id).ok()?;
         let cmd = serde_json::json!({"type": "get_state"}).to_string();
-        let response =
-            tokio::time::timeout(Duration::from_secs(2), send_uds_command(&socket_path, &cmd))
-                .await
-                .ok()?
-                .ok()?;
+        let response = tokio::time::timeout(
+            Duration::from_secs(2),
+            crate::infrastructure::tools::parent_endpoint::send_command_with_timeout(
+                &endpoint,
+                &cmd,
+                Duration::from_secs(2),
+            ),
+        )
+        .await
+        .ok()?
+        .ok()?;
         let parsed: serde_json::Value = serde_json::from_str(&response).ok()?;
         let data = parsed.get("data")?;
 

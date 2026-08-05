@@ -604,7 +604,7 @@ fn kill_container_invokes_script_marks_members_stopped_and_signals_exit() {
     entry.workspace_path = Some(fx._tmp.path().to_string_lossy().to_string());
     let kill = fx._tmp.path().join("kill.py");
     std::fs::write(&kill, format!(
-        "#!/usr/bin/env python3\nimport os\nopen({:?}, 'w').write(os.environ.get('QUECTO_CONTAINER_REF','') + ':' + os.environ.get('QUECTO_ENVIRONMENT_UUID',''))\n",
+        "#!/usr/bin/env python3\nimport json, os\nopen({:?}, 'w').write(os.environ.get('QUECTO_CONTAINER_REF','') + ':' + os.environ.get('QUECTO_ENVIRONMENT_UUID',''))\nprint(json.dumps({{'environment_id': os.environ.get('QUECTO_ENVIRONMENT_UUID',''), 'status': 'stopped', 'workspace_path': os.environ.get('QUECTO_WORKSPACE_PATH',''), 'container_ref': os.environ.get('QUECTO_CONTAINER_REF',''), 'metadata': {{}}, 'cleanup': {{'removed': True}}}}))\n",
         marker
     )).unwrap();
     #[cfg(unix)]
@@ -710,7 +710,7 @@ fn kill_container_uses_canonical_cleanup_env() {
     entry.container_script_name = Some("dev".into());
     let kill = fx._tmp.path().join("envkill.py");
     std::fs::write(&kill, format!(
-        "#!/usr/bin/env python3\nimport os\nvals=[os.environ.get(k,'') for k in ['QUECTO_CONTAINER_UUID','QUECTO_CONTAINER_REF','QUECTO_CONTAINER_NAME','QUECTO_ENVIRONMENT_UUID','QUECTO_WORKSPACE_PATH','QUECTO_CONTAINER_SCRIPT']]\nopen({:?}, 'w').write('|'.join(vals))\n",
+        "#!/usr/bin/env python3\nimport json, os\nvals=[os.environ.get(k,'') for k in ['QUECTO_CONTAINER_UUID','QUECTO_CONTAINER_REF','QUECTO_CONTAINER_NAME','QUECTO_ENVIRONMENT_UUID','QUECTO_WORKSPACE_PATH','QUECTO_CONTAINER_SCRIPT']]\nopen({:?}, 'w').write('|'.join(vals))\nprint(json.dumps({{'environment_id': os.environ.get('QUECTO_ENVIRONMENT_UUID',''), 'status': 'stopped', 'workspace_path': os.environ.get('QUECTO_WORKSPACE_PATH',''), 'container_ref': os.environ.get('QUECTO_CONTAINER_REF',''), 'metadata': {{}}, 'cleanup': {{'removed': True}}}}))\n",
         marker
     )).unwrap();
     #[cfg(unix)]

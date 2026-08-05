@@ -131,6 +131,7 @@ pub struct SubagentEntry {
     pub environment_health: Option<String>,
     /// Parent endpoint mode for container-backed agents: direct or proxy.
     pub socket_mode: Option<String>,
+    pub parent_endpoint: Option<crate::domain::agent_launch_backend::ParentEndpoint>,
     /// Workspace mounted in the container, if known.
     pub workspace_path: Option<String>,
     pub container_script_name: Option<String>,
@@ -215,6 +216,7 @@ impl SubagentEntry {
             environment_id: None,
             environment_health: None,
             socket_mode: None,
+            parent_endpoint: None,
             workspace_path: None,
             container_script_name: None,
             container_kill_command: None,
@@ -377,7 +379,8 @@ pub fn new_registry() -> SubagentRegistry {
 
 /// Maximum wall-clock time to wait for a forwarded sub-agent UDS response on the
 /// `agent_cmd` path (a tool call that may legitimately wait on a long operation).
-const SUBAGENT_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+pub(crate) const SUBAGENT_RESPONSE_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(300);
 
 /// Short, interactive-scale timeout for forwards driven by the TUI inspector's
 /// 1s poll loop (#795). A `get_messages_tail` query answers from history almost
@@ -444,7 +447,6 @@ pub async fn send_subagent_uds_command_with_timeout(
     response_timeout: std::time::Duration,
 ) -> Result<String, crate::domain::error::DomainError> {
     use crate::domain::error::DomainError;
-    use tokio::io::BufReader;
 
     let stream = tokio::net::UnixStream::connect(socket_path)
         .await
@@ -454,6 +456,16 @@ pub async fn send_subagent_uds_command_with_timeout(
                 socket_path.display()
             ))
         })?;
+    send_subagent_stream_command_with_timeout(stream, command, response_timeout).await
+}
+
+pub(crate) async fn send_subagent_stream_command_with_timeout(
+    stream: tokio::net::UnixStream,
+    command: &str,
+    response_timeout: std::time::Duration,
+) -> Result<String, crate::domain::error::DomainError> {
+    use crate::domain::error::DomainError;
+    use tokio::io::BufReader;
 
     let (reader, mut writer) = tokio::io::split(stream);
 

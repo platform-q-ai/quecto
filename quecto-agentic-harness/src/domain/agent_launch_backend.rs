@@ -57,6 +57,7 @@ pub struct AgentLaunchSpec<'a> {
     pub child_args: &'a [std::ffi::OsString],
     pub requested_socket_path: &'a Path,
     pub read_only: bool,
+    pub existing_environment_id: Option<&'a str>,
 }
 
 #[derive(Debug, Default)]
@@ -379,9 +380,9 @@ impl AgentLaunchBackend for ScriptManagedContainerLaunchBackend {
                 SpawnContainerRequest::Existing { reference } => {
                     let (name, set) = SpawnContainerRequest::resolve_default_script(&self.config)
                         .map_err(DomainError::Tool)?;
-                    let env_id = match reference {
+                    let env_id = spec.existing_environment_id.unwrap_or(match reference {
                         ExistingContainerRef::Ref(r) | ExistingContainerRef::Name(r) => r.as_str(),
-                    };
+                    });
                     let mut args = vec![
                         "--script-name".into(),
                         name.into(),

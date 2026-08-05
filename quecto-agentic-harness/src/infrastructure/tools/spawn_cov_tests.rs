@@ -304,8 +304,7 @@ async fn wait_for_socket_returns_ok_when_socket_is_connectable() {
     let socket_path = dir.path().join("ready.sock");
     let _listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
 
-    let tool = SpawnTool::new(vec![], true);
-    tool.wait_for_socket(&socket_path)
+    crate::infrastructure::tools::spawn_wait::wait_for_socket(&socket_path)
         .await
         .expect("listener is bound, so the socket should be connectable");
 }
@@ -317,12 +316,12 @@ async fn wait_for_socket_or_child_exit_reports_pre_ready_exit() {
     let mut child = tokio::process::Command::new("/usr/bin/false")
         .spawn()
         .expect("test helper process should spawn");
-    let tool = SpawnTool::new(vec![], true);
-
-    let err = tool
-        .wait_for_socket_or_child_exit(&socket_path, &mut child)
-        .await
-        .unwrap_err();
+    let err = crate::infrastructure::tools::spawn_wait::wait_for_endpoint_or_child_exit(
+        &crate::domain::agent_launch_backend::ParentEndpoint::DirectUds(socket_path),
+        &mut child,
+    )
+    .await
+    .unwrap_err();
 
     assert!(
         err.to_string()
@@ -339,7 +338,10 @@ async fn send_initial_prompt_errors_when_socket_absent() {
     let socket_path = dir.path().join("nope.sock");
     let tool = SpawnTool::new(vec![], true);
     let err = tool
-        .send_initial_prompt(&socket_path, "hi")
+        .send_initial_prompt(
+            &crate::domain::agent_launch_backend::ParentEndpoint::DirectUds(socket_path.clone()),
+            "hi",
+        )
         .await
         .unwrap_err();
     assert!(
@@ -384,9 +386,12 @@ async fn send_initial_prompt_writes_to_listening_socket() {
     });
 
     let tool = SpawnTool::new(vec![], true);
-    tool.send_initial_prompt(&socket_path, "do-the-thing")
-        .await
-        .expect("send to a bound listener should succeed");
+    tool.send_initial_prompt(
+        &crate::domain::agent_launch_backend::ParentEndpoint::DirectUds(socket_path.clone()),
+        "do-the-thing",
+    )
+    .await
+    .expect("send to a bound listener should succeed");
 
     let received = accept.await.unwrap();
     assert!(received.contains("do-the-thing"), "got: {received}");
