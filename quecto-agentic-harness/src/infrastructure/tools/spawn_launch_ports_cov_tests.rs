@@ -71,3 +71,12 @@ async fn ports_ready_rollback_prompt_uncommit_and_success_paths() {
     assert!(!result.is_error);
     assert!(result.content.contains("environment_ref=env"));
 }
+
+#[tokio::test]
+async fn contract_accessor_yields_working_production_ports() {
+    let tool = tool();
+    let mut ports = tool.launch_ports_for_contract();
+    let identity = ports.allocate_identity(&config()).unwrap();
+    assert_eq!(identity.session_name, "worker");
+    assert!(!identity.registry_key.is_empty());
+}

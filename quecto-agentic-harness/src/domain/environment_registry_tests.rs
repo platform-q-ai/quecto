@@ -40,3 +40,23 @@ fn commit_get_remove_round_trip() {
     assert!(registry.entries().is_empty());
     assert!(registry.remove(&env_ref).is_none());
 }
+
+#[test]
+fn lock_poison_recovery_keeps_registry_usable() {
+    let registry = EnvironmentRegistry::new();
+    registry.commit(record("C1", "env-a"));
+
+    let poisoner = registry.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = poisoner.state.lock().unwrap();
+        panic!("poison the environment registry lock");
+    })
+    .join();
+
+    // Every accessor must recover from the poisoned lock without losing state.
+    assert_eq!(registry.mint_ref(), "C1");
+    registry.commit(record("C2", "env-b"));
+    assert_eq!(registry.get("C1").unwrap().environment_id, "env-a");
+    assert_eq!(registry.entries().len(), 2);
+    assert_eq!(registry.remove("C2").unwrap().environment_id, "env-b");
+}
