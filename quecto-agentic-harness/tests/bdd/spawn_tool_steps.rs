@@ -841,9 +841,26 @@ printf '{{"kind":"cleanup","env_ref":"%s"}}\n' "${{QUECTO_CONTAINER_ENVIRONMENT_
         std::fs::set_permissions(&cleanup, p).unwrap();
     }
     v["container_scripts"] = serde_json::json!({"default": default_script, "scripts": {"default": {"create": [script.to_string_lossy()], "cleanup": [cleanup.to_string_lossy()]}, "alternate": {"create": [script.to_string_lossy()], "cleanup": [cleanup.to_string_lossy()]}}});
-    if let Some(repo) = parent_repo {
-        v["agents"]["defaults"]["repo"] = serde_json::json!(repo);
+    let repo = parent_repo.unwrap_or_else(|| "https://github.com/example/parent.git".to_string());
+    if !base.join(".git").exists() {
+        std::process::Command::new("git")
+            .arg("init")
+            .arg(&base)
+            .status()
+            .expect("git init for parent repo fixture");
     }
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(&base)
+        .args(["remote", "remove", "origin"])
+        .status()
+        .ok();
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(&base)
+        .args(["remote", "add", "origin", &repo])
+        .status()
+        .expect("git remote add for parent repo fixture");
     std::fs::write(&cfg_path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
 }
 
