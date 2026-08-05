@@ -400,7 +400,9 @@ impl AgentCmdTool {
         // one (#831 security review): otherwise killing a parent would drop its
         // descendants from the registry while leaving their OS processes running
         // as untracked orphans that `shutdown_all` can no longer reach.
-        if let Err(err) = cleanup_container_environments_after_removal(&removed, &self.registry) {
+        if let Err(err) =
+            cleanup_container_environments_after_removal(&removed, &self.registry, None)
+        {
             tracing::warn!(error = %err, "container cleanup failed after agent kill");
         }
 

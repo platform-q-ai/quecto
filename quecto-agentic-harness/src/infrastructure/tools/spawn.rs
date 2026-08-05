@@ -111,12 +111,8 @@ fn spawn_reaper_task(
                 signal: None,
             },
         };
-        // Signal any waiting `await` call before removing from registry.
         let _ = reaper_exit_tx.send(Some(exit_signal));
 
-        // Run postmortem inspect before removal as a reaper-side fallback.
-        // The monitor also attempts this on EOF; the SubagentEntry atomic
-        // guard makes the two lifecycle owners exact-once under races.
         if let Err(err) = apply_container_inspect(
             &reaper_registry,
             Some(&reaper_container_registry),
@@ -129,10 +125,6 @@ fn spawn_reaper_task(
                 err,
             );
         }
-        // Cascade-remove the dead agent AND its descendants, then broadcast
-        // the survivor set so every connected client (the TUI panel) drops
-        // them promptly instead of leaving them lingering (#831). The reaper
-        // is a detached task, so the send is best-effort (errors at debug).
         let crate::infrastructure::tools::subagent_cascade::CascadeOutcome { removed, event } =
             crate::infrastructure::tools::subagent_cascade::cascade_remove_and_state_changed(
                 &reaper_registry,
@@ -149,14 +141,16 @@ fn spawn_reaper_task(
                 }
             }
         }
-        if let Err(err) = cleanup_container_environments_after_removal(&removed, &reaper_registry) {
+        if let Err(err) = cleanup_container_environments_after_removal(
+            &removed,
+            &reaper_registry,
+            Some(&reaper_container_registry),
+        ) {
             tracing::warn!(error = %err, "container cleanup failed after reaper removal");
         }
 
         for (id, entry) in &removed {
             if id == &reaper_name {
-                // Monitor EOF and wrapper reaper both call postmortem
-                // inspect; the shared atomic guard guarantees exact-once.
                 if let Some(ref handle) = entry.monitor_handle {
                     handle.abort();
                 }
@@ -296,13 +290,9 @@ impl SpawnTool {
             .get("workflow_guards")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        // workflow_guards requires workflow — reject early rather than letting the
-        // child process fail with an opaque CLI error.
         if workflow_guards && !workflow {
             return Err("workflow_guards requires workflow to also be true".to_string());
         }
-        // Borrow-deserialize into the domain type so malformed by-value specs
-        // fail here clearly and raw JSON never leaks into the launch pipeline.
         let workflow_spec = match args.get("workflow_spec") {
             Some(v) if !v.is_null() => {
                 use serde::Deserialize;
@@ -312,8 +302,6 @@ impl SpawnTool {
             }
             _ => None,
         };
-        // #881: share set_model parsing so accepted forms cannot diverge;
-        // explicit model > forwarded --config > built-in default.
         let model_arg = crate::domain::subagent::parse_model_arg(
             args.get("model").and_then(|v| v.as_str()),
             args.get("provider").and_then(|v| v.as_str()),
@@ -330,7 +318,6 @@ impl SpawnTool {
             }
         }
         let disable_tools = parse_disable_tools(&args)?;
-        // Observer sub-agents have both mutation tools disabled (#966).
         let read_only = {
             let has = |name: &str| disable_tools.iter().any(|t| t == name);
             has("write") && has("edit")
@@ -426,8 +413,6 @@ impl SpawnTool {
         } else {
             None
         };
-        // Build the full child argument list (incl. `--model`, #881) via the
-        // pure builder so the exact flag set is unit-testable.
         let effective_config =
             effective_config_path(config.config_path.as_ref(), inherited_runtime_config_path());
         let cli_args = super::spawn_launch_args::build_child_cli_args(
@@ -545,8 +530,6 @@ impl SpawnTool {
                 entry,
             );
         }
-        // Start a persistent monitor task to track child events in real-time (#522).
-        // Pass the notification sender so the monitor can auto-notify the parent (#523).
         let monitor_handle = super::subagent_monitor::spawn_monitor_task(
             registry_key.clone(),
             socket_path.clone(),

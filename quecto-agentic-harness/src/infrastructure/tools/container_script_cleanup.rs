@@ -193,7 +193,16 @@ where
 pub(crate) fn cleanup_container_environments_after_removal(
     removed: &[(String, SubagentEntry)],
     live: &super::subagent_registry::SubagentRegistry,
+    container_registry: Option<&super::container_registry::ContainerRegistry>,
 ) -> Result<(), String> {
+    if let Some(registry) = container_registry {
+        for (_, entry) in removed {
+            if let (Some(uuid), agent) = (&entry.container_uuid, &entry.agent_uuid) {
+                let _ =
+                    super::container_registry::remove_agent_from_container(registry, uuid, agent);
+            }
+        }
+    }
     let live_entries = live.lock().unwrap_or_else(|e| e.into_inner());
     let mut cleaned = std::collections::HashSet::new();
     let mut errors = Vec::new();
@@ -204,12 +213,46 @@ pub(crate) fn cleanup_container_environments_after_removal(
         if !cleaned.insert(env.to_string()) {
             continue;
         }
-        let has_live_member = live_entries
-            .values()
-            .any(|candidate| environment_key(candidate) == Some(env));
+        let has_live_member = if let (Some(registry), Some(uuid)) =
+            (container_registry, entry.container_uuid.as_deref())
+        {
+            registry
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .entries
+                .get(uuid)
+                .is_some_and(|container| !container.agents.is_empty())
+        } else {
+            live_entries
+                .values()
+                .any(|candidate| environment_key(candidate) == Some(env))
+        };
         if !has_live_member {
-            if let Err(err) = invoke_container_kill_script(entry) {
-                errors.push(format!("{env}: {err}"));
+            match invoke_container_kill_script(entry) {
+                Ok(()) => {
+                    if let (Some(registry), Some(uuid)) =
+                        (container_registry, entry.container_uuid.as_deref())
+                    {
+                        let _ = super::container_registry::set_container_status(
+                            registry,
+                            uuid,
+                            super::container_registry::ContainerStatus::Stopped,
+                        );
+                    }
+                }
+                Err(err) => {
+                    if let (Some(registry), Some(uuid)) =
+                        (container_registry, entry.container_uuid.as_deref())
+                    {
+                        let _ = super::container_registry::set_container_health(
+                            registry,
+                            uuid,
+                            super::container_registry::ContainerStatus::CleanupFailed,
+                            Some(err.clone()),
+                        );
+                    }
+                    errors.push(format!("{env}: {err}"));
+                }
             }
         }
     }

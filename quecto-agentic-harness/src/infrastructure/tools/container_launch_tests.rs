@@ -433,7 +433,7 @@ fn cascade_cleanup_kills_once_when_all_colocated_members_removed() {
     let removed = vec![("agent-a".into(), a), ("agent-b".into(), b)];
 
     super::container_script_cleanup::cleanup_container_environments_after_removal(
-        &removed, &registry,
+        &removed, &registry, None,
     )
     .expect("cleanup succeeds");
 
@@ -471,7 +471,7 @@ fn cascade_cleanup_skips_kill_when_colocated_live_member_remains() {
     let removed = vec![("agent-a".into(), removed_agent)];
 
     super::container_script_cleanup::cleanup_container_environments_after_removal(
-        &removed, &registry,
+        &removed, &registry, None,
     )
     .expect("cleanup succeeds");
 

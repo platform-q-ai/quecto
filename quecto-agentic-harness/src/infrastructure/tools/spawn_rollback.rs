@@ -39,7 +39,8 @@ pub(super) async fn rollback_registered_spawn_failure(
         tracing::debug!(agent = %id, "rolled back registered spawn after launch failure");
     }
 
-    let cleanup_result = cleanup_container_environments_after_removal(&removed, registry);
+    let cleanup_result =
+        cleanup_container_environments_after_removal(&removed, registry, Some(container_registry));
     rollback_existing_join(container_registry, existing_join, agent_uuid);
 
     if let Some(mut rx) = root_exit_rx {
