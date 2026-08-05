@@ -391,6 +391,13 @@ fn create_result_contract_accepts_direct_endpoint() {
 }
 
 #[test]
+fn unsafe_arg_detects_empty_and_nul_only() {
+    assert!(unsafe_arg(""));
+    assert!(unsafe_arg("bad\0arg"));
+    assert!(!unsafe_arg("safe-arg"));
+}
+
+#[test]
 fn script_managed_environment_refs_are_monotonic_c_style_and_cleanup_uses_endpoint_id() {
     let first = new_environment_ref();
     let second = new_environment_ref();
