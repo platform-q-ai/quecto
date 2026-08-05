@@ -253,6 +253,8 @@ PY
         let result = run_launch(&tool, &config(ContainerSelection::Local, None))
             .await
             .unwrap();
+        // SAFETY: paired cleanup for the test-scoped environment override above, under ENV_LOCK.
+        unsafe { std::env::remove_var("QUECTO_CHILD_BINARY") };
 
         assert!(!result.is_error, "{}", result.content);
         assert!(!result.content.contains("environment_ref="));
@@ -274,6 +276,8 @@ PY
         let err = run_launch(&tool, &config(ContainerSelection::Local, None))
             .await
             .unwrap_err();
+        // SAFETY: paired cleanup for the test-scoped environment override above, under ENV_LOCK.
+        unsafe { std::env::remove_var("QUECTO_CHILD_BINARY") };
 
         assert!(
             err.to_string().contains("exited before socket ready"),

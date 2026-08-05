@@ -49,6 +49,8 @@ pub(super) struct InitialRegistryEntrySpec<'a> {
     pub exit_signal_tx: Option<ExitSignalTx>,
     pub cleanup_environment_id: Option<String>,
     pub cleanup_argv: Vec<String>,
+    pub environment_registry: Option<crate::domain::environment_registry::EnvironmentRegistry>,
+    pub environment_ref: Option<String>,
 }
 
 /// Build the registry entry used at spawn registration (production after socket
@@ -64,6 +66,8 @@ pub(super) fn initial_registry_entry(spec: InitialRegistryEntrySpec<'_>) -> Suba
     entry.exit_signal_tx = spec.exit_signal_tx;
     entry.cleanup_environment_id = spec.cleanup_environment_id;
     entry.cleanup_argv = spec.cleanup_argv;
+    entry.environment_registry = spec.environment_registry;
+    entry.environment_ref = spec.environment_ref;
     // Stamp the child's parent as THIS agent's own id (#820 panel tree).
     entry.parent_id = spec.parent_id;
     // Record whether this child is a read-only observer (#966 / #957).

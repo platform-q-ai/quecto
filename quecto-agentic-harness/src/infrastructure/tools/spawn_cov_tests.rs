@@ -230,6 +230,8 @@ async fn register_and_broadcast_sends_state_changed_event() {
         exit_signal_tx: None,
         cleanup_environment_id: None,
         cleanup_argv: Vec::new(),
+        environment_registry: None,
+        environment_ref: None,
     });
 
     register_and_broadcast(&registry, Some(&tx), "child", entry).unwrap();
@@ -433,6 +435,8 @@ async fn register_and_broadcast_closed_receiver_still_inserts_entry() {
         exit_signal_tx: None,
         cleanup_environment_id: None,
         cleanup_argv: Vec::new(),
+        environment_registry: None,
+        environment_ref: None,
     });
 
     register_and_broadcast(&registry, Some(&tx), "closed", entry).unwrap();
@@ -468,6 +472,8 @@ async fn spawn_registry_poison_recovery_paths_do_not_drop_entries() {
             exit_signal_tx: None,
             cleanup_environment_id: None,
             cleanup_argv: Vec::new(),
+            environment_registry: None,
+            environment_ref: None,
         }),
     )
     .unwrap();

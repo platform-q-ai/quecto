@@ -138,7 +138,6 @@ async fn spawn_script_managed_child(
     set_script_env(
         &mut cmd,
         config,
-        cfg,
         script_name,
         &environment_ref,
         child.base_dir,
@@ -159,8 +158,8 @@ async fn spawn_script_managed_child(
         Ok(result) => result,
         Err(e) => {
             let mut cleanup_argv = script.cleanup.clone();
-            if let Ok(wire) = serde_json::from_slice::<CreateResultWire>(&output.stdout) {
-                run_cleanup_once(Some(wire.environment_id), &mut cleanup_argv).await;
+            if let Some(env_id) = salvage_environment_id(&output.stdout) {
+                run_cleanup_once(Some(env_id), &mut cleanup_argv).await;
             }
             return Err(e);
         }
@@ -182,6 +181,7 @@ async fn spawn_script_managed_child(
 }
 
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CreateResultWire {
     environment_id: String,
     workspace_path: std::path::PathBuf,
@@ -196,6 +196,24 @@ struct CreateResult {
     environment_id: String,
     workspace_path: std::path::PathBuf,
     socket_path: std::path::PathBuf,
+}
+
+/// Best-effort extraction of `environment_id` from a rejected create result so
+/// the environment the script already created can still be cleaned up.
+/// Deliberately permissive, unlike the strict `CreateResultWire` contract.
+fn salvage_environment_id(stdout: &[u8]) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct SalvageWire {
+        environment_id: String,
+    }
+    // Permissive on unknown keys AND trailing data: any rejected create result
+    // whose leading object still names the environment must get cleanup.
+    let text = std::str::from_utf8(stdout).ok()?;
+    let mut de = serde_json::Deserializer::from_str(text);
+    SalvageWire::deserialize(&mut de)
+        .ok()
+        .map(|wire| wire.environment_id)
+        .filter(|id| !id.is_empty())
 }
 
 fn parse_create_result(stdout: &[u8]) -> Result<CreateResult, DomainError> {
@@ -268,7 +286,6 @@ fn create_command(
 fn set_script_env(
     cmd: &mut tokio::process::Command,
     config: &SubagentConfig,
-    _cfg: &Config,
     script_name: &str,
     env_ref: &str,
     base_dir: &Path,
@@ -332,6 +349,11 @@ fn validate_script(script: &ContainerScriptConfig) -> Result<(), DomainError> {
             "invalid container_scripts configuration: missing create argv".into(),
         ));
     }
+    if script.cleanup.is_empty() {
+        return Err(DomainError::Tool(
+            "invalid container_scripts configuration: missing cleanup argv".into(),
+        ));
+    }
     if script
         .create
         .iter()
@@ -355,8 +377,8 @@ fn cleanup_command(env_ref: Option<&str>, argv: &[String]) -> Option<tokio::proc
     }
     let mut cmd = tokio::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]);
-    if let Some(env_ref) = env_ref {
-        cmd.env("QUECTO_CONTAINER_ENVIRONMENT_REF", env_ref);
+    if let Some(env_id) = env_ref {
+        cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", env_id);
     }
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::null());

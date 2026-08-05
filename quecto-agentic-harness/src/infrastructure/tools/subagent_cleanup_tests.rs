@@ -10,7 +10,7 @@ fn cleanup_script(log: &std::path::Path) -> std::path::PathBuf {
     std::fs::write(
         &script,
         format!(
-            "#!/usr/bin/env bash\necho \"$QUECTO_CONTAINER_ENVIRONMENT_REF\" >> '{}'\n",
+            "#!/usr/bin/env bash\necho \"$QUECTO_CONTAINER_ENVIRONMENT_ID\" >> '{}'\n",
             log.display()
         ),
     )
@@ -87,4 +87,41 @@ fn teardown_all_claims_pid_zero_cleanup_before_registry_clear() {
     assert!(registry.lock().unwrap().is_empty());
     let text = std::fs::read_to_string(&log).unwrap();
     assert_eq!(text.lines().collect::<Vec<_>>(), vec!["env-teardown"]);
+}
+
+#[tokio::test]
+async fn cleanup_registered_once_uncommits_the_committed_environment_entry() {
+    use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry};
+
+    let temp = tempfile::tempdir().unwrap();
+    let log = temp.path().join("cleanup.log");
+    let script = cleanup_script(&log);
+
+    let environments = EnvironmentRegistry::new();
+    let env_ref = environments.mint_ref();
+    environments.commit(EnvironmentRecord {
+        environment_ref: env_ref.clone(),
+        environment_id: "env-exit".to_string(),
+        workspace_path: PathBuf::from("/workspace"),
+        script_name: "default".to_string(),
+    });
+
+    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/child.sock"), 42);
+    entry.cleanup_environment_id = Some("env-exit".to_string());
+    entry.cleanup_argv = vec![script.to_string_lossy().to_string()];
+    entry.environment_registry = Some(environments.clone());
+    entry.environment_ref = Some(env_ref.clone());
+    registry.lock().unwrap().insert("child".to_string(), entry);
+
+    // The monitor EOF path (normal child exit) runs exactly this function: it
+    // must both invoke the cleanup script and uncommit the environment entry.
+    cleanup_registered_once(&registry, "child").await;
+    assert!(environments.get(&env_ref).is_none());
+    assert!(environments.entries().is_empty());
+    assert_eq!(std::fs::read_to_string(&log).unwrap().trim(), "env-exit");
+
+    // Second run is a no-op: the claim was consumed.
+    cleanup_registered_once(&registry, "child").await;
+    assert_eq!(std::fs::read_to_string(&log).unwrap().trim(), "env-exit");
 }

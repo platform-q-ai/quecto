@@ -456,6 +456,8 @@ impl Tool for SpawnTool {
                             exit_signal_tx: None,
                             cleanup_environment_id: None,
                             cleanup_argv: Vec::new(),
+                            environment_registry: None,
+                            environment_ref: None,
                         });
                         if let Err(e) = register_and_broadcast(
                             &self.registry,

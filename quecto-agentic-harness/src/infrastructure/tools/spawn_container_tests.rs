@@ -29,6 +29,13 @@ fn validate_script_rejects_missing_or_unsafe_argv() {
     assert!(
         validate_script(&ContainerScriptConfig {
             create: vec!["ok".into()],
+            cleanup: vec![]
+        })
+        .is_err()
+    );
+    assert!(
+        validate_script(&ContainerScriptConfig {
+            create: vec!["ok".into()],
             cleanup: vec!["cleanup".into()]
         })
         .is_ok()
@@ -243,15 +250,7 @@ fn create_command_and_common_env_are_constructed_without_shell() {
 
 #[test]
 fn script_env_includes_optional_selection_values() {
-    let cfg = Config {
-        agents: crate::infrastructure::config::AgentConfig {
-            defaults: crate::infrastructure::config::AgentDefaults {
-                repo: Some("repo-default".into()),
-                ..Default::default()
-            },
-        },
-        ..configured_scripts()
-    };
+    let cfg = configured_scripts();
     let config = base_config(ContainerSelection::New {
         repo: Some("explicit".into()),
         container_script: Some("alt".into()),
@@ -261,7 +260,7 @@ fn script_env_includes_optional_selection_values() {
         Path::new("/bin/quecto"),
         &[],
     );
-    set_script_env(&mut cmd, &config, &cfg, "alt", "", Path::new("/tmp/base")).unwrap();
+    set_script_env(&mut cmd, &config, "alt", "C1", Path::new("/tmp/base")).unwrap();
     apply_common_child_env(&mut cmd, Path::new("/tmp/base"));
     let _ = cmd;
 }
@@ -335,7 +334,6 @@ async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
     std::fs::write(
         &cfg_path,
         r#"{
-  "agents": {"defaults": {"repo": "default-repo"}},
   "container_scripts": {
     "default": "default",
     "scripts": {"default": {"create": ["printf", "{\"environment_id\":\"env-1\",\"workspace_path\":\"/tmp/ws\",\"metadata\":{},\"socket_path\":\"/tmp/child.sock\"}"], "cleanup": ["true"]}}
@@ -410,6 +408,18 @@ fn selected_repo_fails_before_create_when_parent_remote_missing() {
 #[test]
 fn create_result_contract_rejects_invalid_shapes_and_proxy() {
     assert!(parse_create_result(b"").is_err());
+    let unknown_key = br#"{"environment_id":"e-unknown","workspace_path":"/tmp/ws","metadata":{},"socket_path":"/tmp/sock","bogus":1}"#;
+    assert!(parse_create_result(unknown_key).is_err());
+    assert_eq!(
+        salvage_environment_id(unknown_key).as_deref(),
+        Some("e-unknown")
+    );
+    assert!(salvage_environment_id(br#"{"no_id":true}"#).is_none());
+    assert!(salvage_environment_id(br#"{"environment_id":""}"#).is_none());
+    let trailing =
+        br#"{"environment_id":"e-trail","workspace_path":"/tmp/ws","metadata":{},"socket_path":"/tmp/sock"} extra"#;
+    assert!(parse_create_result(trailing).is_err());
+    assert_eq!(salvage_environment_id(trailing).as_deref(), Some("e-trail"));
     assert!(
         parse_create_result(
             br#"{"environment_id":"e","workspace_path":"/tmp/ws","metadata":{},"socket_proxy":{}}"#

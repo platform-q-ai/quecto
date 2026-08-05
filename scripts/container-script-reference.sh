@@ -7,6 +7,8 @@
 # Invocation:  create-argv... -- <child-binary> <child-args...>
 # Environment: QUECTO_CONTAINER_REPO, QUECTO_CONTAINER_SCRIPT,
 #              QUECTO_CONTAINER_ENVIRONMENT_REF, QUECTO_BASE_DIR
+# (The paired cleanup script instead receives QUECTO_CONTAINER_ENVIRONMENT_ID,
+# the runtime environment_id this script reports below.)
 set -euo pipefail
 
 # Split our own argv from the child command after `--`.

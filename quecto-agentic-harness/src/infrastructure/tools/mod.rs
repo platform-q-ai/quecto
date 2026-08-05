@@ -39,6 +39,7 @@ mod subagent_monitor_registry;
 mod subagent_monitor_stall;
 mod subagent_monitor_truncate;
 pub mod subagent_registry;
+mod subagent_status;
 pub mod truncate;
 pub mod web_fetch;
 pub mod web_search;

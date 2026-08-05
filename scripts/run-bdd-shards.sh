@@ -13,7 +13,6 @@ TAG=""
 REAL_LLM="0"
 COVERAGE="0"
 COVERAGE_THRESHOLD=""
-IGNORE_FILENAME_REGEX=""
 
 resolve_llvm_tools() {
     # cargo-llvm-cov can use system LLVM tools when rustup llvm-tools-preview
@@ -62,10 +61,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --coverage-threshold)
             COVERAGE_THRESHOLD="$2"
-            shift 2
-            ;;
-        --ignore-filename-regex)
-            IGNORE_FILENAME_REGEX="$2"
             shift 2
             ;;
         *)
@@ -205,9 +200,6 @@ fi
 
 if [[ "$COVERAGE" == "1" ]]; then
     report_args=(report -p "$PACKAGE")
-    if [[ -n "$IGNORE_FILENAME_REGEX" ]]; then
-        report_args+=(--ignore-filename-regex "$IGNORE_FILENAME_REGEX")
-    fi
     if [[ -n "$COVERAGE_THRESHOLD" ]]; then
         report_args+=(--fail-under-functions "$COVERAGE_THRESHOLD")
     fi

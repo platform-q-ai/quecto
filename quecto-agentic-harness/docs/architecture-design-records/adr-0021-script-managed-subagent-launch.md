@@ -20,3 +20,5 @@ Issue #1369 Slice 1 adds script-managed subagent creation while preserving the e
 ## Consequences
 
 Architecture tests enforce that domain/application do not perform runtime I/O or process construction. Public domain/application launch ports require shared behavioral contract tests under `tests/contracts/`. Future slices extend the same registry and ports rather than adding parallel launch pipelines.
+
+Register-failure rollback is currently enforced only by the application-level contract suite: registration has no production failure mode in this slice, so no scenario fabricates one. It gains a genuine production seam when registration becomes fallible (Slice 2 environment membership).

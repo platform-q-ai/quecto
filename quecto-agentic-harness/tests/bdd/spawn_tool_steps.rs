@@ -827,7 +827,7 @@ printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"sock
         format!(
             r#"#!/usr/bin/env bash
 set -euo pipefail
-printf '{{"kind":"cleanup","env_ref":"%s"}}\n' "${{QUECTO_CONTAINER_ENVIRONMENT_REF:-}}" >> '{}'
+printf '{{"kind":"cleanup","env_ref":"%s"}}\n' "${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}" >> '{}'
 "#,
             log.display()
         ),
@@ -1111,10 +1111,19 @@ fn then_existing_error(world: &mut QuectoWorld) {
 }
 #[then(expr = "the spawn result should fail because script configuration {string} is invalid")]
 fn then_config_error(world: &mut QuectoWorld, err: String) {
+    let expected = match err.as_str() {
+        "missing default" => "missing default",
+        "default name not found" => "not found",
+        "missing create argv" | "empty create argv" => "missing create argv",
+        "missing cleanup argv" => "missing cleanup argv",
+        "unsafe create argv" => "unsafe argv",
+        "unknown config field" => "unknown field",
+        other => panic!("unmapped config error variant '{other}'"),
+    };
     let r = world.spawn_result.as_ref().unwrap();
     assert!(
-        r.is_error && r.content.contains("container_scripts"),
-        "{} {err}",
+        r.is_error && r.content.contains("container_scripts") && r.content.contains(expected),
+        "expected '{expected}' for '{err}' in: {}",
         r.content
     );
 }
@@ -1165,6 +1174,9 @@ fn given_invalid_runtime_config(world: &mut QuectoWorld, err: String) {
         "empty create argv" => {
             serde_json::json!({"default":"default","scripts":{"default":{"create":[],"cleanup":["true"]}}})
         }
+        "missing cleanup argv" => {
+            serde_json::json!({"default":"default","scripts":{"default":{"create":[create.to_string_lossy()]}}})
+        }
         "unsafe create argv" => {
             serde_json::json!({"default":"default","scripts":{"default":{"create":["bad\u{0000}arg"],"cleanup":["true"]}}})
         }
@@ -1190,11 +1202,26 @@ fn given_spawn_fails_during(world: &mut QuectoWorld, phase: String) {
 }
 #[then("the spawn result should fail because proxy endpoints are unsupported")]
 fn then_proxy_unsupported(world: &mut QuectoWorld) {
-    assert!(world.spawn_result.as_ref().unwrap().is_error);
+    let r = world.spawn_result.as_ref().unwrap();
+    assert!(
+        r.is_error && r.content.contains("direct socket_path only"),
+        "expected proxy rejection message in: {}",
+        r.content
+    );
 }
 #[then(expr = "the spawn result should fail because script-managed launch failed during {string}")]
-fn then_launch_failed_phase(world: &mut QuectoWorld, _phase: String) {
-    assert!(world.spawn_result.as_ref().unwrap().is_error);
+fn then_launch_failed_phase(world: &mut QuectoWorld, phase: String) {
+    let expected = match phase.as_str() {
+        "readiness" => "did not become ready",
+        "initial prompt" => "failed to send prompt",
+        other => panic!("unmapped launch failure phase '{other}'"),
+    };
+    let r = world.spawn_result.as_ref().unwrap();
+    assert!(
+        r.is_error && r.content.contains(expected),
+        "expected '{expected}' for phase '{phase}' in: {}",
+        r.content
+    );
 }
 #[then(expr = "the script-managed runtime should have cleaned up exactly {int} environment")]
 fn then_cleanup_count(world: &mut QuectoWorld, n: i32) {

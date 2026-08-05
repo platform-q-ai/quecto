@@ -74,6 +74,7 @@ Feature: Script-managed subagent spawning
       | default name not found |
       | missing create argv |
       | empty create argv |
+      | missing cleanup argv |
       | unsafe create argv |
       | unknown config field |
 

@@ -49,8 +49,9 @@ with normal `agent_cmd` operations over its direct UDS endpoint.
 
 `default` names the script set used for `container: true`. Each script
 set's `create`/`cleanup` are argv arrays executed directly — no shell
-interpolation. Missing, unknown, empty, or unsafe (empty/NUL argument)
-configuration fails before any script runs.
+interpolation. Both are required: missing, unknown, empty (including an
+empty `cleanup`), or unsafe (empty/NUL argument) configuration fails
+before any script runs.
 
 ## Script contract
 
@@ -69,7 +70,7 @@ Environment variables provided to the script:
 | `QUECTO_CONTAINER_REPO` | Repository URL to check out (explicit or discovered) |
 | `QUECTO_CONTAINER_SCRIPT` | Name of the selected script set |
 | `QUECTO_CONTAINER_ENVIRONMENT_REF` | The minted session ref (`C1`, ...) |
-| `QUECTO_BASE_DIR` | Parent agent's base directory |
+| `QUECTO_BASE_DIR` | Parent agent's base directory (set only when the parent has one) |
 
 The script must start the child (`<child-binary> <child-args...>`)
 **exactly once** — Quecto never starts a local fallback child — and print
@@ -89,9 +90,13 @@ parent can connect to (`socket_proxy` is rejected in this slice). Extra
 JSON data after the object is rejected. A non-zero exit or an invalid
 contract fails the launch and rolls back.
 
+The create result must contain exactly these fields — unknown keys are
+rejected.
+
 ### `cleanup`
 
-Invoked with `QUECTO_CONTAINER_ENVIRONMENT_REF` set to the
-`environment_id` being destroyed. Runs exactly once when a launch fails
-after creation (readiness, registration, or initial-prompt failure) or
-when the environment is torn down.
+Invoked with `QUECTO_CONTAINER_ENVIRONMENT_ID` set to the runtime
+`environment_id` being destroyed (note: a different identity than the
+session `C1` ref the create script received). Runs exactly once when a
+launch fails after creation (readiness, registration, or initial-prompt
+failure) or when the environment is torn down.

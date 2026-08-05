@@ -41,9 +41,15 @@ pub fn shutdown_all(registry: &SubagentRegistry) {
 
 /// Like [`shutdown_all`], returning the number of registry entries removed.
 pub fn shutdown_all_with_count(registry: &SubagentRegistry) -> usize {
-    let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    let removed = entries.len();
-    for (name, entry) in entries.iter() {
+    // Drain in the SAME critical section that decides who gets signalled, so
+    // an agent registering concurrently can never be drained (and cleaned up)
+    // without having been signalled, and the returned count matches the
+    // drained set exactly.
+    let mut removed: Vec<_> = {
+        let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+        entries.drain().collect()
+    };
+    for (name, entry) in removed.iter() {
         if let Some(ref tx) = entry.exit_signal_tx {
             let _ = tx.send(Some(ExitSignal {
                 exit_code: None,
@@ -60,7 +66,7 @@ pub fn shutdown_all_with_count(registry: &SubagentRegistry) -> usize {
             tracing::info!(agent = %name, pid = entry.pid, "sent SIGTERM to subagent");
         }
     }
-    drop(entries);
-    super::subagent_cleanup::cleanup_all_before_clear_once(registry);
-    removed
+    let count = removed.len();
+    super::subagent_cleanup::cleanup_removed_entries_once(&mut removed);
+    count
 }

@@ -23,7 +23,6 @@ pub(super) struct SpawnLaunchPorts<'a> {
     tool: &'a SpawnTool,
     agent_uuid: Option<AgentUuid>,
     socket_path: Option<PathBuf>,
-    environment_ref: Option<String>,
 }
 
 impl<'a> SpawnLaunchPorts<'a> {
@@ -32,7 +31,6 @@ impl<'a> SpawnLaunchPorts<'a> {
             tool,
             agent_uuid: None,
             socket_path: None,
-            environment_ref: None,
         }
     }
 }
@@ -181,7 +179,6 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             } else {
                 self.tool.wait_for_socket(&actual_socket_path).await?;
             }
-            self.environment_ref = prepared.environment_ref.clone();
             Ok(PreparedRuntime {
                 socket_path: actual_socket_path,
                 pid,
@@ -199,17 +196,22 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
 
     fn uncommit_registered<'b>(&'b mut self, registry_key: &'b str) -> LaunchFuture<'b, ()> {
         Box::pin(async move {
+            // Abort the monitor inside the same critical section that removes
+            // the entry, so a monitor cannot claim the cleanup plan after this
+            // uncommit has decided to own it.
             let mut removed = {
                 let mut entries = self.tool.registry.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(entry) = entries.get(registry_key) {
+                    if let Some(ref handle) = entry.monitor_handle {
+                        handle.abort();
+                    }
+                }
                 entries
                     .remove(registry_key)
                     .map(|entry| vec![(registry_key.to_string(), entry)])
                     .unwrap_or_default()
             };
             for (_id, entry) in &removed {
-                if let Some(ref handle) = entry.monitor_handle {
-                    handle.abort();
-                }
                 if let Some(ref tx) = entry.exit_signal_tx {
                     let _ = tx.send(Some(ExitSignal {
                         exit_code: None,
@@ -219,9 +221,6 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 crate::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry);
             }
             super::subagent_cleanup::cleanup_removed_entries_once(&mut removed);
-            if let Some(env_ref) = self.environment_ref.take() {
-                self.tool.environment_registry.remove(&env_ref);
-            }
         })
     }
 
@@ -238,7 +237,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 .as_ref()
                 .expect("identity allocated")
                 .clone();
-            let (cleanup_environment_ref, cleanup_argv) = prepared.cleanup_plan();
+            let (cleanup_environment_id, cleanup_argv) = prepared.cleanup_plan();
             let (exit_tx, _exit_rx) = new_exit_signal_channel();
             let entry = initial_registry_entry(InitialRegistryEntrySpec {
                 agent_uuid,
@@ -248,8 +247,13 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 parent_id: self.tool.parent_id.clone(),
                 config,
                 exit_signal_tx: Some(exit_tx.clone()),
-                cleanup_environment_id: cleanup_environment_ref,
+                cleanup_environment_id,
                 cleanup_argv,
+                environment_registry: prepared
+                    .environment_ref
+                    .as_ref()
+                    .map(|_| self.tool.environment_registry.clone()),
+                environment_ref: prepared.environment_ref.clone(),
             });
             register_and_broadcast(
                 &self.tool.registry,
