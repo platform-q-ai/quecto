@@ -391,7 +391,6 @@ impl SpawnTool {
 
         let pid = prepared_child.child.id().unwrap_or(0);
 
-        // Wait for socket readiness while also observing premature child exit.
         if let Err(e) = self
             .wait_for_socket_or_child_exit(&socket_path, &mut prepared_child.child)
             .await
@@ -446,7 +445,6 @@ impl SpawnTool {
             self.parent_id.clone(),
         );
 
-        // Store the monitor handle so it can be aborted on shutdown.
         {
             let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(entry) = entries.get_mut(&registry_key) {
