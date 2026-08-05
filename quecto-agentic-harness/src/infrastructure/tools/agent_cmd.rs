@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::infrastructure::tools::container_script_cleanup::cleanup_container_environments_after_removal;
 
 // Re-export shared types for external consumers.
 pub use super::subagent_registry::{
@@ -399,6 +400,8 @@ impl AgentCmdTool {
         // one (#831 security review): otherwise killing a parent would drop its
         // descendants from the registry while leaving their OS processes running
         // as untracked orphans that `shutdown_all` can no longer reach.
+        cleanup_container_environments_after_removal(&removed, &self.registry);
+
         let mut killed_pid = 0;
         for (id, entry) in &removed {
             let mut lifecycle = entry.lifecycle;

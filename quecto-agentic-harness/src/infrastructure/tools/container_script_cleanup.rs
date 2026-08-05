@@ -111,39 +111,33 @@ pub(super) fn invoke_container_kill_script(entry: &SubagentEntry) {
     let _ = run_container_kill_script(entry);
 }
 
-pub(crate) fn kill_container_owner(entry: &SubagentEntry, removed: &[(String, SubagentEntry)]) {
-    let Some(env) = entry
+fn environment_key(entry: &SubagentEntry) -> Option<&str> {
+    entry
         .environment_id
         .as_deref()
         .or(entry.container_uuid.as_deref())
-    else {
-        return;
-    };
-    let remaining = removed
-        .iter()
-        .filter(|(_, other)| {
-            other.agent_uuid != entry.agent_uuid
-                && other
-                    .environment_id
-                    .as_deref()
-                    .or(other.container_uuid.as_deref())
-                    == Some(env)
-        })
-        .count();
-    if remaining == 0 {
-        invoke_container_kill_script(entry);
-    }
 }
 
-pub(super) fn invoke_container_inspect_script(entry: &SubagentEntry) {
-    let Some(command) = entry.container_inspect_command.as_deref() else {
-        return;
-    };
-    let Ok(mut cmd) = command_from_config(command) else {
-        return;
-    };
-    populate_env(&mut cmd, entry);
-    let _ = cmd.output();
+pub(crate) fn cleanup_container_environments_after_removal(
+    removed: &[(String, SubagentEntry)],
+    live: &super::subagent_registry::SubagentRegistry,
+) {
+    let live_entries = live.lock().unwrap_or_else(|e| e.into_inner());
+    let mut cleaned = std::collections::HashSet::new();
+    for (_, entry) in removed {
+        let Some(env) = environment_key(entry) else {
+            continue;
+        };
+        if !cleaned.insert(env.to_string()) {
+            continue;
+        }
+        let has_live_member = live_entries
+            .values()
+            .any(|candidate| environment_key(candidate) == Some(env));
+        if !has_live_member {
+            invoke_container_kill_script(entry);
+        }
+    }
 }
 
 pub(crate) fn apply_container_inspect(
@@ -155,6 +149,12 @@ pub(crate) fn apply_container_inspect(
         entries.get(agent_id).cloned()
     };
     let Some(entry) = entry else { return };
+    if entry
+        .container_inspect_once
+        .swap(true, std::sync::atomic::Ordering::AcqRel)
+    {
+        return;
+    }
     let Some(command) = entry.container_inspect_command.as_deref() else {
         return;
     };

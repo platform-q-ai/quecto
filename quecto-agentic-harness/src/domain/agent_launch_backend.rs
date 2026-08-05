@@ -256,20 +256,47 @@ fn parse_launch_output(
             "container script '{script_name}' output missing string field 'environment_id'"
         ))
     })?;
+    let _container_ref = sf("container_ref").ok_or_else(|| {
+        DomainError::Tool(format!(
+            "container script '{script_name}' output missing string field 'container_ref'"
+        ))
+    })?;
     let workspace_path = PathBuf::from(sf("workspace_path").ok_or_else(|| {
         DomainError::Tool(format!(
             "container script '{script_name}' output missing string field 'workspace_path'"
         ))
     })?);
+    let metadata = v.get("metadata").cloned().ok_or_else(|| {
+        DomainError::Tool(format!(
+            "container script '{script_name}' output missing required object field 'metadata'"
+        ))
+    })?;
+    if !metadata.is_object() {
+        return Err(DomainError::Tool(format!(
+            "container script '{script_name}' field 'metadata' must be an object"
+        )));
+    }
+    let socket_path = sf("socket_path").map(PathBuf::from);
+    let socket_proxy = sf("socket_proxy");
+    match (socket_path.is_some(), socket_proxy.is_some()) {
+        (true, false) | (false, true) => {}
+        (false, false) => {
+            return Err(DomainError::Tool(format!(
+                "container script '{script_name}' output must include exactly one endpoint: socket_path or socket_proxy"
+            )));
+        }
+        (true, true) => {
+            return Err(DomainError::Tool(format!(
+                "container script '{script_name}' output must not include both socket_path and socket_proxy"
+            )));
+        }
+    }
     Ok(ContainerLaunchOutcome {
         environment_id,
-        socket_path: sf("socket_path").map(PathBuf::from),
-        socket_proxy: sf("socket_proxy"),
+        socket_path,
+        socket_proxy,
         workspace_path,
-        metadata: v
-            .get("metadata")
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!({})),
+        metadata,
         repository: repo,
         script_name: script_name.into(),
         container_ref: sf("container_ref"),

@@ -285,16 +285,77 @@ fn reference_kill_rejects_workspace_outside_managed_root() {
 }
 
 #[test]
-fn spawn_reaper_only_kills_container_for_environment_owner() {
-    let source = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src/infrastructure/tools/container_script_cleanup.rs"),
+fn cascade_cleanup_kills_once_when_all_colocated_members_removed() {
+    let temp = tempfile::tempdir().unwrap();
+    let log = temp.path().join("kills.log");
+    let script = temp.path().join("kill.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/usr/bin/env bash\necho \"$QUECTO_ENVIRONMENT_UUID\" >> {}\n",
+            log.display()
+        ),
     )
     .unwrap();
-    assert!(source.contains("remaining == 0"));
-    let spawn_source = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/infrastructure/tools/spawn.rs"),
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let registry = super::subagent_registry::new_registry();
+    let mut a =
+        super::subagent_registry::SubagentEntry::new(std::path::PathBuf::from("/tmp/a.sock"), 1);
+    a.environment_id = Some("env-1".into());
+    a.container_kill_command = Some(script.display().to_string());
+    let mut b =
+        super::subagent_registry::SubagentEntry::new(std::path::PathBuf::from("/tmp/b.sock"), 2);
+    b.environment_id = Some("env-1".into());
+    b.container_kill_command = Some(script.display().to_string());
+    let removed = vec![("agent-a".into(), a), ("agent-b".into(), b)];
+
+    super::container_script_cleanup::cleanup_container_environments_after_removal(
+        &removed, &registry,
+    );
+
+    let kills = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(kills.lines().collect::<Vec<_>>(), vec!["env-1"]);
+}
+
+#[test]
+fn cascade_cleanup_skips_kill_when_colocated_live_member_remains() {
+    let temp = tempfile::tempdir().unwrap();
+    let log = temp.path().join("kills.log");
+    let script = temp.path().join("kill.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/usr/bin/env bash\necho \"$QUECTO_ENVIRONMENT_UUID\" >> {}\n",
+            log.display()
+        ),
     )
     .unwrap();
-    assert!(spawn_source.contains("kill_container_owner(entry, &removed)"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let registry = super::subagent_registry::new_registry();
+    let mut live =
+        super::subagent_registry::SubagentEntry::new(std::path::PathBuf::from("/tmp/b.sock"), 2);
+    live.environment_id = Some("env-1".into());
+    registry.lock().unwrap().insert("agent-b".into(), live);
+    let mut removed_agent =
+        super::subagent_registry::SubagentEntry::new(std::path::PathBuf::from("/tmp/a.sock"), 1);
+    removed_agent.environment_id = Some("env-1".into());
+    removed_agent.container_kill_command = Some(script.display().to_string());
+    let removed = vec![("agent-a".into(), removed_agent)];
+
+    super::container_script_cleanup::cleanup_container_environments_after_removal(
+        &removed, &registry,
+    );
+
+    assert!(
+        !log.exists(),
+        "kill script must not run while another live member remains"
+    );
 }

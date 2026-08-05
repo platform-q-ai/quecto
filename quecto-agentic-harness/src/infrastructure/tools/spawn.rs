@@ -1,4 +1,4 @@
-use super::container_script_cleanup::{invoke_container_inspect_script, kill_container_owner};
+use super::container_script_cleanup::cleanup_container_environments_after_removal;
 use super::spawn_entry::{
     InitialRegistryEntrySpec, child_session_key, child_sidecar_filename, child_socket_path,
     effective_config_path, inherited_runtime_config_path, initial_registry_entry,
@@ -516,16 +516,19 @@ impl SpawnTool {
                 }
             }
 
+            cleanup_container_environments_after_removal(&removed, &reaper_registry);
+
             for (id, entry) in &removed {
                 if id == &reaper_name {
-                    invoke_container_inspect_script(entry);
-                    kill_container_owner(entry, &removed);
+                    // The persistent socket monitor is the lifecycle owner for
+                    // postmortem inspect. The reaper only aborts it after process
+                    // exit; the shared exact-once guard protects races where EOF
+                    // and wrapper exit arrive together.
                     if let Some(ref handle) = entry.monitor_handle {
                         handle.abort();
                     }
                     continue;
                 }
-                kill_container_owner(entry, &removed);
                 if let Some(ref tx) = entry.exit_signal_tx {
                     let _ = tx.send(Some(ExitSignal {
                         exit_code: None,

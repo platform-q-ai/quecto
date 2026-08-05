@@ -115,6 +115,39 @@ pub fn mark_container_stopped(
     Ok(entry.clone())
 }
 
+pub fn add_agent_to_live_container(
+    registry: &ContainerRegistry,
+    uuid: &str,
+    agent: AgentUuid,
+) -> Result<ContainerEntry, String> {
+    let mut state = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let entry = state
+        .entries
+        .get_mut(uuid)
+        .ok_or_else(|| format!("unknown container '{uuid}'"))?;
+    if entry.status != ContainerStatus::Running {
+        return Err(format!("container '{uuid}' is not live"));
+    }
+    if !entry.agents.contains(&agent) {
+        entry.agents.push(agent);
+    }
+    Ok(entry.clone())
+}
+
+pub fn remove_agent_from_container(
+    registry: &ContainerRegistry,
+    uuid: &str,
+    agent: &AgentUuid,
+) -> Result<ContainerEntry, String> {
+    let mut state = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let entry = state
+        .entries
+        .get_mut(uuid)
+        .ok_or_else(|| format!("unknown container '{uuid}'"))?;
+    entry.agents.retain(|a| a != agent);
+    Ok(entry.clone())
+}
+
 pub fn list_containers(registry: &ContainerRegistry) -> Vec<ContainerEntry> {
     let mut entries: Vec<_> = registry
         .lock()

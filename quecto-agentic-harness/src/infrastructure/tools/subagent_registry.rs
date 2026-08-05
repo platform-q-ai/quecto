@@ -136,6 +136,7 @@ pub struct SubagentEntry {
     pub container_script_name: Option<String>,
     pub container_kill_command: Option<String>,
     pub container_inspect_command: Option<String>,
+    pub container_inspect_once: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Last lifecycle event applied to this entry. This is internal observability
     /// for race-focused tests; parent-facing behavior continues to use `status`.
     #[cfg(test)]
@@ -218,6 +219,7 @@ impl SubagentEntry {
             container_script_name: None,
             container_kill_command: None,
             container_inspect_command: None,
+            container_inspect_once: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             #[cfg(test)]
             last_lifecycle_event: None,
         }
