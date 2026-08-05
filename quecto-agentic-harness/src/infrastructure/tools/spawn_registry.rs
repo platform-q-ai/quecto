@@ -10,7 +10,7 @@ pub fn register_and_broadcast(
     broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
     session_name: &str,
     entry: SubagentEntry,
-) {
+) -> Result<(), crate::domain::error::DomainError> {
     // Insert and serialize the survivor set in ONE critical section. Locking
     // twice (insert, then re-lock inside build_state_changed_event) leaves a gap
     // in which a concurrent reaper/cascade-removal could mutate or drop the
@@ -26,8 +26,11 @@ pub fn register_and_broadcast(
         })
     };
     if let (Some(tx), Some(event)) = (broadcast_tx, event) {
-        let _ = tx.send(event);
+        if let Err(e) = tx.send(event) {
+            tracing::debug!(error = %e, "register broadcast had no subscribers");
+        }
     }
+    Ok(())
 }
 
 /// Send SIGTERM to all tracked subagent processes and clear the registry.

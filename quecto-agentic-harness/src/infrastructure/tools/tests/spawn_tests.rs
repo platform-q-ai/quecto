@@ -255,7 +255,7 @@ fn register_and_broadcast_emits_immediate_state_changed() {
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
     let entry = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), 0);
-    super::register_and_broadcast(&registry, Some(&tx), "worker", entry);
+    super::register_and_broadcast(&registry, Some(&tx), "worker", entry).unwrap();
     assert!(
         registry
             .lock()
@@ -277,7 +277,7 @@ fn register_and_broadcast_emits_immediate_state_changed() {
 fn register_and_broadcast_without_channel_still_registers() {
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let entry = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), 0);
-    super::register_and_broadcast(&registry, None, "worker", entry);
+    super::register_and_broadcast(&registry, None, "worker", entry).unwrap();
     assert!(
         registry
             .lock()
@@ -368,7 +368,7 @@ fn initial_entry_taskless_broadcasts_idle_via_register() {
         cleanup_environment_id: None,
         cleanup_argv: Vec::new(),
     });
-    super::register_and_broadcast(&registry, Some(&tx), "idle-worker", entry);
+    super::register_and_broadcast(&registry, Some(&tx), "idle-worker", entry).unwrap();
     let line = rx
         .try_recv()
         .expect("#1049: registration must broadcast state_changed");

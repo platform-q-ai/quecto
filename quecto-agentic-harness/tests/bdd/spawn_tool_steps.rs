@@ -1167,23 +1167,11 @@ fn given_spawn_fails_during(world: &mut QuectoWorld, phase: String) {
     given_script_spawn(world, "default".to_string(), None, Some(phase.clone()));
     match phase.as_str() {
         "register" => {
-            // This deterministic test-support seam fails after create/readiness and
-            // before registry commit.
-            // SAFETY: BDD scenarios run in isolated processes.
-            unsafe {
-                std::env::set_var(
-                    "QUECTO_TEST_FAIL_SPAWN_REGISTER",
-                    "container-rollback-slice1",
-                )
-            };
+            if let Some(tool) = world.spawn_tool.take() {
+                world.spawn_tool = Some(tool.with_register_failure_for_test());
+            }
         }
-        "initial prompt" => {
-            let cfg_path = std::path::PathBuf::from(world.config_path.clone().unwrap());
-            let mut v: serde_json::Value =
-                serde_json::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
-            v["providers"]["openai"]["api_base"] = serde_json::json!("http://127.0.0.1:9");
-            std::fs::write(&cfg_path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
-        }
+        "initial prompt" => {}
         _ => {}
     }
 }

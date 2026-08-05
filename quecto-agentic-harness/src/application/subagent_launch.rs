@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -33,13 +34,13 @@ pub trait SubagentLaunchPorts {
         &'a mut self,
         identity: &'a LaunchIdentity,
         config: &'a SubagentConfig,
-    ) -> Result<Vec<String>, DomainError>;
+    ) -> Result<Vec<OsString>, DomainError>;
     fn resolve_binary(&mut self) -> Result<PathBuf, DomainError>;
     fn prepare_child<'a>(
         &'a mut self,
         config: &'a SubagentConfig,
         binary: &'a Path,
-        cli_args: &'a [String],
+        cli_args: &'a [OsString],
     ) -> LaunchFuture<'a, Result<Self::Prepared, DomainError>>;
     fn ready<'a>(
         &'a mut self,
@@ -49,7 +50,11 @@ pub trait SubagentLaunchPorts {
         &'a mut self,
         prepared: &'a mut Self::Prepared,
     ) -> LaunchFuture<'a, ()>;
-    fn cleanup_registered_once<'a>(&'a mut self, registry_key: &'a str) -> LaunchFuture<'a, ()>;
+    /// Atomically uncommit a registered launch: take/remove the registry record,
+    /// cancel its monitor/ownership, terminate the runtime if appropriate, and
+    /// run any claimed cleanup exactly once. This prevents prompt-failure races
+    /// with monitor-owned cleanup.
+    fn uncommit_registered<'a>(&'a mut self, registry_key: &'a str) -> LaunchFuture<'a, ()>;
     fn register_and_monitor<'a>(
         &'a mut self,
         identity: &'a LaunchIdentity,
@@ -124,9 +129,8 @@ where
                 .await
             {
                 self.ports
-                    .cleanup_registered_once(&registered.registry_key)
+                    .uncommit_registered(&registered.registry_key)
                     .await;
-                self.ports.unregister(&registered.registry_key);
                 return Err(e);
             }
         }

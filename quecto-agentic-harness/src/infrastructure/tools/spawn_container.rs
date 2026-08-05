@@ -16,6 +16,21 @@ pub(super) struct PreparedChild {
 }
 
 impl PreparedChild {
+    #[cfg(test)]
+    pub(super) fn new_for_test(
+        child: Option<tokio::process::Child>,
+        environment_ref: Option<String>,
+        socket_path: Option<std::path::PathBuf>,
+    ) -> Self {
+        Self {
+            child,
+            environment_ref,
+            socket_path,
+            cleanup_environment_id: None,
+            cleanup_argv: vec![],
+        }
+    }
+
     pub fn cleanup_plan(&self) -> (Option<String>, Vec<String>) {
         (
             self.cleanup_environment_id.clone(),
