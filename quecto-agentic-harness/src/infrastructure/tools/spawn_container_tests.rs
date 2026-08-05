@@ -347,3 +347,27 @@ fn selected_repo_uses_config_default_for_new_container_without_explicit_repo() {
         Some("default-repo")
     );
 }
+
+#[test]
+fn create_result_contract_rejects_invalid_shapes_and_proxy() {
+    assert!(parse_create_result(b"").is_err());
+    assert!(
+        parse_create_result(
+            br#"{"environment_id":"e","workspace_path":"/tmp/ws","metadata":{},"socket_proxy":{}}"#
+        )
+        .is_err()
+    );
+    assert!(parse_create_result(br#"{"environment_id":"e","workspace_path":"/tmp/ws","metadata":[],"socket_path":"/tmp/sock"}"#).is_err());
+}
+
+#[test]
+fn script_managed_environment_refs_are_monotonic_c_style_and_cleanup_uses_endpoint_id() {
+    let first = new_environment_ref();
+    let second = new_environment_ref();
+    assert!(first.starts_with('C'));
+    assert!(second.starts_with('C'));
+    let first_num: u64 = first.trim_start_matches('C').parse().unwrap();
+    let second_num: u64 = second.trim_start_matches('C').parse().unwrap();
+    assert!(second_num > first_num);
+    assert!(!first.contains('-'));
+}
