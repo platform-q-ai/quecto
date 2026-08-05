@@ -141,6 +141,20 @@ fn notification_fallbacks_cover_missing_agent_paths() {
     );
 }
 
+#[test]
+fn notification_helpers_use_registry_entry_when_present() {
+    let registry = super::super::subagent_registry::new_registry();
+    let mut entry = wave3_test_entry();
+    entry.display_name = "display".into();
+    entry.agent_uuid = crate::domain::ids::AgentUuid::new("uuid-123");
+    registry.lock().unwrap().insert("uuid-123".into(), entry);
+    assert_eq!(notification_display_label(&registry, "uuid-123"), "display");
+    assert_eq!(
+        notification_agent_uuid(&registry, "uuid-123").as_str(),
+        "uuid-123"
+    );
+}
+
 #[tokio::test]
 async fn notify_child_exited_claims_script_cleanup_once() {
     let registry = super::super::subagent_registry::new_registry();
