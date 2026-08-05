@@ -115,14 +115,17 @@ pub(super) async fn spawn_prepared_child(
         ContainerSelection::Local => spawn_local_child(binary, cli_args, base_dir),
         ContainerSelection::New {
             container_script, ..
-        } => spawn_script_managed_child(
-            config,
-            binary,
-            cli_args,
-            base_dir,
-            &load_container_config(config)?,
-            container_script,
-        ),
+        } => {
+            spawn_script_managed_child(
+                config,
+                binary,
+                cli_args,
+                base_dir,
+                &load_container_config(config)?,
+                container_script,
+            )
+            .await
+        }
     }
 }
 
@@ -161,7 +164,7 @@ fn load_container_config(config: &SubagentConfig) -> Result<Config, DomainError>
         .map_err(|e| DomainError::Tool(format!("invalid container_scripts configuration: {e}")))
 }
 
-fn spawn_script_managed_child(
+async fn spawn_script_managed_child(
     config: &SubagentConfig,
     binary: &Path,
     cli_args: &[std::ffi::OsString],
@@ -190,7 +193,16 @@ fn spawn_script_managed_child(
             output.status
         )));
     }
-    let result = parse_create_result(&output.stdout)?;
+    let result = match parse_create_result(&output.stdout) {
+        Ok(result) => result,
+        Err(e) => {
+            let mut cleanup_argv = script.cleanup.clone();
+            if let Ok(wire) = serde_json::from_slice::<CreateResultWire>(&output.stdout) {
+                run_cleanup_once(Some(wire.environment_id), &mut cleanup_argv).await;
+            }
+            return Err(e);
+        }
+    };
     Ok(PreparedChild {
         child: None,
         environment_ref: Some(new_environment_ref()),
@@ -205,6 +217,7 @@ struct CreateResultWire {
     environment_id: String,
     workspace_path: std::path::PathBuf,
     metadata: serde_json::Value,
+    #[serde(default)]
     socket_path: std::path::PathBuf,
     #[serde(default)]
     socket_proxy: Option<serde_json::Value>,

@@ -115,10 +115,9 @@ pub struct SubagentEntry {
     /// A supervision-critical stall alert retained after notification-channel
     /// saturation and retried on the next monitor event (#1076).
     pub pending_stall: Option<SequencedSubagentNotification>,
-    /// Whether this sub-agent was spawned read-only (`write` + `edit` disabled).
-    /// Surfaced through `get_subagents` so the TUI can mark it as an observer
-    /// (#966). Display flag only; enforcement is #957.
     pub read_only: bool,
+    pub cleanup_environment_id: Option<String>,
+    pub cleanup_argv: Vec<String>,
     /// Last lifecycle event applied to this entry. This is internal observability
     /// for race-focused tests; parent-facing behavior continues to use `status`.
     #[cfg(test)]
@@ -189,6 +188,8 @@ impl SubagentEntry {
             stalled_armed: true,
             pending_stall: None,
             read_only: false,
+            cleanup_environment_id: None,
+            cleanup_argv: Vec::new(),
             #[cfg(test)]
             last_lifecycle_event: None,
         }

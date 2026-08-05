@@ -787,7 +787,12 @@ for arg in "$@"; do
   prev="$arg"
 done
 if [ -z "$socket_path" ]; then socket_path="$PWD/script-managed.sock"; fi
-if [ "{}" = "fail" ]; then printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$PWD/missing.sock"; exit 0; fi
+case "{}" in
+  proxy) printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_proxy":{{"argv":["proxy"]}}}}' "$PWD"; exit 0 ;;
+  readiness) printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$PWD/missing.sock"; exit 0 ;;
+  register) printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$socket_path"; exit 0 ;;
+  "initial prompt") printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$PWD/not-a-socket-file"; exit 0 ;;
+esac
 "$@" >/dev/null 2>&1 &
 printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$socket_path"
 "#,
@@ -1056,19 +1061,72 @@ fn then_config_error(world: &mut QuectoWorld, err: String) {
 #[then("the script-managed runtime should not have been invoked")]
 fn then_runtime_not_invoked(world: &mut QuectoWorld) {
     assert!(world.spawn_result.as_ref().unwrap().is_error);
+    let inv = script_invocations(world);
+    assert!(
+        inv.iter().all(|v| v["kind"] != "create"),
+        "invocations: {inv:?}"
+    );
 }
 
 #[given(expr = "script-managed subagent spawning has {string} runtime configuration")]
-fn given_invalid_runtime_config(world: &mut QuectoWorld, _err: String) {
+fn given_invalid_runtime_config(world: &mut QuectoWorld, err: String) {
     given_live_spawn_agent_cmd_mock_child(world);
+    let cfg_path = std::path::PathBuf::from(world.config_path.clone().unwrap());
+    let cfg_dir = cfg_path.parent().unwrap().to_path_buf();
+    let log = cfg_dir.join("container-log.jsonl");
+    let create = cfg_dir.join("should-not-create.sh");
+    std::fs::write(
+        &create,
+        format!(
+            "#!/usr/bin/env bash\necho '{{\"kind\":\"create\"}}' >> '{}'\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut p = std::fs::metadata(&create).unwrap().permissions();
+        p.set_mode(0o700);
+        std::fs::set_permissions(&create, p).unwrap();
+    }
+    let mut v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
+    v["container_scripts"] = match err.as_str() {
+        "missing default" => {
+            serde_json::json!({"scripts":{"default":{"create":[create.to_string_lossy()],"cleanup":["true"]}}})
+        }
+        "default name not found" => {
+            serde_json::json!({"default":"missing","scripts":{"default":{"create":[create.to_string_lossy()],"cleanup":["true"]}}})
+        }
+        "missing create argv" => {
+            serde_json::json!({"default":"default","scripts":{"default":{"cleanup":["true"]}}})
+        }
+        "empty create argv" => {
+            serde_json::json!({"default":"default","scripts":{"default":{"create":[],"cleanup":["true"]}}})
+        }
+        "unsafe create argv" => {
+            serde_json::json!({"default":"default","scripts":{"default":{"create":["bad\u{0000}arg"],"cleanup":["true"]}}})
+        }
+        "unknown config field" => {
+            serde_json::json!({"default":"default","scripts":{"default":{"create":[create.to_string_lossy()],"cleanup":["true"],"surprise":true}}})
+        }
+        other => panic!("unknown config_error example: {other}"),
+    };
+    std::fs::write(&cfg_path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
 }
 #[given(expr = "script-managed subagent spawning returns a proxy endpoint")]
 fn given_proxy_endpoint(world: &mut QuectoWorld) {
-    given_script_spawn(world, "default".to_string(), None, Some("fail".to_string()));
+    given_script_spawn(
+        world,
+        "default".to_string(),
+        None,
+        Some("proxy".to_string()),
+    );
 }
 #[given(expr = "script-managed subagent spawning fails during {string}")]
-fn given_spawn_fails_during(world: &mut QuectoWorld, _phase: String) {
-    given_script_spawn(world, "default".to_string(), None, Some("fail".to_string()));
+fn given_spawn_fails_during(world: &mut QuectoWorld, phase: String) {
+    given_script_spawn(world, "default".to_string(), None, Some(phase));
 }
 #[then("the spawn result should fail because proxy endpoints are unsupported")]
 fn then_proxy_unsupported(world: &mut QuectoWorld) {

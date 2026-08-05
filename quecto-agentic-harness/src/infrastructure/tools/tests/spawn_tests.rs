@@ -322,6 +322,8 @@ fn initial_entry_taskless_is_idle() {
         parent_id: Some("parent".into()),
         config: &sample_config(None),
         exit_signal_tx: None,
+        cleanup_environment_id: None,
+        cleanup_argv: Vec::new(),
     });
     assert_eq!(entry.status, SubagentStatus::Idle);
     assert_eq!(entry.parent_id.as_deref(), Some("parent"));
@@ -339,6 +341,8 @@ fn initial_entry_with_task_stays_starting() {
         parent_id: None,
         config: &sample_config(Some("do work")),
         exit_signal_tx: None,
+        cleanup_environment_id: None,
+        cleanup_argv: Vec::new(),
     });
     assert_eq!(
         entry.status,
@@ -361,6 +365,8 @@ fn initial_entry_taskless_broadcasts_idle_via_register() {
         parent_id: None,
         config: &sample_config(None),
         exit_signal_tx: None,
+        cleanup_environment_id: None,
+        cleanup_argv: Vec::new(),
     });
     super::register_and_broadcast(&registry, Some(&tx), "idle-worker", entry);
     let line = rx

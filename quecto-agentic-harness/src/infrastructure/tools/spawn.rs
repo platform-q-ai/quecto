@@ -398,6 +398,8 @@ impl SpawnTool {
                 parent_id: self.parent_id.clone(),
                 config,
                 exit_signal_tx: Some(exit_tx.clone()),
+                cleanup_environment_id: cleanup_environment_ref.clone(),
+                cleanup_argv: cleanup_argv.clone(),
             });
             register_and_broadcast(
                 &self.registry,
@@ -664,6 +666,8 @@ impl Tool for SpawnTool {
                             parent_id: self.parent_id.clone(),
                             config: &config,
                             exit_signal_tx: None,
+                            cleanup_environment_id: None,
+                            cleanup_argv: Vec::new(),
                         });
                         register_and_broadcast(
                             &self.registry,

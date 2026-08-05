@@ -164,10 +164,6 @@ pub fn mark_exited(entry: &mut SubagentEntry) {
     entry.updated_at = Instant::now();
 }
 
-/// Spawn a background monitor task that connects to a child agent's UDS socket
-/// and reads the framed JSON event stream, updating the registry in real-time.
-/// When `notify_tx` is `Some`, sends [`SubagentNotification`]s on the child's
-/// completion/error/exit (#523). Returns an abortable `JoinHandle`.
 pub fn spawn_monitor_task(
     agent_id: String,
     socket_path: std::path::PathBuf,
@@ -189,11 +185,23 @@ pub fn spawn_monitor_task(
     })
 }
 
-fn notify_child_exited(
+async fn notify_child_exited(
     registry: &SubagentRegistry,
     agent_id: &str,
     notify_tx: Option<&NotificationTx>,
 ) {
+    let cleanup_plan = {
+        let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+        entries.get_mut(agent_id).and_then(|entry| {
+            entry
+                .cleanup_environment_id
+                .take()
+                .map(|env| (env, std::mem::take(&mut entry.cleanup_argv)))
+        })
+    };
+    if let Some((env, mut argv)) = cleanup_plan {
+        super::spawn_container::run_cleanup_once(Some(env), &mut argv).await;
+    }
     let sequence = update_entry_next_sequence(registry, agent_id, mark_exited);
     let label = notification_display_label(registry, agent_id);
     let agent_uuid = notification_agent_uuid(registry, agent_id);
@@ -207,9 +215,6 @@ fn notify_child_exited(
     );
 }
 
-/// User-facing label for completion notes: prefer the entry's display name so
-/// parents can `agent_cmd` with the same token they see in the note. Falls back
-/// to the registry key (UUID) when the entry is already gone (#1378).
 fn notification_display_label(registry: &SubagentRegistry, agent_id: &str) -> String {
     let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     entries
@@ -260,7 +265,7 @@ async fn monitor_loop(
                     SubagentLifecycleEvent::SocketConnectFailed,
                 );
             });
-            notify_child_exited(registry, agent_id, notify_tx);
+            notify_child_exited(registry, agent_id, notify_tx).await;
             return;
         }
     };
@@ -304,7 +309,7 @@ async fn monitor_loop(
             }
             MonitorRead::Skip => continue,
             MonitorRead::Closed => {
-                notify_child_exited(registry, agent_id, notify_tx);
+                notify_child_exited(registry, agent_id, notify_tx).await;
                 return;
             }
         }
@@ -433,13 +438,6 @@ fn handle_monitor_line(
     }
 }
 
-/// Whether a child event changed the registry fields mirrored by
-/// `subagent_state_changed` and should be pushed to TUI clients immediately
-/// instead of waiting for a later polling rebuild (#839). Gated to terminal
-/// transitions plus the FIRST running transition (`agent_start`, #866 — so a
-/// newly-running child stays visible during a long first turn) — NOT the
-/// high-frequency per-tool boundaries #839 removed (a running→idle transition is
-/// carried by the broadcast `agent_end`, so no stale "running" persists).
 pub fn should_broadcast_state_changed_after_event(value: &serde_json::Value) -> bool {
     match value.get("type").and_then(|v| v.as_str()) {
         Some("agent_start") => true,
