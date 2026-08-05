@@ -248,6 +248,7 @@ fn given_subagent_inheriting_sandbox(world: &mut QuectoWorld) {
     let sb = world.sandbox.as_ref().expect("sandbox not configured");
     // Create a subagent config that inherits the sandbox's restrict_to_workspace
     world.subagent_config = Some(SubagentConfig {
+        container: quecto::domain::subagent::ContainerSelection::Local,
         task: Some("test task".to_string()),
         agent_id: None,
         restrict_to_workspace: sb.restrict_to_workspace,

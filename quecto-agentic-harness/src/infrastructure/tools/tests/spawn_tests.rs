@@ -295,6 +295,7 @@ fn register_and_broadcast_without_channel_still_registers() {
 
 fn sample_config(task: Option<&str>) -> crate::domain::subagent::SubagentConfig {
     crate::domain::subagent::SubagentConfig {
+        container: crate::domain::subagent::ContainerSelection::Local,
         task: task.map(String::from),
         agent_id: Some("worker".into()),
         restrict_to_workspace: true,

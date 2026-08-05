@@ -19,6 +19,7 @@ mod registry_tool_ids;
 mod registry_uds;
 pub mod spawn;
 mod spawn_binary;
+mod spawn_container;
 mod spawn_entry;
 mod spawn_inherited_policy;
 mod spawn_launch_args;

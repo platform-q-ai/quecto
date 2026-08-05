@@ -25,6 +25,7 @@ fn test_validate_agent_id_rejected() {
 #[test]
 fn test_subagent_config_new_fields_default() {
     let cfg = SubagentConfig {
+        container: crate::domain::subagent::ContainerSelection::Local,
         task: None,
         agent_id: None,
         restrict_to_workspace: true,
@@ -46,6 +47,7 @@ fn test_subagent_config_new_fields_default() {
 #[test]
 fn test_subagent_config_with_config_path() {
     let cfg = SubagentConfig {
+        container: crate::domain::subagent::ContainerSelection::Local,
         task: None,
         agent_id: None,
         restrict_to_workspace: true,
@@ -65,6 +67,7 @@ fn test_subagent_config_with_config_path() {
 #[test]
 fn test_subagent_config_with_workflow() {
     let cfg = SubagentConfig {
+        container: crate::domain::subagent::ContainerSelection::Local,
         task: None,
         agent_id: None,
         restrict_to_workspace: true,

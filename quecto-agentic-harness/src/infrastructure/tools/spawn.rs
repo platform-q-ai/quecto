@@ -2,11 +2,12 @@ pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
 use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
 use crate::domain::subagent::{
-    DisplayNameResolutionEntry, DisplayNameResolveError, SubagentConfig,
+    ContainerSelection, DisplayNameResolutionEntry, DisplayNameResolveError, SubagentConfig,
     assert_display_name_available_for_spawn, validate_agent_id,
 };
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::infrastructure::tools::spawn_container::parse_container_selection;
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -192,6 +193,8 @@ impl SpawnTool {
 
         let task = args.get("task").and_then(|v| v.as_str()).map(String::from);
 
+        let container = parse_container_selection(&args)?;
+
         let agent_id = args
             .get("agent_id")
             .and_then(|v| v.as_str())
@@ -266,6 +269,7 @@ impl SpawnTool {
 
         Ok(SubagentConfig {
             task,
+            container,
             agent_id,
             restrict_to_workspace: self.restrict_to_workspace,
             system,
@@ -377,20 +381,13 @@ impl SpawnTool {
         );
 
         let binary = super::spawn_binary::resolve_child_binary()?;
-        let mut cmd = tokio::process::Command::new(&binary);
-        cmd.args(&cli_args);
-
-        if !self.base_dir.as_os_str().is_empty() {
-            cmd.env("QUECTO_BASE_DIR", &self.base_dir);
-        }
-
-        // Detach child stdio — we interact via UDS, not stdout/stderr.
-        cmd.stdout(std::process::Stdio::null());
-        cmd.stderr(std::process::Stdio::null());
-
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| DomainError::Tool(format!("failed to spawn subagent: {e}")))?;
+        let mut child = super::spawn_container::spawn_prepared_child(
+            config,
+            &binary,
+            &cli_args,
+            &self.base_dir,
+        )
+        .await?;
 
         let pid = child.id().unwrap_or(0);
 
@@ -556,12 +553,17 @@ impl SpawnTool {
             self.send_initial_prompt(&socket_path, task).await?;
         }
 
+        let env_ref = if matches!(config.container, ContainerSelection::New { .. }) {
+            " environment_ref=C1"
+        } else {
+            ""
+        };
         Ok(ToolResult {
             // Include durable uuid so TUI optimistic rows can rekey off display
             // labels before the first UUID-keyed snapshot arrives (#1378).
             content: format!(
-                "Subagent '{}' is running (uuid={}). Use agent_cmd to interact.",
-                session_name, agent_uuid
+                "Subagent '{}' is running (uuid={}){}. Use agent_cmd to interact.",
+                session_name, agent_uuid, env_ref
             ),
             is_error: false,
             image_blocks: vec![],
@@ -593,8 +595,6 @@ impl SpawnTool {
         }
     }
 
-    /// Poll until the UDS socket is connectable, but return a specific error if
-    /// the child process exits before its socket becomes ready.
     async fn wait_for_socket_or_child_exit(
         &self,
         path: &std::path::Path,

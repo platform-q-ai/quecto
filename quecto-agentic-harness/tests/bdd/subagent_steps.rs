@@ -17,6 +17,7 @@ fn bdd_child_session_key(agent_uuid: &AgentUuid) -> String {
 #[given(expr = "a subagent spawn request with task {string}")]
 fn given_subagent_spawn_request(world: &mut QuectoWorld, task: String) {
     world.subagent_config = Some(SubagentConfig {
+        container: quecto::domain::subagent::ContainerSelection::Local,
         task: Some(task),
         agent_id: None,
         restrict_to_workspace: false,
@@ -36,6 +37,7 @@ fn given_subagent_spawn_request(world: &mut QuectoWorld, task: String) {
 fn given_parent_config_restrict(world: &mut QuectoWorld, value: String) {
     let restrict = value == "true";
     world.subagent_config = Some(SubagentConfig {
+        container: quecto::domain::subagent::ContainerSelection::Local,
         task: Some("test task".to_string()),
         agent_id: None,
         restrict_to_workspace: restrict,

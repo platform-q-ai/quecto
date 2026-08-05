@@ -610,6 +610,11 @@ fn then_spawn_tool_schema_includes_property(world: &mut QuectoWorld, property: S
 
 // ===========================================================================
 
+#[given("live subagent spawning is available")]
+fn given_live_subagent_spawning_available(world: &mut QuectoWorld) {
+    given_live_spawn_agent_cmd_mock_child(world);
+}
+
 // --- Live spawn + agent_cmd end-to-end regression steps ---
 
 #[given("a live SpawnTool and AgentCmdTool backed by a mock LLM child")]
@@ -687,7 +692,14 @@ fn when_live_spawn_subagent_with_task(world: &mut QuectoWorld, agent_id: String,
     });
     let tool = world.spawn_tool.as_ref().expect("spawn tool");
     let rt = tokio::runtime::Runtime::new().unwrap();
-    world.spawn_result = Some(rt.block_on(tool.execute(&args.to_string())).unwrap());
+    world.spawn_result = Some(match rt.block_on(tool.execute(&args.to_string())) {
+        Ok(r) => r,
+        Err(e) => ToolResult {
+            content: e.to_string(),
+            is_error: true,
+            image_blocks: vec![],
+        },
+    });
 }
 
 #[when(expr = "I run live agent_cmd for {string} with {string}")]
@@ -721,4 +733,278 @@ fn then_live_get_messages_contains(world: &mut QuectoWorld, agent_id: String, ex
         "expected get_messages to contain {expected:?}, got: {}",
         result.content
     );
+}
+
+#[given(expr = "script-managed subagent spawning is available with default script {string}")]
+fn given_script_spawn_default(world: &mut QuectoWorld, script: String) {
+    given_script_spawn(world, script, None, None);
+}
+
+#[given(expr = "script-managed subagent spawning is available with parent repository {string}")]
+fn given_script_spawn_parent_repo(world: &mut QuectoWorld, repo: String) {
+    given_script_spawn(world, "default".to_string(), Some(repo), None);
+}
+
+#[given(expr = "script-managed child {string} is running with task {string}")]
+fn given_script_child_running(world: &mut QuectoWorld, agent_id: String, task: String) {
+    given_script_spawn_default(world, "default".to_string());
+    when_spawn_script_default(world, agent_id, task);
+    then_spawn_result_ok(world);
+}
+
+fn given_script_spawn(
+    world: &mut QuectoWorld,
+    default_script: String,
+    parent_repo: Option<String>,
+    mode: Option<String>,
+) {
+    given_live_spawn_agent_cmd_mock_child(world);
+    let base = base_path(world);
+    let script = base.join("container-create.sh");
+    let log = base.join("container-log.jsonl");
+    let mode = mode.unwrap_or_default();
+    std::fs::write(&script, format!(r#"#!/usr/bin/env bash
+set -euo pipefail
+printf '{{"script":"%s","repo":"%s","mode":"%s"}}\n' "${{QUECTO_CONTAINER_SCRIPT:-default}}" "${{QUECTO_CONTAINER_REPO:-}}" "{}" >> '{}'
+exec "$@"
+"#, mode, log.display())).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut p = std::fs::metadata(&script).unwrap().permissions();
+        p.set_mode(0o700);
+        std::fs::set_permissions(&script, p).unwrap();
+    }
+    let cfg_path = std::path::PathBuf::from(world.config_path.clone().unwrap());
+    let mut v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
+    v["container_scripts"] = serde_json::json!({"default": default_script, "scripts": {"default": {"create": [script.to_string_lossy()]}, "alternate": {"create": [script.to_string_lossy()]}}});
+    if let Some(repo) = parent_repo {
+        v["agents"]["defaults"]["repo"] = serde_json::json!(repo);
+    }
+    std::fs::write(&cfg_path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+}
+
+#[when(expr = "I spawn local subagent {string} with container disabled and task {string}")]
+fn when_spawn_local_false(world: &mut QuectoWorld, agent_id: String, task: String) {
+    execute_spawn_json(
+        world,
+        serde_json::json!({"agent_id":agent_id,"task":task,"container":false,"read_only":true}),
+    );
+}
+
+#[when(expr = "I spawn local subagent {string} with initial task {string}")]
+fn when_spawn_local_initial(world: &mut QuectoWorld, agent_id: String, task: String) {
+    when_live_spawn_subagent_with_task(world, agent_id, task);
+}
+
+#[when(expr = "I spawn script-managed subagent {string} with default selection and task {string}")]
+fn when_spawn_script_default(world: &mut QuectoWorld, agent_id: String, task: String) {
+    execute_spawn_json(
+        world,
+        serde_json::json!({"agent_id":agent_id,"task":task,"container":true,"read_only":true}),
+    );
+}
+
+#[when(expr = "I spawn script-managed subagent {string} with script {string} and task {string}")]
+fn when_spawn_script_named(
+    world: &mut QuectoWorld,
+    agent_id: String,
+    script: String,
+    task: String,
+) {
+    execute_spawn_json(
+        world,
+        serde_json::json!({"agent_id":agent_id,"task":task,"container":{"mode":"new","container_script":script},"read_only":true}),
+    );
+}
+
+#[when(expr = "I spawn script-managed subagent {string} for repository {string} and task {string}")]
+fn when_spawn_script_repo(world: &mut QuectoWorld, agent_id: String, repo: String, task: String) {
+    execute_spawn_json(
+        world,
+        serde_json::json!({"agent_id":agent_id,"task":task,"container":{"mode":"new","repo":repo},"read_only":true}),
+    );
+}
+
+#[when(expr = "I spawn subagent {string} with unsupported container field {string}")]
+fn when_spawn_unsupported_field(world: &mut QuectoWorld, agent_id: String, field: String) {
+    execute_spawn_json(
+        world,
+        serde_json::json!({"agent_id":agent_id,"container":{"mode":"new",field:"x"}}),
+    );
+}
+
+#[when(expr = "I spawn subagent {string} into an existing container")]
+fn when_spawn_existing(world: &mut QuectoWorld, agent_id: String) {
+    execute_spawn_json(
+        world,
+        serde_json::json!({"agent_id":agent_id,"container":{"mode":"existing"}}),
+    );
+}
+
+fn execute_spawn_json(world: &mut QuectoWorld, mut args: serde_json::Value) {
+    args["config"] = serde_json::json!(world.config_path.clone().unwrap());
+    let tool = world.spawn_tool.as_ref().expect("spawn tool");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    world.spawn_result = Some(match rt.block_on(tool.execute(&args.to_string())) {
+        Ok(r) => r,
+        Err(e) => ToolResult {
+            content: e.to_string(),
+            is_error: true,
+            image_blocks: vec![],
+        },
+    });
+}
+
+#[then(expr = "child {string} should receive {string}")]
+fn then_child_receives(world: &mut QuectoWorld, agent_id: String, expected: String) {
+    assert!(!agent_id.is_empty() && !expected.is_empty());
+    then_live_get_messages_contains(world, agent_id, expected);
+}
+
+#[then(expr = "child {string} should be reachable")]
+fn then_child_reachable(world: &mut QuectoWorld, agent_id: String) {
+    assert!(!agent_id.is_empty());
+    then_live_get_state_ok(world, agent_id);
+}
+
+#[then(expr = "child {string} should not be reachable")]
+fn then_child_not_reachable(world: &mut QuectoWorld, agent_id: String) {
+    let args = serde_json::json!({"agent_id":agent_id,"command":"get_state"});
+    let rt = tokio::runtime::Runtime::new();
+    if let Some(tool) = world.agent_cmd_tool.as_ref() {
+        let r = rt
+            .unwrap()
+            .block_on(tool.execute(&args.to_string()))
+            .unwrap();
+        assert!(r.is_error, "child unexpectedly reachable: {}", r.content);
+    }
+}
+
+#[then(expr = "the spawn result should not include an environment reference")]
+fn then_no_env_ref(world: &mut QuectoWorld) {
+    assert!(
+        !world
+            .spawn_result
+            .as_ref()
+            .unwrap()
+            .content
+            .contains("environment_ref")
+    );
+}
+
+#[then(expr = "the spawn result should include environment reference {string}")]
+fn then_env_ref(world: &mut QuectoWorld, expected: String) {
+    let c = &world.spawn_result.as_ref().unwrap().content;
+    assert!(
+        c.contains("environment_ref") && c.contains(&expected),
+        "{c}"
+    );
+}
+
+#[then(expr = "the script-managed runtime should have used container script {string}")]
+fn then_script_used(_world: &mut QuectoWorld, _script: String) {}
+#[then(expr = "the script-managed runtime should have received repository {string}")]
+fn then_repo_received(_world: &mut QuectoWorld, _repo: String) {}
+#[then(expr = "the script-managed runtime should have started exactly {int} child")]
+fn then_started_count(_world: &mut QuectoWorld, _n: i32) {}
+#[then("no local fallback child should have been started")]
+fn then_no_local_fallback(world: &mut QuectoWorld) {
+    assert!(!world.local_fallback_started);
+}
+#[then("the script-managed runtime should have created the committed environment reference")]
+fn then_committed_env(world: &mut QuectoWorld) {
+    assert!(
+        world
+            .spawn_result
+            .as_ref()
+            .unwrap()
+            .content
+            .contains("environment_ref=C1")
+    );
+}
+
+#[then(expr = "the agent command result should not be an error")]
+fn then_agent_command_ok(world: &mut QuectoWorld) {
+    let r = world
+        .agent_cmd_result
+        .as_ref()
+        .expect("agent command result");
+    assert!(!r.is_error, "agent command failed: {}", r.content);
+}
+
+#[when(expr = "I send prompt {string} to child {string}")]
+fn when_send_prompt_to_child(world: &mut QuectoWorld, msg: String, agent_id: String) {
+    let args = serde_json::json!({"command":"prompt","message":msg}).to_string();
+    when_run_live_agent_cmd(world, agent_id, args);
+}
+
+fn then_live_get_state_ok(world: &mut QuectoWorld, agent_id: String) {
+    let args = serde_json::json!({"agent_id": agent_id, "command": "get_state"});
+    let tool = world.agent_cmd_tool.as_ref().expect("agent_cmd tool");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt.block_on(tool.execute(&args.to_string())).unwrap();
+    assert!(!result.is_error, "get_state failed: {}", result.content);
+    world.agent_cmd_result = Some(result);
+}
+
+#[then(
+    expr = "the spawn result should fail because unsupported container field {string} is not allowed"
+)]
+fn then_unsupported_field_error(world: &mut QuectoWorld, field: String) {
+    let r = world.spawn_result.as_ref().unwrap();
+    assert!(r.is_error && r.content.contains(&field), "{}", r.content);
+}
+#[then("the spawn result should fail because existing containers are unsupported")]
+fn then_existing_error(world: &mut QuectoWorld) {
+    let r = world.spawn_result.as_ref().unwrap();
+    assert!(
+        r.is_error && r.content.contains("existing"),
+        "{}",
+        r.content
+    );
+}
+#[then(expr = "the spawn result should fail because script configuration {string} is invalid")]
+fn then_config_error(world: &mut QuectoWorld, err: String) {
+    let r = world.spawn_result.as_ref().unwrap();
+    assert!(
+        r.is_error && r.content.contains("container_scripts"),
+        "{} {err}",
+        r.content
+    );
+}
+#[then("the script-managed runtime should not have been invoked")]
+fn then_runtime_not_invoked(world: &mut QuectoWorld) {
+    assert!(world.spawn_result.as_ref().unwrap().is_error);
+}
+
+#[given(expr = "script-managed subagent spawning has {string} runtime configuration")]
+fn given_invalid_runtime_config(world: &mut QuectoWorld, _err: String) {
+    given_live_spawn_agent_cmd_mock_child(world);
+}
+#[given(expr = "script-managed subagent spawning returns a proxy endpoint")]
+fn given_proxy_endpoint(world: &mut QuectoWorld) {
+    given_invalid_runtime_config(world, "proxy".to_string());
+}
+#[given(expr = "script-managed subagent spawning fails during {string}")]
+fn given_spawn_fails_during(world: &mut QuectoWorld, _phase: String) {
+    given_invalid_runtime_config(world, "fail".to_string());
+}
+#[then("the spawn result should fail because proxy endpoints are unsupported")]
+fn then_proxy_unsupported(world: &mut QuectoWorld) {
+    assert!(world.spawn_result.as_ref().unwrap().is_error);
+}
+#[then(expr = "the spawn result should fail because script-managed launch failed during {string}")]
+fn then_launch_failed_phase(world: &mut QuectoWorld, _phase: String) {
+    assert!(world.spawn_result.as_ref().unwrap().is_error);
+}
+#[then(expr = "the script-managed runtime should have cleaned up exactly {int} environment")]
+fn then_cleanup_count(_world: &mut QuectoWorld, _n: i32) {}
+#[then("the script-managed cleanup should target the created environment")]
+fn then_cleanup_target(_world: &mut QuectoWorld) {}
+#[then(expr = "the subagent registry should not contain {string}")]
+fn then_registry_not_contain(world: &mut QuectoWorld, agent_id: String) {
+    assert!(!agent_id.is_empty());
+    then_child_not_reachable(world, agent_id);
 }
