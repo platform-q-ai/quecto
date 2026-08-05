@@ -179,13 +179,9 @@ async fn spawn_script_managed_child(
     set_script_env(&mut cmd, config, cfg, script_name, "");
     apply_common_child_env(&mut cmd, base_dir);
     cmd.stdout(std::process::Stdio::piped());
-    let output = std::process::Command::new(&script.create[0])
-        .args(&script.create[1..])
-        .arg("--")
-        .arg(binary)
-        .args(cli_args)
-        .envs(create_env(config, cfg, script_name))
+    let output = cmd
         .output()
+        .await
         .map_err(|e| DomainError::Tool(format!("failed to invoke script-managed create: {e}")))?;
     if !output.status.success() {
         return Err(DomainError::Tool(format!(
@@ -255,17 +251,6 @@ fn parse_create_result(stdout: &[u8]) -> Result<CreateResult, DomainError> {
         environment_id: wire.environment_id,
         socket_path: wire.socket_path,
     })
-}
-
-fn create_env(config: &SubagentConfig, cfg: &Config, script_name: &str) -> Vec<(String, String)> {
-    let mut env = vec![(
-        "QUECTO_CONTAINER_SCRIPT".to_string(),
-        script_name.to_string(),
-    )];
-    if let Some(repo) = selected_repo(config, cfg) {
-        env.push(("QUECTO_CONTAINER_REPO".to_string(), repo));
-    }
-    env
 }
 
 fn script_name<'a>(selected: &'a Option<String>, cfg: &'a Config) -> Result<&'a str, DomainError> {

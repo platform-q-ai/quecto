@@ -190,18 +190,7 @@ async fn notify_child_exited(
     agent_id: &str,
     notify_tx: Option<&NotificationTx>,
 ) {
-    let cleanup_plan = {
-        let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-        entries.get_mut(agent_id).and_then(|entry| {
-            entry
-                .cleanup_environment_id
-                .take()
-                .map(|env| (env, std::mem::take(&mut entry.cleanup_argv)))
-        })
-    };
-    if let Some((env, mut argv)) = cleanup_plan {
-        super::spawn_container::run_cleanup_once(Some(env), &mut argv).await;
-    }
+    super::subagent_cleanup::cleanup_registered_once(registry, agent_id).await;
     let sequence = update_entry_next_sequence(registry, agent_id, mark_exited);
     let label = notification_display_label(registry, agent_id);
     let agent_uuid = notification_agent_uuid(registry, agent_id);

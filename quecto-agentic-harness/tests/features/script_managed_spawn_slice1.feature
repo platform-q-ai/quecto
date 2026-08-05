@@ -101,6 +101,7 @@ Feature: Script-managed subagent spawning
     And the script-managed runtime should have started exactly 1 child
     And the spawn result should include an environment reference
     And no local fallback child should have been started
+    And the script-managed runtime should have received the configured base directory
     And child "container-once-slice1" should be reachable
 
   @done @container-spawn

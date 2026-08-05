@@ -381,9 +381,16 @@ impl SpawnTool {
         }
 
         let environment_ref = prepared_child.environment_ref.clone();
-        let (cleanup_environment_ref, mut cleanup_argv) = prepared_child.cleanup_plan();
-        let reaper_cleanup_environment_ref = cleanup_environment_ref.clone();
-        let mut reaper_cleanup_argv = cleanup_argv.clone();
+        let (cleanup_environment_ref, cleanup_argv) = prepared_child.cleanup_plan();
+
+        #[cfg(feature = "test-support")]
+        if std::env::var("QUECTO_TEST_FAIL_SPAWN_REGISTER").as_deref() == Ok(session_name) {
+            prepared_child.rollback_once().await;
+            return Err(DomainError::Tool(
+                "script-managed launch failed during register".into(),
+            ));
+        }
+
         let mut child = prepared_child.child;
 
         // `mpsc` or `oneshot` without updating the subscribe pattern.
@@ -466,11 +473,8 @@ impl SpawnTool {
 
                 let _ = reaper_exit_tx.send(Some(exit_signal));
 
-                super::spawn_container::run_cleanup_once(
-                    reaper_cleanup_environment_ref,
-                    &mut reaper_cleanup_argv,
-                )
-                .await;
+                super::subagent_cleanup::cleanup_registered_once(&reaper_registry, &reaper_name)
+                    .await;
 
                 let crate::infrastructure::tools::subagent_cascade::CascadeOutcome { removed, event } =
                 crate::infrastructure::tools::subagent_cascade::cascade_remove_and_state_changed(
@@ -510,11 +514,8 @@ impl SpawnTool {
 
         if let Some(ref task) = config.task {
             if let Err(e) = self.send_initial_prompt(&actual_socket_path, task).await {
-                super::spawn_container::run_cleanup_once(
-                    cleanup_environment_ref,
-                    &mut cleanup_argv,
-                )
-                .await;
+                super::subagent_cleanup::cleanup_registered_once(&self.registry, &registry_key)
+                    .await;
                 {
                     let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
                     entries.remove(&registry_key);

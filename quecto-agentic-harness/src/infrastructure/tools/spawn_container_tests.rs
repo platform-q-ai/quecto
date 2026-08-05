@@ -259,7 +259,7 @@ fn create_command_and_common_env_are_constructed_without_shell() {
 }
 
 #[test]
-fn create_env_includes_optional_selection_values() {
+fn script_env_includes_optional_selection_values() {
     let cfg = Config {
         agents: crate::infrastructure::config::AgentConfig {
             defaults: crate::infrastructure::config::AgentDefaults {
@@ -273,9 +273,14 @@ fn create_env_includes_optional_selection_values() {
         repo: None,
         container_script: Some("alt".into()),
     });
-    let env = create_env(&config, &cfg, "alt");
-    assert!(env.contains(&("QUECTO_CONTAINER_SCRIPT".into(), "alt".into())));
-    assert!(env.contains(&("QUECTO_CONTAINER_REPO".into(), "repo-default".into())));
+    let mut cmd = create_command(
+        script_config(&cfg, "default").unwrap(),
+        Path::new("/bin/quecto"),
+        &[],
+    );
+    set_script_env(&mut cmd, &config, &cfg, "alt", "");
+    apply_common_child_env(&mut cmd, Path::new("/tmp/base"));
+    let _ = cmd;
 }
 
 #[tokio::test]

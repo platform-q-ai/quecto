@@ -775,7 +775,7 @@ fn given_script_spawn(
         r#"#!/usr/bin/env bash
 set -euo pipefail
 env_ref="env-bdd"
-echo "{{\"kind\":\"create\",\"script\":\"${{QUECTO_CONTAINER_SCRIPT:-default}}\",\"repo\":\"${{QUECTO_CONTAINER_REPO:-}}\",\"mode\":\"{}\",\"env_ref\":\"$env_ref\"}}" >> '{}'
+echo "{{\"kind\":\"create\",\"script\":\"${{QUECTO_CONTAINER_SCRIPT:-default}}\",\"repo\":\"${{QUECTO_CONTAINER_REPO:-}}\",\"base_dir\":\"${{QUECTO_BASE_DIR:-}}\",\"mode\":\"{}\",\"env_ref\":\"$env_ref\"}}" >> '{}'
 socket_path=""
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "--" ]; then shift; break; fi
@@ -790,8 +790,19 @@ if [ -z "$socket_path" ]; then socket_path="$PWD/script-managed.sock"; fi
 case "{}" in
   proxy) printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_proxy":{{"argv":["proxy"]}}}}' "$PWD"; exit 0 ;;
   readiness) printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$PWD/missing.sock"; exit 0 ;;
-  register) printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$socket_path"; exit 0 ;;
-  "initial prompt") printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$PWD/not-a-socket-file"; exit 0 ;;
+  register) "$@" >/dev/null 2>&1 & printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$socket_path"; exit 0 ;;
+  "initial prompt") python3 - "$socket_path" <<'PY' >/dev/null 2>&1 &
+import os, socket, sys, time
+path=sys.argv[1]
+try: os.unlink(path)
+except FileNotFoundError: pass
+s=socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); s.bind(path); s.listen(8)
+# readiness probe connects first; initial prompt connects second and gets EOF/reset
+for _ in range(2):
+    c,_=s.accept(); c.close()
+time.sleep(2)
+PY
+printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$socket_path"; exit 0 ;;
 esac
 "$@" >/dev/null 2>&1 &
 printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$socket_path"
@@ -987,6 +998,16 @@ fn then_repo_received(world: &mut QuectoWorld, repo: String) {
         "invocations: {inv:?}"
     );
 }
+#[then("the script-managed runtime should have received the configured base directory")]
+fn then_base_dir_received(world: &mut QuectoWorld) {
+    let inv = script_invocations(world);
+    let base = base_path(world).to_string_lossy().to_string();
+    assert!(
+        inv.iter()
+            .any(|v| v["kind"] == "create" && v["base_dir"] == base),
+        "invocations: {inv:?}, expected base {base}"
+    );
+}
 #[then(expr = "the script-managed runtime should have started exactly {int} child")]
 fn then_started_count(world: &mut QuectoWorld, n: i32) {
     let inv = script_invocations(world);
@@ -1126,7 +1147,28 @@ fn given_proxy_endpoint(world: &mut QuectoWorld) {
 }
 #[given(expr = "script-managed subagent spawning fails during {string}")]
 fn given_spawn_fails_during(world: &mut QuectoWorld, phase: String) {
-    given_script_spawn(world, "default".to_string(), None, Some(phase));
+    given_script_spawn(world, "default".to_string(), None, Some(phase.clone()));
+    match phase.as_str() {
+        "register" => {
+            // This deterministic test-support seam fails after create/readiness and
+            // before registry commit.
+            // SAFETY: BDD scenarios run in isolated processes.
+            unsafe {
+                std::env::set_var(
+                    "QUECTO_TEST_FAIL_SPAWN_REGISTER",
+                    "container-rollback-slice1",
+                )
+            };
+        }
+        "initial prompt" => {
+            let cfg_path = std::path::PathBuf::from(world.config_path.clone().unwrap());
+            let mut v: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
+            v["providers"]["openai"]["api_base"] = serde_json::json!("http://127.0.0.1:9");
+            std::fs::write(&cfg_path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+        }
+        _ => {}
+    }
 }
 #[then("the spawn result should fail because proxy endpoints are unsupported")]
 fn then_proxy_unsupported(world: &mut QuectoWorld) {
