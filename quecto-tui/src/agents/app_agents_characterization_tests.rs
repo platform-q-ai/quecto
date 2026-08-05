@@ -28,6 +28,7 @@ fn subagent(id: &str, status: &str) -> crate::protocol::client::SubagentInfoEven
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     }
 }
 

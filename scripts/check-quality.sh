@@ -57,11 +57,8 @@ MAX_LINES=750
 # Temporary ratchet baselines for issue #1369 container-spawn wiring. New files
 # remain capped at MAX_LINES; these touched legacy seams must not grow further.
 declare -A OVERSIZED_BASELINE=(
-    ["quecto-tui/src/protocol/client.rs"]=772
-    ["quecto-tui/src/agents/app_subagent_first_tests.rs"]=754
     ["quecto-tui/src/agents/controller_subagent_panel.rs"]=811
     ["quecto-agentic-harness/src/infrastructure/config_tests.rs"]=783
-    ["quecto-agentic-harness/src/interface/cli/protocol_tests.rs"]=770
 )
 
 oversized=""

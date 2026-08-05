@@ -1,4 +1,7 @@
 pub mod agent;
+pub mod agent_launch_backend;
+#[cfg(test)]
+mod agent_launch_backend_tests;
 pub mod audit;
 pub mod constants;
 pub mod container_runtime;

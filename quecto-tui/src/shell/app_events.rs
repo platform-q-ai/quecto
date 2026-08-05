@@ -319,6 +319,7 @@ impl App {
             environment_id: None,
             workspace_path: None,
             environment_health: None,
+            socket_mode: None,
         });
         // Mark this as an unconfirmed local guess: the kernel has not registered
         // the child yet, so a snapshot taken in that window must not evict it

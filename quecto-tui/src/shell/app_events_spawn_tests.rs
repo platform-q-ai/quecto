@@ -151,6 +151,7 @@ async fn optimistic_display_row_reconciles_to_uuid_snapshot_without_dual_rows() 
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     }]);
 
     assert!(
@@ -326,6 +327,7 @@ async fn snapshot_uuid_migrate_moves_sessions_feeds_and_session_order() {
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     }]);
 
     assert!(!app.subagents.sessions.contains_key("worker-1"));

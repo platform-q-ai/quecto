@@ -46,19 +46,10 @@ async fn parent_asks_spawn_tool_for_new_container(
 #[then("SpawnTool rejects the container request without falling back to local launch")]
 fn spawn_tool_rejects_container_request_without_local_fallback(world: &mut QuectoWorld) {
     let result = world.tool_result.as_ref().expect("spawn tool executed");
-    let tool_result = result
+    let error = result
         .as_ref()
-        .expect("container spawn should reach launch seam");
-    assert!(
-        tool_result.is_error,
-        "container spawn without script-runtime wiring must fail closed rather than fall back locally: {}",
-        tool_result.content
-    );
-    assert!(
-        tool_result
-            .content
-            .contains("refusing to fall back to local spawn")
-    );
+        .expect_err("container spawn without runtime wiring must return an execution error");
+    assert!(error.contains("refusing to fall back to local spawn"));
 }
 
 #[given(expr = "container scripts define default {string} and script {string}")]
@@ -124,7 +115,7 @@ fn container_launch_backend_configured(world: &mut QuectoWorld, script: String) 
 
 #[when(expr = "the parent launches agent {string} in a new container through the backend")]
 fn parent_launches_new_container_through_backend(world: &mut QuectoWorld, agent_id: String) {
-    use quecto::application::agent_launch_backend::{
+    use quecto::domain::agent_launch_backend::{
         AgentLaunchBackend, ScriptManagedContainerLaunchBackend,
     };
     let backend = ScriptManagedContainerLaunchBackend::default();
@@ -171,7 +162,7 @@ fn new_container_launch_request_omits_repo(world: &mut QuectoWorld) {
         repo: None,
         container_script: Some("quecto-dev".into()),
     };
-    use quecto::application::agent_launch_backend::{
+    use quecto::domain::agent_launch_backend::{
         AgentLaunchBackend, ScriptManagedContainerLaunchBackend,
     };
     assert!(
@@ -188,7 +179,7 @@ fn new_container_launch_request_specifies_repo(world: &mut QuectoWorld, repo: St
         repo: Some(repo.clone()),
         container_script: Some("quecto-dev".into()),
     };
-    use quecto::application::agent_launch_backend::{
+    use quecto::domain::agent_launch_backend::{
         AgentLaunchBackend, ScriptManagedContainerLaunchBackend,
     };
     assert!(

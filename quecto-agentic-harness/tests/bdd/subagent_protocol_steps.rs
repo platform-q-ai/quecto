@@ -337,6 +337,7 @@ fn given_subagent_info(
         repo_url: None,
         environment_id: None,
         environment_health: None,
+        socket_mode: None,
         workspace_path: None,
     });
 }
@@ -441,6 +442,7 @@ fn given_state_changed_event(world: &mut QuectoWorld, count: usize) {
             repo_url: None,
             environment_id: None,
             environment_health: None,
+            socket_mode: None,
             workspace_path: None,
         })
         .collect();
@@ -474,6 +476,7 @@ fn given_state_changed_one(
             repo_url: None,
             environment_id: None,
             environment_health: None,
+            socket_mode: None,
             workspace_path: None,
         }],
     });
@@ -508,6 +511,7 @@ fn given_state_changed_observer_and_readwrite(
                 repo_url: None,
                 environment_id: None,
                 environment_health: None,
+                socket_mode: None,
                 workspace_path: None,
             },
             SubagentInfo {
@@ -529,6 +533,7 @@ fn given_state_changed_observer_and_readwrite(
                 repo_url: None,
                 environment_id: None,
                 environment_health: None,
+                socket_mode: None,
                 workspace_path: None,
             },
         ],

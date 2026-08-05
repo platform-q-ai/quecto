@@ -331,6 +331,7 @@ async fn forwarded_child_workflow_state_does_not_clobber_parent_bar() {
             environment_id: None,
             workspace_path: None,
             environment_health: None,
+            socket_mode: None,
         }],
     });
     // A workflow_state forwarded up from the child (agent_id = "child", a
@@ -445,6 +446,7 @@ async fn handles_subagent_workflow_and_error_events() {
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     };
     app.handle_event(Event::SubagentStateChanged {
         subagents: vec![info.clone()],

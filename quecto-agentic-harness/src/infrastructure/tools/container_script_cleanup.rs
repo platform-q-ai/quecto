@@ -145,3 +145,49 @@ pub(super) fn invoke_container_inspect_script(entry: &SubagentEntry) {
     populate_env(&mut cmd, entry);
     let _ = cmd.output();
 }
+
+pub(crate) fn apply_container_inspect(
+    registry: &super::subagent_registry::SubagentRegistry,
+    agent_id: &str,
+) {
+    let entry = {
+        let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+        entries.get(agent_id).cloned()
+    };
+    let Some(entry) = entry else { return };
+    let Some(command) = entry.container_inspect_command.as_deref() else {
+        return;
+    };
+    let Ok(mut cmd) = command_from_config(command) else {
+        return;
+    };
+    populate_env(&mut cmd, &entry);
+    let Ok(output) = cmd.output() else { return };
+    if !output.status.success() {
+        return;
+    }
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
+        return;
+    };
+    let status = value
+        .get("status")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let health = value
+        .get("health")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let workspace = value
+        .get("workspace_path")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(current) = entries.get_mut(agent_id) {
+        if let Some(s) = status.or(health) {
+            current.environment_health = Some(s);
+        }
+        if let Some(w) = workspace {
+            current.workspace_path = Some(w);
+        }
+    }
+}

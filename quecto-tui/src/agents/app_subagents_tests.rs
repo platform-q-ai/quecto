@@ -32,6 +32,7 @@ pub(super) fn info(id: &str, status: &str) -> crate::protocol::client::SubagentI
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     }
 }
 
@@ -66,6 +67,7 @@ fn info_with_workflow(
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     }
 }
 

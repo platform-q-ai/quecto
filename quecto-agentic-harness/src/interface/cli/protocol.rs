@@ -239,6 +239,8 @@ pub struct SubagentInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment_health: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub socket_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_path: Option<String>,
 }
 
@@ -329,6 +331,7 @@ pub fn build_subagent_info_list(
                     repo_url: entry.repo_url.clone(),
                     environment_id: entry.environment_id.clone(),
                     environment_health: entry.environment_health.clone(),
+                    socket_mode: entry.socket_mode.clone(),
                     workspace_path: entry.workspace_path.clone(),
                 }
             })

@@ -103,6 +103,7 @@ pub fn subagent_with_socket(
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     }
 }
 

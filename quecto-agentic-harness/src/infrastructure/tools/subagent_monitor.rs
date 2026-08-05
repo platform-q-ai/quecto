@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use super::subagent_lifecycle::{SubagentLifecycleEvent, apply_lifecycle_event};
 pub use super::subagent_monitor_merge::{
     forward_child_state_changed, merge_and_forward_state_changed,
@@ -16,11 +14,9 @@ pub use super::subagent_registry::SubagentStatus;
 use super::subagent_registry::{
     NotificationTx, SubagentEntry, SubagentNotification, SubagentRegistry,
 };
-
+use std::time::Instant;
 const MAX_EVENT_PAYLOAD_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
-
 const MAX_STORED_STRING: usize = 256;
-
 const STATE_CHANGING_EVENTS: &[&str] = &[
     "\"type\":\"agent_start\"",
     "\"type\":\"agent_end\"",
@@ -30,7 +26,6 @@ const STATE_CHANGING_EVENTS: &[&str] = &[
     "\"type\":\"workflow_idle\"",
     "\"command\":\"agent_error\"",
 ];
-
 /// (via `mark_exited`).
 pub fn apply_event(entry: &mut SubagentEntry, line: &str) {
     if !STATE_CHANGING_EVENTS.iter().any(|pat| line.contains(pat)) {
@@ -304,6 +299,9 @@ async fn monitor_loop(
             }
             MonitorRead::Skip => continue,
             MonitorRead::Closed => {
+                crate::infrastructure::tools::container_script_cleanup::apply_container_inspect(
+                    registry, agent_id,
+                );
                 notify_child_exited(registry, agent_id, notify_tx);
                 return;
             }

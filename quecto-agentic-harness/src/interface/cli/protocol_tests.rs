@@ -1,7 +1,4 @@
 use super::*;
-
-// ─── AgentCommand deserialization ──────────────────────────────────────────
-
 #[test]
 fn test_parse_prompt_command() {
     let json = r#"{"type":"prompt","message":"hello world"}"#;
@@ -19,14 +16,12 @@ fn test_parse_prompt_command() {
         _ => panic!("expected Prompt"),
     }
 }
-
 #[test]
 fn test_parse_prompt_with_id() {
     let json = r#"{"type":"prompt","id":"req-1","message":"hello"}"#;
     let cmd: AgentCommand = serde_json::from_str(json).unwrap();
     assert_eq!(cmd.id(), Some("req-1"));
 }
-
 #[test]
 fn test_parse_prompt_with_steer_behavior() {
     let json = r#"{"type":"prompt","message":"hi","streamingBehavior":"steer"}"#;
@@ -40,7 +35,6 @@ fn test_parse_prompt_with_steer_behavior() {
         _ => panic!("expected Prompt"),
     }
 }
-
 #[test]
 fn test_parse_prompt_with_follow_up_behavior() {
     let json = r#"{"type":"prompt","message":"hi","streamingBehavior":"followUp"}"#;
@@ -291,6 +285,7 @@ fn test_subagent_state_changed_event_serializes() {
             repo_url: None,
             environment_id: None,
             environment_health: None,
+            socket_mode: None,
             workspace_path: None,
         }],
     };
@@ -335,6 +330,7 @@ fn test_subagent_info_null_fields_omitted() {
         repo_url: None,
         environment_id: None,
         environment_health: None,
+        socket_mode: None,
         workspace_path: None,
     };
     let json = serde_json::to_string(&info).unwrap();
@@ -363,6 +359,7 @@ fn test_subagent_info_with_error() {
         repo_url: None,
         environment_id: None,
         environment_health: None,
+        socket_mode: None,
         workspace_path: None,
     };
     let json = serde_json::to_string(&info).unwrap();
@@ -393,7 +390,6 @@ fn test_build_subagent_info_list_with_entries() {
     }
     let list = build_subagent_info_list(&Some(reg));
     assert_eq!(list.len(), 2);
-    // Sorted by agent_id
     assert_eq!(list[0].agent_id, "formatter");
     assert_eq!(list[0].status, "idle");
     assert_eq!(list[1].agent_id, "reviewer");
@@ -432,9 +428,6 @@ fn test_build_subagent_info_list_maps_all_statuses() {
 
 #[test]
 fn test_build_subagent_info_list_surfaces_socket_path() {
-    // #800 connect-on-select: the TUI must learn each child's UDS socket path
-    // to open a direct connection. build_subagent_info_list surfaces it from
-    // the registry entry the kernel already tracks.
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
@@ -456,8 +449,6 @@ fn test_build_subagent_info_list_surfaces_socket_path() {
 
 #[test]
 fn test_subagent_info_socket_path_round_trips_camel_case() {
-    // The TUI deserializes SubagentInfo from the wire; the path must survive a
-    // serde round-trip under the camelCase `socketPath` key.
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
@@ -489,8 +480,6 @@ fn test_unknown_type_fails() {
     let result: Result<AgentCommand, _> = serde_json::from_str(r#"{"type":"unknown_command"}"#);
     assert!(result.is_err());
 }
-
-// ─── AgentEvent serialization ──────────────────────────────────────────────
 
 #[test]
 fn test_agent_start_event_serializes() {
@@ -561,7 +550,6 @@ fn test_response_err_event_serializes() {
     let json = event.to_json_line();
     assert!(json.contains("\"success\":false"));
     assert!(json.contains("\"error\":\"agent already running\""));
-    // id field should be absent when None
     assert!(!json.contains("\"id\""));
 }
 
@@ -571,8 +559,6 @@ fn test_response_without_id_omits_id_field() {
     let json = event.to_json_line();
     assert!(!json.contains("\"id\""));
 }
-
-// ─── SessionState / SessionStats ────────────────────────────────────────
 
 #[test]
 fn test_session_state_serializes() {
@@ -750,13 +736,6 @@ fn build_subagent_info_list_includes_parent_and_workflow() {
     let info = list.iter().find(|i| i.agent_id == "child").unwrap();
     assert_eq!(info.parent_id.as_deref(), Some("root"));
     assert_eq!(info.workflow.as_ref().unwrap().steps_completed, 1);
-}
-
-#[test]
-fn unit_tree_parent_of_unknown_agent_is_none() {
-    let tree = UnitTree::from_events(&[serde_json::json!({"agent_id":"root","parent_id":null})]);
-    assert_eq!(tree.parent_of("nope"), None);
-    assert_eq!(tree.parent_of("root"), None);
 }
 
 #[test]

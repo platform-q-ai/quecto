@@ -1,22 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Emits a machine-readable JSON result describing environment_id, workspace_path, container_ref, status/metadata.
+# JSON result: stdout emits exactly one machine-readable JSON object for Quecto.
 
 env_id="${QUECTO_ENVIRONMENT_UUID:-${QUECTO_CONTAINER_UUID:-${1:-}}}"
 root="${QUECTO_CONTAINER_ROOT:-${TMPDIR:-/tmp}/quecto-containers}"
 workspace="${QUECTO_WORKSPACE_PATH:-$root/$env_id/workspace}"
+case "$env_id" in ""|*/*|*..*|*$'\n'*|*$'\r'*) echo "unsafe environment id" >&2; exit 64 ;; esac
+python3 - "$root" "$workspace" <<'PY'
+import pathlib, sys
+root=pathlib.Path(sys.argv[1]).resolve(); ws=pathlib.Path(sys.argv[2])
+ws = ws.resolve() if ws.exists() else ws.absolute()
+if root != ws and root not in ws.parents:
+    raise SystemExit(f"refusing to clean workspace outside managed root: {ws}")
+PY
 root_real="$(mkdir -p "$root" && cd "$root" && pwd -P)"
-case "$env_id" in
-  ""|*/*|*..*|*$'\n'*|*$'\r'*) echo "unsafe environment id" >&2; exit 64 ;;
-esac
-workspace_parent="$(dirname "$workspace")"
-mkdir -p "$workspace_parent"
-parent_real="$(cd "$workspace_parent" && pwd -P)"
-workspace_real="$parent_real/$(basename "$workspace")"
-case "$workspace_real" in
-  "$root_real"/*/workspace) ;;
-  *) echo "refusing to clean workspace outside managed root" >&2; exit 64 ;;
-esac
 pid_file="$root_real/$env_id/child.pid"
 if [[ -f "$pid_file" ]]; then
   pid="$(cat "$pid_file")"
@@ -24,4 +21,8 @@ if [[ -f "$pid_file" ]]; then
   rm -f -- "$pid_file"
 fi
 rm -rf -- "$root_real/$env_id"
-printf '{"environment_id":"%s","status":"stopped","workspace_path":"%s","container_ref":"%s","metadata":{"runtime":"docker-reference","cleaned":true}}\n' "$env_id" "$workspace" "${QUECTO_CONTAINER_REF:-$env_id}"
+export env_id workspace
+python3 - <<'PY'
+import json, os
+print(json.dumps({"environment_id":os.environ["env_id"],"status":"stopped","workspace_path":os.environ["workspace"],"container_ref":os.environ.get("QUECTO_CONTAINER_REF",os.environ["env_id"]),"metadata":{"runtime":"host-local-reference","cleaned":True}}))
+PY

@@ -23,6 +23,7 @@ fn make_tracked(id: &str, status: &str) -> (String, super::TrackedSubagent) {
             environment_id: None,
             workspace_path: None,
             environment_health: None,
+            socket_mode: None,
         }),
     )
 }
@@ -149,6 +150,7 @@ fn tracked_subagent_new_sets_exited_at_for_exited() {
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     });
     assert!(entry.exited_at.is_some());
 }
@@ -175,6 +177,7 @@ fn tracked_subagent_new_no_exited_at_for_running() {
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     });
     assert!(entry.exited_at.is_none());
 }
@@ -201,6 +204,7 @@ fn tracked_subagent_update_sets_exited_at_on_transition() {
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     });
     assert!(entry.exited_at.is_none());
 
@@ -224,6 +228,7 @@ fn tracked_subagent_update_sets_exited_at_on_transition() {
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     });
     assert!(entry.exited_at.is_some());
 }
@@ -250,6 +255,7 @@ fn tracked_subagent_update_clears_exited_at_on_revival() {
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     });
     assert!(entry.exited_at.is_some());
 
@@ -273,6 +279,7 @@ fn tracked_subagent_update_clears_exited_at_on_revival() {
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     });
     assert!(entry.exited_at.is_none());
 }
@@ -299,6 +306,7 @@ fn tracked_subagent_update_clears_read_only_marker_on_authoritative_read_write_u
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     });
 
     entry.update_info(crate::protocol::client::SubagentInfoEvent {
@@ -321,6 +329,7 @@ fn tracked_subagent_update_clears_read_only_marker_on_authoritative_read_write_u
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     });
 
     assert!(
@@ -437,6 +446,7 @@ fn mk_info(id: &str, status: &str) -> crate::protocol::client::SubagentInfoEvent
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     }
 }
 

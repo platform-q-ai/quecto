@@ -167,6 +167,7 @@ async fn subagent_older_history_request_is_disabled_after_legacy_backfill_remova
             environment_id: None,
             workspace_path: None,
             environment_health: None,
+            socket_mode: None,
         }],
     });
     h.app_mut().select_agent(Some("worker"));

@@ -195,16 +195,12 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
         spawn = spawn.with_inherited_tool_policy(snapshot);
     }
     if !deps.container_scripts.scripts.is_empty() {
-        spawn = spawn.with_container_launch(
-            crate::infrastructure::tools::container_launch::ContainerLaunchContext {
-                registry: crate::infrastructure::tools::container_registry::new_container_registry(
-                ),
-                scripts: deps.container_scripts,
-                parent_repo: crate::infrastructure::tools::container_launch::default_parent_repo(
-                    &deps.base_dir,
-                ),
-            },
-        );
+        spawn = spawn.with_launch_backend(std::sync::Arc::new(
+            crate::domain::agent_launch_backend::ScriptManagedContainerLaunchBackend::new(
+                deps.container_scripts,
+                crate::infrastructure::tools::container_launch::default_parent_repo(&deps.base_dir),
+            ),
+        ));
     }
     let spawn = spawn
         .with_registry(registry.clone())

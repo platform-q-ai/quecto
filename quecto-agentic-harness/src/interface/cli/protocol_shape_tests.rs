@@ -384,6 +384,7 @@ fn subagent_info_camel_case_serialization() {
         repo_url: None,
         environment_id: None,
         environment_health: None,
+        socket_mode: None,
         workspace_path: None,
     };
     let j = round_trip(&info);
@@ -417,6 +418,7 @@ fn subagent_info_null_fields_omitted() {
         repo_url: None,
         environment_id: None,
         environment_health: None,
+        socket_mode: None,
         workspace_path: None,
     };
     let j = round_trip(&info);
@@ -445,6 +447,7 @@ fn subagent_info_with_error_field() {
         repo_url: None,
         environment_id: None,
         environment_health: None,
+        socket_mode: None,
         workspace_path: None,
     };
     let j = round_trip(&info);
@@ -474,6 +477,7 @@ fn subagent_state_changed_event_matches_spec() {
                 repo_url: None,
                 environment_id: None,
                 environment_health: None,
+                socket_mode: None,
                 workspace_path: None,
             },
             SubagentInfo {
@@ -495,6 +499,7 @@ fn subagent_state_changed_event_matches_spec() {
                 repo_url: None,
                 environment_id: None,
                 environment_health: None,
+                socket_mode: None,
                 workspace_path: None,
             },
         ],
@@ -534,6 +539,7 @@ fn subagent_state_changed_event_roundtrip() {
             repo_url: None,
             environment_id: None,
             environment_health: None,
+            socket_mode: None,
             workspace_path: None,
         }],
     };

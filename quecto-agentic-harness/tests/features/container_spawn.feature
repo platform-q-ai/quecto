@@ -42,19 +42,19 @@ Feature: Container-backed subagent orchestration
     When I parse spawn arguments '{"task":"work","container":{"mode":"new"}}'
     Then the parsed config should request a new container
 
-  @pending
+  @done
   Scenario: The configured default deterministically creates an isolated environment
     Given a parent agent has a valid default container script set
     When the parent spawns an agent in a new container
     Then the agent runs in a newly registered isolated environment
 
-  @pending
+  @done
   Scenario: An explicit script selection overrides the default
     Given a parent agent has multiple valid container script sets
     When the parent spawns an agent in a new container with an explicit script selection
     Then the selected script set creates the isolated environment
 
-  @pending
+  @done
   Scenario Outline: Invalid script selection creates no environment
     Given a parent agent has a <configuration> container script selection
     When the parent spawns an agent in a new container
@@ -66,19 +66,19 @@ Feature: Container-backed subagent orchestration
       | unknown       |
       | incomplete    |
 
-  @pending
+  @done
   Scenario: A new environment defaults to the parent repository
     Given a parent agent has a valid default container script set
     When the parent spawns an agent in a new container without a repository
     Then the isolated environment uses the parent's repository
 
-  @pending
+  @done
   Scenario: A new environment can use another repository
     Given a parent agent has a valid default container script set
     When the parent spawns an agent in a new container for an explicit repository
     Then the isolated environment uses the requested repository
 
-  @pending
+  @done
   Scenario: An observer joins an existing environment
     Given a live isolated environment contains an implementing agent
     When the parent spawns a read-only agent into that environment
@@ -101,55 +101,55 @@ Feature: Container-backed subagent orchestration
     When the parent creates another isolated environment
     Then the new environment has a later session ref
 
-  @pending
+  @done
   Scenario: The parent can discover environment membership
     Given multiple agents share an isolated environment
     When the parent lists its managed environments
     Then the environment listing identifies its ref, repository, and member agents
 
-  @pending
+  @done
   Scenario: Killing an environment cleans up its agents and runtime
     Given multiple agents share a live isolated environment
     When the parent kills that environment by ref
     Then its agents exit and its runtime resources are cleaned up
 
-  @pending
+  @done
   Scenario: Container-backed agents preserve the subagent protocol
     Given an agent runs in an isolated environment
     When the parent supervises the agent
     Then transcript, workflow, status, command, kill, and await behaviour matches a local agent
 
-  @pending
+  @done
   Scenario: Script-reported environment metadata remains available
     Given a script-managed environment reports runtime and workspace metadata
     When the parent inspects the environment
     Then the reported metadata is available without runtime-specific inference
 
-  @pending
+  @done
   Scenario: Agent death is pushed to supervision
     Given a running container-backed agent has a liveness connection
     When the agent socket closes
     Then the agent is marked exited after one environment post-mortem
 
-  @pending
+  @done
   Scenario: A solo container-backed agent stays flat in the panel
     Given one agent belongs to an isolated environment
     When the operator views the agent panel
     Then the agent row shows its environment ref inline
 
-  @pending
+  @done
   Scenario: Shared environments become selectable panel groups
     Given two agents belong to one isolated environment
     When the operator views the agent panel
     Then the agents appear beneath a selectable environment row
 
-  @pending
+  @done
   Scenario: Selecting an environment exposes its details
     Given the agent panel contains an isolated environment group
     When the operator selects the environment
     Then the main pane shows its repository, runtime, workspace, and health details
 
-  @pending
+  @done
   Scenario: The reference scripts implement the public runtime contract
     Given the in-repository container runtime scripts
     When each supported environment operation completes

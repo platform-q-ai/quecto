@@ -1,4 +1,4 @@
-use quecto::application::agent_launch_backend::{AgentLaunchBackend, LocalProcessLaunchBackend};
+use quecto::domain::agent_launch_backend::{AgentLaunchBackend, LocalProcessLaunchBackend};
 
 #[test]
 fn local_backend_advertises_local_runtime() {

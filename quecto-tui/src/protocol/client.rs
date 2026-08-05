@@ -1,12 +1,3 @@
-//! UDS client — connects to a quecto agent over a Unix domain socket.
-//!
-//! Sends JSON commands and receives JSON events. Since #1059 (ADR-0008
-//! part 1) messages travel as length-prefixed frames; during the NDJSON
-//! deprecation window the reader sniffs each incoming message so legacy
-//! agents still interoperate, and [`Client::connect_legacy`] keeps the writer
-//! on newline framing for agents that did not announce protocol v2. The
-//! client is async (tokio) and designed to run in a background task, feeding
-//! events to the TUI's main render loop.
 use quecto_line_io::{FrameError, WireMode, read_frame_or_legacy_line_into, write_message};
 use serde::{Deserialize, Serialize};
 #[path = "client_policy_types.rs"]
@@ -18,22 +9,9 @@ use std::path::Path;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
-/// Maximum line size from the agent — derived from the shared protocol cap
-/// (`quecto_line_io::PROTOCOL_LINE_CAP_BYTES`, 8 MiB) so the harness emitter
-/// and this reader can never disagree (#1047 review).
-///
-/// Public so out-of-crate tests (the harness BDD suite) can build boundary
-/// frames against the real cap instead of a duplicated literal.
 pub const MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
-/// Bound on the ordered outbound command writer FIFO (`Client::connect`).
-///
-/// Sized for bursty fan-in (subagent polls, recovery `get_message` batches)
-/// while staying bounded. Entries are owned serialized `String`s; the wire
-/// per-message cap is still [`MAX_LINE_BYTES`] at write time (#1238).
 pub const COMMAND_WRITER_QUEUE_CAPACITY: usize = 4096;
 pub use client_classes::{COMMAND_WRITER_INTERACTIVE_FLOOR, COMMAND_WRITER_USER_RESERVED};
-// ─── Protocol types (subset matching quecto's wire format) ────────────────────
-/// A command sent from the TUI to the agent.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Command {
@@ -41,7 +19,6 @@ pub enum Command {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         message: String,
-        /// How to handle this prompt if the agent is already running.
         #[serde(rename = "streamingBehavior", skip_serializing_if = "Option::is_none")]
         streaming_behavior: Option<String>,
     },
@@ -73,7 +50,6 @@ pub enum Command {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         count: usize,
-        /// When set, fetch this spawned sub-agent's message tail instead of the
         /// connected agent's own history (#795).
         #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
         agent_id: Option<String>,
@@ -362,8 +338,9 @@ pub struct SubagentInfoEvent {
     pub workspace_path: Option<String>,
     #[serde(default)]
     pub environment_health: Option<String>,
+    #[serde(default)]
+    pub socket_mode: Option<String>,
 }
-
 fn default_runtime_backend() -> String {
     "local".to_string()
 }

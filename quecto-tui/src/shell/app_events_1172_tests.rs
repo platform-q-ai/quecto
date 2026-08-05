@@ -23,6 +23,7 @@ fn tracked_child() -> SubagentInfoEvent {
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     }
 }
 

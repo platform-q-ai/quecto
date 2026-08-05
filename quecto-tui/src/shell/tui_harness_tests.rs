@@ -471,6 +471,7 @@ mod workflow_display_regression {
             environment_id: None,
             workspace_path: None,
             environment_health: None,
+            socket_mode: None,
         }
     }
     fn wf_state(

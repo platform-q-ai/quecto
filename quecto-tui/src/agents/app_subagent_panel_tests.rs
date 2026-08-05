@@ -37,6 +37,7 @@ fn child(id: &str, status: &str, parent: Option<&str>) -> SubagentInfoEvent {
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     }
 }
 
@@ -114,6 +115,7 @@ async fn panel_renders_display_label_not_uuid_key() {
             environment_id: None,
             workspace_path: None,
             environment_health: None,
+            socket_mode: None,
         }],
     });
     // Selection/identity is UUID-keyed.

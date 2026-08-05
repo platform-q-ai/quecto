@@ -44,6 +44,7 @@ fn given_bar_with_agents(world: &mut QuectoWorld, step: &cucumber::gherkin::Step
             repo_url: None,
             environment_id: None,
             environment_health: None,
+            socket_mode: None,
             workspace_path: None,
         })
         .collect();

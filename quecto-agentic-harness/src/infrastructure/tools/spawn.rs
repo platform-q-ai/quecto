@@ -41,7 +41,6 @@ fn validate_config_path(s: &str) -> Result<PathBuf, String> {
 /// When executed, validates the request, launches the child as a
 /// `--mode uds --persist` background process, waits for the UDS socket
 /// to become ready, and registers the child in a shared [`SubagentRegistry`]
-#[derive(Debug)]
 pub struct SpawnTool {
     allowed_agents: Vec<String>,
     restrict_to_workspace: bool,
@@ -53,7 +52,9 @@ pub struct SpawnTool {
     /// workflow_state events onto the parent's stream (PRD Stage B / R-B2).
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     parent_id: Option<String>,
-    container_launch: Option<super::container_launch::ContainerLaunchContext>,
+    launch_backends:
+        Vec<std::sync::Arc<dyn crate::domain::agent_launch_backend::AgentLaunchBackend>>,
+    container_registry: crate::infrastructure::tools::container_registry::ContainerRegistry,
     inherited_tool_policy: super::spawn_inherited_policy::InheritedToolPolicyState,
 }
 impl SpawnTool {
@@ -67,7 +68,11 @@ impl SpawnTool {
             notify_tx: None,
             broadcast_tx: None,
             parent_id: None,
-            container_launch: None,
+            launch_backends: vec![std::sync::Arc::new(
+                crate::domain::agent_launch_backend::LocalProcessLaunchBackend,
+            )],
+            container_registry:
+                crate::infrastructure::tools::container_registry::new_container_registry(),
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
         }
     }
@@ -85,7 +90,11 @@ impl SpawnTool {
             notify_tx: None,
             broadcast_tx: None,
             parent_id: None,
-            container_launch: None,
+            launch_backends: vec![std::sync::Arc::new(
+                crate::domain::agent_launch_backend::LocalProcessLaunchBackend,
+            )],
+            container_registry:
+                crate::infrastructure::tools::container_registry::new_container_registry(),
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
         }
     }
@@ -93,11 +102,11 @@ impl SpawnTool {
         self.socket_dir = socket_dir;
         self
     }
-    pub fn with_container_launch(
+    pub fn with_launch_backend(
         mut self,
-        context: super::container_launch::ContainerLaunchContext,
+        backend: std::sync::Arc<dyn crate::domain::agent_launch_backend::AgentLaunchBackend>,
     ) -> Self {
-        self.container_launch = Some(context);
+        self.launch_backends.push(backend);
         self
     }
     pub(crate) fn with_inherited_tool_policy(
@@ -249,37 +258,8 @@ impl SpawnTool {
             }
         }
         let agent_uuid = AgentUuid::mint();
-        if let Some(ctx) = &self.container_launch {
-            if !matches!(
-                config.container,
-                crate::domain::container_runtime::SpawnContainerRequest::Local
-            ) {
-                super::container_launch::validate_container_request(ctx, config)
-                    .map_err(DomainError::Tool)?;
-            }
-        }
-        let container_launch = if let Some(ctx) = &self.container_launch {
-            super::container_launch::prepare_container_launch(ctx, config, &agent_uuid).await?
-        } else if matches!(
-            config.container,
-            crate::domain::container_runtime::SpawnContainerRequest::Local
-        ) {
-            None
-        } else {
-            return Ok(ToolResult {
-                content: "Failed to spawn subagent: container-backed launch requires a configured script runtime; refusing to fall back to local spawn".into(),
-                is_error: true,
-                image_blocks: vec![],
-            });
-        };
         let registry_key = agent_uuid.to_string();
         let requested_socket_path = child_socket_path(&self.socket_dir, &agent_uuid);
-        let socket_path = container_launch
-            .as_ref()
-            .and_then(|launch| launch.entry.socket_path.as_ref())
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| requested_socket_path.clone());
-
         // A by-value workflow assignment is written to a file next to the
         // socket and forwarded as `--workflow-spec <path>`; the inline template
         // is too large for a bare CLI arg. The child runs it in Active mode
@@ -309,7 +289,6 @@ impl SpawnTool {
         } else {
             None
         };
-
         let inherited_tool_policy =
             super::spawn_inherited_policy::snapshot(&self.inherited_tool_policy);
         let inherited_tool_policy_path = if let Some(snapshot) = inherited_tool_policy.as_ref() {
@@ -325,7 +304,6 @@ impl SpawnTool {
         } else {
             None
         };
-
         // Build the full child argument list (incl. `--model`, #881) via the
         // pure builder so the exact flag set is unit-testable.
         let effective_config =
@@ -333,7 +311,7 @@ impl SpawnTool {
         let cli_args = super::spawn_launch_args::build_child_cli_args(
             &super::spawn_launch_args::ChildLaunchSpec {
                 session_name: child_session_key(&agent_uuid),
-                socket_path: &socket_path,
+                socket_path: &requested_socket_path,
                 config,
                 effective_config: effective_config.as_deref(),
                 parent_id: self.parent_id.as_deref(),
@@ -342,44 +320,39 @@ impl SpawnTool {
                 inherited_tool_policy_path: inherited_tool_policy_path.as_deref(),
             },
         );
-
         let binary = super::spawn_binary::resolve_child_binary()?;
-        let mut cmd = if let Some(ref launch) = container_launch {
-            let argv_args: Vec<std::ffi::OsString> =
-                std::iter::once(binary.as_os_str().to_os_string())
-                    .chain(cli_args.iter().cloned())
-                    .collect();
-            super::container_launch::build_container_exec_command(
-                super::container_launch::ContainerExecSpec {
-                    entry: &launch.entry,
-                    agent_uuid: &agent_uuid,
-                    parent_id: self.parent_id.as_deref(),
-                    requested_socket_path: &requested_socket_path,
-                    child_binary: &binary,
-                    child_args: if launch.is_new { &argv_args } else { &cli_args },
-                    prepend_child_binary: !launch.is_new,
-                },
-            )?
-        } else {
-            let mut c = tokio::process::Command::new(&binary);
-            c.args(&cli_args);
-            c
+        let backend = self.launch_backends.iter()
+            .find(|b| b.can_launch(&config.container))
+            .ok_or_else(|| DomainError::Tool("container-backed launch requires a configured script runtime; refusing to fall back to local spawn".into()))?;
+        let prepared = backend
+            .prepare_launch(crate::domain::agent_launch_backend::AgentLaunchSpec {
+                request: &config.container,
+                agent_uuid: agent_uuid.as_ref(),
+                parent_agent_uuid: self.parent_id.as_deref(),
+                child_binary: &binary,
+                child_args: &cli_args,
+                requested_socket_path: &requested_socket_path,
+                read_only: config.read_only,
+            })
+            .await?;
+        let socket_path = match &prepared.endpoint {
+            crate::domain::agent_launch_backend::ParentEndpoint::DirectUds(p) => p.clone(),
+            crate::domain::agent_launch_backend::ParentEndpoint::Proxy(_) => {
+                requested_socket_path.clone()
+            }
         };
-
+        let container_launch = prepared.container.clone();
+        let mut cmd = prepared.command;
         if !self.base_dir.as_os_str().is_empty() {
             cmd.env("QUECTO_BASE_DIR", &self.base_dir);
         }
-
         // Detach child stdio — we interact via UDS, not stdout/stderr.
         cmd.stdout(std::process::Stdio::null());
         cmd.stderr(std::process::Stdio::null());
-
         let mut child = cmd
             .spawn()
             .map_err(|e| DomainError::Tool(format!("failed to spawn subagent: {e}")))?;
-
         let pid = child.id().unwrap_or(0);
-
         // Wait for socket readiness while also observing premature child exit.
         if let Err(e) = self
             .wait_for_socket_or_child_exit(&socket_path, &mut child)
@@ -391,14 +364,12 @@ impl SpawnTool {
             let _ = child.wait().await;
             return Err(e);
         }
-
         // Create exit signal channel for `await` support (#612).
         // The receiver is intentionally dropped — `watch` channels remain
         // functional after the initial receiver is dropped. Await callers
         // get their own receiver via `tx.subscribe()`. Do NOT switch to
         // `mpsc` or `oneshot` without updating the subscribe pattern.
         let (exit_tx, _exit_rx) = new_exit_signal_channel();
-
         // Register in shared registry BEFORE starting the monitor task,
         // so the monitor's update_entry calls find the entry (#522). The insert
         // also broadcasts the survivor set immediately so the TUI learns of the
@@ -416,24 +387,43 @@ impl SpawnTool {
                 exit_signal_tx: Some(exit_tx.clone()),
             });
             if let Some(launch) = &container_launch {
-                entry.runtime_backend = "container".to_string();
-                entry.container_uuid = Some(launch.entry.container_uuid.clone());
-                entry.container_ref = Some(launch.entry.container_ref.clone());
-                entry.container_name = launch.entry.container_name.clone();
-                entry.repo_url = launch.entry.repo_url.clone();
-                entry.environment_id = Some(launch.entry.environment_id.clone());
-                entry.environment_health = Some(
-                    match launch.entry.status {
-                        super::container_registry::ContainerStatus::Running => "running",
-                        super::container_registry::ContainerStatus::Stopped => "stopped",
-                        super::container_registry::ContainerStatus::Unhealthy => "unhealthy",
-                    }
-                    .to_string(),
+                let registered_container = crate::infrastructure::tools::container_registry::register_container(
+                    &self.container_registry,
+                    crate::infrastructure::tools::container_registry::ContainerEntry {
+                        container_uuid: launch.container_id.clone().unwrap_or_else(|| launch.environment_id.clone()),
+                        container_ref: launch.container_ref.clone().unwrap_or_default(),
+                        container_name: launch.container_name.clone(),
+                        environment_id: launch.environment_id.clone(),
+                        repo_url: launch.repository.clone(),
+                        workspace_path: launch.workspace_path.display().to_string(),
+                        status: crate::infrastructure::tools::container_registry::ContainerStatus::Running,
+                        agents: vec![agent_uuid.clone()],
+                        script_name: launch.script_name.clone(),
+                        exec_command: launch.exec_command.clone(),
+                        inspect_command: launch.inspect_command.clone(),
+                        kill_command: launch.kill_command.clone(),
+                        socket_path: launch.socket_path.as_ref().map(|p| p.display().to_string()),
+                        socket_proxy: launch.socket_proxy.clone(),
+                        metadata: launch.metadata.clone(),
+                    },
                 );
-                entry.workspace_path = Some(launch.entry.workspace_path.clone());
-                entry.container_script_name = Some(launch.entry.script_name.clone());
-                entry.container_kill_command = Some(launch.entry.kill_command.clone());
-                entry.container_inspect_command = Some(launch.entry.inspect_command.clone());
+                entry.runtime_backend = "container".to_string();
+                entry.container_uuid = Some(registered_container.container_uuid.clone());
+                entry.container_ref = Some(registered_container.container_ref.clone());
+                entry.container_name = launch.container_name.clone();
+                entry.repo_url = launch.repository.clone();
+                entry.environment_id = Some(launch.environment_id.clone());
+                entry.environment_health = Some(
+                    launch
+                        .status
+                        .clone()
+                        .unwrap_or_else(|| "running".to_string()),
+                );
+                entry.socket_mode = Some(prepared.endpoint.mode().to_string());
+                entry.workspace_path = Some(launch.workspace_path.display().to_string());
+                entry.container_script_name = Some(launch.script_name.clone());
+                entry.container_kill_command = Some(launch.kill_command.clone());
+                entry.container_inspect_command = Some(launch.inspect_command.clone());
             }
             register_and_broadcast(
                 &self.registry,
@@ -442,7 +432,6 @@ impl SpawnTool {
                 entry,
             );
         }
-
         // Start a persistent monitor task to track child events in real-time (#522).
         // Pass the notification sender so the monitor can auto-notify the parent (#523).
         let monitor_handle = super::subagent_monitor::spawn_monitor_task(
@@ -453,7 +442,6 @@ impl SpawnTool {
             self.broadcast_tx.clone(),
             self.parent_id.clone(),
         );
-
         {
             let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(entry) = entries.get_mut(&registry_key) {
@@ -559,7 +547,13 @@ impl SpawnTool {
                 agent_uuid,
                 container_launch
                     .as_ref()
-                    .map(|launch| format!(" in container {}", launch.entry.container_ref))
+                    .map(|launch| format!(
+                        " in container {}",
+                        launch
+                            .container_ref
+                            .clone()
+                            .unwrap_or_else(|| launch.environment_id.clone())
+                    ))
                     .unwrap_or_default()
             ),
             is_error: false,
@@ -738,3 +732,15 @@ mod cov_tests;
 #[cfg(test)]
 #[path = "tests/spawn_tests.rs"]
 mod tests;
+
+impl std::fmt::Debug for SpawnTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SpawnTool")
+            .field("allowed_agents", &self.allowed_agents)
+            .field("restrict_to_workspace", &self.restrict_to_workspace)
+            .field("base_dir", &self.base_dir)
+            .field("socket_dir", &self.socket_dir)
+            .field("launch_backends", &self.launch_backends.len())
+            .finish()
+    }
+}

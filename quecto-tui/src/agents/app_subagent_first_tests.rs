@@ -1,7 +1,3 @@
-//! RED-phase behavioural tests for the **sub-agent-first default layout**
-//! (#820), driven through the headless render harness.
-//!
-//! These pin the acceptance criteria from the issue:
 //!   * the left panel is ALWAYS visible once connected — the Master row shows
 //!     even with no sub-agents (not gated on `!subagent_local.is_empty()`);
 //!   * panel rows carry NO status dot/glyph; the NAME TEXT is coloured by status
@@ -14,14 +10,11 @@
 //!   * `compose_frame` stays render-idempotent (no flash) with the panel.
 //!
 //! They drive not-yet-existing layout behaviour on purpose (TDD RED).
-
 use super::tui_harness::*;
 use crate::components::ansi::strip_ansi;
 use crate::protocol::client::{Event, SubagentInfoEvent, SubagentWorkflow};
-
 /// Panel-row status glyphs that the sub-agent-first design removes entirely.
 const GLYPHS: &[&str] = &["●", "✓", "✗", "○", "•"];
-
 /// A `SubagentInfoEvent` with an explicit status and parent (no socket).
 fn child(id: &str, status: &str, parent: Option<&str>) -> SubagentInfoEvent {
     SubagentInfoEvent {
@@ -48,6 +41,7 @@ fn child(id: &str, status: &str, parent: Option<&str>) -> SubagentInfoEvent {
         environment_id: None,
         workspace_path: None,
         environment_health: None,
+        socket_mode: None,
     }
 }
 

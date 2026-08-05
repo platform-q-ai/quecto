@@ -129,6 +129,8 @@ pub struct SubagentEntry {
     pub environment_id: Option<String>,
     /// Last known container health/status string.
     pub environment_health: Option<String>,
+    /// Parent endpoint mode for container-backed agents: direct or proxy.
+    pub socket_mode: Option<String>,
     /// Workspace mounted in the container, if known.
     pub workspace_path: Option<String>,
     pub container_script_name: Option<String>,
@@ -211,6 +213,7 @@ impl SubagentEntry {
             repo_url: None,
             environment_id: None,
             environment_health: None,
+            socket_mode: None,
             workspace_path: None,
             container_script_name: None,
             container_kill_command: None,
