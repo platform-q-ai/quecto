@@ -381,6 +381,16 @@ fn create_result_contract_rejects_invalid_shapes_and_proxy() {
 }
 
 #[test]
+fn create_result_contract_accepts_direct_endpoint() {
+    let parsed = parse_create_result(
+        br#"{"environment_id":"env","workspace_path":"/tmp/ws","metadata":{"k":"v"},"socket_path":"/tmp/sock"}"#,
+    )
+    .unwrap();
+    assert_eq!(parsed.environment_id, "env");
+    assert_eq!(parsed.socket_path, PathBuf::from("/tmp/sock"));
+}
+
+#[test]
 fn script_managed_environment_refs_are_monotonic_c_style_and_cleanup_uses_endpoint_id() {
     let first = new_environment_ref();
     let second = new_environment_ref();
