@@ -480,3 +480,112 @@ fn cascade_cleanup_skips_kill_when_colocated_live_member_remains() {
         "kill script must not run while another live member remains"
     );
 }
+
+#[test]
+fn concurrent_last_member_cleanup_claim_kills_once_and_retry_after_failure() {
+    let temp = tempfile::tempdir().unwrap();
+    let log = temp.path().join("kills.log");
+    let script = temp.path().join("kill.sh");
+    let gate = temp.path().join("gate");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/usr/bin/env bash\nwhile [ ! -e {} ]; do sleep 0.01; done\necho \"$QUECTO_ENVIRONMENT_UUID\" >> {}\nif [ -e {}.fail ]; then exit 7; fi\nprintf '{{\"environment_id\":\"%s\",\"status\":\"stopped\",\"workspace_path\":\"/workspace\",\"container_ref\":\"C1\",\"metadata\":{{\"cleaned\":true}}}}' \"$QUECTO_ENVIRONMENT_UUID\"\nexit 0\n",
+            gate.display(), log.display(), gate.display()
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let registry = super::subagent_registry::new_registry();
+    let container_registry = super::container_registry::new_container_registry();
+    super::container_registry::register_container(
+        &container_registry,
+        super::container_registry::ContainerEntry {
+            container_uuid: "container-race".into(),
+            container_ref: String::new(),
+            container_name: None,
+            environment_id: "env-race".into(),
+            repo_url: None,
+            workspace_path: "/workspace".into(),
+            status: super::container_registry::ContainerStatus::Running,
+            agents: vec!["agent-a".into()],
+            script_name: "test".into(),
+            exec_command: "exec".into(),
+            inspect_command: "inspect".into(),
+            kill_command: script.display().to_string(),
+            socket_path: None,
+            socket_proxy: None,
+            metadata: serde_json::json!({}),
+            last_error: None,
+        },
+    );
+    let removed = std::sync::Arc::new({
+        let mut entry = super::subagent_registry::SubagentEntry::new(
+            std::path::PathBuf::from("/tmp/a.sock"),
+            1,
+        );
+        entry.agent_uuid = "agent-a".into();
+        entry.container_uuid = Some("container-race".into());
+        entry.environment_id = Some("env-race".into());
+        entry.container_kill_command = Some(script.display().to_string());
+        vec![("agent-a".to_string(), entry)]
+    });
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let mut handles = Vec::new();
+    for _ in 0..2 {
+        let removed = removed.clone();
+        let registry = registry.clone();
+        let barrier = barrier.clone();
+        let container_registry = container_registry.clone();
+        handles.push(std::thread::spawn(move || {
+            barrier.wait();
+            super::container_script_cleanup::cleanup_container_environments_after_removal(
+                &removed,
+                &registry,
+                Some(&container_registry),
+            )
+        }));
+    }
+    barrier.wait();
+    std::fs::write(&gate, "go").unwrap();
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    assert!(
+        results
+            .iter()
+            .filter(|result| result.as_ref().is_err_and(|err| !err.contains("env-race")))
+            .count()
+            == 0,
+        "unexpected cleanup errors: {results:?}"
+    );
+    let kills = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(kills.lines().count(), 1, "{kills}");
+
+    super::container_registry::set_container_health(
+        &container_registry,
+        "container-race",
+        super::container_registry::ContainerStatus::CleanupFailed,
+        Some("previous failure".into()),
+    )
+    .unwrap();
+    std::fs::write(format!("{}.fail", gate.display()), "fail").unwrap();
+    let err = super::container_script_cleanup::cleanup_container_environments_after_removal(
+        &removed,
+        &registry,
+        Some(&container_registry),
+    )
+    .unwrap_err();
+    assert!(err.contains("container-race"), "{err}");
+    std::fs::remove_file(format!("{}.fail", gate.display())).unwrap();
+    super::container_script_cleanup::cleanup_container_environments_after_removal(
+        &removed,
+        &registry,
+        Some(&container_registry),
+    )
+    .expect("failure claim is released for retry");
+    let kills = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(kills.lines().count(), 3, "{kills}");
+}

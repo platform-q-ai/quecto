@@ -83,6 +83,14 @@ pub trait AgentLaunchBackend: Send + Sync {
     fn prepare_launch<'a>(&'a self, spec: AgentLaunchSpec<'a>) -> LaunchFuture<'a>;
 }
 
+pub struct RetainedContainerScript<'a> {
+    pub environment_id: &'a str,
+    pub script_name: &'a str,
+    pub exec_command: &'a str,
+    pub inspect_command: &'a str,
+    pub kill_command: &'a str,
+}
+
 pub struct AgentLaunchSpec<'a> {
     pub request: &'a SpawnContainerRequest,
     pub agent_uuid: &'a str,
@@ -92,6 +100,7 @@ pub struct AgentLaunchSpec<'a> {
     pub requested_socket_path: &'a Path,
     pub read_only: bool,
     pub existing_environment_id: Option<&'a str>,
+    pub retained_container_script: Option<RetainedContainerScript<'a>>,
 }
 
 #[derive(Debug, Default)]
@@ -244,6 +253,19 @@ fn parse_configured_script_command(command: &str) -> Result<Vec<String>, DomainE
                 if let Some(next) = chars.next() {
                     current.push(next);
                 }
+            }
+            (
+                None,
+                c @ (';' | '|' | '&' | '$' | '`' | '<' | '>' | '*' | '?' | '{' | '}' | '(' | ')'),
+            ) => {
+                return Err(DomainError::Tool(format!(
+                    "shell metacharacter '{c}' is not allowed; configure an executable path plus arguments"
+                )));
+            }
+            (None, c) if c.is_control() && c != '\t' => {
+                return Err(DomainError::Tool(
+                    "control characters are not allowed".into(),
+                ));
             }
             (None, c) => current.push(c),
         }
@@ -410,11 +432,19 @@ impl AgentLaunchBackend for ScriptManagedContainerLaunchBackend {
                     })
                 }
                 SpawnContainerRequest::Existing { reference } => {
-                    let (name, set) = SpawnContainerRequest::resolve_default_script(&self.config)
-                        .map_err(DomainError::Tool)?;
-                    let env_id = spec.existing_environment_id.unwrap_or(match reference {
-                        ExistingContainerRef::Ref(r) | ExistingContainerRef::Name(r) => r.as_str(),
-                    });
+                    let retained = spec.retained_container_script.as_ref().ok_or_else(|| {
+                        DomainError::Tool(
+                            "existing container join missing retained script authority".into(),
+                        )
+                    })?;
+                    let name = retained.script_name;
+                    let set = crate::domain::container_runtime::ContainerScriptSet {
+                        create: String::new(),
+                        exec: retained.exec_command.to_string(),
+                        inspect: retained.inspect_command.to_string(),
+                        kill: retained.kill_command.to_string(),
+                    };
+                    let env_id = retained.environment_id;
                     let mut args = vec![
                         "--script-name".into(),
                         name.into(),
@@ -448,7 +478,7 @@ impl AgentLaunchBackend for ScriptManagedContainerLaunchBackend {
                                 ("QUECTO_AGENT_UUID", spec.agent_uuid.into()),
                                 ("QUECTO_ENVIRONMENT_UUID", env_id.into()),
                             ],
-                            set,
+                            set: &set,
                         })
                         .await?;
                     let endpoint = out

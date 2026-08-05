@@ -8,7 +8,13 @@ use crate::infrastructure::tools::container_registry::{
 #[derive(Debug, Clone)]
 pub(crate) struct ExistingContainerJoin {
     pub uuid: String,
-    pub environment_id: Option<String>,
+    pub entry: crate::infrastructure::tools::container_registry::ContainerEntry,
+}
+
+impl ExistingContainerJoin {
+    pub(crate) fn environment_id(&self) -> &str {
+        &self.entry.environment_id
+    }
 }
 
 pub(crate) fn prepare_existing_container_join(
@@ -21,16 +27,14 @@ pub(crate) fn prepare_existing_container_join(
     };
     let uuid = resolve_live_ref(registry, live_ref).map_err(DomainError::Tool)?;
     add_agent_to_live_container(registry, &uuid, agent_uuid.clone()).map_err(DomainError::Tool)?;
-    let environment_id = registry
+    let entry = registry
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .entries
         .get(&uuid)
-        .map(|entry| entry.environment_id.clone());
-    Ok(Some(ExistingContainerJoin {
-        uuid,
-        environment_id,
-    }))
+        .cloned()
+        .ok_or_else(|| DomainError::Tool(format!("container '{uuid}' disappeared during join")))?;
+    Ok(Some(ExistingContainerJoin { uuid, entry }))
 }
 
 pub(crate) fn rollback_existing_container_join(

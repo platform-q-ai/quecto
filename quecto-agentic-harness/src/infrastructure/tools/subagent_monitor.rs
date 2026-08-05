@@ -178,16 +178,12 @@ pub fn spawn_monitor_task(
     context: MonitorContext,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let endpoint = {
-            let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-            entries
-                .get(&agent_id)
-                .and_then(|entry| entry.parent_endpoint.clone())
-                .unwrap_or_else(|| {
-                    crate::domain::agent_launch_backend::ParentEndpoint::DirectUds(
-                        socket_path.clone(),
-                    )
-                })
+        let Some(endpoint) = super::parent_endpoint_guard::endpoint_or_record_proxy_failure(
+            &registry,
+            &agent_id,
+            socket_path.clone(),
+        ) else {
+            return;
         };
         monitor_loop(
             &agent_id,

@@ -190,23 +190,89 @@ where
     }
 }
 
+fn cleanup_claims() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static CLAIMS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    CLAIMS.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+fn completed_cleanups()
+-> &'static std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>> {
+    static COMPLETED: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
+    > = std::sync::OnceLock::new();
+    COMPLETED.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+struct CleanupClaim {
+    env: Option<String>,
+}
+
+impl CleanupClaim {
+    fn try_claim(env: &str) -> Option<Self> {
+        let mut claims = cleanup_claims().lock().unwrap_or_else(|e| e.into_inner());
+        claims.insert(env.to_string()).then(|| Self {
+            env: Some(env.to_string()),
+        })
+    }
+}
+
+impl Drop for CleanupClaim {
+    fn drop(&mut self) {
+        if let Some(env) = &self.env {
+            cleanup_claims()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(env);
+        }
+    }
+}
+
+fn cleanup_transaction_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 pub(crate) fn cleanup_container_environments_after_removal(
     removed: &[(String, SubagentEntry)],
     live: &super::subagent_registry::SubagentRegistry,
     container_registry: Option<&super::container_registry::ContainerRegistry>,
 ) -> Result<(), String> {
+    let _cleanup_tx = cleanup_transaction_lock()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let mut registry_cleanup_entries = Vec::new();
     if let Some(registry) = container_registry {
         for (_, entry) in removed {
             if let (Some(uuid), agent) = (&entry.container_uuid, &entry.agent_uuid) {
-                let _ =
-                    super::container_registry::remove_agent_from_container(registry, uuid, agent);
+                if let Some(claimed) = super::container_registry::remove_agent_and_claim_cleanup(
+                    registry, uuid, agent,
+                )? {
+                    let mut cleanup_entry = entry.clone();
+                    cleanup_entry.container_uuid = Some(claimed.container_uuid);
+                    cleanup_entry.environment_id = Some(claimed.environment_id);
+                    cleanup_entry.container_kill_command = Some(claimed.kill_command);
+                    registry_cleanup_entries.push(cleanup_entry);
+                }
             }
         }
     }
     let live_entries = live.lock().unwrap_or_else(|e| e.into_inner());
     let mut cleaned = std::collections::HashSet::new();
     let mut errors = Vec::new();
-    for (_, entry) in removed {
+    let mut claimed = Vec::new();
+    let mut claim_guards = Vec::new();
+    let registry_removed;
+    let cleanup_removed: &[(String, SubagentEntry)] = if container_registry.is_some() {
+        registry_removed = registry_cleanup_entries
+            .into_iter()
+            .map(|entry| (entry.agent_uuid.to_string(), entry))
+            .collect::<Vec<_>>();
+        &registry_removed
+    } else {
+        removed
+    };
+    for (_, entry) in cleanup_removed {
         let Some(env) = environment_key(entry) else {
             continue;
         };
@@ -228,8 +294,63 @@ pub(crate) fn cleanup_container_environments_after_removal(
                 .any(|candidate| environment_key(candidate) == Some(env))
         };
         if !has_live_member {
+            if container_registry.is_none() {
+                let mut completed = completed_cleanups()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                completed.retain(|_, at| at.elapsed() < std::time::Duration::from_secs(5));
+                if completed.contains_key(env) {
+                    continue;
+                }
+            } else if cleanup_claims()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains(env)
+            {
+                continue;
+            }
+            let Some(claim) = CleanupClaim::try_claim(env) else {
+                continue;
+            };
+            if container_registry.is_none() {
+                completed_cleanups()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(env.to_string(), std::time::Instant::now());
+            }
+            claimed.push(env.to_string());
+            claim_guards.push(claim);
+            let has_live_member = if let (Some(registry), Some(uuid)) =
+                (container_registry, entry.container_uuid.as_deref())
+            {
+                registry
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .entries
+                    .get(uuid)
+                    .is_some_and(|container| {
+                        !container.agents.is_empty()
+                            || matches!(
+                                container.status,
+                                super::container_registry::ContainerStatus::Stopped
+                            )
+                    })
+            } else {
+                live_entries
+                    .values()
+                    .any(|candidate| environment_key(candidate) == Some(env))
+            };
+            if has_live_member {
+                continue;
+            }
             match invoke_container_kill_script(entry) {
                 Ok(()) => {
+                    if container_registry.is_none() {
+                        completed_cleanups()
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(env.to_string(), std::time::Instant::now());
+                    }
                     if let (Some(registry), Some(uuid)) =
                         (container_registry, entry.container_uuid.as_deref())
                     {
@@ -259,6 +380,17 @@ pub(crate) fn cleanup_container_environments_after_removal(
     if errors.is_empty() {
         Ok(())
     } else {
+        drop(claim_guards);
+        for env in claimed {
+            cleanup_claims()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&env);
+            completed_cleanups()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&env);
+        }
         Err(errors.join("; "))
     }
 }

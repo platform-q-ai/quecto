@@ -182,6 +182,35 @@ pub fn remove_agent_from_container(
     Ok(entry.clone())
 }
 
+/// Atomically remove a member and claim responsibility for last-member cleanup.
+/// Returns `Some(entry)` exactly once for an empty, retryable environment; concurrent
+/// callers observing the same last removal receive `None` until a failed cleanup resets
+/// the state back to `CleanupFailed`.
+pub fn remove_agent_and_claim_cleanup(
+    registry: &ContainerRegistry,
+    uuid: &str,
+    agent: &AgentUuid,
+) -> Result<Option<ContainerEntry>, String> {
+    let mut state = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let entry = state
+        .entries
+        .get_mut(uuid)
+        .ok_or_else(|| format!("unknown container '{uuid}'"))?;
+    entry.agents.retain(|a| a != agent);
+    if !entry.agents.is_empty() || entry.status == ContainerStatus::Stopped {
+        return Ok(None);
+    }
+    if matches!(
+        entry.status,
+        ContainerStatus::Running | ContainerStatus::CleanupFailed
+    ) {
+        entry.status = ContainerStatus::Unhealthy;
+        entry.last_error = Some("cleanup in progress".into());
+        return Ok(Some(entry.clone()));
+    }
+    Ok(None)
+}
+
 pub fn list_containers(registry: &ContainerRegistry) -> Vec<ContainerEntry> {
     let mut entries: Vec<_> = registry
         .lock()

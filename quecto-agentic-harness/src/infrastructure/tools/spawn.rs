@@ -445,9 +445,16 @@ impl SpawnTool {
                 child_args: &cli_args,
                 requested_socket_path: &requested_socket_path,
                 read_only: config.read_only,
-                existing_environment_id: existing_join
-                    .as_ref()
-                    .and_then(|join| join.environment_id.as_deref()),
+                existing_environment_id: existing_join.as_ref().map(|join| join.environment_id()),
+                retained_container_script: existing_join.as_ref().map(|join| {
+                    crate::domain::agent_launch_backend::RetainedContainerScript {
+                        environment_id: &join.entry.environment_id,
+                        script_name: &join.entry.script_name,
+                        exec_command: &join.entry.exec_command,
+                        inspect_command: &join.entry.inspect_command,
+                        kill_command: &join.entry.kill_command,
+                    }
+                }),
             })
             .await
         {

@@ -19,6 +19,7 @@ pub(crate) mod inherited_tool_policy;
 #[path = "inherited_tool_policy_unit_tests.rs"]
 mod inherited_tool_policy_unit_tests;
 pub(crate) mod parent_endpoint;
+pub(crate) mod parent_endpoint_guard;
 #[cfg(test)]
 mod parent_endpoint_tests;
 pub mod path_utils;
