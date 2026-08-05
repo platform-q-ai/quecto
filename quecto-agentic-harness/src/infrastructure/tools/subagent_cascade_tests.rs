@@ -95,6 +95,37 @@ fn cascade_remove_and_state_changed_noop_returns_none() {
 }
 
 #[test]
+fn state_changed_event_serializes_container_metadata_for_live_tui_roster() {
+    let r = new_registry();
+    {
+        let mut guard = r.lock().unwrap();
+        let mut entry = SubagentEntry::new(PathBuf::from("/container.sock"), 7);
+        entry.runtime_backend = "container".into();
+        entry.container_uuid = Some("uuid-1".into());
+        entry.container_ref = Some("C1".into());
+        entry.container_name = Some("dev".into());
+        entry.repo_url = Some("platform-q-ai/quecto".into());
+        entry.environment_id = Some("env-1".into());
+        entry.environment_health = Some("healthy".into());
+        entry.socket_mode = Some("proxy".into());
+        entry.workspace_path = Some("/workspace/quecto".into());
+        guard.insert("container".into(), entry);
+    }
+    let event = build_state_changed_event(&r);
+    let v: serde_json::Value = serde_json::from_str(&event).unwrap();
+    let row = &v["subagents"].as_array().unwrap()[0];
+    assert_eq!(row["runtimeBackend"], "container");
+    assert_eq!(row["containerUuid"], "uuid-1");
+    assert_eq!(row["containerRef"], "C1");
+    assert_eq!(row["containerName"], "dev");
+    assert_eq!(row["repoUrl"], "platform-q-ai/quecto");
+    assert_eq!(row["environmentId"], "env-1");
+    assert_eq!(row["environmentHealth"], "healthy");
+    assert_eq!(row["socketMode"], "proxy");
+    assert_eq!(row["workspacePath"], "/workspace/quecto");
+}
+
+#[test]
 fn state_changed_event_serializes_read_only_observer_flag() {
     let r = new_registry();
     {

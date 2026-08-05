@@ -183,6 +183,34 @@ pub fn build_state_changed_event_locked(guard: &HashMap<String, SubagentEntry>) 
                 if let Some(parent) = &entry.parent_id {
                     obj.insert("parentId".into(), serde_json::json!(parent));
                 }
+                obj.insert(
+                    "runtimeBackend".into(),
+                    serde_json::json!(entry.runtime_backend),
+                );
+                if let Some(v) = &entry.container_uuid {
+                    obj.insert("containerUuid".into(), serde_json::json!(v));
+                }
+                if let Some(v) = &entry.container_ref {
+                    obj.insert("containerRef".into(), serde_json::json!(v));
+                }
+                if let Some(v) = &entry.container_name {
+                    obj.insert("containerName".into(), serde_json::json!(v));
+                }
+                if let Some(v) = &entry.repo_url {
+                    obj.insert("repoUrl".into(), serde_json::json!(v));
+                }
+                if let Some(v) = &entry.environment_id {
+                    obj.insert("environmentId".into(), serde_json::json!(v));
+                }
+                if let Some(v) = &entry.environment_health {
+                    obj.insert("environmentHealth".into(), serde_json::json!(v));
+                }
+                if let Some(v) = &entry.socket_mode {
+                    obj.insert("socketMode".into(), serde_json::json!(v));
+                }
+                if let Some(v) = &entry.workspace_path {
+                    obj.insert("workspacePath".into(), serde_json::json!(v));
+                }
                 if let Some(workflow) = &entry.workflow {
                     if let Ok(w) = serde_json::to_value(workflow) {
                         obj.insert("workflow".into(), w);
