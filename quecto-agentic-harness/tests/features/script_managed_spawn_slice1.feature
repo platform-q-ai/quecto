@@ -24,7 +24,7 @@ Feature: Script-managed subagent spawning
     Given script-managed subagent spawning is available with default script "default"
     When I spawn script-managed subagent "container-default-slice1" with default selection and task "CONTAINER_DEFAULT_MARKER"
     Then the spawn result should not be an error
-    And the spawn result should include environment reference "C1"
+    And the spawn result should include an environment reference
     And the script-managed runtime should have used container script "default"
     And child "container-default-slice1" should receive "CONTAINER_DEFAULT_MARKER"
 
@@ -33,7 +33,7 @@ Feature: Script-managed subagent spawning
     Given script-managed subagent spawning is available with default script "default"
     When I spawn script-managed subagent "container-explicit-slice1" with script "alternate" and task "CONTAINER_EXPLICIT_MARKER"
     Then the spawn result should not be an error
-    And the spawn result should include environment reference "C1"
+    And the spawn result should include an environment reference
     And the script-managed runtime should have used container script "alternate"
     And child "container-explicit-slice1" should receive "CONTAINER_EXPLICIT_MARKER"
 
@@ -99,7 +99,7 @@ Feature: Script-managed subagent spawning
     When I spawn script-managed subagent "container-once-slice1" with default selection and task "EXACTLY_ONCE_MARKER"
     Then the spawn result should not be an error
     And the script-managed runtime should have started exactly 1 child
-    And the script-managed runtime should have created the committed environment reference
+    And the spawn result should include an environment reference
     And no local fallback child should have been started
     And child "container-once-slice1" should be reachable
 

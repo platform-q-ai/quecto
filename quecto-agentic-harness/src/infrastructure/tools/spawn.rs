@@ -2,7 +2,7 @@ pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
 use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
 use crate::domain::subagent::{
-    ContainerSelection, DisplayNameResolutionEntry, DisplayNameResolveError, SubagentConfig,
+    DisplayNameResolutionEntry, DisplayNameResolveError, SubagentConfig,
     assert_display_name_available_for_spawn, validate_agent_id,
 };
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
@@ -381,7 +381,7 @@ impl SpawnTool {
         );
 
         let binary = super::spawn_binary::resolve_child_binary()?;
-        let mut child = super::spawn_container::spawn_prepared_child(
+        let mut prepared_child = super::spawn_container::spawn_prepared_child(
             config,
             &binary,
             &cli_args,
@@ -389,19 +389,19 @@ impl SpawnTool {
         )
         .await?;
 
-        let pid = child.id().unwrap_or(0);
+        let pid = prepared_child.child.id().unwrap_or(0);
 
         // Wait for socket readiness while also observing premature child exit.
         if let Err(e) = self
-            .wait_for_socket_or_child_exit(&socket_path, &mut child)
+            .wait_for_socket_or_child_exit(&socket_path, &mut prepared_child.child)
             .await
         {
-            // Socket never became ready — kill the child if it is still alive and
-            // report failure. If the child already exited, kill/wait are benign.
-            let _ = child.kill().await;
-            let _ = child.wait().await;
+            prepared_child.rollback_once().await;
             return Err(e);
         }
+
+        let environment_ref = prepared_child.environment_ref.clone();
+        let mut child = prepared_child.child;
 
         // Create exit signal channel for `await` support (#612).
         // The receiver is intentionally dropped — `watch` channels remain
@@ -553,11 +553,10 @@ impl SpawnTool {
             self.send_initial_prompt(&socket_path, task).await?;
         }
 
-        let env_ref = if matches!(config.container, ContainerSelection::New { .. }) {
-            " environment_ref=C1"
-        } else {
-            ""
-        };
+        let env_ref = environment_ref
+            .as_ref()
+            .map(|r| format!(" environment_ref={r}"))
+            .unwrap_or_default();
         Ok(ToolResult {
             // Include durable uuid so TUI optimistic rows can rekey off display
             // labels before the first UUID-keyed snapshot arrives (#1378).

@@ -761,13 +761,23 @@ fn given_script_spawn(
     given_live_spawn_agent_cmd_mock_child(world);
     let base = base_path(world);
     let script = base.join("container-create.sh");
-    let log = base.join("container-log.jsonl");
+    let cfg_path = std::path::PathBuf::from(world.config_path.clone().unwrap());
+    let cfg_dir = cfg_path.parent().unwrap().to_path_buf();
+    let log = cfg_dir.join("container-log.jsonl");
     let mode = mode.unwrap_or_default();
-    std::fs::write(&script, format!(r#"#!/usr/bin/env bash
+    let create_script = format!(
+        r#"#!/usr/bin/env bash
 set -euo pipefail
-printf '{{"script":"%s","repo":"%s","mode":"%s"}}\n' "${{QUECTO_CONTAINER_SCRIPT:-default}}" "${{QUECTO_CONTAINER_REPO:-}}" "{}" >> '{}'
+env_ref="${{QUECTO_CONTAINER_ENVIRONMENT_REF:-}}"
+echo "{{\"kind\":\"create\",\"script\":\"${{QUECTO_CONTAINER_SCRIPT:-default}}\",\"repo\":\"${{QUECTO_CONTAINER_REPO:-}}\",\"mode\":\"{}\",\"env_ref\":\"$env_ref\"}}" >> '{}'
+if [ "{}" = "fail" ]; then exit 0; fi
 exec "$@"
-"#, mode, log.display())).unwrap();
+"#,
+        mode,
+        log.display(),
+        mode
+    );
+    std::fs::write(&script, create_script).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -775,10 +785,28 @@ exec "$@"
         p.set_mode(0o700);
         std::fs::set_permissions(&script, p).unwrap();
     }
-    let cfg_path = std::path::PathBuf::from(world.config_path.clone().unwrap());
     let mut v: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
-    v["container_scripts"] = serde_json::json!({"default": default_script, "scripts": {"default": {"create": [script.to_string_lossy()]}, "alternate": {"create": [script.to_string_lossy()]}}});
+    let cleanup = cfg_dir.join("container-cleanup.sh");
+    std::fs::write(
+        &cleanup,
+        format!(
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+printf '{{"kind":"cleanup","env_ref":"%s"}}\n' "${{QUECTO_CONTAINER_ENVIRONMENT_REF:-}}" >> '{}'
+"#,
+            log.display()
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut p = std::fs::metadata(&cleanup).unwrap().permissions();
+        p.set_mode(0o700);
+        std::fs::set_permissions(&cleanup, p).unwrap();
+    }
+    v["container_scripts"] = serde_json::json!({"default": default_script, "scripts": {"default": {"create": [script.to_string_lossy()], "cleanup": [cleanup.to_string_lossy()]}, "alternate": {"create": [script.to_string_lossy()], "cleanup": [cleanup.to_string_lossy()]}}});
     if let Some(repo) = parent_repo {
         v["agents"]["defaults"]["repo"] = serde_json::json!(repo);
     }
@@ -894,6 +922,12 @@ fn then_no_env_ref(world: &mut QuectoWorld) {
     );
 }
 
+#[then("the spawn result should include an environment reference")]
+fn then_env_ref_present(world: &mut QuectoWorld) {
+    let c = &world.spawn_result.as_ref().unwrap().content;
+    assert!(c.contains("environment_ref="), "{c}");
+}
+
 #[then(expr = "the spawn result should include environment reference {string}")]
 fn then_env_ref(world: &mut QuectoWorld, expected: String) {
     let c = &world.spawn_result.as_ref().unwrap().content;
@@ -903,12 +937,39 @@ fn then_env_ref(world: &mut QuectoWorld, expected: String) {
     );
 }
 
+fn script_invocations(world: &mut QuectoWorld) -> Vec<serde_json::Value> {
+    let cfg_path = std::path::PathBuf::from(world.config_path.clone().unwrap());
+    let log = cfg_path.parent().unwrap().join("container-log.jsonl");
+    let text = std::fs::read_to_string(log).unwrap_or_default();
+    text.lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
+}
+
 #[then(expr = "the script-managed runtime should have used container script {string}")]
-fn then_script_used(_world: &mut QuectoWorld, _script: String) {}
+fn then_script_used(world: &mut QuectoWorld, script: String) {
+    let inv = script_invocations(world);
+    assert!(
+        inv.iter()
+            .any(|v| v["kind"] == "create" && v["script"] == script),
+        "invocations: {inv:?}"
+    );
+}
 #[then(expr = "the script-managed runtime should have received repository {string}")]
-fn then_repo_received(_world: &mut QuectoWorld, _repo: String) {}
+fn then_repo_received(world: &mut QuectoWorld, repo: String) {
+    let inv = script_invocations(world);
+    assert!(
+        inv.iter()
+            .any(|v| v["kind"] == "create" && v["repo"] == repo),
+        "invocations: {inv:?}"
+    );
+}
 #[then(expr = "the script-managed runtime should have started exactly {int} child")]
-fn then_started_count(_world: &mut QuectoWorld, _n: i32) {}
+fn then_started_count(world: &mut QuectoWorld, n: i32) {
+    let inv = script_invocations(world);
+    let count = inv.iter().filter(|v| v["kind"] == "create").count() as i32;
+    assert_eq!(count, n, "invocations: {inv:?}");
+}
 #[then("no local fallback child should have been started")]
 fn then_no_local_fallback(world: &mut QuectoWorld) {
     assert!(!world.local_fallback_started);
@@ -921,7 +982,7 @@ fn then_committed_env(world: &mut QuectoWorld) {
             .as_ref()
             .unwrap()
             .content
-            .contains("environment_ref=C1")
+            .contains("environment_ref=")
     );
 }
 
@@ -985,11 +1046,11 @@ fn given_invalid_runtime_config(world: &mut QuectoWorld, _err: String) {
 }
 #[given(expr = "script-managed subagent spawning returns a proxy endpoint")]
 fn given_proxy_endpoint(world: &mut QuectoWorld) {
-    given_invalid_runtime_config(world, "proxy".to_string());
+    given_script_spawn(world, "default".to_string(), None, Some("fail".to_string()));
 }
 #[given(expr = "script-managed subagent spawning fails during {string}")]
 fn given_spawn_fails_during(world: &mut QuectoWorld, _phase: String) {
-    given_invalid_runtime_config(world, "fail".to_string());
+    given_script_spawn(world, "default".to_string(), None, Some("fail".to_string()));
 }
 #[then("the spawn result should fail because proxy endpoints are unsupported")]
 fn then_proxy_unsupported(world: &mut QuectoWorld) {
@@ -1000,9 +1061,26 @@ fn then_launch_failed_phase(world: &mut QuectoWorld, _phase: String) {
     assert!(world.spawn_result.as_ref().unwrap().is_error);
 }
 #[then(expr = "the script-managed runtime should have cleaned up exactly {int} environment")]
-fn then_cleanup_count(_world: &mut QuectoWorld, _n: i32) {}
+fn then_cleanup_count(world: &mut QuectoWorld, n: i32) {
+    let inv = script_invocations(world);
+    let count = inv.iter().filter(|v| v["kind"] == "cleanup").count() as i32;
+    assert_eq!(count, n, "invocations: {inv:?}");
+}
 #[then("the script-managed cleanup should target the created environment")]
-fn then_cleanup_target(_world: &mut QuectoWorld) {}
+fn then_cleanup_target(world: &mut QuectoWorld) {
+    let inv = script_invocations(world);
+    let created = inv
+        .iter()
+        .find(|v| v["kind"] == "create")
+        .and_then(|v| v["env_ref"].as_str())
+        .unwrap_or("");
+    assert!(!created.is_empty(), "no created env ref: {inv:?}");
+    assert!(
+        inv.iter()
+            .any(|v| v["kind"] == "cleanup" && v["env_ref"] == created),
+        "invocations: {inv:?}"
+    );
+}
 #[then(expr = "the subagent registry should not contain {string}")]
 fn then_registry_not_contain(world: &mut QuectoWorld, agent_id: String) {
     assert!(!agent_id.is_empty());

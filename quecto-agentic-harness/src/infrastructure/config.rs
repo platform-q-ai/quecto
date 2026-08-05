@@ -87,6 +87,8 @@ pub struct AgentDefaults {
     /// falls back to the dangerous-command denylist only.
     #[serde(default)]
     pub command_allowlist: Option<Vec<String>>,
+    #[serde(default)]
+    pub repo: Option<String>,
 }
 
 impl Default for AgentDefaults {
@@ -106,6 +108,7 @@ impl Default for AgentDefaults {
             context_collapse_after_messages: default_context_collapse_after_messages(),
             effort: None,
             command_allowlist: None,
+            repo: None,
         }
     }
 }
