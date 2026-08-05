@@ -42,7 +42,7 @@ impl SubagentLaunchPorts for ContractPorts {
         &mut self,
         _identity: &LaunchIdentity,
         _config: &SubagentConfig,
-    ) -> Result<Vec<String>, DomainError> {
+    ) -> Result<Vec<std::ffi::OsString>, DomainError> {
         self.record("cli");
         Ok(vec![])
     }
@@ -56,7 +56,7 @@ impl SubagentLaunchPorts for ContractPorts {
         &'a mut self,
         _config: &'a SubagentConfig,
         _binary: &'a Path,
-        _cli_args: &'a [String],
+        _cli_args: &'a [std::ffi::OsString],
     ) -> LaunchFuture<'a, Result<Self::Prepared, DomainError>> {
         self.record("prepare");
         Box::pin(async { Ok(()) })
@@ -84,8 +84,8 @@ impl SubagentLaunchPorts for ContractPorts {
         Box::pin(async {})
     }
 
-    fn cleanup_registered_once<'a>(&'a mut self, registry_key: &'a str) -> LaunchFuture<'a, ()> {
-        self.record(format!("cleanup:{registry_key}"));
+    fn uncommit_registered<'a>(&'a mut self, registry_key: &'a str) -> LaunchFuture<'a, ()> {
+        self.record(format!("uncommit:{registry_key}"));
         Box::pin(async {})
     }
 
@@ -178,8 +178,7 @@ async fn subagent_launch_port_contract_orders_register_before_initial_prompt_and
             "ready",
             "register-monitor",
             "initial-prompt",
-            "cleanup:contract-uuid",
-            "unregister:contract-uuid"
+            "uncommit:contract-uuid"
         ]
     );
 }

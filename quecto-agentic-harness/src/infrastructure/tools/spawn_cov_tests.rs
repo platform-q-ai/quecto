@@ -232,7 +232,7 @@ async fn register_and_broadcast_sends_state_changed_event() {
         cleanup_argv: Vec::new(),
     });
 
-    register_and_broadcast(&registry, Some(&tx), "child", entry);
+    register_and_broadcast(&registry, Some(&tx), "child", entry).unwrap();
 
     assert!(
         registry
@@ -341,7 +341,7 @@ async fn send_initial_prompt_errors_when_socket_absent() {
     let socket_path = dir.path().join("nope.sock");
     let tool = SpawnTool::new(vec![], true);
     let err = tool
-        .send_initial_prompt(&socket_path, "hi")
+        .send_initial_prompt_for_test(&socket_path, "hi")
         .await
         .unwrap_err();
     assert!(
@@ -386,7 +386,7 @@ async fn send_initial_prompt_writes_to_listening_socket() {
     });
 
     let tool = SpawnTool::new(vec![], true);
-    tool.send_initial_prompt(&socket_path, "do-the-thing")
+    tool.send_initial_prompt_for_test(&socket_path, "do-the-thing")
         .await
         .expect("send to a bound listener should succeed");
 
@@ -435,7 +435,7 @@ async fn register_and_broadcast_closed_receiver_still_inserts_entry() {
         cleanup_argv: Vec::new(),
     });
 
-    register_and_broadcast(&registry, Some(&tx), "closed", entry);
+    register_and_broadcast(&registry, Some(&tx), "closed", entry).unwrap();
 
     assert!(
         registry
@@ -469,7 +469,8 @@ async fn spawn_registry_poison_recovery_paths_do_not_drop_entries() {
             cleanup_environment_id: None,
             cleanup_argv: Vec::new(),
         }),
-    );
+    )
+    .unwrap();
     assert!(
         registry
             .lock()

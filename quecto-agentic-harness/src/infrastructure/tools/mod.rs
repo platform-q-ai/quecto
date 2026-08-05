@@ -25,6 +25,7 @@ mod spawn_container;
 mod spawn_entry;
 mod spawn_inherited_policy;
 mod spawn_launch_args;
+mod spawn_launch_ports;
 mod spawn_registry;
 pub mod subagent_cascade;
 mod subagent_cleanup;

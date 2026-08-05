@@ -1,3 +1,9 @@
+#[cfg(test)]
+use super::spawn_entry::{child_session_key, child_sidecar_filename};
+#[cfg(test)]
+use super::spawn_entry::{effective_config_path, inherited_runtime_config_path};
+#[cfg(test)]
+use super::spawn_launch_args::write_private_new;
 pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
 use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
@@ -8,6 +14,7 @@ use crate::domain::subagent::{
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 use crate::infrastructure::tools::spawn_container::parse_container_selection;
+use crate::subagent_launch_app::SubagentLaunchUseCase;
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -15,15 +22,11 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::spawn_entry::{
-    InitialRegistryEntrySpec, child_session_key, child_sidecar_filename, child_socket_path,
-    effective_config_path, inherited_runtime_config_path, initial_registry_entry,
-};
-use super::spawn_launch_args::write_private_new;
+use super::spawn_entry::{InitialRegistryEntrySpec, child_socket_path, initial_registry_entry};
 pub use super::spawn_registry::{register_and_broadcast, shutdown_all, shutdown_all_with_count};
+use super::subagent_registry::NotificationTx;
 #[cfg(test)]
 pub use super::subagent_registry::SubagentStatus;
-use super::subagent_registry::{ExitSignal, NotificationTx, new_exit_signal_channel};
 
 /// non-string entry is an LLM-addressable error, not a silent skip.
 fn parse_disable_tools(args: &serde_json::Value) -> Result<Vec<String>, String> {
@@ -73,20 +76,21 @@ fn validate_config_path(s: &str) -> Result<PathBuf, String> {
 #[derive(Debug)]
 pub struct SpawnTool {
     /// Allowlist of agent IDs that can be spawned.
-    allowed_agents: Vec<String>,
+    pub(super) allowed_agents: Vec<String>,
     /// Whether workspace restriction should be inherited.
-    restrict_to_workspace: bool,
+    pub(super) restrict_to_workspace: bool,
     /// Base directory for the child agent process.
-    base_dir: PathBuf,
+    pub(super) base_dir: PathBuf,
     /// Directory for UDS sockets (e.g. `$XDG_RUNTIME_DIR` or temp).
-    socket_dir: PathBuf,
+    pub(super) socket_dir: PathBuf,
     /// Shared registry of spawned subagents.
-    registry: SubagentRegistry,
-    notify_tx: Option<NotificationTx>,
-    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    pub(super) registry: SubagentRegistry,
+    pub(super) notify_tx: Option<NotificationTx>,
+    pub(super) broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     /// child events (PRD Stage B).
-    parent_id: Option<String>,
-    inherited_tool_policy: super::spawn_inherited_policy::InheritedToolPolicyState,
+    pub(super) parent_id: Option<String>,
+    pub(super) fail_register_for_test: bool,
+    pub(super) inherited_tool_policy: super::spawn_inherited_policy::InheritedToolPolicyState,
 }
 
 impl SpawnTool {
@@ -100,6 +104,7 @@ impl SpawnTool {
             notify_tx: None,
             broadcast_tx: None,
             parent_id: None,
+            fail_register_for_test: false,
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
         }
     }
@@ -119,6 +124,7 @@ impl SpawnTool {
             notify_tx: None,
             broadcast_tx: None,
             parent_id: None,
+            fail_register_for_test: false,
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
         }
     }
@@ -155,6 +161,21 @@ impl SpawnTool {
         self.broadcast_tx = broadcast_tx;
         self.parent_id = parent_id;
         self
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn with_register_failure_for_test(mut self) -> Self {
+        self.fail_register_for_test = true;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn send_initial_prompt_for_test(
+        &self,
+        socket_path: &std::path::Path,
+        task: &str,
+    ) -> Result<(), DomainError> {
+        send_initial_prompt_to_socket(socket_path, task).await
     }
 
     pub fn registry(&self) -> &SubagentRegistry {
@@ -262,8 +283,7 @@ impl SpawnTool {
 
     async fn launch_uds_agent(&self, config: &SubagentConfig) -> Result<ToolResult, DomainError> {
         let session_name = config.agent_id.as_deref().unwrap_or("subagent");
-
-        {
+        let duplicate = {
             let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
             let resolution_entries: Vec<_> = entries
                 .iter()
@@ -273,273 +293,29 @@ impl SpawnTool {
                     live: entry.status != super::subagent_registry::SubagentStatus::Exited,
                 })
                 .collect();
-            if let Err(DisplayNameResolveError::AmbiguousLiveMatch { display_name })
-            | Err(DisplayNameResolveError::NoLiveMatch { display_name }) =
-                assert_display_name_available_for_spawn(&resolution_entries, session_name)
-            {
-                return Ok(ToolResult {
-                    content: format!(
-                        "Failed to spawn subagent: duplicate live subagent display label '{}'",
-                        display_name
-                    ),
-                    is_error: true,
-                    image_blocks: vec![],
-                });
-            }
-        }
-
-        let agent_uuid = AgentUuid::mint();
-        let registry_key = agent_uuid.to_string();
-
-        let socket_path = child_socket_path(&self.socket_dir, &agent_uuid);
-
-        let workflow_spec_path = if let Some(ref spec) = config.workflow_spec {
-            let spec_json = serde_json::to_string(spec).map_err(|e| {
-                DomainError::Tool(format!("failed to serialize workflow spec: {e}"))
-            })?;
-            if spec_json.len() > crate::domain::workflow::MAX_WORKFLOW_SPEC_BYTES {
-                return Err(DomainError::Tool(format!(
-                    "workflow spec too large: {} bytes (max {})",
-                    spec_json.len(),
-                    crate::domain::workflow::MAX_WORKFLOW_SPEC_BYTES
-                )));
-            }
-            let spec_path = self.socket_dir.join(child_sidecar_filename(
-                "quecto-wfspec",
-                &agent_uuid,
-                std::process::id(),
-            ));
-            write_private_new(&spec_path, spec_json.as_bytes())
-                .map_err(|e| DomainError::Tool(format!("failed to write workflow spec: {e}")))?;
-            Some(spec_path)
-        } else {
-            None
+            assert_display_name_available_for_spawn(&resolution_entries, session_name).err()
         };
-
-        let inherited_tool_policy =
-            super::spawn_inherited_policy::snapshot(&self.inherited_tool_policy);
-        let inherited_tool_policy_path = if let Some(snapshot) = inherited_tool_policy.as_ref() {
-            let path = self.socket_dir.join(child_sidecar_filename(
-                "quecto-tool-policy",
-                &agent_uuid,
-                std::process::id(),
-            ));
-            super::inherited_tool_policy::write_snapshot(&path, snapshot).map_err(|e| {
-                DomainError::Tool(format!("failed to write inherited tool policy: {e}"))
-            })?;
-            Some(path)
-        } else {
-            None
-        };
-
-        // pure builder so the exact flag set is unit-testable.
-        let effective_config =
-            effective_config_path(config.config_path.as_ref(), inherited_runtime_config_path());
-        let cli_args = super::spawn_launch_args::build_child_cli_args(
-            &super::spawn_launch_args::ChildLaunchSpec {
-                session_name: child_session_key(&agent_uuid),
-                socket_path: &socket_path,
-                config,
-                effective_config: effective_config.as_deref(),
-                parent_id: self.parent_id.as_deref(),
-                restrict_to_workspace: self.restrict_to_workspace,
-                workflow_spec_path: workflow_spec_path.as_deref(),
-                inherited_tool_policy_path: inherited_tool_policy_path.as_deref(),
-            },
-        );
-
-        let binary = super::spawn_binary::resolve_child_binary()?;
-        let mut prepared_child = super::spawn_container::spawn_prepared_child(
-            config,
-            &binary,
-            &cli_args,
-            &self.base_dir,
-        )
-        .await?;
-
-        let actual_socket_path = prepared_child
-            .socket_path
-            .clone()
-            .unwrap_or_else(|| socket_path.clone());
-        let pid = prepared_child
-            .child
-            .as_ref()
-            .and_then(|child| child.id())
-            .unwrap_or(0);
-
-        if let Some(child) = &mut prepared_child.child {
-            if let Err(e) = self
-                .wait_for_socket_or_child_exit(&actual_socket_path, child)
-                .await
-            {
-                prepared_child.rollback_once().await;
-                return Err(e);
-            }
-        } else if let Err(e) = self.wait_for_socket(&actual_socket_path).await {
-            prepared_child.rollback_once().await;
-            return Err(e);
-        }
-
-        let environment_ref = prepared_child.environment_ref.clone();
-        let (cleanup_environment_ref, cleanup_argv) = prepared_child.cleanup_plan();
-
-        #[cfg(feature = "test-support")]
-        if std::env::var("QUECTO_TEST_FAIL_SPAWN_REGISTER").as_deref() == Ok(session_name) {
-            prepared_child.rollback_once().await;
-            return Err(DomainError::Tool(
-                "script-managed launch failed during register".into(),
-            ));
-        }
-
-        let mut child = prepared_child.child;
-
-        // `mpsc` or `oneshot` without updating the subscribe pattern.
-        let (exit_tx, _exit_rx) = new_exit_signal_channel();
-
+        if let Some(
+            DisplayNameResolveError::AmbiguousLiveMatch { display_name }
+            | DisplayNameResolveError::NoLiveMatch { display_name },
+        ) = duplicate
         {
-            let entry = initial_registry_entry(InitialRegistryEntrySpec {
-                agent_uuid: agent_uuid.clone(),
-                display_name: session_name.to_string(),
-                socket_path: actual_socket_path.clone(),
-                pid,
-                parent_id: self.parent_id.clone(),
-                config,
-                exit_signal_tx: Some(exit_tx.clone()),
-                cleanup_environment_id: cleanup_environment_ref.clone(),
-                cleanup_argv: cleanup_argv.clone(),
-            });
-            register_and_broadcast(
-                &self.registry,
-                self.broadcast_tx.as_ref(),
-                session_name,
-                entry,
-            );
-        }
-
-        let monitor_handle = super::subagent_monitor::spawn_monitor_task(
-            registry_key.clone(),
-            actual_socket_path.clone(),
-            self.registry.clone(),
-            self.notify_tx.clone(),
-            self.broadcast_tx.clone(),
-            self.parent_id.clone(),
-        );
-
-        {
-            let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(entry) = entries.get_mut(&registry_key) {
-                entry.monitor_handle = Some(std::sync::Arc::new(monitor_handle));
-            }
-        }
-
-        let reaper_registry = self.registry.clone();
-        let reaper_name = registry_key.clone();
-        let reaper_exit_tx = exit_tx;
-        let reaper_broadcast = self.broadcast_tx.clone();
-        if child.is_some() {
-            tokio::spawn(async move {
-                let status = child.as_mut().expect("checked child").wait().await;
-
-                let exit_signal = match status {
-                    Ok(exit_status) => {
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::process::ExitStatusExt;
-                            if let Some(signal) = exit_status.signal() {
-                                ExitSignal {
-                                    exit_code: None,
-                                    signal: Some(signal),
-                                }
-                            } else {
-                                ExitSignal {
-                                    exit_code: exit_status.code(),
-                                    signal: None,
-                                }
-                            }
-                        }
-                        #[cfg(not(unix))]
-                        {
-                            ExitSignal {
-                                exit_code: exit_status.code(),
-                                signal: None,
-                            }
-                        }
-                    }
-                    Err(_) => ExitSignal {
-                        exit_code: None,
-                        signal: None,
-                    },
-                };
-
-                let _ = reaper_exit_tx.send(Some(exit_signal));
-
-                super::subagent_cleanup::cleanup_registered_once(&reaper_registry, &reaper_name)
-                    .await;
-
-                let crate::infrastructure::tools::subagent_cascade::CascadeOutcome { removed, event } =
-                crate::infrastructure::tools::subagent_cascade::cascade_remove_and_state_changed(
-                    &reaper_registry,
-                    &reaper_name,
-                );
-                if let Some(event) = event {
-                    if let Some(tx) = &reaper_broadcast {
-                        if let Err(e) = tx.send(event) {
-                            tracing::debug!(
-                                agent = %reaper_name,
-                                error = %e,
-                                "reaper: no subscribers for cascade state_changed broadcast"
-                            );
-                        }
-                    }
-                }
-
-                // pid-reuse TOCTOU race).
-                for (id, entry) in &removed {
-                    if id == &reaper_name {
-                        if let Some(ref handle) = entry.monitor_handle {
-                            handle.abort();
-                        }
-                        continue;
-                    }
-                    if let Some(ref tx) = entry.exit_signal_tx {
-                        let _ = tx.send(Some(ExitSignal {
-                            exit_code: None,
-                            signal: Some(15), // SIGTERM
-                        }));
-                    }
-                    crate::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry);
-                }
+            return Ok(ToolResult {
+                content: format!(
+                    "Failed to spawn subagent: duplicate live subagent display label '{}'",
+                    display_name
+                ),
+                is_error: true,
+                image_blocks: vec![],
             });
         }
-
-        if let Some(ref task) = config.task {
-            if let Err(e) = self.send_initial_prompt(&actual_socket_path, task).await {
-                super::subagent_cleanup::cleanup_registered_once(&self.registry, &registry_key)
-                    .await;
-                {
-                    let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-                    entries.remove(&registry_key);
-                }
-                return Err(e);
-            }
-        }
-
-        let env_ref = environment_ref
-            .as_ref()
-            .map(|r| format!(" environment_ref={r}"))
-            .unwrap_or_default();
-        Ok(ToolResult {
-            content: format!(
-                "Subagent '{}' is running (uuid={}){}. Use agent_cmd to interact.",
-                session_name, agent_uuid, env_ref
-            ),
-            is_error: false,
-            image_blocks: vec![],
-        })
+        SubagentLaunchUseCase::new(super::spawn_launch_ports::SpawnLaunchPorts::new(self))
+            .execute(config)
+            .await
     }
 
     /// Poll until the UDS socket is connectable (up to 10s).
-    async fn wait_for_socket(&self, path: &std::path::Path) -> Result<(), DomainError> {
+    pub(super) async fn wait_for_socket(&self, path: &std::path::Path) -> Result<(), DomainError> {
         use tokio::time::Instant;
 
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -561,7 +337,7 @@ impl SpawnTool {
         }
     }
 
-    async fn wait_for_socket_or_child_exit(
+    pub(super) async fn wait_for_socket_or_child_exit(
         &self,
         path: &std::path::Path,
         child: &mut tokio::process::Child,
@@ -580,23 +356,21 @@ impl SpawnTool {
             }
         }
     }
+}
 
-    /// Fire-and-forget: writes the prompt and closes the connection.
-    async fn send_initial_prompt(
-        &self,
-        socket_path: &std::path::Path,
-        task: &str,
-    ) -> Result<(), DomainError> {
-        let cmd = serde_json::json!({"type": "prompt", "message": task, "ack": "accept"});
-        super::subagent_registry::send_subagent_uds_command_with_timeout(
-            socket_path,
-            &cmd.to_string(),
-            super::subagent_registry::INSPECTOR_RESPONSE_TIMEOUT,
-        )
-        .await
-        .map(|_| ())
-        .map_err(|e| DomainError::Tool(format!("failed to send prompt to subagent: {e}")))
-    }
+pub(super) async fn send_initial_prompt_to_socket(
+    socket_path: &std::path::Path,
+    task: &str,
+) -> Result<(), DomainError> {
+    let cmd = serde_json::json!({"type": "prompt", "message": task, "ack": "accept"});
+    super::subagent_registry::send_subagent_uds_command_with_timeout(
+        socket_path,
+        &cmd.to_string(),
+        super::subagent_registry::INSPECTOR_RESPONSE_TIMEOUT,
+    )
+    .await
+    .map(|_| ())
+    .map_err(|e| DomainError::Tool(format!("failed to send prompt to subagent: {e}")))
 }
 
 impl Tool for SpawnTool {
@@ -670,12 +444,18 @@ impl Tool for SpawnTool {
                             cleanup_environment_id: None,
                             cleanup_argv: Vec::new(),
                         });
-                        register_and_broadcast(
+                        if let Err(e) = register_and_broadcast(
                             &self.registry,
                             self.broadcast_tx.as_ref(),
                             session_name,
                             stub_entry,
-                        );
+                        ) {
+                            return Ok(ToolResult {
+                                content: format!("Failed to spawn subagent: {e}"),
+                                is_error: true,
+                                image_blocks: vec![],
+                            });
+                        }
 
                         let msg = format!(
                             "Subagent '{}' is running (uuid={}). Use agent_cmd to interact.",
