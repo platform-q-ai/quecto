@@ -245,6 +245,26 @@ fn create_command_and_common_env_are_constructed_without_shell() {
     let _ = cmd;
 }
 
+#[test]
+fn create_env_includes_optional_selection_values() {
+    let cfg = Config {
+        agents: crate::infrastructure::config::AgentConfig {
+            defaults: crate::infrastructure::config::AgentDefaults {
+                repo: Some("repo-default".into()),
+                ..Default::default()
+            },
+        },
+        ..configured_scripts()
+    };
+    let config = base_config(ContainerSelection::New {
+        repo: None,
+        container_script: Some("alt".into()),
+    });
+    let env = create_env(&config, &cfg, "alt");
+    assert!(env.contains(&("QUECTO_CONTAINER_SCRIPT".into(), "alt".into())));
+    assert!(env.contains(&("QUECTO_CONTAINER_REPO".into(), "repo-default".into())));
+}
+
 #[tokio::test]
 async fn local_child_success_has_no_cleanup_plan() {
     let config = base_config(ContainerSelection::Local);
