@@ -223,8 +223,7 @@ fn liveness_connection_receives_eof(world: &mut QuectoWorld) {
             socket_path,
             registry,
             None,
-            None,
-            None,
+            quecto::infrastructure::tools::subagent_monitor::MonitorContext::default(),
         );
         let _ = tokio::time::timeout(std::time::Duration::from_secs(2), exit_rx.changed()).await;
         for _ in 0..50 {

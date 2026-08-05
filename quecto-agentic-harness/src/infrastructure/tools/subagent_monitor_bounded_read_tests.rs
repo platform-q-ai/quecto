@@ -32,8 +32,11 @@ async fn monitor_loop_drops_oversized_line_but_keeps_processing_later_events() {
         sock.clone(),
         registry.clone(),
         None,
-        Some(btx),
-        Some("root".to_string()),
+        MonitorContext {
+            broadcast_tx: Some(btx),
+            parent_id: Some("root".to_string()),
+            container_registry: None,
+        },
     );
     let (mut stream, _) = listener.accept().await.unwrap();
 

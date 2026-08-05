@@ -547,8 +547,11 @@ async fn monitor_loop_forwards_child_workflow_state_to_broadcast() {
         sock.clone(),
         registry.clone(),
         None,
-        Some(btx),
-        Some("root".to_string()),
+        MonitorContext {
+            broadcast_tx: Some(btx),
+            parent_id: Some("root".to_string()),
+            container_registry: None,
+        },
     );
     let (mut stream, _) = listener.accept().await.unwrap();
     stream
@@ -694,8 +697,11 @@ async fn monitor_loop_broadcasts_state_changed_on_agent_start() {
         sock.clone(),
         registry.clone(),
         None,
-        Some(btx),
-        Some("root".to_string()),
+        MonitorContext {
+            broadcast_tx: Some(btx),
+            parent_id: Some("root".to_string()),
+            container_registry: None,
+        },
     );
     let (mut stream, _) = listener.accept().await.unwrap();
     stream

@@ -20,8 +20,7 @@ async fn monitor_connect_failure_marks_socket_readiness_failure() {
         sock,
         registry.clone(),
         Some(tx),
-        None,
-        None,
+        MonitorContext::default(),
     );
 
     tokio::time::timeout(std::time::Duration::from_secs(5), async {

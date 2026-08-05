@@ -69,6 +69,7 @@ pub struct SpawnTool {
 fn spawn_reaper_task(
     mut child: tokio::process::Child,
     reaper_registry: SubagentRegistry,
+    reaper_container_registry: crate::infrastructure::tools::container_registry::ContainerRegistry,
     reaper_name: String,
     reaper_exit_tx: tokio::sync::watch::Sender<Option<ExitSignal>>,
     reaper_broadcast: Option<tokio::sync::broadcast::Sender<String>>,
@@ -116,7 +117,11 @@ fn spawn_reaper_task(
         // Run postmortem inspect before removal as a reaper-side fallback.
         // The monitor also attempts this on EOF; the SubagentEntry atomic
         // guard makes the two lifecycle owners exact-once under races.
-        if let Err(err) = apply_container_inspect(&reaper_registry, &reaper_name) {
+        if let Err(err) = apply_container_inspect(
+            &reaper_registry,
+            Some(&reaper_container_registry),
+            &reaper_name,
+        ) {
             super::container_script_cleanup::record_container_health_failure(
                 &reaper_registry,
                 [reaper_name.clone()],
@@ -547,8 +552,11 @@ impl SpawnTool {
             socket_path.clone(),
             self.registry.clone(),
             self.notify_tx.clone(),
-            self.broadcast_tx.clone(),
-            self.parent_id.clone(),
+            super::subagent_monitor::MonitorContext {
+                broadcast_tx: self.broadcast_tx.clone(),
+                parent_id: self.parent_id.clone(),
+                container_registry: Some(self.container_registry.clone()),
+            },
         );
         {
             let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
@@ -560,6 +568,7 @@ impl SpawnTool {
             spawn_reaper_task(
                 child,
                 self.registry.clone(),
+                self.container_registry.clone(),
                 registry_key.clone(),
                 exit_tx,
                 self.broadcast_tx.clone(),

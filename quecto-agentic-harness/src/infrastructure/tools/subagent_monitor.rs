@@ -38,7 +38,6 @@ pub fn apply_event(entry: &mut SubagentEntry, line: &str) {
 }
 
 /// Apply a pre-parsed JSON event to a SubagentEntry.
-/// This avoids a second parse when the caller already has the Value.
 pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) {
     let event_type = match value.get("type").and_then(|v| v.as_str()) {
         Some(t) => t,
@@ -159,6 +158,14 @@ pub fn mark_exited(entry: &mut SubagentEntry) {
     entry.updated_at = Instant::now();
 }
 
+#[derive(Clone, Default)]
+pub struct MonitorContext {
+    pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    pub parent_id: Option<String>,
+    pub container_registry:
+        Option<crate::infrastructure::tools::container_registry::ContainerRegistry>,
+}
+
 /// Spawn a background monitor task that connects to a child agent's UDS socket
 /// and reads the framed JSON event stream, updating the registry in real-time.
 /// When `notify_tx` is `Some`, sends [`SubagentNotification`]s on the child's
@@ -168,8 +175,7 @@ pub fn spawn_monitor_task(
     socket_path: std::path::PathBuf,
     registry: SubagentRegistry,
     notify_tx: Option<NotificationTx>,
-    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    parent_id: Option<String>,
+    context: MonitorContext,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let endpoint = {
@@ -188,8 +194,11 @@ pub fn spawn_monitor_task(
             &endpoint,
             &registry,
             notify_tx.as_ref(),
-            broadcast_tx.as_ref(),
-            parent_id.as_deref(),
+            MonitorRefs {
+                broadcast_tx: context.broadcast_tx.as_ref(),
+                parent_id: context.parent_id.as_deref(),
+                container_registry: context.container_registry.as_ref(),
+            },
         )
         .await;
     })
@@ -235,14 +244,19 @@ fn notification_agent_uuid(
         .unwrap_or_else(|| crate::domain::ids::AgentUuid::new(agent_id))
 }
 
-/// Internal monitor loop: connect → read lines → apply events → detect close.
+struct MonitorRefs<'a> {
+    broadcast_tx: Option<&'a tokio::sync::broadcast::Sender<String>>,
+    parent_id: Option<&'a str>,
+    container_registry:
+        Option<&'a crate::infrastructure::tools::container_registry::ContainerRegistry>,
+}
+
 async fn monitor_loop(
     agent_id: &str,
     endpoint: &crate::domain::agent_launch_backend::ParentEndpoint,
     registry: &SubagentRegistry,
     notify_tx: Option<&NotificationTx>,
-    broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
-    parent_id: Option<&str>,
+    refs: MonitorRefs<'_>,
 ) {
     // Retry connection with increasing backoff — the endpoint should already be
     // ready because spawn waits for it, but there's a tiny race window.
@@ -270,11 +284,6 @@ async fn monitor_loop(
             }
         };
 
-    // The monitor is otherwise listen-only, so announce framed mode with an
-    // empty hello frame (ignored by the dispatch loop) — the child then
-    // replies in length-prefixed frames (#1059 / ADR-0008 part 1). The write
-    // half must stay open: dropping it would shut down the socket's write
-    // direction and read as a client disconnect on the child.
     let (read_half, mut write_half) = tokio::io::split(stream);
     if let Err(e) = quecto_line_io::write_frame(
         &mut write_half,
@@ -290,10 +299,6 @@ async fn monitor_loop(
     // typically well under 1 KiB. Default 8 KiB is wasteful per child.
     let mut reader = tokio::io::BufReader::with_capacity(1024, read_half);
 
-    // Reused across the child's whole event stream so each high-volume token
-    // line does not allocate (and, on the framed branch, zero-initialize) a
-    // fresh Vec — matching the sibling TUI/quecto-api hot readers migrated in
-    // #1059.
     let mut buf = Vec::new();
     loop {
         match read_monitor_message(&mut reader, &mut buf, agent_id).await {
@@ -303,23 +308,31 @@ async fn monitor_loop(
                     agent_id,
                     registry,
                     notify_tx,
-                    broadcast_tx,
-                    parent_id,
+                    refs.broadcast_tx,
+                    refs.parent_id,
                 );
             }
             MonitorRead::Skip => continue,
             MonitorRead::Closed => {
-                record_container_inspect_failure(registry, agent_id);
+                record_container_inspect_failure(registry, refs.container_registry, agent_id);
                 notify_child_exited(registry, agent_id, notify_tx);
                 return;
             }
         }
     }
 }
-fn record_container_inspect_failure(registry: &SubagentRegistry, agent_id: &str) {
+fn record_container_inspect_failure(
+    registry: &SubagentRegistry,
+    container_registry: Option<
+        &crate::infrastructure::tools::container_registry::ContainerRegistry,
+    >,
+    agent_id: &str,
+) {
     if let Err(err) =
         crate::infrastructure::tools::container_script_cleanup::apply_container_inspect(
-            registry, agent_id,
+            registry,
+            container_registry,
+            agent_id,
         )
     {
         crate::infrastructure::tools::container_script_cleanup::record_container_health_failure(
@@ -337,10 +350,6 @@ enum MonitorRead {
     Closed,
 }
 
-/// Read one framed-or-legacy message from the child into the reusable `buf`,
-/// classifying EOF, oversized rejection (stream stays usable), and hard read
-/// errors. Uses the buffer-reusing `_into` reader so a child's high-volume
-/// token stream does not allocate per message.
 async fn read_monitor_message<R>(reader: &mut R, buf: &mut Vec<u8>, agent_id: &str) -> MonitorRead
 where
     R: tokio::io::AsyncBufRead + Unpin,
@@ -365,9 +374,6 @@ where
     }
 }
 
-/// Process one event line from a child: drop oversized lines, update the
-/// registry entry + fire notifications for state-changing events, and forward
-/// the child's workflow_state events onto the parent's stream (R-B2).
 fn handle_monitor_line(
     line: &str,
     agent_id: &str,
@@ -380,19 +386,9 @@ fn handle_monitor_line(
         tracing::warn!(agent = %agent_id, len = line.len(), "monitor: dropping oversized line");
         return;
     }
-    // Sub-agent stream events (per-turn messages and descendant state) are the
-    // only lines forwarded onto the parent's stream from here. Gate both behind
-    // one cheap substring fail-fast so high-volume `token` lines pay a single
-    // scan instead of one per forward check (perf review).
     if let Some(tx) = broadcast_tx {
         if line.contains("\"subagent_") {
-            // Per-turn message stream: forward re-stamped onto the parent's
-            // stream so the TUI inspector updates turn-by-turn (#797). Not a
-            // status change, so it bypasses the state-changing path below.
             if let Some(fwd) = forward_child_messages_appended(line, agent_id, parent_id) {
-                // Re-stamping adds identity metadata and can cross the shared
-                // frame cap. That is an invariant violation, not permission to
-                // trim the child payload: reject the forwarded event whole.
                 if fwd.len() > crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET {
                     tracing::warn!(
                         agent = %agent_id,

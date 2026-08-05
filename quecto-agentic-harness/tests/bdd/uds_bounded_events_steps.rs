@@ -716,14 +716,17 @@ fn when_subagent_completes_turn_on_parent(world: &mut QuectoWorld) {
             "worker".into(),
             quecto::infrastructure::tools::subagent_registry::SubagentEntry::new(socket.clone(), 0),
         );
-        let (tx, mut rx) = tokio::sync::broadcast::channel(8);
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
         let monitor = quecto::infrastructure::tools::subagent_monitor::spawn_monitor_task(
             "worker".into(),
             socket,
             registry,
             None,
-            Some(tx),
-            None,
+            quecto::infrastructure::tools::subagent_monitor::MonitorContext {
+                broadcast_tx: Some(tx),
+                parent_id: None,
+                container_registry: None,
+            },
         );
         let (child, _) = listener.accept().await.expect("monitor connected");
         let (read_half, mut write_half) = child.into_split();

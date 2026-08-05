@@ -345,6 +345,51 @@ mod container_query_tests {
     }
 
     #[test]
+    fn get_containers_reports_zero_member_inspect_failure_error() {
+        use crate::infrastructure::tools::container_registry::{
+            ContainerEntry, ContainerStatus, register_container,
+        };
+        let mut fx = Fx::new();
+        let reg = crate::infrastructure::tools::container_registry::new_container_registry();
+        register_container(
+            &reg,
+            ContainerEntry {
+                container_uuid: "env-fail".into(),
+                container_ref: String::new(),
+                container_name: Some("failed".into()),
+                environment_id: "env-fail".into(),
+                repo_url: None,
+                workspace_path: "/workspace".into(),
+                status: ContainerStatus::InspectFailed,
+                agents: vec![],
+                script_name: "default".into(),
+                exec_command: "exec".into(),
+                inspect_command: "inspect".into(),
+                kill_command: "kill".into(),
+                socket_path: None,
+                socket_proxy: None,
+                metadata: serde_json::json!({"k":"v"}),
+                last_error: Some("postmortem inspect failed: boom".into()),
+            },
+        );
+        fx.container_registry = Some(reg);
+        let data =
+            query_response_data(&AgentCommand::GetContainers { id: None }, &fx.ctx()).unwrap();
+        assert_eq!(data["containers"][0]["status"], "inspectfailed");
+        assert_eq!(data["containers"][0]["environment_health"], "inspectfailed");
+        assert!(
+            data["containers"][0]["last_error"]
+                .as_str()
+                .unwrap()
+                .contains("boom")
+        );
+        assert_eq!(
+            data["containers"][0]["members"].as_array().unwrap().len(),
+            0
+        );
+    }
+
+    #[test]
     fn kill_container_uses_registry_ref_not_stale_subagent_only() {
         use crate::infrastructure::tools::container_registry::{
             ContainerEntry, ContainerStatus, register_container,

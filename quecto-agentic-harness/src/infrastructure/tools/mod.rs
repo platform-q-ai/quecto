@@ -1,6 +1,8 @@
 pub mod agent_cmd;
 pub mod bash;
 pub mod command_match;
+#[cfg(test)]
+mod container_inspect_authority_tests;
 pub mod container_launch;
 #[cfg(test)]
 mod container_launch_tests;

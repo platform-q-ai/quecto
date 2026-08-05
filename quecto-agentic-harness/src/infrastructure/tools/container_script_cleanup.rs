@@ -222,6 +222,7 @@ pub(crate) fn cleanup_container_environments_after_removal(
 
 pub(crate) fn apply_container_inspect(
     registry: &super::subagent_registry::SubagentRegistry,
+    container_registry: Option<&super::container_registry::ContainerRegistry>,
     agent_id: &str,
 ) -> Result<(), String> {
     let entry = {
@@ -241,23 +242,43 @@ pub(crate) fn apply_container_inspect(
     let mut cmd =
         command_from_config(command).map_err(|e| format!("inspect command invalid: {e}"))?;
     populate_env(&mut cmd, &entry);
-    let output = cmd
-        .output()
-        .map_err(|e| format!("inspect script failed to start: {e}"))?;
+    let output = cmd.output().map_err(|e| {
+        persist_container_inspect_failure(
+            container_registry,
+            &entry,
+            format!("inspect script failed to start: {e}"),
+        );
+        format!("inspect script failed to start: {e}")
+    })?;
     if !output.status.success() {
-        return Err(format!(
+        let err = format!(
             "inspect script exited with status {}: {}",
             output.status,
             String::from_utf8_lossy(&output.stderr).trim()
-        ));
+        );
+        persist_container_inspect_failure(container_registry, &entry, err.clone());
+        return Err(err);
     }
-    let (status, health) = validate_inspect_output(&output.stdout)?;
-    let value = serde_json::from_slice::<serde_json::Value>(&output.stdout)
-        .map_err(|e| format!("inspect script did not return JSON: {e}"))?;
+    let (status, health) = match validate_inspect_output(&output.stdout) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            persist_container_inspect_failure(container_registry, &entry, err.clone());
+            return Err(err);
+        }
+    };
+    let value = match serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+        Ok(value) => value,
+        Err(err) => {
+            let err = format!("inspect script did not return JSON: {err}");
+            persist_container_inspect_failure(container_registry, &entry, err.clone());
+            return Err(err);
+        }
+    };
     let workspace = value
         .get("workspace_path")
         .and_then(|v| v.as_str())
         .map(str::to_string);
+    persist_container_inspect_success(container_registry, &entry, &value, &status, &health);
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(current) = entries.get_mut(agent_id) {
         current.environment_health = Some(if health == "healthy" { status } else { health });
@@ -267,6 +288,78 @@ pub(crate) fn apply_container_inspect(
         }
     }
     Ok(())
+}
+
+fn persist_container_inspect_failure(
+    container_registry: Option<&super::container_registry::ContainerRegistry>,
+    entry: &SubagentEntry,
+    error: String,
+) {
+    let Some(registry) = container_registry else {
+        return;
+    };
+    let Some(uuid) = entry.container_uuid.as_deref() else {
+        return;
+    };
+    let mut state = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(container) = state.entries.get_mut(uuid) else {
+        return;
+    };
+    if matches!(
+        container.status,
+        super::container_registry::ContainerStatus::Stopped
+            | super::container_registry::ContainerStatus::CleanupFailed
+    ) {
+        return;
+    }
+    container.status = super::container_registry::ContainerStatus::InspectFailed;
+    container.last_error = Some(format!("postmortem inspect failed: {error}"));
+}
+
+fn persist_container_inspect_success(
+    container_registry: Option<&super::container_registry::ContainerRegistry>,
+    entry: &SubagentEntry,
+    value: &serde_json::Value,
+    status: &str,
+    health: &str,
+) {
+    let Some(registry) = container_registry else {
+        return;
+    };
+    let Some(uuid) = entry.container_uuid.as_deref() else {
+        return;
+    };
+    let mut state = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(container) = state.entries.get_mut(uuid) else {
+        return;
+    };
+    if matches!(
+        container.status,
+        super::container_registry::ContainerStatus::Stopped
+            | super::container_registry::ContainerStatus::CleanupFailed
+    ) {
+        return;
+    }
+    container.workspace_path = value
+        .get("workspace_path")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&container.workspace_path)
+        .to_string();
+    container.environment_id = value
+        .get("environment_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&container.environment_id)
+        .to_string();
+    container.metadata = value
+        .get("metadata")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    container.status = if health == "healthy" && status == "running" {
+        super::container_registry::ContainerStatus::Running
+    } else {
+        super::container_registry::ContainerStatus::Unhealthy
+    };
+    container.last_error = None;
 }
 
 pub(crate) fn record_container_health_failure(

@@ -38,8 +38,7 @@ fn drive_monitor_with_lines(
             socket_path.clone(),
             registry,
             Some(tx),
-            None,
-            None,
+            quecto::infrastructure::tools::subagent_monitor::MonitorContext::default(),
         );
         let (mut stream, _) = listener.accept().await.expect("accept monitor connection");
         for line in lines {
