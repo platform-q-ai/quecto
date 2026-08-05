@@ -12,6 +12,8 @@ mod inherited_tool_policy_unit_tests;
 pub mod path_utils;
 pub mod recall;
 pub mod registration;
+#[cfg(test)]
+mod registration_tests;
 pub mod registry;
 mod registry_catalogue;
 mod registry_inherited_policy;
