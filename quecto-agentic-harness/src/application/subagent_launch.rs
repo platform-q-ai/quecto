@@ -67,7 +67,6 @@ pub trait SubagentLaunchPorts {
         socket_path: &'a Path,
         task: &'a str,
     ) -> LaunchFuture<'a, Result<(), DomainError>>;
-    fn unregister(&mut self, registry_key: &str);
     fn success(&self, identity: &LaunchIdentity, environment_ref: Option<&str>) -> ToolResult;
 }
 

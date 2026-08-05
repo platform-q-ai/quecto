@@ -89,7 +89,6 @@ pub struct SpawnTool {
     pub(super) broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     /// child events (PRD Stage B).
     pub(super) parent_id: Option<String>,
-    pub(super) fail_register_for_test: bool,
     pub(super) inherited_tool_policy: super::spawn_inherited_policy::InheritedToolPolicyState,
 }
 
@@ -104,7 +103,6 @@ impl SpawnTool {
             notify_tx: None,
             broadcast_tx: None,
             parent_id: None,
-            fail_register_for_test: false,
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
         }
     }
@@ -124,7 +122,6 @@ impl SpawnTool {
             notify_tx: None,
             broadcast_tx: None,
             parent_id: None,
-            fail_register_for_test: false,
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
         }
     }
@@ -160,12 +157,6 @@ impl SpawnTool {
     ) -> Self {
         self.broadcast_tx = broadcast_tx;
         self.parent_id = parent_id;
-        self
-    }
-
-    #[cfg(feature = "test-support")]
-    pub fn with_register_failure_for_test(mut self) -> Self {
-        self.fail_register_for_test = true;
         self
     }
 

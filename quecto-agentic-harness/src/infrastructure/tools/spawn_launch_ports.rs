@@ -231,11 +231,6 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 .clone();
             let (cleanup_environment_ref, cleanup_argv) = prepared.cleanup_plan();
             let (exit_tx, _exit_rx) = new_exit_signal_channel();
-            if self.tool.fail_register_for_test {
-                return Err(DomainError::Tool(
-                    "script-managed launch failed during register".into(),
-                ));
-            }
             let entry = initial_registry_entry(InitialRegistryEntrySpec {
                 agent_uuid,
                 display_name: identity.session_name.clone(),
@@ -351,13 +346,6 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         task: &'b str,
     ) -> LaunchFuture<'b, Result<(), DomainError>> {
         Box::pin(async move { send_initial_prompt_to_socket(socket_path, task).await })
-    }
-    fn unregister(&mut self, registry_key: &str) {
-        self.tool
-            .registry
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(registry_key);
     }
     fn success(&self, identity: &LaunchIdentity, environment_ref: Option<&str>) -> ToolResult {
         let env_ref = environment_ref

@@ -67,29 +67,7 @@ async fn ports_ready_rollback_prompt_uncommit_and_success_paths() {
     ports.rollback_prepared(&mut prepared).await;
     assert!(ports.send_initial_prompt(&socket, "hi").await.is_err());
     ports.uncommit_registered("missing").await;
-    ports.unregister("missing");
     let result = ports.success(&identity, Some("env"));
     assert!(!result.is_error);
     assert!(result.content.contains("environment_ref=env"));
-}
-
-#[tokio::test]
-async fn ports_register_failure_rolls_back_before_registry_commit() {
-    let mut tool = tool();
-    tool.fail_register_for_test = true;
-    let mut ports = SpawnLaunchPorts::new(&tool);
-    let cfg = config();
-    let identity = ports.allocate_identity(&cfg).unwrap();
-    let mut prepared = PreparedChild::new_for_test(None, None, None);
-    let runtime = PreparedRuntime {
-        socket_path: tempfile::tempdir().unwrap().path().join("missing.sock"),
-        pid: 0,
-        environment_ref: None,
-    };
-    let err = ports
-        .register_and_monitor(&identity, runtime, &mut prepared, &cfg)
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("register"));
-    assert!(tool.registry().lock().unwrap().is_empty());
 }

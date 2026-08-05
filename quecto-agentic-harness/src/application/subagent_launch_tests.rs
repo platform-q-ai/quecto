@@ -133,10 +133,6 @@ impl SubagentLaunchPorts for RecordingPorts {
         })
     }
 
-    fn unregister(&mut self, registry_key: &str) {
-        self.record(format!("unregister:{registry_key}"));
-    }
-
     fn success(&self, _identity: &LaunchIdentity, _environment_ref: Option<&str>) -> ToolResult {
         self.record("success");
         ToolResult {

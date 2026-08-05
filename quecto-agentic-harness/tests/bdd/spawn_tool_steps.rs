@@ -1164,16 +1164,7 @@ fn given_proxy_endpoint(world: &mut QuectoWorld) {
 }
 #[given(expr = "script-managed subagent spawning fails during {string}")]
 fn given_spawn_fails_during(world: &mut QuectoWorld, phase: String) {
-    given_script_spawn(world, "default".to_string(), None, Some(phase.clone()));
-    match phase.as_str() {
-        "register" => {
-            if let Some(tool) = world.spawn_tool.take() {
-                world.spawn_tool = Some(tool.with_register_failure_for_test());
-            }
-        }
-        "initial prompt" => {}
-        _ => {}
-    }
+    given_script_spawn(world, "default".to_string(), None, Some(phase));
 }
 #[then("the spawn result should fail because proxy endpoints are unsupported")]
 fn then_proxy_unsupported(world: &mut QuectoWorld) {

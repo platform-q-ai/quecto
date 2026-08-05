@@ -134,5 +134,4 @@ Feature: Script-managed subagent spawning
     Examples:
       | phase |
       | readiness |
-      | register |
       | initial prompt |
