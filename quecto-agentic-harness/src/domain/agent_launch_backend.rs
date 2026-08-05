@@ -65,7 +65,10 @@ impl ParentEndpoint {
 
 #[derive(Debug)]
 pub struct PreparedAgentLaunch {
-    pub command: tokio::process::Command,
+    /// Process owned by Quecto. Script-managed container launches return None
+    /// because create/exec scripts are authoritative: they create/join the
+    /// runtime and start the child agent exactly once.
+    pub command: Option<tokio::process::Command>,
     pub backend_name: String,
     pub container: Option<ContainerLaunchOutcome>,
     pub endpoint: ParentEndpoint,
@@ -105,7 +108,7 @@ impl AgentLaunchBackend for LocalProcessLaunchBackend {
             let mut c = tokio::process::Command::new(spec.child_binary);
             c.args(spec.child_args);
             Ok(PreparedAgentLaunch {
-                command: c,
+                command: Some(c),
                 backend_name: self.backend_name().into(),
                 container: None,
                 endpoint: ParentEndpoint::DirectUds(spec.requested_socket_path.to_path_buf()),
@@ -399,10 +402,8 @@ impl AgentLaunchBackend for ScriptManagedContainerLaunchBackend {
                                     .unwrap_or_else(|| spec.requested_socket_path.to_path_buf()),
                             )
                         });
-                    let mut c = tokio::process::Command::new(spec.child_binary);
-                    c.args(spec.child_args);
                     Ok(PreparedAgentLaunch {
-                        command: c,
+                        command: None,
                         backend_name: self.backend_name().into(),
                         container: Some(out),
                         endpoint,
@@ -461,10 +462,8 @@ impl AgentLaunchBackend for ScriptManagedContainerLaunchBackend {
                                     .unwrap_or_else(|| spec.requested_socket_path.to_path_buf()),
                             )
                         });
-                    let mut c = tokio::process::Command::new(spec.child_binary);
-                    c.args(spec.child_args);
                     Ok(PreparedAgentLaunch {
-                        command: c,
+                        command: None,
                         backend_name: self.backend_name().into(),
                         container: Some(out),
                         endpoint,

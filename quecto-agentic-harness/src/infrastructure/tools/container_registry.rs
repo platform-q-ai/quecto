@@ -8,6 +8,7 @@ pub enum ContainerStatus {
     Running,
     Stopped,
     Unhealthy,
+    CleanupFailed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -89,11 +90,11 @@ pub fn resolve_live_ref(
     Ok(entry.container_uuid.clone())
 }
 
-pub fn mark_container_stopped(
+pub fn resolve_container_ref_any(
     registry: &ContainerRegistry,
     container_ref: &str,
 ) -> Result<ContainerEntry, String> {
-    let mut state = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let state = registry.lock().unwrap_or_else(|e| e.into_inner());
     let uuid = state
         .refs
         .get(container_ref)
@@ -107,12 +108,33 @@ pub fn mark_container_stopped(
             })
         })
         .ok_or_else(|| format!("unknown container ref, id, or name '{container_ref}'"))?;
+    state
+        .entries
+        .get(&uuid)
+        .cloned()
+        .ok_or_else(|| format!("unknown container ref, id, or name '{container_ref}'"))
+}
+
+pub fn set_container_status(
+    registry: &ContainerRegistry,
+    container_uuid: &str,
+    status: ContainerStatus,
+) -> Result<ContainerEntry, String> {
+    let mut state = registry.lock().unwrap_or_else(|e| e.into_inner());
     let entry = state
         .entries
-        .get_mut(&uuid)
-        .ok_or_else(|| format!("unknown container ref, id, or name '{container_ref}'"))?;
-    entry.status = ContainerStatus::Stopped;
+        .get_mut(container_uuid)
+        .ok_or_else(|| format!("unknown container '{container_uuid}'"))?;
+    entry.status = status;
     Ok(entry.clone())
+}
+
+pub fn mark_container_stopped(
+    registry: &ContainerRegistry,
+    container_ref: &str,
+) -> Result<ContainerEntry, String> {
+    let entry = resolve_container_ref_any(registry, container_ref)?;
+    set_container_status(registry, &entry.container_uuid, ContainerStatus::Stopped)
 }
 
 pub fn add_agent_to_live_container(

@@ -34,6 +34,7 @@ mod spawn_container_register;
 mod spawn_entry;
 mod spawn_inherited_policy;
 mod spawn_launch_args;
+mod spawn_launch_owner;
 mod spawn_parse;
 mod spawn_registry;
 mod spawn_rollback;

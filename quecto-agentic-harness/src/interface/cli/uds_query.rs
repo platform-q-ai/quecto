@@ -148,8 +148,8 @@ pub(super) fn query_response_data(
         }
         AgentCommand::KillContainer { container_ref, .. } => {
             let container_registry = ctx.container_registry.as_ref()?;
-            let stopped =
-                match crate::infrastructure::tools::container_registry::mark_container_stopped(
+            let target =
+                match crate::infrastructure::tools::container_registry::resolve_container_ref_any(
                     container_registry,
                     container_ref,
                 ) {
@@ -167,10 +167,10 @@ pub(super) fn query_response_data(
                     entries
                         .iter()
                         .filter(|(_, entry)| {
-                            entry.container_ref.as_deref() == Some(stopped.container_ref.as_str())
+                            entry.container_ref.as_deref() == Some(target.container_ref.as_str())
                                 || entry.container_uuid.as_deref()
-                                    == Some(stopped.container_uuid.as_str())
-                                || stopped.agents.contains(&entry.agent_uuid)
+                                    == Some(target.container_uuid.as_str())
+                                || target.agents.contains(&entry.agent_uuid)
                         })
                         .map(|(id, entry)| (id.clone(), entry.clone()))
                         .collect::<Vec<_>>()
@@ -188,7 +188,12 @@ pub(super) fn query_response_data(
                             if let Some(entry) = entries.get_mut(id) { entry.environment_health = Some("cleanup_failed".into()); }
                         }
                     }
-                    return Some(serde_json::json!({ "container_ref": container_ref, "agents": agents, "status": "error", "error": error }));
+                    let _ = crate::infrastructure::tools::container_registry::set_container_status(
+                        container_registry,
+                        &target.container_uuid,
+                        crate::infrastructure::tools::container_registry::ContainerStatus::CleanupFailed,
+                    );
+                    return Some(serde_json::json!({ "container_ref": container_ref, "container_uuid": target.container_uuid, "agents": agents, "status": "error", "error": error, "retry": "fix cleanup and call kill_container again" }));
                 }
             }
             for (_, entry) in &matched {
@@ -212,6 +217,19 @@ pub(super) fn query_response_data(
                     }
                 }
             }
+            let stopped =
+                match crate::infrastructure::tools::container_registry::set_container_status(
+                    container_registry,
+                    &target.container_uuid,
+                    crate::infrastructure::tools::container_registry::ContainerStatus::Stopped,
+                ) {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        return Some(
+                            serde_json::json!({ "container_ref": container_ref, "status": "error", "error": error }),
+                        );
+                    }
+                };
             Some(serde_json::json!({
                 "container_ref": stopped.container_ref,
                 "container_uuid": stopped.container_uuid,

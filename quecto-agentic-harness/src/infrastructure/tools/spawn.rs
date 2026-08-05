@@ -468,40 +468,15 @@ impl SpawnTool {
             .map(std::path::Path::to_path_buf)
             .unwrap_or_else(|| requested_socket_path.clone());
         let container_launch = prepared.container.clone();
-        let mut cmd = prepared.command;
-        if !self.base_dir.as_os_str().is_empty() {
-            cmd.env("QUECTO_BASE_DIR", &self.base_dir);
-        }
-        // Detach child stdio — we interact via UDS, not stdout/stderr.
-        cmd.stdout(std::process::Stdio::null());
-        cmd.stderr(std::process::Stdio::null());
-        let mut child = match cmd.spawn() {
-            Ok(child) => child,
-            Err(e) => {
-                rollback_existing_join(
-                    &self.container_registry,
-                    existing_join.as_ref(),
-                    &agent_uuid,
-                );
-                return Err(DomainError::Tool(format!("failed to spawn subagent: {e}")));
-            }
-        };
-        let pid = child.id().unwrap_or(0);
-        // Wait for socket readiness while also observing premature child exit.
-        if let Err(e) =
-            super::spawn_wait::wait_for_endpoint_or_child_exit(&prepared.endpoint, &mut child).await
-        {
-            // Socket never became ready — kill the child if it is still alive and
-            // report failure. If the child already exited, kill/wait are benign.
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-            rollback_existing_join(
+        let (prepared, mut owned_child, pid) =
+            super::spawn_launch_owner::await_prepared_launch_owner(
+                prepared,
+                &self.base_dir,
                 &self.container_registry,
                 existing_join.as_ref(),
                 &agent_uuid,
-            );
-            return Err(e);
-        }
+            )
+            .await?;
         // Create exit signal channel for `await` support (#612).
         // The receiver is intentionally dropped — `watch` channels remain
         // functional after the initial receiver is dropped. Await callers
@@ -572,13 +547,15 @@ impl SpawnTool {
                 entry.monitor_handle = Some(std::sync::Arc::new(monitor_handle));
             }
         }
-        spawn_reaper_task(
-            child,
-            self.registry.clone(),
-            registry_key.clone(),
-            exit_tx,
-            self.broadcast_tx.clone(),
-        );
+        if let Some(child) = owned_child.take() {
+            spawn_reaper_task(
+                child,
+                self.registry.clone(),
+                registry_key.clone(),
+                exit_tx,
+                self.broadcast_tx.clone(),
+            );
+        }
 
         if let Some(ref task) = config.task {
             if let Err(err) = self.send_initial_prompt(&prepared.endpoint, task).await {
