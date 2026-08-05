@@ -642,12 +642,18 @@ fn given_live_spawn_agent_cmd_mock_child(world: &mut QuectoWorld) {
     });
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let child_binary = manifest_dir
-        .parent()
-        .unwrap()
-        .join("target")
-        .join("debug")
-        .join("quecto");
+    let workspace_root = manifest_dir.parent().unwrap();
+    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                workspace_root.join(path)
+            }
+        })
+        .unwrap_or_else(|| workspace_root.join("target"));
+    let child_binary = target_dir.join("debug").join("quecto");
     assert!(
         child_binary.exists(),
         "build the quecto binary before this scenario: cargo build -p quecto-agentic-harness --bin quecto"
