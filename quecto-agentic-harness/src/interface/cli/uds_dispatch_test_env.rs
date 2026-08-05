@@ -168,6 +168,7 @@ impl DispatchTestEnv {
             ),
             current_client_id: 0,
             subagent_registry: None,
+            container_registry: None,
             notification_rx: self.notification_rx.take(),
             workflow_state: Some(self.workflow.clone()),
             workflow_config: Some(WorkflowConfig::default()),

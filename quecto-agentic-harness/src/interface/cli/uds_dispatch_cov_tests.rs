@@ -229,6 +229,7 @@ impl Fixture {
             client_tool_registry: self.registry.clone(),
             current_client_id: 0,
             subagent_registry: None,
+            container_registry: None,
             notification_rx: None,
             workflow_state: None,
             workflow_config: None,

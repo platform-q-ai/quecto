@@ -176,12 +176,15 @@ pub struct AgentControlToolDeps {
 pub struct AgentControlToolBuild {
     pub extensions: Vec<Arc<dyn Extension>>,
     pub subagent_registry: crate::infrastructure::tools::subagent_registry::SubagentRegistry,
+    pub container_registry: crate::infrastructure::tools::container_registry::ContainerRegistry,
     pub notification_tx: crate::infrastructure::tools::subagent_registry::NotificationTx,
     pub notification_rx: crate::infrastructure::tools::subagent_registry::NotificationRx,
 }
 
 pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentControlToolBuild {
     let registry = crate::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
+    let container_registry =
+        crate::infrastructure::tools::container_registry::new_container_registry();
     let (notification_tx, notification_rx) = tokio::sync::mpsc::channel(64);
     let active_awaits = crate::infrastructure::tools::agent_cmd::new_active_awaits();
 
@@ -204,6 +207,7 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
     }
     let spawn = spawn
         .with_registry(registry.clone())
+        .with_container_registry(container_registry.clone())
         .with_notify_tx(notification_tx.clone())
         .with_event_forwarding(deps.broadcast_tx.clone(), deps.parent_session_name);
     let agent_cmd = crate::infrastructure::tools::agent_cmd::AgentCmdTool::with_active_awaits(
@@ -219,6 +223,7 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
             vec![Arc::new(spawn), Arc::new(agent_cmd)],
         ))],
         subagent_registry: registry,
+        container_registry,
         notification_tx,
         notification_rx,
     }

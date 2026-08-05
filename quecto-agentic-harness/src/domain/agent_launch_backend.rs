@@ -399,9 +399,8 @@ impl AgentLaunchBackend for ScriptManagedContainerLaunchBackend {
                                     .unwrap_or_else(|| spec.requested_socket_path.to_path_buf()),
                             )
                         });
-                    let c = tokio::process::Command::new("sleep");
-                    let mut c = c;
-                    c.arg("31536000");
+                    let mut c = tokio::process::Command::new(spec.child_binary);
+                    c.args(spec.child_args);
                     Ok(PreparedAgentLaunch {
                         command: c,
                         backend_name: self.backend_name().into(),
@@ -462,9 +461,8 @@ impl AgentLaunchBackend for ScriptManagedContainerLaunchBackend {
                                     .unwrap_or_else(|| spec.requested_socket_path.to_path_buf()),
                             )
                         });
-                    let c = tokio::process::Command::new("sleep");
-                    let mut c = c;
-                    c.arg("31536000");
+                    let mut c = tokio::process::Command::new(spec.child_binary);
+                    c.args(spec.child_args);
                     Ok(PreparedAgentLaunch {
                         command: c,
                         backend_name: self.backend_name().into(),

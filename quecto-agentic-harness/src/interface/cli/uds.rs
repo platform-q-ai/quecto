@@ -145,6 +145,8 @@ pub(crate) struct DispatchCtx<'a> {
     pub current_client_id: u64,
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    pub container_registry:
+        Option<crate::infrastructure::tools::container_registry::ContainerRegistry>,
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562

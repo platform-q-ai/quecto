@@ -99,6 +99,7 @@ impl Fx {
             client_tool_registry: new_client_tool_registry(),
             current_client_id: 0,
             subagent_registry: None,
+            container_registry: None,
             notification_rx: None,
             workflow_state: None,
             workflow_config: None,

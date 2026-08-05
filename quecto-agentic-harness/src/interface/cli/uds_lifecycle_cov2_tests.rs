@@ -72,6 +72,7 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
         persist: false,
         notification_rx: None,
         subagent_registry: None,
+        container_registry: None,
         workflow_state: None,
         workflow_config: None,
         broadcast_tx: None,

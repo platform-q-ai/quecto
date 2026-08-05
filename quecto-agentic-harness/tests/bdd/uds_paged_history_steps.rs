@@ -918,6 +918,7 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
             persist: true,
             notification_rx: None,
             subagent_registry: None,
+            container_registry: None,
             workflow_state: None,
             workflow_config: None,
             broadcast_tx: None,

@@ -1,5 +1,3 @@
-use std::{collections::HashMap, sync::Arc};
-
 use super::CliContext;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::agent::AgentLoop;
@@ -9,7 +7,7 @@ use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::model_registry::ModelRegistry;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
-
+use std::{collections::HashMap, sync::Arc};
 /// Max byte length for `--socket` paths.  Linux allows 108, macOS 104;
 /// we use the stricter limit for portability.
 const MAX_SOCKET_PATH_BYTES: usize = 104;
@@ -18,7 +16,6 @@ pub(crate) struct AgentOutput<'a> {
     pub(crate) stdout: &'a mut String,
     pub(crate) stderr: &'a mut String,
 }
-
 /// Outcome of a deadline-bounded agent run.
 pub(crate) enum DeadlineResult {
     /// Agent completed (successfully or with error) within the deadline.
@@ -26,7 +23,6 @@ pub(crate) enum DeadlineResult {
     /// The deadline expired before the agent finished.
     TimedOut,
 }
-
 mod flag_parse;
 mod flag_private;
 pub(crate) use flag_parse::AgentFlags;
@@ -34,7 +30,6 @@ use flag_parse::{
     next_arg, parse_agent_mode, parse_effort_level, parse_pos_u32, parse_pos_u64,
     parse_session_name,
 };
-
 pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<AgentFlags> {
     let mut session_name: Option<String> = None;
     let mut no_session = false;
@@ -57,7 +52,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut inherited_tool_policy_path: Option<std::path::PathBuf> = None;
     let mut spawned = false;
     let mut i = 0;
-
     while i < args.len() {
         match args[i].as_str() {
             f @ ("--no-session" | "--no-sandbox" | "--persist" | "--workflow"
@@ -154,7 +148,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
             }
         }
     }
-
     if (workflow || no_workflow_requested || workflow_guards || workflow_spec_path.is_some())
         && !uds_mode
     {
@@ -163,7 +156,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         );
         return None;
     }
-
     if workflow_spec_path.is_some() && no_workflow_requested {
         stderr.push_str("agent: --workflow-spec cannot be combined with --no-workflow\n");
         return None;
@@ -278,6 +270,8 @@ pub(crate) struct AgentBuildResult {
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    pub container_registry:
+        Option<crate::infrastructure::tools::container_registry::ContainerRegistry>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub provider_reload: crate::interface::cli::provider_reload::ProviderReload,
     pub provider_reload_inputs: crate::interface::cli::provider_reload::ProviderReloadInputs,
@@ -345,6 +339,7 @@ pub(crate) fn build_agent_from_config(
         extension_prompt_snippets,
         notification_rx,
         subagent_registry,
+        container_registry,
         workflow_state,
         workspace,
     } = match build_tool_registry(ToolRegistryArgs {
@@ -434,6 +429,7 @@ pub(crate) fn build_agent_from_config(
         ext_registry: std::sync::Arc::new(std::sync::Mutex::new(ext_registry)),
         notification_rx,
         subagent_registry,
+        container_registry,
         workflow_state,
         provider_reload,
         provider_reload_inputs,
@@ -698,6 +694,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         persist: flags.persist,
         notification_rx: build.notification_rx,
         subagent_registry: build.subagent_registry,
+        container_registry: build.container_registry,
         workflow_state: build.workflow_state,
         workflow_config: build.workflow_config,
         broadcast_tx,

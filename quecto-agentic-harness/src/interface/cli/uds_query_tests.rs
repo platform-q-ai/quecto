@@ -6,11 +6,9 @@ use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::test_support::message_contents;
 use crate::infrastructure::tools::registration::ToolRegistration;
 use std::{future::Future, pin::Pin, sync::Arc};
-
 struct CatalogueFixtureTool {
     def: ToolDefinition,
 }
-
 impl CatalogueFixtureTool {
     fn new(name: &str) -> Self {
         Self {
@@ -22,7 +20,6 @@ impl CatalogueFixtureTool {
         }
     }
 }
-
 impl std::fmt::Debug for CatalogueFixtureTool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CatalogueFixtureTool")
@@ -30,12 +27,10 @@ impl std::fmt::Debug for CatalogueFixtureTool {
             .finish()
     }
 }
-
 impl Tool for CatalogueFixtureTool {
     fn definition(&self) -> ToolDefinition {
         self.def.clone()
     }
-
     fn execute(
         &self,
         _arguments: &str,
@@ -55,7 +50,6 @@ use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds_cancel::CancelSlot;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::AgentSession;
-
 pub(crate) struct Fx {
     agent: AgentLoopImpl,
     messages: Vec<Message>,
@@ -65,8 +59,9 @@ pub(crate) struct Fx {
     _tmp: tempfile::TempDir,
     writer: tokio::io::Sink,
     subagent_registry: Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    pub(crate) container_registry:
+        Option<crate::infrastructure::tools::container_registry::ContainerRegistry>,
 }
-
 impl Fx {
     pub(crate) fn new() -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -102,9 +97,9 @@ impl Fx {
             _tmp: tmp,
             writer: tokio::io::sink(),
             subagent_registry: None,
+            container_registry: None,
         }
     }
-
     pub(crate) fn ctx(&mut self) -> crate::interface::cli::uds::DispatchCtx<'_> {
         let initial_stats = compute_session_stats_with_usage(
             &self.session_key,
@@ -141,6 +136,7 @@ impl Fx {
             client_tool_registry: new_client_tool_registry(),
             current_client_id: 0,
             subagent_registry: self.subagent_registry.clone(),
+            container_registry: self.container_registry.clone(),
             notification_rx: None,
             workflow_state: None,
             workflow_config: None,
@@ -151,17 +147,14 @@ impl Fx {
         }
     }
 }
-
 #[test]
 fn query_get_state_messages_and_stats_are_shaped() {
     let mut fx = Fx::new();
     let ctx = fx.ctx();
-
     let state = query_response_data(&AgentCommand::GetState { id: None }, &ctx).unwrap();
     assert_eq!(state["model"], "stub");
     assert_eq!(state["messageCount"], 2);
     assert_eq!(state["execution"]["phase"], "idle");
-
     let all = query_response_data(
         &AgentCommand::GetMessages {
             id: None,
@@ -176,7 +169,6 @@ fn query_get_state_messages_and_stats_are_shaped() {
     assert_eq!(all_messages.len(), 2);
     assert_eq!(all["hasMoreBefore"], false);
     assert_eq!(all["before"], serde_json::Value::Null);
-
     let tail = query_response_data(
         &AgentCommand::GetMessages {
             id: None,
@@ -188,11 +180,9 @@ fn query_get_state_messages_and_stats_are_shaped() {
     )
     .unwrap();
     assert_eq!(tail["messages"].as_array().unwrap().len(), 1);
-
     let stats = query_response_data(&AgentCommand::GetSessionStats { id: None }, &ctx).unwrap();
     assert_eq!(stats["sessionKey"], "cli:test");
 }
-
 fn assert_page_metadata(data: &serde_json::Value, has_more: bool) {
     assert_eq!(data["hasMoreBefore"], has_more);
     if has_more {
@@ -205,7 +195,6 @@ fn assert_page_metadata(data: &serde_json::Value, has_more: bool) {
     }
     assert_ne!(data["trimmed"], true);
 }
-
 #[test]
 fn query_get_messages_without_count_returns_newest_bounded_page_with_cursor() {
     let mut fx = Fx::new();
@@ -213,7 +202,6 @@ fn query_get_messages_without_count_returns_newest_bounded_page_with_cursor() {
         .map(|i| Message::user(format!("msg-{i:03}")))
         .collect();
     let ctx = fx.ctx();
-
     let page = query_response_data(
         &AgentCommand::GetMessages {
             id: None,
@@ -225,7 +213,6 @@ fn query_get_messages_without_count_returns_newest_bounded_page_with_cursor() {
     )
     .expect("get_messages returns a page");
     let contents = message_contents(&page);
-
     assert_eq!(
         contents.len(),
         HISTORY_PAGE_SIZE,
@@ -235,7 +222,6 @@ fn query_get_messages_without_count_returns_newest_bounded_page_with_cursor() {
     assert_eq!(contents.first().map(String::as_str), Some("msg-128"));
     assert_page_metadata(&page, true);
 }
-
 #[test]
 fn query_get_messages_exact_page_has_no_older_cursor() {
     let mut fx = Fx::new();
@@ -243,7 +229,6 @@ fn query_get_messages_exact_page_has_no_older_cursor() {
         .map(|i| Message::user(format!("msg-{i:03}")))
         .collect();
     let ctx = fx.ctx();
-
     let page = query_response_data(
         &AgentCommand::GetMessages {
             id: None,
@@ -254,11 +239,9 @@ fn query_get_messages_exact_page_has_no_older_cursor() {
         &ctx,
     )
     .expect("exact page returns data");
-
     assert_eq!(message_contents(&page).len(), HISTORY_PAGE_SIZE);
     assert_page_metadata(&page, false);
 }
-
 #[test]
 fn query_get_messages_just_over_page_keeps_oldest_reachable() {
     let mut fx = Fx::new();
@@ -266,7 +249,6 @@ fn query_get_messages_just_over_page_keeps_oldest_reachable() {
         .map(|i| Message::user(format!("msg-{i:03}")))
         .collect();
     let ctx = fx.ctx();
-
     let newest = query_response_data(
         &AgentCommand::GetMessages {
             id: None,
@@ -283,7 +265,6 @@ fn query_get_messages_just_over_page_keeps_oldest_reachable() {
         Some("msg-001")
     );
     assert_page_metadata(&newest, true);
-
     let older = query_response_data(
         &AgentCommand::GetMessages {
             id: None,
@@ -297,7 +278,6 @@ fn query_get_messages_just_over_page_keeps_oldest_reachable() {
     assert_eq!(message_contents(&older), ["msg-000"]);
     assert_page_metadata(&older, false);
 }
-
 #[test]
 fn query_get_messages_before_cursor_returns_adjacent_older_page() {
     let mut fx = Fx::new();
@@ -311,16 +291,13 @@ fn query_get_messages_before_cursor_returns_adjacent_older_page() {
     }))
     .expect("paged get_messages command parses");
     let ctx = fx.ctx();
-
     let page = query_response_data(&cmd, &ctx).expect("older page returns data");
     let contents = message_contents(&page);
-
     assert_eq!(contents.len(), HISTORY_PAGE_SIZE);
     assert_eq!(contents.last().map(String::as_str), Some("msg-079"));
     assert_eq!(contents.first().map(String::as_str), Some("msg-016"));
     assert!(contents.iter().all(|content| content.as_str() < "msg-080"));
 }
-
 #[test]
 fn query_get_messages_pages_to_start_without_gap_or_duplicate() {
     let mut fx = Fx::new();
@@ -330,7 +307,6 @@ fn query_get_messages_pages_to_start_without_gap_or_duplicate() {
     let ctx = fx.ctx();
     let mut before = None;
     let mut collected = Vec::new();
-
     loop {
         let page = query_response_data(
             &AgentCommand::GetMessages {
@@ -350,7 +326,6 @@ fn query_get_messages_pages_to_start_without_gap_or_duplicate() {
         }
         before = page["before"].as_str().map(str::to_owned);
     }
-
     assert_eq!(collected.len(), HISTORY_PAGE_SIZE * 2 + 1);
     assert_eq!(collected.first().map(String::as_str), Some("msg-000"));
     assert_eq!(collected.last().map(String::as_str), Some("msg-128"));
@@ -361,13 +336,11 @@ fn query_get_messages_pages_to_start_without_gap_or_duplicate() {
         "collected messages must be exact-once"
     );
 }
-
 #[test]
 fn query_get_messages_count_is_older_client_newest_slice_with_page_metadata() {
     let mut fx = Fx::new();
     fx.messages = (0..10).map(|i| Message::user(format!("msg-{i}"))).collect();
     let ctx = fx.ctx();
-
     let page = query_response_data(
         &AgentCommand::GetMessages {
             id: None,
@@ -379,11 +352,9 @@ fn query_get_messages_count_is_older_client_newest_slice_with_page_metadata() {
     )
     .expect("compat get_messages count returns data");
     let contents = message_contents(&page);
-
     assert_eq!(contents, ["msg-7", "msg-8", "msg-9"]);
     assert_page_metadata(&page, true);
 }
-
 #[test]
 fn query_get_messages_explicit_count_above_page_size_is_preserved() {
     let mut fx = Fx::new();
@@ -391,7 +362,6 @@ fn query_get_messages_explicit_count_above_page_size_is_preserved() {
         .map(|i| Message::user(format!("msg-{i:03}")))
         .collect();
     let ctx = fx.ctx();
-
     let page = query_response_data(
         &AgentCommand::GetMessages {
             id: None,
@@ -402,20 +372,17 @@ fn query_get_messages_explicit_count_above_page_size_is_preserved() {
         &ctx,
     )
     .expect("explicit count returns data");
-
     assert_eq!(message_contents(&page).len(), 80);
     assert_eq!(
         message_contents(&page).first().map(String::as_str),
         Some("msg-020")
     );
 }
-
 #[test]
 fn query_get_messages_count_at_or_beyond_total_has_no_older_cursor() {
     let mut fx = Fx::new();
     fx.messages = (0..3).map(|i| Message::user(format!("msg-{i}"))).collect();
     let ctx = fx.ctx();
-
     for count in [3, 10] {
         let page = query_response_data(
             &AgentCommand::GetMessages {
@@ -431,7 +398,6 @@ fn query_get_messages_count_at_or_beyond_total_has_no_older_cursor() {
         assert_page_metadata(&page, false);
     }
 }
-
 #[test]
 fn query_get_messages_count_with_before_returns_bounded_slice_before_cursor() {
     let mut fx = Fx::new();
@@ -440,7 +406,6 @@ fn query_get_messages_count_with_before_returns_bounded_slice_before_cursor() {
         .collect();
     let cursor = fx.messages[10].id().to_string();
     let ctx = fx.ctx();
-
     let page = query_response_data(
         &AgentCommand::GetMessages {
             id: None,
@@ -451,7 +416,6 @@ fn query_get_messages_count_with_before_returns_bounded_slice_before_cursor() {
         &ctx,
     )
     .expect("count combined with before returns data");
-
     assert_eq!(
         message_contents(&page),
         ["msg-06", "msg-07", "msg-08", "msg-09"],
@@ -459,11 +423,9 @@ fn query_get_messages_count_with_before_returns_bounded_slice_before_cursor() {
     );
     assert_page_metadata(&page, true);
 }
-
 #[test]
 fn query_get_message_hit_returns_message_by_stable_id() {
     let mut fx = Fx::new();
-    // Resolve against the stable id of the second (assistant) message.
     let target_id = fx.messages[1].id().to_string();
     let ctx = fx.ctx();
     let hit = query_response_data(
@@ -488,7 +450,6 @@ fn query_get_message_hit_returns_message_by_stable_id() {
         "the exact referenced body is returned"
     );
 }
-
 #[test]
 fn query_get_message_miss_returns_none_for_structured_error() {
     for message_id in ["00000000-0000-0000-0000-000000000000", "not-a-uuid"] {
@@ -513,7 +474,6 @@ fn query_get_message_miss_returns_none_for_structured_error() {
         );
     }
 }
-
 #[test]
 fn query_get_message_tool_call_uses_tool_id_not_request_or_message_id() {
     let mut fx = Fx::new();
@@ -527,7 +487,6 @@ fn query_get_message_tool_call_uses_tool_id_not_request_or_message_id() {
     ));
     let message_id = fx.messages.last().unwrap().id().to_string();
     let ctx = fx.ctx();
-
     let hit = query_response_data(
         &AgentCommand::GetMessage {
             id: Some("response-correlation".into()),
@@ -540,7 +499,6 @@ fn query_get_message_tool_call_uses_tool_id_not_request_or_message_id() {
         &ctx,
     )
     .expect("tool-call argument lookup must resolve by the requested toolCallId");
-
     assert_eq!(hit["id"], message_id);
     assert_eq!(hit["toolCallId"], "call-target");
     assert_eq!(hit["toolName"], "bash");
@@ -550,7 +508,6 @@ fn query_get_message_tool_call_uses_tool_id_not_request_or_message_id() {
         "request/correlation id must not be confused with message or tool-call ids"
     );
 }
-
 #[test]
 fn query_metadata_commands_are_shaped_or_deferred() {
     let mut fx = Fx::new();
@@ -577,14 +534,12 @@ fn query_metadata_commands_are_shaped_or_deferred() {
             .is_array()
     );
 }
-
 #[test]
 fn kill_container_invokes_script_marks_members_stopped_and_signals_exit() {
     use crate::domain::ids::AgentUuid;
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_exit_signal_channel, new_registry,
     };
-
     let mut fx = Fx::new();
     let marker = fx._tmp.path().join("killed.txt");
     let registry = new_registry();
@@ -616,7 +571,28 @@ fn kill_container_invokes_script_marks_members_stopped_and_signals_exit() {
     entry.exit_signal_tx = Some(tx);
     registry.lock().unwrap().insert(uuid.to_string(), entry);
     fx.subagent_registry = Some(registry.clone());
-
+    let creg = crate::infrastructure::tools::container_registry::new_container_registry();
+    crate::infrastructure::tools::container_registry::register_container(
+        &creg,
+        crate::infrastructure::tools::container_registry::ContainerEntry {
+            container_uuid: "env-1".into(),
+            container_ref: String::new(),
+            container_name: None,
+            environment_id: "env-1".into(),
+            repo_url: None,
+            workspace_path: fx._tmp.path().to_string_lossy().to_string(),
+            status: crate::infrastructure::tools::container_registry::ContainerStatus::Running,
+            agents: vec![uuid.clone()],
+            script_name: String::new(),
+            exec_command: String::new(),
+            inspect_command: String::new(),
+            kill_command: String::new(),
+            socket_path: None,
+            socket_proxy: None,
+            metadata: serde_json::json!({}),
+        },
+    );
+    fx.container_registry = Some(creg);
     let response = query_response_data(
         &AgentCommand::KillContainer {
             id: None,
@@ -625,7 +601,6 @@ fn kill_container_invokes_script_marks_members_stopped_and_signals_exit() {
         &fx.ctx(),
     )
     .expect("kill_container response");
-
     assert_eq!(response["status"], "stopped");
     assert_eq!(response["agents"].as_array().unwrap().len(), 1);
     assert_eq!(std::fs::read_to_string(marker).unwrap(), "C1:env-1");
@@ -636,12 +611,10 @@ fn kill_container_invokes_script_marks_members_stopped_and_signals_exit() {
     drop(entries);
     assert!(rx.borrow().is_some());
 }
-
 #[test]
 fn kill_container_reports_script_failure_without_pretending_success() {
     use crate::domain::ids::AgentUuid;
     use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
-
     let mut fx = Fx::new();
     let registry = new_registry();
     let uuid = AgentUuid::mint();
@@ -666,7 +639,28 @@ fn kill_container_reports_script_failure_without_pretending_success() {
     entry.container_kill_command = Some(kill.to_string_lossy().into_owned());
     registry.lock().unwrap().insert(uuid.to_string(), entry);
     fx.subagent_registry = Some(registry);
-
+    let creg = crate::infrastructure::tools::container_registry::new_container_registry();
+    crate::infrastructure::tools::container_registry::register_container(
+        &creg,
+        crate::infrastructure::tools::container_registry::ContainerEntry {
+            container_uuid: "env-1".into(),
+            container_ref: String::new(),
+            container_name: None,
+            environment_id: "env-1".into(),
+            repo_url: None,
+            workspace_path: fx._tmp.path().to_string_lossy().to_string(),
+            status: crate::infrastructure::tools::container_registry::ContainerStatus::Running,
+            agents: vec![uuid.clone()],
+            script_name: String::new(),
+            exec_command: String::new(),
+            inspect_command: String::new(),
+            kill_command: String::new(),
+            socket_path: None,
+            socket_proxy: None,
+            metadata: serde_json::json!({}),
+        },
+    );
+    fx.container_registry = Some(creg);
     let response = query_response_data(
         &AgentCommand::KillContainer {
             id: None,
@@ -675,7 +669,6 @@ fn kill_container_reports_script_failure_without_pretending_success() {
         &fx.ctx(),
     )
     .expect("kill_container response");
-
     assert_eq!(response["status"], "error");
     assert!(response["error"].as_str().unwrap().contains("boom"));
     let entries = fx.subagent_registry.as_ref().unwrap().lock().unwrap();
@@ -686,12 +679,10 @@ fn kill_container_reports_script_failure_without_pretending_success() {
     );
     assert_eq!(failed.environment_health.as_deref(), Some("cleanup_failed"));
 }
-
 #[test]
 fn kill_container_uses_canonical_cleanup_env() {
     use crate::domain::ids::AgentUuid;
     use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
-
     let mut fx = Fx::new();
     let marker = fx._tmp.path().join("env.txt");
     let registry = new_registry();
@@ -721,7 +712,28 @@ fn kill_container_uses_canonical_cleanup_env() {
     entry.container_kill_command = Some(kill.to_string_lossy().into_owned());
     registry.lock().unwrap().insert(uuid.to_string(), entry);
     fx.subagent_registry = Some(registry);
-
+    let creg = crate::infrastructure::tools::container_registry::new_container_registry();
+    crate::infrastructure::tools::container_registry::register_container(
+        &creg,
+        crate::infrastructure::tools::container_registry::ContainerEntry {
+            container_uuid: "uuid-1".into(),
+            container_ref: String::new(),
+            container_name: Some("name-1".into()),
+            environment_id: "env-1".into(),
+            repo_url: None,
+            workspace_path: fx._tmp.path().to_string_lossy().to_string(),
+            status: crate::infrastructure::tools::container_registry::ContainerStatus::Running,
+            agents: vec![uuid.clone()],
+            script_name: "dev".into(),
+            exec_command: String::new(),
+            inspect_command: String::new(),
+            kill_command: String::new(),
+            socket_path: None,
+            socket_proxy: None,
+            metadata: serde_json::json!({}),
+        },
+    );
+    fx.container_registry = Some(creg);
     let response = query_response_data(
         &AgentCommand::KillContainer {
             id: None,

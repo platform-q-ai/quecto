@@ -336,6 +336,7 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
             persist: true,
             notification_rx: None,
             subagent_registry: None,
+            container_registry: None,
             workflow_state: None,
             workflow_config: None,
             broadcast_tx: None,

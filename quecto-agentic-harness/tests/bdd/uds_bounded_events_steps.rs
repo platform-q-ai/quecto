@@ -1596,6 +1596,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
             persist,
             notification_rx: None,
             subagent_registry: None,
+            container_registry: None,
             workflow_state: None,
             workflow_config: None,
             broadcast_tx: None,

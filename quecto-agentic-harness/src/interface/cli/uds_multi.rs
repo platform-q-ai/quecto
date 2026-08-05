@@ -92,6 +92,8 @@ pub(super) struct MultiClientArgs<'a> {
     /// Shared subagent registry for get_subagents / state_changed (#524).
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    pub container_registry:
+        Option<crate::infrastructure::tools::container_registry::ContainerRegistry>,
     /// Shared workflow state for auto-nudge injection (#562).
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
     /// Workflow config (auto_continue, completion_nudge flags).
@@ -158,6 +160,7 @@ pub(super) async fn multi_client_loop(
     let persist = args.persist;
     let notification_rx = args.notification_rx;
     let subagent_registry = args.subagent_registry;
+    let container_registry = args.container_registry;
     let wf_state = args.workflow_state;
     let wf_config = args.workflow_config;
     let pre_broadcast_tx = args.broadcast_tx;
@@ -283,6 +286,7 @@ pub(super) async fn multi_client_loop(
         client_tool_registry: client_tool_registry.clone(),
         current_client_id: 0,
         subagent_registry,
+        container_registry,
         notification_rx,
         workflow_state: wf_state.clone(),
         workflow_config: wf_config,

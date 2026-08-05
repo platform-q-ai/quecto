@@ -38,6 +38,8 @@ pub struct UdsLoopArgs<'a> {
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    pub container_registry:
+        Option<crate::infrastructure::tools::container_registry::ContainerRegistry>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
     /// Pre-created broadcast channel for workflow event emission (#598).
@@ -73,6 +75,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         persist,
         notification_rx,
         subagent_registry,
+        container_registry,
         workflow_state,
         workflow_config,
         broadcast_tx,
@@ -149,6 +152,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 persist,
                 notification_rx,
                 subagent_registry,
+                container_registry,
                 workflow_state,
                 workflow_config,
                 broadcast_tx,
@@ -255,6 +259,7 @@ async fn single_client_loop(
             client_tool_registry: super::uds_ext_protocol::new_client_tool_registry(),
             current_client_id: 0,
             subagent_registry: None,
+            container_registry: None,
             notification_rx: None,
             workflow_state: workflow_state.clone(),
             workflow_config: None,

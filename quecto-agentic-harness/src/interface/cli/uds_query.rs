@@ -127,64 +127,66 @@ pub(super) fn query_response_data(
             Some(serde_json::json!({ "subagents": list }))
         }
         AgentCommand::GetContainers { .. } => {
-            let agents = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
-            let mut containers = std::collections::BTreeMap::new();
-            for agent in agents
+            let registry = ctx.container_registry.as_ref()?;
+            let containers = crate::infrastructure::tools::container_registry::list_containers(registry)
                 .into_iter()
-                .filter(|a| a.runtime_backend == "container")
-            {
-                let key = agent
-                    .container_uuid
-                    .clone()
-                    .unwrap_or_else(|| agent.agent_id.clone());
-                let entry = containers.entry(key.clone()).or_insert_with(|| {
-                    serde_json::json!({
-                        "container_uuid": key,
-                        "container_id": agent.container_uuid,
-                        "container_ref": agent.container_ref,
-                        "container_name": agent.container_name,
-                        "environment_id": agent.environment_id,
-                        "environment_health": agent.environment_health,
-                        "repo_url": agent.repo_url,
-                        "workspace_path": agent.workspace_path,
-                        "agents": [],
-                        "members": [],
-                    })
-                });
-                if let Some(arr) = entry.get_mut("agents").and_then(|v| v.as_array_mut()) {
-                    arr.push(serde_json::Value::String(agent.agent_id.clone()));
-                }
-                if let Some(arr) = entry.get_mut("members").and_then(|v| v.as_array_mut()) {
-                    arr.push(serde_json::json!({"agent_id": agent.agent_id, "agent_uuid": agent.agent_uuid}));
-                }
-            }
-            Some(serde_json::json!({ "containers": containers.into_values().collect::<Vec<_>>() }))
+                .map(|entry| serde_json::json!({
+                    "container_uuid": entry.container_uuid,
+                    "container_id": entry.container_uuid,
+                    "container_ref": entry.container_ref,
+                    "container_name": entry.container_name,
+                    "environment_id": entry.environment_id,
+                    "environment_health": format!("{:?}", entry.status).to_lowercase(),
+                    "status": format!("{:?}", entry.status).to_lowercase(),
+                    "repo_url": entry.repo_url,
+                    "workspace_path": entry.workspace_path,
+                    "agents": entry.agents.iter().map(|a| a.as_ref().to_string()).collect::<Vec<_>>(),
+                    "members": entry.agents.iter().map(|a| serde_json::json!({"agent_uuid": a.as_ref()})).collect::<Vec<_>>(),
+                }))
+                .collect::<Vec<_>>();
+            Some(serde_json::json!({ "containers": containers }))
         }
         AgentCommand::KillContainer { container_ref, .. } => {
-            let registry = ctx.subagent_registry.as_ref()?;
-            let matched: Vec<_> = {
-                let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-                entries
-                    .iter()
-                    .filter(|(_, entry)| {
-                        entry.container_ref.as_deref() == Some(container_ref.as_str())
-                            || entry.container_uuid.as_deref() == Some(container_ref.as_str())
-                    })
-                    .map(|(id, entry)| (id.clone(), entry.clone()))
-                    .collect()
-            };
-            if matched.is_empty() {
-                return None;
-            }
+            let container_registry = ctx.container_registry.as_ref()?;
+            let stopped =
+                match crate::infrastructure::tools::container_registry::mark_container_stopped(
+                    container_registry,
+                    container_ref,
+                ) {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        return Some(
+                            serde_json::json!({ "container_ref": container_ref, "status": "error", "error": error }),
+                        );
+                    }
+                };
+            let registry = ctx.subagent_registry.as_ref();
+            let matched: Vec<_> = registry
+                .map(|registry| {
+                    let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+                    entries
+                        .iter()
+                        .filter(|(_, entry)| {
+                            entry.container_ref.as_deref() == Some(stopped.container_ref.as_str())
+                                || entry.container_uuid.as_deref()
+                                    == Some(stopped.container_uuid.as_str())
+                                || stopped.agents.contains(&entry.agent_uuid)
+                        })
+                        .map(|(id, entry)| (id.clone(), entry.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             let agents: Vec<_> = matched.iter().map(|(id, _)| id.clone()).collect();
             if let Some((_, owner)) = matched
                 .iter()
                 .find(|(_, entry)| entry.container_kill_command.is_some())
             {
                 if let Err(error) = crate::infrastructure::tools::container_script_cleanup::run_container_kill_script(owner) {
-                    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-                    for (id, _) in &matched {
-                        if let Some(entry) = entries.get_mut(id) { entry.environment_health = Some("cleanup_failed".into()); }
+                    if let Some(registry) = registry {
+                        let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+                        for (id, _) in &matched {
+                            if let Some(entry) = entries.get_mut(id) { entry.environment_health = Some("cleanup_failed".into()); }
+                        }
                     }
                     return Some(serde_json::json!({ "container_ref": container_ref, "agents": agents, "status": "error", "error": error }));
                 }
@@ -200,7 +202,7 @@ pub(super) fn query_response_data(
                 }
                 subagent_cascade::terminate_removed_entry(entry);
             }
-            {
+            if let Some(registry) = registry {
                 let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
                 for (id, _) in &matched {
                     if let Some(entry) = entries.get_mut(id) {
@@ -210,9 +212,12 @@ pub(super) fn query_response_data(
                     }
                 }
             }
-            Some(
-                serde_json::json!({ "container_ref": container_ref, "agents": agents, "status": "stopped" }),
-            )
+            Some(serde_json::json!({
+                "container_ref": stopped.container_ref,
+                "container_uuid": stopped.container_uuid,
+                "agents": agents,
+                "status": "stopped"
+            }))
         }
         AgentCommand::DeleteAllSubagents { .. } => {
             Some(super::uds_delete_all_subagents::response_data(ctx))
@@ -240,7 +245,7 @@ pub(super) fn query_response_data(
 
 #[cfg(test)]
 #[path = "uds_query_tests.rs"]
-mod tests;
+pub(crate) mod tests;
 #[cfg(test)]
 mod cov2_tests {
     use super::{query_response_data, tests::Fx};
@@ -275,5 +280,87 @@ mod cov2_tests {
         let value = query_response_data(&AgentCommand::GetState { id: None }, &ctx).unwrap();
         assert!(value.get("workflow").is_none());
         assert_eq!(value["model"], "stub");
+    }
+}
+#[cfg(test)]
+mod container_query_tests {
+    use super::{query_response_data, tests::Fx};
+    use crate::interface::cli::protocol::AgentCommand;
+    #[test]
+    fn get_containers_uses_authoritative_registry_including_empty_stopped() {
+        use crate::infrastructure::tools::container_registry::{
+            ContainerEntry, ContainerStatus, register_container,
+        };
+        let mut fx = Fx::new();
+        let reg = crate::infrastructure::tools::container_registry::new_container_registry();
+        register_container(
+            &reg,
+            ContainerEntry {
+                container_uuid: "env-empty".into(),
+                container_ref: String::new(),
+                container_name: Some("empty".into()),
+                environment_id: "env-empty".into(),
+                repo_url: None,
+                workspace_path: "/workspace".into(),
+                status: ContainerStatus::Stopped,
+                agents: vec![],
+                script_name: "default".into(),
+                exec_command: "exec".into(),
+                inspect_command: "inspect".into(),
+                kill_command: "kill".into(),
+                socket_path: None,
+                socket_proxy: None,
+                metadata: serde_json::json!({}),
+            },
+        );
+        fx.container_registry = Some(reg);
+        let data =
+            query_response_data(&AgentCommand::GetContainers { id: None }, &fx.ctx()).unwrap();
+        assert_eq!(data["containers"][0]["container_ref"], "C1");
+        assert_eq!(data["containers"][0]["status"], "stopped");
+        assert_eq!(data["containers"][0]["agents"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn kill_container_uses_registry_ref_not_stale_subagent_only() {
+        use crate::infrastructure::tools::container_registry::{
+            ContainerEntry, ContainerStatus, register_container,
+        };
+        let mut fx = Fx::new();
+        let reg = crate::infrastructure::tools::container_registry::new_container_registry();
+        register_container(
+            &reg,
+            ContainerEntry {
+                container_uuid: "env-live".into(),
+                container_ref: String::new(),
+                container_name: None,
+                environment_id: "env-live".into(),
+                repo_url: None,
+                workspace_path: "/workspace".into(),
+                status: ContainerStatus::Running,
+                agents: vec![],
+                script_name: "default".into(),
+                exec_command: "exec".into(),
+                inspect_command: "inspect".into(),
+                kill_command: "kill".into(),
+                socket_path: None,
+                socket_proxy: None,
+                metadata: serde_json::json!({}),
+            },
+        );
+        fx.container_registry = Some(reg.clone());
+        let data = query_response_data(
+            &AgentCommand::KillContainer {
+                id: None,
+                container_ref: "C1".into(),
+            },
+            &fx.ctx(),
+        )
+        .unwrap();
+        assert_eq!(data["status"], "stopped");
+        assert_eq!(
+            crate::infrastructure::tools::container_registry::list_containers(&reg)[0].status,
+            ContainerStatus::Stopped
+        );
     }
 }

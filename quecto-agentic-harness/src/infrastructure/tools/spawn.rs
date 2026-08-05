@@ -210,6 +210,13 @@ impl SpawnTool {
         self.launch_backends.push(backend);
         self
     }
+    pub fn with_container_registry(
+        mut self,
+        registry: crate::infrastructure::tools::container_registry::ContainerRegistry,
+    ) -> Self {
+        self.container_registry = registry;
+        self
+    }
     pub(crate) fn with_inherited_tool_policy(
         self,
         snapshot: super::inherited_tool_policy::InheritedToolPolicySnapshot,
