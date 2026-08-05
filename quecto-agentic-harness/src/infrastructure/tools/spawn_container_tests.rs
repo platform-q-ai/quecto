@@ -242,3 +242,44 @@ fn create_command_and_common_env_are_constructed_without_shell() {
     apply_common_child_env(&mut cmd, Path::new("/tmp/base"));
     let _ = cmd;
 }
+
+#[tokio::test]
+async fn local_child_success_has_no_cleanup_plan() {
+    let config = base_config(ContainerSelection::Local);
+    let mut prepared = spawn_prepared_child(&config, Path::new("true"), &[], Path::new("/tmp"))
+        .await
+        .unwrap();
+    let (env_ref, argv) = prepared.cleanup_plan();
+    assert!(env_ref.is_none());
+    assert!(argv.is_empty());
+    let _ = prepared.child.wait().await;
+}
+
+#[tokio::test]
+async fn cleanup_runner_consumes_argv_only_when_command_exists() {
+    let mut no_env = vec!["true".into()];
+    run_cleanup_once(None, &mut no_env).await;
+    assert_eq!(no_env, vec!["true"]);
+
+    let mut no_cmd = Vec::new();
+    run_cleanup_once(Some("C-test".into()), &mut no_cmd).await;
+    assert!(no_cmd.is_empty());
+
+    let mut cmd = vec!["true".into()];
+    run_cleanup_once(Some("C-test".into()), &mut cmd).await;
+    assert!(cmd.is_empty());
+}
+
+#[tokio::test]
+async fn rollback_kills_child_and_consumes_cleanup_once() {
+    let mut prepared = PreparedChild {
+        child: tokio::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap(),
+        environment_ref: Some("C-test".into()),
+        cleanup_argv: vec!["true".into()],
+    };
+    prepared.rollback_once().await;
+    assert!(prepared.cleanup_argv.is_empty());
+}
