@@ -25,7 +25,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-fn rollback_existing_join(
+pub(super) fn rollback_existing_join(
     registry: &crate::infrastructure::tools::container_registry::ContainerRegistry,
     join: Option<&super::spawn_container_existing::ExistingContainerJoin>,
     agent_uuid: &AgentUuid,
@@ -79,7 +79,6 @@ fn spawn_reaper_task(
     // and signals any waiting `await` calls with the exit status (#612).
     tokio::spawn(async move {
         let status = child.wait().await;
-
         // Build the exit signal from the child's exit status (#612).
         let exit_signal = match status {
             Ok(exit_status) => {
@@ -111,7 +110,6 @@ fn spawn_reaper_task(
                 signal: None,
             },
         };
-
         // Signal any waiting `await` call before removing from registry.
         let _ = reaper_exit_tx.send(Some(exit_signal));
 
@@ -119,7 +117,6 @@ fn spawn_reaper_task(
         // The monitor also attempts this on EOF; the SubagentEntry atomic
         // guard makes the two lifecycle owners exact-once under races.
         apply_container_inspect(&reaper_registry, &reaper_name);
-
         // Cascade-remove the dead agent AND its descendants, then broadcast
         // the survivor set so every connected client (the TUI panel) drops
         // them promptly instead of leaving them lingering (#831). The reaper
@@ -140,7 +137,6 @@ fn spawn_reaper_task(
                 }
             }
         }
-
         cleanup_container_environments_after_removal(&removed, &reaper_registry);
 
         for (id, entry) in &removed {
@@ -162,7 +158,6 @@ fn spawn_reaper_task(
         }
     });
 }
-
 impl SpawnTool {
     pub fn new(allowed_agents: Vec<String>, restrict_to_workspace: bool) -> Self {
         Self {
@@ -570,7 +565,6 @@ impl SpawnTool {
                 entry.monitor_handle = Some(std::sync::Arc::new(monitor_handle));
             }
         }
-
         spawn_reaper_task(
             child,
             self.registry.clone(),
@@ -581,15 +575,18 @@ impl SpawnTool {
 
         if let Some(ref task) = config.task {
             if let Err(err) = self.send_initial_prompt(&prepared.endpoint, task).await {
-                rollback_existing_join(
+                super::spawn_rollback::rollback_registered_spawn_failure(
+                    &self.registry,
+                    &registry_key,
+                    self.broadcast_tx.as_ref(),
                     &self.container_registry,
                     existing_join.as_ref(),
                     &agent_uuid,
-                );
+                )
+                .await;
                 return Err(err);
             }
         }
-
         Ok(ToolResult {
             content: format!(
                 "Subagent '{}' is running (uuid={}){}. Use agent_cmd to interact.",
@@ -610,7 +607,6 @@ impl SpawnTool {
             image_blocks: vec![],
         })
     }
-
     /// Send the initial task as a UDS prompt after the socket is ready.
     /// Fire-and-forget: writes the prompt and closes the connection.
     async fn send_initial_prompt(
@@ -646,14 +642,12 @@ impl Tool for SpawnTool {
             parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"Initial task to send to the subagent (optional — starts idle if omitted)"},"agent_id":{"type":"string","description":"Session name for the subagent (used to address it via agent_cmd)"},"system":{"type":"string","description":"System prompt for the subagent"},"config":{"type":"string","description":"Path to a config file to pass to the child agent via --config (optional)"},"model":{"type":"string","description":"Model for the child in provider/model form (e.g. 'openai/gpt-5.5'), same format as agent_cmd set_model. Forwarded to the child as --model at launch so its FIRST turn runs on this model. Precedence: explicit model > --config > built-in default. Invalid combinations are rejected with a clear error."},"effort":{"type":"string","description":"Reasoning effort for the child. Must be one of: none, low, medium, high, xhigh, max. Forwarded as --effort at launch. Precedence: explicit spawn effort > child forwarded agents.defaults.effort > inherited QUECTO_AGENTS_DEFAULTS_EFFORT > provider default."},"provider":{"type":"string","description":"Provider name for the child model (alternative to model; must be paired with model_id)"},"model_id":{"type":"string","description":"Model id for the child model (used with provider)"},"workflow":{"type":"boolean","description":"Start the child agent with --workflow (requires --mode uds, always enabled for spawned agents)"},"workflow_guards":{"type":"boolean","description":"Start the child agent with --workflow-guards (requires --workflow)"},"disable_tools":{"type":"array","items":{"type":"string"},"description":"Tool names to disable and hide from the child model before its session starts (forwarded as --disable-tool per entry), e.g. [\"write\",\"edit\"]. Disabled tools remain described for policy/UI callers, reject execution, and cannot be re-registered at runtime. Entries must be strings."},"read_only":{"type":"boolean","description":"Convenience that disables the 'write' and 'edit' tools in the child (equivalent to disable_tools:[\"write\",\"edit\"]); unions with any explicit disable_tools. Use to launch read-only children such as reviewers."},"workflow_spec":{"type":"object","description":"Assign a binding workflow to the child by value. Provide the full template inline: {\"template\":{\"id\":...,\"label\":...,\"description\":...,\"steps\":[{\"key\":...,\"label\":...,\"phase\":...}]}}. The child runs exactly this template in Active mode (no template selection) and it overrides the child's default template library.","properties":{"template":{"type":"object"}}},"container":{"description":"Launch backend selector. Omitted or false keeps local spawn. true or {mode:'new', repo?, container_script?/containerScript?} creates a script-managed container. {mode:'existing', ref|name} joins an existing live container.","oneOf":[{"type":"boolean"},{"type":"object"}]}}}"#.into(),
         }
     }
-
     fn set_inherited_child_policy_snapshot_for_spawn(
         &self,
         snapshot: BTreeMap<String, ProfileAvailabilityScope>,
     ) {
         super::spawn_inherited_policy::set_from_tools(&self.inherited_tool_policy, snapshot);
     }
-
     fn inherited_child_policy_snapshot_for_spawn(
         &self,
     ) -> Option<BTreeMap<String, ProfileAvailabilityScope>> {
@@ -670,7 +664,6 @@ impl Tool for SpawnTool {
                 Ok(config) => {
                     if self.base_dir.as_os_str().is_empty() {
                         let session_name = config.agent_id.as_deref().unwrap_or("subagent");
-
                         {
                             let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
                             if entries.values().any(|entry| {
@@ -688,7 +681,6 @@ impl Tool for SpawnTool {
                                 });
                             }
                         }
-
                         let agent_uuid = AgentUuid::mint();
                         let stub_entry = initial_registry_entry(InitialRegistryEntrySpec {
                             agent_uuid: agent_uuid.clone(),
@@ -728,14 +720,15 @@ impl Tool for SpawnTool {
         })
     }
 }
-
 #[cfg(test)]
 #[path = "spawn_cov_tests.rs"]
 mod cov_tests;
 #[cfg(test)]
+#[path = "spawn_fault_injection_tests.rs"]
+mod fault_injection_tests;
+#[cfg(test)]
 #[path = "tests/spawn_tests.rs"]
 mod tests;
-
 impl std::fmt::Debug for SpawnTool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SpawnTool")
