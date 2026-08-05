@@ -777,6 +777,10 @@ set -euo pipefail
 env_ref="env-bdd"
 echo "{{\"kind\":\"create\",\"script\":\"${{QUECTO_CONTAINER_SCRIPT:-default}}\",\"repo\":\"${{QUECTO_CONTAINER_REPO:-}}\",\"mode\":\"{}\",\"env_ref\":\"$env_ref\"}}" >> '{}'
 socket_path=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--" ]; then shift; break; fi
+  shift
+done
 prev=""
 for arg in "$@"; do
   if [ "$prev" = "--socket" ]; then socket_path="$arg"; break; fi
