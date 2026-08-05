@@ -10,7 +10,7 @@ pub(super) async fn rollback_registered_spawn_failure(
     container_registry: &crate::infrastructure::tools::container_registry::ContainerRegistry,
     existing_join: Option<&super::spawn_container_existing::ExistingContainerJoin>,
     agent_uuid: &AgentUuid,
-) {
+) -> Result<(), String> {
     let root_exit_rx = registry
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -39,7 +39,7 @@ pub(super) async fn rollback_registered_spawn_failure(
         tracing::debug!(agent = %id, "rolled back registered spawn after launch failure");
     }
 
-    cleanup_container_environments_after_removal(&removed, registry);
+    let cleanup_result = cleanup_container_environments_after_removal(&removed, registry);
     rollback_existing_join(container_registry, existing_join, agent_uuid);
 
     if let Some(mut rx) = root_exit_rx {
@@ -55,4 +55,5 @@ pub(super) async fn rollback_registered_spawn_failure(
         })
         .await;
     }
+    cleanup_result
 }

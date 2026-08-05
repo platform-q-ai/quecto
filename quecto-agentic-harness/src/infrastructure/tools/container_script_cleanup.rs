@@ -107,7 +107,7 @@ fn require_metadata(value: &serde_json::Value) -> Result<(), String> {
         .ok_or_else(|| "missing required object field 'metadata'".to_string())
 }
 
-fn validate_inspect_output(stdout: &[u8]) -> Result<(String, String), String> {
+pub(crate) fn validate_inspect_output(stdout: &[u8]) -> Result<(String, String), String> {
     let value: serde_json::Value = serde_json::from_slice(stdout)
         .map_err(|e| format!("inspect script did not return JSON: {e}"))?;
     require_string(&value, "environment_id")?;
@@ -119,7 +119,7 @@ fn validate_inspect_output(stdout: &[u8]) -> Result<(String, String), String> {
     Ok((status, health))
 }
 
-fn validate_kill_output(stdout: &[u8]) -> Result<(), String> {
+pub(crate) fn validate_kill_output(stdout: &[u8]) -> Result<(), String> {
     let value: serde_json::Value = serde_json::from_slice(stdout)
         .map_err(|e| format!("kill script did not return JSON: {e}"))?;
     require_string(&value, "environment_id")?;
@@ -155,8 +155,8 @@ pub(crate) fn run_container_kill_script(entry: &SubagentEntry) -> Result<(), Str
     }
 }
 
-pub(super) fn invoke_container_kill_script(entry: &SubagentEntry) {
-    let _ = run_container_kill_script(entry);
+pub(super) fn invoke_container_kill_script(entry: &SubagentEntry) -> Result<(), String> {
+    run_container_kill_script(entry)
 }
 
 pub(crate) fn environment_key(entry: &SubagentEntry) -> Option<&str> {
@@ -166,28 +166,37 @@ pub(crate) fn environment_key(entry: &SubagentEntry) -> Option<&str> {
         .or(entry.environment_id.as_deref())
 }
 
-pub(crate) fn invoke_container_kill_scripts_once<'a, I>(entries: I)
+pub(crate) fn invoke_container_kill_scripts_once<'a, I>(entries: I) -> Result<(), String>
 where
     I: IntoIterator<Item = &'a SubagentEntry>,
 {
     let mut cleaned = std::collections::HashSet::new();
+    let mut errors = Vec::new();
     for entry in entries {
-        let Some(env) = environment_key(entry) else {
-            invoke_container_kill_script(entry);
-            continue;
-        };
-        if cleaned.insert(env.to_string()) {
-            invoke_container_kill_script(entry);
+        let env = environment_key(entry).map(str::to_string);
+        if env.as_ref().is_none_or(|e| cleaned.insert(e.clone())) {
+            if let Err(err) = invoke_container_kill_script(entry) {
+                errors.push(match env {
+                    Some(env) => format!("{env}: {err}"),
+                    None => err,
+                });
+            }
         }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
     }
 }
 
 pub(crate) fn cleanup_container_environments_after_removal(
     removed: &[(String, SubagentEntry)],
     live: &super::subagent_registry::SubagentRegistry,
-) {
+) -> Result<(), String> {
     let live_entries = live.lock().unwrap_or_else(|e| e.into_inner());
     let mut cleaned = std::collections::HashSet::new();
+    let mut errors = Vec::new();
     for (_, entry) in removed {
         let Some(env) = environment_key(entry) else {
             continue;
@@ -199,43 +208,52 @@ pub(crate) fn cleanup_container_environments_after_removal(
             .values()
             .any(|candidate| environment_key(candidate) == Some(env));
         if !has_live_member {
-            invoke_container_kill_script(entry);
+            if let Err(err) = invoke_container_kill_script(entry) {
+                errors.push(format!("{env}: {err}"));
+            }
         }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
     }
 }
 
 pub(crate) fn apply_container_inspect(
     registry: &super::subagent_registry::SubagentRegistry,
     agent_id: &str,
-) {
+) -> Result<(), String> {
     let entry = {
         let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
         entries.get(agent_id).cloned()
     };
-    let Some(entry) = entry else { return };
+    let Some(entry) = entry else { return Ok(()) };
     if entry
         .container_inspect_once
         .swap(true, std::sync::atomic::Ordering::AcqRel)
     {
-        return;
+        return Ok(());
     }
     let Some(command) = entry.container_inspect_command.as_deref() else {
-        return;
+        return Ok(());
     };
-    let Ok(mut cmd) = command_from_config(command) else {
-        return;
-    };
+    let mut cmd =
+        command_from_config(command).map_err(|e| format!("inspect command invalid: {e}"))?;
     populate_env(&mut cmd, &entry);
-    let Ok(output) = cmd.output() else { return };
+    let output = cmd
+        .output()
+        .map_err(|e| format!("inspect script failed to start: {e}"))?;
     if !output.status.success() {
-        return;
+        return Err(format!(
+            "inspect script exited with status {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
     }
-    let Ok((status, health)) = validate_inspect_output(&output.stdout) else {
-        return;
-    };
-    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
-        return;
-    };
+    let (status, health) = validate_inspect_output(&output.stdout)?;
+    let value = serde_json::from_slice::<serde_json::Value>(&output.stdout)
+        .map_err(|e| format!("inspect script did not return JSON: {e}"))?;
     let workspace = value
         .get("workspace_path")
         .and_then(|v| v.as_str())
@@ -243,8 +261,35 @@ pub(crate) fn apply_container_inspect(
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(current) = entries.get_mut(agent_id) {
         current.environment_health = Some(if health == "healthy" { status } else { health });
+        current.last_error = None;
         if let Some(w) = workspace {
             current.workspace_path = Some(w);
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn record_container_health_failure(
+    registry: &super::subagent_registry::SubagentRegistry,
+    entries_to_mark: impl IntoIterator<Item = String>,
+    health: &str,
+    error: String,
+) {
+    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let mut envs = std::collections::HashSet::new();
+    for id in entries_to_mark {
+        if let Some(entry) = entries.get_mut(&id) {
+            entry.environment_health = Some(health.to_string());
+            entry.last_error = Some(error.clone());
+            if let Some(env) = environment_key(entry) {
+                envs.insert(env.to_string());
+            }
+        }
+    }
+    for entry in entries.values_mut() {
+        if environment_key(entry).is_some_and(|env| envs.contains(env)) {
+            entry.environment_health = Some(health.to_string());
+            entry.last_error = Some(error.clone());
         }
     }
 }

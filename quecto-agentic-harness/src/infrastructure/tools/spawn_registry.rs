@@ -41,7 +41,9 @@ pub fn shutdown_all(registry: &SubagentRegistry) {
 pub fn shutdown_all_with_count(registry: &SubagentRegistry) -> usize {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     let removed = entries.len();
-    invoke_container_kill_scripts_once(entries.values());
+    if let Err(err) = invoke_container_kill_scripts_once(entries.values()) {
+        tracing::warn!(error = %err, "container cleanup failed during shutdown_all");
+    }
     for (name, entry) in entries.iter() {
         if let Some(ref tx) = entry.exit_signal_tx {
             let _ = tx.send(Some(ExitSignal {

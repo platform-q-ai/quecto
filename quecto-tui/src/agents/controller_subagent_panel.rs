@@ -1,5 +1,6 @@
 use super::*;
 use crate::components::theme;
+use crate::shell::app::controller_subagent_panel_rows::{PanelRow, PanelRowKind};
 
 #[path = "controller_subagent_panel_helpers.rs"]
 mod controller_subagent_panel_helpers;
@@ -728,22 +729,4 @@ impl App {
         }
         title
     }
-}
-
-enum PanelRowKind {
-    Master,
-    Agent(String),
-    Container(String),
-}
-
-struct PanelRow {
-    kind: PanelRowKind,
-    id: Option<String>,
-    /// Tree connector stalk drawn before the name (`├ `/`└ ` + ancestor `│ `).
-    prefix: String,
-    label: String,
-    status: String,
-    /// `(steps_completed, steps_total)` when the agent has an active workflow —
-    /// drives the per-step progress bar drawn beneath the name row.
-    workflow: Option<(u32, u32)>,
 }

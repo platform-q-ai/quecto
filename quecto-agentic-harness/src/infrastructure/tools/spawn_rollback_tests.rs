@@ -55,7 +55,8 @@ async fn rollback_registered_spawn_failure_removes_entry_and_preserves_error() {
         None,
         &uuid,
     )
-    .await;
+    .await
+    .expect("rollback cleanup succeeds");
 
     assert!(
         registry.lock().unwrap().get(key).is_none(),
@@ -83,7 +84,8 @@ async fn rollback_registered_spawn_failure_removes_entry_and_preserves_error() {
         None,
         &uuid,
     )
-    .await;
+    .await
+    .expect("rollback cleanup succeeds");
     assert!(
         registry.lock().unwrap().is_empty(),
         "rollback is idempotent"

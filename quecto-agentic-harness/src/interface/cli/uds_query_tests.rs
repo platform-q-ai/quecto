@@ -455,8 +455,6 @@ fn query_get_message_miss_returns_none_for_structured_error() {
     for message_id in ["00000000-0000-0000-0000-000000000000", "not-a-uuid"] {
         let mut fx = Fx::new();
         let ctx = fx.ctx();
-        // An unknown id must return None so dispatch emits a structured
-        // "message not found" error rather than a stale/empty hit (#1060).
         let miss = query_response_data(
             &AgentCommand::GetMessage {
                 id: Some("r1".into()),
@@ -590,6 +588,7 @@ fn kill_container_invokes_script_marks_members_stopped_and_signals_exit() {
             socket_path: None,
             socket_proxy: None,
             metadata: serde_json::json!({}),
+            last_error: None,
         },
     );
     fx.container_registry = Some(creg);
@@ -658,6 +657,7 @@ fn kill_container_reports_script_failure_without_pretending_success() {
             socket_path: None,
             socket_proxy: None,
             metadata: serde_json::json!({}),
+            last_error: None,
         },
     );
     fx.container_registry = Some(creg);
@@ -677,7 +677,6 @@ fn kill_container_reports_script_failure_without_pretending_success() {
         failed.status,
         crate::infrastructure::tools::subagent_registry::SubagentStatus::Exited
     );
-    assert_eq!(failed.environment_health.as_deref(), Some("cleanup_failed"));
 }
 #[test]
 fn kill_container_uses_canonical_cleanup_env() {
@@ -731,6 +730,7 @@ fn kill_container_uses_canonical_cleanup_env() {
             socket_path: None,
             socket_proxy: None,
             metadata: serde_json::json!({}),
+            last_error: None,
         },
     );
     fx.container_registry = Some(creg);

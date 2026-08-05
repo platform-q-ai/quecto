@@ -43,6 +43,7 @@ pub(crate) fn registered_container_for_launch(
             socket_path: launch.socket_path.as_ref().map(|p| p.display().to_string()),
             socket_proxy: launch.socket_proxy.clone(),
             metadata: launch.metadata.clone(),
+            last_error: None,
         },
     ))
 }

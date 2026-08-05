@@ -309,19 +309,28 @@ async fn monitor_loop(
             }
             MonitorRead::Skip => continue,
             MonitorRead::Closed => {
-                crate::infrastructure::tools::container_script_cleanup::apply_container_inspect(
-                    registry, agent_id,
-                );
+                record_container_inspect_failure(registry, agent_id);
                 notify_child_exited(registry, agent_id, notify_tx);
                 return;
             }
         }
     }
 }
+fn record_container_inspect_failure(registry: &SubagentRegistry, agent_id: &str) {
+    if let Err(err) =
+        crate::infrastructure::tools::container_script_cleanup::apply_container_inspect(
+            registry, agent_id,
+        )
+    {
+        crate::infrastructure::tools::container_script_cleanup::record_container_health_failure(
+            registry,
+            [agent_id.to_string()],
+            "inspect_failed",
+            err,
+        );
+    }
+}
 
-/// Outcome of a single monitor read: a message (now in the caller's reusable
-/// buffer), a recoverable skip (oversized frame rejected cleanly), or a
-/// closed/broken connection.
 enum MonitorRead {
     Message,
     Skip,
@@ -731,12 +740,11 @@ mod completion_tests;
 mod stall_race_tests;
 
 #[cfg(test)]
-#[path = "tests/subagent_monitor_tool_error_tests.rs"]
-mod tool_error_tests;
-
-#[cfg(test)]
 #[path = "subagent_monitor_bounded_read_tests.rs"]
 mod bounded_read_tests;
+#[cfg(test)]
+#[path = "tests/subagent_monitor_tool_error_tests.rs"]
+mod tool_error_tests;
 #[cfg(test)]
 #[path = "subagent_monitor_wave3_cov_tests.rs"]
 mod wave3_cov_tests;

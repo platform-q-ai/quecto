@@ -35,6 +35,7 @@ fn entry(id: &str, status: ContainerStatus) -> ContainerEntry {
         socket_path: None,
         socket_proxy: None,
         metadata: serde_json::json!({"runtime":"docker-script"}),
+        last_error: None,
     }
 }
 

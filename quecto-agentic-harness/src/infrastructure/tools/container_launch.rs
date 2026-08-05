@@ -38,26 +38,26 @@ pub struct PreparedContainerLaunch {
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct ScriptResult {
-    environment_id: String,
+pub(crate) struct ScriptResult {
+    pub(crate) environment_id: String,
     #[serde(default)]
-    workspace_path: Option<String>,
+    pub(crate) workspace_path: Option<String>,
     #[serde(default)]
-    socket_path: Option<String>,
+    pub(crate) socket_path: Option<String>,
     #[serde(default)]
-    socket_proxy: Option<String>,
+    pub(crate) socket_proxy: Option<String>,
     #[serde(default)]
-    container_ref: Option<String>,
+    pub(crate) container_ref: Option<String>,
     #[serde(default)]
-    container_id: Option<String>,
+    pub(crate) container_id: Option<String>,
     #[serde(default)]
-    container_name: Option<String>,
+    pub(crate) container_name: Option<String>,
     #[serde(default)]
-    status: Option<String>,
+    pub(crate) status: Option<String>,
     #[serde(default)]
     health: Option<String>,
     #[serde(default)]
-    metadata: serde_json::Value,
+    pub(crate) metadata: serde_json::Value,
 }
 
 pub fn validate_container_request(
@@ -91,6 +91,7 @@ pub async fn prepare_container_launch(
             let repo = repo.clone().or_else(|| ctx.parent_repo.clone());
             reject_unsafe_repo(repo.as_deref())?;
             let out = run_script_json(&set.create, repo.as_deref(), None, agent_uuid).await?;
+            validate_script_result(&out)?;
             if let Some(proxy) = out.socket_proxy.as_deref() {
                 crate::domain::agent_launch_backend::validate_socket_proxy(proxy, name)?;
             }
@@ -192,7 +193,7 @@ fn command_from_config(
     Ok(cmd)
 }
 
-async fn run_script_json(
+pub(crate) async fn run_script_json(
     command: &str,
     repo: Option<&str>,
     container_ref: Option<&str>,
@@ -220,6 +221,20 @@ async fn run_script_json(
     }
     serde_json::from_slice(&out.stdout)
         .map_err(|e| DomainError::Tool(format!("container script did not emit valid JSON: {e}")))
+}
+
+pub(crate) fn validate_script_result(result: &ScriptResult) -> Result<(), DomainError> {
+    if result.environment_id.trim().is_empty() {
+        return Err(DomainError::Tool(
+            "container script result missing environment_id".into(),
+        ));
+    }
+    if result.socket_path.is_some() && result.socket_proxy.is_some() {
+        return Err(DomainError::Tool(
+            "container script result must not include both socket_path and socket_proxy".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn entry_from_script(
@@ -261,6 +276,7 @@ fn entry_from_script(
         socket_path: result.socket_path,
         socket_proxy: result.socket_proxy,
         metadata,
+        last_error: None,
     }
 }
 

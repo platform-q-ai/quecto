@@ -8,6 +8,7 @@ pub enum ContainerStatus {
     Running,
     Stopped,
     Unhealthy,
+    InspectFailed,
     CleanupFailed,
 }
 
@@ -28,6 +29,7 @@ pub struct ContainerEntry {
     pub socket_path: Option<String>,
     pub socket_proxy: Option<String>,
     pub metadata: serde_json::Value,
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -120,12 +122,22 @@ pub fn set_container_status(
     container_uuid: &str,
     status: ContainerStatus,
 ) -> Result<ContainerEntry, String> {
+    set_container_health(registry, container_uuid, status, None)
+}
+
+pub fn set_container_health(
+    registry: &ContainerRegistry,
+    container_uuid: &str,
+    status: ContainerStatus,
+    last_error: Option<String>,
+) -> Result<ContainerEntry, String> {
     let mut state = registry.lock().unwrap_or_else(|e| e.into_inner());
     let entry = state
         .entries
         .get_mut(container_uuid)
         .ok_or_else(|| format!("unknown container '{container_uuid}'"))?;
     entry.status = status;
+    entry.last_error = last_error;
     Ok(entry.clone())
 }
 

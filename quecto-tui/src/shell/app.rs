@@ -319,6 +319,8 @@ mod app_subagent_feed;
 mod app_subagent_panel;
 #[path = "app_submit.rs"]
 mod app_submit;
+#[path = "../agents/controller_subagent_panel_rows.rs"]
+mod controller_subagent_panel_rows;
 use crate::agents::roster::{
     gc_exited_subagents, next_exited_subagent_gc_deadline, subagent_status_is_active,
 };

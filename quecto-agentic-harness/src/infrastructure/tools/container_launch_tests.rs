@@ -233,6 +233,7 @@ async fn existing_container_spawn_reuses_registered_environment_and_exec_command
             socket_path: None,
             socket_proxy: None,
             metadata: serde_json::json!({}),
+            last_error: None,
         },
     );
     let config = config_with_container(SpawnContainerRequest::Existing {
@@ -278,6 +279,7 @@ async fn container_exec_command_passes_structured_argv_without_joined_env_or_she
         socket_path: None,
         socket_proxy: None,
         metadata: serde_json::json!({}),
+        last_error: None,
     };
     let mut cmd = build_container_exec_command(ContainerExecSpec {
         entry: &entry,
@@ -297,6 +299,64 @@ async fn container_exec_command_passes_structured_argv_without_joined_env_or_she
         v["argv"],
         serde_json::json!(["--", "/bin/echo", "hello", "two words", "$(touch pwn)"])
     );
+}
+
+#[tokio::test]
+async fn reference_scripts_emit_outputs_accepted_by_strict_production_parsers() {
+    let root = tempfile::tempdir().unwrap();
+    let script_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("scripts/container-runtime");
+    let agent = AgentUuid::new("contract-agent");
+    let create = run_script_json(
+        &script_root.join("create.sh").display().to_string(),
+        None,
+        None,
+        &agent,
+    )
+    .await
+    .expect("create fixture output parses as JSON");
+    validate_script_result(&create).expect("create fixture satisfies strict launch parser");
+    assert!(create.socket_path.is_some() ^ create.socket_proxy.is_some());
+
+    let inspect = std::process::Command::new("bash")
+        .arg(script_root.join("inspect.sh"))
+        .env("QUECTO_CONTAINER_ROOT", root.path())
+        .env("QUECTO_ENVIRONMENT_UUID", &create.environment_id)
+        .env(
+            "QUECTO_WORKSPACE_PATH",
+            root.path().join("contract-agent/workspace"),
+        )
+        .output()
+        .unwrap();
+    assert!(inspect.status.success());
+    super::container_script_cleanup::validate_inspect_output(&inspect.stdout)
+        .expect("inspect fixture satisfies strict parser");
+
+    let kill = std::process::Command::new("bash")
+        .arg(script_root.join("kill.sh"))
+        .env("QUECTO_CONTAINER_ROOT", root.path())
+        .env("QUECTO_ENVIRONMENT_UUID", &create.environment_id)
+        .env(
+            "QUECTO_WORKSPACE_PATH",
+            root.path().join("contract-agent/workspace"),
+        )
+        .output()
+        .unwrap();
+    assert!(kill.status.success());
+    super::container_script_cleanup::validate_kill_output(&kill.stdout)
+        .expect("kill fixture satisfies strict cleanup parser");
+
+    let exec = run_script_json(
+        &script_root.join("exec.sh").display().to_string(),
+        None,
+        Some("C1"),
+        &agent,
+    )
+    .await
+    .expect("exec fixture output parses as JSON");
+    validate_script_result(&exec).expect("exec fixture satisfies strict launch parser");
 }
 
 #[test]
@@ -351,7 +411,7 @@ fn cascade_cleanup_kills_once_when_all_colocated_members_removed() {
     std::fs::write(
         &script,
         format!(
-            "#!/usr/bin/env bash\necho \"$QUECTO_ENVIRONMENT_UUID\" >> {}\n",
+            "#!/usr/bin/env bash\necho \"$QUECTO_ENVIRONMENT_UUID\" >> {}\nprintf '{{\"environment_id\":\"%s\",\"status\":\"removed\",\"workspace_path\":\"/workspace/quecto\",\"container_ref\":\"C1\",\"metadata\":{{}},\"cleanup\":{{\"removed\":true}}}}\\n' \"$QUECTO_ENVIRONMENT_UUID\"\n",
             log.display()
         ),
     )
@@ -374,7 +434,8 @@ fn cascade_cleanup_kills_once_when_all_colocated_members_removed() {
 
     super::container_script_cleanup::cleanup_container_environments_after_removal(
         &removed, &registry,
-    );
+    )
+    .expect("cleanup succeeds");
 
     let kills = std::fs::read_to_string(&log).unwrap();
     assert_eq!(kills.lines().collect::<Vec<_>>(), vec!["env-1"]);
@@ -411,7 +472,8 @@ fn cascade_cleanup_skips_kill_when_colocated_live_member_remains() {
 
     super::container_script_cleanup::cleanup_container_environments_after_removal(
         &removed, &registry,
-    );
+    )
+    .expect("cleanup succeeds");
 
     assert!(
         !log.exists(),

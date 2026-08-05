@@ -138,6 +138,7 @@ pub(super) fn query_response_data(
                     "environment_id": entry.environment_id,
                     "environment_health": format!("{:?}", entry.status).to_lowercase(),
                     "status": format!("{:?}", entry.status).to_lowercase(),
+                    "last_error": entry.last_error,
                     "repo_url": entry.repo_url,
                     "workspace_path": entry.workspace_path,
                     "agents": entry.agents.iter().map(|a| a.as_ref().to_string()).collect::<Vec<_>>(),
@@ -185,14 +186,17 @@ pub(super) fn query_response_data(
                     if let Some(registry) = registry {
                         let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
                         for (id, _) in &matched {
-                            if let Some(entry) = entries.get_mut(id) { entry.environment_health = Some("cleanup_failed".into()); }
+                            if let Some(entry) = entries.get_mut(id) { entry.environment_health = Some("cleanup_failed".into()); entry.last_error = Some(error.clone()); }
                         }
                     }
-                    let _ = crate::infrastructure::tools::container_registry::set_container_status(
+                    if let Err(registry_error) = crate::infrastructure::tools::container_registry::set_container_health(
                         container_registry,
                         &target.container_uuid,
                         crate::infrastructure::tools::container_registry::ContainerStatus::CleanupFailed,
-                    );
+                        Some(error.clone()),
+                    ) {
+                        return Some(serde_json::json!({ "container_ref": container_ref, "container_uuid": target.container_uuid, "agents": agents, "status": "error", "error": error, "registry_error": registry_error, "retry": "fix cleanup and call kill_container again" }));
+                    }
                     return Some(serde_json::json!({ "container_ref": container_ref, "container_uuid": target.container_uuid, "agents": agents, "status": "error", "error": error, "retry": "fix cleanup and call kill_container again" }));
                 }
             }
@@ -329,6 +333,7 @@ mod container_query_tests {
                 socket_path: None,
                 socket_proxy: None,
                 metadata: serde_json::json!({}),
+                last_error: None,
             },
         );
         fx.container_registry = Some(reg);
@@ -364,6 +369,7 @@ mod container_query_tests {
                 socket_path: None,
                 socket_proxy: None,
                 metadata: serde_json::json!({}),
+                last_error: None,
             },
         );
         fx.container_registry = Some(reg.clone());

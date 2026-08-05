@@ -29,6 +29,7 @@ fn lifecycle_entry(metadata: serde_json::Value, status: ContainerStatus) -> Cont
         socket_path: None,
         socket_proxy: None,
         metadata,
+        last_error: None,
     }
 }
 

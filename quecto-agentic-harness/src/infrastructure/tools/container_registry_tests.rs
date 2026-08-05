@@ -17,6 +17,7 @@ fn entry(id: &str, status: ContainerStatus) -> ContainerEntry {
         socket_path: None,
         socket_proxy: None,
         metadata: serde_json::json!({}),
+        last_error: None,
     }
 }
 

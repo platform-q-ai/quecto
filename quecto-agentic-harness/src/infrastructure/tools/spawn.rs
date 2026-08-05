@@ -116,7 +116,14 @@ fn spawn_reaper_task(
         // Run postmortem inspect before removal as a reaper-side fallback.
         // The monitor also attempts this on EOF; the SubagentEntry atomic
         // guard makes the two lifecycle owners exact-once under races.
-        apply_container_inspect(&reaper_registry, &reaper_name);
+        if let Err(err) = apply_container_inspect(&reaper_registry, &reaper_name) {
+            super::container_script_cleanup::record_container_health_failure(
+                &reaper_registry,
+                [reaper_name.clone()],
+                "inspect_failed",
+                err,
+            );
+        }
         // Cascade-remove the dead agent AND its descendants, then broadcast
         // the survivor set so every connected client (the TUI panel) drops
         // them promptly instead of leaving them lingering (#831). The reaper
@@ -137,7 +144,9 @@ fn spawn_reaper_task(
                 }
             }
         }
-        cleanup_container_environments_after_removal(&removed, &reaper_registry);
+        if let Err(err) = cleanup_container_environments_after_removal(&removed, &reaper_registry) {
+            tracing::warn!(error = %err, "container cleanup failed after reaper removal");
+        }
 
         for (id, entry) in &removed {
             if id == &reaper_name {
@@ -559,7 +568,7 @@ impl SpawnTool {
 
         if let Some(ref task) = config.task {
             if let Err(err) = self.send_initial_prompt(&prepared.endpoint, task).await {
-                super::spawn_rollback::rollback_registered_spawn_failure(
+                let cleanup = super::spawn_rollback::rollback_registered_spawn_failure(
                     &self.registry,
                     &registry_key,
                     self.broadcast_tx.as_ref(),
@@ -568,6 +577,12 @@ impl SpawnTool {
                     &agent_uuid,
                 )
                 .await;
+                if let Err(cleanup_err) = cleanup {
+                    return Err(DomainError::Tool(format!(
+                        "{}; rollback cleanup failed: {}",
+                        err, cleanup_err
+                    )));
+                }
                 return Err(err);
             }
         }

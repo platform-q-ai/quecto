@@ -668,3 +668,71 @@ async fn master_is_modeled_as_active_session_like_subagents() {
         "returning to master restores its still-running unified flag"
     );
 }
+
+#[tokio::test]
+async fn container_panel_probe_drives_real_roster_render_navigation_and_details() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    let mut solo = child("alpha", "running", None);
+    solo.runtime_backend = "container".into();
+    solo.container_uuid = Some("uuid-solo".into());
+    solo.container_ref = Some("C1".into());
+    solo.environment_health = Some("healthy".into());
+    let mut beta = child("beta", "running", None);
+    beta.runtime_backend = "container".into();
+    beta.container_uuid = Some("uuid-shared".into());
+    beta.container_ref = Some("C2".into());
+    beta.container_name = Some("platform-q-ai/quecto".into());
+    beta.repo_url = Some("platform-q-ai/quecto".into());
+    beta.environment_id = Some("env-shared".into());
+    beta.workspace_path = Some("/workspace/quecto".into());
+    beta.environment_health = Some("healthy".into());
+    let mut gamma = beta.clone();
+    gamma.agent_id = "gamma".into();
+    h.event(Event::SubagentStateChanged {
+        subagents: vec![solo, beta, gamma],
+    });
+    let frame = strip_ansi(
+        &h.app_mut()
+            .render_subagent_panel(80, 10, tokio::time::Instant::now())
+            .join("\n"),
+    );
+    assert!(
+        frame.contains("alpha · C1"),
+        "solo container row must expose ref inline:\n{frame}"
+    );
+    assert!(
+        frame.contains("C2 platform-q-ai/quecto"),
+        "shared env group row must render:\n{frame}"
+    );
+    assert!(
+        frame.contains("beta") && frame.contains("gamma"),
+        "shared members must render under group:\n{frame}"
+    );
+    h.app_mut().panel_highlight_row(2);
+    h.app_mut().commit_panel_selection();
+    let selected_frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        selected_frame.contains("repo:platform-q-ai/quecto"),
+        "committing shared environment should render details in the main pane:\n{selected_frame}"
+    );
+    let detail = crate::agents::container_panel::environment_title(
+        &h.app_mut().subagents.tracked.get("beta").unwrap().info,
+    );
+    assert!(
+        detail.contains("repo:platform-q-ai/quecto"),
+        "selected env details show repo:\n{detail}"
+    );
+    assert!(
+        detail.contains("runtime:container"),
+        "selected env details show runtime:\n{detail}"
+    );
+    assert!(
+        detail.contains("workspace:/workspace/quecto"),
+        "selected env details show workspace:\n{detail}"
+    );
+    assert!(
+        detail.contains("status:healthy"),
+        "selected env details show health:\n{detail}"
+    );
+}

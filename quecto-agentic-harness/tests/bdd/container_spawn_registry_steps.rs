@@ -29,6 +29,7 @@ fn entry(
         socket_path: Some(format!("/tmp/{reference}.sock")),
         socket_proxy: None,
         metadata: json!({"bdd":"production-registry"}),
+        last_error: None,
     }
 }
 
