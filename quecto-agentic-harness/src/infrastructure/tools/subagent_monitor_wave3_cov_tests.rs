@@ -131,6 +131,19 @@ async fn notify_child_exited_missing_agent_sends_sequence_zero_note() {
     assert!(note.to_message().contains("exited unexpectedly"));
 }
 
+#[tokio::test]
+async fn notify_child_exited_claims_script_cleanup_once() {
+    let registry = super::super::subagent_registry::new_registry();
+    let mut entry = wave3_test_entry();
+    entry.cleanup_environment_id = Some("env-clean".into());
+    entry.cleanup_argv = vec!["true".into()];
+    registry.lock().unwrap().insert("bot".into(), entry);
+    notify_child_exited(&registry, "bot", None).await;
+    let entry = &registry.lock().unwrap()["bot"];
+    assert!(entry.cleanup_environment_id.is_none());
+    assert!(entry.cleanup_argv.is_empty());
+}
+
 fn poison_registry(registry: &SubagentRegistry) {
     let cloned = registry.clone();
     let _ = std::thread::spawn(move || {
