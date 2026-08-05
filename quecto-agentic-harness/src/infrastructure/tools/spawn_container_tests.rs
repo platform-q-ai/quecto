@@ -283,3 +283,61 @@ async fn rollback_kills_child_and_consumes_cleanup_once() {
     prepared.rollback_once().await;
     assert!(prepared.cleanup_argv.is_empty());
 }
+
+#[tokio::test]
+async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
+    let dir = TempDir::new().unwrap();
+    let cfg_path = dir.path().join("config.toml");
+    std::fs::write(
+        &cfg_path,
+        r#"{
+  "agents": {"defaults": {"repo": "default-repo"}},
+  "container_scripts": {
+    "default": "default",
+    "scripts": {"default": {"create": ["true"], "cleanup": ["true"]}}
+  }
+}
+"#,
+    )
+    .unwrap();
+    let mut config = base_config(ContainerSelection::New {
+        repo: None,
+        container_script: None,
+    });
+    config.config_path = Some(cfg_path);
+    let mut prepared = spawn_prepared_child(&config, Path::new("true"), &[], dir.path())
+        .await
+        .unwrap();
+    assert!(
+        prepared
+            .environment_ref
+            .as_deref()
+            .unwrap()
+            .starts_with("C-")
+    );
+    let (env_ref, argv) = prepared.cleanup_plan();
+    assert!(env_ref.as_deref().unwrap().starts_with("C-"));
+    assert_eq!(argv, vec!["true"]);
+    let _ = prepared.child.wait().await;
+}
+
+#[test]
+fn selected_repo_uses_config_default_for_new_container_without_explicit_repo() {
+    let cfg = Config {
+        agents: crate::infrastructure::config::AgentConfig {
+            defaults: crate::infrastructure::config::AgentDefaults {
+                repo: Some("default-repo".into()),
+                ..Default::default()
+            },
+        },
+        ..Default::default()
+    };
+    let config = base_config(ContainerSelection::New {
+        repo: None,
+        container_script: None,
+    });
+    assert_eq!(
+        selected_repo(&config, &cfg).as_deref(),
+        Some("default-repo")
+    );
+}
