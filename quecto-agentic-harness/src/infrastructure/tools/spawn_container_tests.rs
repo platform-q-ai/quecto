@@ -157,8 +157,21 @@ fn relative_config_path_is_rejected_for_container_config() {
 fn cleanup_command_is_once_consumable_by_prepared_child() {
     let cmd = cleanup_command(Some("C-test"), &["echo".into()]);
     assert!(cmd.is_some());
+    let cmd = cleanup_command(Some("C-test"), &["echo".into(), "ok".into()]);
+    assert!(cmd.is_some());
     assert!(cleanup_command(None, &["echo".into()]).is_none());
     assert!(cleanup_command(Some("C-test"), &[]).is_none());
+}
+
+#[tokio::test]
+async fn run_cleanup_once_ignores_missing_env_or_empty_argv() {
+    let mut argv = vec!["true".into()];
+    run_cleanup_once(None, &mut argv).await;
+    assert_eq!(argv, vec!["true"]);
+    run_cleanup_once(Some("env".into()), &mut argv).await;
+    assert!(argv.is_empty());
+    run_cleanup_once(Some("env".into()), &mut argv).await;
+    assert!(argv.is_empty());
 }
 
 #[tokio::test]
