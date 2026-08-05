@@ -55,8 +55,8 @@ fn wave3_notify_and_broadcast_paths_cover_terminal_and_stall() {
     assert!(rx.try_recv().unwrap().to_message().contains("stalled"));
 }
 
-#[test]
-fn wave3_agent_error_notification_and_exit_sequence_paths() {
+#[tokio::test]
+async fn wave3_agent_error_notification_and_exit_sequence_paths() {
     let registry = super::super::subagent_registry::new_registry();
     registry
         .lock()
@@ -82,7 +82,7 @@ fn wave3_agent_error_notification_and_exit_sequence_paths() {
         &serde_json::json!({"type":"tool_execution_start"})
     ));
 
-    notify_child_exited(&registry, "bot", Some(&tx));
+    notify_child_exited(&registry, "bot", Some(&tx)).await;
     assert!(rx.try_recv().unwrap().to_message().contains("exited"));
     assert!(matches!(
         registry.lock().unwrap()["bot"].status,
@@ -120,15 +120,52 @@ fn should_broadcast_and_entry_workflow_mode_cover_remaining_arms() {
     ));
 }
 
-#[test]
-fn notify_child_exited_missing_agent_sends_sequence_zero_note() {
+#[tokio::test]
+async fn notify_child_exited_missing_agent_sends_sequence_zero_note() {
     let registry = super::super::subagent_registry::new_registry();
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-    notify_child_exited(&registry, "ghost", Some(&tx));
+    notify_child_exited(&registry, "ghost", Some(&tx)).await;
     let note = rx.try_recv().unwrap();
     assert_eq!(note.sequence, 0);
     assert!(note.to_message().contains("ghost"));
     assert!(note.to_message().contains("exited unexpectedly"));
+}
+
+#[test]
+fn notification_fallbacks_cover_missing_agent_paths() {
+    let registry = super::super::subagent_registry::new_registry();
+    assert_eq!(notification_display_label(&registry, "ghost"), "ghost");
+    assert_eq!(
+        notification_agent_uuid(&registry, "ghost").as_str(),
+        "ghost"
+    );
+}
+
+#[test]
+fn notification_helpers_use_registry_entry_when_present() {
+    let registry = super::super::subagent_registry::new_registry();
+    let mut entry = wave3_test_entry();
+    entry.display_name = "display".into();
+    entry.agent_uuid = crate::domain::ids::AgentUuid::new("uuid-123");
+    registry.lock().unwrap().insert("uuid-123".into(), entry);
+    assert_eq!(notification_display_label(&registry, "uuid-123"), "display");
+    assert_eq!(
+        notification_agent_uuid(&registry, "uuid-123").as_str(),
+        "uuid-123"
+    );
+}
+
+#[tokio::test]
+async fn notify_child_exited_claims_script_cleanup_once() {
+    let registry = super::super::subagent_registry::new_registry();
+    let mut entry = wave3_test_entry();
+    entry.cleanup_environment_id = Some("env-clean".into());
+    entry.cleanup_argv = vec!["true".into()];
+    registry.lock().unwrap().insert("bot".into(), entry);
+    notify_child_exited(&registry, "bot", None).await;
+    let entry = &registry.lock().unwrap()["bot"];
+    assert!(entry.cleanup_environment_id.is_none());
+    assert!(entry.cleanup_argv.is_empty());
 }
 
 fn poison_registry(registry: &SubagentRegistry) {

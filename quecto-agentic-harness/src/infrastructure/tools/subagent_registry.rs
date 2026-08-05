@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -8,61 +7,7 @@ use crate::domain::ids::AgentUuid;
 use crate::domain::subagent::{DisplayNameResolutionEntry, resolve_live_display_name};
 
 use super::subagent_lifecycle::{SubagentLifecycleEvent, SubagentLifecycleState};
-
-/// Live status of a spawned subagent, updated by the monitor task (#522).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum SubagentStatus {
-    /// Child process spawned but not yet confirmed running.
-    #[default]
-    Starting,
-    /// Agent finished processing and is waiting for the next prompt.
-    Idle,
-    /// Agent is actively processing a prompt or executing a tool.
-    Running,
-    /// Last tool execution returned an error.
-    Error,
-    /// Child process exited (connection closed or process reaped).
-    Exited,
-}
-
-impl SubagentStatus {
-    /// Wire-format string for the UDS protocol (lowercase, zero-alloc).
-    pub fn to_wire_str(&self) -> &'static str {
-        match self {
-            Self::Starting => "starting",
-            Self::Idle => "idle",
-            Self::Running => "running",
-            Self::Error => "error",
-            Self::Exited => "exited",
-        }
-    }
-
-    /// Parse a wire-format status string back into a [`SubagentStatus`].
-    /// Unknown values map to `Starting` (the conservative default). Inverse of
-    /// [`to_wire_str`](Self::to_wire_str); used when merging a descendant's
-    /// forwarded state into the registry (#815).
-    pub fn from_wire_str(s: &str) -> Self {
-        match s {
-            "idle" => Self::Idle,
-            "running" => Self::Running,
-            "error" => Self::Error,
-            "exited" => Self::Exited,
-            _ => Self::Starting,
-        }
-    }
-}
-
-impl fmt::Display for SubagentStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Starting => write!(f, "Starting"),
-            Self::Idle => write!(f, "Idle"),
-            Self::Running => write!(f, "Running"),
-            Self::Error => write!(f, "Error"),
-            Self::Exited => write!(f, "Exited"),
-        }
-    }
-}
+pub use super::subagent_status::SubagentStatus;
 
 /// Entry for a spawned subagent in the shared registry.
 #[derive(Debug, Clone)]
@@ -115,10 +60,14 @@ pub struct SubagentEntry {
     /// A supervision-critical stall alert retained after notification-channel
     /// saturation and retried on the next monitor event (#1076).
     pub pending_stall: Option<SequencedSubagentNotification>,
-    /// Whether this sub-agent was spawned read-only (`write` + `edit` disabled).
-    /// Surfaced through `get_subagents` so the TUI can mark it as an observer
-    /// (#966). Display flag only; enforcement is #957.
     pub read_only: bool,
+    pub cleanup_environment_id: Option<String>,
+    pub cleanup_argv: Vec<String>,
+    /// Session environment-registry handle plus the minted `CN` ref, taken
+    /// together with the cleanup plan so the environment entry is uncommitted
+    /// exactly once when this agent's cleanup runs.
+    pub environment_registry: Option<crate::domain::environment_registry::EnvironmentRegistry>,
+    pub environment_ref: Option<String>,
     /// Last lifecycle event applied to this entry. This is internal observability
     /// for race-focused tests; parent-facing behavior continues to use `status`.
     #[cfg(test)]
@@ -189,6 +138,10 @@ impl SubagentEntry {
             stalled_armed: true,
             pending_stall: None,
             read_only: false,
+            cleanup_environment_id: None,
+            cleanup_argv: Vec::new(),
+            environment_registry: None,
+            environment_ref: None,
             #[cfg(test)]
             last_lifecycle_event: None,
         }

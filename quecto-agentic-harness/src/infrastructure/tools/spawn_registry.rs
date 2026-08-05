@@ -10,7 +10,7 @@ pub fn register_and_broadcast(
     broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
     session_name: &str,
     entry: SubagentEntry,
-) {
+) -> Result<(), crate::domain::error::DomainError> {
     // Insert and serialize the survivor set in ONE critical section. Locking
     // twice (insert, then re-lock inside build_state_changed_event) leaves a gap
     // in which a concurrent reaper/cascade-removal could mutate or drop the
@@ -26,8 +26,11 @@ pub fn register_and_broadcast(
         })
     };
     if let (Some(tx), Some(event)) = (broadcast_tx, event) {
-        let _ = tx.send(event);
+        if let Err(e) = tx.send(event) {
+            tracing::debug!(error = %e, "register broadcast had no subscribers");
+        }
     }
+    Ok(())
 }
 
 /// Send SIGTERM to all tracked subagent processes and clear the registry.
@@ -38,9 +41,15 @@ pub fn shutdown_all(registry: &SubagentRegistry) {
 
 /// Like [`shutdown_all`], returning the number of registry entries removed.
 pub fn shutdown_all_with_count(registry: &SubagentRegistry) -> usize {
-    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    let removed = entries.len();
-    for (name, entry) in entries.iter() {
+    // Drain in the SAME critical section that decides who gets signalled, so
+    // an agent registering concurrently can never be drained (and cleaned up)
+    // without having been signalled, and the returned count matches the
+    // drained set exactly.
+    let mut removed: Vec<_> = {
+        let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+        entries.drain().collect()
+    };
+    for (name, entry) in removed.iter() {
         if let Some(ref tx) = entry.exit_signal_tx {
             let _ = tx.send(Some(ExitSignal {
                 exit_code: None,
@@ -57,6 +66,7 @@ pub fn shutdown_all_with_count(registry: &SubagentRegistry) -> usize {
             tracing::info!(agent = %name, pid = entry.pid, "sent SIGTERM to subagent");
         }
     }
-    entries.clear();
-    removed
+    let count = removed.len();
+    super::subagent_cleanup::cleanup_removed_entries_once(&mut removed);
+    count
 }

@@ -16,6 +16,26 @@ pub struct Config {
     pub tools: ToolsConfig,
     #[serde(default)]
     pub workflow: WorkflowConfig,
+    #[serde(default)]
+    pub container_scripts: ContainerScriptsConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ContainerScriptsConfig {
+    #[serde(default)]
+    pub default: String,
+    #[serde(default)]
+    pub scripts: HashMap<String, ContainerScriptConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ContainerScriptConfig {
+    #[serde(default)]
+    pub create: Vec<String>,
+    #[serde(default)]
+    pub cleanup: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

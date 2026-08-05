@@ -255,7 +255,7 @@ fn register_and_broadcast_emits_immediate_state_changed() {
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
     let entry = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), 0);
-    super::register_and_broadcast(&registry, Some(&tx), "worker", entry);
+    super::register_and_broadcast(&registry, Some(&tx), "worker", entry).unwrap();
     assert!(
         registry
             .lock()
@@ -277,7 +277,7 @@ fn register_and_broadcast_emits_immediate_state_changed() {
 fn register_and_broadcast_without_channel_still_registers() {
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let entry = SubagentEntry::new(PathBuf::from("/tmp/x.sock"), 0);
-    super::register_and_broadcast(&registry, None, "worker", entry);
+    super::register_and_broadcast(&registry, None, "worker", entry).unwrap();
     assert!(
         registry
             .lock()
@@ -295,6 +295,7 @@ fn register_and_broadcast_without_channel_still_registers() {
 
 fn sample_config(task: Option<&str>) -> crate::domain::subagent::SubagentConfig {
     crate::domain::subagent::SubagentConfig {
+        container: crate::domain::subagent::ContainerSelection::Local,
         task: task.map(String::from),
         agent_id: Some("worker".into()),
         restrict_to_workspace: true,
@@ -321,6 +322,10 @@ fn initial_entry_taskless_is_idle() {
         parent_id: Some("parent".into()),
         config: &sample_config(None),
         exit_signal_tx: None,
+        cleanup_environment_id: None,
+        cleanup_argv: Vec::new(),
+        environment_registry: None,
+        environment_ref: None,
     });
     assert_eq!(entry.status, SubagentStatus::Idle);
     assert_eq!(entry.parent_id.as_deref(), Some("parent"));
@@ -338,6 +343,10 @@ fn initial_entry_with_task_stays_starting() {
         parent_id: None,
         config: &sample_config(Some("do work")),
         exit_signal_tx: None,
+        cleanup_environment_id: None,
+        cleanup_argv: Vec::new(),
+        environment_registry: None,
+        environment_ref: None,
     });
     assert_eq!(
         entry.status,
@@ -360,8 +369,12 @@ fn initial_entry_taskless_broadcasts_idle_via_register() {
         parent_id: None,
         config: &sample_config(None),
         exit_signal_tx: None,
+        cleanup_environment_id: None,
+        cleanup_argv: Vec::new(),
+        environment_registry: None,
+        environment_ref: None,
     });
-    super::register_and_broadcast(&registry, Some(&tx), "idle-worker", entry);
+    super::register_and_broadcast(&registry, Some(&tx), "idle-worker", entry).unwrap();
     let line = rx
         .try_recv()
         .expect("#1049: registration must broadcast state_changed");

@@ -1,4 +1,12 @@
+#[cfg(test)]
+use super::spawn_entry::{child_session_key, child_sidecar_filename};
+#[cfg(test)]
+use super::spawn_entry::{effective_config_path, inherited_runtime_config_path};
+use super::spawn_input::parse_container_selection;
+#[cfg(test)]
+use super::spawn_launch_args::write_private_new;
 pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
+use crate::domain::environment_registry::EnvironmentRegistry;
 use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
 use crate::domain::subagent::{
@@ -7,6 +15,7 @@ use crate::domain::subagent::{
 };
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::subagent_launch_app::SubagentLaunchUseCase;
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -14,19 +23,12 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::spawn_entry::{
-    InitialRegistryEntrySpec, child_session_key, child_sidecar_filename, child_socket_path,
-    effective_config_path, inherited_runtime_config_path, initial_registry_entry,
-};
-use super::spawn_launch_args::write_private_new;
+use super::spawn_entry::{InitialRegistryEntrySpec, child_socket_path, initial_registry_entry};
 pub use super::spawn_registry::{register_and_broadcast, shutdown_all, shutdown_all_with_count};
+use super::subagent_registry::NotificationTx;
 #[cfg(test)]
 pub use super::subagent_registry::SubagentStatus;
-use super::subagent_registry::{ExitSignal, NotificationTx, new_exit_signal_channel};
 
-/// Compute the effective set of tools to disable in the child registry (#957):
-/// the explicit `disable_tools` array unioned with the `read_only` convenience
-/// (which expands to `write` + `edit`), de-duplicated (read-only tools first). A
 /// non-string entry is an LLM-addressable error, not a silent skip.
 fn parse_disable_tools(args: &serde_json::Value) -> Result<Vec<String>, String> {
     let mut tools: Vec<String> = Vec::new();
@@ -36,8 +38,6 @@ fn parse_disable_tools(args: &serde_json::Value) -> Result<Vec<String>, String> 
         }
     };
 
-    // Treat a malformed read_only safety flag as an error rather than silently
-    // dropping it; valid true expands first, then unions disable_tools.
     if let Some(v) = args.get("read_only").filter(|v| !v.is_null()) {
         if v.as_bool().ok_or("read_only must be a boolean")? {
             push_unique("write", &mut tools);
@@ -74,30 +74,26 @@ fn validate_config_path(s: &str) -> Result<PathBuf, String> {
 /// Tool that spawns a child `quecto agent` process in UDS mode.
 ///
 /// When executed, validates the request, launches the child as a
-/// `--mode uds --persist` background process, waits for the UDS socket
-/// to become ready, and registers the child in a shared [`SubagentRegistry`]
-/// so the companion [`super::agent_cmd::AgentCmdTool`] can interact with it.
 #[derive(Debug)]
 pub struct SpawnTool {
     /// Allowlist of agent IDs that can be spawned.
-    allowed_agents: Vec<String>,
+    pub(super) allowed_agents: Vec<String>,
     /// Whether workspace restriction should be inherited.
-    restrict_to_workspace: bool,
+    pub(super) restrict_to_workspace: bool,
     /// Base directory for the child agent process.
-    base_dir: PathBuf,
+    pub(super) base_dir: PathBuf,
     /// Directory for UDS sockets (e.g. `$XDG_RUNTIME_DIR` or temp).
-    socket_dir: PathBuf,
+    pub(super) socket_dir: PathBuf,
     /// Shared registry of spawned subagents.
-    registry: SubagentRegistry,
-    /// Optional notification sender for parent LLM auto-notify (#523).
-    notify_tx: Option<NotificationTx>,
-    /// Parent's broadcast channel, so the child monitor can forward the child's
-    /// workflow_state events onto the parent's stream (PRD Stage B / R-B2).
-    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    /// This (parent) agent's own id, stamped as the `parent_id` on forwarded
+    pub(super) registry: SubagentRegistry,
+    pub(super) notify_tx: Option<NotificationTx>,
+    pub(super) broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     /// child events (PRD Stage B).
-    parent_id: Option<String>,
-    inherited_tool_policy: super::spawn_inherited_policy::InheritedToolPolicyState,
+    pub(super) parent_id: Option<String>,
+    pub(super) inherited_tool_policy: super::spawn_inherited_policy::InheritedToolPolicyState,
+    /// Session-scoped script-managed environment registry (ADR-0021: built
+    /// once at composition and injected).
+    pub(super) environment_registry: EnvironmentRegistry,
 }
 
 impl SpawnTool {
@@ -112,6 +108,7 @@ impl SpawnTool {
             broadcast_tx: None,
             parent_id: None,
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
+            environment_registry: EnvironmentRegistry::new(),
         }
     }
 
@@ -131,7 +128,14 @@ impl SpawnTool {
             broadcast_tx: None,
             parent_id: None,
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
+            environment_registry: EnvironmentRegistry::new(),
         }
+    }
+
+    /// Inject the session-scoped environment registry built at composition.
+    pub fn with_environment_registry(mut self, environment_registry: EnvironmentRegistry) -> Self {
+        self.environment_registry = environment_registry;
+        self
     }
 
     /// Set the directory for child agent UDS sockets.
@@ -148,20 +152,16 @@ impl SpawnTool {
         self
     }
 
-    /// Inject a shared subagent registry (used when wiring spawn + agent_cmd together).
     pub fn with_registry(mut self, registry: SubagentRegistry) -> Self {
         self.registry = registry;
         self
     }
 
-    /// Set the notification sender for auto-notifying the parent LLM (#523).
     pub fn with_notify_tx(mut self, tx: NotificationTx) -> Self {
         self.notify_tx = Some(tx);
         self
     }
 
-    /// Set the parent's broadcast channel + own id so spawned children forward
-    /// their workflow_state events onto the parent's stream (PRD Stage B).
     pub fn with_event_forwarding(
         mut self,
         broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
@@ -172,14 +172,30 @@ impl SpawnTool {
         self
     }
 
-    /// Return a reference to the shared registry (for testing / wiring).
+    #[cfg(test)]
+    pub(crate) async fn send_initial_prompt_for_test(
+        &self,
+        socket_path: &std::path::Path,
+        task: &str,
+    ) -> Result<(), DomainError> {
+        send_initial_prompt_to_socket(socket_path, task).await
+    }
+
     pub fn registry(&self) -> &SubagentRegistry {
         &self.registry
     }
 
+    /// Real launch-port adapter handle for the shared `tests/contracts/`
+    /// suite, so local and script-managed launches run through one behavioral
+    /// contract. Not part of the runtime API.
+    #[doc(hidden)]
+    pub fn launch_ports_for_contract(
+        &self,
+    ) -> impl crate::domain::subagent_launch::SubagentLaunchPorts<Prepared: Send> + Send + '_ {
+        super::spawn_launch_ports::SpawnLaunchPorts::new(self)
+    }
+
     /// Parse spawn arguments and return the resulting config.
-    /// Available in tests and the `test-support` feature so BDD steps can
-    /// inspect parsed values without promoting the method to the full public API.
     #[cfg(any(test, feature = "test-support"))]
     pub fn parse_args_for_test(&self, arguments: &str) -> Result<SubagentConfig, String> {
         self.parse_args(arguments)
@@ -191,6 +207,8 @@ impl SpawnTool {
             serde_json::from_str(arguments).map_err(|e| format!("invalid JSON: {}", e))?;
 
         let task = args.get("task").and_then(|v| v.as_str()).map(String::from);
+
+        let container = parse_container_selection(&args)?;
 
         let agent_id = args
             .get("agent_id")
@@ -218,14 +236,11 @@ impl SpawnTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        // workflow_guards requires workflow — reject early rather than letting the
         // child process fail with an opaque CLI error.
         if workflow_guards && !workflow {
             return Err("workflow_guards requires workflow to also be true".to_string());
         }
 
-        // Borrow-deserialize into the domain type so malformed by-value specs
-        // fail here clearly and raw JSON never leaks into the launch pipeline.
         let workflow_spec = match args.get("workflow_spec") {
             Some(v) if !v.is_null() => {
                 use serde::Deserialize;
@@ -236,7 +251,6 @@ impl SpawnTool {
             _ => None,
         };
 
-        // #881: share set_model parsing so accepted forms cannot diverge;
         // explicit model > forwarded --config > built-in default.
         let model_arg = crate::domain::subagent::parse_model_arg(
             args.get("model").and_then(|v| v.as_str()),
@@ -258,7 +272,6 @@ impl SpawnTool {
 
         let disable_tools = parse_disable_tools(&args)?;
 
-        // Observer sub-agents have both mutation tools disabled (#966).
         let read_only = {
             let has = |name: &str| disable_tools.iter().any(|t| t == name);
             has("write") && has("edit")
@@ -266,6 +279,7 @@ impl SpawnTool {
 
         Ok(SubagentConfig {
             task,
+            container,
             agent_id,
             restrict_to_workspace: self.restrict_to_workspace,
             system,
@@ -282,8 +296,7 @@ impl SpawnTool {
 
     async fn launch_uds_agent(&self, config: &SubagentConfig) -> Result<ToolResult, DomainError> {
         let session_name = config.agent_id.as_deref().unwrap_or("subagent");
-
-        {
+        let duplicate = {
             let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
             let resolution_entries: Vec<_> = entries
                 .iter()
@@ -293,294 +306,38 @@ impl SpawnTool {
                     live: entry.status != super::subagent_registry::SubagentStatus::Exited,
                 })
                 .collect();
-            if let Err(DisplayNameResolveError::AmbiguousLiveMatch { display_name })
-            | Err(DisplayNameResolveError::NoLiveMatch { display_name }) =
-                assert_display_name_available_for_spawn(&resolution_entries, session_name)
-            {
-                return Ok(ToolResult {
-                    content: format!(
-                        "Failed to spawn subagent: duplicate live subagent display label '{}'",
-                        display_name
-                    ),
-                    is_error: true,
-                    image_blocks: vec![],
-                });
-            }
-        }
-
-        let agent_uuid = AgentUuid::mint();
-        let registry_key = agent_uuid.to_string();
-
-        let socket_path = child_socket_path(&self.socket_dir, &agent_uuid);
-
-        // A by-value workflow assignment is written to a file next to the
-        // socket and forwarded as `--workflow-spec <path>`; the inline template
-        // is too large for a bare CLI arg. The child runs it in Active mode
-        // (binding) and deletes the file once read — see agent_tool_registry.
-        let workflow_spec_path = if let Some(ref spec) = config.workflow_spec {
-            let spec_json = serde_json::to_string(spec).map_err(|e| {
-                DomainError::Tool(format!("failed to serialize workflow spec: {e}"))
-            })?;
-            if spec_json.len() > crate::domain::workflow::MAX_WORKFLOW_SPEC_BYTES {
-                return Err(DomainError::Tool(format!(
-                    "workflow spec too large: {} bytes (max {})",
-                    spec_json.len(),
-                    crate::domain::workflow::MAX_WORKFLOW_SPEC_BYTES
-                )));
-            }
-            // Unique per spawn (pid + session) and created privately with
-            // O_CREAT|O_EXCL + mode 0600 so a pre-planted symlink at the path
-            // cannot be followed/overwritten and the contents are owner-only.
-            let spec_path = self.socket_dir.join(child_sidecar_filename(
-                "quecto-wfspec",
-                &agent_uuid,
-                std::process::id(),
-            ));
-            write_private_new(&spec_path, spec_json.as_bytes())
-                .map_err(|e| DomainError::Tool(format!("failed to write workflow spec: {e}")))?;
-            Some(spec_path)
-        } else {
-            None
+            assert_display_name_available_for_spawn(&resolution_entries, session_name).err()
         };
-
-        let inherited_tool_policy =
-            super::spawn_inherited_policy::snapshot(&self.inherited_tool_policy);
-        let inherited_tool_policy_path = if let Some(snapshot) = inherited_tool_policy.as_ref() {
-            let path = self.socket_dir.join(child_sidecar_filename(
-                "quecto-tool-policy",
-                &agent_uuid,
-                std::process::id(),
-            ));
-            super::inherited_tool_policy::write_snapshot(&path, snapshot).map_err(|e| {
-                DomainError::Tool(format!("failed to write inherited tool policy: {e}"))
-            })?;
-            Some(path)
-        } else {
-            None
-        };
-
-        // Build the full child argument list (incl. `--model`, #881) via the
-        // pure builder so the exact flag set is unit-testable.
-        let effective_config =
-            effective_config_path(config.config_path.as_ref(), inherited_runtime_config_path());
-        let cli_args = super::spawn_launch_args::build_child_cli_args(
-            &super::spawn_launch_args::ChildLaunchSpec {
-                session_name: child_session_key(&agent_uuid),
-                socket_path: &socket_path,
-                config,
-                effective_config: effective_config.as_deref(),
-                parent_id: self.parent_id.as_deref(),
-                restrict_to_workspace: self.restrict_to_workspace,
-                workflow_spec_path: workflow_spec_path.as_deref(),
-                inherited_tool_policy_path: inherited_tool_policy_path.as_deref(),
-            },
-        );
-
-        let binary = super::spawn_binary::resolve_child_binary()?;
-        let mut cmd = tokio::process::Command::new(&binary);
-        cmd.args(&cli_args);
-
-        if !self.base_dir.as_os_str().is_empty() {
-            cmd.env("QUECTO_BASE_DIR", &self.base_dir);
-        }
-
-        // Detach child stdio — we interact via UDS, not stdout/stderr.
-        cmd.stdout(std::process::Stdio::null());
-        cmd.stderr(std::process::Stdio::null());
-
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| DomainError::Tool(format!("failed to spawn subagent: {e}")))?;
-
-        let pid = child.id().unwrap_or(0);
-
-        // Wait for socket readiness while also observing premature child exit.
-        if let Err(e) = self
-            .wait_for_socket_or_child_exit(&socket_path, &mut child)
-            .await
+        if let Some(
+            DisplayNameResolveError::AmbiguousLiveMatch { display_name }
+            | DisplayNameResolveError::NoLiveMatch { display_name },
+        ) = duplicate
         {
-            // Socket never became ready — kill the child if it is still alive and
-            // report failure. If the child already exited, kill/wait are benign.
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-            return Err(e);
-        }
-
-        // Create exit signal channel for `await` support (#612).
-        // The receiver is intentionally dropped — `watch` channels remain
-        // functional after the initial receiver is dropped. Await callers
-        // get their own receiver via `tx.subscribe()`. Do NOT switch to
-        // `mpsc` or `oneshot` without updating the subscribe pattern.
-        let (exit_tx, _exit_rx) = new_exit_signal_channel();
-
-        // Register in shared registry BEFORE starting the monitor task,
-        // so the monitor's update_entry calls find the entry (#522). The insert
-        // also broadcasts the survivor set immediately so the TUI learns of the
-        // new child at once instead of waiting for the next GetSubagents poll or
-        // a terminal event — without this a child that begins a long first turn
-        // stays invisible in the side panel until it finishes (#866).
-        {
-            let entry = initial_registry_entry(InitialRegistryEntrySpec {
-                agent_uuid: agent_uuid.clone(),
-                display_name: session_name.to_string(),
-                socket_path: socket_path.clone(),
-                pid,
-                parent_id: self.parent_id.clone(),
-                config,
-                exit_signal_tx: Some(exit_tx.clone()),
+            return Ok(ToolResult {
+                content: format!(
+                    "Failed to spawn subagent: duplicate live subagent display label '{}'",
+                    display_name
+                ),
+                is_error: true,
+                image_blocks: vec![],
             });
-            register_and_broadcast(
-                &self.registry,
-                self.broadcast_tx.as_ref(),
-                session_name,
-                entry,
-            );
         }
-
-        // Start a persistent monitor task to track child events in real-time (#522).
-        // Pass the notification sender so the monitor can auto-notify the parent (#523).
-        let monitor_handle = super::subagent_monitor::spawn_monitor_task(
-            registry_key.clone(),
-            socket_path.clone(),
-            self.registry.clone(),
-            self.notify_tx.clone(),
-            self.broadcast_tx.clone(),
-            self.parent_id.clone(),
-        );
-
-        // Store the monitor handle so it can be aborted on shutdown.
-        {
-            let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(entry) = entries.get_mut(&registry_key) {
-                entry.monitor_handle = Some(std::sync::Arc::new(monitor_handle));
-            }
-        }
-
-        // Spawn a background reaper task so the child process is always
-        // cleaned up (no zombies) even if the parent never calls shutdown_all.
-        // The reaper also aborts the monitor task to prevent leaks (#522),
-        // and signals any waiting `await` calls with the exit status (#612).
-        let reaper_registry = self.registry.clone();
-        let reaper_name = registry_key.clone();
-        let reaper_exit_tx = exit_tx;
-        let reaper_broadcast = self.broadcast_tx.clone();
-        tokio::spawn(async move {
-            let status = child.wait().await;
-
-            // Build the exit signal from the child's exit status (#612).
-            let exit_signal = match status {
-                Ok(exit_status) => {
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::process::ExitStatusExt;
-                        if let Some(signal) = exit_status.signal() {
-                            ExitSignal {
-                                exit_code: None,
-                                signal: Some(signal),
-                            }
-                        } else {
-                            ExitSignal {
-                                exit_code: exit_status.code(),
-                                signal: None,
-                            }
-                        }
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        ExitSignal {
-                            exit_code: exit_status.code(),
-                            signal: None,
-                        }
-                    }
-                }
-                Err(_) => ExitSignal {
-                    exit_code: None,
-                    signal: None,
-                },
-            };
-
-            // Signal any waiting `await` call before removing from registry.
-            let _ = reaper_exit_tx.send(Some(exit_signal));
-
-            // Cascade-remove the dead agent AND its descendants, then broadcast
-            // the survivor set so every connected client (the TUI panel) drops
-            // them promptly instead of leaving them lingering (#831). The reaper
-            // is a detached task, so the send is best-effort (errors at debug).
-            let crate::infrastructure::tools::subagent_cascade::CascadeOutcome { removed, event } =
-                crate::infrastructure::tools::subagent_cascade::cascade_remove_and_state_changed(
-                    &reaper_registry,
-                    &reaper_name,
-                );
-            if let Some(event) = event {
-                if let Some(tx) = &reaper_broadcast {
-                    if let Err(e) = tx.send(event) {
-                        tracing::debug!(
-                            agent = %reaper_name,
-                            error = %e,
-                            "reaper: no subscribers for cascade state_changed broadcast"
-                        );
-                    }
-                }
-            }
-
-            // Clean up the removed sub-tree. The dead agent itself was already
-            // wait()ed, so we only abort its monitor (the aborted monitor will
-            // NOT emit its EOF->Exited notification — that is why we announced the
-            // exit above rather than relying on it, #831). For DESCENDANTS we also
-            // SIGTERM their processes: when a parent exits its children are
-            // orphaned and would otherwise leak as untracked processes that
-            // `shutdown_all` can no longer reach (#831 security review). We do NOT
-            // re-signal the dead agent's own pid (already reaped; avoids a
-            // pid-reuse TOCTOU race).
-            for (id, entry) in &removed {
-                if id == &reaper_name {
-                    if let Some(ref handle) = entry.monitor_handle {
-                        handle.abort();
-                    }
-                    continue;
-                }
-                if let Some(ref tx) = entry.exit_signal_tx {
-                    let _ = tx.send(Some(ExitSignal {
-                        exit_code: None,
-                        signal: Some(15), // SIGTERM
-                    }));
-                }
-                crate::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry);
-            }
-        });
-
-        // If the caller provided an initial task, send it as the first prompt.
-        // Fire-and-forget: the child acks the prompt internally, but we don't
-        // read the response here. Use agent_cmd get_messages to check output.
-        if let Some(ref task) = config.task {
-            self.send_initial_prompt(&socket_path, task).await?;
-        }
-
-        Ok(ToolResult {
-            // Include durable uuid so TUI optimistic rows can rekey off display
-            // labels before the first UUID-keyed snapshot arrives (#1378).
-            content: format!(
-                "Subagent '{}' is running (uuid={}). Use agent_cmd to interact.",
-                session_name, agent_uuid
-            ),
-            is_error: false,
-            image_blocks: vec![],
-        })
+        SubagentLaunchUseCase::new(super::spawn_launch_ports::SpawnLaunchPorts::new(self))
+            .execute(config)
+            .await
     }
 
     /// Poll until the UDS socket is connectable (up to 10s).
-    async fn wait_for_socket(&self, path: &std::path::Path) -> Result<(), DomainError> {
+    pub(super) async fn wait_for_socket(&self, path: &std::path::Path) -> Result<(), DomainError> {
         use tokio::time::Instant;
 
         let deadline = Instant::now() + Duration::from_secs(10);
-        // Delay the first probe slightly — the child needs time to start up.
         let mut interval = tokio::time::interval_at(
             Instant::now() + Duration::from_millis(100),
             Duration::from_millis(100),
         );
         loop {
             interval.tick().await;
-            // Just try to connect — no need for a separate exists() check.
             if tokio::net::UnixStream::connect(path).await.is_ok() {
                 return Ok(());
             }
@@ -593,9 +350,7 @@ impl SpawnTool {
         }
     }
 
-    /// Poll until the UDS socket is connectable, but return a specific error if
-    /// the child process exits before its socket becomes ready.
-    async fn wait_for_socket_or_child_exit(
+    pub(super) async fn wait_for_socket_or_child_exit(
         &self,
         path: &std::path::Path,
         child: &mut tokio::process::Child,
@@ -614,24 +369,21 @@ impl SpawnTool {
             }
         }
     }
+}
 
-    /// Send the initial task as a UDS prompt after the socket is ready.
-    /// Fire-and-forget: writes the prompt and closes the connection.
-    async fn send_initial_prompt(
-        &self,
-        socket_path: &std::path::Path,
-        task: &str,
-    ) -> Result<(), DomainError> {
-        let cmd = serde_json::json!({"type": "prompt", "message": task, "ack": "accept"});
-        super::subagent_registry::send_subagent_uds_command_with_timeout(
-            socket_path,
-            &cmd.to_string(),
-            super::subagent_registry::INSPECTOR_RESPONSE_TIMEOUT,
-        )
-        .await
-        .map(|_| ())
-        .map_err(|e| DomainError::Tool(format!("failed to send prompt to subagent: {e}")))
-    }
+pub(super) async fn send_initial_prompt_to_socket(
+    socket_path: &std::path::Path,
+    task: &str,
+) -> Result<(), DomainError> {
+    let cmd = serde_json::json!({"type": "prompt", "message": task, "ack": "accept"});
+    super::subagent_registry::send_subagent_uds_command_with_timeout(
+        socket_path,
+        &cmd.to_string(),
+        super::subagent_registry::INSPECTOR_RESPONSE_TIMEOUT,
+    )
+    .await
+    .map(|_| ())
+    .map_err(|e| DomainError::Tool(format!("failed to send prompt to subagent: {e}")))
 }
 
 impl Tool for SpawnTool {
@@ -672,8 +424,6 @@ impl Tool for SpawnTool {
         Box::pin(async move {
             match self.parse_args(&args) {
                 Ok(config) => {
-                    // Only spawn subprocess when base_dir is configured (CLI agent mode).
-                    // Otherwise return a stub result (unit test / isolated mode).
                     if self.base_dir.as_os_str().is_empty() {
                         let session_name = config.agent_id.as_deref().unwrap_or("subagent");
 
@@ -695,11 +445,6 @@ impl Tool for SpawnTool {
                             }
                         }
 
-                        // Stub registration uses the same entry builder as the
-                        // real post-socket-ready path so status/parent/read_only
-                        // and #1049 cannot drift (#866 broadcast still applies).
-                        // #1378: socket path is UUID-keyed even in stub mode so
-                        // tests catch display-label collisions before launch.
                         let agent_uuid = AgentUuid::mint();
                         let stub_entry = initial_registry_entry(InitialRegistryEntrySpec {
                             agent_uuid: agent_uuid.clone(),
@@ -709,13 +454,23 @@ impl Tool for SpawnTool {
                             parent_id: self.parent_id.clone(),
                             config: &config,
                             exit_signal_tx: None,
+                            cleanup_environment_id: None,
+                            cleanup_argv: Vec::new(),
+                            environment_registry: None,
+                            environment_ref: None,
                         });
-                        register_and_broadcast(
+                        if let Err(e) = register_and_broadcast(
                             &self.registry,
                             self.broadcast_tx.as_ref(),
                             session_name,
                             stub_entry,
-                        );
+                        ) {
+                            return Ok(ToolResult {
+                                content: format!("Failed to spawn subagent: {e}"),
+                                is_error: true,
+                                image_blocks: vec![],
+                            });
+                        }
 
                         let msg = format!(
                             "Subagent '{}' is running (uuid={}). Use agent_cmd to interact.",

@@ -61,6 +61,9 @@ pub fn assert_display_name_available_for_spawn(
 pub struct SubagentConfig {
     /// The task to execute (optional — agent starts idle if omitted).
     pub task: Option<String>,
+    /// Runtime selection for this spawn. Local is the default; script-managed
+    /// creation is runtime-neutral and interpreted by application/infrastructure.
+    pub container: ContainerSelection,
     /// Optional user-facing display label (`agent_id` on the compatibility wire).
     /// This is not durable identity and must not key persistence or sockets.
     pub agent_id: Option<String>,
@@ -96,6 +99,16 @@ pub struct SubagentConfig {
     /// `disable_tools` set). Surfaced to the TUI so the left panel can mark the
     /// agent as an observer (#966). Purely a display flag; enforcement is #957.
     pub read_only: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum ContainerSelection {
+    #[default]
+    Local,
+    New {
+        repo: Option<String>,
+        container_script: Option<String>,
+    },
 }
 
 /// A validated model argument, in either of the two forms accepted by

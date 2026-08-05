@@ -183,13 +183,15 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
     let registry = crate::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
     let (notification_tx, notification_rx) = tokio::sync::mpsc::channel(64);
     let active_awaits = crate::infrastructure::tools::agent_cmd::new_active_awaits();
+    let environment_registry = crate::domain::environment_registry::EnvironmentRegistry::new();
 
     let mut spawn = crate::infrastructure::tools::spawn::SpawnTool::with_base_dir(
         Vec::new(),
         deps.restrict_to_workspace,
         deps.base_dir,
     )
-    .with_socket_dir(deps.socket_dir);
+    .with_socket_dir(deps.socket_dir)
+    .with_environment_registry(environment_registry);
     if let Some(snapshot) = deps.inherited_tool_policy {
         spawn = spawn.with_inherited_tool_policy(snapshot);
     }

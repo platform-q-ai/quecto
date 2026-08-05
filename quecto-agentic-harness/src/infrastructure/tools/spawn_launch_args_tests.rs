@@ -7,6 +7,7 @@ use std::path::Path;
 
 fn base_config() -> SubagentConfig {
     SubagentConfig {
+        container: crate::domain::subagent::ContainerSelection::Local,
         task: None,
         agent_id: Some("w1".into()),
         restrict_to_workspace: true,

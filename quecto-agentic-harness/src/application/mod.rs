@@ -9,5 +9,7 @@ pub mod context;
 pub mod context_pruning;
 #[cfg(any(test, feature = "test-support"))]
 pub mod extension_tool;
-#[cfg(any(test, feature = "test-support"))]
 pub mod subagent;
+pub mod subagent_launch;
+#[cfg(test)]
+mod subagent_launch_tests;

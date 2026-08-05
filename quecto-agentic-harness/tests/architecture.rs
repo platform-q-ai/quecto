@@ -194,7 +194,16 @@ fn application_layer_has_no_runtime_io_calls() {
     assert_no_imports(
         "application",
         Path::new("src/application"),
-        &["std::fs::", "tokio::fs::", "std::env::", "dirs::"],
+        &[
+            "std::fs::",
+            "tokio::fs::",
+            "std::env::",
+            "dirs::",
+            "std::process::",
+            "tokio::process::",
+            "Command::new",
+            "Stdio::",
+        ],
     );
 
     // Extra guard: filesystem existence checks are also I/O and should move to infrastructure ports.
@@ -211,6 +220,10 @@ fn domain_layer_has_no_runtime_io_calls() {
             "tokio::fs::",
             "std::env::",
             "dirs::",
+            "std::process::",
+            "tokio::process::",
+            "Command::new",
+            "Stdio::",
             ".exists(",
         ],
     );

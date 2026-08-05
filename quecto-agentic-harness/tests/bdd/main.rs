@@ -399,6 +399,8 @@ pub struct QuectoWorld {
     pub _agent_cmd_mock_tmp: Option<TempDir>,
     /// Last command sent to mock UDS server (#421)
     pub agent_cmd_last_command: Option<Arc<Mutex<String>>>,
+    pub script_invocations: Arc<Mutex<Vec<serde_json::Value>>>,
+    pub script_cleanup_targets: Arc<Mutex<Vec<String>>>,
     /// Subagent spawn config for subagent scenarios
     pub subagent_config: Option<SubagentConfig>,
     /// Created subagent context
