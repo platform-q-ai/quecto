@@ -1033,7 +1033,29 @@ fn then_started_count(world: &mut QuectoWorld, n: i32) {
 }
 #[then("no local fallback child should have been started")]
 fn then_no_local_fallback(world: &mut QuectoWorld) {
-    assert!(!world.local_fallback_started);
+    // The registry entry for a script-managed launch records the pid of any
+    // child the parent itself spawned; the script-managed adapter starts no
+    // local process, so a nonzero pid here proves a local fallback child.
+    let content = world
+        .spawn_result
+        .as_ref()
+        .expect("spawn result")
+        .content
+        .clone();
+    let uuid = content
+        .split("uuid=")
+        .nth(1)
+        .and_then(|s| s.split(')').next())
+        .expect("spawn result contains uuid")
+        .to_string();
+    let registry = world.spawn_tool.as_ref().expect("spawn tool").registry();
+    let entries = registry.lock().unwrap();
+    let entry = entries.get(&uuid).expect("registered spawned agent");
+    assert_eq!(
+        entry.pid, 0,
+        "parent spawned a local child (pid {}) alongside the script-managed create",
+        entry.pid
+    );
 }
 #[then("the script-managed runtime should have created the committed environment reference")]
 fn then_committed_env(world: &mut QuectoWorld) {

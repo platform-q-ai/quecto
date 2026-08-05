@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry};
 use crate::domain::error::DomainError;
 use crate::domain::subagent::{ContainerSelection, SubagentConfig};
 use crate::infrastructure::config::{Config, ContainerScriptConfig};
@@ -13,6 +13,9 @@ pub(super) struct PreparedChild {
     pub socket_path: Option<std::path::PathBuf>,
     cleanup_environment_id: Option<String>,
     cleanup_argv: Vec<String>,
+    /// Session registry the environment was committed to, so rollback can
+    /// uncommit the entry it created.
+    environments: Option<EnvironmentRegistry>,
 }
 
 impl PreparedChild {
@@ -28,6 +31,7 @@ impl PreparedChild {
             socket_path,
             cleanup_environment_id: None,
             cleanup_argv: vec![],
+            environments: None,
         }
     }
 
@@ -44,6 +48,9 @@ impl PreparedChild {
             let _ = child.wait().await;
         }
         run_cleanup_once(self.cleanup_environment_id.clone(), &mut self.cleanup_argv).await;
+        if let (Some(environments), Some(env_ref)) = (&self.environments, &self.environment_ref) {
+            environments.remove(env_ref);
+        }
     }
 }
 
@@ -54,104 +61,40 @@ pub(super) async fn run_cleanup_once(env_ref: Option<String>, cleanup_argv: &mut
     }
 }
 
-pub(super) fn parse_container_selection(
-    args: &serde_json::Value,
-) -> Result<ContainerSelection, String> {
-    let Some(value) = args.get("container") else {
-        return Ok(ContainerSelection::Local);
-    };
-    parse_container_value(value)
-}
-
-fn parse_container_value(value: &serde_json::Value) -> Result<ContainerSelection, String> {
-    match value {
-        serde_json::Value::Bool(false) => Ok(ContainerSelection::Local),
-        serde_json::Value::Bool(true) => Ok(ContainerSelection::New {
-            repo: None,
-            container_script: None,
-        }),
-        serde_json::Value::Object(map) => parse_container_object(map),
-        _ => Err("container must be false, true, or an object".to_string()),
-    }
-}
-
-fn parse_container_object(
-    map: &serde_json::Map<String, serde_json::Value>,
-) -> Result<ContainerSelection, String> {
-    reject_unknown_container_fields(map)?;
-    require_new_mode(map)?;
-    Ok(ContainerSelection::New {
-        repo: optional_string(map, "repo")?,
-        container_script: optional_string(map, "container_script")?,
-    })
-}
-
-fn reject_unknown_container_fields(
-    map: &serde_json::Map<String, serde_json::Value>,
-) -> Result<(), String> {
-    let allowed = ["mode", "repo", "container_script"];
-    if let Some(key) = map.keys().find(|k| !allowed.contains(&k.as_str())) {
-        return Err(format!("unknown container field '{key}'"));
-    }
-    Ok(())
-}
-
-fn require_new_mode(map: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
-    match map.get("mode").and_then(|v| v.as_str()) {
-        Some("new") => Ok(()),
-        Some("existing") => {
-            Err("container mode 'existing' is not supported in this slice".to_string())
-        }
-        Some(other) => Err(format!("unsupported container mode '{other}'")),
-        None => Err("container.mode is required".to_string()),
-    }
-}
-
-fn optional_string(
-    map: &serde_json::Map<String, serde_json::Value>,
-    key: &str,
-) -> Result<Option<String>, String> {
-    map.get(key)
-        .map(|v| {
-            v.as_str()
-                .ok_or_else(|| format!("container.{key} must be a string"))
-        })
-        .transpose()
-        .map(|v| v.map(str::to_string))
+/// The child command a launch adapter must run (or hand to a create script):
+/// binary, final CLI args, and the parent's base directory.
+pub(super) struct ChildCommand<'a> {
+    pub binary: &'a Path,
+    pub cli_args: &'a [std::ffi::OsString],
+    pub base_dir: &'a Path,
 }
 
 pub(super) async fn spawn_prepared_child(
     config: &SubagentConfig,
-    binary: &Path,
-    cli_args: &[std::ffi::OsString],
-    base_dir: &Path,
+    child: &ChildCommand<'_>,
+    environments: &EnvironmentRegistry,
 ) -> Result<PreparedChild, DomainError> {
     match &config.container {
-        ContainerSelection::Local => spawn_local_child(binary, cli_args, base_dir),
+        ContainerSelection::Local => spawn_local_child(child),
         ContainerSelection::New {
             container_script, ..
         } => {
             spawn_script_managed_child(
                 config,
-                binary,
-                cli_args,
-                base_dir,
+                child,
                 &load_container_config(config)?,
                 container_script,
+                environments,
             )
             .await
         }
     }
 }
 
-fn spawn_local_child(
-    binary: &Path,
-    cli_args: &[std::ffi::OsString],
-    base_dir: &Path,
-) -> Result<PreparedChild, DomainError> {
-    let mut cmd = tokio::process::Command::new(binary);
-    cmd.args(cli_args);
-    apply_common_child_env(&mut cmd, base_dir);
+fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, DomainError> {
+    let mut cmd = tokio::process::Command::new(child.binary);
+    cmd.args(child.cli_args);
+    apply_common_child_env(&mut cmd, child.base_dir);
     let child = cmd
         .spawn()
         .map_err(|e| DomainError::Tool(format!("failed to spawn subagent: {e}")))?;
@@ -161,6 +104,7 @@ fn spawn_local_child(
         socket_path: None,
         cleanup_environment_id: None,
         cleanup_argv: Vec::new(),
+        environments: None,
     })
 }
 
@@ -181,18 +125,25 @@ fn load_container_config(config: &SubagentConfig) -> Result<Config, DomainError>
 
 async fn spawn_script_managed_child(
     config: &SubagentConfig,
-    binary: &Path,
-    cli_args: &[std::ffi::OsString],
-    base_dir: &Path,
+    child: &ChildCommand<'_>,
     cfg: &Config,
     selected_script: &Option<String>,
+    environments: &EnvironmentRegistry,
 ) -> Result<PreparedChild, DomainError> {
     let script_name = script_name(selected_script, cfg)?;
     let script = script_config(cfg, script_name)?;
     validate_script(script)?;
-    let mut cmd = create_command(script, binary, cli_args);
-    set_script_env(&mut cmd, config, cfg, script_name, "", base_dir)?;
-    apply_common_child_env(&mut cmd, base_dir);
+    let environment_ref = environments.mint_ref();
+    let mut cmd = create_command(script, child.binary, child.cli_args);
+    set_script_env(
+        &mut cmd,
+        config,
+        cfg,
+        script_name,
+        &environment_ref,
+        child.base_dir,
+    )?;
+    apply_common_child_env(&mut cmd, child.base_dir);
     cmd.stdout(std::process::Stdio::piped());
     let output = cmd
         .output()
@@ -214,12 +165,19 @@ async fn spawn_script_managed_child(
             return Err(e);
         }
     };
+    environments.commit(EnvironmentRecord {
+        environment_ref: environment_ref.clone(),
+        environment_id: result.environment_id.clone(),
+        workspace_path: result.workspace_path.clone(),
+        script_name: script_name.to_string(),
+    });
     Ok(PreparedChild {
         child: None,
-        environment_ref: Some(new_environment_ref()),
+        environment_ref: Some(environment_ref),
         socket_path: Some(result.socket_path),
         cleanup_environment_id: Some(result.environment_id),
         cleanup_argv: script.cleanup.clone(),
+        environments: Some(environments.clone()),
     })
 }
 
@@ -236,6 +194,7 @@ struct CreateResultWire {
 
 struct CreateResult {
     environment_id: String,
+    workspace_path: std::path::PathBuf,
     socket_path: std::path::PathBuf,
 }
 
@@ -264,6 +223,7 @@ fn parse_create_result(stdout: &[u8]) -> Result<CreateResult, DomainError> {
     }
     Ok(CreateResult {
         environment_id: wire.environment_id,
+        workspace_path: wire.workspace_path,
         socket_path: wire.socket_path,
     })
 }
@@ -290,12 +250,6 @@ fn script_config<'a>(
             "invalid container_scripts configuration: script '{name}' not found"
         ))
     })
-}
-
-static NEXT_ENVIRONMENT_REF: AtomicU64 = AtomicU64::new(1);
-
-fn new_environment_ref() -> String {
-    format!("C{}", NEXT_ENVIRONMENT_REF.fetch_add(1, Ordering::Relaxed))
 }
 
 fn create_command(

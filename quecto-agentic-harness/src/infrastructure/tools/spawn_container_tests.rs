@@ -1,57 +1,7 @@
 use super::*;
-use serde_json::json;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
-
-#[test]
-fn parse_rejects_runtime_specific_fields() {
-    for field in ["branch", "pr", "image", "runtime"] {
-        let err =
-            parse_container_selection(&json!({"container":{"mode":"new", field:"x"}})).unwrap_err();
-        assert!(err.contains(field), "{err}");
-    }
-}
-
-#[test]
-fn parse_rejects_invalid_container_shapes_and_modes() {
-    assert!(parse_container_selection(&json!({"container":"new"})).is_err());
-    assert!(parse_container_selection(&json!({"container":{"repo":"r"}})).is_err());
-    assert!(parse_container_selection(&json!({"container":{"mode":"existing"}})).is_err());
-    assert!(parse_container_selection(&json!({"container":{"mode":"other"}})).is_err());
-    assert!(parse_container_selection(&json!({"container":{"mode":"new","repo":1}})).is_err());
-    assert!(
-        parse_container_selection(&json!({"container":{"mode":"new","container_script":1}}))
-            .is_err()
-    );
-}
-
-#[test]
-fn parse_accepts_true_false_and_new_object() {
-    assert!(matches!(
-        parse_container_selection(&json!({})).unwrap(),
-        ContainerSelection::Local
-    ));
-    assert!(matches!(
-        parse_container_selection(&json!({"container":false})).unwrap(),
-        ContainerSelection::Local
-    ));
-    assert!(matches!(
-        parse_container_selection(&json!({"container":true})).unwrap(),
-        ContainerSelection::New { .. }
-    ));
-    let parsed = parse_container_selection(
-        &json!({"container":{"mode":"new","repo":"r","container_script":"s"}}),
-    )
-    .unwrap();
-    assert_eq!(
-        parsed,
-        ContainerSelection::New {
-            repo: Some("r".into()),
-            container_script: Some("s".into())
-        }
-    );
-}
 
 #[test]
 fn validate_script_rejects_missing_or_unsafe_argv() {
@@ -187,6 +137,7 @@ async fn cleanup_plan_clones_environment_and_argv() {
         socket_path: None,
         cleanup_environment_id: Some("env-test".into()),
         cleanup_argv: vec!["echo".into(), "ok".into()],
+        environments: None,
     };
     let (env_ref, argv) = prepared.cleanup_plan();
     assert_eq!(env_ref.as_deref(), Some("env-test"));
@@ -199,9 +150,12 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
     assert!(
         spawn_prepared_child(
             &local,
-            Path::new("/definitely/not/quecto"),
-            &[],
-            Path::new("/tmp")
+            &ChildCommand {
+                binary: Path::new("/definitely/not/quecto"),
+                cli_args: &[],
+                base_dir: Path::new("/tmp"),
+            },
+            &EnvironmentRegistry::new()
         )
         .await
         .is_err()
@@ -212,16 +166,32 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
         container_script: None,
     });
     assert!(
-        spawn_prepared_child(&without_config, Path::new("true"), &[], Path::new("/tmp"))
-            .await
-            .is_err()
+        spawn_prepared_child(
+            &without_config,
+            &ChildCommand {
+                binary: Path::new("true"),
+                cli_args: &[],
+                base_dir: Path::new("/tmp"),
+            },
+            &EnvironmentRegistry::new()
+        )
+        .await
+        .is_err()
     );
 
     without_config.config_path = Some(PathBuf::from("relative.toml"));
     assert!(
-        spawn_prepared_child(&without_config, Path::new("true"), &[], Path::new("/tmp"))
-            .await
-            .is_err()
+        spawn_prepared_child(
+            &without_config,
+            &ChildCommand {
+                binary: Path::new("true"),
+                cli_args: &[],
+                base_dir: Path::new("/tmp"),
+            },
+            &EnvironmentRegistry::new()
+        )
+        .await
+        .is_err()
     );
 }
 
@@ -246,9 +216,17 @@ cleanup = ["echo"]
     });
     config.config_path = Some(cfg_path);
     assert!(
-        spawn_prepared_child(&config, Path::new("true"), &[], dir.path())
-            .await
-            .is_err()
+        spawn_prepared_child(
+            &config,
+            &ChildCommand {
+                binary: Path::new("true"),
+                cli_args: &[],
+                base_dir: dir.path(),
+            },
+            &EnvironmentRegistry::new()
+        )
+        .await
+        .is_err()
     );
 }
 
@@ -291,9 +269,17 @@ fn script_env_includes_optional_selection_values() {
 #[tokio::test]
 async fn local_child_success_has_no_cleanup_plan() {
     let config = base_config(ContainerSelection::Local);
-    let mut prepared = spawn_prepared_child(&config, Path::new("true"), &[], Path::new("/tmp"))
-        .await
-        .unwrap();
+    let mut prepared = spawn_prepared_child(
+        &config,
+        &ChildCommand {
+            binary: Path::new("true"),
+            cli_args: &[],
+            base_dir: Path::new("/tmp"),
+        },
+        &EnvironmentRegistry::new(),
+    )
+    .await
+    .unwrap();
     let (env_ref, argv) = prepared.cleanup_plan();
     assert!(env_ref.is_none());
     assert!(argv.is_empty());
@@ -317,6 +303,13 @@ async fn cleanup_runner_consumes_argv_only_when_command_exists() {
 
 #[tokio::test]
 async fn rollback_kills_child_and_consumes_cleanup_once() {
+    let registry = EnvironmentRegistry::new();
+    registry.commit(EnvironmentRecord {
+        environment_ref: "C-test".into(),
+        environment_id: "env-test".into(),
+        workspace_path: PathBuf::from("/workspace"),
+        script_name: "default".into(),
+    });
     let mut prepared = PreparedChild {
         child: Some(
             tokio::process::Command::new("sleep")
@@ -328,9 +321,11 @@ async fn rollback_kills_child_and_consumes_cleanup_once() {
         socket_path: None,
         cleanup_environment_id: Some("env-test".into()),
         cleanup_argv: vec!["true".into()],
+        environments: Some(registry.clone()),
     };
     prepared.rollback_once().await;
     assert!(prepared.cleanup_argv.is_empty());
+    assert!(registry.get("C-test").is_none());
 }
 
 #[tokio::test]
@@ -354,16 +349,23 @@ async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
         container_script: None,
     });
     config.config_path = Some(cfg_path);
-    let prepared = spawn_prepared_child(&config, Path::new("true"), &[], dir.path())
-        .await
-        .unwrap();
-    assert!(
-        prepared
-            .environment_ref
-            .as_deref()
-            .unwrap()
-            .starts_with("C")
-    );
+    let registry = EnvironmentRegistry::new();
+    let prepared = spawn_prepared_child(
+        &config,
+        &ChildCommand {
+            binary: Path::new("true"),
+            cli_args: &[],
+            base_dir: dir.path(),
+        },
+        &registry,
+    )
+    .await
+    .unwrap();
+    assert_eq!(prepared.environment_ref.as_deref(), Some("C1"));
+    let committed = registry.get("C1").unwrap();
+    assert_eq!(committed.environment_id, "env-1");
+    assert_eq!(committed.workspace_path, PathBuf::from("/tmp/ws"));
+    assert_eq!(committed.script_name, "default");
     let (env_ref, argv) = prepared.cleanup_plan();
     assert!(env_ref.as_deref().unwrap() == "env-1");
     assert_eq!(argv, vec!["true"]);
@@ -432,16 +434,4 @@ fn unsafe_arg_detects_empty_and_nul_only() {
     assert!(unsafe_arg(""));
     assert!(unsafe_arg("bad\0arg"));
     assert!(!unsafe_arg("safe-arg"));
-}
-
-#[test]
-fn script_managed_environment_refs_are_monotonic_c_style_and_cleanup_uses_endpoint_id() {
-    let first = new_environment_ref();
-    let second = new_environment_ref();
-    assert!(first.starts_with('C'));
-    assert!(second.starts_with('C'));
-    let first_num: u64 = first.trim_start_matches('C').parse().unwrap();
-    let second_num: u64 = second.trim_start_matches('C').parse().unwrap();
-    assert!(second_num > first_num);
-    assert!(!first.contains('-'));
 }

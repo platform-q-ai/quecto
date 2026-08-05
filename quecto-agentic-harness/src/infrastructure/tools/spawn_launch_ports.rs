@@ -23,6 +23,7 @@ pub(super) struct SpawnLaunchPorts<'a> {
     tool: &'a SpawnTool,
     agent_uuid: Option<AgentUuid>,
     socket_path: Option<PathBuf>,
+    environment_ref: Option<String>,
 }
 
 impl<'a> SpawnLaunchPorts<'a> {
@@ -31,6 +32,7 @@ impl<'a> SpawnLaunchPorts<'a> {
             tool,
             agent_uuid: None,
             socket_path: None,
+            environment_ref: None,
         }
     }
 }
@@ -145,9 +147,12 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         Box::pin(async move {
             super::spawn_container::spawn_prepared_child(
                 config,
-                binary,
-                cli_args,
-                &self.tool.base_dir,
+                &super::spawn_container::ChildCommand {
+                    binary,
+                    cli_args,
+                    base_dir: &self.tool.base_dir,
+                },
+                &self.tool.environment_registry,
             )
             .await
         })
@@ -176,6 +181,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             } else {
                 self.tool.wait_for_socket(&actual_socket_path).await?;
             }
+            self.environment_ref = prepared.environment_ref.clone();
             Ok(PreparedRuntime {
                 socket_path: actual_socket_path,
                 pid,
@@ -213,6 +219,9 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 crate::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry);
             }
             super::subagent_cleanup::cleanup_removed_entries_once(&mut removed);
+            if let Some(env_ref) = self.environment_ref.take() {
+                self.tool.environment_registry.remove(&env_ref);
+            }
         })
     }
 

@@ -24,6 +24,7 @@ mod spawn_binary;
 mod spawn_container;
 mod spawn_entry;
 mod spawn_inherited_policy;
+mod spawn_input;
 mod spawn_launch_args;
 mod spawn_launch_ports;
 mod spawn_registry;

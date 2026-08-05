@@ -149,6 +149,233 @@ fn config(task: Option<&str>) -> SubagentConfig {
     }
 }
 
+/// Shared behavioral contract run against the REAL launch adapters (local
+/// process and script-managed create) through the production
+/// `SpawnLaunchPorts` implementation, not fakes.
+mod real_adapters {
+    use std::path::{Path, PathBuf};
+
+    use quecto::application::subagent_launch::SubagentLaunchUseCase;
+    use quecto::domain::environment_registry::EnvironmentRegistry;
+    use quecto::domain::error::DomainError;
+    use quecto::domain::subagent::ContainerSelection;
+    use quecto::domain::subagent::SubagentConfig;
+    use quecto::domain::tool::ToolResult;
+    use quecto::infrastructure::tools::spawn::SpawnTool;
+
+    /// Serializes scenarios that set `QUECTO_CHILD_BINARY`.
+    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    fn write_exec(path: &Path, content: &str) {
+        std::fs::write(path, content).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut p = std::fs::metadata(path).unwrap().permissions();
+            p.set_mode(0o700);
+            std::fs::set_permissions(path, p).unwrap();
+        }
+    }
+
+    /// A stand-in child: binds the UDS socket passed via `--socket` and holds
+    /// accepted connections open so readiness and the monitor stay connected.
+    const LISTENER: &str = r#"#!/usr/bin/env bash
+set -euo pipefail
+sock=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--socket" ]; then sock="$a"; fi
+  prev="$a"
+done
+exec python3 - "$sock" <<'PY'
+import socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.bind(sys.argv[1])
+s.listen(8)
+s.settimeout(15)
+conns = []
+try:
+    while True:
+        c, _ = s.accept()
+        conns.append(c)
+except Exception:
+    pass
+PY
+"#;
+
+    fn tool(dir: &Path) -> SpawnTool {
+        SpawnTool::with_base_dir(Vec::new(), false, dir.to_path_buf())
+            .with_socket_dir(dir.to_path_buf())
+    }
+
+    fn config(container: ContainerSelection, config_path: Option<PathBuf>) -> SubagentConfig {
+        SubagentConfig {
+            task: None,
+            container,
+            agent_id: Some("contract-adapter-child".into()),
+            restrict_to_workspace: false,
+            system: None,
+            config_path,
+            workflow: false,
+            workflow_guards: false,
+            workflow_spec: None,
+            model: None,
+            effort: None,
+            disable_tools: Vec::new(),
+            read_only: false,
+        }
+    }
+
+    async fn run_launch(
+        tool: &SpawnTool,
+        config: &SubagentConfig,
+    ) -> Result<ToolResult, DomainError> {
+        SubagentLaunchUseCase::new(tool.launch_ports_for_contract())
+            .execute(config)
+            .await
+    }
+
+    fn committed_pids(tool: &SpawnTool) -> Vec<u32> {
+        let entries = tool.registry().lock().unwrap();
+        entries.values().map(|entry| entry.pid).collect()
+    }
+
+    #[tokio::test]
+    async fn local_adapter_commits_one_entry_owning_the_child_process() {
+        let _env = ENV_LOCK.lock().await;
+        let dir = tempfile::TempDir::new().unwrap();
+        let child = dir.path().join("child.sh");
+        write_exec(&child, LISTENER);
+        // SAFETY: ENV_LOCK serializes every scenario touching this process-wide override, which is set before any child process is launched.
+        unsafe { std::env::set_var("QUECTO_CHILD_BINARY", &child) };
+
+        let tool = tool(dir.path());
+        let result = run_launch(&tool, &config(ContainerSelection::Local, None))
+            .await
+            .unwrap();
+
+        assert!(!result.is_error, "{}", result.content);
+        assert!(!result.content.contains("environment_ref="));
+        let pids = committed_pids(&tool);
+        assert_eq!(pids.len(), 1);
+        assert_ne!(pids[0], 0, "local adapter must record the child it spawned");
+    }
+
+    #[tokio::test]
+    async fn local_adapter_readiness_failure_rolls_back_to_no_committed_entry() {
+        let _env = ENV_LOCK.lock().await;
+        let dir = tempfile::TempDir::new().unwrap();
+        let child = dir.path().join("child.sh");
+        write_exec(&child, "#!/usr/bin/env bash\nexit 0\n");
+        // SAFETY: ENV_LOCK serializes every scenario touching this process-wide override, which is set before any child process is launched.
+        unsafe { std::env::set_var("QUECTO_CHILD_BINARY", &child) };
+
+        let tool = tool(dir.path());
+        let err = run_launch(&tool, &config(ContainerSelection::Local, None))
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("exited before socket ready"),
+            "{err}"
+        );
+        assert!(committed_pids(&tool).is_empty());
+    }
+
+    fn script_fixture(dir: &Path, create_body: &str) -> PathBuf {
+        let create = dir.join("create.sh");
+        write_exec(&create, create_body);
+        let cleanup = dir.join("cleanup.sh");
+        write_exec(&cleanup, "#!/usr/bin/env bash\nexit 0\n");
+        let cfg = dir.join("config.json");
+        std::fs::write(
+            &cfg,
+            serde_json::json!({
+                "container_scripts": {
+                    "default": "default",
+                    "scripts": {"default": {
+                        "create": [create.to_string_lossy()],
+                        "cleanup": [cleanup.to_string_lossy()],
+                    }},
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        cfg
+    }
+
+    fn script_container() -> ContainerSelection {
+        ContainerSelection::New {
+            repo: Some("https://example.invalid/contract.git".into()),
+            container_script: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn script_adapter_commits_environment_and_entry_without_local_child() {
+        let _env = ENV_LOCK.lock().await;
+        let dir = tempfile::TempDir::new().unwrap();
+        let listener = dir.path().join("listener.sh");
+        write_exec(&listener, LISTENER);
+        let create_body = format!(
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--" ]; then shift; break; fi
+  shift
+done
+'{listener}' "$@" >/dev/null 2>&1 &
+sock=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--socket" ]; then sock="$a"; fi
+  prev="$a"
+done
+printf '{{"environment_id":"env-contract","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$sock"
+"#,
+            listener = listener.display()
+        );
+        let cfg = script_fixture(dir.path(), &create_body);
+
+        let environments = EnvironmentRegistry::new();
+        let tool = tool(dir.path()).with_environment_registry(environments.clone());
+        let result = run_launch(&tool, &config(script_container(), Some(cfg)))
+            .await
+            .unwrap();
+
+        assert!(!result.is_error, "{}", result.content);
+        assert!(result.content.contains("environment_ref=C1"));
+        let pids = committed_pids(&tool);
+        assert_eq!(pids.len(), 1);
+        assert_eq!(pids[0], 0, "script adapter must not start a local child");
+        let committed = environments.entries();
+        assert_eq!(committed.len(), 1);
+        assert_eq!(committed[0].environment_ref, "C1");
+        assert_eq!(committed[0].environment_id, "env-contract");
+        assert_eq!(committed[0].script_name, "default");
+    }
+
+    #[tokio::test]
+    async fn script_adapter_create_failure_rolls_back_to_no_committed_entry() {
+        let _env = ENV_LOCK.lock().await;
+        let dir = tempfile::TempDir::new().unwrap();
+        let cfg = script_fixture(dir.path(), "#!/usr/bin/env bash\nexit 1\n");
+
+        let environments = EnvironmentRegistry::new();
+        let tool = tool(dir.path()).with_environment_registry(environments.clone());
+        let err = run_launch(&tool, &config(script_container(), Some(cfg)))
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("create failed"), "{err}");
+        assert!(committed_pids(&tool).is_empty());
+        assert!(environments.entries().is_empty());
+        // The failed launch still consumed its ref: refs are never reused.
+        assert_eq!(environments.mint_ref(), "C2");
+    }
+}
+
 #[tokio::test]
 async fn subagent_launch_port_contract_orders_register_before_initial_prompt_and_cleanup_after_prompt_failure()
  {

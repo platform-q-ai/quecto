@@ -25,3 +25,4 @@ Package-specific source, tests, docs, and fixtures are colocated under each pack
 - Terminal UI: [`quecto-tui/README.md`](quecto-tui/README.md)
 - MCP bridge: [`quecto-mcp/README.md`](quecto-mcp/README.md)
 - Docker harness for local TUI development: [`docs/docker-harness.md`](docs/docker-harness.md)
+- Script-managed subagent environments: [`docs/container-scripts.md`](docs/container-scripts.md) (reference script: [`scripts/container-script-reference.sh`](scripts/container-script-reference.sh))

@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod audit;
 pub mod constants;
+pub mod environment_registry;
 pub mod error;
 pub mod extension;
 pub mod extension_tool;
@@ -11,6 +12,7 @@ pub mod provider_error;
 pub mod redaction;
 pub mod session;
 pub mod subagent;
+pub mod subagent_launch;
 pub mod text;
 pub mod tool;
 pub mod tool_descriptor;

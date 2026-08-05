@@ -2,9 +2,11 @@
 use super::spawn_entry::{child_session_key, child_sidecar_filename};
 #[cfg(test)]
 use super::spawn_entry::{effective_config_path, inherited_runtime_config_path};
+use super::spawn_input::parse_container_selection;
 #[cfg(test)]
 use super::spawn_launch_args::write_private_new;
 pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
+use crate::domain::environment_registry::EnvironmentRegistry;
 use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
 use crate::domain::subagent::{
@@ -13,7 +15,6 @@ use crate::domain::subagent::{
 };
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
-use crate::infrastructure::tools::spawn_container::parse_container_selection;
 use crate::subagent_launch_app::SubagentLaunchUseCase;
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
@@ -90,6 +91,9 @@ pub struct SpawnTool {
     /// child events (PRD Stage B).
     pub(super) parent_id: Option<String>,
     pub(super) inherited_tool_policy: super::spawn_inherited_policy::InheritedToolPolicyState,
+    /// Session-scoped script-managed environment registry (ADR-0021: built
+    /// once at composition and injected).
+    pub(super) environment_registry: EnvironmentRegistry,
 }
 
 impl SpawnTool {
@@ -104,6 +108,7 @@ impl SpawnTool {
             broadcast_tx: None,
             parent_id: None,
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
+            environment_registry: EnvironmentRegistry::new(),
         }
     }
 
@@ -123,7 +128,14 @@ impl SpawnTool {
             broadcast_tx: None,
             parent_id: None,
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
+            environment_registry: EnvironmentRegistry::new(),
         }
+    }
+
+    /// Inject the session-scoped environment registry built at composition.
+    pub fn with_environment_registry(mut self, environment_registry: EnvironmentRegistry) -> Self {
+        self.environment_registry = environment_registry;
+        self
     }
 
     /// Set the directory for child agent UDS sockets.
@@ -171,6 +183,16 @@ impl SpawnTool {
 
     pub fn registry(&self) -> &SubagentRegistry {
         &self.registry
+    }
+
+    /// Real launch-port adapter handle for the shared `tests/contracts/`
+    /// suite, so local and script-managed launches run through one behavioral
+    /// contract. Not part of the runtime API.
+    #[doc(hidden)]
+    pub fn launch_ports_for_contract(
+        &self,
+    ) -> impl crate::domain::subagent_launch::SubagentLaunchPorts<Prepared: Send> + Send + '_ {
+        super::spawn_launch_ports::SpawnLaunchPorts::new(self)
     }
 
     /// Parse spawn arguments and return the resulting config.
