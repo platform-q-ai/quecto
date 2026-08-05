@@ -17,6 +17,8 @@ mod runtime_tool_lifecycle_registry;
 mod session_aware_tools;
 #[path = "contracts/session_store.rs"]
 mod session_store;
+#[path = "contracts/subagent_launch_ports.rs"]
+mod subagent_launch_ports;
 #[path = "contracts/tool.rs"]
 mod tool;
 #[path = "contracts/tool_catalog.rs"]

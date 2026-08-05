@@ -176,7 +176,7 @@ async fn spawn_script_managed_child(
     let script = script_config(cfg, script_name)?;
     validate_script(script)?;
     let mut cmd = create_command(script, binary, cli_args);
-    set_script_env(&mut cmd, config, cfg, script_name, "");
+    set_script_env(&mut cmd, config, cfg, script_name, "", base_dir)?;
     apply_common_child_env(&mut cmd, base_dir);
     cmd.stdout(std::process::Stdio::piped());
     let output = cmd
@@ -299,24 +299,61 @@ fn create_command(
 fn set_script_env(
     cmd: &mut tokio::process::Command,
     config: &SubagentConfig,
-    cfg: &Config,
+    _cfg: &Config,
     script_name: &str,
     env_ref: &str,
-) {
-    if let Some(repo) = selected_repo(config, cfg) {
+    base_dir: &Path,
+) -> Result<(), DomainError> {
+    if let Some(repo) = selected_repo(config, base_dir)? {
         cmd.env("QUECTO_CONTAINER_REPO", repo);
     }
     cmd.env("QUECTO_CONTAINER_SCRIPT", script_name);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_REF", env_ref);
+    Ok(())
 }
 
-fn selected_repo(config: &SubagentConfig, cfg: &Config) -> Option<String> {
+fn selected_repo(config: &SubagentConfig, base_dir: &Path) -> Result<Option<String>, DomainError> {
     match &config.container {
         ContainerSelection::New {
             repo: Some(repo), ..
-        } => Some(repo.clone()),
-        ContainerSelection::New { repo: None, .. } => cfg.agents.defaults.repo.clone(),
-        ContainerSelection::Local => None,
+        } => Ok(Some(repo.clone())),
+        ContainerSelection::New { repo: None, .. } => discover_parent_repo(base_dir).map(Some),
+        ContainerSelection::Local => Ok(None),
+    }
+}
+
+fn discover_parent_repo(base_dir: &Path) -> Result<String, DomainError> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(base_dir)
+        .arg("config")
+        .arg("--get")
+        .arg("remote.origin.url")
+        .output()
+        .map_err(|e| {
+            DomainError::Tool(format!(
+                "failed to discover parent repository remote.origin.url: {e}"
+            ))
+        })?;
+    if !output.status.success() {
+        return Err(DomainError::Tool(
+            "container spawn requires parent checkout remote.origin.url when container.repo is omitted".into(),
+        ));
+    }
+    let repo = String::from_utf8(output.stdout)
+        .map_err(|e| {
+            DomainError::Tool(format!(
+                "parent repository remote.origin.url is not UTF-8: {e}"
+            ))
+        })?
+        .trim()
+        .to_string();
+    if repo.is_empty() {
+        Err(DomainError::Tool(
+            "container spawn requires non-empty parent checkout remote.origin.url when container.repo is omitted".into(),
+        ))
+    } else {
+        Ok(repo)
     }
 }
 

@@ -38,7 +38,7 @@ pub fn shutdown_all(registry: &SubagentRegistry) {
 
 /// Like [`shutdown_all`], returning the number of registry entries removed.
 pub fn shutdown_all_with_count(registry: &SubagentRegistry) -> usize {
-    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     let removed = entries.len();
     for (name, entry) in entries.iter() {
         if let Some(ref tx) = entry.exit_signal_tx {
@@ -57,6 +57,7 @@ pub fn shutdown_all_with_count(registry: &SubagentRegistry) -> usize {
             tracing::info!(agent = %name, pid = entry.pid, "sent SIGTERM to subagent");
         }
     }
-    entries.clear();
+    drop(entries);
+    super::subagent_cleanup::cleanup_all_before_clear_once(registry);
     removed
 }

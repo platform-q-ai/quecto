@@ -5,11 +5,8 @@ use std::sync::{Arc, Mutex};
 use super::subagent_cleanup::cleanup_registered_once;
 use super::subagent_registry::{SubagentEntry, SubagentRegistry};
 
-#[tokio::test]
-async fn cleanup_registered_once_is_claimed_by_single_concurrent_owner() {
-    let temp = tempfile::tempdir().unwrap();
-    let log = temp.path().join("cleanup.log");
-    let script = temp.path().join("cleanup.sh");
+fn cleanup_script(log: &std::path::Path) -> std::path::PathBuf {
+    let script = log.parent().unwrap().join("cleanup.sh");
     std::fs::write(
         &script,
         format!(
@@ -25,6 +22,14 @@ async fn cleanup_registered_once_is_claimed_by_single_concurrent_owner() {
         p.set_mode(0o700);
         std::fs::set_permissions(&script, p).unwrap();
     }
+    script
+}
+
+#[tokio::test]
+async fn cleanup_registered_once_is_claimed_by_single_concurrent_owner() {
+    let temp = tempfile::tempdir().unwrap();
+    let log = temp.path().join("cleanup.log");
+    let script = cleanup_script(&log);
 
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let mut entry = SubagentEntry::new(PathBuf::from("/tmp/child.sock"), 42);
@@ -42,4 +47,44 @@ async fn cleanup_registered_once_is_claimed_by_single_concurrent_owner() {
     let entry = guard.get("child").unwrap();
     assert!(entry.cleanup_environment_id.is_none());
     assert!(entry.cleanup_argv.is_empty());
+}
+
+#[test]
+fn cleanup_removed_entries_runs_pid_zero_script_plan_before_discard() {
+    let temp = tempfile::tempdir().unwrap();
+    let log = temp.path().join("cleanup.log");
+    let script = cleanup_script(&log);
+
+    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/script.sock"), 0);
+    entry.cleanup_environment_id = Some("env-kill".into());
+    entry.cleanup_argv = vec![script.to_string_lossy().to_string()];
+    let mut removed = vec![("child".to_string(), entry)];
+
+    super::subagent_cleanup::cleanup_removed_entries_once(&mut removed);
+    super::subagent_cleanup::cleanup_removed_entries_once(&mut removed);
+
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(text.lines().collect::<Vec<_>>(), vec!["env-kill"]);
+    assert!(removed[0].1.cleanup_environment_id.is_none());
+    assert!(removed[0].1.cleanup_argv.is_empty());
+}
+
+#[test]
+fn teardown_all_claims_pid_zero_cleanup_before_registry_clear() {
+    let temp = tempfile::tempdir().unwrap();
+    let log = temp.path().join("cleanup.log");
+    let script = cleanup_script(&log);
+
+    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/script.sock"), 0);
+    entry.cleanup_environment_id = Some("env-teardown".into());
+    entry.cleanup_argv = vec![script.to_string_lossy().to_string()];
+    registry.lock().unwrap().insert("child".to_string(), entry);
+
+    let removed = super::spawn_registry::shutdown_all_with_count(&registry);
+
+    assert_eq!(removed, 1);
+    assert!(registry.lock().unwrap().is_empty());
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(text.lines().collect::<Vec<_>>(), vec!["env-teardown"]);
 }

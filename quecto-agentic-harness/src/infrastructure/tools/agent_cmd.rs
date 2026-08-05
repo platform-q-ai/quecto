@@ -381,6 +381,9 @@ impl AgentCmdTool {
             };
         }
 
+        let mut removed: Vec<_> = removed.into_iter().collect();
+        super::subagent_cleanup::cleanup_removed_entries_once(&mut removed);
+
         // Broadcast the survivor set so the TUI panel drops the whole dead
         // sub-tree promptly (#831). Best-effort send: no subscribers is fine.
         if let Some(event) = event {

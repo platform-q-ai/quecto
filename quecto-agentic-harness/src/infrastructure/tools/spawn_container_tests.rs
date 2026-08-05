@@ -133,13 +133,18 @@ fn script_selection_and_repo_defaults_are_resolved() {
         repo: Some("explicit".into()),
         container_script: None,
     });
-    assert_eq!(selected_repo(&config, &cfg).as_deref(), Some("explicit"));
+    assert_eq!(
+        selected_repo(&config, Path::new("/tmp"))
+            .unwrap()
+            .as_deref(),
+        Some("explicit")
+    );
 }
 
 #[test]
 fn local_selection_has_no_repo_or_container_config_requirement() {
     let config = base_config(ContainerSelection::Local);
-    assert!(selected_repo(&config, &Config::default()).is_none());
+    assert!(selected_repo(&config, Path::new("/tmp")).unwrap().is_none());
     assert!(load_container_config(&config).is_err());
 }
 
@@ -270,7 +275,7 @@ fn script_env_includes_optional_selection_values() {
         ..configured_scripts()
     };
     let config = base_config(ContainerSelection::New {
-        repo: None,
+        repo: Some("explicit".into()),
         container_script: Some("alt".into()),
     });
     let mut cmd = create_command(
@@ -278,7 +283,7 @@ fn script_env_includes_optional_selection_values() {
         Path::new("/bin/quecto"),
         &[],
     );
-    set_script_env(&mut cmd, &config, &cfg, "alt", "");
+    set_script_env(&mut cmd, &config, &cfg, "alt", "", Path::new("/tmp/base")).unwrap();
     apply_common_child_env(&mut cmd, Path::new("/tmp/base"));
     let _ = cmd;
 }
@@ -345,7 +350,7 @@ async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
     )
     .unwrap();
     let mut config = base_config(ContainerSelection::New {
-        repo: None,
+        repo: Some("explicit".into()),
         container_script: None,
     });
     config.config_path = Some(cfg_path);
@@ -366,24 +371,38 @@ async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
 }
 
 #[test]
-fn selected_repo_uses_config_default_for_new_container_without_explicit_repo() {
-    let cfg = Config {
-        agents: crate::infrastructure::config::AgentConfig {
-            defaults: crate::infrastructure::config::AgentDefaults {
-                repo: Some("default-repo".into()),
-                ..Default::default()
-            },
-        },
-        ..Default::default()
-    };
+fn selected_repo_discovers_parent_checkout_remote_when_repo_omitted() {
+    let dir = TempDir::new().unwrap();
+    std::process::Command::new("git")
+        .arg("init")
+        .arg(dir.path())
+        .status()
+        .unwrap();
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir.path())
+        .args(["remote", "add", "origin", "https://github.com/org/repo.git"])
+        .status()
+        .unwrap();
     let config = base_config(ContainerSelection::New {
         repo: None,
         container_script: None,
     });
     assert_eq!(
-        selected_repo(&config, &cfg).as_deref(),
-        Some("default-repo")
+        selected_repo(&config, dir.path()).unwrap().as_deref(),
+        Some("https://github.com/org/repo.git")
     );
+}
+
+#[test]
+fn selected_repo_fails_before_create_when_parent_remote_missing() {
+    let dir = TempDir::new().unwrap();
+    let config = base_config(ContainerSelection::New {
+        repo: None,
+        container_script: None,
+    });
+    let err = selected_repo(&config, dir.path()).unwrap_err();
+    assert!(err.to_string().contains("remote.origin.url"), "{err}");
 }
 
 #[test]
