@@ -774,9 +774,9 @@ fn given_script_spawn(
     let create_script = format!(
         r#"#!/usr/bin/env bash
 set -euo pipefail
-env_ref="${{QUECTO_CONTAINER_ENVIRONMENT_REF:-}}"
+env_ref="env-bdd"
 echo "{{\"kind\":\"create\",\"script\":\"${{QUECTO_CONTAINER_SCRIPT:-default}}\",\"repo\":\"${{QUECTO_CONTAINER_REPO:-}}\",\"mode\":\"{}\",\"env_ref\":\"$env_ref\"}}" >> '{}'
-if [ "{}" = "fail" ]; then exit 0; fi
+if [ "{}" = "fail" ]; then printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$PWD/missing.sock"; exit 0; fi
 exec "$@"
 "#,
         mode,
