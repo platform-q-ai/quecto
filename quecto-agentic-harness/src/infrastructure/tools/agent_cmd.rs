@@ -452,14 +452,7 @@ impl AgentCmdTool {
         &self,
         agent_id: &str,
     ) -> Result<crate::domain::agent_launch_backend::ParentEndpoint, String> {
-        let socket_path =
-            super::subagent_registry::lookup_subagent_socket(&self.registry, agent_id)?;
-        let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-        let entry = entries
-            .values()
-            .find(|entry| entry.socket_path == socket_path)
-            .ok_or_else(|| format!("agent '{agent_id}' endpoint disappeared"))?;
-        super::parent_endpoint_guard::endpoint_or_proxy_error(entry, socket_path, agent_id)
+        super::parent_endpoint_guard::lookup_endpoint_for_agent(&self.registry, agent_id)
     }
 }
 

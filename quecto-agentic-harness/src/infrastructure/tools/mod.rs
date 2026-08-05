@@ -11,6 +11,8 @@ pub mod container_registry;
 mod container_registry_tests;
 pub(crate) mod container_script_cleanup;
 pub mod docs;
+#[cfg(test)]
+mod endpoint_consumer_tests;
 pub mod filesystem;
 pub mod find;
 pub mod grep;

@@ -333,11 +333,21 @@ impl AgentCmdTool {
             match entries.get(&registry_key) {
                 Some(entry) => {
                     let rx = entry.exit_signal_tx.as_ref().map(|tx| tx.subscribe());
-                    let endpoint = entry.parent_endpoint.clone().unwrap_or_else(|| {
-                        crate::domain::agent_launch_backend::ParentEndpoint::DirectUds(
-                            entry.socket_path.clone(),
-                        )
-                    });
+                    let endpoint = match crate::infrastructure::tools::parent_endpoint_guard::endpoint_or_proxy_error(
+                        entry,
+                        agent_id,
+                    ) {
+                        Ok(endpoint) => endpoint,
+                        Err(_) => {
+                            return Err(await_tool_result(
+                                "error",
+                                Some("endpoint_unavailable"),
+                                agent_id.to_string(),
+                                start.elapsed().as_millis() as u64,
+                                None,
+                            ));
+                        }
+                    };
                     (endpoint, rx)
                 }
                 None => {
