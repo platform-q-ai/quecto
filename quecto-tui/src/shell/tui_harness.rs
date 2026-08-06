@@ -724,7 +724,7 @@ impl TuiHarness {
 
 #[path = "tui_harness_panel.rs"]
 mod panel;
-pub use panel::{after_stalk, panel_rows};
+pub use panel::{after_stalk, label_depth, panel_rows};
 
 #[path = "tui_harness_probes.rs"]
 mod probes;

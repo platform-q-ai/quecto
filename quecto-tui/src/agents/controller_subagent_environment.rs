@@ -160,6 +160,13 @@ impl App {
     /// read as if the parent transcript belongs to the container. `None` when
     /// no environment is selected (or its metadata is gone) — the caller then
     /// renders the normal conversation.
+    ///
+    /// Runtime inspect metadata (image/container ids from the adapter's
+    /// `inspect` script) is deliberately absent: the subagent wire
+    /// (`SubagentEnvironmentInfo`) carries only ref/uuid/name/status/
+    /// repository/branch/runtimeId/workspace/socketMode — inspect output never
+    /// reaches the TUI roster. Renders-not-decides: add it here only once the
+    /// harness forwards it on the wire.
     pub(super) fn render_environment_body(&self, width: usize) -> Option<Vec<String>> {
         let env_key = self.subagents.selected_environment.as_deref()?;
         let env = self.environment_info(env_key)?;

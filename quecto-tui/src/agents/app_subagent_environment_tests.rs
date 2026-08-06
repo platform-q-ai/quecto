@@ -119,6 +119,12 @@ async fn solo_environment_agent_renders_as_a_full_environment_group() {
         idx > env_rows[0],
         "the solo member must nest beneath the environment row:\n{panel}"
     );
+    // Structural nesting, not mere ordering: a flat root-level row after the
+    // environment row (same depth) must fail here.
+    assert!(
+        label_depth(&rows[idx]) > label_depth(&rows[env_rows[0]]),
+        "the solo member must nest strictly deeper than the environment row:\n{panel}"
+    );
     assert!(
         rows[idx].contains('└'),
         "the solo member must carry the └ nested tree connector:\n{}",
@@ -217,6 +223,11 @@ async fn shared_environment_groups_agents_under_one_selectable_environment_row()
         assert!(
             idx > env_idx,
             "member {id} must nest beneath the environment row:\n{panel}"
+        );
+        // Structural nesting, not mere ordering (see the solo-group test).
+        assert!(
+            label_depth(&rows[idx]) > label_depth(&rows[env_idx]),
+            "member {id} must nest strictly deeper than the environment row:\n{panel}"
         );
         assert!(
             rows[idx].contains(connector),
@@ -685,12 +696,21 @@ async fn selecting_an_environment_row_suppresses_the_parent_conversation() {
             "member {member} must be listed in the container info:\n{top}"
         );
     }
-    // Returning to a member agent restores a conversation pane.
+    // Returning to a member agent restores a conversation pane. Deterministic:
+    // re-focus the panel (Enter handed focus back to the main pane), pin that
+    // Down actually moved the highlight onto the member row, then
+    // unconditionally assert the container-info pane is dismissed.
+    h.press(Key::Tab);
     h.press(Key::Down);
     h.press(Key::Enter);
+    assert_eq!(
+        h.app_mut().panel_highlight_index(),
+        target + 1,
+        "Down must move the highlight from the environment row to its first member"
+    );
     let top = h.main_pane();
     assert!(
-        !top.contains("Container environment") || h.app_mut().panel_highlight_index() == target,
+        !top.contains("Container environment"),
         "selecting an agent dismisses the container-info pane:\n{top}"
     );
 }

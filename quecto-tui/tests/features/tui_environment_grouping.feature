@@ -18,7 +18,7 @@ Feature: Environment visibility and grouping in the sub-agent panel (#1369 slice
     Given a TUI on a 120-column terminal tracking sub-agent "impl" running alone in environment "C1"
     Then the panel shows one environment row for "C1"
     And the agent "impl" is nested beneath the "C1" environment row with the last-child connector
-    And no flat root row with an inline environment badge is rendered for "impl"
+    And the agent "impl" appears exactly once, beneath the environment row
 
   @done
   Scenario: The solo environment group survives narrow-panel truncation
@@ -41,7 +41,8 @@ Feature: Environment visibility and grouping in the sub-agent panel (#1369 slice
 
   @done
   Scenario: Selecting an environment row shows container information only
-    Given a TUI on a 120-column terminal tracking sub-agents "impl" and "rev" sharing environment "C2" with a parent conversation on screen
+    Given a TUI on a 120-column terminal tracking sub-agents "impl" and "rev" sharing environment "C2"
+    And a parent conversation is on screen
     When I select the environment row "C2" through panel navigation
     Then the main pane carries a container-info header and lists the members "impl" and "rev"
     And the main pane does not render the parent conversation

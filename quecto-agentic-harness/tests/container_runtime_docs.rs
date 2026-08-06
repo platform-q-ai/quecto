@@ -121,6 +121,12 @@ fn docker_adapter_keeps_its_load_bearing_properties() {
         "QUECTO_CONTAINER_ENVIRONMENT_REF",
         "QUECTO_BASE_DIR",
         "OAuth",
+        // Identity bind-mounts (same path inside and outside): workspace rw,
+        // socket dir rw, child binary ro, $HOME/.quecto rw with HOME kept.
+        "$workspace_path:$workspace_path:rw",
+        "$socket_dir:$socket_dir:rw",
+        "$child_binary:$child_binary:ro",
+        "$HOME/.quecto:$HOME/.quecto:rw",
     ] {
         assert!(
             create.contains(needle),

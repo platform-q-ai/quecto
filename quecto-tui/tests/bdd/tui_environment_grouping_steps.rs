@@ -102,7 +102,7 @@ fn panel(world: &mut TuiWorld) -> String {
 
 // Panel-chrome helpers are shared from the harness so the footer-hint filter
 // and stalk glyph set cannot drift from the render code.
-use quecto_tui::shell::app::tui_harness::{after_stalk, panel_rows};
+use quecto_tui::shell::app::tui_harness::{after_stalk, label_depth, panel_rows};
 
 /// Structural environment-row detection: the environment ref is the row's own
 /// first label token (agent rows lead with the agent name; nested members of
@@ -208,6 +208,13 @@ fn then_solo_nested(world: &mut TuiWorld, id: String, env_ref: String) {
         idx > env_idx,
         "member {id} must be listed beneath the environment row:\n{panel}"
     );
+    // Structural nesting, not mere ordering: the member's label must start
+    // strictly deeper than the environment row's — a flat root-level sibling
+    // row (same depth, later position) must fail this step.
+    assert!(
+        label_depth(&rows[idx]) > label_depth(&rows[env_idx]),
+        "member {id} must nest strictly deeper than the environment row:\n{panel}"
+    );
     assert!(
         rows[idx].contains('└'),
         "the solo member must carry the └ last-child connector:\n{}",
@@ -215,24 +222,29 @@ fn then_solo_nested(world: &mut TuiWorld, id: String, env_ref: String) {
     );
 }
 
-#[then(expr = "no flat root row with an inline environment badge is rendered for {string}")]
-fn then_no_inline_badge(world: &mut TuiWorld, id: String) {
+#[then(expr = "the agent {string} appears exactly once, beneath the environment row")]
+fn then_member_exactly_once_nested(world: &mut TuiWorld, id: String) {
     let panel = panel(world);
     let rows = panel_rows(&panel);
-    let row = rows
+    let idx = rows
         .iter()
-        .find(|l| l.contains(&id))
+        .position(|l| l.contains(&id))
         .unwrap_or_else(|| panic!("no panel row for {id}:\n{panel}"));
-    // Format-agnostic shape check: the member row leads with the agent name
-    // directly after the tree stalk — no badge token may sit between them.
+    // The member row leads with the agent name directly after the tree stalk
+    // and sits strictly deeper than the row above it (its environment row).
     assert!(
-        after_stalk(row).starts_with(&id),
-        "member row must place the name directly after the stalk (no inline badge):\n{row}"
+        after_stalk(&rows[idx]).starts_with(&id),
+        "member row must place the name directly after the stalk:\n{}",
+        rows[idx]
+    );
+    assert!(
+        idx > 0 && label_depth(&rows[idx]) > label_depth(&rows[idx - 1]),
+        "member {id} must sit nested beneath the row above it:\n{panel}"
     );
     assert_eq!(
         rows.iter().filter(|l| l.contains(&id)).count(),
         1,
-        "agent {id} must appear exactly once (nested, never duplicated flat):\n{panel}"
+        "agent {id} must appear exactly once:\n{panel}"
     );
 }
 
@@ -270,6 +282,11 @@ fn then_nested_agents(world: &mut TuiWorld, a: String, b: String, env_ref: Strin
         assert!(
             idx > env_idx,
             "member {id} must be listed beneath the environment row:\n{panel}"
+        );
+        // Structural nesting, not mere ordering (see then_solo_nested).
+        assert!(
+            label_depth(&rows[idx]) > label_depth(&rows[env_idx]),
+            "member {id} must nest strictly deeper than the environment row:\n{panel}"
         );
         let row = &rows[idx];
         assert!(
@@ -356,22 +373,10 @@ fn then_panel_width(world: &mut TuiWorld) {
     );
 }
 
-#[given(
-    expr = "a TUI on a {int}-column terminal tracking sub-agents {string} and {string} sharing environment {string} with a parent conversation on screen"
-)]
-fn given_shared_env_agents_with_conversation(
-    world: &mut TuiWorld,
-    cols: usize,
-    a: String,
-    b: String,
-    env_ref: String,
-) {
-    init(
-        world,
-        cols,
-        vec![env_agent_json(&a, &env_ref), env_agent_json(&b, &env_ref)],
-    );
-    // Seed the master transcript through the REAL token-stream + turn-end path.
+#[given("a parent conversation is on screen")]
+fn given_parent_conversation_on_screen(world: &mut TuiWorld) {
+    // Composable atop any roster Given: seeds the master transcript through
+    // the REAL token-stream + turn-end path, then asserts it renders.
     drive(world, |h| {
         h.event(Event::Token {
             token: "PARENT_CONVERSATION_MARKER".to_string(),
