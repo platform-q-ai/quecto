@@ -18,7 +18,9 @@ pub(super) fn spawn_reaper_task(
 ) {
     tokio::spawn(async move {
         let status = child.wait().await;
-        let _ = exit_tx.send(Some(exit_signal_from_status(status)));
+        // send_replace: store the real exit status even when no awaiter holds
+        // a receiver yet, so late awaits report it instead of a fallback.
+        exit_tx.send_replace(Some(exit_signal_from_status(status)));
         subagent_cleanup::cleanup_registered_once(&registry, &registry_key).await;
         let super::subagent_cascade::CascadeOutcome { removed, event } =
             super::subagent_cascade::cascade_remove_and_state_changed(&registry, &registry_key);
@@ -44,6 +46,7 @@ pub(super) fn spawn_reaper_task(
                 let _ = tx.send(Some(ExitSignal {
                     exit_code: None,
                     signal: Some(15),
+                    kind: Default::default(),
                 }));
             }
             super::subagent_cascade::terminate_removed_entry(entry);
@@ -61,11 +64,13 @@ fn exit_signal_from_status(status: std::io::Result<std::process::ExitStatus>) ->
                     ExitSignal {
                         exit_code: None,
                         signal: Some(signal),
+                        kind: Default::default(),
                     }
                 } else {
                     ExitSignal {
                         exit_code: exit_status.code(),
                         signal: None,
+                        kind: Default::default(),
                     }
                 }
             }
@@ -74,12 +79,14 @@ fn exit_signal_from_status(status: std::io::Result<std::process::ExitStatus>) ->
                 ExitSignal {
                     exit_code: exit_status.code(),
                     signal: None,
+                    kind: Default::default(),
                 }
             }
         }
         Err(_) => ExitSignal {
             exit_code: None,
             signal: None,
+            kind: Default::default(),
         },
     }
 }

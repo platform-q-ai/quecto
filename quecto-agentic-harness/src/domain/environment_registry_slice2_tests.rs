@@ -16,6 +16,7 @@ fn commit_env(reg: &EnvironmentRegistry, name: Option<&str>) -> String {
         retained_exec_argv: vec!["exec.sh".to_string()],
         retained_kill_argv: vec!["kill.sh".to_string()],
         retained_cleanup_argv: vec!["cleanup.sh".to_string()],
+        retained_inspect_argv: vec![],
         members: vec![],
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),

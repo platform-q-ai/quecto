@@ -88,6 +88,10 @@ pub struct EnvironmentRecord {
     /// fallback for script sets without a configured `kill` — retained on the
     /// record so it survives the creator exiting before other members.
     pub retained_cleanup_argv: Vec<String>,
+    /// Inspect argv retained at create time. Runs exactly once per dead
+    /// member post-mortem; retained on the record (surviving zero members and
+    /// failed inspects) so it stays available for retry (#1369 slice 3).
+    pub retained_inspect_argv: Vec<String>,
     /// Member agent UUIDs, in join order.
     pub members: Vec<String>,
     pub status: EnvironmentStatus,
@@ -126,10 +130,26 @@ pub struct KillClaim {
     environment_ref: String,
 }
 
+/// Proof that the caller holds the exclusive right to run this environment's
+/// retained inspect for one dead member (#1369 slice 3). Only `begin_inspect`
+/// hands one out — at most once per (environment, member) — and it must be
+/// settled with `record_inspect_success` or `record_inspect_failure`.
+#[derive(Debug)]
+pub struct InspectClaim {
+    environment_ref: String,
+}
+
 #[derive(Debug, Default)]
 struct EnvironmentRegistryState {
     next_ref: u64,
     entries: BTreeMap<String, EnvironmentRecord>,
+    /// (environment_ref, member agent UUID) pairs whose post-mortem inspect
+    /// has been claimed. Repeated EOF/reset death signals for the same member
+    /// find their pair already present and claim nothing.
+    inspect_claims: std::collections::BTreeSet<(String, String)>,
+    /// Environments carrying a recorded inspect failure. A later successful
+    /// kill must not erase that truthfully persisted error.
+    inspect_failures: std::collections::BTreeSet<String>,
 }
 
 /// Cloneable handle to one session's environment registry.
@@ -164,6 +184,12 @@ impl EnvironmentRegistry {
     /// A stopped environment stays listed and its ref is never reused.
     pub fn remove(&self, environment_ref: &str) -> Option<EnvironmentRecord> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        // Prune the removed environment's inspect bookkeeping with it; refs
+        // are never reused, so nothing can resurrect these keys.
+        state
+            .inspect_claims
+            .retain(|(env_ref, _)| env_ref != environment_ref);
+        state.inspect_failures.remove(environment_ref);
         state.entries.remove(environment_ref)
     }
 
@@ -322,10 +348,74 @@ impl EnvironmentRegistry {
     /// Commit stopped after a successful kill. Members are gone by definition.
     pub fn complete_kill(&self, claim: KillClaim) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        // A successful kill clears a previous KILL error, but never a
+        // truthfully persisted inspect failure (#1369 slice 3).
+        let keep_error = state.inspect_failures.contains(&claim.environment_ref);
         if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
             record.status = EnvironmentStatus::Stopped;
             record.members.clear();
-            record.last_error = None;
+            if !keep_error {
+                record.last_error = None;
+            }
+        }
+    }
+
+    /// Claim the exclusive right to run this environment's retained inspect
+    /// for one dead member. Exactly one death signal per member claims it;
+    /// repeated EOF/reset for the same member claims nothing. Unknown
+    /// environments claim nothing.
+    pub fn begin_inspect(&self, environment_ref: &str, agent_uuid: &str) -> Option<InspectClaim> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if !state.entries.contains_key(environment_ref) {
+            return None;
+        }
+        let key = (environment_ref.to_string(), agent_uuid.to_string());
+        if !state.inspect_claims.insert(key) {
+            return None;
+        }
+        Some(InspectClaim {
+            environment_ref: environment_ref.to_string(),
+        })
+    }
+
+    /// Commit a successful inspect outcome onto the authoritative environment
+    /// aggregate: the inspect result's metadata object is merged over the
+    /// create-time metadata (create keys survive unless the inspect names
+    /// them). Callers invoke this BEFORE member removal; the outcome also
+    /// survives an environment that is already empty. A removed environment
+    /// is a no-op, never a panic.
+    pub fn record_inspect_success(&self, claim: InspectClaim, metadata: serde_json::Value) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        // A later successful inspect supersedes a previously persisted
+        // inspect failure: clear the sticky flag so the environment's most
+        // recent inspect outcome is what get_containers reports, and drop
+        // the stale inspect error unless a kill failure now owns last_error.
+        let had_inspect_failure = state.inspect_failures.remove(&claim.environment_ref);
+        if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
+            if had_inspect_failure && record.status != EnvironmentStatus::CleanupFailed {
+                record.last_error = None;
+            }
+            match (record.metadata.as_object_mut(), metadata) {
+                (Some(existing), serde_json::Value::Object(incoming)) => {
+                    for (key, value) in incoming {
+                        existing.insert(key, value);
+                    }
+                }
+                (_, incoming) => record.metadata = incoming,
+            }
+        }
+    }
+
+    /// Persist an inspect failure truthfully: the actionable error is
+    /// retained on the aggregate, and the retained inspect argv survives so
+    /// the inspect can be retried. A removed environment is a no-op.
+    pub fn record_inspect_failure(&self, claim: InspectClaim, error: &str) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.entries.contains_key(&claim.environment_ref) {
+            state.inspect_failures.insert(claim.environment_ref.clone());
+            if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
+                record.last_error = Some(error.to_string());
+            }
         }
     }
 
@@ -346,3 +436,7 @@ mod tests;
 #[cfg(test)]
 #[path = "environment_registry_slice2_tests.rs"]
 mod slice2_tests;
+
+#[cfg(test)]
+#[path = "environment_registry_slice3_tests.rs"]
+mod slice3_tests;

@@ -22,7 +22,7 @@ The `spawn` tool's `container` field selects the launch adapter:
 Unknown fields are rejected. Runtime-specific fields (`branch`, `pr`,
 `image`, ...) do not exist. `mode: existing` requires exactly one of
 `ref`/`name`; unknown, ambiguous, stopped, or stale (kill pending/failed)
-targets fail without guessing, and proxy endpoints are still rejected.
+targets fail without guessing.
 
 - `repo` omitted → the parent checkout's `remote.origin.url` is used and
   must exist; explicit `repo` is passed to the script literally.
@@ -33,7 +33,7 @@ A successful spawn returns a session-scoped environment reference
 (`environment_ref=C1`, `C2`, ...). Refs are minted once per session and
 never reused — a stopped environment stays listed and its ref is retired.
 The child then behaves like any other subagent: drive it with normal
-`agent_cmd` operations over its direct UDS endpoint. Every member of an
+`agent_cmd` operations over its direct or proxy endpoint. Every member of an
 environment shares its reported workspace; each agent keeps its own agent
 UUID, distinct from the environment's hidden UUID.
 
@@ -69,7 +69,8 @@ refuses such environments up front, leaving every member untouched.
         "create": ["/abs/path/to/create-script"],
         "cleanup": ["/abs/path/to/cleanup-script"],
         "exec": ["/abs/path/to/exec-script"],
-        "kill": ["/abs/path/to/kill-script"]
+        "kill": ["/abs/path/to/kill-script"],
+        "inspect": ["/abs/path/to/inspect-script"]
       }
     }
   }
@@ -78,14 +79,55 @@ refuses such environments up front, leaving every member untouched.
 
 `default` names the script set used for `container: true`. Each script
 set's operations are argv arrays executed directly — no shell
-interpolation. `create` and `cleanup` are required; `exec` (joining) and
-`kill` (explicit stop) are optional but needed for `mode: existing` and
-`kill_container`. Missing, unknown, empty required, or unsafe (empty/NUL
+interpolation. `create` and `cleanup` are required; `exec` (joining),
+`kill` (explicit stop), and `inspect` (post-mortem) are optional but
+needed for `mode: existing`, `kill_container`, and death diagnostics
+respectively. Missing, unknown, empty required, or unsafe (empty/NUL
 argument) configuration fails before any script runs.
 
 The script set in effect when an environment is **created** is retained
-with the environment: later joins and kills use the retained `exec`/`kill`
-argv even if `container_scripts.default` changes afterwards.
+with the environment: later joins, kills, and inspects use the retained
+`exec`/`kill`/`inspect` argv even if `container_scripts.default` changes
+afterwards.
+
+## Endpoints and liveness (direct vs proxy)
+
+A `create`/`exec` result must carry **exactly one** endpoint:
+
+- `"socket_path": "/path/to/child.sock"` — a direct UDS endpoint the
+  parent connects to; or
+- `"socket_proxy": {"argv": ["/abs/path/to/proxy", "args"...]}` — a
+  validated argv the parent runs once per connection. The proxy process
+  speaks the child protocol on its stdio (typically bridging to a socket
+  that is only reachable inside the environment). Unknown keys, an empty
+  argv, or empty/NUL arguments are rejected.
+
+Results carrying both or neither endpoint fail the launch with rollback.
+In proxy mode Quecto binds a private parent-side bridge socket and never
+connects to (or falls back to) the direct socket path that was passed in
+the child's CLI args. A bridged connection is torn down — including its
+proxy process — as soon as either side closes, so dropped probe or
+one-shot command connections never leave proxies (or their connections
+into the child) lingering.
+
+Proxy readiness probes the bridge across the launch's readiness budget:
+a probe that reads EOF (the proxy could not reach the child yet) is
+retried; the endpoint is ready once a probe survives a quiet window.
+Residual assumption: a proxy that hangs without producing EOF while the
+child is unreachable is indistinguishable from a live-but-quiet child;
+such a launch fails at the initial prompt and rolls back.
+
+After readiness the parent holds one persistent monitor connection to the
+endpoint. EOF or connection reset on it IS the child's death signal — no
+lifecycle polling, no wrapper process. On death, the environment's
+retained `inspect` runs exactly once for that member (repeated EOF/reset
+signals do not re-run it), the authoritative environment record is
+updated before the member is removed, and the exit feeds `await`, passive
+completion notes, snapshots, and live events exactly like a local child.
+Because no exit status exists for a script-managed death, the `await`
+reason reports how the death was observed — `connection_closed` (EOF or
+reset) or `never_reachable` (the endpoint never accepted the monitor
+connection) — never a fabricated `exit_code_0`.
 
 ## Script contract
 
@@ -119,10 +161,10 @@ exactly one JSON object to stdout:
 }
 ```
 
-All fields are required; `socket_path` must be a direct UDS endpoint the
-parent can connect to (`socket_proxy` is rejected in this slice). Extra
-JSON data after the object is rejected. A non-zero exit or an invalid
-contract fails the launch and rolls back.
+`environment_id`, `workspace_path`, and `metadata` are required, plus
+exactly one of `socket_path` or `socket_proxy` (see "Endpoints and
+liveness"). Extra JSON data after the object is rejected. A non-zero exit
+or an invalid contract fails the launch and rolls back.
 
 The create result must contain exactly these fields — unknown keys are
 rejected.
@@ -148,8 +190,9 @@ JSON object:
 }
 ```
 
-`socket_path` must be a direct UDS endpoint; `socket_proxy` and unknown
-keys are rejected.
+The exec result carries a `metadata` object plus exactly one of
+`socket_path` or `socket_proxy` (same endpoint contract as `create`);
+unknown keys are rejected.
 
 Known limitation: the exec result carries no process handle, so if a join
 fails after the script started the child (socket never ready, registration
@@ -166,6 +209,35 @@ Invoked with `QUECTO_CONTAINER_ENVIRONMENT_ID` set to the runtime
 `kill_container` or when the final member exits. A non-zero exit leaves
 the environment in a retryable `cleanup-failed` state with the script's
 stderr preserved as the last error.
+
+### `inspect`
+
+Invoked with `QUECTO_CONTAINER_ENVIRONMENT_ID` set to the runtime
+`environment_id`, exactly once per dead member, after the member's death
+is pushed (EOF/reset) and before the member is removed from the
+environment record. A parent-initiated `kill_container` is not a
+post-mortem: members terminated by it are not inspected. The inspect
+subprocess is bounded (5s); on timeout it is killed and an inspect
+failure is persisted, keeping the retained argv for retry. It must print
+exactly one JSON object:
+
+```json
+{
+  "status": "dead",
+  "metadata": {"cause": "oom-killed"}
+}
+```
+
+`metadata` (required object) is merged over the environment's stored
+metadata and becomes visible via `get_containers`; `status` (optional) is
+recorded as `inspect_status`. The result is parsed with the same strict
+wire rules as `create`/`exec`: exactly these fields — unknown keys,
+trailing JSON data, and non-UTF8 output are rejected. A non-zero exit or
+invalid contract persists an actionable inspect error on the environment
+(surviving later successful cleanup) while keeping the retained `inspect`
+argv; a later member's successful inspect supersedes and clears the
+stale inspect error (a `cleanup-failed` kill error is never cleared by
+an inspect).
 
 ### `cleanup`
 

@@ -788,7 +788,6 @@ for arg in "$@"; do
 done
 if [ -z "$socket_path" ]; then socket_path="$PWD/script-managed.sock"; fi
 case "{}" in
-  proxy) printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_proxy":{{"argv":["proxy"]}}}}' "$PWD"; exit 0 ;;
   readiness) printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$PWD/missing.sock"; exit 0 ;;
   register) "$@" >/dev/null 2>&1 & printf '{{"environment_id":"env-bdd","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$PWD" "$socket_path"; exit 0 ;;
   "initial prompt") python3 - "$socket_path" <<'PY' >/dev/null 2>&1 &
@@ -1187,27 +1186,9 @@ fn given_invalid_runtime_config(world: &mut QuectoWorld, err: String) {
     };
     std::fs::write(&cfg_path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
 }
-#[given(expr = "script-managed subagent spawning returns a proxy endpoint")]
-fn given_proxy_endpoint(world: &mut QuectoWorld) {
-    given_script_spawn(
-        world,
-        "default".to_string(),
-        None,
-        Some("proxy".to_string()),
-    );
-}
 #[given(expr = "script-managed subagent spawning fails during {string}")]
 fn given_spawn_fails_during(world: &mut QuectoWorld, phase: String) {
     given_script_spawn(world, "default".to_string(), None, Some(phase));
-}
-#[then("the spawn result should fail because proxy endpoints are unsupported")]
-fn then_proxy_unsupported(world: &mut QuectoWorld) {
-    let r = world.spawn_result.as_ref().unwrap();
-    assert!(
-        r.is_error && r.content.contains("direct socket_path only"),
-        "expected proxy rejection message in: {}",
-        r.content
-    );
 }
 #[then(expr = "the spawn result should fail because script-managed launch failed during {string}")]
 fn then_launch_failed_phase(world: &mut QuectoWorld, phase: String) {

@@ -10,7 +10,8 @@ fn validate_script_rejects_missing_or_unsafe_argv() {
             create: vec![],
             cleanup: vec![],
             exec: vec![],
-            kill: vec![]
+            kill: vec![],
+            inspect: vec![],
         })
         .is_err()
     );
@@ -19,7 +20,8 @@ fn validate_script_rejects_missing_or_unsafe_argv() {
             create: vec!["".into()],
             cleanup: vec![],
             exec: vec![],
-            kill: vec![]
+            kill: vec![],
+            inspect: vec![],
         })
         .is_err()
     );
@@ -28,7 +30,8 @@ fn validate_script_rejects_missing_or_unsafe_argv() {
             create: vec!["ok".into()],
             cleanup: vec!["bad\0".into()],
             exec: vec![],
-            kill: vec![]
+            kill: vec![],
+            inspect: vec![],
         })
         .is_err()
     );
@@ -37,7 +40,8 @@ fn validate_script_rejects_missing_or_unsafe_argv() {
             create: vec!["ok".into()],
             cleanup: vec![],
             exec: vec![],
-            kill: vec![]
+            kill: vec![],
+            inspect: vec![],
         })
         .is_err()
     );
@@ -46,7 +50,8 @@ fn validate_script_rejects_missing_or_unsafe_argv() {
             create: vec!["ok".into()],
             cleanup: vec!["cleanup".into()],
             exec: vec![],
-            kill: vec![]
+            kill: vec![],
+            inspect: vec![],
         })
         .is_ok()
     );
@@ -61,6 +66,7 @@ fn configured_scripts() -> Config {
             cleanup: vec!["echo".into()],
             exec: vec![],
             kill: vec![],
+            inspect: vec![],
         },
     );
     Config {
@@ -84,6 +90,7 @@ fn test_record(env_ref: &str, env_id: &str) -> EnvironmentRecord {
         retained_exec_argv: vec![],
         retained_kill_argv: vec![],
         retained_cleanup_argv: vec![],
+        retained_inspect_argv: vec![],
         members: vec![],
         status: crate::domain::environment_registry::EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
@@ -174,7 +181,8 @@ async fn cleanup_plan_clones_environment_and_argv() {
     let prepared = PreparedChild {
         child: Some(tokio::process::Command::new("true").spawn().unwrap()),
         environment_ref: Some("C-test".into()),
-        socket_path: None,
+        endpoint: None,
+        proxy_bridge: None,
         cleanup_environment_id: Some("env-test".into()),
         cleanup_argv: vec!["echo".into(), "ok".into()],
         environments: None,
@@ -279,6 +287,7 @@ fn create_command_and_common_env_are_constructed_without_shell() {
         cleanup: vec![],
         exec: vec![],
         kill: vec![],
+        inspect: vec![],
     };
     let mut cmd = script_command(&script.create, Path::new("/bin/quecto"), &["--mode".into()]);
     apply_common_child_env(&mut cmd, Path::new("/tmp/base"));
@@ -398,7 +407,8 @@ async fn rollback_kills_child_and_consumes_cleanup_once() {
                 .unwrap(),
         ),
         environment_ref: Some("C-test".into()),
-        socket_path: None,
+        endpoint: None,
+        proxy_bridge: None,
         cleanup_environment_id: Some("env-test".into()),
         cleanup_argv: vec!["true".into()],
         environments: Some(registry.clone()),
@@ -520,7 +530,12 @@ fn create_result_contract_accepts_direct_endpoint() {
     )
     .unwrap();
     assert_eq!(parsed.environment_id, "env");
-    assert_eq!(parsed.socket_path, PathBuf::from("/tmp/sock"));
+    assert_eq!(
+        parsed.endpoint,
+        crate::domain::subagent_launch::ParentEndpoint::Direct {
+            socket_path: PathBuf::from("/tmp/sock")
+        }
+    );
 }
 
 #[test]
@@ -542,7 +557,9 @@ fn exec_result_contract_rejects_invalid_shapes_and_proxy() {
     assert!(parse_exec_result(br#"{"metadata":{},"socket_path":"/tmp/s","bogus":1}"#).is_err());
     assert_eq!(
         parse_exec_result(br#"{"metadata":{},"socket_path":"/tmp/s"}"#).unwrap(),
-        PathBuf::from("/tmp/s")
+        crate::domain::subagent_launch::ParentEndpoint::Direct {
+            socket_path: PathBuf::from("/tmp/s")
+        }
     );
 }
 

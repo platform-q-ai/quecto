@@ -60,7 +60,13 @@ async fn ports_ready_rollback_prompt_uncommit_and_success_paths() {
     let cfg = config();
     let identity = ports.allocate_identity(&cfg).unwrap();
     let socket = ports.socket_path.clone().unwrap();
-    let mut prepared = PreparedChild::new_for_test(None, Some("env".into()), Some(socket.clone()));
+    let mut prepared = PreparedChild::new_for_test(
+        None,
+        Some("env".into()),
+        Some(crate::subagent_launch_app::ParentEndpoint::Direct {
+            socket_path: socket.clone(),
+        }),
+    );
 
     let ready = ports.ready(&mut prepared).await;
     assert!(ready.is_err());
@@ -92,6 +98,7 @@ async fn register_into_a_stopped_environment_fails_and_unregisters() {
             retained_exec_argv: vec![],
             retained_kill_argv: vec![],
             retained_cleanup_argv: vec![],
+            retained_inspect_argv: vec![],
             members: vec![],
             status: crate::domain::environment_registry::EnvironmentStatus::Running,
             metadata: serde_json::json!({}),

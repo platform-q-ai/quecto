@@ -112,6 +112,7 @@ fn given_mock_subagent_will_exit(
             quecto::infrastructure::tools::subagent_registry::ExitSignal {
                 exit_code: Some(exit_code),
                 signal: None,
+                kind: Default::default(),
             },
         ));
         // Set status to Exited while still holding the lock.

@@ -47,6 +47,7 @@ fn record(kill_argv: Vec<String>, members: Vec<String>) -> EnvironmentRecord {
         retained_exec_argv: vec![],
         retained_kill_argv: kill_argv,
         retained_cleanup_argv: vec![],
+        retained_inspect_argv: vec![],
         members,
         status: EnvironmentStatus::Killing,
         metadata: serde_json::json!({}),

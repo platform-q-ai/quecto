@@ -3,19 +3,19 @@ use super::*;
 // Slice 2 (#1369): join, list, and kill shared script-managed environments.
 // ===========================================================================
 
-fn shared_log_path(world: &QuectoWorld) -> PathBuf {
+pub(crate) fn shared_log_path(world: &QuectoWorld) -> PathBuf {
     let cfg_path = PathBuf::from(world.config_path.clone().unwrap());
     cfg_path.parent().unwrap().join("container-env-log.jsonl")
 }
 
-fn shared_invocations(world: &QuectoWorld) -> Vec<serde_json::Value> {
+pub(crate) fn shared_invocations(world: &QuectoWorld) -> Vec<serde_json::Value> {
     let text = std::fs::read_to_string(shared_log_path(world)).unwrap_or_default();
     text.lines()
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect()
 }
 
-fn write_executable(path: &PathBuf, content: String) {
+pub(crate) fn write_executable(path: &PathBuf, content: String) {
     std::fs::write(path, content).unwrap();
     #[cfg(unix)]
     {
@@ -29,7 +29,7 @@ fn write_executable(path: &PathBuf, content: String) {
 /// Configure a full create/exec/kill (plus rollback cleanup) script set that
 /// records every invocation kind to a shared JSONL log, then rewrites the
 /// session config's `container_scripts` to point at it.
-fn given_shared_script_spawn(world: &mut QuectoWorld, kill_fails_once: bool) {
+pub(crate) fn given_shared_script_spawn(world: &mut QuectoWorld, kill_fails_once: bool) {
     spawn_tool_steps::given_live_spawn_agent_cmd_mock_child(world);
     let base = base_path(world);
     let cfg_path = PathBuf::from(world.config_path.clone().unwrap());
@@ -176,6 +176,27 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
         .expect("git remote add for parent repo fixture");
     std::fs::write(&cfg_path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
 
+    // Rebuild the SpawnTool with notification + live-event channels wired
+    // (mirroring composition), so scenarios can observe passive exit notes and
+    // state-changed events for script-managed children (#1369 slice 3).
+    let subagent_registry_for_spawn = world
+        .agent_cmd_registry
+        .as_ref()
+        .expect("agent_cmd registry")
+        .clone();
+    let (notify_tx, notify_rx) =
+        quecto::infrastructure::tools::subagent_registry::new_notification_channel();
+    let (broadcast_tx, broadcast_rx) = tokio::sync::broadcast::channel::<String>(64);
+    world.spawn_tool = Some(
+        SpawnTool::with_base_dir(vec![], true, base.clone())
+            .with_socket_dir(base.join("sockets"))
+            .with_registry(subagent_registry_for_spawn)
+            .with_notify_tx(notify_tx)
+            .with_event_forwarding(Some(broadcast_tx), None),
+    );
+    world.notify_rx = Some(notify_rx);
+    world.spawn_broadcast_rx = Some(broadcast_rx);
+
     // Rebuild the AgentCmdTool with environment control sharing the
     // SpawnTool's session environment registry, mirroring composition wiring.
     let environment_registry = world
@@ -207,10 +228,23 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
     );
 }
 
-fn execute_env_spawn(world: &mut QuectoWorld, agent_id: &str, mut args: serde_json::Value) {
+/// Scenario-scoped runtime shared by every environment step, so monitor and
+/// proxy-bridge tasks spawned during launch stay alive across steps.
+pub(crate) fn env_runtime(world: &mut QuectoWorld) -> std::sync::Arc<tokio::runtime::Runtime> {
+    world
+        .env_rt
+        .get_or_insert_with(|| std::sync::Arc::new(tokio::runtime::Runtime::new().unwrap()))
+        .clone()
+}
+
+pub(crate) fn execute_env_spawn(
+    world: &mut QuectoWorld,
+    agent_id: &str,
+    mut args: serde_json::Value,
+) {
     args["config"] = serde_json::json!(world.config_path.clone().unwrap());
+    let rt = env_runtime(world);
     let tool = world.spawn_tool.as_ref().expect("spawn tool");
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let result = match rt.block_on(tool.execute(&args.to_string())) {
         Ok(r) => r,
         Err(e) => ToolResult {
@@ -256,9 +290,12 @@ fn execute_env_spawn(world: &mut QuectoWorld, agent_id: &str, mut args: serde_js
     world.spawn_result = Some(result);
 }
 
-fn run_container_command(world: &mut QuectoWorld, args: serde_json::Value) -> ToolResult {
+pub(crate) fn run_container_command(
+    world: &mut QuectoWorld,
+    args: serde_json::Value,
+) -> ToolResult {
+    let rt = env_runtime(world);
     let tool = world.agent_cmd_tool.as_ref().expect("agent_cmd tool");
-    let rt = tokio::runtime::Runtime::new().unwrap();
     match rt.block_on(tool.execute(&args.to_string())) {
         Ok(r) => r,
         Err(e) => ToolResult {
@@ -270,7 +307,7 @@ fn run_container_command(world: &mut QuectoWorld, args: serde_json::Value) -> To
 }
 
 /// Fetch the authoritative listing and return the entry for `env_ref`.
-fn container_listing_entry(world: &mut QuectoWorld, env_ref: &str) -> serde_json::Value {
+pub(crate) fn container_listing_entry(world: &mut QuectoWorld, env_ref: &str) -> serde_json::Value {
     let result = run_container_command(
         world,
         serde_json::json!({"agent_id": "*", "command": "get_containers"}),

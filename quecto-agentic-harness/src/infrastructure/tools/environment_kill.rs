@@ -39,7 +39,7 @@ impl ScriptEnvironmentKill {
         let mut removed: Vec<_> = removed.into_iter().collect();
         super::subagent_cleanup::cleanup_removed_entries_once(
             &mut removed,
-            super::subagent_cleanup::FinalizeMode::Exit,
+            super::subagent_cleanup::FinalizeMode::ParentKill,
         )
         .await;
         for (_id, entry) in &removed {
@@ -47,6 +47,7 @@ impl ScriptEnvironmentKill {
                 let _ = tx.send(Some(ExitSignal {
                     exit_code: None,
                     signal: Some(15),
+                    kind: Default::default(),
                 }));
             }
             super::subagent_cascade::terminate_removed_entry(entry);

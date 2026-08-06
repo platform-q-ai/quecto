@@ -61,6 +61,23 @@ pub trait SubagentLaunchPorts {
     fn success(&self, identity: &LaunchIdentity, environment_ref: Option<&str>) -> ToolResult;
 }
 
+/// Typed parent-side endpoint for reaching a launched child (#1369 slice 3).
+///
+/// A launch result carries EXACTLY ONE endpoint mode: a direct UDS socket the
+/// parent connects to, or a validated proxy argv the parent runs per
+/// connection as a stdio<->child bridge. The prepared endpoint is carried
+/// transactionally through readiness, prompt routing, commands, await, and
+/// monitor construction — never reconstructed from a requested path or a
+/// mutable registry entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParentEndpoint {
+    /// Direct UDS socket path the parent connects to.
+    Direct { socket_path: PathBuf },
+    /// Validated proxy argv; each parent connection runs this command and
+    /// speaks the child protocol over its stdio.
+    Proxy { argv: Vec<String> },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchIdentity {
     pub session_name: String,

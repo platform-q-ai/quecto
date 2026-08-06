@@ -39,6 +39,12 @@ pub struct SubagentEntry {
     pub updated_at: Instant,
     /// Abort handle for the monitor task (if running).
     pub monitor_handle: Option<Arc<tokio::task::JoinHandle<()>>>,
+    /// Abort handle for the proxy-endpoint bridge accept loop (#1369 slice
+    /// 3), owned so tearing the entry down stops accepting new connections.
+    pub proxy_bridge_handle: Option<Arc<tokio::task::JoinHandle<()>>>,
+    /// Bridge socket path, removed together with the accept loop on teardown
+    /// so nothing can connect to a dead child's bridge.
+    pub proxy_bridge_socket: Option<std::path::PathBuf>,
     /// Monotonic notification id for this subagent.
     pub notification_sequence: u64,
     /// Exit signal sender — the reaper task sends the exit code/signal through
@@ -129,6 +135,8 @@ impl SubagentEntry {
             run_error: None,
             updated_at: Instant::now(),
             monitor_handle: None,
+            proxy_bridge_handle: None,
+            proxy_bridge_socket: None,
             notification_sequence: 0,
             exit_signal_tx: None,
             parent_id: None,
@@ -535,13 +543,33 @@ where
 // (declared near the bottom of this file) to respect the 750-line file cap; they
 // are re-exported below so `subagent_registry::AwaitResult` etc. keep working.
 /// Signal sent by the reaper task when a child process exits.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExitSignal {
     /// Process exit code (0 for success, non-zero for error).
     /// `None` if the process was killed by a signal.
     pub exit_code: Option<i32>,
     /// Signal number if the process was killed by a signal.
     pub signal: Option<i32>,
+    /// How the death was observed. Distinguishes signal-less script-managed
+    /// deaths (pushed EOF, or a never-reachable socket) from a real process
+    /// exit status, so await reasons never fabricate a clean exit (#1369
+    /// slice 3).
+    pub kind: ExitSignalKind,
+}
+
+/// How a child's death was observed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExitSignalKind {
+    /// A local process exit status from the reaper (or a parent-initiated
+    /// termination signal).
+    #[default]
+    ProcessExit,
+    /// Script-managed death pushed as EOF/reset on the liveness connection;
+    /// no exit status exists.
+    ConnectionClosed,
+    /// The child's socket never accepted the monitor connection; the child
+    /// was never observed alive.
+    NeverReachable,
 }
 
 pub type ExitSignalTx = tokio::sync::watch::Sender<Option<ExitSignal>>;

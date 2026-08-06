@@ -7,10 +7,18 @@
 # Invocation:  create-argv... -- <child-binary> <child-args...>
 # Environment: QUECTO_CONTAINER_REPO, QUECTO_CONTAINER_SCRIPT,
 #              QUECTO_CONTAINER_ENVIRONMENT_REF, QUECTO_BASE_DIR
-# (The paired cleanup/kill scripts instead receive QUECTO_CONTAINER_ENVIRONMENT_ID,
-# the runtime environment_id this script reports below; an exec script receives
-# QUECTO_CONTAINER_ENVIRONMENT_ID and QUECTO_CONTAINER_SCRIPT and prints
-# {"metadata":{},"socket_path":"..."} — see docs/container-scripts.md.)
+# (The paired cleanup/kill/inspect scripts instead receive
+# QUECTO_CONTAINER_ENVIRONMENT_ID, the runtime environment_id this script
+# reports below; an exec script receives QUECTO_CONTAINER_ENVIRONMENT_ID and
+# QUECTO_CONTAINER_SCRIPT and prints {"metadata":{},"socket_path":"..."}.
+# An inspect script runs exactly once per dead member and prints
+# {"status":"...","metadata":{...}} — its metadata is merged into the
+# environment record; like create/exec results it is parsed strictly
+# (unknown keys and trailing data rejected). Instead of "socket_path",
+# create/exec may report
+# "socket_proxy":{"argv":[...]}: an argv Quecto runs per connection that
+# bridges its stdio to the child inside the environment. Exactly one of the
+# two endpoints must be present — see docs/container-scripts.md.)
 set -euo pipefail
 
 # Split our own argv from the child command after `--`.

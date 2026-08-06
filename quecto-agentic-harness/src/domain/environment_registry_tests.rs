@@ -12,6 +12,7 @@ fn record(env_ref: &str, id: &str) -> EnvironmentRecord {
         retained_exec_argv: vec![],
         retained_kill_argv: vec![],
         retained_cleanup_argv: vec![],
+        retained_inspect_argv: vec![],
         members: vec![],
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
@@ -69,4 +70,43 @@ fn lock_poison_recovery_keeps_registry_usable() {
     assert_eq!(registry.get("C1").unwrap().environment_id, "env-a");
     assert_eq!(registry.entries().len(), 2);
     assert_eq!(registry.remove("C2").unwrap().environment_id, "env-b");
+}
+
+/// The membership/kill/inspect mutators must also recover from a poisoned
+/// lock (their `unwrap_or_else(into_inner)` closures are production paths).
+#[test]
+fn lock_poison_recovery_covers_member_kill_and_inspect_paths() {
+    let registry = EnvironmentRegistry::new();
+    let env_ref = registry.mint_ref();
+    registry.commit(record(&env_ref, "env-a"));
+
+    let poisoner = registry.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = poisoner.state.lock().unwrap();
+        panic!("poison the environment registry lock");
+    })
+    .join();
+
+    registry.add_member(&env_ref, "member-a").unwrap();
+    registry.add_member(&env_ref, "member-b").unwrap();
+    assert!(
+        registry
+            .remove_member(&env_ref, "member-a")
+            .unwrap()
+            .is_none()
+    );
+
+    let claim = registry.begin_inspect(&env_ref, "member-b").expect("claim");
+    registry.record_inspect_failure(claim, "inspect broke");
+    assert!(registry.get(&env_ref).unwrap().last_error.is_some());
+    let claim = registry.begin_inspect(&env_ref, "member-c").expect("claim");
+    registry.record_inspect_success(claim, serde_json::json!({"cause": "ok"}));
+    assert!(registry.get(&env_ref).unwrap().last_error.is_none());
+
+    let claim = registry.begin_kill(&env_ref).unwrap();
+    registry.complete_kill(claim);
+    assert_eq!(
+        registry.get(&env_ref).unwrap().status,
+        EnvironmentStatus::Stopped
+    );
 }

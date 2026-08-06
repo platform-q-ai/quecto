@@ -39,6 +39,39 @@ fn elapsed_ms(start: tokio::time::Instant) -> u64 {
     start.elapsed().as_millis() as u64
 }
 
+/// Render an exit signal as the await `reason` string. Single definition
+/// shared by the main await loop and the dead-socket classifier.
+fn exit_signal_reason(
+    signal: &crate::infrastructure::tools::subagent_registry::ExitSignal,
+) -> String {
+    use crate::infrastructure::tools::subagent_registry::ExitSignalKind;
+    if let Some(code) = signal.exit_code {
+        format!("exit_code_{code}")
+    } else if let Some(sig) = signal.signal {
+        format!("signal_{sig}")
+    } else {
+        // No status exists: report HOW the death was observed instead of
+        // fabricating a clean exit for a child that may have been killed
+        // behind quecto's back (#1369 slice 3).
+        match signal.kind {
+            ExitSignalKind::ConnectionClosed => "connection_closed".to_string(),
+            ExitSignalKind::NeverReachable => "never_reachable".to_string(),
+            ExitSignalKind::ProcessExit => "exit_status_unknown".to_string(),
+        }
+    }
+}
+
+/// Output of [`AgentCmdTool::prepare_await_session`]: the resolved durable
+/// key, exit-signal subscription, active-await guard, and whether the child's
+/// socket accepted a probe connection (a dead socket is classified by
+/// `classify_dead_socket` rather than failing outright, #1369 slice 3).
+struct PreparedAwait {
+    registry_key: String,
+    exit_signal_rx: Option<ExitSignalRx>,
+    guard: AwaitGuard,
+    connectable: bool,
+}
+
 impl AgentCmdTool {
     pub(super) async fn execute_await(&self, arguments: &str) -> Result<ToolResult, DomainError> {
         // LLM-addressable: malformed JSON and missing fields → Ok(is_error=true)
@@ -89,16 +122,34 @@ impl AgentCmdTool {
         let start = tokio::time::Instant::now();
 
         // Resolve display→UUID, arm active-await, and validate the socket (#1378).
-        let (registry_key, exit_signal_rx, _guard) =
-            match self.prepare_await_session(&agent_id, start) {
-                Ok(prepared) => prepared,
-                Err(result) => return Ok(result),
-            };
+        let PreparedAwait {
+            registry_key,
+            exit_signal_rx,
+            guard: _guard,
+            connectable,
+        } = match self.prepare_await_session(&agent_id) {
+            Ok(prepared) => prepared,
+            Err(result) => return Ok(result),
+        };
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
+        if !connectable {
+            if let Err(result) = self
+                .classify_dead_socket(
+                    &registry_key,
+                    &agent_id,
+                    start,
+                    exit_signal_rx.as_ref(),
+                    deadline,
+                )
+                .await
+            {
+                return Ok(result);
+            }
+        }
 
         // Main await loop: poll status + listen for exit signals.
         // Uses `tokio::select!` to wake instantly on exit signals while
         // polling registry status at a slower interval.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
         let mut idle_since: Option<tokio::time::Instant> = None;
         let mut poll_interval =
             tokio::time::interval(Duration::from_millis(AWAIT_POLL_INTERVAL_MS));
@@ -147,13 +198,7 @@ impl AgentCmdTool {
                 if let Some(ref mut rx) = exit_rx {
                     let signal = rx.borrow_and_update().clone();
                     if let Some(exit_signal) = signal {
-                        let reason = if let Some(code) = exit_signal.exit_code {
-                            Some(format!("exit_code_{code}"))
-                        } else if let Some(sig) = exit_signal.signal {
-                            Some(format!("signal_{sig}"))
-                        } else {
-                            Some("exit_code_0".to_string())
-                        };
+                        let reason = Some(exit_signal_reason(&exit_signal));
                         mark_completion_consumed_by_await(&self.registry, &registry_key);
                         return Ok(await_tool_result(
                             "exited",
@@ -178,7 +223,10 @@ impl AgentCmdTool {
                 None | Some((SubagentStatus::Exited, _)) => {
                     // Agent removed from registry or marked Exited. Read the
                     // exit signal from the registry entry for the actual exit
-                    // code/signal; fall back to exit_code_0 if unavailable.
+                    // code/signal/observation kind; only an entry that never
+                    // published a signal at all falls back to exit_code_0
+                    // (the pre-signal legacy contract for locally reaped
+                    // children).
                     let reason = {
                         let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
                         entries
@@ -188,15 +236,7 @@ impl AgentCmdTool {
                                 let rx = tx.subscribe();
                                 rx.borrow().clone()
                             })
-                            .map(|es| {
-                                if let Some(code) = es.exit_code {
-                                    format!("exit_code_{code}")
-                                } else if let Some(sig) = es.signal {
-                                    format!("signal_{sig}")
-                                } else {
-                                    "exit_code_0".into()
-                                }
-                            })
+                            .map(|es| exit_signal_reason(&es))
                             .or(Some("exit_code_0".into()))
                     };
                     mark_completion_consumed_by_await(&self.registry, &registry_key);
@@ -305,11 +345,7 @@ impl AgentCmdTool {
     /// Resolve display→UUID, arm the active-await set, and validate the child's
     /// socket is connectable. On failure returns a ready-made tool result so
     /// `execute_await` stays under the line budget (#1378).
-    fn prepare_await_session(
-        &self,
-        agent_id: &str,
-        start: tokio::time::Instant,
-    ) -> Result<(String, Option<ExitSignalRx>, AwaitGuard), ToolResult> {
+    fn prepare_await_session(&self, agent_id: &str) -> Result<PreparedAwait, ToolResult> {
         // Resolve live display label → UUID registry key before any await /
         // dedupe bookkeeping. User-facing `agent_id` stays the display label.
         let registry_key = {
@@ -373,31 +409,87 @@ impl AgentCmdTool {
         } else {
             false
         };
-        if !connectable {
-            let still_registered = {
-                let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-                entries.contains_key(&registry_key)
-            };
-            return Err(if still_registered {
-                await_tool_result(
-                    "error",
-                    Some("connection_failed"),
-                    agent_id.to_string(),
-                    elapsed_ms(start),
-                    None,
-                )
-            } else {
-                await_tool_result(
-                    "error",
-                    Some("agent_not_found"),
-                    agent_id.to_string(),
-                    elapsed_ms(start),
-                    None,
-                )
-            });
-        }
+        Ok(PreparedAwait {
+            registry_key,
+            exit_signal_rx,
+            guard,
+            connectable,
+        })
+    }
 
-        Ok((registry_key, exit_signal_rx, guard))
+    /// Classify a dead-socket await (#1369 slice 3): a registered child whose
+    /// socket is gone is a PUSHED death in flight, not a hard error — its
+    /// monitor observed (or is about to observe) EOF and will mark the entry
+    /// exited. An already-delivered exit signal (read from the in-hand watch
+    /// channel's current value — `subscribe` marks it seen, so `changed()`
+    /// alone would miss it) short-circuits to `exited` immediately. The
+    /// signal itself fires only after the post-mortem inspect completes, and
+    /// the inspect subprocess is bounded (`INSPECT_TIMEOUT`), so the grace
+    /// window here is sized to outlast it: an awaiter arriving mid-inspect
+    /// still classifies as `exited` rather than `connection_failed` —
+    /// unless the caller's own await deadline (which always wins) elapses
+    /// first. A child that stays non-exited on a dead socket keeps the
+    /// fail-fast `connection_failed` contract.
+    async fn classify_dead_socket(
+        &self,
+        registry_key: &str,
+        agent_id: &str,
+        start: tokio::time::Instant,
+        exit_rx: Option<&ExitSignalRx>,
+        deadline: tokio::time::Instant,
+    ) -> Result<(), ToolResult> {
+        // Must exceed subagent_cleanup::INSPECT_TIMEOUT so a hung-then-killed
+        // inspect cannot make a dead-socket await misreport connection_failed.
+        // Without an exit-signal channel no pushed death can ever arrive, so
+        // waiting would only delay the honest connection_failed answer.
+        let grace = if exit_rx.is_some() {
+            (tokio::time::Instant::now() + Duration::from_secs(6)).min(deadline)
+        } else {
+            tokio::time::Instant::now()
+        };
+        loop {
+            // A pushed death that already fired IS the answer — never
+            // misclassify it as connection_failed behind a grace timer.
+            if let Some(rx) = exit_rx {
+                let signal = rx.borrow().clone();
+                if let Some(exit_signal) = signal {
+                    mark_completion_consumed_by_await(&self.registry, registry_key);
+                    return Err(await_tool_result(
+                        "exited",
+                        Some(&exit_signal_reason(&exit_signal)),
+                        agent_id.to_string(),
+                        elapsed_ms(start),
+                        None,
+                    ));
+                }
+            }
+            let status = {
+                let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+                entries.get(registry_key).map(|entry| entry.status.clone())
+            };
+            match status {
+                None => {
+                    return Err(await_tool_result(
+                        "error",
+                        Some("agent_not_found"),
+                        agent_id.to_string(),
+                        elapsed_ms(start),
+                        None,
+                    ));
+                }
+                Some(SubagentStatus::Exited) => return Ok(()),
+                Some(_) if tokio::time::Instant::now() >= grace => {
+                    return Err(await_tool_result(
+                        "error",
+                        Some("connection_failed"),
+                        agent_id.to_string(),
+                        elapsed_ms(start),
+                        None,
+                    ));
+                }
+                Some(_) => tokio::time::sleep(Duration::from_millis(50)).await,
+            }
+        }
     }
 
     /// Fetch workflow state from a subagent via UDS `get_state` command.
