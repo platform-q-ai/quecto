@@ -11,6 +11,7 @@ fn record(env_ref: &str, id: &str) -> EnvironmentRecord {
         script_name: "default".to_string(),
         retained_exec_argv: vec![],
         retained_kill_argv: vec![],
+        retained_cleanup_argv: vec![],
         members: vec![],
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),

@@ -67,6 +67,6 @@ pub fn shutdown_all_with_count(registry: &SubagentRegistry) -> usize {
         }
     }
     let count = removed.len();
-    super::subagent_cleanup::cleanup_removed_entries_once(&mut removed);
+    super::subagent_cleanup::cleanup_removed_entries_sync(&mut removed);
     count
 }

@@ -83,6 +83,7 @@ fn test_record(env_ref: &str, env_id: &str) -> EnvironmentRecord {
         script_name: "default".into(),
         retained_exec_argv: vec![],
         retained_kill_argv: vec![],
+        retained_cleanup_argv: vec![],
         members: vec![],
         status: crate::domain::environment_registry::EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
@@ -281,22 +282,73 @@ fn create_command_and_common_env_are_constructed_without_shell() {
     };
     let mut cmd = script_command(&script.create, Path::new("/bin/quecto"), &["--mode".into()]);
     apply_common_child_env(&mut cmd, Path::new("/tmp/base"));
-    let _ = cmd;
+    let std_cmd = cmd.as_std();
+    assert_eq!(std_cmd.get_program(), "echo");
+    let args: Vec<_> = std_cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    // Argv-exec contract: script args, `--` separator, child binary, child args.
+    assert_eq!(args, vec!["prefix", "--", "/bin/quecto", "--mode"]);
+    let envs: Vec<_> = std_cmd
+        .get_envs()
+        .map(|(k, v)| {
+            (
+                k.to_string_lossy().into_owned(),
+                v.map(|v| v.to_string_lossy().into_owned()),
+            )
+        })
+        .collect();
+    assert!(envs.contains(&("QUECTO_BASE_DIR".to_string(), Some("/tmp/base".to_string()))));
 }
 
-#[test]
-fn script_env_includes_optional_selection_values() {
-    let cfg = configured_scripts();
-    let mut cmd = script_command(
-        &script_config(&cfg, "default").unwrap().create,
-        Path::new("/bin/quecto"),
-        &[],
+/// The production create path (not the test) must wire the selection env
+/// vars: deleting the `cmd.env` lines in `spawn_script_managed_child` fails
+/// this test (#1390 review finding).
+#[tokio::test]
+async fn script_env_includes_optional_selection_values() {
+    let dir = TempDir::new().unwrap();
+    let cfg_path = dir.path().join("config.toml");
+    // The create script echoes the env vars it received back into metadata.
+    std::fs::write(
+        &cfg_path,
+        r#"{
+  "container_scripts": {
+    "default": "alt",
+    "scripts": {"alt": {"create": ["/bin/sh", "-c", "printf '{\"environment_id\":\"env-env\",\"workspace_path\":\"/tmp/ws\",\"socket_path\":\"/tmp/s.sock\",\"metadata\":{\"repo\":\"'\"$QUECTO_CONTAINER_REPO\"'\",\"script\":\"'\"$QUECTO_CONTAINER_SCRIPT\"'\",\"ref\":\"'\"$QUECTO_CONTAINER_ENVIRONMENT_REF\"'\"}}'"], "cleanup": ["true"]}}
+  }
+}
+"#,
+    )
+    .unwrap();
+    let mut config = base_config(ContainerSelection::New {
+        repo: Some("https://example.invalid/explicit.git".into()),
+        container_script: Some("alt".into()),
+        name: None,
+    });
+    config.config_path = Some(cfg_path);
+    let registry = EnvironmentRegistry::new();
+    spawn_prepared_child(
+        &config,
+        &ChildCommand {
+            binary: Path::new("true"),
+            cli_args: &[],
+            base_dir: dir.path(),
+        },
+        &registry,
+    )
+    .await
+    .unwrap();
+    let committed = registry.get("C1").unwrap();
+    assert_eq!(
+        committed.metadata,
+        serde_json::json!({
+            "repo": "https://example.invalid/explicit.git",
+            "script": "alt",
+            "ref": "C1",
+        })
     );
-    cmd.env("QUECTO_CONTAINER_REPO", "explicit");
-    cmd.env("QUECTO_CONTAINER_SCRIPT", "alt");
-    cmd.env("QUECTO_CONTAINER_ENVIRONMENT_REF", "C1");
-    apply_common_child_env(&mut cmd, Path::new("/tmp/base"));
-    let _ = cmd;
+    assert_eq!(committed.retained_cleanup_argv, vec!["true"]);
 }
 
 #[tokio::test]

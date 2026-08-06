@@ -30,14 +30,18 @@ impl ScriptEnvironmentKill {
     /// terminate processes/monitors. Membership removal happens inside the
     /// entry cleanup; the environment is already claimed by the caller, so no
     /// final-member cleanup can double-fire here.
-    fn terminate_member(&self, registry_key: &str) {
+    async fn terminate_member(&self, registry_key: &str) {
         let super::subagent_cascade::CascadeOutcome { removed, event } =
             super::subagent_cascade::cascade_remove_and_state_changed(
                 &self.subagents,
                 registry_key,
             );
         let mut removed: Vec<_> = removed.into_iter().collect();
-        super::subagent_cleanup::cleanup_removed_entries_once(&mut removed);
+        super::subagent_cleanup::cleanup_removed_entries_once(
+            &mut removed,
+            super::subagent_cleanup::FinalizeMode::Exit,
+        )
+        .await;
         for (_id, entry) in &removed {
             if let Some(ref tx) = entry.exit_signal_tx {
                 let _ = tx.send(Some(ExitSignal {
@@ -59,34 +63,30 @@ impl EnvironmentKillPort for ScriptEnvironmentKill {
         record: &'a EnvironmentRecord,
     ) -> LaunchFuture<'a, Result<(), String>> {
         Box::pin(async move {
-            for member in &record.members {
-                self.terminate_member(member);
-            }
+            // The argv guard must precede member termination: an environment
+            // whose script set has no `kill` must refuse kill_container with
+            // its members untouched, not strand dead members in a permanently
+            // cleanup-failed environment.
             if record.retained_kill_argv.is_empty() {
                 return Err(format!(
                     "environment {} has no retained kill argv; its script set does not support kill_container",
                     record.environment_ref
                 ));
             }
+            for member in &record.members {
+                self.terminate_member(member).await;
+            }
             run_retained_kill(record).await
         })
     }
 }
 
+/// Async wrapper over the single shared retained-kill contract (command
+/// construction and outcome mapping live in `subagent_cleanup`).
 async fn run_retained_kill(record: &EnvironmentRecord) -> Result<(), String> {
-    let argv = &record.retained_kill_argv;
-    let mut cmd = tokio::process::Command::new(&argv[0]);
-    cmd.args(&argv[1..]);
-    cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", &record.environment_id);
-    cmd.stdout(std::process::Stdio::null());
-    cmd.stderr(std::process::Stdio::piped());
-    match cmd.output().await {
-        Ok(output) if output.status.success() => Ok(()),
-        Ok(output) => Err(format!(
-            "retained kill exited with {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        )),
-        Err(e) => Err(format!("failed to invoke retained kill: {e}")),
-    }
+    let mut cmd = tokio::process::Command::from(super::subagent_cleanup::retained_kill_command(
+        &record.environment_id,
+        &record.retained_kill_argv,
+    ));
+    super::subagent_cleanup::retained_kill_outcome(cmd.output().await)
 }

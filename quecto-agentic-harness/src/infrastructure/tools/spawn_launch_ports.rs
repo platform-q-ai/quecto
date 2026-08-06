@@ -220,7 +220,13 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 }
                 crate::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry);
             }
-            super::subagent_cleanup::cleanup_removed_entries_once(&mut removed);
+            // Launch rollback: the environment's retained cleanup (not kill)
+            // runs when the launch fails after creation (#1369 slice 2).
+            super::subagent_cleanup::cleanup_removed_entries_once(
+                &mut removed,
+                super::subagent_cleanup::FinalizeMode::LaunchRollback,
+            )
+            .await;
         })
     }
 
@@ -263,12 +269,23 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             )?;
             // Slice 2 (#1369): every registered environment child — creator or
             // joiner — becomes a member of its environment; the registry key is
-            // the agent UUID.
+            // the agent UUID. add_member is refused once the environment is no
+            // longer running (a join racing a kill), in which case the launch
+            // fails: unregister the entry we just added and let the use case
+            // roll back.
             if let Some(env_ref) = prepared.environment_ref.as_deref() {
-                let _ = self
+                if let Err(e) = self
                     .tool
                     .environment_registry
-                    .add_member(env_ref, &identity.registry_key);
+                    .add_member(env_ref, &identity.registry_key)
+                {
+                    let mut entries = self.tool.registry.lock().unwrap_or_else(|e| e.into_inner());
+                    entries.remove(&identity.registry_key);
+                    drop(entries);
+                    return Err(DomainError::Tool(format!(
+                        "cannot register into environment {env_ref}: {e}"
+                    )));
+                }
             }
             let monitor_handle = super::subagent_monitor::spawn_monitor_task(
                 identity.registry_key.clone(),

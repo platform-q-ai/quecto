@@ -15,6 +15,7 @@ fn commit_env(reg: &EnvironmentRegistry, name: Option<&str>) -> String {
         script_name: "default".to_string(),
         retained_exec_argv: vec!["exec.sh".to_string()],
         retained_kill_argv: vec!["kill.sh".to_string()],
+        retained_cleanup_argv: vec!["cleanup.sh".to_string()],
         members: vec![],
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
@@ -165,7 +166,7 @@ fn removing_a_non_final_member_does_not_claim_cleanup() {
     reg.add_member(&env_ref, "a").unwrap();
     reg.add_member(&env_ref, "b").unwrap();
     let removal = reg.remove_member(&env_ref, "a").unwrap();
-    assert!(!removal.final_member_cleanup_claimed);
+    assert!(removal.is_none());
     assert_eq!(
         reg.get(&env_ref).unwrap().status,
         EnvironmentStatus::Running
@@ -178,10 +179,10 @@ fn final_member_removal_claims_cleanup_exactly_once() {
     let env_ref = commit_env(&reg, None);
     reg.add_member(&env_ref, "a").unwrap();
     let removal = reg.remove_member(&env_ref, "a").unwrap();
-    assert!(removal.final_member_cleanup_claimed);
+    assert!(removal.is_some());
     // A duplicate/racing removal of the same member cannot claim again.
     let removal = reg.remove_member(&env_ref, "a").unwrap();
-    assert!(!removal.final_member_cleanup_claimed);
+    assert!(removal.is_none());
 }
 
 #[test]
@@ -197,7 +198,7 @@ fn concurrent_final_member_exits_yield_exactly_one_cleanup_claim() {
     let tb = std::thread::spawn(move || reg_b.remove_member(&rb, "a").unwrap());
     let claims = [ta.join().unwrap(), tb.join().unwrap()]
         .iter()
-        .filter(|r| r.final_member_cleanup_claimed)
+        .filter(|r| r.is_some())
         .count();
     assert_eq!(claims, 1, "exactly one racer may claim final cleanup");
 }
@@ -285,7 +286,7 @@ fn lock_poison_recovery_keeps_slice2_operations_usable() {
     );
     reg.add_member(&env_ref, "member-b").unwrap();
     let removal = reg.remove_member(&env_ref, "member-b").unwrap();
-    assert!(!removal.final_member_cleanup_claimed);
+    assert!(removal.is_none());
     let claim = reg.begin_kill(&env_ref).unwrap();
     reg.fail_kill(claim, "poisoned-kill");
     let claim = reg.begin_kill(&env_ref).unwrap();
@@ -293,6 +294,63 @@ fn lock_poison_recovery_keeps_slice2_operations_usable() {
     assert_eq!(
         reg.get(&env_ref).unwrap().status,
         EnvironmentStatus::Stopped
+    );
+}
+
+#[test]
+fn name_resolution_ignores_stopped_records_so_names_are_reusable() {
+    let reg = EnvironmentRegistry::new();
+    let first = commit_env(&reg, Some("review-env"));
+    let claim = reg.begin_kill(&first).unwrap();
+    reg.complete_kill(claim);
+    // A fresh environment reusing the name resolves uniquely: the stopped
+    // record must not make the name ambiguous for the rest of the session.
+    let second = commit_env(&reg, Some("review-env"));
+    let rec = reg
+        .resolve(&EnvironmentTarget::Name("review-env".to_string()))
+        .unwrap();
+    assert_eq!(rec.environment_ref, second);
+}
+
+#[test]
+fn name_matching_only_stopped_records_fails_as_stopped_not_unknown() {
+    let reg = EnvironmentRegistry::new();
+    let env_ref = commit_env(&reg, Some("done-env"));
+    let claim = reg.begin_kill(&env_ref).unwrap();
+    reg.complete_kill(claim);
+    let err = reg
+        .resolve(&EnvironmentTarget::Name("done-env".to_string()))
+        .unwrap_err();
+    assert!(matches!(err, EnvironmentLookupError::Stopped(_)), "{err:?}");
+}
+
+#[test]
+fn add_member_is_refused_once_the_environment_is_no_longer_running() {
+    let reg = EnvironmentRegistry::new();
+    let stopped = commit_env(&reg, None);
+    let claim = reg.begin_kill(&stopped).unwrap();
+    // While the kill claim is outstanding a join must fail as stale.
+    let err = reg.add_member(&stopped, "late-joiner").unwrap_err();
+    assert!(matches!(err, EnvironmentLookupError::Stale(_)), "{err:?}");
+    reg.complete_kill(claim);
+    let err = reg.add_member(&stopped, "late-joiner").unwrap_err();
+    assert!(matches!(err, EnvironmentLookupError::Stopped(_)), "{err:?}");
+    assert!(reg.get(&stopped).unwrap().members.is_empty());
+
+    let failed = commit_env(&reg, None);
+    let claim = reg.begin_kill(&failed).unwrap();
+    reg.fail_kill(claim, "boom");
+    let err = reg.add_member(&failed, "late-joiner").unwrap_err();
+    assert!(matches!(err, EnvironmentLookupError::Stale(_)), "{err:?}");
+}
+
+#[test]
+fn retained_cleanup_argv_round_trips_through_commit() {
+    let reg = EnvironmentRegistry::new();
+    let env_ref = commit_env(&reg, None);
+    assert_eq!(
+        reg.get(&env_ref).unwrap().retained_cleanup_argv,
+        vec!["cleanup.sh"]
     );
 }
 

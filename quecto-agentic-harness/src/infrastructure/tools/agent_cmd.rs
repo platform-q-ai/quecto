@@ -296,6 +296,13 @@ impl AgentCmdTool {
         if command == "get_subagents_all" {
             return Some(self.list_all_subagents());
         }
+        None
+    }
+
+    /// Handle the `kill` command (async: container teardown scripts run on a
+    /// blocking worker and are awaited).
+    async fn try_kill_command(&self, args: &serde_json::Value) -> Option<ToolResult> {
+        let command = args.get("command").and_then(|v| v.as_str())?;
         if command != "kill" {
             return None;
         }
@@ -316,7 +323,7 @@ impl AgentCmdTool {
                 image_blocks: vec![],
             });
         }
-        Some(self.kill_agent(agent_id))
+        Some(self.kill_agent(agent_id).await)
     }
 
     /// Queueable forwarded commands carry `"ack":"accept"` — the child acks
@@ -358,7 +365,7 @@ impl AgentCmdTool {
 
     /// Kill a specific subagent by ID: SIGTERM + cascade-remove its sub-tree from
     /// the registry, then broadcast the survivor set (#559, #831).
-    fn kill_agent(&self, agent_id: &str) -> ToolResult {
+    async fn kill_agent(&self, agent_id: &str) -> ToolResult {
         let registry_key = {
             let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
             entries
@@ -402,7 +409,11 @@ impl AgentCmdTool {
         }
 
         let mut removed: Vec<_> = removed.into_iter().collect();
-        super::subagent_cleanup::cleanup_removed_entries_once(&mut removed);
+        super::subagent_cleanup::cleanup_removed_entries_once(
+            &mut removed,
+            super::subagent_cleanup::FinalizeMode::Exit,
+        )
+        .await;
 
         // Broadcast the survivor set so the TUI panel drops the whole dead
         // sub-tree promptly (#831). Best-effort send: no subscribers is fine.
@@ -561,6 +572,11 @@ impl Tool for AgentCmdTool {
                 }
                 // Check for sync locally-handled commands (#559).
                 if let Some(result) = self.try_local_command(value) {
+                    return Ok(result);
+                }
+                // kill is local but async: environment teardown scripts must
+                // run off the runtime thread and be awaited (#1369 slice 2).
+                if let Some(result) = self.try_kill_command(value).await {
                     return Ok(result);
                 }
             }

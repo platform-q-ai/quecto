@@ -27,6 +27,7 @@ fn committed_registry() -> EnvironmentRegistry {
         script_name: "default".into(),
         retained_exec_argv: vec![],
         retained_kill_argv: vec!["true".into()],
+        retained_cleanup_argv: vec![],
         members: vec![],
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),

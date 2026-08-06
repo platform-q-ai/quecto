@@ -60,8 +60,8 @@ fn cleanup_removed_entries_runs_pid_zero_script_plan_before_discard() {
     entry.cleanup_argv = vec![script.to_string_lossy().to_string()];
     let mut removed = vec![("child".to_string(), entry)];
 
-    super::subagent_cleanup::cleanup_removed_entries_once(&mut removed);
-    super::subagent_cleanup::cleanup_removed_entries_once(&mut removed);
+    super::subagent_cleanup::cleanup_removed_entries_sync(&mut removed);
+    super::subagent_cleanup::cleanup_removed_entries_sync(&mut removed);
 
     let text = std::fs::read_to_string(&log).unwrap();
     assert_eq!(text.lines().collect::<Vec<_>>(), vec!["env-kill"]);
@@ -111,6 +111,7 @@ async fn cleanup_registered_once_stops_the_committed_environment_entry() {
         script_name: "default".to_string(),
         retained_exec_argv: vec![],
         retained_kill_argv: vec![],
+        retained_cleanup_argv: vec![],
         members: vec!["child".to_string()],
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
@@ -140,6 +141,140 @@ async fn cleanup_registered_once_stops_the_committed_environment_entry() {
     // Second run is a no-op: the claim was consumed.
     cleanup_registered_once(&registry, "child").await;
     assert_eq!(std::fs::read_to_string(&log).unwrap().trim(), "env-exit");
+}
+
+fn committed_env_record(
+    env_ref: &str,
+    kill_argv: Vec<String>,
+    cleanup_argv: Vec<String>,
+    members: Vec<String>,
+) -> crate::domain::environment_registry::EnvironmentRecord {
+    use crate::domain::environment_registry::{EnvironmentRecord, mint_environment_uuid};
+    EnvironmentRecord {
+        environment_ref: env_ref.to_string(),
+        environment_id: format!("runtime-{env_ref}"),
+        environment_uuid: mint_environment_uuid(),
+        name: None,
+        workspace_path: PathBuf::from("/workspace"),
+        repository: String::new(),
+        script_name: "default".to_string(),
+        retained_exec_argv: vec![],
+        retained_kill_argv: kill_argv,
+        retained_cleanup_argv: cleanup_argv,
+        members,
+        status: crate::domain::environment_registry::EnvironmentStatus::Running,
+        metadata: serde_json::json!({}),
+        last_error: None,
+    }
+}
+
+/// Finding fix (#1390 review): the final member may be a joiner whose entry
+/// never carried a cleanup plan. The environment record's retained cleanup
+/// argv must cover the fallback even after the creator exited first.
+#[tokio::test]
+async fn final_joiner_exit_falls_back_to_the_record_retained_cleanup() {
+    let temp = tempfile::tempdir().unwrap();
+    let log = temp.path().join("cleanup.log");
+    let script = cleanup_script(&log);
+
+    let environments = crate::domain::environment_registry::EnvironmentRegistry::new();
+    let env_ref = environments.mint_ref();
+    environments.commit(committed_env_record(
+        &env_ref,
+        vec![],
+        vec!["/bin/sh".to_string(), script.to_string_lossy().to_string()],
+        vec!["creator".to_string(), "joiner".to_string()],
+    ));
+
+    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    // The creator's entry holds the only per-entry cleanup plan.
+    let mut creator = SubagentEntry::new(PathBuf::from("/tmp/creator.sock"), 0);
+    creator.cleanup_environment_id = Some("plan-env".to_string());
+    creator.cleanup_argv = vec!["true".to_string()];
+    creator.environment_registry = Some(environments.clone());
+    creator.environment_ref = Some(env_ref.clone());
+    registry
+        .lock()
+        .unwrap()
+        .insert("creator".to_string(), creator);
+    let mut joiner = SubagentEntry::new(PathBuf::from("/tmp/joiner.sock"), 0);
+    joiner.environment_registry = Some(environments.clone());
+    joiner.environment_ref = Some(env_ref.clone());
+    registry
+        .lock()
+        .unwrap()
+        .insert("joiner".to_string(), joiner);
+
+    // Creator exits first (non-final): no teardown yet.
+    cleanup_registered_once(&registry, "creator").await;
+    assert!(!log.exists(), "non-final exit must not tear down");
+    // Joiner exits last: the record's retained cleanup runs exactly once.
+    cleanup_registered_once(&registry, "joiner").await;
+    let record = environments.get(&env_ref).unwrap();
+    assert_eq!(
+        record.status,
+        crate::domain::environment_registry::EnvironmentStatus::Stopped
+    );
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap().trim(),
+        format!("runtime-{env_ref}")
+    );
+}
+
+/// Finding fix (#1390 review): a launch rollback after creation runs the
+/// retained `cleanup`, never the retained `kill`, matching the documented
+/// script contract for initial-prompt failures.
+#[tokio::test]
+async fn launch_rollback_runs_retained_cleanup_instead_of_kill() {
+    let temp = tempfile::tempdir().unwrap();
+    let cleanup_log = temp.path().join("cleanup.log");
+    let cleanup = cleanup_script(&cleanup_log);
+    let kill_log = temp.path().join("kill.log");
+    let kill = {
+        let script = temp.path().join("kill.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/usr/bin/env bash\necho killed >> '{}'\n",
+                kill_log.display()
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut p = std::fs::metadata(&script).unwrap().permissions();
+            p.set_mode(0o700);
+            std::fs::set_permissions(&script, p).unwrap();
+        }
+        script
+    };
+
+    let environments = crate::domain::environment_registry::EnvironmentRegistry::new();
+    let env_ref = environments.mint_ref();
+    environments.commit(committed_env_record(
+        &env_ref,
+        vec!["/bin/sh".to_string(), kill.to_string_lossy().to_string()],
+        vec!["/bin/sh".to_string(), cleanup.to_string_lossy().to_string()],
+        vec!["creator".to_string()],
+    ));
+
+    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/creator.sock"), 0);
+    entry.environment_registry = Some(environments.clone());
+    entry.environment_ref = Some(env_ref.clone());
+    let mut removed = vec![("creator".to_string(), entry)];
+    super::subagent_cleanup::cleanup_removed_entries_once(
+        &mut removed,
+        super::subagent_cleanup::FinalizeMode::LaunchRollback,
+    )
+    .await;
+
+    assert!(cleanup_log.exists(), "rollback must run retained cleanup");
+    assert!(!kill_log.exists(), "rollback must not run retained kill");
+    assert_eq!(
+        environments.get(&env_ref).unwrap().status,
+        crate::domain::environment_registry::EnvironmentStatus::Stopped
+    );
 }
 
 #[test]

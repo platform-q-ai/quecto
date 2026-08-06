@@ -149,23 +149,45 @@ struct ExecResultWire {
     socket_proxy: Option<serde_json::Value>,
 }
 
-fn parse_exec_result(stdout: &[u8]) -> Result<std::path::PathBuf, DomainError> {
+/// Strict wire parse shared by the create and exec result contracts: UTF-8
+/// only, exactly one JSON value, trailing data rejected. Unknown-key
+/// rejection comes from each wire type's `deny_unknown_fields`.
+fn parse_strict_wire<T: serde::de::DeserializeOwned>(
+    stdout: &[u8],
+    operation: &str,
+) -> Result<T, DomainError> {
     let text = std::str::from_utf8(stdout).map_err(|e| {
-        DomainError::Tool(format!("script-managed exec returned non-UTF8 JSON: {e}"))
+        DomainError::Tool(format!(
+            "script-managed {operation} returned non-UTF8 JSON: {e}"
+        ))
     })?;
     let mut de = serde_json::Deserializer::from_str(text);
-    let wire = ExecResultWire::deserialize(&mut de).map_err(|e| {
+    let wire = T::deserialize(&mut de).map_err(|e| {
         DomainError::Tool(format!(
-            "script-managed exec returned invalid JSON contract: {e}"
+            "script-managed {operation} returned invalid JSON contract: {e}"
         ))
     })?;
     de.end().map_err(|e| {
-        DomainError::Tool(format!("script-managed exec returned extra JSON data: {e}"))
+        DomainError::Tool(format!(
+            "script-managed {operation} returned extra JSON data: {e}"
+        ))
     })?;
-    if wire.socket_path.as_os_str().is_empty()
-        || wire.socket_proxy.is_some()
-        || !wire.metadata.is_object()
-    {
+    Ok(wire)
+}
+
+/// Shared endpoint validation for the create and exec results: a metadata
+/// object and a non-empty direct `socket_path` (no `socket_proxy`).
+fn invalid_direct_endpoint(
+    socket_path: &Path,
+    socket_proxy: &Option<serde_json::Value>,
+    metadata: &serde_json::Value,
+) -> bool {
+    socket_path.as_os_str().is_empty() || socket_proxy.is_some() || !metadata.is_object()
+}
+
+fn parse_exec_result(stdout: &[u8]) -> Result<std::path::PathBuf, DomainError> {
+    let wire: ExecResultWire = parse_strict_wire(stdout, "exec")?;
+    if invalid_direct_endpoint(&wire.socket_path, &wire.socket_proxy, &wire.metadata) {
         return Err(DomainError::Tool(
             "script-managed exec result must contain a metadata object and direct socket_path only"
                 .into(),
@@ -256,6 +278,7 @@ async fn spawn_script_managed_child(
         script_name: script_name.to_string(),
         retained_exec_argv: script.exec.clone(),
         retained_kill_argv: script.kill.clone(),
+        retained_cleanup_argv: script.cleanup.clone(),
         members: Vec::new(),
         status: crate::domain::environment_registry::EnvironmentStatus::Running,
         metadata: result.metadata.clone(),
@@ -316,25 +339,10 @@ fn salvage_environment_id(stdout: &[u8]) -> Option<String> {
 }
 
 fn parse_create_result(stdout: &[u8]) -> Result<CreateResult, DomainError> {
-    let text = std::str::from_utf8(stdout).map_err(|e| {
-        DomainError::Tool(format!("script-managed create returned non-UTF8 JSON: {e}"))
-    })?;
-    let mut de = serde_json::Deserializer::from_str(text);
-    let wire = CreateResultWire::deserialize(&mut de).map_err(|e| {
-        DomainError::Tool(format!(
-            "script-managed create returned invalid JSON contract: {e}"
-        ))
-    })?;
-    de.end().map_err(|e| {
-        DomainError::Tool(format!(
-            "script-managed create returned extra JSON data: {e}"
-        ))
-    })?;
+    let wire: CreateResultWire = parse_strict_wire(stdout, "create")?;
     if wire.environment_id.is_empty()
         || wire.workspace_path.as_os_str().is_empty()
-        || wire.socket_path.as_os_str().is_empty()
-        || wire.socket_proxy.is_some()
-        || !wire.metadata.is_object()
+        || invalid_direct_endpoint(&wire.socket_path, &wire.socket_proxy, &wire.metadata)
     {
         return Err(DomainError::Tool("script-managed create result must contain environment_id, workspace_path, metadata object, and direct socket_path only".into()));
     }

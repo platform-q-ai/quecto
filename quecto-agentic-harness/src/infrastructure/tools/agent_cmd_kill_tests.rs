@@ -10,8 +10,8 @@ fn child_entry(parent: &str) -> SubagentEntry {
     e
 }
 
-#[test]
-fn kill_cascade_removes_subtree_and_broadcasts_survivors() {
+#[tokio::test]
+async fn kill_cascade_removes_subtree_and_broadcasts_survivors() {
     let registry = new_registry();
     {
         let mut g = registry.lock().unwrap();
@@ -30,7 +30,7 @@ fn kill_cascade_removes_subtree_and_broadcasts_survivors() {
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
     let tool = AgentCmdTool::new(registry.clone()).with_broadcast(Some(tx));
 
-    let result = tool.kill_agent("parent");
+    let result = tool.kill_agent("parent").await;
     assert!(!result.is_error, "kill should succeed: {}", result.content);
 
     // Whole dead sub-tree pruned; the live sibling is untouched.
@@ -84,7 +84,7 @@ async fn kill_signals_await_aborts_monitor_and_sigterms_live_pid() {
     let (tx, _rx) = tokio::sync::broadcast::channel::<String>(8);
     let tool = AgentCmdTool::new(registry.clone()).with_broadcast(Some(tx));
 
-    let result = tool.kill_agent("solo");
+    let result = tool.kill_agent("solo").await;
     assert!(!result.is_error);
     assert!(result.content.contains(&pid.to_string()));
 
@@ -139,7 +139,7 @@ async fn kill_parent_sigterms_descendant_processes_not_just_named_agent() {
     let (tx, _rx) = tokio::sync::broadcast::channel::<String>(8);
     let tool = AgentCmdTool::new(registry.clone()).with_broadcast(Some(tx));
 
-    let result = tool.kill_agent("parent");
+    let result = tool.kill_agent("parent").await;
     assert!(!result.is_error);
     assert!(registry.lock().unwrap().is_empty());
 
@@ -166,12 +166,12 @@ async fn kill_parent_sigterms_descendant_processes_not_just_named_agent() {
     let _ = gchild_proc.wait();
 }
 
-#[test]
-fn kill_unknown_agent_returns_error_and_no_broadcast() {
+#[tokio::test]
+async fn kill_unknown_agent_returns_error_and_no_broadcast() {
     let registry = new_registry();
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
     let tool = AgentCmdTool::new(registry).with_broadcast(Some(tx));
-    let result = tool.kill_agent("ghost");
+    let result = tool.kill_agent("ghost").await;
     assert!(result.is_error);
     assert!(result.content.contains("not found"));
     assert!(rx.try_recv().is_err(), "no broadcast for unknown agent");

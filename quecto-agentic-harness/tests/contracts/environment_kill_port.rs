@@ -46,6 +46,7 @@ fn record(kill_argv: Vec<String>, members: Vec<String>) -> EnvironmentRecord {
         script_name: "default".into(),
         retained_exec_argv: vec![],
         retained_kill_argv: kill_argv,
+        retained_cleanup_argv: vec![],
         members,
         status: EnvironmentStatus::Killing,
         metadata: serde_json::json!({}),
@@ -107,4 +108,27 @@ async fn script_kill_port_refuses_environments_without_a_retained_kill() {
         .await
         .unwrap_err();
     assert!(err.contains("no retained kill argv"), "{err}");
+}
+
+/// #1390 review finding: the no-kill-argv refusal must happen BEFORE member
+/// termination — otherwise members die while the environment is stuck in a
+/// deterministically unrecoverable cleanup-failed state.
+#[tokio::test]
+async fn script_kill_port_refusal_leaves_members_untouched() {
+    let subagents: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let entry = SubagentEntry::new(PathBuf::from("/tmp/member.sock"), 0);
+    subagents
+        .lock()
+        .unwrap()
+        .insert("member-uuid".to_string(), entry);
+    let port = ScriptEnvironmentKill::new(subagents.clone(), None);
+    let err = port
+        .kill_environment(&record(vec![], vec!["member-uuid".to_string()]))
+        .await
+        .unwrap_err();
+    assert!(err.contains("no retained kill argv"), "{err}");
+    assert!(
+        subagents.lock().unwrap().contains_key("member-uuid"),
+        "members must survive a refused kill_container"
+    );
 }

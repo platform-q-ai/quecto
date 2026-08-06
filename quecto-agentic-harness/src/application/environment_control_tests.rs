@@ -51,6 +51,7 @@ fn committed_env(reg: &EnvironmentRegistry) -> String {
         script_name: "default".to_string(),
         retained_exec_argv: vec!["exec.sh".to_string()],
         retained_kill_argv: vec!["kill.sh".to_string()],
+        retained_cleanup_argv: vec![],
         members: vec![],
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
@@ -131,23 +132,56 @@ fn kill_failure_persists_retryable_state_and_retry_succeeds() {
     );
 }
 
+/// Kill port that parks inside the kill until released, so a second
+/// `kill_container` genuinely overlaps the first one's in-flight kill.
+struct GatedKillPort {
+    calls: AtomicUsize,
+    gate: Arc<tokio::sync::Notify>,
+}
+
+impl EnvironmentKillPort for GatedKillPort {
+    fn kill_environment<'a>(
+        &'a self,
+        _record: &'a EnvironmentRecord,
+    ) -> LaunchFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.gate.notified().await;
+            Ok(())
+        })
+    }
+}
+
 #[test]
 fn concurrent_kill_container_calls_cannot_double_kill() {
     let reg = EnvironmentRegistry::new();
     let env_ref = committed_env(&reg);
-    let port = Arc::new(SpyKillPort::default());
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let port = Arc::new(GatedKillPort {
+        calls: AtomicUsize::new(0),
+        gate: gate.clone(),
+    });
     let uc = Arc::new(EnvironmentControlUseCase::new(reg.clone(), port.clone()));
     let (a, b) = block_on(async {
         let ua = uc.clone();
         let ub = uc.clone();
         let ra = EnvironmentTarget::Ref(env_ref.clone());
         let rb = EnvironmentTarget::Ref(env_ref.clone());
-        tokio::join!(ua.kill_container(&ra), ub.kill_container(&rb))
+        tokio::join!(ua.kill_container(&ra), async {
+            // On this current-thread runtime the first caller has already
+            // claimed the kill and parked inside the port when this runs, so
+            // the second call races an IN-FLIGHT kill, not a finished one.
+            let second = ub.kill_container(&rb).await;
+            gate.notify_one();
+            second
+        })
     });
     assert_eq!(port.calls.load(Ordering::SeqCst), 1, "exactly one kill");
+    assert!(a.is_ok(), "the claim holder completes its kill");
+    let err = b.unwrap_err();
     assert!(
-        a.is_ok() || b.is_ok(),
-        "at least one caller observes success"
+        err.contains("stale"),
+        "the overlapping caller is refused while the claim is outstanding: {err}"
     );
     assert_eq!(
         reg.get(&env_ref).unwrap().status,
@@ -169,6 +203,7 @@ fn resolve_target_supports_names_for_control_operations() {
         script_name: "default".to_string(),
         retained_exec_argv: vec!["exec.sh".to_string()],
         retained_kill_argv: vec!["kill.sh".to_string()],
+        retained_cleanup_argv: vec![],
         members: vec![],
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),

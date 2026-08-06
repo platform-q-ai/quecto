@@ -72,6 +72,65 @@ async fn ports_ready_rollback_prompt_uncommit_and_success_paths() {
     assert!(result.content.contains("environment_ref=env"));
 }
 
+/// #1390 review finding: a join racing a kill must not register into a
+/// no-longer-running environment — the launch fails and the just-registered
+/// entry is removed again.
+#[tokio::test]
+async fn register_into_a_stopped_environment_fails_and_unregisters() {
+    let tool = tool();
+    let env_ref = tool.environment_registry.mint_ref();
+    tool.environment_registry
+        .commit(crate::domain::environment_registry::EnvironmentRecord {
+            environment_ref: env_ref.clone(),
+            environment_id: "env-raced".into(),
+            environment_uuid: crate::domain::environment_registry::mint_environment_uuid(),
+            name: None,
+            workspace_path: std::path::PathBuf::from("/workspace"),
+            repository: String::new(),
+            script_name: "default".into(),
+            retained_exec_argv: vec![],
+            retained_kill_argv: vec![],
+            retained_cleanup_argv: vec![],
+            members: vec![],
+            status: crate::domain::environment_registry::EnvironmentStatus::Running,
+            metadata: serde_json::json!({}),
+            last_error: None,
+        });
+    let claim = tool.environment_registry.begin_kill(&env_ref).unwrap();
+    tool.environment_registry.complete_kill(claim);
+
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let cfg = config();
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    let mut prepared = PreparedChild::new_for_test(None, Some(env_ref.clone()), None);
+    let runtime = PreparedRuntime {
+        socket_path: std::path::PathBuf::from("/tmp/raced.sock"),
+        pid: 0,
+        environment_ref: Some(env_ref.clone()),
+    };
+    let err = ports
+        .register_and_monitor(&identity, runtime, &mut prepared, &cfg)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains(&env_ref), "{err}");
+    assert!(
+        !tool
+            .registry
+            .lock()
+            .unwrap()
+            .contains_key(&identity.registry_key),
+        "the raced entry must be unregistered"
+    );
+    assert!(
+        tool.environment_registry
+            .get(&env_ref)
+            .unwrap()
+            .members
+            .is_empty(),
+        "no membership may be recorded in a stopped environment"
+    );
+}
+
 #[tokio::test]
 async fn contract_accessor_yields_working_production_ports() {
     let tool = tool();

@@ -83,6 +83,11 @@ pub struct EnvironmentRecord {
     /// Kill argv retained at create time; final-member and explicit cleanup
     /// use this exactly once per successful kill.
     pub retained_kill_argv: Vec<String>,
+    /// Cleanup argv retained at create time. Runs instead of `kill` when a
+    /// launch fails after creation, and serves as the final-member teardown
+    /// fallback for script sets without a configured `kill` — retained on the
+    /// record so it survives the creator exiting before other members.
+    pub retained_cleanup_argv: Vec<String>,
     /// Member agent UUIDs, in join order.
     pub members: Vec<String>,
     pub status: EnvironmentStatus,
@@ -119,16 +124,6 @@ pub fn mint_environment_uuid() -> String {
 #[derive(Debug)]
 pub struct KillClaim {
     environment_ref: String,
-}
-
-/// Outcome of removing one member from an environment.
-#[derive(Debug)]
-pub struct MemberRemoval {
-    /// True when this removal made the environment empty and atomically
-    /// claimed its final cleanup. Exactly one racer can observe true.
-    pub final_member_cleanup_claimed: bool,
-    /// The kill claim when `final_member_cleanup_claimed` is true.
-    pub claim: Option<KillClaim>,
 }
 
 #[derive(Debug, Default)]
@@ -219,20 +214,34 @@ impl EnvironmentRegistry {
                 .cloned()
                 .ok_or_else(|| EnvironmentLookupError::Unknown(env_ref.clone())),
             EnvironmentTarget::Name(name) => {
-                let mut matches = state
+                // Only non-stopped records participate in name resolution, so
+                // a name freed by a stopped environment can be reused without
+                // a false ambiguity for the rest of the session.
+                let named = |r: &&EnvironmentRecord| r.name.as_deref() == Some(name.as_str());
+                let mut live = state
                     .entries
                     .values()
-                    .filter(|r| r.name.as_deref() == Some(name.as_str()));
-                match (matches.next(), matches.next()) {
+                    .filter(named)
+                    .filter(|r| r.status != EnvironmentStatus::Stopped);
+                match (live.next(), live.next()) {
                     (Some(record), None) => Ok(record.clone()),
                     (Some(_), Some(_)) => Err(EnvironmentLookupError::Ambiguous(name.clone())),
-                    (None, _) => Err(EnvironmentLookupError::Unknown(name.clone())),
+                    (None, _) => {
+                        if state.entries.values().any(|r| named(&r)) {
+                            Err(EnvironmentLookupError::Stopped(name.clone()))
+                        } else {
+                            Err(EnvironmentLookupError::Unknown(name.clone()))
+                        }
+                    }
                 }
             }
         }
     }
 
-    /// Record one member agent UUID joining the environment.
+    /// Record one member agent UUID joining the environment. Refused unless
+    /// the environment is still running: a join racing a kill must fail here
+    /// and let the launch roll back rather than register into a torn-down
+    /// environment.
     pub fn add_member(
         &self,
         environment_ref: &str,
@@ -243,20 +252,30 @@ impl EnvironmentRegistry {
             .entries
             .get_mut(environment_ref)
             .ok_or_else(|| EnvironmentLookupError::Unknown(environment_ref.to_string()))?;
-        if !record.members.iter().any(|m| m == agent_uuid) {
-            record.members.push(agent_uuid.to_string());
+        match record.status {
+            EnvironmentStatus::Running => {
+                if !record.members.iter().any(|m| m == agent_uuid) {
+                    record.members.push(agent_uuid.to_string());
+                }
+                Ok(())
+            }
+            EnvironmentStatus::Stopped => Err(EnvironmentLookupError::Stopped(
+                record.environment_ref.clone(),
+            )),
+            EnvironmentStatus::Killing | EnvironmentStatus::CleanupFailed => Err(
+                EnvironmentLookupError::Stale(record.environment_ref.clone()),
+            ),
         }
-        Ok(())
     }
 
     /// Remove one member. When the environment becomes (or already is) empty
     /// and still running, this atomically claims its final cleanup: exactly
-    /// one concurrent remover observes `final_member_cleanup_claimed`.
+    /// one concurrent remover receives `Some(KillClaim)`.
     pub fn remove_member(
         &self,
         environment_ref: &str,
         agent_uuid: &str,
-    ) -> Result<MemberRemoval, EnvironmentLookupError> {
+    ) -> Result<Option<KillClaim>, EnvironmentLookupError> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let record = state
             .entries
@@ -265,17 +284,11 @@ impl EnvironmentRegistry {
         record.members.retain(|m| m != agent_uuid);
         if record.members.is_empty() && record.status == EnvironmentStatus::Running {
             record.status = EnvironmentStatus::Killing;
-            Ok(MemberRemoval {
-                final_member_cleanup_claimed: true,
-                claim: Some(KillClaim {
-                    environment_ref: environment_ref.to_string(),
-                }),
-            })
+            Ok(Some(KillClaim {
+                environment_ref: environment_ref.to_string(),
+            }))
         } else {
-            Ok(MemberRemoval {
-                final_member_cleanup_claimed: false,
-                claim: None,
-            })
+            Ok(None)
         }
     }
 

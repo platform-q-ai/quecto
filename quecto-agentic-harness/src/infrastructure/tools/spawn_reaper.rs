@@ -28,7 +28,11 @@ pub(super) fn spawn_reaper_task(
             }
         }
         let mut removed = removed;
-        subagent_cleanup::cleanup_removed_entries_once(&mut removed);
+        subagent_cleanup::cleanup_removed_entries_once(
+            &mut removed,
+            subagent_cleanup::FinalizeMode::Exit,
+        )
+        .await;
         for (id, entry) in &removed {
             if id == &registry_key {
                 if let Some(ref handle) = entry.monitor_handle {

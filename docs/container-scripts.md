@@ -55,7 +55,8 @@ commands expose it (use `agent_id: "*"`):
 When the final member of a live environment exits or is killed, the same
 retained `kill` operation runs exactly once (concurrent final exits cannot
 double-kill). Script sets without a configured `kill` fall back to the
-rollback `cleanup` plan for final-member teardown.
+retained `cleanup` argv for final-member teardown; `kill_container` itself
+refuses such environments up front, leaving every member untouched.
 
 ## Configuration
 
@@ -150,6 +151,14 @@ JSON object:
 `socket_path` must be a direct UDS endpoint; `socket_proxy` and unknown
 keys are rejected.
 
+Known limitation: the exec result carries no process handle, so if a join
+fails after the script started the child (socket never ready, registration
+refused), Quecto cannot terminate that process individually. It keeps
+running inside the environment until the environment's retained `kill`
+(or final-member `cleanup` fallback) tears the environment down. Exec
+scripts should therefore make the started child exit on its own when its
+socket is never connected to.
+
 ### `kill`
 
 Invoked with `QUECTO_CONTAINER_ENVIRONMENT_ID` set to the runtime
@@ -164,5 +173,6 @@ Invoked with `QUECTO_CONTAINER_ENVIRONMENT_ID` set to the runtime
 `environment_id` being destroyed (note: a different identity than the
 session `C1` ref the create script received). Runs exactly once when a
 launch fails after creation (readiness, registration, or initial-prompt
-failure). For script sets without a configured `kill`, it also serves as
-the final-member teardown fallback.
+failure) — even when a `kill` is configured. For script sets without a
+configured `kill`, the retained `cleanup` argv also serves as the
+final-member teardown fallback.
