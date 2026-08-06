@@ -101,7 +101,16 @@ fn fresh_parent_runtime_catalogue_leaves_unrestricted_tools_available_to_parent_
     let built = build_runtime_with_flags(ToolRuntimeProfileContext::Parent, false, &[]);
 
     for name in [
-        "bash", "docs", "edit", "find", "grep", "ls", "read", "recall", "write",
+        "bash",
+        "docs",
+        "edit",
+        "find",
+        "grep",
+        "ls",
+        "read",
+        "recall",
+        "rust_ast_graph",
+        "write",
     ] {
         let entry = built
             .catalogue_entries

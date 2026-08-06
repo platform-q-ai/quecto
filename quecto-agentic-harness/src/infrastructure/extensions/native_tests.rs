@@ -246,7 +246,15 @@ fn build_official_tool_extensions_lists_core_workspace_tools() {
     assert_eq!(exts.len(), 1);
     assert_eq!(exts[0].name(), "quecto:official-tools");
     for name in [
-        "bash", "read", "write", "edit", "ls", "grep", "find", "docs",
+        "bash",
+        "read",
+        "write",
+        "edit",
+        "ls",
+        "grep",
+        "find",
+        "rust_ast_graph",
+        "docs",
     ] {
         assert!(has_tool(&exts, name), "missing official tool {name}");
     }

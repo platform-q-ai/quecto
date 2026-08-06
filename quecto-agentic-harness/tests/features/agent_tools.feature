@@ -114,6 +114,7 @@ Feature: Agent Tool System
     Then the [ToolResult] should contain "entries limit reached"
     And the [ToolResult] should not be an error
 
+  @rust-ast-graph
   Scenario: Tool registry lists core tools
     Given a tool workspace
     Then the tool registry should contain "bash"
@@ -121,6 +122,7 @@ Feature: Agent Tool System
     And the tool registry should contain "write"
     And the tool registry should contain "edit"
     And the tool registry should contain "ls"
+    And the tool registry should contain "rust_ast_graph"
 
   Scenario: Spawn tool validates and creates subagent config
     Given a spawn tool with allowed agents "news-bot" and "weather-bot"

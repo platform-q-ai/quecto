@@ -44,6 +44,10 @@ const EMBEDDED_DOCS: &[(&str, &str)] = &[
         "models",
         include_str!("../../../docs/docs-tool-embeds/models.md"),
     ),
+    (
+        "rust-ast-graph",
+        include_str!("../../../docs/docs-tool-embeds/rust-ast-graph.md"),
+    ),
 ];
 
 /// Normalize a requested doc name: strip a leading `docs/` or
