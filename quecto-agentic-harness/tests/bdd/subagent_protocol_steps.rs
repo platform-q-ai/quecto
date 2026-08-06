@@ -330,6 +330,8 @@ fn given_subagent_info(
         parent_id: None,
         workflow: None,
         read_only: false,
+        execution_backend: "local".to_string(),
+        environment: None,
     });
 }
 
@@ -426,6 +428,8 @@ fn given_state_changed_event(world: &mut QuectoWorld, count: usize) {
             parent_id: None,
             workflow: None,
             read_only: false,
+            execution_backend: "local".to_string(),
+            environment: None,
         })
         .collect();
     world.protocol_event = Some(AgentEvent::SubagentStateChanged { subagents });
@@ -451,6 +455,8 @@ fn given_state_changed_one(
             parent_id: None,
             workflow: None,
             read_only: false,
+            execution_backend: "local".to_string(),
+            environment: None,
         }],
     });
 }
@@ -477,6 +483,8 @@ fn given_state_changed_observer_and_readwrite(
                 parent_id: None,
                 workflow: None,
                 read_only: true,
+                execution_backend: "local".to_string(),
+                environment: None,
             },
             SubagentInfo {
                 agent_uuid: None,
@@ -490,6 +498,8 @@ fn given_state_changed_observer_and_readwrite(
                 parent_id: None,
                 workflow: None,
                 read_only: false,
+                execution_backend: "local".to_string(),
+                environment: None,
             },
         ],
     });

@@ -256,8 +256,10 @@ This issue is the characterization-readiness slice for the later code-moving iss
 |---|---|
 | `agents/controller_ledger_sync.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/controller_subagent_feed.rs` | `agents` (relocated, #1257 Phase 4) |
+| `agents/controller_subagent_environment.rs` | `agents` environment grouping model and main-pane chrome (#1369 slice 4; split from `controller_subagent_panel.rs` for the 750-line baseline) |
 | `agents/controller_subagent_panel.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/controller_subagent_panel_helpers.rs` | `agents` (panel free helpers split, #1378) |
+| `agents/controller_subagent_panel_rows.rs` | `agents` panel row model (master + tree + environment-group rows; split from `controller_subagent_panel.rs` for the 750-line baseline, #1369 slice 4 review) |
 | `agents/controller_subagent_stream.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/controller_subagents.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/feed.rs` | `agents` (relocated, #1257 Phase 4) |
@@ -321,6 +323,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/range_accumulator.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/session_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/state_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
+| `protocol/subagent_payloads.rs` | `protocol` typed subagent roster wire DTOs incl. versioned environment metadata (#1369 slice 4; split from `client.rs` for the 750-line baseline) |
 | `protocol/workflow_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `sessions/controller_sessions.rs` | `sessions` (relocated, #1257 Phase 5) |
 | `sessions/mod.rs` | `sessions` (relocated, #1257 Phase 5) |

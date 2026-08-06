@@ -48,7 +48,7 @@ fn bar_continuation(prefix: &str) -> String {
 /// Colour a panel row's NAME by status (#820): green = running, orange/yellow =
 /// idle, red = errored. Exited names dim out; unknown states stay uncoloured.
 /// No glyph is emitted — the colour alone conveys the state.
-pub(super) fn status_colored_name(status: &str, name: &str) -> String {
+pub(crate) fn status_colored_name(status: &str, name: &str) -> String {
     match status {
         "running" | "starting" => theme::green(name),
         "idle" => theme::yellow(name),
@@ -59,12 +59,12 @@ pub(super) fn status_colored_name(status: &str, name: &str) -> String {
 }
 
 /// Strip terminal control sequences from a panel label.
-pub(super) fn sanitize_panel_label(s: &str) -> String {
+pub(crate) fn sanitize_panel_label(s: &str) -> String {
     crate::components::ansi::sanitize_control(s)
 }
 
 /// Pad (or truncate) a cell to exactly `width` visible columns.
-pub(super) fn pad_cell(text: &str, width: usize) -> String {
+pub(crate) fn pad_cell(text: &str, width: usize) -> String {
     let visible = crate::components::utils::visible_width(text);
     if visible > width {
         crate::components::utils::truncate_to_width(text, width, None)

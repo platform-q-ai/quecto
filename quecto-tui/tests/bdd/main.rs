@@ -119,6 +119,12 @@ pub struct TuiWorld {
     pub tui_render_count: Option<usize>,
     /// TUI idle-efficiency BDD (#978): branch name expected after a switch.
     pub tui_idle_expected_branch: Option<String>,
+    /// TUI environment-grouping BDD (#1369 slice 4): terminal width stated in
+    /// the Given, for width bounds independent of the app's own split.
+    pub tui_env_terminal_cols: Option<usize>,
+    /// TUI environment-grouping BDD (#1369 slice 4): local-only agent ids the
+    /// scenario tracks, for format-agnostic no-badge shape checks.
+    pub tui_env_local_agents: Vec<String>,
     /// TUI idle-efficiency BDD (#978): whether kitty fallback detection completed.
     pub tui_idle_fallback_done: Option<bool>,
     /// TUI UDS client defensive-bounds BDD (#982): socket/client state.
@@ -338,6 +344,7 @@ mod tui_cold_start_steps;
 mod tui_ctrl_c_clear_steps;
 mod tui_ctrl_d_exit_steps;
 mod tui_end_of_turn_refs_steps;
+mod tui_environment_grouping_steps;
 mod tui_esc_abort_recovery_steps;
 mod tui_file_mention_steps;
 mod tui_foundation_steps;

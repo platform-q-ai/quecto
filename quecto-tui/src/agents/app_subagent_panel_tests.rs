@@ -29,6 +29,8 @@ fn child(id: &str, status: &str, parent: Option<&str>) -> SubagentInfoEvent {
             steps_total: 3,
         }),
         read_only: false,
+        execution_backend: None,
+        environment: None,
     }
 }
 
@@ -98,6 +100,8 @@ async fn panel_renders_display_label_not_uuid_key() {
                 steps_total: 2,
             }),
             read_only: false,
+            execution_backend: None,
+            environment: None,
         }],
     });
     // Selection/identity is UUID-keyed.

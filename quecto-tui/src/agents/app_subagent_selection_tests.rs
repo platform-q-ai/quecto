@@ -15,6 +15,8 @@ fn make_tracked(id: &str, status: &str) -> (String, super::TrackedSubagent) {
             parent_id: None,
             workflow: None,
             read_only: false,
+            execution_backend: None,
+            environment: None,
         }),
     )
 }
@@ -133,6 +135,8 @@ fn tracked_subagent_new_sets_exited_at_for_exited() {
         parent_id: None,
         workflow: None,
         read_only: false,
+        execution_backend: None,
+        environment: None,
     });
     assert!(entry.exited_at.is_some());
 }
@@ -151,6 +155,8 @@ fn tracked_subagent_new_no_exited_at_for_running() {
         parent_id: None,
         workflow: None,
         read_only: false,
+        execution_backend: None,
+        environment: None,
     });
     assert!(entry.exited_at.is_none());
 }
@@ -169,6 +175,8 @@ fn tracked_subagent_update_sets_exited_at_on_transition() {
         parent_id: None,
         workflow: None,
         read_only: false,
+        execution_backend: None,
+        environment: None,
     });
     assert!(entry.exited_at.is_none());
 
@@ -184,6 +192,8 @@ fn tracked_subagent_update_sets_exited_at_on_transition() {
         parent_id: None,
         workflow: None,
         read_only: false,
+        execution_backend: None,
+        environment: None,
     });
     assert!(entry.exited_at.is_some());
 }
@@ -202,6 +212,8 @@ fn tracked_subagent_update_clears_exited_at_on_revival() {
         parent_id: None,
         workflow: None,
         read_only: false,
+        execution_backend: None,
+        environment: None,
     });
     assert!(entry.exited_at.is_some());
 
@@ -217,6 +229,8 @@ fn tracked_subagent_update_clears_exited_at_on_revival() {
         parent_id: None,
         workflow: None,
         read_only: false,
+        execution_backend: None,
+        environment: None,
     });
     assert!(entry.exited_at.is_none());
 }
@@ -235,6 +249,8 @@ fn tracked_subagent_update_clears_read_only_marker_on_authoritative_read_write_u
         parent_id: None,
         workflow: None,
         read_only: true,
+        execution_backend: None,
+        environment: None,
     });
 
     entry.update_info(crate::protocol::client::SubagentInfoEvent {
@@ -249,6 +265,8 @@ fn tracked_subagent_update_clears_read_only_marker_on_authoritative_read_write_u
         parent_id: None,
         workflow: None,
         read_only: false,
+        execution_backend: None,
+        environment: None,
     });
 
     assert!(
@@ -357,6 +375,8 @@ fn mk_info(id: &str, status: &str) -> crate::protocol::client::SubagentInfoEvent
         parent_id: None,
         workflow: None,
         read_only: false,
+        execution_backend: None,
+        environment: None,
     }
 }
 

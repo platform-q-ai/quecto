@@ -65,8 +65,10 @@ async fn burst_of_completions_coalesces_to_one_summary_line() {
             "the summary must list `{name}`:\n{frame}"
         );
     }
+    // Probe kept short of the body-width truncation point (the panel widened
+    // to 34 for #1369 slice 4, narrowing the body by 4 columns).
     assert!(
-        frame.contains("Inspect agent_cmd ge"),
+        frame.contains("Inspect agent"),
         "the coalesced note must preserve the inspection warning:\n{frame}"
     );
 }

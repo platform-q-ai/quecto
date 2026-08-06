@@ -16,3 +16,45 @@ fn detects_notes_verbatim_and_collapsed() {
         "[user: \"write me a poem\" (4 tokens) — recall(\"turn1:msg:user\")]"
     ));
 }
+
+#[test]
+fn subagents_parses_execution_backend_and_environment_from_snapshot() {
+    // #1369 slice 4: the get_subagents response parse must round-trip the
+    // additive versioned fields, not just live subagent_state_changed events.
+    let data = serde_json::json!({
+        "subagents": [{
+            "agentId": "impl",
+            "displayName": "impl",
+            "agentUuid": "uuid-impl",
+            "status": "running",
+            "lastTool": null,
+            "lastError": null,
+            "pid": 7,
+            "readOnly": false,
+            "executionBackend": "script",
+            "environment": {
+                "ref": "C1",
+                "name": "pr-env",
+                "status": "running",
+                "repository": "https://example.com/acme/widget.git",
+                "branch": "pr-42",
+                "runtimeId": "rt-9001",
+                "workspace": "/work/pr-42",
+                "socketMode": "proxy",
+            },
+        }],
+    });
+    let parsed = super::subagents(&data);
+    assert_eq!(parsed.len(), 1);
+    let info = &parsed[0];
+    assert_eq!(info.execution_backend.as_deref(), Some("script"));
+    let env = info.environment.as_ref().expect("environment parses");
+    assert_eq!(env.environment_ref, "C1");
+    assert_eq!(env.name.as_deref(), Some("pr-env"));
+    assert_eq!(env.status, "running");
+    assert_eq!(env.repository, "https://example.com/acme/widget.git");
+    assert_eq!(env.branch.as_deref(), Some("pr-42"));
+    assert_eq!(env.runtime_id, "rt-9001");
+    assert_eq!(env.workspace, "/work/pr-42");
+    assert_eq!(env.socket_mode, "proxy");
+}

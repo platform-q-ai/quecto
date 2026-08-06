@@ -463,6 +463,8 @@ mod workflow_display_regression {
                 steps_total: t,
             }),
             read_only: false,
+            execution_backend: None,
+            environment: None,
         }
     }
     fn wf_state(

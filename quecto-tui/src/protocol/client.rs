@@ -312,45 +312,12 @@ pub enum Event {
     #[serde(other)]
     Unknown,
 }
-/// Wire-format subagent info from `subagent_state_changed` event (#524/#525).
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SubagentInfoEvent {
-    /// Compatibility display label from legacy `agentId`.
-    pub agent_id: String,
-    #[serde(default)]
-    pub agent_uuid: Option<String>,
-    #[serde(default)]
-    pub display_name: Option<String>,
-    pub status: String,
-    pub last_tool: Option<String>,
-    pub last_error: Option<String>,
-    pub pid: u32,
-    /// Path to this sub-agent's own UDS socket, used to open a direct
-    /// connect-on-select connection to its live stream (#800). `None` when the
-    /// kernel did not surface it (older servers / non-local agents).
-    #[serde(default)]
-    pub socket_path: Option<String>,
-    /// Spawning agent's id, for reconstructing the unit tree (PRD Stage B).
-    #[serde(default)]
-    pub parent_id: Option<String>,
-    /// Latest workflow snapshot for this subagent, if any (PRD Stage B).
-    #[serde(default)]
-    pub workflow: Option<SubagentWorkflow>,
-    /// Whether this sub-agent was spawned read-only (`write` + `edit` disabled).
-    /// Drives the observer marker in the left panel (#966). Defaults to `false`
-    /// for older kernels that did not surface the field.
-    #[serde(default)]
-    pub read_only: bool,
-}
-/// Workflow snapshot mirror carried on a subagent entry (PRD Stage B).
-/// Field names match the server's snake_case `WorkflowSnapshot` serialization.
-#[derive(Debug, Clone, Deserialize)]
-pub struct SubagentWorkflow {
-    pub mode: String,
-    pub steps_completed: u32,
-    pub steps_total: u32,
-}
+// Typed subagent roster payloads live in `subagent_payloads` (750-line cap
+// split); re-exported here so existing `protocol::client::…` paths still work.
+pub use crate::protocol::subagent_payloads::{
+    SubagentEnvironmentInfo, SubagentInfoEvent, SubagentWorkflow,
+};
+
 // ─── Result text extraction ───────────────────────────────────────────────────
 /// Extract the first text content from a tool result JSON value.
 ///

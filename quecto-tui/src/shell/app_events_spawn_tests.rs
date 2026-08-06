@@ -143,6 +143,8 @@ async fn optimistic_display_row_reconciles_to_uuid_snapshot_without_dual_rows() 
         parent_id: None,
         workflow: None,
         read_only: false,
+        execution_backend: None,
+        environment: None,
     }]);
 
     assert!(
@@ -310,6 +312,8 @@ async fn snapshot_uuid_migrate_moves_sessions_feeds_and_session_order() {
         parent_id: None,
         workflow: None,
         read_only: false,
+        execution_backend: None,
+        environment: None,
     }]);
 
     assert!(!app.subagents.sessions.contains_key("worker-1"));
