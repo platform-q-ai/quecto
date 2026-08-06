@@ -86,10 +86,14 @@ pub fn mask_comments_and_strings(text: &str) -> String {
             let end = quoted_end(bytes, i, b'"');
             push_spaces(&mut out, bytes, i, end - i);
             i = end;
-        } else if bytes[i] == b'\'' && is_char_literal_start(bytes, i) {
-            let end = quoted_end(bytes, i, b'\'');
-            push_spaces(&mut out, bytes, i, end - i);
-            i = end;
+        } else if bytes[i] == b'\'' {
+            if let Some(end) = char_literal_end(bytes, i) {
+                push_spaces(&mut out, bytes, i, end - i);
+                i = end;
+            } else {
+                out.push(bytes[i]);
+                i += 1;
+            }
         } else {
             out.push(bytes[i]);
             i += 1;
@@ -126,11 +130,28 @@ fn quoted_end(bytes: &[u8], start: usize, quote: u8) -> usize {
     i
 }
 
-fn is_char_literal_start(bytes: &[u8], i: usize) -> bool {
-    !matches!(
-        bytes.get(i + 1),
-        Some(b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'0'..=b'9')
-    )
+fn char_literal_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut i = start + 1;
+    if i >= bytes.len() || bytes[i] == b'\n' || bytes[i] == b'\r' {
+        return None;
+    }
+    if bytes[i] == b'\\' {
+        let end = quoted_end(bytes, start, b'\'');
+        return (end <= bytes.len()).then_some(end);
+    }
+    i += 1;
+    while i < bytes.len() && is_utf8_continuation(bytes[i]) {
+        i += 1;
+    }
+    if bytes.get(i) == Some(&b'\'') {
+        Some(i + 1)
+    } else {
+        None
+    }
+}
+
+fn is_utf8_continuation(byte: u8) -> bool {
+    (byte & 0b1100_0000) == 0b1000_0000
 }
 
 fn raw_string_end(bytes: &[u8], i: usize) -> Option<usize> {

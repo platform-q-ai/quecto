@@ -589,9 +589,13 @@ impl Graph {
                 if hits.len() >= limit {
                     return hits;
                 }
+                if calls_only && is_function_declaration_at(hay, m.start()) {
+                    continue;
+                }
+                let match_start = m.start();
                 hits.push(hit_for(
                     f,
-                    m.start(),
+                    match_start,
                     m.end(),
                     snippet_lines,
                     if calls_only {
@@ -604,6 +608,22 @@ impl Graph {
         }
         hits
     }
+}
+
+fn is_function_declaration_at(hay: &str, match_start: usize) -> bool {
+    let line_start = hay[..match_start].rfind('\n').map_or(0, |idx| idx + 1);
+    let prefix = &hay[line_start..match_start];
+    let trimmed = prefix.trim_end();
+    trimmed.ends_with("fn")
+        && trimmed
+            .trim_end_matches("fn")
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_rust_ident_continue(ch))
+}
+
+fn is_rust_ident_continue(ch: char) -> bool {
+    ch == '_' || ch.is_alphanumeric()
 }
 
 #[cfg(test)]

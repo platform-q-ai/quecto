@@ -32,6 +32,8 @@ fn helper() {}
 fn mentioned_in_code() {}
 // fn mentioned_in_comment() {}
 const S: &str = "mentioned_in_string()";
+const C: char = 'a';
+pub fn after_char_literal() {}
 pub fn unsafe_holder() { unsafe
 { std::ptr::read(1 as *const i32); } }
 "#,
@@ -194,20 +196,40 @@ async fn depth_and_include_bodies_controls_are_exercised() {
             .is_empty()
     );
 
-    let without_bodies = call(&tool, r#"{"action":"query","query":"functions","limit":5}"#).await;
+    let without_bodies = call(
+        &tool,
+        r#"{"action":"query","query":"functions","limit":20}"#,
+    )
+    .await;
+    let without_body_results = without_bodies["results"].as_array().unwrap();
     assert!(
-        !without_bodies["results"][0]["snippet"]
-            .as_str()
-            .unwrap()
-            .contains("std::ptr::read")
+        without_body_results
+            .iter()
+            .any(|result| result["name"] == "unsafe_holder")
+    );
+    assert!(
+        without_body_results
+            .iter()
+            .all(|result| result["snippet"].as_str().unwrap().is_empty())
     );
 
     let with_bodies = call(
         &tool,
-        r#"{"action":"query","query":"functions","include_bodies":true,"limit":5}"#,
+        r#"{"action":"query","query":"functions","include_bodies":true,"limit":20}"#,
     )
     .await;
-    assert!(with_bodies.to_string().contains("std::ptr::read"));
+    let unsafe_holder = with_bodies["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|result| result["name"] == "unsafe_holder")
+        .unwrap();
+    assert!(
+        unsafe_holder["snippet"]
+            .as_str()
+            .unwrap()
+            .contains("std::ptr::read")
+    );
 
     let no_snippet = call(
         &tool,
@@ -395,7 +417,14 @@ async fn references_to_selected_symbol_cover_resolved_path() {
         .iter()
         .map(|value| value["line"].as_u64().unwrap())
         .collect();
-    assert_eq!(call_lines, vec![7, 8, 9]);
+    assert_eq!(call_lines, vec![7, 8]);
+    assert!(
+        call_candidates["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|value| value["snippet"].as_str().unwrap().contains("helper();"))
+    );
 }
 
 #[tokio::test]
@@ -403,7 +432,7 @@ async fn masking_handles_raw_strings_lifetimes_and_non_ascii_offsets() {
     let (tool, tmp) = tool_with_workspace();
     std::fs::write(
         tmp.path().join("src/unicode.rs"),
-        "pub fn café() {}\nconst RAW: &str = r#\"fn fake_raw() {}\"#;\nfn lifetime_arg(x: &'static str) {}\nfn after_lifetime() {}\n",
+        "pub fn café() {}\nconst RAW: &str = r#\"fn fake_raw() {}\"#;\nfn lifetime_arg(x: &'static str) {}\nfn after_lifetime() {}\nconst CHAR_LITERAL: char = 'a';\npub fn after_char_literal_in_extra_file() {}\n",
     )
     .unwrap();
 
@@ -420,6 +449,13 @@ async fn masking_handles_raw_strings_lifetimes_and_non_ascii_offsets() {
     )
     .await;
     assert_eq!(after["matches"].as_array().unwrap().len(), 1);
+
+    let after_char = call(
+        &tool,
+        r#"{"action":"find_symbol","symbol":"after_char_literal_in_extra_file","limit":10}"#,
+    )
+    .await;
+    assert_eq!(after_char["matches"].as_array().unwrap().len(), 1);
 
     let accented = call(
         &tool,
@@ -558,6 +594,38 @@ async fn numeric_context_controls_are_clamped_at_documented_bounds() {
     assert_eq!(
         snippet_max["results"][0]["snippet"],
         snippet_above_max["results"][0]["snippet"]
+    );
+}
+
+#[tokio::test]
+async fn file_collection_stops_at_global_rust_file_limit() {
+    let (tool, tmp) = tool_with_workspace();
+    let first = tmp.path().join("src/limit_a");
+    let second = tmp.path().join("src/limit_b");
+    std::fs::create_dir_all(&first).unwrap();
+    std::fs::create_dir_all(&second).unwrap();
+    for idx in 0..crate::infrastructure::tools::rust_ast_graph_parse::MAX_RUST_FILES {
+        std::fs::write(
+            first.join(format!("generated_{idx}.rs")),
+            "fn generated() {}\n",
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        second.join("should_not_overflow.rs"),
+        "fn should_not_overflow() {}\n",
+    )
+    .unwrap();
+
+    let overview = call(&tool, r#"{"action":"overview","path":"src","limit":1}"#).await;
+    assert_eq!(
+        overview["files"].as_u64().unwrap(),
+        crate::infrastructure::tools::rust_ast_graph_parse::MAX_RUST_FILES as u64
+    );
+    assert!(
+        overview
+            .to_string()
+            .contains("stopped after MAX_RUST_FILES=2000")
     );
 }
 

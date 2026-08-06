@@ -21,6 +21,7 @@ struct TraversalBudget {
     visited_dirs: usize,
     scanned_entries: usize,
     exhausted: bool,
+    file_limit_reported: bool,
 }
 
 struct CollectContext<'a> {
@@ -172,6 +173,10 @@ fn collect_rs(path: &Path, ctx: &mut CollectContext<'_>) -> Result<(), String> {
     let entries = std::fs::read_dir(&validated)
         .map_err(|e| format!("failed to read {}: {e}", validated.display()))?;
     for entry in entries.flatten() {
+        if ctx.out.len() >= MAX_RUST_FILES {
+            report_file_limit(&validated, ctx);
+            break;
+        }
         if ctx.budget.scanned_entries >= MAX_SCANNED_ENTRIES {
             if !ctx.budget.exhausted {
                 ctx.diagnostics.push(Diagnostic {
@@ -189,6 +194,10 @@ fn collect_rs(path: &Path, ctx: &mut CollectContext<'_>) -> Result<(), String> {
             continue;
         }
         if p.is_dir() {
+            if ctx.out.len() >= MAX_RUST_FILES {
+                report_file_limit(&validated, ctx);
+                break;
+            }
             if let Err(e) = collect_rs(&p, ctx) {
                 ctx.diagnostics.push(Diagnostic {
                     file: rel_path(&p, ctx.workspace),
@@ -199,14 +208,21 @@ fn collect_rs(path: &Path, ctx: &mut CollectContext<'_>) -> Result<(), String> {
             push_candidate(&p, ctx.sandbox, ctx.out, ctx.diagnostics);
         }
         if ctx.out.len() >= MAX_RUST_FILES {
-            ctx.diagnostics.push(Diagnostic {
-                file: rel_path(&validated, &validated),
-                message: format!("stopped after MAX_RUST_FILES={MAX_RUST_FILES}"),
-            });
+            report_file_limit(&validated, ctx);
             break;
         }
     }
     Ok(())
+}
+
+fn report_file_limit(dir: &Path, ctx: &mut CollectContext<'_>) {
+    if !ctx.budget.file_limit_reported {
+        ctx.diagnostics.push(Diagnostic {
+            file: rel_path(dir, ctx.workspace),
+            message: format!("stopped after MAX_RUST_FILES={MAX_RUST_FILES}"),
+        });
+        ctx.budget.file_limit_reported = true;
+    }
 }
 
 fn is_skipped_dir(name: &str) -> bool {
@@ -230,6 +246,9 @@ fn push_candidate(
     out: &mut Vec<PathBuf>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    if out.len() >= MAX_RUST_FILES {
+        return;
+    }
     match sandbox.validate_path(&path.to_string_lossy()) {
         Ok(validated) => out.push(validated),
         Err(e) => diagnostics.push(Diagnostic {
