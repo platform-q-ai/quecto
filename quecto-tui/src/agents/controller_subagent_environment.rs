@@ -171,6 +171,30 @@ impl App {
         )
     }
 
+    /// Head-anchored overflow clamp for the environment body (PR #1401
+    /// review): unlike the conversation's tail-anchored auto-scroll, the
+    /// container pane keeps its head — the "Container environment" header and
+    /// the container-info disclaimer must never be the lines that drop — and
+    /// elides the member-roster tail with a marker instead.
+    pub(crate) fn clamp_environment_body(
+        mut lines: Vec<String>,
+        chat_height: usize,
+    ) -> Vec<String> {
+        if lines.len() <= chat_height {
+            return lines;
+        }
+        if chat_height == 0 {
+            lines.clear();
+            return lines;
+        }
+        let hidden = lines.len() + 1 - chat_height;
+        lines.truncate(chat_height - 1);
+        lines.push(theme::dim(&format!(
+            "… {hidden} more container-info lines — resize to see all"
+        )));
+        lines
+    }
+
     /// The selected environment's main-pane BODY (#1369 follow-up): container
     /// information only, replacing the conversation area entirely. Renders a
     /// clear container-info header plus the member roster, so the pane cannot
