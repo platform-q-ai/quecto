@@ -4,7 +4,7 @@
 # Contract (see docs/container-runtimes.md):
 #   create-argv... -- <child-binary> <child-args...>
 # Environment: QUECTO_CONTAINER_REPO, QUECTO_CONTAINER_SCRIPT,
-#              QUECTO_CONTAINER_ENVIRONMENT_REF, QUECTO_BASE_DIR
+#              QUECTO_CONTAINER_ENVIRONMENT_REF
 #
 # This reference runtime is host-local: it checks the repository out into a
 # per-environment workspace under --state-dir and starts the child directly on
@@ -66,6 +66,11 @@ mkdir -p -m 700 "$state_dir"
 # 700, and a hard failure instead of silently reusing (or following a symlink
 # planted at) a pre-existing path.
 env_dir="$(mktemp -d "$state_dir/env-XXXXXXXXXX")" || die "failed to create environment dir under $state_dir"
+# Rollback on any later failure: an environment that was never reported to
+# Quecto can never be reached by the `cleanup` operation, so a partial
+# creation (e.g. a failed clone) must remove its own state instead of
+# leaking one directory per failure.
+trap 'rm -rf "$env_dir"' ERR
 environment_id="$(basename "$env_dir")"
 workspace_path="$env_dir/workspace"
 mkdir "$workspace_path"
@@ -80,8 +85,10 @@ git clone --quiet -- "$QUECTO_CONTAINER_REPO" "$workspace_path/repo"
 # A real adapter creates the isolated environment here (e.g. `docker run`
 # with the workspace mounted) and starts the child inside it EXACTLY once,
 # with the socket path shared back to the host. The host-local reference
-# starts the child directly. Quecto never starts a fallback child itself.
-"$@" >/dev/null 2>&1 &
+# starts the child directly, INSIDE the environment's checkout so the agent
+# genuinely operates in its isolated workspace. Quecto never starts a
+# fallback child itself.
+(cd "$workspace_path/repo" && exec "$@") >/dev/null 2>&1 &
 child_pid=$!
 # ------------------------------------------------------------------------
 

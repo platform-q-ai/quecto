@@ -273,7 +273,11 @@ environment directory is minted with `mktemp -d` — an unpredictable name
 that fails hard rather than reuse (or follow a symlink planted at) an
 existing path. `create.sh` checks the repository out into
 `<state>/<environment_id>/workspace/repo` and starts the child directly on
-the host; `exec.sh` starts a joining child sharing that workspace;
+the host with the checkout as its working directory, so the agent genuinely
+operates inside its isolated workspace; a failure after state allocation
+(e.g. a failed clone) rolls the partially created environment directory back
+so nothing unreachable by `cleanup` is ever leaked. `exec.sh` starts a
+joining child in that same checkout;
 `inspect.sh` reports whether any recorded child is still alive; `kill.sh`
 serves both the `kill` and `cleanup` operations, distinguished by
 `--op kill` / `--op cleanup`, and performs trusted-root containment (the

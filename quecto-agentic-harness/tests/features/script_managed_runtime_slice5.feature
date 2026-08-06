@@ -22,6 +22,16 @@ Feature: Canonical container-runtime scripts and multi-PR orchestration
     And the canonical runtime should have recorded exactly 1 create invocation
     And child "canon-create-slice5" should receive "CANON_CREATE_MARKER"
     And the workspace checkout for "canon-create-slice5" should contain repository marker "REPO_A_MARKER"
+    And the child process for "canon-create-slice5" should be running inside its environment checkout
+
+  @done @container-runtime
+  Scenario: A failed creation rolls its canonical environment state back
+    Given repository fixtures "repo-a" and "repo-b" exist
+    And the canonical container-runtime script set is configured
+    And the parent session's repository is fixture "repo-a"
+    When I spawn canonical subagent "canon-fail-slice5" for a missing repository with task "CANON_FAIL_MARKER"
+    Then the spawn result should be a canonical create failure
+    And the canonical state root should contain no environment directories
 
   @done @container-runtime
   Scenario: Two PR environments in one repository get distinct refs and workspaces
@@ -63,6 +73,8 @@ Feature: Canonical container-runtime scripts and multi-PR orchestration
     And subagents "canon-impl-slice5" and "canon-reviewer-slice5" should share environment reference "C1"
     And subagents "canon-impl-slice5" and "canon-reviewer-slice5" should share the same workspace
     And the workspace checkout for "canon-reviewer-slice5" should contain repository marker "REPO_A_MARKER"
+    And the canonical exec invocations should target the environment of "canon-impl-slice5"
+    And the child process for "canon-reviewer-slice5" should be running inside its environment checkout
 
   @done @container-runtime
   Scenario: kill_container tears an environment down through the canonical kill script

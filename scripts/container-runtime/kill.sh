@@ -62,7 +62,11 @@ printf '%s\n' "$op" >>"$env_dir/kill.log"
 # `docker rm -f`). The host-local reference terminates every recorded
 # child process and removes the checked-out workspace.
 if [ -f "$env_dir/children.jsonl" ]; then
-  # One jq pass over the whole record, not one fork per line.
+  # One jq pass over the whole record, not one fork per line. A jq parse
+  # failure yields no pids and the loop is a no-op by design. Reference
+  # caveat: recorded pids can be reused by unrelated same-user processes on
+  # long-lived environments; a real adapter kills the runtime container (a
+  # stable handle) instead of raw pids.
   while IFS= read -r pid; do
     kill -9 "$pid" 2>/dev/null || true
   done < <(jq -r '.pid' "$env_dir/children.jsonl")

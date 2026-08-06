@@ -245,6 +245,133 @@ fn given_canonical_running_repo(
     );
 }
 
+#[when(expr = "I spawn canonical subagent {string} for a missing repository with task {string}")]
+fn when_spawn_canonical_missing_repo(world: &mut QuectoWorld, agent_id: String, task: String) {
+    let missing = base_path(world).join("fixtures").join("does-not-exist");
+    spawn_env_steps::execute_env_spawn(
+        world,
+        &agent_id,
+        serde_json::json!({
+            "agent_id": agent_id,
+            "task": task,
+            "container": {"mode": "new", "repo": missing.to_string_lossy()},
+            "read_only": false,
+        }),
+    );
+}
+
+#[then("the spawn result should be a canonical create failure")]
+fn then_canonical_create_failed(world: &mut QuectoWorld) {
+    let result = world.spawn_result.as_ref().expect("spawn result");
+    assert!(
+        result.is_error,
+        "expected canonical create failure, got success: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains("create failed"),
+        "expected a create-phase failure, got: {}",
+        result.content
+    );
+}
+
+#[then("the canonical state root should contain no environment directories")]
+fn then_canonical_state_empty(world: &mut QuectoWorld) {
+    // The create script's ERR trap must have rolled back the partially
+    // created environment: a directory Quecto was never told about could
+    // never be reached by the `cleanup` operation.
+    let state = canonical_state_dir(world);
+    let leftover: Vec<_> = std::fs::read_dir(&state)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|e| e.path().is_dir())
+                .map(|e| e.path())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        leftover.is_empty(),
+        "failed create leaked environment state under {}: {leftover:?}",
+        state.display()
+    );
+}
+
+#[then(expr = "the canonical exec invocations should target the environment of {string}")]
+fn then_canonical_exec_targets(world: &mut QuectoWorld, agent_id: String) {
+    // exec.sh logs the QUECTO_CONTAINER_ENVIRONMENT_ID it was invoked with;
+    // every recorded join must name the create-reported id of this agent's
+    // environment, so a join routed at the wrong environment cannot pass.
+    let expected = env_state_dir_for(world, &agent_id)
+        .file_name()
+        .expect("environment dir name")
+        .to_string_lossy()
+        .to_string();
+    let log = canonical_state_dir(world).join("execs.log");
+    let recorded = std::fs::read_to_string(&log)
+        .unwrap_or_else(|e| panic!("no canonical exec log {}: {e}", log.display()));
+    let lines: Vec<_> = recorded.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert!(
+        !lines.is_empty(),
+        "no canonical exec invocations recorded in {}",
+        log.display()
+    );
+    for line in &lines {
+        assert_eq!(
+            line.trim(),
+            expected,
+            "canonical exec targeted environment {line} instead of {expected}"
+        );
+    }
+}
+
+#[then(expr = "the child process for {string} should be running inside its environment checkout")]
+fn then_child_runs_in_checkout(world: &mut QuectoWorld, agent_id: String) {
+    // Runtime evidence, not a test-side disk read: the recorded child pid's
+    // /proc cwd must resolve to the environment's checkout, proving the agent
+    // process genuinely operates inside its isolated workspace.
+    let uuid = world
+        .agent_spawn_uuids
+        .get(&agent_id)
+        .unwrap_or_else(|| {
+            panic!(
+                "no captured uuid for {agent_id}: {:?}",
+                world.agent_spawn_uuids
+            )
+        })
+        .clone();
+    let env_dir = env_state_dir_for(world, &agent_id);
+    let children = env_dir.join("children.jsonl");
+    let text = std::fs::read_to_string(&children)
+        .unwrap_or_else(|e| panic!("no canonical children record {}: {e}", children.display()));
+    let pid = text
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| {
+            v["socket"]
+                .as_str()
+                .is_some_and(|socket| socket.contains(uuid.as_str()))
+        })
+        .and_then(|v| v["pid"].as_i64())
+        .unwrap_or_else(|| {
+            panic!("no recorded canonical child pid for {agent_id} ({uuid}): {text}")
+        });
+    let cwd = std::fs::read_link(format!("/proc/{pid}/cwd"))
+        .unwrap_or_else(|e| panic!("cannot read cwd of canonical child pid {pid}: {e}"));
+    let checkout = env_dir
+        .join("workspace")
+        .join("repo")
+        .canonicalize()
+        .expect("canonical checkout path");
+    assert_eq!(
+        cwd.canonicalize().unwrap_or(cwd.clone()),
+        checkout,
+        "canonical child for {agent_id} runs in {} instead of its checkout {}",
+        cwd.display(),
+        checkout.display()
+    );
+}
+
 #[when(expr = "the canonical child {string} is killed behind Quecto's back")]
 fn when_canonical_child_killed(world: &mut QuectoWorld, agent_id: String) {
     let uuid = world

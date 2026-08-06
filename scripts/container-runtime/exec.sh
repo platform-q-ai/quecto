@@ -39,8 +39,19 @@ done
 [ "$#" -gt 0 ] || die "missing child command after --"
 [ -n "${QUECTO_CONTAINER_ENVIRONMENT_ID:-}" ] || die "QUECTO_CONTAINER_ENVIRONMENT_ID must be set"
 
+# Same trusted-root containment as kill.sh: reject path-shaped ids and prove
+# the environment directory resolves under the trusted state root before use.
+case "$QUECTO_CONTAINER_ENVIRONMENT_ID" in
+*/* | *..*) die "invalid environment id: $QUECTO_CONTAINER_ENVIRONMENT_ID" ;;
+esac
 env_dir="$state_dir/$QUECTO_CONTAINER_ENVIRONMENT_ID"
 [ -d "$env_dir" ] || die "unknown environment: $QUECTO_CONTAINER_ENVIRONMENT_ID"
+state_root="$(cd "$state_dir" && pwd -P)"
+env_real="$(cd "$env_dir" && pwd -P)"
+case "$env_real" in
+"$state_root"/*) ;;
+*) die "refusing to use $env_real outside trusted root $state_root" ;;
+esac
 
 socket_path=""
 prev=""
@@ -53,11 +64,17 @@ for arg in "$@"; do
 done
 [ -n "$socket_path" ] || die "child command has no --socket argument"
 
+# The joining child runs inside the environment's checkout (workspace/repo
+# when create.sh cloned a repository, else the bare workspace).
+workdir="$env_dir/workspace/repo"
+[ -d "$workdir" ] || workdir="$env_dir/workspace"
+[ -d "$workdir" ] || die "environment has no workspace: $QUECTO_CONTAINER_ENVIRONMENT_ID"
+
 # --- Runtime-specific section -------------------------------------------
 # A real adapter starts the child INSIDE the existing environment here
 # (e.g. `docker exec`) exactly once. The host-local reference starts it
-# directly; it shares the environment's checked-out workspace.
-"$@" >/dev/null 2>&1 &
+# directly, in the environment's shared checkout.
+(cd "$workdir" && exec "$@") >/dev/null 2>&1 &
 child_pid=$!
 # ------------------------------------------------------------------------
 

@@ -32,8 +32,19 @@ done
 [ -n "$state_dir" ] || die "--state-dir is required"
 [ -n "${QUECTO_CONTAINER_ENVIRONMENT_ID:-}" ] || die "QUECTO_CONTAINER_ENVIRONMENT_ID must be set"
 
+# Same trusted-root containment as kill.sh: reject path-shaped ids and prove
+# the environment directory resolves under the trusted state root before use.
+case "$QUECTO_CONTAINER_ENVIRONMENT_ID" in
+*/* | *..*) die "invalid environment id: $QUECTO_CONTAINER_ENVIRONMENT_ID" ;;
+esac
 env_dir="$state_dir/$QUECTO_CONTAINER_ENVIRONMENT_ID"
 [ -d "$env_dir" ] || die "unknown environment: $QUECTO_CONTAINER_ENVIRONMENT_ID"
+state_root="$(cd "$state_dir" && pwd -P)"
+env_real="$(cd "$env_dir" && pwd -P)"
+case "$env_real" in
+"$state_root"/*) ;;
+*) die "refusing to inspect $env_real outside trusted root $state_root" ;;
+esac
 
 printf 'inspect\n' >>"$env_dir/inspect.log"
 
@@ -42,7 +53,9 @@ printf 'inspect\n' >>"$env_dir/inspect.log"
 # host-local reference checks the recorded child pids.
 status="dead"
 if [ -f "$env_dir/children.jsonl" ]; then
-  # One jq pass over the whole record, not one fork per line.
+  # One jq pass over the whole record, not one fork per line. A jq parse
+  # failure yields no pids, degrading to "dead" by design (truthful for a
+  # corrupted record: nothing provably alive).
   while IFS= read -r pid; do
     if kill -0 "$pid" 2>/dev/null; then
       status="running"
