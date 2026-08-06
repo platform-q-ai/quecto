@@ -3,35 +3,17 @@
 // Connects to child agent UDS sockets directly from Rust — no ncat, no socat,
 // no bash intermediary.  Uses the framed JSON protocol from
 // `src/interface/cli/protocol.rs`.
-//
-// Extended with `await` command (#612) that blocks until a sub-agent reaches a
-// terminal state (idle, exited, timeout, or error).
-//
-// Short-term: `await` stays implemented and dispatchable, but is **hidden from
-// the model-facing tool schema/description** so agents default to passive
-// completion notes + get_messages. Flip [`AWAIT_VISIBLE_IN_SCHEMA`] to `true`
-// (and restore the await wording in `definition` / `spawn`) to re-advertise it.
-
-use std::future::Future;
-use std::pin::Pin;
-use std::time::Duration;
 
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use std::future::Future;
+use std::pin::Pin;
 
 // Re-export shared types for external consumers.
 pub use super::subagent_registry::{
-    ActiveAwaits, AwaitResult, ExitSignalRx, SubagentEntry, SubagentRegistry, WorkflowSnapshot,
-    new_active_awaits, new_registry, validate_agent_id_format,
+    ExitSignalRx, SubagentEntry, SubagentRegistry, WorkflowSnapshot, new_registry,
+    validate_agent_id_format,
 };
-
-#[path = "agent_cmd_await.rs"]
-mod agent_cmd_await;
-
-/// When `false`, `await` is omitted from the `agent_cmd` tool schema and
-/// description (model cannot discover it). Implementation and dispatch remain.
-/// Set to `true` to re-advertise blocking await to the LLM.
-const AWAIT_VISIBLE_IN_SCHEMA: bool = false;
 
 /// Supported commands for interacting with a subagent.
 const SUPPORTED_COMMANDS: &[&str] = &[
@@ -40,7 +22,6 @@ const SUPPORTED_COMMANDS: &[&str] = &[
     "follow_up",
     "abort",
     "kill",
-    "await",
     "get_state",
     "get_messages",
     "get_session_stats",
@@ -54,21 +35,6 @@ const SUPPORTED_COMMANDS: &[&str] = &[
     "clear_history",
 ];
 
-/// Default timeout for `await` command (seconds).
-const AWAIT_DEFAULT_TIMEOUT: u64 = 300;
-
-/// Maximum allowed timeout for `await` command (1 hour). Prevents DoS from
-/// unbounded blocking when a hallucinating LLM passes u64::MAX.
-const AWAIT_MAX_TIMEOUT: u64 = 3600;
-
-/// Default idle_timeout for `await` command (seconds).
-const AWAIT_DEFAULT_IDLE_TIMEOUT: u64 = 5;
-
-/// Polling interval for checking subagent status during `await` (milliseconds).
-/// Exit signals are handled via `tokio::select!` for instant wakeup, so this
-/// only affects idle-timeout and registry-status polling.
-const AWAIT_POLL_INTERVAL_MS: u64 = 500;
-
 /// Tool that sends UDS commands to spawned subagents.
 ///
 /// Looks up the socket path from a shared [`SubagentRegistry`], connects,
@@ -78,8 +44,6 @@ const AWAIT_POLL_INTERVAL_MS: u64 = 500;
 pub struct AgentCmdTool {
     /// Shared registry populated by [`super::spawn::SpawnTool`].
     registry: SubagentRegistry,
-    /// Tracks active `await` calls to prevent duplicates (#612).
-    active_awaits: ActiveAwaits,
     /// Broadcast channel used to announce a `subagent_state_changed` survivor set
     /// when `kill` cascade-removes an agent's sub-tree, so connected clients (the
     /// TUI panel) drop the dead agents promptly (#831).
@@ -95,17 +59,6 @@ impl AgentCmdTool {
     pub fn new(registry: SubagentRegistry) -> Self {
         Self {
             registry,
-            active_awaits: new_active_awaits(),
-            broadcast_tx: None,
-            environment_control: None,
-        }
-    }
-
-    /// Create with both a registry and a shared active_awaits tracker.
-    pub fn with_active_awaits(registry: SubagentRegistry, active_awaits: ActiveAwaits) -> Self {
-        Self {
-            registry,
-            active_awaits,
             broadcast_tx: None,
             environment_control: None,
         }
@@ -136,11 +89,6 @@ impl AgentCmdTool {
     /// Create a new empty registry (convenience for tests and wiring).
     pub fn new_registry() -> SubagentRegistry {
         new_registry()
-    }
-
-    /// Return a reference to the active awaits tracker (for testing / wiring).
-    pub fn active_awaits(&self) -> &ActiveAwaits {
-        &self.active_awaits
     }
 
     /// Parse arguments and build the JSON command to send. Test-only wrapper
@@ -279,18 +227,15 @@ impl AgentCmdTool {
                 serde_json::json!({"type": "get_tool_catalogue"})
             }
             "kill" => return Err("kill command is handled locally, not via UDS".to_string()),
-            "await" => return Err("await command is handled locally, not via UDS".to_string()),
             _ => unreachable!(), // Covered by SUPPORTED_COMMANDS check above.
         };
 
         Ok((agent_id, json_cmd.to_string(), command))
     }
 
-    /// Handle commands that are executed locally (not via UDS) (#559, #612).
+    /// Handle commands that are executed locally (not via UDS) (#559).
     /// Returns `Some(result)` if the command was handled synchronously,
     /// `None` to fall through to UDS dispatch.
-    /// For async local commands (await), returns `None` but sets a flag —
-    /// the caller must check `is_await_command` separately.
     fn try_local_command(&self, args: &serde_json::Value) -> Option<ToolResult> {
         let command = args.get("command").and_then(|v| v.as_str())?;
         if command == "get_subagents_all" {
@@ -335,21 +280,6 @@ impl AgentCmdTool {
             command,
             "prompt" | "steer" | "follow_up" | "abort" | "set_model" | "clear_history"
         )
-    }
-
-    /// Check if the arguments specify an `await` command. Test-only wrapper over
-    /// [`is_await_value`]; the dispatch path parses once and calls it directly.
-    #[cfg(test)]
-    fn is_await_command(arguments: &str) -> bool {
-        serde_json::from_str::<serde_json::Value>(arguments)
-            .ok()
-            .as_ref()
-            .is_some_and(Self::is_await_value)
-    }
-
-    /// Check if the already-parsed arguments specify an `await` command.
-    fn is_await_value(args: &serde_json::Value) -> bool {
-        args.get("command").and_then(|c| c.as_str()) == Some("await")
     }
 
     /// List every subagent currently tracked by this parent agent's registry.
@@ -450,8 +380,7 @@ impl AgentCmdTool {
             if id == &registry_key {
                 killed_pid = entry.pid;
             }
-            // Signal any waiting `await` call so it returns "exited" instead of
-            // spinning until timeout (#612).
+            // Signal any lifecycle observers that the process exited.
             if let Some(ref tx) = entry.exit_signal_tx {
                 let _ = tx.send(Some(super::subagent_registry::ExitSignal {
                     exit_code: None,
@@ -477,75 +406,17 @@ impl AgentCmdTool {
     }
 }
 
-/// RAII guard that removes the agent_id from active_awaits when dropped (#612).
-struct AwaitGuard {
-    active_awaits: ActiveAwaits,
-    agent_id: String,
-}
-
-impl Drop for AwaitGuard {
-    fn drop(&mut self) {
-        let mut active = self.active_awaits.lock().unwrap_or_else(|e| e.into_inner());
-        active.remove(&self.agent_id);
-    }
-}
-
 use super::subagent_registry::send_subagent_uds_command as send_uds_command;
 use super::subagent_registry::send_subagent_uds_command_with_timeout as send_uds_command_with_timeout;
 
 impl Tool for AgentCmdTool {
     fn definition(&self) -> ToolDefinition {
-        // Schema/description only — see AWAIT_VISIBLE_IN_SCHEMA. Dispatch still
-        // accepts await when the model invents the command name.
-        let (description, parameters_schema) = if AWAIT_VISIBLE_IN_SCHEMA {
-            (
-                "Send a command to a spawned subagent. \
-                Supported commands: prompt, steer, follow_up, abort, kill, await, \
-                get_state, get_messages, get_session_stats, \
-                get_subagents, get_subagents_all, get_containers, kill_container, \
-                get_tool_catalogue, set_model, clear_history. \
-                Spawned subagents are auto-noted PASSIVELY: a one-line completion \
-                note arrives WITHOUT blocking and enters your context at your NEXT \
-                turn, so await is OPTIONAL. Use await only when you must BLOCK \
-                synchronously until the sub-agent reaches idle, exited, timeout, or \
-                error before continuing within the SAME turn; awaiting a completion \
-                suppresses its duplicate auto-note. Either way, read the child's \
-                output explicitly with get_messages — it returns the NEWEST bounded \
-                history page (count for the last N); when the response reports \
-                hasMoreBefore:true, pass its before cursor to page older history — \
-                the note/await summary is one line, not the result. \
-                get_state is the live/in-flight supervision API: it reports execution \
-                phase, current/recent tool activity, progress, model, effort, and message \
-                count. get_messages is the stable committed transcript API, intended for \
-                full or end-of-turn output inspection. Busy responses are tagged \
-                snapshot:true; transcript data may lag the active turn.",
-                r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent; use '*' for command=get_subagents_all"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","await","get_state","get_messages","get_session_stats","get_subagents","get_subagents_all","get_containers","kill_container","get_tool_catalogue","set_model","set_effort","clear_history"],"description":"Command to send. get_subagents_all lists this parent agent's tracked subagents without targeting a child. kill terminates the subagent process. await blocks until idle, exited, timeout, or error; then inspect output with get_messages (use count for the last N messages)."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages (omit for the newest history page; N for last N)"},"before":{"type":"string","description":"Paging cursor for get_messages (#1061): a message id from a prior response's before field; returns the adjacent older page"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"},"ref":{"type":"string","description":"Environment ref (e.g. C1) for kill_container (agent_id '*')"},"name":{"type":"string","description":"Environment name for kill_container (alternative to ref)"},"timeout":{"type":"integer","description":"Maximum wall-clock seconds to wait for await command (default: 300)"},"idle_timeout":{"type":"integer","description":"Seconds agent must stay idle before await returns (default: 5). Set to 0 for immediate return on first idle."}},"required":["agent_id","command"]}"#,
-            )
-        } else {
-            (
-                "Send a command to a spawned subagent. \
-                Supported commands: prompt, steer, follow_up, abort, kill, \
-                get_state, get_messages, get_session_stats, \
-                get_subagents, get_subagents_all, get_containers, kill_container, \
-                get_tool_catalogue, set_model, clear_history. \
-                COMPLETION SEQUENCE (required): (1) spawn returns when the socket is ready — \
-                do not wait in this turn. (2) End your turn or do other non-blocking parent \
-                work; do NOT poll get_subagents/get_subagents_all/get_state in a loop, do NOT \
-                sleep/bash-wait for the child. (3) On your NEXT turn a passive one-line \
-                completion note arrives automatically. (4) Then agent_cmd get_messages \
-                (count 1-5) for the child's report — the note is not the report. \
-                get_subagents_all is for inventory/cleanup after work, not completion waiting. \
-                get_state is the live/in-flight supervision API (occasional progress/debug, \
-                not a wait loop). get_messages is the stable committed transcript API \
-                (newest bounded history page; count for last N; hasMoreBefore/before pages \
-                older). Busy get_messages may be snapshot:true and lag.",
-                r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent; use '*' for command=get_subagents_all"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","get_state","get_messages","get_session_stats","get_subagents","get_subagents_all","get_containers","kill_container","get_tool_catalogue","set_model","set_effort","clear_history"],"description":"Command to send. After spawn, wait for the passive completion note on a later turn — do not poll get_subagents* or sleep. Then get_messages (count 1-5) for the report. get_subagents_all is inventory/cleanup (agent_id '*'), not a wait loop. kill terminates the child process."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages (omit for the newest history page; N for last N)"},"before":{"type":"string","description":"Paging cursor for get_messages (#1061): a message id from a prior response's before field; returns the adjacent older page"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"},"ref":{"type":"string","description":"Environment ref (e.g. C1) for kill_container (agent_id '*')"},"name":{"type":"string","description":"Environment name for kill_container (alternative to ref)"}},"required":["agent_id","command"]}"#,
-            )
-        };
         ToolDefinition {
             name: "agent_cmd".into(),
-            description: description.into(),
-            parameters_schema: parameters_schema.into(),
+            description: "Send a command to a spawned subagent.                 Supported commands: prompt, steer, follow_up, abort, kill,                 get_state, get_messages, get_session_stats,                 get_subagents, get_subagents_all, get_containers, kill_container,                 get_tool_catalogue, set_model, set_effort, clear_history.                 COMPLETION SEQUENCE (required): (1) spawn returns when the socket is ready —                 do not wait in this turn. (2) End your turn or do other non-blocking parent                 work; do NOT poll get_subagents/get_subagents_all/get_state in a loop, do NOT                 sleep/bash-wait for the child. (3) On your NEXT turn a passive one-line                 completion note arrives automatically. (4) Then agent_cmd get_messages                 (count 1-5) for the child's report — the note is not the report.                 get_subagents_all is for inventory/cleanup after work, not completion waiting.                 get_state is the live/in-flight supervision API (occasional progress/debug,                 not a wait loop). get_messages is the stable committed transcript API                 (newest bounded history page; count for last N; hasMoreBefore/before pages                 older). Busy get_messages may be snapshot:true and lag."
+                .into(),
+            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent; use '*' for command=get_subagents_all"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","get_state","get_messages","get_session_stats","get_subagents","get_subagents_all","get_containers","kill_container","get_tool_catalogue","set_model","set_effort","clear_history"],"description":"Command to send. After spawn, wait for the passive completion note on a later turn — do not poll get_subagents* or sleep. Then get_messages (count 1-5) for the report. get_subagents_all is inventory/cleanup (agent_id '*'), not a wait loop. kill terminates the child process."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages (omit for the newest history page; N for last N)"},"before":{"type":"string","description":"Paging cursor for get_messages (#1061): a message id from a prior response's before field; returns the adjacent older page"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"},"ref":{"type":"string","description":"Environment ref (e.g. C1) for kill_container (agent_id '*')"},"name":{"type":"string","description":"Environment name for kill_container (alternative to ref)"}},"required":["agent_id","command"]}"#
+                .into(),
         }
     }
 
@@ -568,10 +439,6 @@ impl Tool for AgentCmdTool {
                         value,
                     )
                     .await);
-                }
-                // Check for async local commands first (#612).
-                if Self::is_await_value(value) {
-                    return self.execute_await(&args).await;
                 }
                 // Check for sync locally-handled commands (#559).
                 if let Some(result) = self.try_local_command(value) {
@@ -652,9 +519,6 @@ impl Tool for AgentCmdTool {
     }
 }
 
-#[cfg(test)]
-#[path = "agent_cmd_await_exclusion_tests.rs"]
-mod await_exclusion_tests;
 #[cfg(test)]
 #[path = "agent_cmd_definition_tests.rs"]
 mod definition_tests;

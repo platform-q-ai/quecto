@@ -100,7 +100,6 @@ async fn awaiting_indicator_gone_agents_live_in_panel() {
         subagent("other", "running", Some(("active", 1, 3))),
     ]));
 
-    h.event(await_start("worker"));
     let dump = h.dump();
     assert!(
         !dump.contains("awaiting"),

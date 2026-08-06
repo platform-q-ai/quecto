@@ -133,20 +133,6 @@ pub fn apply_lifecycle_event(
     state.status_projection()
 }
 
-/// Apply `event` to a registry entry, recording the event in tests so timeout
-/// and dedupe paths remain falsifiable even when the event is intentionally
-/// state-neutral.
-pub fn apply_lifecycle_event_to_entry(
-    entry: &mut super::subagent_registry::SubagentEntry,
-    event: SubagentLifecycleEvent,
-) -> SubagentStatus {
-    #[cfg(test)]
-    {
-        entry.last_lifecycle_event = Some(event);
-    }
-    apply_lifecycle_event(&mut entry.lifecycle, event)
-}
-
 #[cfg(test)]
 #[path = "subagent_lifecycle_tests.rs"]
 mod tests;

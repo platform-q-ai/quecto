@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -547,11 +547,6 @@ where
     }
 }
 
-// ─── Await support (#612) ────────────────────────────────────────────────────
-// `AwaitResult`, `WorkflowSnapshot`, `WorkflowResult`, `ResultProgress` and the
-// verdict-derivation logic live in the `subagent_await_result` child module
-// (declared near the bottom of this file) to respect the 750-line file cap; they
-// are re-exported below so `subagent_registry::AwaitResult` etc. keep working.
 /// Signal sent by the reaper task when a child process exits.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExitSignal {
@@ -587,14 +582,6 @@ pub type ExitSignalRx = tokio::sync::watch::Receiver<Option<ExitSignal>>;
 
 pub fn new_exit_signal_channel() -> (ExitSignalTx, ExitSignalRx) {
     tokio::sync::watch::channel(None)
-}
-
-/// Tracks which agent_ids have an active `await` call to prevent duplicates.
-pub type ActiveAwaits = Arc<Mutex<HashSet<String>>>;
-
-/// Create a new empty active awaits tracker.
-pub fn new_active_awaits() -> ActiveAwaits {
-    Arc::new(Mutex::new(HashSet::new()))
 }
 
 // ─── Subagent notifications (#523) ───────────────────────────────────────────
@@ -725,9 +712,13 @@ pub fn validate_agent_id_format(agent_id: &str) -> Result<(), String> {
         .ok_or_else(|| "agent_id must use only [a-zA-Z0-9_-]".to_string())
 }
 
-#[path = "subagent_await_result.rs"]
-mod subagent_await_result;
-pub use subagent_await_result::{AwaitResult, ResultProgress, WorkflowResult, WorkflowSnapshot};
+/// Snapshot of workflow state reported by a subagent.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct WorkflowSnapshot {
+    pub mode: String,
+    pub steps_completed: u32,
+    pub steps_total: u32,
+}
 
 #[path = "subagent_snapshot.rs"]
 mod subagent_snapshot;
