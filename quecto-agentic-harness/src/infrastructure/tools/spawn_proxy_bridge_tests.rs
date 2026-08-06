@@ -105,7 +105,7 @@ async fn bridge_one_survives_an_unspawnable_proxy_argv() {
 
 /// #1391 review: a bridged connection that the parent drops must tear down
 /// its proxy process even when the child side never writes — otherwise every
-/// dropped probe/await connection leaks a live proxy for the child's
+/// dropped probe/command connection leaks a live proxy for the child's
 /// lifetime.
 #[tokio::test]
 async fn dropped_connection_tears_down_the_proxy_process() {

@@ -89,7 +89,7 @@ Important invariants before Phase 4:
 
 - spawning returns quickly while monitoring continues asynchronously;
 - child commands are routed over the child's UDS socket when possible;
-- passive completion notes are coalesced and do not duplicate explicit awaits;
+- passive completion notes are coalesced and pair with `agent_cmd get_messages` for result recovery;
 - `get_subagents` reports enough identity/state to rebuild the unit tree; and
 - exited children remain inspectable long enough for result recovery.
 

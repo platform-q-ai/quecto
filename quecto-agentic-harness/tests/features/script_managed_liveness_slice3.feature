@@ -2,7 +2,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
   As a parent agent
   I want script-managed children reachable over direct or proxy endpoints and
   their deaths pushed via EOF with exactly one post-mortem inspect
-  So that container children appear in status/await exactly like local children without polling
+  So that container children appear in status and result inspection exactly like local children without polling
 
   # Slice 3 of #1369: typed direct/proxy parent endpoint, transactional endpoint
   # ownership, EOF-pushed death, exactly-once inspect updating the authoritative

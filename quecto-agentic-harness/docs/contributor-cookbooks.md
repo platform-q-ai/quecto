@@ -252,8 +252,8 @@ or `agent_cmd` surface that exposes it.
 - Read-only spawned reviewers still have `bash`; treat `read_only` as a guard
   against accidental writes, not a sandbox.
 - Preserve result recovery after child exit long enough for inspection.
-- Test races explicitly: completion before await, await before completion, kill
-  during busy, and exit before socket ready.
+- Test races explicitly: passive completion before result inspection, result
+  inspection after exit, kill during busy, and exit before socket ready.
 
 ## Change context policy
 
