@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Official Docker adapter for the Quecto container-runtime contract: `exec` (join).
+#   exec.sh --state-dir <dir> -- <child-binary> <child-args...>
+# Environment: QUECTO_CONTAINER_SCRIPT, QUECTO_CONTAINER_ENVIRONMENT_ID
+#
+# Starts a joining child inside the environment's existing container via
+# `docker exec`, in the environment's checkout. The joiner's socket lives
+# in the same parent socket dir that create identity-mounted, so it is
+# reachable from the host without extra mounts.
+set -euo pipefail
+
+log() { printf 'container-runtime-docker exec: %s\n' "$*" >&2; }
+die() {
+  log "$@"
+  exit 1
+}
+
+command -v jq >/dev/null 2>&1 || die "jq is required to encode the exec result"
+command -v docker >/dev/null 2>&1 || die "docker is required"
+
+state_dir=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+  --state-dir)
+    [ "$#" -ge 2 ] || die "--state-dir needs a value"
+    state_dir="$2"
+    shift 2
+    ;;
+  --)
+    shift
+    break
+    ;;
+  *) die "unknown argument: $1" ;;
+  esac
+done
+[ -n "$state_dir" ] || die "--state-dir is required"
+[ "$#" -gt 0 ] || die "missing child command after --"
+id="${QUECTO_CONTAINER_ENVIRONMENT_ID:-}"
+[ -n "$id" ] || die "QUECTO_CONTAINER_ENVIRONMENT_ID must be set"
+case "$id" in
+*/* | *..*) die "invalid environment id: $id" ;;
+esac
+env_dir="$state_dir/$id"
+[ -d "$env_dir" ] || die "unknown environment: $id"
+resolved="$(cd "$env_dir" && pwd -P)"
+root="$(cd "$state_dir" && pwd -P)"
+case "$resolved" in
+"$root"/*) ;;
+*) die "environment $id escapes the state root" ;;
+esac
+container="$(cat "$env_dir/container")"
+[ -n "$container" ] || die "environment $id has no recorded container"
+running="$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || echo false)"
+[ "$running" = "true" ] || die "container $container for environment $id is not running"
+
+socket_path=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--socket" ]; then
+    socket_path="$arg"
+    break
+  fi
+  prev="$arg"
+done
+[ -n "$socket_path" ] || die "child command has no --socket argument"
+
+workspace_path="$env_dir/workspace"
+workdir="$workspace_path/repo"
+[ -d "$workdir" ] || workdir="$workspace_path"
+
+docker exec -d -w "$workdir" -e "HOME=$HOME" \
+  "$container" "$@"
+
+jq -cn --arg container "$container" --arg socket "$socket_path" \
+  '{container: $container, socket: $socket}' >>"$env_dir/children.jsonl"
+printf '%s\n' "$id" >>"$state_dir/execs.log"
+
+jq -cn --arg socket "$socket_path" --arg container "$container" \
+  '{metadata: {runtime: "docker", container: $container}, socket_path: $socket}'

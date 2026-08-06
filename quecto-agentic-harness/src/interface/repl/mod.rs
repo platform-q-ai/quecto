@@ -315,6 +315,7 @@ pub fn run_repl<R: BufRead, W: Write>(
             restrict_to_workspace: !ctx.flags.no_sandbox
                 && ctx.config.agents.defaults.restrict_to_workspace,
             parent_session_name: ctx.flags.session_name.clone(),
+            parent_config_path: Some(ctx.config_path.to_path_buf()),
             disabled_tools: &[],
             inherited_tool_policy: None,
             workflow: crate::interface::shared::ToolRuntimeWorkflowPolicy::disabled(
@@ -510,6 +511,9 @@ fn build_system_prompt(ctx: &ReplContext<'_>) -> Option<String> {
 /// Context for constructing a REPL session.
 pub struct ReplContext<'a> {
     pub base_dir: &'a Path,
+    /// The path the session's config was loaded from — plumbed into SpawnTool
+    /// as the container-config fallback (#1369 follow-up).
+    pub config_path: &'a Path,
     pub provider: Arc<dyn LlmProvider>,
     pub config: &'a Config,
     pub flags: &'a ReplFlags,

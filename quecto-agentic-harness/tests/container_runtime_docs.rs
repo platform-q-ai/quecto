@@ -29,10 +29,20 @@ const CANONICAL_SCRIPTS: [&str; 4] = [
     "scripts/container-runtime/kill.sh",
 ];
 
+/// The official Docker adapter lives INSIDE the canonical reference-script
+/// path (one canonical path, per the #1369 delivery rule), next to the
+/// CI-exercised host-local set.
+const DOCKER_SCRIPTS: [&str; 4] = [
+    "scripts/container-runtime/docker/create.sh",
+    "scripts/container-runtime/docker/exec.sh",
+    "scripts/container-runtime/docker/inspect.sh",
+    "scripts/container-runtime/docker/kill.sh",
+];
+
 #[test]
 fn canonical_container_runtimes_doc_exists_and_names_the_script_set() {
     let doc = read_workspace_file(CANONICAL_DOC);
-    for script in CANONICAL_SCRIPTS {
+    for script in CANONICAL_SCRIPTS.iter().chain(DOCKER_SCRIPTS.iter()) {
         assert!(
             doc.contains(script),
             "{CANONICAL_DOC} should reference the canonical script {script}"
@@ -96,8 +106,61 @@ fn readme_links_the_canonical_runtime_doc_and_scripts() {
 }
 
 #[test]
+fn docker_adapter_keeps_its_load_bearing_properties() {
+    // Contract needles for the Docker adapter: strict jq-encoded JSON,
+    // identity mounts, rollback, id containment, op logging, and the
+    // QUECTO_BASE_DIR warning (overriding it broke OAuth providers).
+    let create = read_workspace_file(DOCKER_SCRIPTS[0]);
+    for needle in [
+        "QUECTO_DOCKER_IMAGE",
+        "--image",
+        "docker rm -f",
+        "trap",
+        "jq -cn",
+        "HOME=$HOME",
+        "QUECTO_CONTAINER_ENVIRONMENT_REF",
+        "QUECTO_BASE_DIR",
+        "OAuth",
+    ] {
+        assert!(
+            create.contains(needle),
+            "{} should contain {needle}",
+            DOCKER_SCRIPTS[0]
+        );
+    }
+    assert!(
+        !create.contains("QUECTO_BASE_DIR="),
+        "docker create must never override QUECTO_BASE_DIR (credentials/config home)"
+    );
+    let kill = read_workspace_file(DOCKER_SCRIPTS[3]);
+    for needle in [
+        "--op",
+        "kill.log",
+        "docker rm -f",
+        "QUECTO_CONTAINER_ENVIRONMENT_ID",
+    ] {
+        assert!(
+            kill.contains(needle),
+            "{} should contain {needle}",
+            DOCKER_SCRIPTS[3]
+        );
+    }
+    for script in [DOCKER_SCRIPTS[1], DOCKER_SCRIPTS[2], DOCKER_SCRIPTS[3]] {
+        let content = read_workspace_file(script);
+        assert!(
+            content.contains("*/* | *..*)"),
+            "{script} should contain the environment-id containment check"
+        );
+    }
+}
+
+#[test]
 fn canonical_scripts_exist_and_are_executable() {
-    for script in CANONICAL_SCRIPTS {
+    for script in CANONICAL_SCRIPTS
+        .iter()
+        .chain(DOCKER_SCRIPTS.iter())
+        .copied()
+    {
         let path = workspace_file(script);
         assert!(path.is_file(), "{script} should exist");
         let content = fs::read_to_string(&path).unwrap();

@@ -448,9 +448,17 @@ impl App {
         let unpadded_chat_height = height.saturating_sub(bottom_height + top_chrome_height);
         let streaming_vertical_padding = usize::from(unpadded_chat_height > 1);
         let chat_height = unpadded_chat_height.saturating_sub(streaming_vertical_padding);
-        let chat = self.active_chat_mut();
-        chat.set_viewport_height(chat_height);
-        let mut chat_lines = chat.render(width);
+        // Environment selected (#1369 follow-up): the main pane body is
+        // container info ONLY — no parent/agent transcript may render beneath
+        // the environment chrome, so the conversation is suppressed entirely.
+        let mut chat_lines = match self.render_environment_body(width) {
+            Some(body) => body,
+            None => {
+                let chat = self.active_chat_mut();
+                chat.set_viewport_height(chat_height);
+                chat.render(width)
+            }
+        };
 
         // If chat is taller than available space, show only the tail (auto-scroll).
         if chat_lines.len() > chat_height {

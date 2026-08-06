@@ -1,4 +1,6 @@
-//! Step definitions for `tui_environment_grouping.feature` (#1369 slice 4).
+//! Step definitions for `tui_environment_grouping.feature` (#1369 slice 4,
+//! revised by the #1369 follow-up: solo environments render as full groups
+//! and environment selection shows container information only).
 //!
 //! These drive the REAL TUI render path through the headless render harness
 //! (`quecto_tui::shell::app::tui_harness`) and feed sub-agent rosters through
@@ -189,66 +191,48 @@ fn when_sparse_refresh_two(world: &mut TuiWorld, a: String, b: String) {
 // ── Then ─────────────────────────────────────────────────────────────────────
 
 #[then(
-    expr = "the panel row for {string} shows the environment badge {string} between the tree stalk and the name"
+    expr = "the agent {string} is nested beneath the {string} environment row with the last-child connector"
 )]
-fn then_solo_badge(world: &mut TuiWorld, id: String, env_ref: String) {
+fn then_solo_nested(world: &mut TuiWorld, id: String, env_ref: String) {
     let panel = panel(world);
-    let row = panel_rows(&panel)
-        .into_iter()
+    let rows = panel_rows(&panel);
+    let env_idx = rows
+        .iter()
+        .position(|l| is_environment_row(l, &env_ref))
+        .unwrap_or_else(|| panic!("no environment row for {env_ref}:\n{panel}"));
+    let idx = rows
+        .iter()
+        .position(|l| l.contains(&id))
+        .unwrap_or_else(|| panic!("no row for member {id}:\n{panel}"));
+    assert!(
+        idx > env_idx,
+        "member {id} must be listed beneath the environment row:\n{panel}"
+    );
+    assert!(
+        rows[idx].contains('└'),
+        "the solo member must carry the └ last-child connector:\n{}",
+        rows[idx]
+    );
+}
+
+#[then(expr = "no flat root row with an inline environment badge is rendered for {string}")]
+fn then_no_inline_badge(world: &mut TuiWorld, id: String) {
+    let panel = panel(world);
+    let rows = panel_rows(&panel);
+    let row = rows
+        .iter()
         .find(|l| l.contains(&id))
         .unwrap_or_else(|| panic!("no panel row for {id}:\n{panel}"));
-    let stalk = row
-        .find('└')
-        .or_else(|| row.find('├'))
-        .unwrap_or_else(|| panic!("row for {id} has no tree stalk:\n{row}"));
-    let badge = row
-        .find(&env_ref)
-        .unwrap_or_else(|| panic!("row for {id} carries no {env_ref} badge:\n{panel}"));
-    let name = row.find(&id).expect("row contains the agent name");
+    // Format-agnostic shape check: the member row leads with the agent name
+    // directly after the tree stalk — no badge token may sit between them.
     assert!(
-        stalk < badge && badge < name,
-        "badge {env_ref} must sit between the tree stalk and the name:\n{row}"
+        after_stalk(row).starts_with(&id),
+        "member row must place the name directly after the stalk (no inline badge):\n{row}"
     );
-}
-
-#[then(expr = "the panel renders no separate environment row for {string}")]
-fn then_no_separate_env_row(world: &mut TuiWorld, env_ref: String) {
-    let panel = panel(world);
-    let badge_rows: Vec<String> = panel_rows(&panel)
-        .into_iter()
-        .filter(|l| l.contains(&env_ref))
-        .collect();
     assert_eq!(
-        badge_rows.len(),
+        rows.iter().filter(|l| l.contains(&id)).count(),
         1,
-        "a solo environment must occupy exactly one row (the agent's own):\n{panel}"
-    );
-}
-
-#[then(expr = "the panel row keeps the {string} badge")]
-fn then_narrow_badge(world: &mut TuiWorld, env_ref: String) {
-    let panel = panel(world);
-    assert!(
-        panel_rows(&panel).iter().any(|l| l.contains(&env_ref)),
-        "the narrow panel must keep the {env_ref} badge:\n{panel}"
-    );
-}
-
-#[then("the agent name is truncated within the clamped panel width")]
-fn then_narrow_truncation(world: &mut TuiWorld) {
-    // Independent width bound computed from the scenario's stated terminal
-    // size and the spec (fixed 34 clamped to half the terminal) — NOT from the
-    // app's own split, so deleting the clamp fails this step.
-    let cols = world.tui_env_terminal_cols.expect("terminal size given");
-    let bound = usize::min(34, cols / 2);
-    let panel = panel(world);
-    let row = panel_rows(&panel)
-        .into_iter()
-        .find(|l| l.contains('…'))
-        .unwrap_or_else(|| panic!("the long agent name must truncate with an ellipsis:\n{panel}"));
-    assert!(
-        unicode_width::UnicodeWidthStr::width(row.as_str()) <= bound,
-        "the badged row must fit the clamped panel width {bound}:\n{row}"
+        "agent {id} must appear exactly once (nested, never duplicated flat):\n{panel}"
     );
 }
 
@@ -334,19 +318,6 @@ fn then_env_details(world: &mut TuiWorld, env_ref: String) {
     }
 }
 
-#[then(expr = "the panel row for {string} still shows the environment badge {string}")]
-fn then_badge_survives(world: &mut TuiWorld, id: String, env_ref: String) {
-    let panel = panel(world);
-    let row = panel_rows(&panel)
-        .into_iter()
-        .find(|l| l.contains(&id))
-        .unwrap_or_else(|| panic!("no panel row for {id}:\n{panel}"));
-    assert!(
-        row.contains(&env_ref),
-        "the {env_ref} badge must survive a sparse roster refresh (sticky merge):\n{panel}"
-    );
-}
-
 #[then("the panel contains no environment badge or environment row")]
 fn then_no_env_chrome(world: &mut TuiWorld) {
     let panel = panel(world);
@@ -382,5 +353,85 @@ fn then_panel_width(world: &mut TuiWorld) {
         widths,
         std::collections::HashSet::from([34]),
         "every panel line must be exactly 34 columns at a {cols}-wide terminal:\n{panel}"
+    );
+}
+
+#[given(
+    expr = "a TUI on a {int}-column terminal tracking sub-agents {string} and {string} sharing environment {string} with a parent conversation on screen"
+)]
+fn given_shared_env_agents_with_conversation(
+    world: &mut TuiWorld,
+    cols: usize,
+    a: String,
+    b: String,
+    env_ref: String,
+) {
+    init(
+        world,
+        cols,
+        vec![env_agent_json(&a, &env_ref), env_agent_json(&b, &env_ref)],
+    );
+    // Seed the master transcript through the REAL token-stream + turn-end path.
+    drive(world, |h| {
+        h.event(Event::Token {
+            token: "PARENT_CONVERSATION_MARKER".to_string(),
+        });
+        h.event_line(
+            &serde_json::json!({
+                "type": "turn_end",
+                "message": {"role": "assistant", "content": "PARENT_CONVERSATION_MARKER"},
+            })
+            .to_string(),
+        );
+    });
+    let top = drive(world, |h| h.main_pane());
+    assert!(
+        top.contains("PARENT_CONVERSATION_MARKER"),
+        "precondition: the parent conversation renders before selection:\n{top}"
+    );
+}
+
+#[then(
+    expr = "the main pane carries a container-info header and lists the members {string} and {string}"
+)]
+fn then_container_info_pane(world: &mut TuiWorld, a: String, b: String) {
+    let top = drive(world, |h| h.main_pane());
+    assert!(
+        top.contains("Container environment"),
+        "the pane must carry a clear container-info header:\n{top}"
+    );
+    assert!(top.contains("members:"), "member roster renders:\n{top}");
+    for member in [&a, &b] {
+        assert!(
+            top.contains(member.as_str()),
+            "member {member} must be listed in the container info:\n{top}"
+        );
+    }
+}
+
+#[then("the main pane does not render the parent conversation")]
+fn then_no_parent_conversation(world: &mut TuiWorld) {
+    let top = drive(world, |h| h.main_pane());
+    assert!(
+        !top.contains("PARENT_CONVERSATION_MARKER"),
+        "no parent transcript may render beneath the environment info:\n{top}"
+    );
+}
+
+#[then("the agent name is truncated within the clamped panel width")]
+fn then_narrow_truncation(world: &mut TuiWorld) {
+    // Independent width bound computed from the scenario's stated terminal
+    // size and the spec (fixed 34 clamped to half the terminal) — NOT from the
+    // app's own split, so deleting the clamp fails this step.
+    let cols = world.tui_env_terminal_cols.expect("terminal size given");
+    let bound = usize::min(34, cols / 2);
+    let panel = panel(world);
+    let row = panel_rows(&panel)
+        .into_iter()
+        .find(|l| l.contains('…'))
+        .unwrap_or_else(|| panic!("the long agent name must truncate with an ellipsis:\n{panel}"));
+    assert!(
+        unicode_width::UnicodeWidthStr::width(row.as_str()) <= bound,
+        "the truncated row must fit the clamped panel width {bound}:\n{row}"
     );
 }

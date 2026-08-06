@@ -130,6 +130,9 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     pub spawned: bool,
     pub restrict_to_workspace: bool,
     pub parent_session_name: Option<String>,
+    /// The parent agent's own config path, forwarded so container spawns can
+    /// fall back to it when the spawn call omits `config` (#1369 follow-up).
+    pub parent_config_path: Option<std::path::PathBuf>,
     pub disabled_tools: &'a [String],
     pub inherited_tool_policy:
         Option<crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot>,
@@ -186,6 +189,7 @@ pub(crate) fn build_tool_runtime(
         spawned,
         restrict_to_workspace,
         parent_session_name,
+        parent_config_path,
         disabled_tools,
         inherited_tool_policy,
         workflow,
@@ -235,6 +239,7 @@ pub(crate) fn build_tool_runtime(
         broadcast_tx: workflow.broadcast_tx.clone(),
         parent_session_name,
         inherited_tool_policy: None,
+        parent_config_path,
     });
     register_bundled_native_tools_with_scope(&mut registry, agent_control.extensions, None);
     let notify_rx = agent_control.notification_rx;

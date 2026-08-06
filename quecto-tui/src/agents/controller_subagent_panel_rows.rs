@@ -16,7 +16,6 @@ impl App {
             id: None,
             env_key: None,
             prefix: String::new(),
-            badge: None,
             label: "Master Agent".to_string(),
             status: self.master_status().to_string(),
             workflow: master_wf,
@@ -48,7 +47,6 @@ impl App {
                         workflow: None,
                         id: None,
                         env_key: Some(env_key),
-                        badge: None,
                         prefix,
                     });
                 }
@@ -73,7 +71,6 @@ impl App {
                         label,
                         status: info.map(|i| i.status.clone()).unwrap_or_default(),
                         workflow,
-                        badge: self.solo_environment_badge(&id, &groups),
                         id: Some(id),
                         env_key: None,
                         prefix,
@@ -89,9 +86,10 @@ impl App {
     /// connector stalk (`├ `/`└ ` with `│ `/`  ` ancestor continuation) so the
     /// panel draws tree lines back up to each parent. Order follows sorted ids.
     ///
-    /// Environments shared by two or more agents (#1369 slice 4) contribute
-    /// one environment node after the agent roots, with the member agents as
-    /// its children — suppressed from the root list so no member is duplicated.
+    /// Every script-managed environment (#1369 slice 4, follow-up revision:
+    /// solo environments included) contributes one environment node after the
+    /// agent roots, with the member agents as its children — suppressed from
+    /// the root list so no member is duplicated.
     fn subagent_tree_order(
         &self,
         groups: &std::collections::BTreeMap<String, Vec<String>>,
@@ -162,9 +160,6 @@ pub(super) struct PanelRow {
     pub(super) env_key: Option<String>,
     /// Tree connector stalk drawn before the name (`├ `/`└ ` + ancestor `│ `).
     pub(super) prefix: String,
-    /// Dim environment ref drawn between the stalk and the name for an agent
-    /// running alone in its environment (#1369 slice 4).
-    pub(super) badge: Option<String>,
     pub(super) label: String,
     pub(super) status: String,
     /// `(steps_completed, steps_total)` when the agent has an active workflow —

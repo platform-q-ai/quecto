@@ -145,6 +145,13 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         cli_args: &'b [std::ffi::OsString],
     ) -> LaunchFuture<'b, Result<Self::Prepared, DomainError>> {
         Box::pin(async move {
+            // The parent's own effective config (composition-plumbed CLI path,
+            // else the inherited runtime config) is the container-config
+            // fallback when the spawn call omits `config` (#1369 follow-up).
+            let parent_config = effective_config_path(
+                self.tool.parent_config_path.as_ref(),
+                inherited_runtime_config_path(),
+            );
             super::spawn_container::spawn_prepared_child(
                 config,
                 &super::spawn_container::ChildCommand {
@@ -153,6 +160,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     base_dir: &self.tool.base_dir,
                 },
                 &self.tool.environment_registry,
+                parent_config.as_deref(),
             )
             .await
         })

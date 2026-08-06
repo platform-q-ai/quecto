@@ -1,12 +1,14 @@
 //! Environment grouping model and main-pane chrome for the sub-agent panel
-//! (#1369 slice 4), plus the selected-agent title chrome moved from
-//! `controller_subagent_panel.rs` (750-line cap).
+//! (#1369 slice 4, revised by the #1369 follow-up), plus the selected-agent
+//! title chrome moved from `controller_subagent_panel.rs` (750-line cap).
 //!
-//! Hybrid rendering rule: one agent in an environment renders as a flat agent
-//! row with a dim `CN` badge; two or more agents render one selectable
-//! environment row with the members nested below (and suppressed from the
-//! root list). Selecting an environment row renders its details in the main
-//! pane's top chrome.
+//! Rendering rule (follow-up revision, superseding the slice-4 hybrid rule):
+//! EVERY script-managed environment — one member or many — renders one
+//! selectable `CN` environment row with its member agents nested below (and
+//! suppressed from the root list), so container data is always reachable by
+//! selecting the `CN` row. Selecting an environment row shows environment
+//! information ONLY in the main pane: detail chrome on top and a
+//! container-info body instead of any agent conversation.
 
 use super::*;
 use crate::components::theme;
@@ -20,13 +22,15 @@ use super::app_subagent_panel::controller_subagent_panel_helpers::{
 impl App {
     // ── Environment grouping model ─────────────────────────────────────
 
-    /// Environments shared by two or more tracked agents: `group key →
-    /// member ids` (sorted, from the sorted tracked map). Keyed on
+    /// Every tracked environment: `group key → member ids` (sorted, from the
+    /// sorted tracked map). Keyed on
     /// [`SubagentEnvironmentInfo::group_key`] — the globally-unique uuid when
     /// reported — NOT the session-scoped `CN` ref, which restarts at `C1` per
     /// session and would merge unrelated forwarded-descendant environments
-    /// (review #1392). Solo environments are not grouped — their agent renders
-    /// flat with a badge.
+    /// (review #1392). Follow-up revision to #1369 slice 4: SOLO environments
+    /// group too — a single member renders nested beneath its own selectable
+    /// `CN` row exactly like multi-member environments, so container data is
+    /// always reachable through the row.
     pub(super) fn environment_groups(&self) -> BTreeMap<String, Vec<String>> {
         let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (id, tracked) in &self.subagents.tracked {
@@ -39,26 +43,7 @@ impl App {
                 }
             }
         }
-        groups.retain(|_, members| members.len() >= 2);
         groups
-    }
-
-    /// The dim badge for `id`'s row: its environment ref when it runs alone in
-    /// that environment (grouped members carry no badge — the environment row
-    /// names the ref once).
-    pub(super) fn solo_environment_badge(
-        &self,
-        id: &str,
-        groups: &BTreeMap<String, Vec<String>>,
-    ) -> Option<String> {
-        let env = self.subagents.tracked.get(id)?.info.environment.as_ref()?;
-        if env.environment_ref.is_empty() || groups.contains_key(env.group_key()) {
-            return None;
-        }
-        // Sanitize here: the ref is wire-controlled and this badge is the one
-        // label rendered outside `sanitize_panel_label` (review #1392 —
-        // terminal escape injection otherwise).
-        Some(sanitize_panel_label(&env.environment_ref))
     }
 
     /// Any tracked member's environment metadata for the group `key` (members
@@ -165,6 +150,84 @@ impl App {
                     let line = crate::components::utils::truncate_to_width(&line, width, Some("…"));
                     pad_cell(&line, width)
                 })
+                .collect(),
+        )
+    }
+
+    /// The selected environment's main-pane BODY (#1369 follow-up): container
+    /// information only, replacing the conversation area entirely. Renders a
+    /// clear container-info header plus the member roster, so the pane cannot
+    /// read as if the parent transcript belongs to the container. `None` when
+    /// no environment is selected (or its metadata is gone) — the caller then
+    /// renders the normal conversation.
+    pub(super) fn render_environment_body(&self, width: usize) -> Option<Vec<String>> {
+        let env_key = self.subagents.selected_environment.as_deref()?;
+        let env = self.environment_info(env_key)?;
+        let mut lines = Vec::new();
+        let header = format!(
+            "{} {}",
+            theme::accent(&theme::bold("▌ Container environment")),
+            theme::bold(&sanitize_panel_label(&env.environment_ref)),
+        );
+        lines.push(header);
+        lines.push(theme::dim(
+            "container info only — environments have no conversation; \
+             select a member agent to view its transcript",
+        ));
+        lines.push(String::new());
+        if !env.environment_uuid.is_empty() {
+            lines.push(format!(
+                "uuid: {}",
+                sanitize_panel_label(&env.environment_uuid)
+            ));
+        }
+        lines.push("members:".to_string());
+        // Member roster: every tracked agent in this environment, in the
+        // sorted-map order the panel nests them, with per-member socket mode
+        // (per-member field, review #1392 — never read from an arbitrary
+        // member's shared copy).
+        let members: Vec<_> = self
+            .subagents
+            .tracked
+            .values()
+            .filter(|t| {
+                t.info
+                    .environment
+                    .as_ref()
+                    .is_some_and(|e| e.group_key() == env_key)
+            })
+            .collect();
+        let count = members.len();
+        for (i, t) in members.into_iter().enumerate() {
+            let connector = if i + 1 == count { "└ " } else { "├ " };
+            let label = t
+                .info
+                .display_name
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or(t.info.agent_id.as_str());
+            let socket = t
+                .info
+                .environment
+                .as_ref()
+                .map(|e| e.socket_mode.as_str())
+                .filter(|m| !m.is_empty())
+                .unwrap_or("-");
+            let status = &t.info.status;
+            lines.push(format!(
+                "  {}{} {} {} {} socket: {}",
+                theme::dim(connector),
+                sanitize_panel_label(label),
+                theme::dim("·"),
+                status_colored_name(status, &sanitize_panel_label(status)),
+                theme::dim("·"),
+                sanitize_panel_label(socket),
+            ));
+        }
+        Some(
+            lines
+                .into_iter()
+                .map(|line| crate::components::utils::truncate_to_width(&line, width, Some("…")))
                 .collect(),
         )
     }
