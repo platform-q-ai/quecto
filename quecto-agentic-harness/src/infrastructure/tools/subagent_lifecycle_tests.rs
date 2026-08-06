@@ -35,6 +35,33 @@ fn passive_note_emission_keeps_completed_child_idle() {
 }
 
 #[test]
+fn passive_note_emission_is_non_terminal_and_does_not_imply_await() {
+    let ready = State::SocketReady.transition(Event::PassiveNoteEmitted);
+    let busy = State::Busy.transition(Event::PassiveNoteEmitted);
+    let failed = State::Failed.transition(Event::PassiveNoteEmitted);
+
+    assert_eq!(ready, State::SocketReady);
+    assert_eq!(ready.status_projection(), SubagentStatus::Starting);
+    assert_eq!(busy, State::Busy);
+    assert_eq!(busy.status_projection(), SubagentStatus::Running);
+    assert_eq!(failed, State::Failed);
+    assert_eq!(failed.status_projection(), SubagentStatus::Error);
+}
+
+#[test]
+fn kill_after_passive_completion_remains_cancelled_terminal() {
+    let state = State::Busy
+        .transition(Event::RunEnded)
+        .transition(Event::PassiveNoteEmitted)
+        .transition(Event::KillRequested);
+
+    assert_eq!(state, State::Killed);
+    assert_eq!(state.status_projection(), SubagentStatus::Exited);
+    assert_eq!(state.transition(Event::RunStarted), State::Killed);
+    assert_eq!(state.transition(Event::PassiveNoteEmitted), State::Killed);
+}
+
+#[test]
 fn kill_during_busy_is_terminal_and_projects_to_existing_exited_status() {
     let state = State::Busy.transition(Event::KillRequested);
 
