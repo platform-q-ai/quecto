@@ -10,8 +10,14 @@
 //! documented script contract. Stopped records stay listed; refs are never
 //! reused.
 
+use std::sync::Arc;
+
 use super::subagent_registry::SubagentRegistry;
+use crate::domain::environment_finalization::{
+    EnvironmentFinalizationPort, EnvironmentFinalizationUseCase, MemberFinalizeMode,
+};
 use crate::domain::environment_registry::EnvironmentRegistry;
+use crate::domain::subagent_launch::LaunchFuture;
 
 /// Why a member is being finalized. Normal exits stop the emptied environment
 /// with the retained `kill`; a launch rollback (the launch failed after the
@@ -95,7 +101,16 @@ fn run_cleanup_jobs_sync(jobs: Vec<CleanupJob>) {
     for job in jobs {
         match job.membership {
             Some((environments, env_ref, agent_uuid)) => {
-                remove_member_and_finalize(&environments, &env_ref, agent_uuid, job.plan, job.mode);
+                let use_case = EnvironmentFinalizationUseCase::new(
+                    environments,
+                    Arc::new(ScriptEnvironmentFinalizationPort),
+                );
+                futures::executor::block_on(use_case.finalize_member(
+                    &env_ref,
+                    &agent_uuid,
+                    job.plan,
+                    job.mode.into(),
+                ));
             }
             None => {
                 if let Some((env, argv)) = job.plan {
@@ -139,89 +154,42 @@ pub(super) fn cleanup_removed_entries_sync(
     run_cleanup_jobs_sync(drain_cleanup_jobs(removed, FinalizeMode::ParentKill));
 }
 
-/// Remove one member from its environment; the final removal of a running
-/// environment claims and runs the retained teardown exactly once.
-///
-/// This transaction deliberately lives next to `remove_member` rather than in
-/// `EnvironmentControlUseCase::kill_container`: the final-member claim must be
-/// granted atomically with the membership removal (only `begin_kill` and
-/// `remove_member` mint claims), so the exit path cannot be routed through the
-/// use case's resolve-then-claim sequence without a race window.
-fn remove_member_and_finalize(
-    environments: &EnvironmentRegistry,
-    env_ref: &str,
-    agent_uuid: String,
-    entry_cleanup_plan: Option<(String, Vec<String>)>,
-    mode: FinalizeMode,
-) {
-    // #1369 slice 3: a normal member death runs the environment's retained
-    // inspect exactly once post-mortem, updating the authoritative aggregate
-    // BEFORE the member is removed (so the outcome also survives the removal
-    // emptying the environment). Launch rollbacks are not deaths: the child
-    // never became usable, so no inspect runs.
-    if mode == FinalizeMode::Exit {
-        run_inspect_once(environments, env_ref, &agent_uuid);
-    }
-    // ParentKill members fall through to plain membership removal: the
-    // caller's begin_kill claim owns the environment-level teardown, so the
-    // removal below cannot mint a final-member claim (status is Killing).
-    let Ok(removal) = environments.remove_member(env_ref, &agent_uuid) else {
-        return;
-    };
-    let Some(claim) = removal else {
-        return;
-    };
-    let Some(record) = environments.get(env_ref) else {
-        environments.complete_kill(claim);
-        return;
-    };
-    // A launch rollback runs the retained cleanup, never the kill: the
-    // documented `cleanup` contract covers launches that fail after creation.
-    let launch_rollback = matches!(
-        mode,
-        FinalizeMode::LaunchRollback | FinalizeMode::LaunchRollbackOwned
-    );
-    let run_cleanup_instead_of_kill = launch_rollback || record.retained_kill_argv.is_empty();
-    if run_cleanup_instead_of_kill {
-        // Prefer the cleanup argv retained on the environment record — it
-        // survives the creator exiting first — falling back to the removed
-        // entry's own claimed plan (slice-1 compatibility). Best-effort, then
-        // stop.
-        if !record.retained_cleanup_argv.is_empty() {
-            run_script_sync(&record.environment_id, &record.retained_cleanup_argv);
-        } else if let Some((env_id, argv)) = entry_cleanup_plan {
-            run_script_sync(&env_id, &argv);
+impl From<FinalizeMode> for MemberFinalizeMode {
+    fn from(mode: FinalizeMode) -> Self {
+        match mode {
+            FinalizeMode::Exit => Self::Exit,
+            FinalizeMode::ParentKill => Self::ParentKill,
+            FinalizeMode::LaunchRollback => Self::LaunchRollback,
+            FinalizeMode::LaunchRollbackOwned => Self::LaunchRollbackOwned,
         }
-        environments.complete_kill(claim);
-        if mode == FinalizeMode::LaunchRollbackOwned {
-            environments.remove(env_ref);
-        }
-        return;
-    }
-    match run_kill_sync(&record.environment_id, &record.retained_kill_argv) {
-        Ok(()) => environments.complete_kill(claim),
-        Err(e) => environments.fail_kill(claim, &e),
     }
 }
 
-/// Run the environment's retained inspect for one dead member, exactly once:
-/// only the death signal that wins the `begin_inspect` claim invokes the
-/// script; repeated EOF/reset for the same member claims nothing. Success
-/// merges the inspect metadata into the aggregate; failure persists an
-/// actionable error while keeping the retained argv for retry.
-fn run_inspect_once(environments: &EnvironmentRegistry, env_ref: &str, agent_uuid: &str) {
-    let Some(record) = environments.get(env_ref) else {
-        return;
-    };
-    if record.retained_inspect_argv.is_empty() {
-        return;
+struct ScriptEnvironmentFinalizationPort;
+
+impl EnvironmentFinalizationPort for ScriptEnvironmentFinalizationPort {
+    fn run_retained_inspect<'a>(
+        &'a self,
+        environment_id: &'a str,
+        argv: &'a [String],
+    ) -> LaunchFuture<'a, Result<serde_json::Value, String>> {
+        Box::pin(async move { run_inspect_sync(environment_id, argv) })
     }
-    let Some(claim) = environments.begin_inspect(env_ref, agent_uuid) else {
-        return;
-    };
-    match run_inspect_sync(&record.environment_id, &record.retained_inspect_argv) {
-        Ok(metadata) => environments.record_inspect_success(claim, metadata),
-        Err(e) => environments.record_inspect_failure(claim, &e),
+
+    fn run_retained_kill<'a>(
+        &'a self,
+        environment_id: &'a str,
+        argv: &'a [String],
+    ) -> LaunchFuture<'a, Result<(), String>> {
+        Box::pin(async move { run_kill_sync(environment_id, argv) })
+    }
+
+    fn run_retained_cleanup<'a>(
+        &'a self,
+        environment_id: &'a str,
+        argv: &'a [String],
+    ) -> LaunchFuture<'a, ()> {
+        Box::pin(async move { run_script_sync(environment_id, argv) })
     }
 }
 
