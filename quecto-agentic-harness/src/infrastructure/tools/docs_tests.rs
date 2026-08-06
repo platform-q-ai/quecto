@@ -172,3 +172,19 @@ async fn top_level_quick_start_still_available() {
     assert!(!result.is_error);
     assert!(result.content.contains("Parent versus subagent"));
 }
+
+#[test]
+fn subagents_embed_teaches_container_environments() {
+    let doc = lookup_doc("subagents").expect("subagents embed");
+    for needle in [
+        "Container environments",
+        "container: true",
+        "\"mode\":\"existing\"",
+        "environment_ref=C1",
+        "get_containers",
+        "kill_container",
+        "absolute path",
+    ] {
+        assert!(doc.contains(needle), "subagents embed misses {needle}");
+    }
+}
