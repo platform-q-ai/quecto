@@ -276,7 +276,7 @@ fn writer_sink_suppresses_notification_when_awaited() {
 
     assert!(
         notifications.is_empty(),
-        "a manual await already consumed this completion — must dedupe"
+        "a legacy completion consumer already reported this completion — must dedupe"
     );
 }
 
@@ -289,7 +289,7 @@ fn writer_sink_dedupe_flag_consumed_once() {
     let sink = EventSink::writer(&mut buf);
     let mut notifications = Vec::new();
 
-    // First notification consumes the pending await flag (suppressed);
+    // First notification consumes the legacy completion-dedupe flag (suppressed);
     // the second must be collected again.
     collect_notification(make_notif(1), &sink, &registry, &mut notifications);
     collect_notification(make_notif(2), &sink, &registry, &mut notifications);

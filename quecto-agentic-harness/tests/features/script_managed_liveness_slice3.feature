@@ -68,7 +68,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     And the container listing should include "C1" with status "stopped" and 0 members
 
   @done @container-liveness
-  Scenario: Child death with no pending await surfaces the note, snapshot, and live event
+  Scenario: Child death surfaces the passive note, snapshot, and live event
     Given liveness script-managed subagent spawning is available
     And script-managed child "surface-slice3" is running in an inspectable environment with task "SURFACE_MARKER"
     When the script-managed child "surface-slice3" is killed behind Quecto's back
