@@ -311,6 +311,35 @@ async fn partial_child_view_push_does_not_evict_intermediate_parent() {
 }
 
 #[tokio::test]
+async fn panel_mouse_wheel_scrolls_overflowing_agent_list_when_panel_focused() {
+    let mut h = TuiHarness::sized(80, 8).await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(
+        (0..12)
+            .map(|i| subagent(&format!("worker-{i:02}"), "running", None))
+            .collect(),
+    ));
+
+    h.app_mut().handle_key(Key::Tab);
+    h.app_mut().handle_key(Key::ScrollDown);
+
+    assert_eq!(
+        h.app_mut().panel_highlight_index(),
+        3,
+        "mouse wheel down in the focused left panel should move the panel cursor, not the chat"
+    );
+    let panel = h.left_panel();
+    assert!(
+        panel.contains("worker-02"),
+        "scrolling the focused panel should reveal rows below the fold:\n{panel}"
+    );
+    assert!(
+        !panel.contains("worker-11"),
+        "one wheel tick should preserve a stable local viewport instead of jumping to the end:\n{panel}"
+    );
+}
+
+#[tokio::test]
 async fn compose_frame_with_panel_is_idempotent() {
     let mut h = with_two_subagents().await;
     h.app_mut().select_agent(Some("worker"));

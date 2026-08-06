@@ -325,6 +325,24 @@ impl App {
         self.subagents.panel_nav.move_next(len);
     }
 
+    /// Move the panel highlight down by multiple rows (mouse wheel/page-like
+    /// panel scrolling) without switching the active session.
+    pub(super) fn panel_highlight_next_by(&mut self, rows: usize) {
+        let len = self.panel_rows().len();
+        for _ in 0..rows {
+            self.subagents.panel_nav.move_next(len);
+        }
+    }
+
+    /// Move the panel highlight up by multiple rows (mouse wheel/page-like
+    /// panel scrolling) without switching the active session.
+    pub(super) fn panel_highlight_previous_by(&mut self, rows: usize) {
+        let len = self.panel_rows().len();
+        for _ in 0..rows {
+            self.subagents.panel_nav.move_previous(len);
+        }
+    }
+
     /// Jump the panel highlight to a 1-based row number (digits 1–9). Row 1 is
     /// the master; row N+1 is the Nth listed sub-agent. No-op past the end.
     pub(super) fn panel_highlight_row(&mut self, one_based: usize) {
