@@ -117,10 +117,16 @@ into the child) lingering.
 
 Proxy readiness probes the bridge across the launch's readiness budget:
 a probe that reads EOF (the proxy could not reach the child yet) is
-retried; the endpoint is ready once a probe survives a quiet window.
-Residual assumption: a proxy that hangs without producing EOF while the
-child is unreachable is indistinguishable from a live-but-quiet child;
-such a launch fails at the initial prompt and rolls back.
+retried; the endpoint is bridge-ready once a probe survives a quiet
+window. For proxy launches with an initial task, an initial prompt send
+failure is folded back into the same launch readiness retry budget before
+rollback, so a proxy that connected before the child accepted commands
+gets another chance without ever falling back to a direct socket or
+polling lifecycle state after launch. Because the child protocol cannot
+prove whether an ambiguous lost acceptance response was observed after the
+child queued the prompt, proxy-managed initial tasks must remain
+idempotent: a retry may resend the same initial task if delivery succeeded
+but the acknowledgement did not return before the retry deadline.
 
 After readiness the parent holds one persistent monitor connection to the
 endpoint. EOF or connection reset on it IS the child's death signal — no

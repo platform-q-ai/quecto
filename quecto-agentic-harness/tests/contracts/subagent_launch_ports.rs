@@ -27,6 +27,10 @@ impl ContractPorts {
 impl SubagentLaunchPorts for ContractPorts {
     type Prepared = ();
 
+    fn initial_prompt_retry_deadline(&self) -> Option<tokio::time::Instant> {
+        None
+    }
+
     fn allocate_identity(
         &mut self,
         _config: &SubagentConfig,

@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::application::subagent_launch::{
     LaunchFuture, LaunchIdentity, PreparedRuntime, RegisteredLaunch, SubagentLaunchPorts,
@@ -15,6 +16,8 @@ struct RecordingPorts {
     fail_ready: bool,
     fail_register: bool,
     fail_initial_prompt: bool,
+    initial_prompt_retry_deadline: Option<tokio::time::Instant>,
+    initial_prompt_failures_remaining: usize,
 }
 
 impl RecordingPorts {
@@ -28,6 +31,10 @@ impl RecordingPorts {
 
 impl SubagentLaunchPorts for RecordingPorts {
     type Prepared = bool;
+
+    fn initial_prompt_retry_deadline(&self) -> Option<tokio::time::Instant> {
+        self.initial_prompt_retry_deadline
+    }
 
     fn allocate_identity(
         &mut self,
@@ -123,7 +130,9 @@ impl SubagentLaunchPorts for RecordingPorts {
         _task: &'a str,
     ) -> LaunchFuture<'a, Result<(), DomainError>> {
         self.record("initial-prompt");
-        let fail = self.fail_initial_prompt;
+        let fail = self.fail_initial_prompt || self.initial_prompt_failures_remaining > 0;
+        self.initial_prompt_failures_remaining =
+            self.initial_prompt_failures_remaining.saturating_sub(1);
         Box::pin(async move {
             if fail {
                 Err(DomainError::Tool("prompt failed".into()))
@@ -186,6 +195,72 @@ async fn launch_use_case_rolls_back_prepared_child_on_register_failure() {
             "register",
             "rollback-prepared"
         ]
+    );
+}
+
+#[tokio::test]
+async fn launch_use_case_retries_initial_prompt_failure_when_endpoint_requests_readiness_retry() {
+    let ports = RecordingPorts {
+        initial_prompt_retry_deadline: Some(tokio::time::Instant::now() + Duration::from_secs(1)),
+        initial_prompt_failures_remaining: 2,
+        ..Default::default()
+    };
+    let events = ports.events();
+
+    let result = SubagentLaunchUseCase::new(ports)
+        .execute(&config_with_task(Some("hello")))
+        .await
+        .unwrap();
+
+    assert!(!result.is_error);
+    assert_eq!(
+        events.lock().unwrap().as_slice(),
+        [
+            "identity",
+            "cli",
+            "binary",
+            "prepare",
+            "ready",
+            "register",
+            "initial-prompt",
+            "initial-prompt",
+            "initial-prompt",
+            "success"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn launch_use_case_uncommits_registered_child_when_initial_prompt_retries_are_exhausted() {
+    let ports = RecordingPorts {
+        initial_prompt_retry_deadline: Some(
+            tokio::time::Instant::now() + Duration::from_millis(150),
+        ),
+        initial_prompt_failures_remaining: usize::MAX,
+        ..Default::default()
+    };
+    let events = ports.events();
+
+    let err = SubagentLaunchUseCase::new(ports)
+        .execute(&config_with_task(Some("hello")))
+        .await
+        .unwrap_err();
+
+    assert!(err.to_string().contains("prompt failed"));
+    assert!(
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| event.as_str() == "initial-prompt")
+            .count()
+            > 1,
+        "expected repeated prompt attempts before rollback: {:?}",
+        events.lock().unwrap().as_slice()
+    );
+    assert_eq!(
+        events.lock().unwrap().last().map(String::as_str),
+        Some("uncommit-registered:uuid")
     );
 }
 
