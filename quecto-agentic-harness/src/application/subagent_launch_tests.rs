@@ -252,6 +252,60 @@ async fn launch_use_case_retries_initial_prompt_failure_when_endpoint_requests_r
 }
 
 #[tokio::test]
+async fn launch_use_case_does_not_start_initial_prompt_when_retry_deadline_already_expired() {
+    let ports = RecordingPorts {
+        initial_prompt_retry_deadline: Some(tokio::time::Instant::now() - Duration::from_millis(1)),
+        ..Default::default()
+    };
+    let events = ports.events();
+    let observed_deadlines = ports.observed_initial_prompt_deadlines.clone();
+
+    let err = SubagentLaunchUseCase::new(ports)
+        .execute(&config_with_task(Some("hello")))
+        .await
+        .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("initial prompt retry deadline expired")
+    );
+    assert_eq!(observed_deadlines.lock().unwrap().len(), 0);
+    assert_eq!(
+        events.lock().unwrap().last().map(String::as_str),
+        Some("uncommit-registered:uuid")
+    );
+}
+
+#[tokio::test]
+async fn launch_use_case_caps_initial_prompt_retry_sleep_to_remaining_budget() {
+    let ports = RecordingPorts {
+        initial_prompt_retry_deadline: Some(
+            tokio::time::Instant::now() + Duration::from_millis(30),
+        ),
+        initial_prompt_failures_remaining: usize::MAX,
+        ..Default::default()
+    };
+    let observed_deadlines = ports.observed_initial_prompt_deadlines.clone();
+    let started = tokio::time::Instant::now();
+
+    let err = SubagentLaunchUseCase::new(ports)
+        .execute(&config_with_task(Some("hello")))
+        .await
+        .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("initial prompt retry deadline expired")
+    );
+    assert_eq!(observed_deadlines.lock().unwrap().len(), 1);
+    assert!(
+        started.elapsed() < Duration::from_millis(80),
+        "retry sleep should be capped to the remaining deadline budget, elapsed {:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
 async fn launch_use_case_stops_prompt_retries_after_attempt_exhausts_budget() {
     let ports = RecordingPorts {
         initial_prompt_retry_deadline: Some(
@@ -289,16 +343,19 @@ async fn launch_use_case_uncommits_registered_child_when_initial_prompt_retries_
         .await
         .unwrap_err();
 
-    assert!(err.to_string().contains("prompt failed"));
     assert!(
+        err.to_string()
+            .contains("initial prompt retry deadline expired")
+    );
+    assert_eq!(
         events
             .lock()
             .unwrap()
             .iter()
             .filter(|event| event.as_str() == "initial-prompt")
-            .count()
-            > 1,
-        "expected repeated prompt attempts before rollback: {:?}",
+            .count(),
+        2,
+        "expected retries to stop when the next attempt would start after the deadline: {:?}",
         events.lock().unwrap().as_slice()
     );
     assert_eq!(

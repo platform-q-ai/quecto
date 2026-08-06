@@ -58,11 +58,19 @@ where
         if let Some(task) = config.task.as_deref() {
             let retry_until = self.ports.initial_prompt_retry_deadline();
             loop {
-                let attempt_deadline =
-                    retry_until.filter(|deadline| tokio::time::Instant::now() < *deadline);
+                if let Some(deadline) = retry_until {
+                    if tokio::time::Instant::now() >= deadline {
+                        self.ports
+                            .uncommit_registered(&registered.registry_key)
+                            .await;
+                        return Err(DomainError::Tool(
+                            "initial prompt retry deadline expired".into(),
+                        ));
+                    }
+                }
                 match self
                     .ports
-                    .send_initial_prompt(&registered.socket_path, task, attempt_deadline)
+                    .send_initial_prompt(&registered.socket_path, task, retry_until)
                     .await
                 {
                     Ok(()) => break,
@@ -73,13 +81,17 @@ where
                                 .await;
                             return Err(e);
                         };
-                        if tokio::time::Instant::now() >= deadline {
+                        let now = tokio::time::Instant::now();
+                        if now >= deadline {
                             self.ports
                                 .uncommit_registered(&registered.registry_key)
                                 .await;
                             return Err(e);
                         }
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        tokio::time::sleep_until(
+                            now + std::time::Duration::from_millis(100).min(deadline - now),
+                        )
+                        .await;
                     }
                 }
             }
