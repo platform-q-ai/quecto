@@ -14,20 +14,39 @@ struct ScriptCall {
     argv: Vec<String>,
 }
 
-#[derive(Default)]
 struct SpyFinalizationPort {
+    inspects: Mutex<Vec<ScriptCall>>,
     kills: Mutex<Vec<ScriptCall>>,
     cleanups: Mutex<Vec<ScriptCall>>,
+    inspect_result: Mutex<Result<serde_json::Value, String>>,
     fail_kill: bool,
+}
+
+impl Default for SpyFinalizationPort {
+    fn default() -> Self {
+        Self {
+            inspects: Mutex::new(Vec::new()),
+            kills: Mutex::new(Vec::new()),
+            cleanups: Mutex::new(Vec::new()),
+            inspect_result: Mutex::new(Ok(serde_json::json!({}))),
+            fail_kill: false,
+        }
+    }
 }
 
 impl EnvironmentFinalizationPort for SpyFinalizationPort {
     fn run_retained_inspect<'a>(
         &'a self,
-        _environment_id: &'a str,
-        _argv: &'a [String],
+        environment_id: &'a str,
+        argv: &'a [String],
     ) -> LaunchFuture<'a, Result<serde_json::Value, String>> {
-        Box::pin(async { Ok(serde_json::json!({})) })
+        Box::pin(async move {
+            self.inspects.lock().unwrap().push(ScriptCall {
+                environment_id: environment_id.to_string(),
+                argv: argv.to_vec(),
+            });
+            self.inspect_result.lock().unwrap().clone()
+        })
     }
 
     fn run_retained_kill<'a>(
@@ -67,6 +86,15 @@ fn committed_env_with_kill(
     members: Vec<&str>,
     retained_kill_argv: Vec<String>,
 ) -> String {
+    committed_env_with_scripts(registry, members, retained_kill_argv, vec![])
+}
+
+fn committed_env_with_scripts(
+    registry: &EnvironmentRegistry,
+    members: Vec<&str>,
+    retained_kill_argv: Vec<String>,
+    retained_inspect_argv: Vec<String>,
+) -> String {
     let env_ref = registry.mint_ref();
     registry.commit(EnvironmentRecord {
         environment_ref: env_ref.clone(),
@@ -79,7 +107,7 @@ fn committed_env_with_kill(
         retained_exec_argv: vec!["exec.sh".to_string()],
         retained_kill_argv,
         retained_cleanup_argv: vec!["cleanup.sh".to_string()],
-        retained_inspect_argv: vec![],
+        retained_inspect_argv,
         members: members.into_iter().map(str::to_string).collect(),
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
@@ -175,5 +203,100 @@ fn final_member_without_retained_kill_uses_retained_cleanup_fallback() {
     assert_eq!(
         registry.get(&env_ref).unwrap().status,
         EnvironmentStatus::Stopped
+    );
+}
+
+#[test]
+fn exit_finalization_runs_retained_inspect_before_removal_and_merges_metadata() {
+    let registry = EnvironmentRegistry::new();
+    let env_ref = committed_env_with_scripts(
+        &registry,
+        vec!["agent-a"],
+        vec!["kill.sh".to_string()],
+        vec!["inspect.sh".to_string(), "--json".to_string()],
+    );
+    let expected_environment_id = registry.get(&env_ref).unwrap().environment_id;
+    let port = Arc::new(SpyFinalizationPort {
+        inspect_result: Mutex::new(Ok(serde_json::json!({"postmortem": "captured"}))),
+        ..Default::default()
+    });
+    let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port.clone());
+
+    block_on(use_case.finalize_member(&env_ref, "agent-a", None, MemberFinalizeMode::Exit));
+
+    assert_eq!(
+        port.inspects.lock().unwrap().as_slice(),
+        &[ScriptCall {
+            environment_id: expected_environment_id,
+            argv: vec!["inspect.sh".to_string(), "--json".to_string()],
+        }]
+    );
+    let record = registry.get(&env_ref).unwrap();
+    assert_eq!(record.status, EnvironmentStatus::Stopped);
+    assert_eq!(record.metadata["postmortem"], "captured");
+    assert!(record.last_error.is_none());
+}
+
+#[test]
+fn exit_finalization_persists_inspect_failure_even_after_successful_kill() {
+    let registry = EnvironmentRegistry::new();
+    let env_ref = committed_env_with_scripts(
+        &registry,
+        vec!["agent-a"],
+        vec!["kill.sh".to_string()],
+        vec!["inspect.sh".to_string()],
+    );
+    let port = Arc::new(SpyFinalizationPort {
+        inspect_result: Mutex::new(Err("inspect failed".to_string())),
+        ..Default::default()
+    });
+    let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port.clone());
+
+    block_on(use_case.finalize_member(&env_ref, "agent-a", None, MemberFinalizeMode::Exit));
+
+    let record = registry.get(&env_ref).unwrap();
+    assert_eq!(record.status, EnvironmentStatus::Stopped);
+    assert_eq!(record.last_error.as_deref(), Some("inspect failed"));
+    assert_eq!(record.retained_inspect_argv, vec!["inspect.sh".to_string()]);
+}
+
+#[test]
+fn non_exit_finalization_does_not_run_retained_inspect() {
+    let registry = EnvironmentRegistry::new();
+    let env_ref = committed_env_with_scripts(
+        &registry,
+        vec!["agent-a"],
+        vec!["kill.sh".to_string()],
+        vec!["inspect.sh".to_string()],
+    );
+    let port = Arc::new(SpyFinalizationPort::default());
+    let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port.clone());
+
+    block_on(use_case.finalize_member(&env_ref, "agent-a", None, MemberFinalizeMode::ParentKill));
+
+    assert!(port.inspects.lock().unwrap().is_empty());
+    assert_eq!(port.kills.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn duplicate_exit_finalization_inspects_dead_member_only_once() {
+    let registry = EnvironmentRegistry::new();
+    let env_ref = committed_env_with_scripts(
+        &registry,
+        vec!["agent-a", "agent-b"],
+        vec!["kill.sh".to_string()],
+        vec!["inspect.sh".to_string()],
+    );
+    let port = Arc::new(SpyFinalizationPort::default());
+    let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port.clone());
+
+    block_on(use_case.finalize_member(&env_ref, "agent-a", None, MemberFinalizeMode::Exit));
+    block_on(use_case.finalize_member(&env_ref, "agent-a", None, MemberFinalizeMode::Exit));
+
+    assert_eq!(port.inspects.lock().unwrap().len(), 1);
+    assert!(port.kills.lock().unwrap().is_empty());
+    assert_eq!(
+        registry.get(&env_ref).unwrap().members,
+        vec!["agent-b".to_string()]
     );
 }
