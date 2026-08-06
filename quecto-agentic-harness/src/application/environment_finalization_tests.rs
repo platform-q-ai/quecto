@@ -9,6 +9,13 @@ use crate::domain::environment_registry::{
 use crate::domain::subagent_launch::LaunchFuture;
 
 #[derive(Debug, PartialEq, Eq)]
+enum ScriptEvent {
+    Inspect,
+    Kill,
+    Cleanup,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 struct ScriptCall {
     environment_id: String,
     argv: Vec<String>,
@@ -18,6 +25,7 @@ struct SpyFinalizationPort {
     inspects: Mutex<Vec<ScriptCall>>,
     kills: Mutex<Vec<ScriptCall>>,
     cleanups: Mutex<Vec<ScriptCall>>,
+    events: Mutex<Vec<ScriptEvent>>,
     inspect_result: Mutex<Result<serde_json::Value, String>>,
     fail_kill: bool,
 }
@@ -28,6 +36,7 @@ impl Default for SpyFinalizationPort {
             inspects: Mutex::new(Vec::new()),
             kills: Mutex::new(Vec::new()),
             cleanups: Mutex::new(Vec::new()),
+            events: Mutex::new(Vec::new()),
             inspect_result: Mutex::new(Ok(serde_json::json!({}))),
             fail_kill: false,
         }
@@ -41,6 +50,7 @@ impl EnvironmentFinalizationPort for SpyFinalizationPort {
         argv: &'a [String],
     ) -> LaunchFuture<'a, Result<serde_json::Value, String>> {
         Box::pin(async move {
+            self.events.lock().unwrap().push(ScriptEvent::Inspect);
             self.inspects.lock().unwrap().push(ScriptCall {
                 environment_id: environment_id.to_string(),
                 argv: argv.to_vec(),
@@ -55,6 +65,7 @@ impl EnvironmentFinalizationPort for SpyFinalizationPort {
         argv: &'a [String],
     ) -> LaunchFuture<'a, Result<(), String>> {
         Box::pin(async move {
+            self.events.lock().unwrap().push(ScriptEvent::Kill);
             self.kills.lock().unwrap().push(ScriptCall {
                 environment_id: environment_id.to_string(),
                 argv: argv.to_vec(),
@@ -73,6 +84,7 @@ impl EnvironmentFinalizationPort for SpyFinalizationPort {
         argv: &'a [String],
     ) -> LaunchFuture<'a, ()> {
         Box::pin(async move {
+            self.events.lock().unwrap().push(ScriptEvent::Cleanup);
             self.cleanups.lock().unwrap().push(ScriptCall {
                 environment_id: environment_id.to_string(),
                 argv: argv.to_vec(),
@@ -231,6 +243,10 @@ fn exit_finalization_runs_retained_inspect_before_removal_and_merges_metadata() 
             argv: vec!["inspect.sh".to_string(), "--json".to_string()],
         }]
     );
+    assert_eq!(
+        port.events.lock().unwrap().as_slice(),
+        &[ScriptEvent::Inspect, ScriptEvent::Kill]
+    );
     let record = registry.get(&env_ref).unwrap();
     assert_eq!(record.status, EnvironmentStatus::Stopped);
     assert_eq!(record.metadata["postmortem"], "captured");
@@ -254,6 +270,17 @@ fn exit_finalization_persists_inspect_failure_even_after_successful_kill() {
 
     block_on(use_case.finalize_member(&env_ref, "agent-a", None, MemberFinalizeMode::Exit));
 
+    assert_eq!(
+        port.kills.lock().unwrap().as_slice(),
+        &[ScriptCall {
+            environment_id: registry.get(&env_ref).unwrap().environment_id,
+            argv: vec!["kill.sh".to_string()],
+        }]
+    );
+    assert_eq!(
+        port.events.lock().unwrap().as_slice(),
+        &[ScriptEvent::Inspect, ScriptEvent::Kill]
+    );
     let record = registry.get(&env_ref).unwrap();
     assert_eq!(record.status, EnvironmentStatus::Stopped);
     assert_eq!(record.last_error.as_deref(), Some("inspect failed"));
@@ -262,20 +289,29 @@ fn exit_finalization_persists_inspect_failure_even_after_successful_kill() {
 
 #[test]
 fn non_exit_finalization_does_not_run_retained_inspect() {
-    let registry = EnvironmentRegistry::new();
-    let env_ref = committed_env_with_scripts(
-        &registry,
-        vec!["agent-a"],
-        vec!["kill.sh".to_string()],
-        vec!["inspect.sh".to_string()],
-    );
-    let port = Arc::new(SpyFinalizationPort::default());
-    let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port.clone());
+    for mode in [
+        MemberFinalizeMode::ParentKill,
+        MemberFinalizeMode::LaunchRollback,
+        MemberFinalizeMode::LaunchRollbackOwned,
+    ] {
+        let registry = EnvironmentRegistry::new();
+        let env_ref = committed_env_with_scripts(
+            &registry,
+            vec!["agent-a"],
+            vec!["kill.sh".to_string()],
+            vec!["inspect.sh".to_string()],
+        );
+        let port = Arc::new(SpyFinalizationPort::default());
+        let use_case = EnvironmentFinalizationUseCase::new(registry.clone(), port.clone());
 
-    block_on(use_case.finalize_member(&env_ref, "agent-a", None, MemberFinalizeMode::ParentKill));
+        block_on(use_case.finalize_member(&env_ref, "agent-a", None, mode));
 
-    assert!(port.inspects.lock().unwrap().is_empty());
-    assert_eq!(port.kills.lock().unwrap().len(), 1);
+        assert!(
+            port.inspects.lock().unwrap().is_empty(),
+            "{mode:?} must not inspect; events: {:?}",
+            port.events.lock().unwrap()
+        );
+    }
 }
 
 #[test]
