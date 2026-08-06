@@ -13,7 +13,9 @@
 # QUECTO_CONTAINER_SCRIPT and prints {"metadata":{},"socket_path":"..."}.
 # An inspect script runs exactly once per dead member and prints
 # {"status":"...","metadata":{...}} — its metadata is merged into the
-# environment record. Instead of "socket_path", create/exec may report
+# environment record; like create/exec results it is parsed strictly
+# (unknown keys and trailing data rejected). Instead of "socket_path",
+# create/exec may report
 # "socket_proxy":{"argv":[...]}: an argv Quecto runs per connection that
 # bridges its stdio to the child inside the environment. Exactly one of the
 # two endpoints must be present — see docs/container-scripts.md.)

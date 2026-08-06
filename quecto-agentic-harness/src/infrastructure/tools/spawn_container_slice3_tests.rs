@@ -46,6 +46,24 @@ fn create_result_rejects_both_endpoints() {
 }
 
 #[test]
+fn create_result_rejects_empty_socket_path_alongside_proxy() {
+    // A present-but-empty socket_path is still a present endpoint field: a
+    // direct-mode template buggily also carrying socket_proxy must fail the
+    // exactly-one check, never silently collapse into proxy mode.
+    let err = parse_create_result(&create_json(
+        r#""socket_path":"","socket_proxy":{"argv":["proxy"]}"#,
+    ))
+    .unwrap_err();
+    assert!(err.to_string().contains("exactly one"), "{err}");
+}
+
+#[test]
+fn create_result_rejects_empty_socket_path_alone() {
+    let err = parse_create_result(&create_json(r#""socket_path":"""#)).unwrap_err();
+    assert!(err.to_string().contains("non-empty"), "{err}");
+}
+
+#[test]
 fn create_result_rejects_missing_endpoint() {
     // An unknown key is rejected by the strict wire contract, naming the
     // offending field.

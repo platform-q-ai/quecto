@@ -380,7 +380,15 @@ impl EnvironmentRegistry {
     /// is a no-op, never a panic.
     pub fn record_inspect_success(&self, claim: InspectClaim, metadata: serde_json::Value) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        // A later successful inspect supersedes a previously persisted
+        // inspect failure: clear the sticky flag so the environment's most
+        // recent inspect outcome is what get_containers reports, and drop
+        // the stale inspect error unless a kill failure now owns last_error.
+        let had_inspect_failure = state.inspect_failures.remove(&claim.environment_ref);
         if let Some(record) = state.entries.get_mut(&claim.environment_ref) {
+            if had_inspect_failure && record.status != EnvironmentStatus::CleanupFailed {
+                record.last_error = None;
+            }
             match (record.metadata.as_object_mut(), metadata) {
                 (Some(existing), serde_json::Value::Object(incoming)) => {
                     for (key, value) in incoming {

@@ -175,29 +175,22 @@ struct SocketProxyWire {
     argv: Vec<String>,
 }
 
-/// Strict wire parse shared by the create and exec result contracts: UTF-8
-/// only, exactly one JSON value, trailing data rejected. Unknown-key
-/// rejection comes from each wire type's `deny_unknown_fields`.
-fn parse_strict_wire<T: serde::de::DeserializeOwned>(
+/// Strict wire parse shared by the create, exec, and inspect result
+/// contracts: UTF-8 only, exactly one JSON value, trailing data rejected.
+/// Unknown-key rejection comes from each wire type's `deny_unknown_fields`.
+/// Returns a plain error string so both launch-path (`DomainError`) and
+/// post-mortem (`String`) callers share one definition.
+pub(super) fn parse_strict_wire<T: serde::de::DeserializeOwned>(
     stdout: &[u8],
     operation: &str,
-) -> Result<T, DomainError> {
-    let text = std::str::from_utf8(stdout).map_err(|e| {
-        DomainError::Tool(format!(
-            "script-managed {operation} returned non-UTF8 JSON: {e}"
-        ))
-    })?;
+) -> Result<T, String> {
+    let text = std::str::from_utf8(stdout)
+        .map_err(|e| format!("script-managed {operation} returned non-UTF8 JSON: {e}"))?;
     let mut de = serde_json::Deserializer::from_str(text);
-    let wire = T::deserialize(&mut de).map_err(|e| {
-        DomainError::Tool(format!(
-            "script-managed {operation} returned invalid JSON contract: {e}"
-        ))
-    })?;
-    de.end().map_err(|e| {
-        DomainError::Tool(format!(
-            "script-managed {operation} returned extra JSON data: {e}"
-        ))
-    })?;
+    let wire = T::deserialize(&mut de)
+        .map_err(|e| format!("script-managed {operation} returned invalid JSON contract: {e}"))?;
+    de.end()
+        .map_err(|e| format!("script-managed {operation} returned extra JSON data: {e}"))?;
     Ok(wire)
 }
 
@@ -215,9 +208,18 @@ fn endpoint_from_wire(
             "script-managed {operation} result must contain a metadata object"
         )));
     }
-    let socket_path = socket_path.filter(|p| !p.as_os_str().is_empty());
+    // A present-but-empty socket_path is still a PRESENT endpoint field: it
+    // must fail the exactly-one check when socket_proxy is also carried (a
+    // buggy direct-mode template), not silently collapse into proxy mode.
     match (socket_path, socket_proxy) {
-        (Some(socket_path), None) => Ok(ParentEndpoint::Direct { socket_path }),
+        (Some(socket_path), None) => {
+            if socket_path.as_os_str().is_empty() {
+                return Err(DomainError::Tool(format!(
+                    "script-managed {operation} result socket_path must be non-empty"
+                )));
+            }
+            Ok(ParentEndpoint::Direct { socket_path })
+        }
         (None, Some(proxy)) => {
             if proxy.argv.is_empty() || proxy.argv.iter().any(|s| unsafe_arg(s)) {
                 return Err(DomainError::Tool(format!(
@@ -233,7 +235,7 @@ fn endpoint_from_wire(
 }
 
 fn parse_exec_result(stdout: &[u8]) -> Result<ParentEndpoint, DomainError> {
-    let wire: ExecResultWire = parse_strict_wire(stdout, "exec")?;
+    let wire: ExecResultWire = parse_strict_wire(stdout, "exec").map_err(DomainError::Tool)?;
     endpoint_from_wire(wire.socket_path, wire.socket_proxy, &wire.metadata, "exec")
 }
 
@@ -384,7 +386,7 @@ fn salvage_environment_id(stdout: &[u8]) -> Option<String> {
 }
 
 fn parse_create_result(stdout: &[u8]) -> Result<CreateResult, DomainError> {
-    let wire: CreateResultWire = parse_strict_wire(stdout, "create")?;
+    let wire: CreateResultWire = parse_strict_wire(stdout, "create").map_err(DomainError::Tool)?;
     if wire.environment_id.is_empty() || wire.workspace_path.as_os_str().is_empty() {
         return Err(DomainError::Tool(
             "script-managed create result must contain environment_id and workspace_path".into(),

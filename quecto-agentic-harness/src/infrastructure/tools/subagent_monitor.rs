@@ -207,15 +207,17 @@ async fn notify_child_exited(
             .filter(|entry| entry.pid == 0)
             .and_then(|entry| entry.exit_signal_tx.clone())
     };
+    // Post-mortem inspect + membership/cleanup claims run BEFORE the exit
+    // signal fires and BEFORE the entry is marked exited: a woken `await`er
+    // (or its immediate `get_containers`) must observe the authoritative
+    // aggregate already updated, per the documented contract.
+    super::subagent_cleanup::cleanup_registered_once(registry, agent_id).await;
     if let Some(tx) = exit_tx {
         let _ = tx.send(Some(super::subagent_registry::ExitSignal {
             exit_code: None,
             signal: None,
         }));
     }
-    // Post-mortem inspect + membership/cleanup claims run BEFORE the entry is
-    // marked exited, so the aggregate is updated before member removal.
-    super::subagent_cleanup::cleanup_registered_once(registry, agent_id).await;
     let sequence = update_entry_next_sequence(registry, agent_id, mark_exited);
     if let Some(tx) = broadcast_tx {
         // Push the terminal transition onto the live event stream (snapshots

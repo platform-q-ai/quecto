@@ -11,15 +11,31 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 fn write_inspect_script(dir: &std::path::Path, log: &std::path::Path) -> std::path::PathBuf {
-    let script = dir.join("inspect.sh");
-    std::fs::write(
-        &script,
-        format!(
-            "#!/usr/bin/env bash\necho \"inspect ${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}\" >> '{}'\nprintf '{{\"status\":\"dead\",\"metadata\":{{\"cause\":\"oom-killed\"}}}}'\n",
+    write_inspect_script_with_body(
+        dir,
+        &format!(
+            "echo \"inspect ${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}\" >> '{}'\nprintf '{{\"status\":\"dead\",\"metadata\":{{\"cause\":\"oom-killed\"}}}}'\n",
             log.display()
         ),
     )
-    .unwrap();
+}
+
+/// A logging inspect script that FAILS (exit 1) so failure-path tests can
+/// observe the invocation count instead of relying on unobservable side
+/// effects.
+fn write_failing_inspect_script(
+    dir: &std::path::Path,
+    log: &std::path::Path,
+) -> std::path::PathBuf {
+    write_inspect_script_with_body(
+        dir,
+        &format!("echo \"inspect-failed\" >> '{}'\nexit 1\n", log.display()),
+    )
+}
+
+fn write_inspect_script_with_body(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
+    let script = dir.join("inspect.sh");
+    std::fs::write(&script, format!("#!/usr/bin/env bash\n{body}")).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -95,8 +111,9 @@ async fn repeated_death_signals_trigger_one_inspect_and_one_terminal_transition(
 #[tokio::test]
 async fn duplicate_signals_after_inspect_failure_still_inspect_once() {
     let dir = tempfile::tempdir().unwrap();
-    let (environments, env_ref) =
-        environment_with_inspect(vec!["/nonexistent-inspect-binary".to_string()]);
+    let log = dir.path().join("inspect-fail-log.txt");
+    let script = write_failing_inspect_script(dir.path(), &log);
+    let (environments, env_ref) = environment_with_inspect(vec![script.display().to_string()]);
     environments.add_member(&env_ref, "agent-2").unwrap();
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let mut entry = SubagentEntry::new(dir.path().join("agent-2.sock"), 0);
@@ -110,13 +127,19 @@ async fn duplicate_signals_after_inspect_failure_still_inspect_once() {
     notify_child_exited(&registry, "agent-2", None, None).await;
     notify_child_exited(&registry, "agent-2", None, None).await;
 
+    let text = std::fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(
+        text.lines().count(),
+        1,
+        "repeated signals after an inspect failure must not re-run it: {text:?}"
+    );
     let record = environments.get(&env_ref).unwrap();
     let last_error = record.last_error.clone().unwrap_or_default();
     assert!(last_error.contains("inspect"), "last_error: {last_error}");
     assert_eq!(
         record.retained_inspect_argv,
-        vec!["/nonexistent-inspect-binary".to_string()],
-        "retained context survives for retry"
+        vec![script.display().to_string()],
+        "retained context survives the failure"
     );
 }
 

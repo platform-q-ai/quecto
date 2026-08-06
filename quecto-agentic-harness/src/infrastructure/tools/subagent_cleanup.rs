@@ -218,8 +218,11 @@ fn run_inspect_once(environments: &EnvironmentRegistry, env_ref: &str, agent_uui
 
 /// Inspect script contract: invoked with `QUECTO_CONTAINER_ENVIRONMENT_ID`,
 /// prints one JSON object `{"status": "...", "metadata": {...}}` on stdout.
+/// The result is parsed through the same strict wire path as create/exec:
+/// unknown keys, trailing data, and non-UTF8 output are rejected.
 fn run_inspect_sync(environment_id: &str, argv: &[String]) -> Result<serde_json::Value, String> {
     #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct InspectResultWire {
         #[serde(default)]
         status: Option<String>,
@@ -240,8 +243,8 @@ fn run_inspect_sync(environment_id: &str, argv: &[String]) -> Result<serde_json:
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    let wire: InspectResultWire = serde_json::from_slice(&output.stdout)
-        .map_err(|e| format!("retained inspect returned invalid JSON contract: {e}"))?;
+    let wire: InspectResultWire =
+        super::spawn_container::parse_strict_wire(&output.stdout, "inspect")?;
     if !wire.metadata.is_object() {
         return Err("retained inspect result must contain a metadata object".to_string());
     }

@@ -212,9 +212,14 @@ environment record. It must print exactly one JSON object:
 
 `metadata` (required object) is merged over the environment's stored
 metadata and becomes visible via `get_containers`; `status` (optional) is
-recorded as `inspect_status`. A non-zero exit or invalid contract
-persists an actionable inspect error on the environment (surviving later
-successful cleanup) while keeping the retained `inspect` argv for retry.
+recorded as `inspect_status`. The result is parsed with the same strict
+wire rules as `create`/`exec`: exactly these fields — unknown keys,
+trailing JSON data, and non-UTF8 output are rejected. A non-zero exit or
+invalid contract persists an actionable inspect error on the environment
+(surviving later successful cleanup) while keeping the retained `inspect`
+argv; a later member's successful inspect supersedes and clears the
+stale inspect error (a `cleanup-failed` kill error is never cleared by
+an inspect).
 
 ### `cleanup`
 

@@ -35,10 +35,49 @@ fn registry_with_member(env_ref: &str, member: &str) -> EnvironmentRegistry {
 }
 
 #[test]
-fn record_retains_inspect_argv() {
+fn later_successful_inspect_clears_persisted_inspect_failure() {
     let registry = registry_with_member("C1", "a1");
+    registry.add_member("C1", "a2").unwrap();
+    // a1 dies and its inspect fails transiently.
+    let claim = registry.begin_inspect("C1", "a1").unwrap();
+    registry.record_inspect_failure(claim, "inspect exited with status 1: transient");
+    assert!(registry.get("C1").unwrap().last_error.is_some());
+    // a2 dies later and its inspect succeeds: the most recent inspect
+    // outcome supersedes the stale failure.
+    let claim = registry.begin_inspect("C1", "a2").unwrap();
+    registry.record_inspect_success(claim, serde_json::json!({"cause": "exit"}));
     let rec = registry.get("C1").unwrap();
-    assert_eq!(rec.retained_inspect_argv, vec!["inspect".to_string()]);
+    assert_eq!(rec.last_error, None, "stale inspect error must be cleared");
+    // A subsequent successful kill now reports no error at all.
+    registry.remove_member("C1", "a1").unwrap();
+    let kill = registry.remove_member("C1", "a2").unwrap().unwrap();
+    registry.complete_kill(kill);
+    let rec = registry.get("C1").unwrap();
+    assert_eq!(rec.status, EnvironmentStatus::Stopped);
+    assert_eq!(rec.last_error, None);
+}
+
+#[test]
+fn later_successful_inspect_keeps_a_kill_failure_error() {
+    let registry = registry_with_member("C1", "a1");
+    registry.add_member("C1", "a2").unwrap();
+    let claim = registry.begin_inspect("C1", "a1").unwrap();
+    registry.record_inspect_failure(claim, "inspect exited with status 1: transient");
+    // A kill failure now owns last_error (cleanup-failed is retryable and
+    // its error must stay actionable).
+    let kill = registry.begin_kill("C1").unwrap();
+    registry.fail_kill(kill, "retained kill exited with status 1: boom");
+    let claim = registry.begin_inspect("C1", "a2").unwrap();
+    registry.record_inspect_success(claim, serde_json::json!({"cause": "exit"}));
+    let rec = registry.get("C1").unwrap();
+    assert_eq!(rec.status, EnvironmentStatus::CleanupFailed);
+    assert!(
+        rec.last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("kill"),
+        "kill failure error must survive a later inspect success"
+    );
 }
 
 #[test]

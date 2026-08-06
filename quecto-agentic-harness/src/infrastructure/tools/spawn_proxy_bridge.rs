@@ -47,6 +47,14 @@ pub(super) fn materialize(
     let socket_path = socket_dir.join(format!("quecto-proxy-{agent_key}.sock"));
     let _ = std::fs::remove_file(&socket_path);
     let listener = tokio::net::UnixListener::bind(&socket_path)?;
+    // Owner-only, same policy as every other quecto listening socket
+    // (`bind_secure_socket`): the socket dir may be world-traversable (temp
+    // fallback), and any local user who can connect could otherwise drive
+    // the child agent through the bridge.
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))?;
+    }
     let handle = tokio::spawn(accept_loop(listener, argv));
     Ok(ProxyBridge {
         socket_path,

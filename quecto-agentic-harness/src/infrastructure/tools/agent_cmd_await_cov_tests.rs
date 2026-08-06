@@ -212,6 +212,63 @@ async fn execute_await_exit_signal_wakes_immediately_with_reason() {
     assert!(registry.lock().unwrap()["exiter"].completion_consumed_by_await);
 }
 
+/// #1369 slice 3 review: a dead socket with an ALREADY-fired exit signal is
+/// a pushed death, never `connection_failed` — even while the entry's status
+/// has not yet been marked Exited (post-mortem inspect still running).
+#[tokio::test]
+async fn execute_await_dead_socket_with_fired_exit_signal_reports_exited() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let socket = tmp.path().join("dead.sock");
+    std::fs::write(&socket, b"").unwrap(); // exists but unconnectable
+    let (exit_tx, _exit_rx) = new_exit_signal_channel();
+    exit_tx
+        .send(Some(ExitSignal {
+            exit_code: None,
+            signal: None,
+        }))
+        .unwrap();
+    let (tool, registry) =
+        tool_with_entry("pushed", socket, SubagentStatus::Running, Some(exit_tx));
+
+    let start = std::time::Instant::now();
+    let got = parse_result(
+        tool.execute_await(r#"{"agent_id":"pushed","timeout":30}"#)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(got.status, "exited");
+    assert_eq!(got.reason.as_deref(), Some("exit_code_0"));
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(2),
+        "pushed death must classify immediately, not after a grace poll"
+    );
+    assert!(registry.lock().unwrap()["pushed"].completion_consumed_by_await);
+}
+
+/// The dead-socket grace window is bounded by the caller's own `timeout`: a
+/// 1s await must not stall for the full 3s grace default.
+#[tokio::test]
+async fn execute_await_dead_socket_grace_respects_caller_timeout() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let socket = tmp.path().join("dead2.sock");
+    std::fs::write(&socket, b"").unwrap();
+    let (tool, _registry) = tool_with_entry("slow", socket, SubagentStatus::Running, None);
+
+    let start = std::time::Instant::now();
+    let got = parse_result(
+        tool.execute_await(r#"{"agent_id":"slow","timeout":1}"#)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(got.status, "error");
+    assert_eq!(got.reason.as_deref(), Some("connection_failed"));
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(2),
+        "grace window must never exceed the requested timeout: {:?}",
+        start.elapsed()
+    );
+}
+
 #[tokio::test]
 async fn execute_await_error_status_with_run_error_returns_structured_error() {
     let tmp = tempfile::TempDir::new().unwrap();

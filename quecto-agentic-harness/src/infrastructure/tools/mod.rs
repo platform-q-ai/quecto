@@ -38,7 +38,7 @@ mod subagent_cleanup;
 mod subagent_cleanup_tests;
 mod subagent_lifecycle;
 pub mod subagent_monitor;
-pub mod subagent_monitor_canonical;
+mod subagent_monitor_canonical;
 pub mod subagent_monitor_merge;
 mod subagent_monitor_registry;
 mod subagent_monitor_stall;
