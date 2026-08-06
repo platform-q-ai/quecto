@@ -2,8 +2,8 @@
 //!
 //! The registry's [`SubagentStatus`](super::subagent_registry::SubagentStatus)
 //! remains the parent-facing wire/status projection. This module owns the
-//! lifecycle vocabulary used by monitor, registry, completion-dedupe,
-//! passive-note, and kill code so race-prone transitions are described in one place instead of as
+//! lifecycle vocabulary used by monitor, registry, passive-note, and kill code
+//! so race-prone transitions are described in one place instead of as
 //! scattered status assignments.
 
 use super::subagent_registry::SubagentStatus;
@@ -33,8 +33,7 @@ pub enum SubagentLifecycleState {
     Killed,
 }
 
-/// Lifecycle events emitted by the process monitor, legacy completion-dedupe,
-/// passive note path, and kill path.
+/// Lifecycle events emitted by the process monitor, passive note path, and kill path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubagentLifecycleEvent {
     /// Monitor connected to the child socket.
@@ -50,13 +49,8 @@ pub enum SubagentLifecycleEvent {
     RunEnded,
     /// A run-level failure was observed.
     RunFailed,
-    /// A legacy completion consumer reported the terminal/idle result and
-    /// consumed the duplicate passive note for this run.
-    AwaitConsumedCompletion,
     /// Passive notification for a completion was emitted.
     PassiveNoteEmitted,
-    /// A legacy completion consumer timed out; the child remains in its current state.
-    AwaitTimedOut,
     /// Process exited or the monitor stream closed.
     ProcessExited,
     /// Parent requested kill.
@@ -88,10 +82,7 @@ impl SubagentLifecycleState {
 
             (State::Launched, Event::SocketConnected) => State::SocketReady,
             (state, Event::SocketConnected) => state,
-            (
-                state,
-                Event::AwaitConsumedCompletion | Event::PassiveNoteEmitted | Event::AwaitTimedOut,
-            ) => state,
+            (state, Event::PassiveNoteEmitted) => state,
         }
     }
 

@@ -66,7 +66,6 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             // Re-arm the passive-note dedupe: a new run means a future terminal
             // completion must notify again, even if a prior run's completion was
             // already consumed.
-            entry.completion_consumed_by_await = false;
             entry.stalled_armed = true;
             entry.updated_at = Instant::now();
         }

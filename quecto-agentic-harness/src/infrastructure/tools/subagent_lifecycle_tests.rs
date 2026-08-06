@@ -27,26 +27,6 @@ fn child_exit_before_socket_ready_is_terminal() {
 }
 
 #[test]
-fn await_before_completion_times_out_without_changing_busy_state() {
-    let state = State::SocketReady.transition(Event::RunStarted);
-
-    assert_eq!(state, State::Busy);
-    assert_eq!(state.transition(Event::AwaitTimedOut), State::Busy);
-    assert_eq!(state.status_projection(), SubagentStatus::Running);
-}
-
-#[test]
-fn completion_consumed_by_manual_await_keeps_child_idle() {
-    let state = State::Busy.transition(Event::RunEnded);
-
-    assert_eq!(state, State::Idle);
-    assert_eq!(
-        state.transition(Event::AwaitConsumedCompletion),
-        State::Idle
-    );
-}
-
-#[test]
 fn passive_note_emission_keeps_completed_child_idle() {
     let state = State::Busy.transition(Event::RunEnded);
 

@@ -6,7 +6,9 @@ use std::time::Instant;
 use crate::domain::ids::AgentUuid;
 use crate::domain::subagent::{DisplayNameResolutionEntry, resolve_live_display_name};
 
-use super::subagent_lifecycle::{SubagentLifecycleEvent, SubagentLifecycleState};
+#[cfg(test)]
+use super::subagent_lifecycle::SubagentLifecycleEvent;
+use super::subagent_lifecycle::SubagentLifecycleState;
 pub use super::subagent_status::SubagentStatus;
 
 /// Entry for a spawned subagent in the shared registry.
@@ -54,9 +56,6 @@ pub struct SubagentEntry {
     pub parent_id: Option<String>,
     /// Latest workflow snapshot reported by the child's monitor (PRD Stage B).
     pub workflow: Option<WorkflowSnapshot>,
-    /// Legacy completion-dedupe flag consumed by the dispatch loop to suppress a
-    /// duplicate passive note, re-armed on a new run (#await-dedupe).
-    pub completion_consumed_by_await: bool,
     /// Terminal-completion latch (#904): consumed by the first `complete`-mode
     /// `agent_end`, re-armed when the workflow leaves `complete`.
     pub completion_armed: bool,
@@ -149,7 +148,6 @@ impl SubagentEntry {
             exit_signal_tx: None,
             parent_id: None,
             workflow: None,
-            completion_consumed_by_await: false,
             completion_armed: true,
             stalled_armed: true,
             pending_stall: None,
@@ -171,9 +169,7 @@ impl SubagentEntry {
 /// entries), then fall back to live-only display-name resolution (#1378).
 ///
 /// Live-only display resolution keeps dead agents non-targetable for NEW
-/// commands (socket lookup / lifecycle arming). Completion dedupe uses
-/// [`resolve_registry_key_for_await_dedupe`] so an exit note that still shows
-/// the display label can coalesce against a retained Exited entry.
+/// commands (socket lookup / lifecycle arming).
 pub fn resolve_registry_key(
     entries: &HashMap<String, SubagentEntry>,
     agent_ref: &str,
@@ -183,34 +179,6 @@ pub fn resolve_registry_key(
     }
     let resolution_entries = display_resolution_entries(entries);
     resolve_live_display_name(&resolution_entries, agent_ref).map(|uuid| uuid.into_string())
-}
-
-/// Like [`resolve_registry_key`], but display-label fallback also matches a
-/// unique retained **exited** entry. Used only for legacy completion-dedupe coalescing so
-/// notes that embed the user-facing label still suppress after `mark_exited`
-/// (#1378 adversarial re-review). Does not re-arm sockets or resume sessions.
-pub fn resolve_registry_key_for_await_dedupe(
-    entries: &HashMap<String, SubagentEntry>,
-    agent_ref: &str,
-) -> Result<String, crate::domain::subagent::DisplayNameResolveError> {
-    if entries.contains_key(agent_ref) {
-        return Ok(agent_ref.to_string());
-    }
-    if let Some((key, _)) = entries.iter().find(|(key, entry)| {
-        entry.effective_display_name(key) == agent_ref && entry.completion_consumed_by_await
-    }) {
-        return Ok(key.clone());
-    }
-
-    let resolution_entries = display_resolution_entries(entries);
-    match resolve_live_display_name(&resolution_entries, agent_ref) {
-        Ok(uuid) => Ok(uuid.into_string()),
-        Err(crate::domain::subagent::DisplayNameResolveError::NoLiveMatch { .. }) => {
-            resolve_unique_retained_display_name(&resolution_entries, agent_ref)
-                .map(|uuid| uuid.into_string())
-        }
-        Err(err) => Err(err),
-    }
 }
 
 fn display_resolution_entries(
@@ -229,84 +197,6 @@ fn display_resolution_entries(
 /// Unique retained display-name match across live **and** exited entries.
 /// Prefers not to invent multi-match semantics: zero → NoLiveMatch, 2+ →
 /// AmbiguousLiveMatch (same error vocabulary as live resolve).
-fn resolve_unique_retained_display_name(
-    entries: &[DisplayNameResolutionEntry],
-    display_name: &str,
-) -> Result<crate::domain::ids::AgentUuid, crate::domain::subagent::DisplayNameResolveError> {
-    let mut matches = entries
-        .iter()
-        .filter(|entry| entry.display_name == display_name)
-        .map(|entry| entry.agent_uuid.clone());
-
-    let Some(first) = matches.next() else {
-        return Err(
-            crate::domain::subagent::DisplayNameResolveError::NoLiveMatch {
-                display_name: display_name.to_string(),
-            },
-        );
-    };
-    if matches.next().is_some() {
-        return Err(
-            crate::domain::subagent::DisplayNameResolveError::AmbiguousLiveMatch {
-                display_name: display_name.to_string(),
-            },
-        );
-    }
-    Ok(first)
-}
-
-/// Mark `agent_ref`'s entry as having had its current-run terminal completion
-/// consumed by a completion consumer (passive-note dedupe). `agent_ref` may be a live
-/// display label, retained exited display label, or UUID; the flag is always
-/// stored on the UUID-keyed entry (#1378). No-op if the entry no longer exists.
-pub fn mark_completion_consumed_by_await(registry: &SubagentRegistry, agent_ref: &str) {
-    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    let Ok(key) = resolve_registry_key_for_await_dedupe(&entries, agent_ref) else {
-        return;
-    };
-    if let Some(entry) = entries.get_mut(&key) {
-        entry.completion_consumed_by_await = true;
-        entry.status = super::subagent_lifecycle::apply_lifecycle_event(
-            &mut entry.lifecycle,
-            SubagentLifecycleEvent::AwaitConsumedCompletion,
-        );
-    }
-}
-
-/// Check-and-consume the completion-dedupe flag for `agent_ref`. Returns `true`
-/// when the passive completion note should be SUPPRESSED because this terminal
-/// result was already reported; in that case the flag is cleared so a future
-/// re-run still notifies. `agent_ref` may be a live / retained-exited display
-/// label or UUID (#1378).
-pub fn take_completion_consumed_by_await(registry: &SubagentRegistry, agent_ref: &str) -> bool {
-    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    let Ok(key) = resolve_registry_key_for_await_dedupe(&entries, agent_ref) else {
-        return false;
-    };
-    if let Some(entry) = entries.get_mut(&key) {
-        if entry.completion_consumed_by_await {
-            entry.completion_consumed_by_await = false;
-            entry.status = super::subagent_lifecycle::apply_lifecycle_event(
-                &mut entry.lifecycle,
-                SubagentLifecycleEvent::PassiveNoteEmitted,
-            );
-            return true;
-        }
-    }
-    false
-}
-
-/// Check-and-consume the completion-dedupe flag for `agent_id` against an
-/// OPTIONAL registry, the form both UDS dispatch paths hold (#828). Returns
-/// `true` when the passive completion note should be suppressed; `false` when
-/// there is no registry or no pending flag. Wraps
-/// [`take_completion_consumed_by_await`] so the predicate lives in ONE place.
-pub fn consume_await_dedupe(registry: &Option<SubagentRegistry>, agent_id: &str) -> bool {
-    registry
-        .as_ref()
-        .is_some_and(|reg| take_completion_consumed_by_await(reg, agent_id))
-}
-
 pub type SubagentRegistry = Arc<Mutex<HashMap<String, SubagentEntry>>>;
 
 pub fn new_registry() -> SubagentRegistry {
@@ -644,14 +534,6 @@ impl SequencedSubagentNotification {
         (agent_id, self.sequence)
     }
 
-    /// Internal await-dedupe reference: UUID when stamped, else display label.
-    pub fn await_dedupe_key(&self) -> (String, u64) {
-        self.agent_uuid
-            .as_ref()
-            .map(|uuid| (uuid.to_string(), self.sequence))
-            .unwrap_or_else(|| self.dedupe_key())
-    }
-
     pub fn to_message(&self) -> String {
         self.notification.to_message()
     }
@@ -723,7 +605,3 @@ mod subagent_snapshot;
 #[cfg(test)]
 #[path = "subagent_registry_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "subagent_registry_cov_tests.rs"]
-mod cov_tests;

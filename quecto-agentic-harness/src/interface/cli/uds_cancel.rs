@@ -610,10 +610,7 @@ fn collect_notification(
 ) {
     let delivered = match sink.broadcast_sender() {
         Some(tx) => forward_notification_broadcast(notif.clone(), tx, subagent_registry),
-        None => !crate::infrastructure::tools::subagent_registry::consume_await_dedupe(
-            subagent_registry,
-            &notif.await_dedupe_key().0,
-        ),
+        None => true,
     };
     if delivered {
         notifications.push(notif);
@@ -623,24 +620,15 @@ fn collect_notification(
 /// Forward a subagent notification as broadcast events (#534).
 ///
 /// Returns `true` when the passive completion note was delivered (so the caller
-/// should also collect it for LLM injection), or `false` when it was SUPPRESSED
-/// because a this terminal completion was already consumed
-/// (passive-note dedupe). The `SubagentStateChanged` panel update is always
-/// emitted regardless. Race-free because the dispatch/drain loop is
-/// single-threaded: the await tool set the flag before this notification is
-/// processed.
+/// should also collect it for LLM injection). The `SubagentStateChanged` panel
+/// update is always emitted regardless.
 pub(in crate::interface::cli) fn forward_notification_broadcast(
     notif: SequencedSubagentNotification,
     broadcast_tx: &tokio::sync::broadcast::Sender<String>,
     subagent_registry: &Option<SubagentRegistry>,
 ) -> bool {
     let (agent_id, sequence) = notif.dedupe_key();
-    let (dedupe_ref, _) = notif.await_dedupe_key();
-    let suppress = crate::infrastructure::tools::subagent_registry::consume_await_dedupe(
-        subagent_registry,
-        &dedupe_ref,
-    );
-    if !suppress {
+    {
         tracing::info!(
             %agent_id,
             sequence,
@@ -661,7 +649,7 @@ pub(in crate::interface::cli) fn forward_notification_broadcast(
     let mut line = ev.to_json_line();
     line.push('\n');
     let _ = broadcast_tx.send(line);
-    !suppress
+    true
 }
 
 /// Forward a single progress event to `sink`.
@@ -688,6 +676,3 @@ mod issue_1060_tests;
 #[cfg(test)]
 #[path = "uds_1072_e2e_tests.rs"]
 mod issue_1072_e2e_tests;
-#[cfg(test)]
-#[path = "uds_cancel_tests.rs"]
-mod tests;

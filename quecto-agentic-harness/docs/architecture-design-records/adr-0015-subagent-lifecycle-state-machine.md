@@ -51,8 +51,6 @@ enum SubagentLifecycleEvent {
     TurnStarted,
     TurnEnded,
     CompletionNoted,
-    AwaitStarted,
-    AwaitTimedOut,
     Exited,
     Killed,
     Failed,
