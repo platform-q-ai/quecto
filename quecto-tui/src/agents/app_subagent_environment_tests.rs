@@ -325,6 +325,147 @@ async fn environment_details_survive_sparse_snapshot_refresh() {
     }
 }
 
+/// Review #1392: with an environment row committed, a routine roster update
+/// must not snap the panel cursor back to the Master row (`active_agent_id`
+/// is `None` while an environment is selected, which used to match Master).
+#[tokio::test]
+async fn environment_selection_survives_subsequent_state_change() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    let agents = vec![env_agent_json("impl", "C2"), env_agent_json("rev", "C2")];
+    h.event_line(&state_changed_line(agents.clone()));
+
+    let rows = panel_rows(&h.left_panel());
+    let target = rows
+        .iter()
+        .position(|l| l.contains("C2") && !l.contains("impl") && !l.contains("rev"))
+        .expect("selectable environment row");
+    h.press(Key::Tab);
+    for _ in 0..target {
+        h.press(Key::Down);
+    }
+    h.press(Key::Enter);
+    assert!(
+        h.main_pane().contains("pr-env"),
+        "chrome shows after commit"
+    );
+
+    // A routine state change (same roster) triggers clamp/sync.
+    h.event_line(&state_changed_line(agents));
+    assert_eq!(
+        h.app_mut().panel_highlight_index(),
+        target,
+        "the cursor must stay on the committed environment row"
+    );
+    assert!(
+        h.main_pane().contains("pr-env"),
+        "environment chrome must still render after the state change"
+    );
+}
+
+/// Review #1392: an update that authoritatively reports a local execution
+/// backend with no environment means the environment was removed — sticky
+/// merge must not resurrect the stale environment object.
+#[tokio::test]
+async fn authoritative_local_backend_clears_stale_environment() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event_line(&state_changed_line(vec![env_agent_json("impl", "C1")]));
+    let mut gone_local = local_agent_json("impl");
+    gone_local["executionBackend"] = serde_json::json!("local");
+    h.event_line(&state_changed_line(vec![gone_local]));
+
+    let panel = h.left_panel();
+    assert!(
+        !panel.contains("C1"),
+        "an authoritative local-backend event must clear the environment badge:\n{panel}"
+    );
+}
+
+/// Review #1392 (security): the solo badge is wire-controlled — escape
+/// sequences in `environment.ref` must be sanitized before rendering.
+#[tokio::test]
+async fn solo_badge_sanitizes_escape_sequences_in_environment_ref() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    let mut agent = env_agent_json("impl", "C1");
+    agent["environment"]["ref"] = serde_json::json!("\u{1b}]0;pwned\u{7}C1");
+    h.event_line(&state_changed_line(vec![agent]));
+
+    let raw = h.full_frame_raw();
+    assert!(
+        !raw.contains("\u{1b}]0;"),
+        "the OSC escape from the wire ref must not reach the terminal"
+    );
+    assert!(
+        raw.contains("pwnedC1") || raw.contains("C1"),
+        "the sanitized badge text still renders:\n{raw}"
+    );
+}
+
+/// Review #1392: session-scoped refs collide across forwarded sessions — two
+/// environments sharing the ref `C1` but carrying different uuids must NOT be
+/// merged into one group.
+#[tokio::test]
+async fn same_ref_different_uuid_environments_do_not_group() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    let mut a = env_agent_json("impl", "C1");
+    a["environment"]["uuid"] = serde_json::json!("env-uuid-a");
+    let mut b = env_agent_json("grand", "C1");
+    b["environment"]["uuid"] = serde_json::json!("env-uuid-b");
+    h.event_line(&state_changed_line(vec![a, b]));
+
+    let panel = h.left_panel();
+    let rows = panel_rows(&panel);
+    assert!(
+        !rows
+            .iter()
+            .any(|l| l.contains("C1") && !l.contains("impl") && !l.contains("grand")),
+        "distinct uuids must not merge into one environment row:\n{panel}"
+    );
+    for id in ["impl", "grand"] {
+        let row = rows
+            .iter()
+            .find(|l| l.contains(id))
+            .unwrap_or_else(|| panic!("no row for {id}:\n{panel}"));
+        assert!(
+            row.contains("C1"),
+            "each solo agent keeps its own C1 badge:\n{row}"
+        );
+    }
+}
+
+/// Review #1392: socket mode is per-member; an environment mixing direct and
+/// proxy endpoints must report `mixed` in the detail chrome, not whichever
+/// member happens to be found first.
+#[tokio::test]
+async fn mixed_member_socket_modes_render_mixed_in_environment_chrome() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    let mut direct = env_agent_json("impl", "C2");
+    direct["environment"]["socketMode"] = serde_json::json!("direct");
+    let proxy = env_agent_json("rev", "C2");
+    h.event_line(&state_changed_line(vec![direct, proxy]));
+
+    let rows = panel_rows(&h.left_panel());
+    let target = rows
+        .iter()
+        .position(|l| l.contains("C2") && !l.contains("impl") && !l.contains("rev"))
+        .expect("selectable environment row");
+    h.press(Key::Tab);
+    for _ in 0..target {
+        h.press(Key::Down);
+    }
+    h.press(Key::Enter);
+
+    let top = h.main_pane();
+    assert!(
+        top.contains("socket: mixed"),
+        "mixed member socket modes must aggregate to `mixed`:\n{top}"
+    );
+}
+
 #[tokio::test]
 async fn local_only_session_renders_without_environment_chrome() {
     let mut h = TuiHarness::new().await;

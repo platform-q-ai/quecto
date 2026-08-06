@@ -342,7 +342,7 @@ impl App {
         if row.is_environment() {
             // Selecting an environment row shows its details in the main-pane
             // chrome over the master body (#1369 slice 4).
-            self.subagents.selected_environment = row.env_ref.clone();
+            self.subagents.selected_environment = row.env_key.clone();
             self.select_agent(None);
             return;
         }
@@ -368,6 +368,22 @@ impl App {
     }
 
     fn sync_panel_selection_to_active_with(&mut self, rows: &[PanelRow]) {
+        // A committed environment selection owns the cursor: with an
+        // environment selected `active_agent_id` is `None`, which would
+        // otherwise match the Master row and silently snap the cursor away
+        // from the environment whose chrome is showing (review #1392).
+        if let Some(env_key) = self.subagents.selected_environment.as_deref() {
+            if let Some(idx) = rows
+                .iter()
+                .position(|r| r.env_key.as_deref() == Some(env_key))
+            {
+                self.subagents.panel_nav.set_selected(idx);
+                return;
+            }
+            // The group dissolved (member exited/refreshed away): drop the
+            // stale selection so the chrome and cursor fall back together.
+            self.subagents.selected_environment = None;
+        }
         if let Some(idx) = rows
             .iter()
             .position(|r| r.id.as_deref() == self.subagents.active_agent_id.as_deref())
@@ -396,7 +412,7 @@ impl App {
         };
         let mut rows = vec![PanelRow {
             id: None,
-            env_ref: None,
+            env_key: None,
             prefix: String::new(),
             badge: None,
             label: "Master Agent".to_string(),
@@ -406,23 +422,28 @@ impl App {
         let groups = self.environment_groups();
         for (node, prefix) in self.subagent_tree_order(&groups) {
             match node {
-                PanelNode::Environment(env_ref) => {
+                PanelNode::Environment(env_key) => {
                     // One selectable row naming the shared environment; its
                     // members nest below via the tree walk (#1369 slice 4).
-                    let env = self.environment_info(&env_ref);
+                    // The node key is the grouping identity (uuid when
+                    // reported, review #1392); the painted label is the ref.
+                    let env = self.environment_info(&env_key);
+                    let env_ref = env
+                        .map(|e| e.environment_ref.clone())
+                        .unwrap_or_else(|| env_key.clone());
                     let name = env
                         .and_then(|e| e.name.as_deref())
                         .filter(|n| !n.is_empty());
                     let label = match name {
                         Some(name) => format!("{env_ref} {name}"),
-                        None => env_ref.clone(),
+                        None => env_ref,
                     };
                     rows.push(PanelRow {
                         label,
                         status: env.map(|e| e.status.clone()).unwrap_or_default(),
                         workflow: None,
                         id: None,
-                        env_ref: Some(env_ref),
+                        env_key: Some(env_key),
                         badge: None,
                         prefix,
                     });
@@ -450,7 +471,7 @@ impl App {
                         workflow,
                         badge: self.solo_environment_badge(&id, &groups),
                         id: Some(id),
-                        env_ref: None,
+                        env_key: None,
                         prefix,
                     });
                 }
@@ -485,7 +506,7 @@ impl App {
                     .info
                     .environment
                     .as_ref()
-                    .map(|e| PanelNode::env_key(&e.environment_ref))
+                    .map(|e| PanelNode::env_key(e.group_key()))
             } else {
                 // Treat an unknown parent as a root so its subtree is not lost.
                 tracked
@@ -691,9 +712,11 @@ impl App {
 
 struct PanelRow {
     id: Option<String>,
-    /// `Some(ref)` when this is a selectable environment row for a shared
-    /// environment (#1369 slice 4); `id` is `None` for such rows.
-    env_ref: Option<String>,
+    /// `Some(group key)` when this is a selectable environment row for a
+    /// shared environment (#1369 slice 4); `id` is `None` for such rows. The
+    /// key is the grouping identity (environment uuid when reported, else the
+    /// session-scoped ref — review #1392), not necessarily the painted ref.
+    env_key: Option<String>,
     /// Tree connector stalk drawn before the name (`├ `/`└ ` + ancestor `│ `).
     prefix: String,
     /// Dim environment ref drawn between the stalk and the name for an agent
@@ -709,7 +732,7 @@ struct PanelRow {
 impl PanelRow {
     /// Whether this is a selectable environment row (not master, not an agent).
     fn is_environment(&self) -> bool {
-        self.id.is_none() && self.env_ref.is_some()
+        self.id.is_none() && self.env_key.is_some()
     }
 }
 

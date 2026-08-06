@@ -67,8 +67,14 @@ pub struct SubagentWorkflow {
 #[serde(rename_all = "camelCase")]
 pub struct SubagentEnvironmentInfo {
     /// Session-scoped `CN` ref minted by the harness environment registry.
+    /// Display label only — refs restart at `C1` per session and can collide
+    /// across forwarded descendant sessions; group on [`Self::group_key`].
     #[serde(rename = "ref", default)]
     pub environment_ref: String,
+    /// Globally-unique environment identity (review #1392). Empty from older
+    /// kernels, in which case grouping falls back to the session-scoped ref.
+    #[serde(rename = "uuid", default)]
+    pub environment_uuid: String,
     /// Optional user-facing environment name.
     #[serde(default)]
     pub name: Option<String>,
@@ -88,7 +94,24 @@ pub struct SubagentEnvironmentInfo {
     /// Workspace path shared by all member agents.
     #[serde(default)]
     pub workspace: String,
-    /// How the parent reaches the child: `direct` UDS or a `proxy` bridge.
+    /// How the parent reaches THIS member: `direct` UDS or a `proxy` bridge.
+    /// Per-member, not environment-scoped (review #1392): one environment can
+    /// mix modes, so environment chrome aggregates across members.
     #[serde(default)]
     pub socket_mode: String,
+}
+
+impl SubagentEnvironmentInfo {
+    /// Grouping identity for this environment: the globally-unique uuid when
+    /// the kernel reports one, else the session-scoped ref (older kernels).
+    /// Session-scoped refs restart at `C1` per session, so grouping on the ref
+    /// alone would merge unrelated environments forwarded from descendant
+    /// sessions (review #1392).
+    pub fn group_key(&self) -> &str {
+        if self.environment_uuid.is_empty() {
+            &self.environment_ref
+        } else {
+            &self.environment_uuid
+        }
+    }
 }

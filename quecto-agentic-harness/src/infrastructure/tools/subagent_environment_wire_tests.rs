@@ -66,6 +66,13 @@ fn state_changed_event_carries_execution_backend_and_environment() {
         .get("environment")
         .expect("script-managed entries must carry an environment object");
     assert_eq!(env.get("ref").and_then(|v| v.as_str()), Some("C1"));
+    assert!(
+        env.get("uuid")
+            .and_then(|v| v.as_str())
+            .is_some_and(|u| !u.is_empty()),
+        "the environment object must carry the globally-unique uuid so \
+         consumers can group across sessions (review #1392): {env}"
+    );
     assert_eq!(env.get("name").and_then(|v| v.as_str()), Some("pr-env"));
     assert_eq!(env.get("status").and_then(|v| v.as_str()), Some("running"));
     assert_eq!(

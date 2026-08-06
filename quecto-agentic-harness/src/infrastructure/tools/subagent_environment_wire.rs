@@ -26,9 +26,16 @@ pub const BACKEND_SCRIPT: &str = "script";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentEnvironmentWire {
-    /// Session-scoped `CN` ref minted by the environment registry.
+    /// Session-scoped `CN` ref minted by the environment registry. Display
+    /// label only — refs restart at `C1` in every session, so forwarded
+    /// descendant environments can collide on it. Group on `uuid`.
     #[serde(rename = "ref", default)]
     pub environment_ref: String,
+    /// Globally-unique environment identity minted at creation (review #1392).
+    /// Unlike the session-scoped `ref`, it never collides across sessions, so
+    /// consumers must group members on it. Empty from older producers.
+    #[serde(default)]
+    pub uuid: String,
     /// Optional user-facing environment name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -48,7 +55,10 @@ pub struct SubagentEnvironmentWire {
     /// Workspace path shared by all member agents.
     #[serde(default)]
     pub workspace: String,
-    /// How the parent reaches the child: `direct` UDS or a `proxy` bridge.
+    /// How the parent reaches THIS member: `direct` UDS or a `proxy` bridge.
+    /// Per-member, not environment-scoped (review #1392) — one environment can
+    /// legitimately mix modes across members, so consumers must not present a
+    /// single member's value as the environment's.
     #[serde(default)]
     pub socket_mode: String,
 }
@@ -69,6 +79,7 @@ pub fn environment_wire(entry: &SubagentEntry) -> Option<SubagentEnvironmentWire
     let record = registry.get(env_ref)?;
     Some(SubagentEnvironmentWire {
         environment_ref: record.environment_ref.clone(),
+        uuid: record.environment_uuid.clone(),
         name: record.name.clone(),
         status: record.status_label().to_string(),
         repository: record.repository.clone(),

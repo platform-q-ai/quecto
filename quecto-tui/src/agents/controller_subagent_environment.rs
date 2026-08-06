@@ -20,16 +20,20 @@ use super::app_subagent_panel::controller_subagent_panel_helpers::{
 impl App {
     // ── Environment grouping model ─────────────────────────────────────
 
-    /// Environments shared by two or more tracked agents: `ref → member ids`
-    /// (sorted, from the sorted tracked map). Solo environments are not
-    /// grouped — their agent renders flat with a badge.
+    /// Environments shared by two or more tracked agents: `group key →
+    /// member ids` (sorted, from the sorted tracked map). Keyed on
+    /// [`SubagentEnvironmentInfo::group_key`] — the globally-unique uuid when
+    /// reported — NOT the session-scoped `CN` ref, which restarts at `C1` per
+    /// session and would merge unrelated forwarded-descendant environments
+    /// (review #1392). Solo environments are not grouped — their agent renders
+    /// flat with a badge.
     pub(super) fn environment_groups(&self) -> BTreeMap<String, Vec<String>> {
         let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (id, tracked) in &self.subagents.tracked {
             if let Some(env) = &tracked.info.environment {
-                if !env.environment_ref.is_empty() {
+                if !env.group_key().is_empty() {
                     groups
-                        .entry(env.environment_ref.clone())
+                        .entry(env.group_key().to_string())
                         .or_default()
                         .push(id.clone());
                 }
@@ -48,20 +52,47 @@ impl App {
         groups: &BTreeMap<String, Vec<String>>,
     ) -> Option<String> {
         let env = self.subagents.tracked.get(id)?.info.environment.as_ref()?;
-        if env.environment_ref.is_empty() || groups.contains_key(&env.environment_ref) {
+        if env.environment_ref.is_empty() || groups.contains_key(env.group_key()) {
             return None;
         }
-        Some(env.environment_ref.clone())
+        // Sanitize here: the ref is wire-controlled and this badge is the one
+        // label rendered outside `sanitize_panel_label` (review #1392 —
+        // terminal escape injection otherwise).
+        Some(sanitize_panel_label(&env.environment_ref))
     }
 
-    /// Any tracked member's environment metadata for `env_ref` (all members
-    /// share it; sticky merge keeps it through sparse refreshes).
-    pub(super) fn environment_info(&self, env_ref: &str) -> Option<&SubagentEnvironmentInfo> {
+    /// Any tracked member's environment metadata for the group `key` (members
+    /// share the registry-owned fields; sticky merge keeps them through sparse
+    /// refreshes). Per-member fields (`socket_mode`) must NOT be read from this
+    /// arbitrary member — use [`Self::environment_socket_mode`].
+    pub(super) fn environment_info(&self, key: &str) -> Option<&SubagentEnvironmentInfo> {
         self.subagents
             .tracked
             .values()
             .filter_map(|t| t.info.environment.as_ref())
-            .find(|e| e.environment_ref == env_ref)
+            .find(|e| e.group_key() == key)
+    }
+
+    /// Aggregate socket mode across every member of the environment `key`:
+    /// the shared value when all members agree, `mixed` when they differ
+    /// (socket mode is per-member, review #1392), `-` when unreported.
+    pub(super) fn environment_socket_mode(&self, key: &str) -> String {
+        let mut modes: Vec<&str> = self
+            .subagents
+            .tracked
+            .values()
+            .filter_map(|t| t.info.environment.as_ref())
+            .filter(|e| e.group_key() == key)
+            .map(|e| e.socket_mode.as_str())
+            .filter(|m| !m.is_empty())
+            .collect();
+        modes.sort_unstable();
+        modes.dedup();
+        match modes.as_slice() {
+            [] => "-".to_string(),
+            [one] => (*one).to_string(),
+            _ => "mixed".to_string(),
+        }
     }
 
     // ── Environment main-pane chrome ───────────────────────────────────
@@ -69,8 +100,8 @@ impl App {
     /// The selected environment's detail chrome for the main pane, or `None`
     /// when no environment is selected (or its metadata is gone).
     pub(super) fn render_environment_chrome(&self, width: usize) -> Option<Vec<String>> {
-        let env_ref = self.subagents.selected_environment.as_deref()?;
-        let env = self.environment_info(env_ref)?;
+        let env_key = self.subagents.selected_environment.as_deref()?;
+        let env = self.environment_info(env_key)?;
         let dot = theme::dim("·");
         let name = env
             .name
@@ -80,7 +111,7 @@ impl App {
             .unwrap_or_default();
         let title = format!(
             "{} {name}{dot} status: {}",
-            theme::bold(&sanitize_panel_label(env_ref)),
+            theme::bold(&sanitize_panel_label(&env.environment_ref)),
             status_colored_name(&env.status, &sanitize_panel_label(&env.status)),
         );
         let repo = format!(
@@ -92,7 +123,9 @@ impl App {
             "runtime: {} {dot} workspace: {} {dot} socket: {}",
             sanitize_panel_label(&env.runtime_id),
             sanitize_panel_label(&env.workspace),
-            sanitize_panel_label(&env.socket_mode),
+            // Aggregated across members — socket mode is per-member and one
+            // environment can mix direct and proxy endpoints (review #1392).
+            sanitize_panel_label(&self.environment_socket_mode(env_key)),
         );
         Some(
             [title, repo, runtime]

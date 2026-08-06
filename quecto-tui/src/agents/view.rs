@@ -36,11 +36,17 @@ impl RosterInfo for SubagentInfoEvent {
         // Sparse `get_subagents` refreshes omit the environment metadata a
         // live event reported; keep the last-known backend/environment so
         // badges, grouping and details survive roster polls (#1369 slice 4).
-        if self.execution_backend.is_none() {
+        // An update that DOES carry an execution backend is authoritative for
+        // environment membership too: `executionBackend: "local"` with no
+        // environment means the environment was removed (the harness strips
+        // membership on cleanup), so restoring the stale object would pin the
+        // agent under a dead environment forever (review #1392).
+        let sparse = self.execution_backend.is_none();
+        if sparse {
             self.execution_backend = previous.execution_backend.clone();
-        }
-        if self.environment.is_none() {
-            self.environment = previous.environment.clone();
+            if self.environment.is_none() {
+                self.environment = previous.environment.clone();
+            }
         }
     }
 }
@@ -132,7 +138,9 @@ pub(crate) struct SubagentUi {
     /// The agent whose session is shown in the main body. `None` = master.
     pub(crate) active_agent_id: Option<String>,
     /// The shared environment whose details render in the main-pane chrome
-    /// after its panel row was selected (#1369 slice 4). `None` = agent chrome.
+    /// after its panel row was selected (#1369 slice 4). Stores the grouping
+    /// key (`SubagentEnvironmentInfo::group_key`, review #1392), not the
+    /// painted ref. `None` = agent chrome.
     pub(crate) selected_environment: Option<String>,
     /// Left-panel selection cursor over the flattened (master + tree) rows.
     pub(crate) panel_nav: ListNavigator,
