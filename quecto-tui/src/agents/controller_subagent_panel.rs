@@ -423,7 +423,9 @@ impl App {
             .enumerate()
             .map(|(i, row)| {
                 let sel = i == selected;
-                let is_active = row.id.as_deref() == active;
+                // Environment rows share `id: None` with the master row; they
+                // are never the active agent (#1369 slice 4).
+                let is_active = row.id.as_deref() == active && !row.is_environment();
                 let mut block =
                     vec![self.panel_name_line(row, sel && focused, is_active, width, now)];
                 if let Some((done, total)) = row.workflow {

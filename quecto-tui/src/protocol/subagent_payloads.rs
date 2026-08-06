@@ -107,6 +107,12 @@ impl SubagentEnvironmentInfo {
     /// Session-scoped refs restart at `C1` per session, so grouping on the ref
     /// alone would merge unrelated environments forwarded from descendant
     /// sessions (review #1392).
+    ///
+    /// Accepted compat degradation: when producers mix (one member reports a
+    /// uuid, another's producer predates it), the two keys differ and one
+    /// environment renders as separate solo rows with identical `CN` badges
+    /// instead of one group. Display-only degradation — no crash, no
+    /// misdirected commands — so no version negotiation is added.
     pub fn group_key(&self) -> &str {
         if self.environment_uuid.is_empty() {
             &self.environment_ref

@@ -506,3 +506,102 @@ async fn local_only_session_renders_without_environment_chrome() {
         "panel lines must be exactly 34 columns wide:\n{panel}"
     );
 }
+
+fn env_agent_json_with_status(id: &str, env_ref: &str, env_status: &str) -> serde_json::Value {
+    let mut agent = env_agent_json(id, env_ref);
+    agent["environment"]["status"] = serde_json::json!(env_status);
+    agent
+}
+
+#[tokio::test]
+async fn environment_rows_are_not_painted_active_while_master_is_active() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    // Two shared environments → two env rows, both with `id: None` like the
+    // master row. With no active agent (master active), only the master row
+    // may take the bold active style (review #1392).
+    h.event_line(&state_changed_line(vec![
+        env_agent_json("impl", "C1"),
+        env_agent_json("rev", "C1"),
+        env_agent_json_with_status("impl2", "C2", "running"),
+        env_agent_json_with_status("rev2", "C2", "running"),
+    ]));
+
+    let raw = h.full_frame_raw();
+    for env_label in ["C1 pr-env", "C2 pr-env"] {
+        let bolded = crate::components::theme::bold(
+            &super::app_subagent_panel::controller_subagent_panel_helpers::status_colored_name(
+                "running", env_label,
+            ),
+        );
+        assert!(
+            !raw.contains(&bolded),
+            "environment row {env_label:?} must not render bold/active, raw:\n{raw}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn divergent_member_statuses_aggregate_worst_wins_in_chrome() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    // A stale forwarded copy still says `running`; the other member already
+    // observed `cleanup-failed`. Worst status must win (review #1392).
+    h.event_line(&state_changed_line(vec![
+        env_agent_json_with_status("impl", "C2", "running"),
+        env_agent_json_with_status("rev", "C2", "cleanup-failed"),
+    ]));
+
+    let rows = panel_rows(&h.left_panel());
+    let target = rows
+        .iter()
+        .position(|l| l.contains("C2") && !l.contains("impl") && !l.contains("rev"))
+        .unwrap_or_else(|| panic!("no environment row for C2:\n{}", rows.join("\n")));
+    h.press(Key::Tab);
+    for _ in 0..target {
+        h.press(Key::Down);
+    }
+    h.press(Key::Enter);
+
+    let top = h.main_pane();
+    assert!(
+        top.contains("status: cleanup-failed"),
+        "worst member status must win in environment chrome, got:\n{top}"
+    );
+    assert!(
+        !top.contains("status: running"),
+        "stale running status must not mask a dying environment:\n{top}"
+    );
+}
+
+#[tokio::test]
+async fn mixed_producers_degrade_to_solo_rows_without_crashing() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    // One member's producer reports the environment uuid, the other's
+    // predates it (empty uuid → ref fallback). Accepted compat degradation:
+    // two solo badge rows, no group row, no crash (review #1392).
+    let mut modern = env_agent_json("impl", "C1");
+    modern["environment"]["uuid"] = serde_json::json!("env-uuid-1");
+    let legacy = env_agent_json("rev", "C1");
+    h.event_line(&state_changed_line(vec![modern, legacy]));
+
+    let rows = panel_rows(&h.left_panel());
+    let group_rows = rows
+        .iter()
+        .filter(|l| l.contains("C1") && !l.contains("impl") && !l.contains("rev"))
+        .count();
+    assert_eq!(
+        group_rows,
+        0,
+        "mixed producers must not form a group row:\n{}",
+        rows.join("\n")
+    );
+    for id in ["impl", "rev"] {
+        assert!(
+            rows.iter().any(|l| l.contains(id) && l.contains("C1")),
+            "member {id} must render as a solo row with the C1 badge:\n{}",
+            rows.join("\n")
+        );
+    }
+}

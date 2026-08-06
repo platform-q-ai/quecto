@@ -42,7 +42,9 @@ impl App {
                     };
                     rows.push(PanelRow {
                         label,
-                        status: env.map(|e| e.status.clone()).unwrap_or_default(),
+                        // Worst-wins across members (review #1392): a stale
+                        // forwarded copy must not paint a dying env `running`.
+                        status: self.environment_status(&env_key),
                         workflow: None,
                         id: None,
                         env_key: Some(env_key),

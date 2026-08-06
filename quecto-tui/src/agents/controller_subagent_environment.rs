@@ -73,6 +73,34 @@ impl App {
             .find(|e| e.group_key() == key)
     }
 
+    /// Aggregate status across every member of the environment `key`: the
+    /// most-degraded value wins, so a stale forwarded member's copy cannot
+    /// show `running` after the environment began dying (review #1392).
+    /// Unknown labels rank between `running` and the terminal states so new
+    /// wire values stay visible rather than being masked.
+    pub(super) fn environment_status(&self, key: &str) -> String {
+        fn rank(status: &str) -> u8 {
+            match status {
+                "cleanup-failed" => 5,
+                "killing" => 4,
+                "stopped" => 3,
+                "empty" => 2,
+                "running" => 0,
+                _ => 1,
+            }
+        }
+        self.subagents
+            .tracked
+            .values()
+            .filter_map(|t| t.info.environment.as_ref())
+            .filter(|e| e.group_key() == key)
+            .map(|e| e.status.as_str())
+            .filter(|s| !s.is_empty())
+            .max_by_key(|s| (rank(s), s.to_string()))
+            .unwrap_or_default()
+            .to_string()
+    }
+
     /// Aggregate socket mode across every member of the environment `key`:
     /// the shared value when all members agree, `mixed` when they differ
     /// (socket mode is per-member, review #1392), `-` when unreported.
@@ -109,10 +137,13 @@ impl App {
             .filter(|n| !n.is_empty())
             .map(|n| format!("{} ", sanitize_panel_label(n)))
             .unwrap_or_default();
+        // Status is aggregated worst-wins across members — a stale forwarded
+        // copy must not report `running` for a dying environment.
+        let status = self.environment_status(env_key);
         let title = format!(
             "{} {name}{dot} status: {}",
             theme::bold(&sanitize_panel_label(&env.environment_ref)),
-            status_colored_name(&env.status, &sanitize_panel_label(&env.status)),
+            status_colored_name(&status, &sanitize_panel_label(&status)),
         );
         let repo = format!(
             "repo: {} {dot} branch: {}",
