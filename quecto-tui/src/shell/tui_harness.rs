@@ -745,5 +745,22 @@ pub(super) fn transient_in(frames: &[Vec<String>]) -> Vec<(usize, String)> {
     }
     out
 }
+/// A panel row's text after the selection column and tree-stalk characters —
+/// the row's own label region, badge included. Shared here so panel-chrome
+/// assertions in every test suite track the render code's glyph set.
+pub fn after_stalk(row: &str) -> &str {
+    row.trim_start_matches(['▌', ' ', '│', '├', '└'])
+}
+
+/// Non-empty panel row lines, excluding the bottom key-hint line. Shared here
+/// so the footer-hint filter cannot drift from the rendered chrome.
+pub fn panel_rows(panel: &str) -> Vec<String> {
+    panel
+        .lines()
+        .map(|l| l.trim_end().to_string())
+        .filter(|l| !l.trim().is_empty() && !l.contains("⇥ pane"))
+        .collect()
+}
+
 #[path = "tui_harness_probes.rs"]
 mod probes;

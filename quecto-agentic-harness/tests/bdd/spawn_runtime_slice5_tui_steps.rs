@@ -81,19 +81,9 @@ fn panel(world: &mut QuectoWorld) -> String {
     drive(world, |h| h.left_panel())
 }
 
-/// Non-empty panel row lines, excluding the bottom key-hint line.
-fn panel_rows(panel: &str) -> Vec<String> {
-    panel
-        .lines()
-        .map(|l| l.trim_end().to_string())
-        .filter(|l| !l.trim().is_empty() && !l.contains("⇥ pane"))
-        .collect()
-}
-
-/// A row's text after the selection column and tree-stalk characters.
-fn after_stalk(row: &str) -> &str {
-    row.trim_start_matches(['▌', ' ', '│', '├', '└'])
-}
+// Panel-chrome helpers are shared from the harness so the footer-hint filter
+// and stalk glyph set cannot drift from quecto-tui's render code.
+use quecto_tui::shell::app::tui_harness::{after_stalk, panel_rows};
 
 /// Structural environment-row detection: the environment ref is the row's own
 /// first label token (agent rows lead with the agent name).

@@ -267,14 +267,21 @@ through the production script adapter and strict parser:
 The reference runtime is **host-local**: it needs no Docker and runs
 everywhere (including CI). Each script takes `--state-dir <dir>` — a trusted
 root under which it keeps one directory per environment (checkout workspace,
-recorded child pids, invocation records). `create.sh` checks the repository
-out into `<state>/<environment_id>/workspace/repo` and starts the child
-directly on the host; `exec.sh` starts a joining child sharing that
-workspace; `inspect.sh` reports whether any recorded child is still alive;
-`kill.sh` serves both the `kill` and `cleanup` operations, distinguished by
+recorded child pids, invocation records). The root is created owner-only
+(mode 700) and adopted only when owned by the invoking user, and each
+environment directory is minted with `mktemp -d` — an unpredictable name
+that fails hard rather than reuse (or follow a symlink planted at) an
+existing path. `create.sh` checks the repository out into
+`<state>/<environment_id>/workspace/repo` and starts the child directly on
+the host; `exec.sh` starts a joining child sharing that workspace;
+`inspect.sh` reports whether any recorded child is still alive; `kill.sh`
+serves both the `kill` and `cleanup` operations, distinguished by
 `--op kill` / `--op cleanup`, and performs trusted-root containment (the
 environment directory must resolve under the `--state-dir` root) before any
-destructive removal. All scripts fail fast (`set -euo pipefail`), log to
+destructive removal. `kill` keeps the environment's recorded metadata for
+the cleanup that follows; `cleanup` is terminal and removes the entire
+per-environment directory, so the state root does not grow with every
+environment ever created. All scripts fail fast (`set -euo pipefail`), log to
 stderr only, encode stdout results with a real JSON encoder (`jq`, which
 must be installed), and pass the repository URL as a literal argv element
 (never shell-interpolated).

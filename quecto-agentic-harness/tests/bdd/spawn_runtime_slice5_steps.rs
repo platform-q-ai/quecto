@@ -9,7 +9,7 @@ use super::*;
 /// Absolute path to the canonical container-runtime script directory at the
 /// workspace root. The scripts are the shipped reference runtime — the suite
 /// must execute those exact files, never a test-local copy.
-pub(crate) fn canonical_runtime_dir() -> PathBuf {
+fn canonical_runtime_dir() -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     manifest_dir
         .parent()
@@ -21,7 +21,7 @@ pub(crate) fn canonical_runtime_dir() -> PathBuf {
 /// Root the canonical scripts use for their host-local invocation records
 /// (`creates.log`, `execs.log`, and per-environment `ref`/`kill.log`/
 /// `inspect.log`/`children.jsonl`), passed via `--state-dir`.
-pub(crate) fn canonical_state_dir(world: &QuectoWorld) -> PathBuf {
+fn canonical_state_dir(world: &QuectoWorld) -> PathBuf {
     base_path(world).join("canonical-state")
 }
 

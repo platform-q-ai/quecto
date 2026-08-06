@@ -59,19 +59,8 @@ fn get_subagents_response_line(agents: Vec<serde_json::Value>) -> String {
     .to_string()
 }
 
-/// A row's text after the selection column and tree-stalk characters.
-fn after_stalk(row: &str) -> &str {
-    row.trim_start_matches(['▌', ' ', '│', '├', '└'])
-}
-
-/// Non-empty panel row lines, excluding the bottom key-hint line.
-fn panel_rows(panel: &str) -> Vec<String> {
-    panel
-        .lines()
-        .map(|l| l.trim_end().to_string())
-        .filter(|l| !l.trim().is_empty() && !l.contains("⇥ pane"))
-        .collect()
-}
+// `after_stalk` / `panel_rows` come from the glob-imported shared harness
+// (`super::tui_harness`), so panel-chrome knowledge lives in one place.
 
 #[tokio::test]
 async fn panel_width_still_clamps_to_half_the_terminal() {

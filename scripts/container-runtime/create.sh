@@ -57,12 +57,18 @@ for arg in "$@"; do
 done
 [ -n "$socket_path" ] || die "child command has no --socket argument"
 
-mkdir -p "$state_dir"
-environment_id="env-$(date +%s)-$$-$RANDOM"
-env_dir="$state_dir/$environment_id"
-mkdir -p "$env_dir"
+# State-root hardening: create the root owner-only, and refuse to adopt a
+# pre-existing root owned by someone else (e.g. an attacker-planted directory
+# under a world-writable parent such as /var/tmp).
+mkdir -p -m 700 "$state_dir"
+[ -O "$state_dir" ] || die "state dir $state_dir is not owned by the current user"
+# Environment directories are minted with mktemp: unpredictable suffix, mode
+# 700, and a hard failure instead of silently reusing (or following a symlink
+# planted at) a pre-existing path.
+env_dir="$(mktemp -d "$state_dir/env-XXXXXXXXXX")" || die "failed to create environment dir under $state_dir"
+environment_id="$(basename "$env_dir")"
 workspace_path="$env_dir/workspace"
-mkdir -p "$workspace_path"
+mkdir "$workspace_path"
 printf '%s\n' "$QUECTO_CONTAINER_ENVIRONMENT_REF" >"$env_dir/ref"
 
 # Safe repository handling: the URL is one literal argv element after `--`,

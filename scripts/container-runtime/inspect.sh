@@ -42,13 +42,13 @@ printf 'inspect\n' >>"$env_dir/inspect.log"
 # host-local reference checks the recorded child pids.
 status="dead"
 if [ -f "$env_dir/children.jsonl" ]; then
-  while IFS= read -r line; do
-    pid="$(jq -r '.pid' <<<"$line")"
+  # One jq pass over the whole record, not one fork per line.
+  while IFS= read -r pid; do
     if kill -0 "$pid" 2>/dev/null; then
       status="running"
       break
     fi
-  done <"$env_dir/children.jsonl"
+  done < <(jq -r '.pid' "$env_dir/children.jsonl")
 fi
 # ------------------------------------------------------------------------
 
