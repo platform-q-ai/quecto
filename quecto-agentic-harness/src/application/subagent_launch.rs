@@ -58,9 +58,11 @@ where
         if let Some(task) = config.task.as_deref() {
             let retry_until = self.ports.initial_prompt_retry_deadline();
             loop {
+                let attempt_deadline =
+                    retry_until.filter(|deadline| tokio::time::Instant::now() < *deadline);
                 match self
                     .ports
-                    .send_initial_prompt(&registered.socket_path, task)
+                    .send_initial_prompt(&registered.socket_path, task, attempt_deadline)
                     .await
                 {
                     Ok(()) => break,

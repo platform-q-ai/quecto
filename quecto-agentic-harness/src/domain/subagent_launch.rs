@@ -64,6 +64,7 @@ pub trait SubagentLaunchPorts {
         &'a mut self,
         socket_path: &'a Path,
         task: &'a str,
+        deadline: Option<tokio::time::Instant>,
     ) -> LaunchFuture<'a, Result<(), DomainError>>;
     fn success(&self, identity: &LaunchIdentity, environment_ref: Option<&str>) -> ToolResult;
 }

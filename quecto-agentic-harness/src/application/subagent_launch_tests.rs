@@ -18,6 +18,8 @@ struct RecordingPorts {
     fail_initial_prompt: bool,
     initial_prompt_retry_deadline: Option<tokio::time::Instant>,
     initial_prompt_failures_remaining: usize,
+    initial_prompt_delay: Option<Duration>,
+    observed_initial_prompt_deadlines: Arc<Mutex<Vec<Option<tokio::time::Instant>>>>,
 }
 
 impl RecordingPorts {
@@ -128,12 +130,21 @@ impl SubagentLaunchPorts for RecordingPorts {
         &'a mut self,
         _socket_path: &'a Path,
         _task: &'a str,
+        deadline: Option<tokio::time::Instant>,
     ) -> LaunchFuture<'a, Result<(), DomainError>> {
         self.record("initial-prompt");
+        self.observed_initial_prompt_deadlines
+            .lock()
+            .unwrap()
+            .push(deadline);
         let fail = self.fail_initial_prompt || self.initial_prompt_failures_remaining > 0;
         self.initial_prompt_failures_remaining =
             self.initial_prompt_failures_remaining.saturating_sub(1);
+        let delay = self.initial_prompt_delay;
         Box::pin(async move {
+            if let Some(delay) = delay {
+                tokio::time::sleep(delay).await;
+            }
             if fail {
                 Err(DomainError::Tool("prompt failed".into()))
             } else {
@@ -206,6 +217,7 @@ async fn launch_use_case_retries_initial_prompt_failure_when_endpoint_requests_r
         ..Default::default()
     };
     let events = ports.events();
+    let observed_deadlines = ports.observed_initial_prompt_deadlines.clone();
 
     let result = SubagentLaunchUseCase::new(ports)
         .execute(&config_with_task(Some("hello")))
@@ -228,6 +240,37 @@ async fn launch_use_case_retries_initial_prompt_failure_when_endpoint_requests_r
             "success"
         ]
     );
+    assert_eq!(observed_deadlines.lock().unwrap().len(), 3);
+    assert!(
+        observed_deadlines
+            .lock()
+            .unwrap()
+            .iter()
+            .all(Option::is_some),
+        "every retried attempt must receive the shared readiness deadline"
+    );
+}
+
+#[tokio::test]
+async fn launch_use_case_stops_prompt_retries_after_attempt_exhausts_budget() {
+    let ports = RecordingPorts {
+        initial_prompt_retry_deadline: Some(
+            tokio::time::Instant::now() + Duration::from_millis(20),
+        ),
+        initial_prompt_delay: Some(Duration::from_millis(30)),
+        initial_prompt_failures_remaining: usize::MAX,
+        ..Default::default()
+    };
+    let observed_deadlines = ports.observed_initial_prompt_deadlines.clone();
+
+    let err = SubagentLaunchUseCase::new(ports)
+        .execute(&config_with_task(Some("hello")))
+        .await
+        .unwrap_err();
+
+    assert!(err.to_string().contains("prompt failed"));
+    assert_eq!(observed_deadlines.lock().unwrap().as_slice().len(), 1);
+    assert!(observed_deadlines.lock().unwrap()[0].is_some());
 }
 
 #[tokio::test]

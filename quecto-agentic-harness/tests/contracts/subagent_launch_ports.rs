@@ -113,6 +113,7 @@ impl SubagentLaunchPorts for ContractPorts {
         &'a mut self,
         _socket_path: &'a Path,
         _task: &'a str,
+        _deadline: Option<tokio::time::Instant>,
     ) -> LaunchFuture<'a, Result<(), DomainError>> {
         self.record("initial-prompt");
         let fail = self.fail_initial_prompt;

@@ -78,7 +78,12 @@ async fn ports_ready_rollback_prompt_uncommit_and_success_paths() {
     let ready = ports.ready(&mut prepared).await;
     assert!(ready.is_err());
     ports.rollback_prepared(&mut prepared).await;
-    assert!(ports.send_initial_prompt(&socket, "hi").await.is_err());
+    assert!(
+        ports
+            .send_initial_prompt(&socket, "hi", None)
+            .await
+            .is_err()
+    );
     ports.uncommit_registered("missing").await;
     let result = ports.success(&identity, Some("env"));
     assert!(!result.is_error);

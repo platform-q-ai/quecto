@@ -413,8 +413,26 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         &'b mut self,
         socket_path: &'b Path,
         task: &'b str,
+        deadline: Option<tokio::time::Instant>,
     ) -> LaunchFuture<'b, Result<(), DomainError>> {
-        Box::pin(async move { send_initial_prompt_to_socket(socket_path, task).await })
+        Box::pin(async move {
+            match deadline {
+                Some(deadline) => {
+                    match tokio::time::timeout_at(
+                        deadline,
+                        send_initial_prompt_to_socket(socket_path, task),
+                    )
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(_) => Err(DomainError::Tool(
+                            "initial prompt send exceeded readiness deadline".into(),
+                        )),
+                    }
+                }
+                None => send_initial_prompt_to_socket(socket_path, task).await,
+            }
+        })
     }
     fn success(&self, identity: &LaunchIdentity, environment_ref: Option<&str>) -> ToolResult {
         let env_ref = environment_ref
