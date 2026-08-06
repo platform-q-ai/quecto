@@ -306,9 +306,9 @@ fn given_proxy_child_running(world: &mut QuectoWorld, agent_id: String, task: St
 #[given(expr = "subagent {string} has already exited behind Quecto's back")]
 fn given_already_exited_behind_back(world: &mut QuectoWorld, agent_id: String) {
     when_child_killed_behind_back(world, agent_id.clone());
-    // Context step: the death must be fully observed (await returns exited)
+    // Context step: the death must be fully observed in the subagent snapshot
     // before the scenario's own trigger fires.
-    then_await_reports_status(world, agent_id, "exited".to_string());
+    then_snapshot_reports_exited(world, agent_id);
 }
 
 #[given(
