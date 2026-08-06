@@ -527,7 +527,7 @@ fn when_wait_first_turn_complete(world: &mut QuectoWorld) {
     } else {
         send_queued_commands_live(world);
     }
-    // Wait until client 1 sees agent_end.
+    // Wait until client 1 sees agent_end within the scenario budget.
     wait_client_agent_end(world, 1, Duration::from_secs(60));
 }
 
@@ -1695,6 +1695,20 @@ fn drain_client_events(world: &mut QuectoWorld, client_id: u32, budget: Duration
 }
 
 fn wait_client_agent_end(world: &mut QuectoWorld, client_id: u32, timeout: Duration) {
+    if !try_wait_client_agent_end(world, client_id, timeout) {
+        let events = world
+            .mc_client_events
+            .get(&client_id)
+            .cloned()
+            .unwrap_or_default();
+        panic!(
+            "timeout waiting for agent_end on client {client_id}; events: {events:#?}; stderr={}",
+            world.agent_stderr
+        );
+    }
+}
+
+fn try_wait_client_agent_end(world: &mut QuectoWorld, client_id: u32, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     // Scan only lines that arrived since the last tick. Cloning the whole event
     // buffer each poll re-copies (and re-scans) every previously seen line; in
@@ -1720,7 +1734,7 @@ fn wait_client_agent_end(world: &mut QuectoWorld, client_id: u32, timeout: Durat
         if let Some(events) = world.mc_client_events.get(&client_id) {
             for line in events.iter().skip(scanned) {
                 if line.contains(r#""type":"agent_end""#) {
-                    return;
+                    return true;
                 }
                 if line.contains(r#""type":"workflow_idle""#) {
                     saw_workflow_idle = true;
@@ -1738,19 +1752,11 @@ fn wait_client_agent_end(world: &mut QuectoWorld, client_id: u32, timeout: Durat
         // boundary has also arrived, otherwise keep a short grace for agent_end.
         if let Some(seen_at) = saw_turn_end_with_refs_at {
             if saw_workflow_idle || seen_at.elapsed() >= Duration::from_secs(2) {
-                return;
+                return true;
             }
         }
         if Instant::now() > deadline {
-            let events = world
-                .mc_client_events
-                .get(&client_id)
-                .cloned()
-                .unwrap_or_default();
-            panic!(
-                "timeout waiting for agent_end on client {client_id}; events: {events:#?}; stderr={}",
-                world.agent_stderr
-            );
+            return false;
         }
     }
 }
