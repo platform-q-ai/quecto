@@ -24,6 +24,7 @@ pub(super) struct SpawnLaunchPorts<'a> {
     agent_uuid: Option<AgentUuid>,
     socket_path: Option<PathBuf>,
     owns_environment: bool,
+    initial_prompt_retry_deadline: Option<tokio::time::Instant>,
 }
 
 impl<'a> SpawnLaunchPorts<'a> {
@@ -33,6 +34,7 @@ impl<'a> SpawnLaunchPorts<'a> {
             agent_uuid: None,
             socket_path: None,
             owns_environment: false,
+            initial_prompt_retry_deadline: None,
         }
     }
 }
@@ -118,8 +120,24 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         } else {
             None
         };
-        let effective_config =
-            effective_config_path(config.config_path.as_ref(), inherited_runtime_config_path());
+        // PR #1401 review: a container child must launch with the SAME config
+        // that authorized/created its environment. When the spawn call omits
+        // `config`, the container path (`load_container_config`) falls back to
+        // the parent's effective config — mirror that exact chain here so the
+        // child is never silently started on its default config while its
+        // environment was defined by the parent's. Local spawns keep the
+        // pre-existing explicit→inherited chain unchanged.
+        let effective_config = match config.container {
+            crate::domain::subagent::ContainerSelection::Local => {
+                effective_config_path(config.config_path.as_ref(), inherited_runtime_config_path())
+            }
+            _ => config.config_path.clone().or_else(|| {
+                effective_config_path(
+                    self.tool.parent_config_path.as_ref(),
+                    inherited_runtime_config_path(),
+                )
+            }),
+        };
         Ok(super::spawn_launch_args::build_child_cli_args(
             &super::spawn_launch_args::ChildLaunchSpec {
                 session_name: child_session_key(agent_uuid),
@@ -145,6 +163,13 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         cli_args: &'b [std::ffi::OsString],
     ) -> LaunchFuture<'b, Result<Self::Prepared, DomainError>> {
         Box::pin(async move {
+            // The parent's own effective config (composition-plumbed CLI path,
+            // else the inherited runtime config) is the container-config
+            // fallback when the spawn call omits `config` (#1369 follow-up).
+            let parent_config = effective_config_path(
+                self.tool.parent_config_path.as_ref(),
+                inherited_runtime_config_path(),
+            );
             super::spawn_container::spawn_prepared_child(
                 config,
                 &super::spawn_container::ChildCommand {
@@ -153,6 +178,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     base_dir: &self.tool.base_dir,
                 },
                 &self.tool.environment_registry,
+                parent_config.as_deref(),
             )
             .await
         })
@@ -192,6 +218,9 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     socket_path
                 }
                 Some(crate::subagent_launch_app::ParentEndpoint::Proxy { argv }) => {
+                    let readiness_deadline =
+                        tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+                    self.initial_prompt_retry_deadline = Some(readiness_deadline);
                     let agent_key = self
                         .agent_uuid
                         .as_ref()
@@ -207,7 +236,11 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     })?;
                     let bridge_path = bridge.socket_path.clone();
                     prepared.proxy_bridge = Some(bridge);
-                    super::spawn_proxy_bridge::wait_for_proxy_ready(&bridge_path).await?;
+                    super::spawn_proxy_bridge::wait_for_proxy_ready_until(
+                        &bridge_path,
+                        readiness_deadline,
+                    )
+                    .await?;
                     bridge_path
                 }
             };
@@ -217,6 +250,10 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 environment_ref: prepared.environment_ref.clone(),
             })
         })
+    }
+
+    fn initial_prompt_retry_deadline(&self) -> Option<tokio::time::Instant> {
+        self.initial_prompt_retry_deadline
     }
 
     fn rollback_prepared<'b>(
@@ -376,8 +413,26 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         &'b mut self,
         socket_path: &'b Path,
         task: &'b str,
+        deadline: Option<tokio::time::Instant>,
     ) -> LaunchFuture<'b, Result<(), DomainError>> {
-        Box::pin(async move { send_initial_prompt_to_socket(socket_path, task).await })
+        Box::pin(async move {
+            match deadline {
+                Some(deadline) => {
+                    match tokio::time::timeout_at(
+                        deadline,
+                        send_initial_prompt_to_socket(socket_path, task),
+                    )
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(_) => Err(DomainError::Tool(
+                            "initial prompt send exceeded readiness deadline".into(),
+                        )),
+                    }
+                }
+                None => send_initial_prompt_to_socket(socket_path, task).await,
+            }
+        })
     }
     fn success(&self, identity: &LaunchIdentity, environment_ref: Option<&str>) -> ToolResult {
         let env_ref = environment_ref

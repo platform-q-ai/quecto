@@ -87,3 +87,27 @@ fn load_workflow_spec_consumes_the_file_on_success() {
     assert_eq!(loaded.template.id, "t1");
     assert!(!path.exists(), "spec file was not consumed after loading");
 }
+
+#[test]
+fn canonical_parent_config_path_absolutizes_relative_paths_and_keeps_broken_ones() {
+    // A resolvable relative path canonicalizes to an absolute one (PR #1401
+    // review: container spawns require the parent-config fallback to be
+    // absolute, but the parent may have been launched with a relative
+    // `--config`). `.` always resolves, without touching the cwd.
+    let canonical =
+        canonical_parent_config_path(Some(std::path::PathBuf::from("."))).expect("some");
+    assert!(canonical.is_absolute());
+    assert_eq!(
+        canonical,
+        std::env::current_dir().unwrap().canonicalize().unwrap()
+    );
+
+    // A path that cannot be canonicalized is forwarded verbatim so the
+    // spawn-time error names the real value.
+    let missing = std::path::PathBuf::from("definitely/not/a/real/config.json");
+    assert_eq!(
+        canonical_parent_config_path(Some(missing.clone())),
+        Some(missing)
+    );
+    assert_eq!(canonical_parent_config_path(None), None);
+}

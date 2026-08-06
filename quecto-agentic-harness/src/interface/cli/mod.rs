@@ -530,6 +530,7 @@ fn cmd_repl_with_progress<R: std::io::BufRead, W: std::io::Write>(
 
     let repl_ctx = ReplContext {
         base_dir: &base_dir,
+        config_path: &config_path,
         provider,
         config: &config,
         flags: &flags,

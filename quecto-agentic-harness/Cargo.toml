@@ -1,6 +1,6 @@
 [package]
 name = "quecto-agentic-harness"
-version = "0.103.1"
+version = "0.104.1"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
 license = "LicenseRef-Proprietary"
@@ -30,6 +30,7 @@ serde_json = { version = "1", features = ["raw_value"] }
 # Utilities
 uuid = { version = "1", features = ["v4"] }
 humantime = "2"
+futures = "0.3"
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
@@ -70,7 +71,7 @@ filetime = "0.2"
 serial_test = "3"
 # `test-harness` exposes quecto-tui's headless render harness so the `bdd`
 # target can drive the real TUI render/key path without a TTY (#805).
-quecto-tui = { version = "0.75.0", path = "../quecto-tui", features = ["test-harness"] }
+quecto-tui = { version = "0.76.0", path = "../quecto-tui", features = ["test-harness"] }
 
 [[test]]
 name = "bdd"

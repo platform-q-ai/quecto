@@ -20,6 +20,10 @@ pub(super) struct ToolRegistryBuild {
 
 pub(super) struct ToolRegistryArgs<'a> {
     pub(super) base_dir: &'a std::path::Path,
+    /// The path `config` was loaded from — the parent's own config path,
+    /// plumbed into SpawnTool as the container-config fallback (#1369
+    /// follow-up).
+    pub(super) config_path: &'a std::path::Path,
     pub(super) config: &'a Config,
     pub(super) http_client: &'a reqwest::Client,
     pub(super) flags: &'a AgentFlags,
@@ -52,6 +56,7 @@ pub(crate) fn resolve_agent_model(model_override: Option<&str>, config_default: 
 pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegistryBuild, String> {
     let ToolRegistryArgs {
         base_dir,
+        config_path,
         config,
         http_client,
         flags,
@@ -106,6 +111,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             spawned: flags.spawned,
             restrict_to_workspace,
             parent_session_name: flags.session_name.clone(),
+            parent_config_path: Some(config_path.to_path_buf()),
             disabled_tools: &flags.disabled_tools,
             inherited_tool_policy: flags.inherited_tool_policy.clone(),
             workflow: crate::interface::shared::ToolRuntimeWorkflowPolicy {

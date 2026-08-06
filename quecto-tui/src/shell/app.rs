@@ -602,6 +602,9 @@ mod app_selection_tests;
 #[path = "app_streaming_stability_tests.rs"]
 mod app_streaming_stability_tests;
 #[cfg(test)]
+#[path = "../agents/app_subagent_environment_body_tests.rs"]
+mod app_subagent_environment_body_tests;
+#[cfg(test)]
 #[path = "../agents/app_subagent_environment_tests.rs"]
 mod app_subagent_environment_tests;
 #[cfg(test)]

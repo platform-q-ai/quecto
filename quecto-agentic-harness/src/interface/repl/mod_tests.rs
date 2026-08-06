@@ -96,6 +96,7 @@ fn test_build_system_prompt_no_user_prompt() {
     let provider = make_stub_provider();
     let ctx = ReplContext {
         base_dir: tmp.path(),
+        config_path: tmp.path(),
         provider,
         config: &config,
         flags: &flags,
@@ -124,6 +125,7 @@ fn test_build_system_prompt_with_user_prompt() {
     let provider = make_stub_provider();
     let ctx = ReplContext {
         base_dir: tmp.path(),
+        config_path: tmp.path(),
         provider,
         config: &config,
         flags: &flags,

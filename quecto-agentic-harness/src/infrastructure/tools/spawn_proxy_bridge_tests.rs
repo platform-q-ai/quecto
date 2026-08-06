@@ -72,7 +72,12 @@ async fn wait_for_proxy_ready_accepts_a_held_open_connection() {
         "ready-agent",
     )
     .unwrap();
-    wait_for_proxy_ready(&bridge.socket_path).await.unwrap();
+    wait_for_proxy_ready_until(
+        &bridge.socket_path,
+        tokio::time::Instant::now() + std::time::Duration::from_secs(10),
+    )
+    .await
+    .unwrap();
     bridge.teardown();
 }
 
@@ -80,7 +85,12 @@ async fn wait_for_proxy_ready_accepts_a_held_open_connection() {
 async fn wait_for_proxy_ready_times_out_without_a_bridge() {
     let dir = temp_socket_dir();
     let missing = dir.path().join("missing-bridge.sock");
-    let err = wait_for_proxy_ready(&missing).await.unwrap_err();
+    let err = wait_for_proxy_ready_until(
+        &missing,
+        tokio::time::Instant::now() + std::time::Duration::from_millis(50),
+    )
+    .await
+    .unwrap_err();
     assert!(err.to_string().contains("did not become ready"), "{err}");
 }
 

@@ -29,10 +29,20 @@ const CANONICAL_SCRIPTS: [&str; 4] = [
     "scripts/container-runtime/kill.sh",
 ];
 
+/// The official Docker adapter lives INSIDE the canonical reference-script
+/// path (one canonical path, per the #1369 delivery rule), next to the
+/// CI-exercised host-local set.
+const DOCKER_SCRIPTS: [&str; 4] = [
+    "scripts/container-runtime/docker/create.sh",
+    "scripts/container-runtime/docker/exec.sh",
+    "scripts/container-runtime/docker/inspect.sh",
+    "scripts/container-runtime/docker/kill.sh",
+];
+
 #[test]
 fn canonical_container_runtimes_doc_exists_and_names_the_script_set() {
     let doc = read_workspace_file(CANONICAL_DOC);
-    for script in CANONICAL_SCRIPTS {
+    for script in CANONICAL_SCRIPTS.iter().chain(DOCKER_SCRIPTS.iter()) {
         assert!(
             doc.contains(script),
             "{CANONICAL_DOC} should reference the canonical script {script}"
@@ -96,8 +106,109 @@ fn readme_links_the_canonical_runtime_doc_and_scripts() {
 }
 
 #[test]
+fn docker_exec_gives_joiners_the_creator_environment_contract() {
+    // Joiners must source the same 0600 secret file (API keys + GH token)
+    // and receive the same non-secret git wiring as the creator.
+    let exec = read_workspace_file(DOCKER_SCRIPTS[1]);
+    for needle in [
+        "provider-env",
+        "GIT_CONFIG_COUNT",
+        "gh auth git-credential",
+        "git config --global --get user.name",
+        r#"'. "$0" && exec "$@"'"#,
+    ] {
+        assert!(
+            exec.contains(needle),
+            "{} should contain {needle}",
+            DOCKER_SCRIPTS[1]
+        );
+    }
+}
+
+#[test]
+fn docker_adapter_keeps_its_load_bearing_properties() {
+    // Contract needles for the Docker adapter: strict jq-encoded JSON,
+    // identity mounts, rollback, id containment, op logging, and the
+    // QUECTO_BASE_DIR warning (overriding it broke OAuth providers).
+    let create = read_workspace_file(DOCKER_SCRIPTS[0]);
+    for needle in [
+        "QUECTO_DOCKER_IMAGE",
+        "--image",
+        "docker rm -f",
+        "trap",
+        "jq -cn",
+        "HOME=$HOME",
+        "QUECTO_CONTAINER_ENVIRONMENT_REF",
+        "QUECTO_BASE_DIR",
+        "OAuth",
+        // Identity bind-mounts (same path inside and outside): workspace rw,
+        // socket dir rw, child binary ro, $HOME/.quecto rw with HOME kept.
+        "$workspace_path:$workspace_path:rw",
+        "$socket_dir:$socket_dir:rw",
+        "$child_binary:$child_binary:ro",
+        "$HOME/.quecto:$HOME/.quecto:rw",
+        // PR #1401 review: host-side clone of the agent-supplied repo URL must
+        // whitelist git transports (no `ext::` command execution on the host).
+        "GIT_ALLOW_PROTOCOL",
+        // PR #1401 review: provider API keys travel via a 0600 mounted file
+        // sourced before exec — never `docker run -e` (docker-inspect leak).
+        "umask 077",
+        "provider-env",
+        // GitHub access for in-container workflows: host-side token resolve
+        // into the same 0600 secret file (keyrings are container-unreachable),
+        // gh credential helper + deterministic global-git identity via
+        // GIT_CONFIG_* env entries, host gitconfig never mounted.
+        "gh auth token",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "gh auth git-credential",
+        "GIT_CONFIG_COUNT",
+        "git config --global --get user.name",
+    ] {
+        assert!(
+            create.contains(needle),
+            "{} should contain {needle}",
+            DOCKER_SCRIPTS[0]
+        );
+    }
+    assert!(
+        !create.contains("QUECTO_BASE_DIR="),
+        "docker create must never override QUECTO_BASE_DIR (credentials/config home)"
+    );
+    assert!(
+        !create.contains(r#"-e "$key=${!key}""#),
+        "docker create must not inline provider API keys with `docker run -e` — \
+         they persist in the container config and leak via `docker inspect`"
+    );
+    let kill = read_workspace_file(DOCKER_SCRIPTS[3]);
+    for needle in [
+        "--op",
+        "kill.log",
+        "docker rm -f",
+        "QUECTO_CONTAINER_ENVIRONMENT_ID",
+    ] {
+        assert!(
+            kill.contains(needle),
+            "{} should contain {needle}",
+            DOCKER_SCRIPTS[3]
+        );
+    }
+    for script in [DOCKER_SCRIPTS[1], DOCKER_SCRIPTS[2], DOCKER_SCRIPTS[3]] {
+        let content = read_workspace_file(script);
+        assert!(
+            content.contains("*/* | *..*)"),
+            "{script} should contain the environment-id containment check"
+        );
+    }
+}
+
+#[test]
 fn canonical_scripts_exist_and_are_executable() {
-    for script in CANONICAL_SCRIPTS {
+    for script in CANONICAL_SCRIPTS
+        .iter()
+        .chain(DOCKER_SCRIPTS.iter())
+        .copied()
+    {
         let path = workspace_file(script);
         assert!(path.is_file(), "{script} should exist");
         let content = fs::read_to_string(&path).unwrap();
