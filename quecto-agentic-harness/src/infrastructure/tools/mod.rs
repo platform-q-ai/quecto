@@ -36,6 +36,7 @@ pub mod subagent_cascade;
 mod subagent_cleanup;
 #[cfg(test)]
 mod subagent_cleanup_tests;
+pub mod subagent_environment_wire;
 mod subagent_lifecycle;
 pub mod subagent_monitor;
 mod subagent_monitor_canonical;

@@ -74,6 +74,14 @@ pub struct SubagentEntry {
     /// exactly once when this agent's cleanup runs.
     pub environment_registry: Option<crate::domain::environment_registry::EnvironmentRegistry>,
     pub environment_ref: Option<String>,
+    /// Execution backend reported by a child's forwarded snapshot for a merged
+    /// descendant entry (#1369 slice 4). `None` for entries this session
+    /// launched itself, whose backend derives from `environment_registry`.
+    pub forwarded_execution_backend: Option<String>,
+    /// Environment wire object reported by a child's forwarded snapshot for a
+    /// merged descendant entry (#1369 slice 4); re-broadcast verbatim so
+    /// grandchild environment metadata survives every ancestor hop.
+    pub forwarded_environment: Option<super::subagent_environment_wire::SubagentEnvironmentWire>,
     /// Last lifecycle event applied to this entry. This is internal observability
     /// for race-focused tests; parent-facing behavior continues to use `status`.
     #[cfg(test)]
@@ -150,6 +158,8 @@ impl SubagentEntry {
             cleanup_argv: Vec::new(),
             environment_registry: None,
             environment_ref: None,
+            forwarded_execution_backend: None,
+            forwarded_environment: None,
             #[cfg(test)]
             last_lifecycle_event: None,
         }

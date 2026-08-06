@@ -269,21 +269,32 @@ fn test_parse_get_subagents_without_id() {
     assert!(cmd.id().is_none());
 }
 
+/// A minimal local-backend `SubagentInfo` for serialization tests.
+fn base_subagent_info(agent_id: &str, status: &str) -> SubagentInfo {
+    SubagentInfo {
+        agent_uuid: None,
+        display_name: None,
+        agent_id: agent_id.to_string(),
+        status: status.to_string(),
+        last_tool: None,
+        last_error: None,
+        pid: 0,
+        socket_path: None,
+        parent_id: None,
+        workflow: None,
+        read_only: false,
+        execution_backend: "local".to_string(),
+        environment: None,
+    }
+}
+
 #[test]
 fn test_subagent_state_changed_event_serializes() {
     let ev = AgentEvent::SubagentStateChanged {
         subagents: vec![SubagentInfo {
-            agent_uuid: None,
-            display_name: None,
-            agent_id: "test".to_string(),
-            status: "running".to_string(),
             last_tool: Some("bash".to_string()),
-            last_error: None,
             pid: 123,
-            socket_path: None,
-            parent_id: None,
-            workflow: None,
-            read_only: false,
+            ..base_subagent_info("test", "running")
         }],
     };
     let json = ev.to_json_line();
@@ -309,17 +320,8 @@ fn test_subagent_messages_appended_event_serializes() {
 #[test]
 fn test_subagent_info_null_fields_omitted() {
     let info = SubagentInfo {
-        agent_uuid: None,
-        display_name: None,
-        agent_id: "idle-agent".to_string(),
-        status: "idle".to_string(),
-        last_tool: None,
-        last_error: None,
         pid: 456,
-        socket_path: None,
-        parent_id: None,
-        workflow: None,
-        read_only: false,
+        ..base_subagent_info("idle-agent", "idle")
     };
     let json = serde_json::to_string(&info).unwrap();
     assert!(!json.contains("lastTool"));
@@ -329,17 +331,8 @@ fn test_subagent_info_null_fields_omitted() {
 #[test]
 fn test_subagent_info_with_error() {
     let info = SubagentInfo {
-        agent_uuid: None,
-        display_name: None,
-        agent_id: "err".to_string(),
-        status: "error".to_string(),
-        last_tool: None,
         last_error: Some("connection refused".to_string()),
-        pid: 0,
-        socket_path: None,
-        parent_id: None,
-        workflow: None,
-        read_only: false,
+        ..base_subagent_info("err", "error")
     };
     let json = serde_json::to_string(&info).unwrap();
     assert!(json.contains("\"lastError\":\"connection refused\""));

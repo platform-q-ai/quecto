@@ -313,6 +313,8 @@ mod app_resumed_history;
 mod app_rewind;
 #[path = "app_selection.rs"]
 mod app_selection;
+#[path = "../agents/controller_subagent_environment.rs"]
+mod app_subagent_environment;
 #[path = "../agents/controller_subagent_feed.rs"]
 mod app_subagent_feed;
 #[path = "../agents/controller_subagent_panel.rs"]
@@ -597,6 +599,9 @@ mod app_selection_tests;
 #[cfg(test)]
 #[path = "app_streaming_stability_tests.rs"]
 mod app_streaming_stability_tests;
+#[cfg(test)]
+#[path = "../agents/app_subagent_environment_tests.rs"]
+mod app_subagent_environment_tests;
 #[cfg(test)]
 #[path = "../agents/app_subagent_first_tests.rs"]
 mod app_subagent_first_tests;

@@ -15,6 +15,8 @@ fn tracked_child() -> SubagentInfoEvent {
         parent_id: None,
         workflow: None,
         read_only: false,
+        execution_backend: None,
+        environment: None,
     }
 }
 

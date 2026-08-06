@@ -148,6 +148,15 @@ fn merge_descendants(
             .get("workflow")
             .and_then(|w| serde_json::from_value(w.clone()).ok());
         entry.read_only = d.get("readOnly").and_then(|v| v.as_bool()).unwrap_or(false);
+        // #1369 slice 4: retain the child's reported execution backend and
+        // typed environment object so the re-broadcast union preserves them.
+        entry.forwarded_execution_backend = d
+            .get("executionBackend")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        entry.forwarded_environment = d
+            .get("environment")
+            .and_then(|e| serde_json::from_value(e.clone()).ok());
         entry.updated_at = Instant::now();
     }
 

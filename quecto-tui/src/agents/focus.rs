@@ -6,8 +6,10 @@ pub(crate) enum Focus {
     Panel,
 }
 
-/// Width of the persistent left sub-agent panel (#800); room for names + a bar.
-pub(crate) const SUBAGENT_PANEL_WIDTH: usize = 30;
+/// Width of the persistent left sub-agent panel (#800); room for names + a
+/// bar. Raised from 30 for environment badges and nested grouping rows
+/// (#1369 slice 4); still clamped to half the terminal by `frame_split`.
+pub(crate) const SUBAGENT_PANEL_WIDTH: usize = 34;
 
 /// Maximum retained sub-agent sessions before the oldest non-active is evicted.
 pub(crate) const MAX_RETAINED_SESSIONS: usize = 16;

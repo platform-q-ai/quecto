@@ -24,6 +24,8 @@ pub(super) fn info(id: &str, status: &str) -> crate::protocol::client::SubagentI
         parent_id: None,
         workflow: None,
         read_only: false,
+        execution_backend: None,
+        environment: None,
     }
 }
 
@@ -50,6 +52,8 @@ fn info_with_workflow(
             steps_total: total,
         }),
         read_only: false,
+        execution_backend: None,
+        environment: None,
     }
 }
 

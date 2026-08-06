@@ -2,7 +2,7 @@ use super::*;
 use crate::components::theme;
 
 #[path = "controller_subagent_panel_helpers.rs"]
-mod controller_subagent_panel_helpers;
+pub(crate) mod controller_subagent_panel_helpers;
 use controller_subagent_panel_helpers::{
     fmt_mss, pad_cell, panel_bar_line, sanitize_panel_label, status_colored_name,
 };
@@ -152,6 +152,12 @@ impl App {
     }
 
     pub(super) fn select_agent(&mut self, agent_id: Option<&str>) {
+        // Focusing a concrete agent always dismisses environment-detail chrome
+        // (#1369 slice 4); selecting the master keeps it (environment rows
+        // render their details over the master body).
+        if agent_id.is_some() {
+            self.subagents.selected_environment = None;
+        }
         let new_active = agent_id.map(str::to_string);
         if new_active == self.subagents.active_agent_id {
             return;
@@ -329,10 +335,19 @@ impl App {
     /// Commit the highlighted panel row: switch the active session to that agent
     /// (the master when row 1 is highlighted) and open its connection (#802).
     pub(super) fn commit_panel_selection(&mut self) {
-        let target = self
-            .panel_rows()
-            .get(self.subagents.panel_nav.selected())
-            .and_then(|r| r.id.clone());
+        let rows = self.panel_rows();
+        let Some(row) = rows.get(self.subagents.panel_nav.selected()) else {
+            return;
+        };
+        if row.is_environment() {
+            // Selecting an environment row shows its details in the main-pane
+            // chrome over the master body (#1369 slice 4).
+            self.subagents.selected_environment = row.env_ref.clone();
+            self.select_agent(None);
+            return;
+        }
+        self.subagents.selected_environment = None;
+        let target = row.id.clone();
         self.select_agent(target.as_deref());
     }
 
@@ -366,7 +381,7 @@ impl App {
     /// Flattened panel rows: the master pinned at the top, then the sub-agent
     /// tree depth-ordered by `parent_id` (grandchildren under their parent).
     /// Master's live status: `running` while processing, else `idle` (#820).
-    fn master_status(&self) -> &'static str {
+    pub(super) fn master_status(&self) -> &'static str {
         if self.agent_state.is_running() {
             "running"
         } else {
@@ -381,59 +396,113 @@ impl App {
         };
         let mut rows = vec![PanelRow {
             id: None,
+            env_ref: None,
             prefix: String::new(),
+            badge: None,
             label: "Master Agent".to_string(),
             status: self.master_status().to_string(),
             workflow: master_wf,
         }];
-        for (id, prefix) in self.subagent_tree_order() {
-            let info = self.subagents.tracked.get(&id).map(|t| &t.info);
-            let workflow = info
-                .and_then(|i| i.workflow.as_ref())
-                .filter(|w| w.steps_total > 0)
-                .map(|w| (w.steps_completed, w.steps_total));
-            // Store/select by durable UUID identity; paint the human display
-            // label (display_name / compatibility agentId) in the panel (#1378).
-            let label = info
-                .map(|i| {
-                    i.display_name
-                        .as_deref()
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or(i.agent_id.as_str())
-                        .to_string()
-                })
-                .unwrap_or_else(|| id.clone());
-            rows.push(PanelRow {
-                label,
-                status: info.map(|i| i.status.clone()).unwrap_or_default(),
-                workflow,
-                id: Some(id),
-                prefix,
-            });
+        let groups = self.environment_groups();
+        for (node, prefix) in self.subagent_tree_order(&groups) {
+            match node {
+                PanelNode::Environment(env_ref) => {
+                    // One selectable row naming the shared environment; its
+                    // members nest below via the tree walk (#1369 slice 4).
+                    let env = self.environment_info(&env_ref);
+                    let name = env
+                        .and_then(|e| e.name.as_deref())
+                        .filter(|n| !n.is_empty());
+                    let label = match name {
+                        Some(name) => format!("{env_ref} {name}"),
+                        None => env_ref.clone(),
+                    };
+                    rows.push(PanelRow {
+                        label,
+                        status: env.map(|e| e.status.clone()).unwrap_or_default(),
+                        workflow: None,
+                        id: None,
+                        env_ref: Some(env_ref),
+                        badge: None,
+                        prefix,
+                    });
+                }
+                PanelNode::Agent(id) => {
+                    let info = self.subagents.tracked.get(&id).map(|t| &t.info);
+                    let workflow = info
+                        .and_then(|i| i.workflow.as_ref())
+                        .filter(|w| w.steps_total > 0)
+                        .map(|w| (w.steps_completed, w.steps_total));
+                    // Store/select by durable UUID identity; paint the human display
+                    // label (display_name / compatibility agentId) in the panel (#1378).
+                    let label = info
+                        .map(|i| {
+                            i.display_name
+                                .as_deref()
+                                .filter(|s| !s.is_empty())
+                                .unwrap_or(i.agent_id.as_str())
+                                .to_string()
+                        })
+                        .unwrap_or_else(|| id.clone());
+                    rows.push(PanelRow {
+                        label,
+                        status: info.map(|i| i.status.clone()).unwrap_or_default(),
+                        workflow,
+                        badge: self.solo_environment_badge(&id, &groups),
+                        id: Some(id),
+                        env_ref: None,
+                        prefix,
+                    });
+                }
+            }
         }
         rows
     }
 
-    /// Depth-first `(agent_id, tree_prefix)` listing of the sub-agent tree. Root
+    /// Depth-first `(node, tree_prefix)` listing of the sub-agent tree. Root
     /// sub-agents (no in-map parent) sit under the master; `tree_prefix` is the
     /// connector stalk (`├ `/`└ ` with `│ `/`  ` ancestor continuation) so the
     /// panel draws tree lines back up to each parent. Order follows sorted ids.
-    fn subagent_tree_order(&self) -> Vec<(String, String)> {
-        use std::collections::BTreeMap;
-        let mut children: BTreeMap<Option<String>, Vec<String>> = BTreeMap::new();
+    ///
+    /// Environments shared by two or more agents (#1369 slice 4) contribute
+    /// one environment node after the agent roots, with the member agents as
+    /// its children — suppressed from the root list so no member is duplicated.
+    fn subagent_tree_order(
+        &self,
+        groups: &std::collections::BTreeMap<String, Vec<String>>,
+    ) -> Vec<(PanelNode, String)> {
+        use std::collections::{BTreeMap, BTreeSet};
+        let grouped: BTreeSet<&str> = groups.values().flatten().map(String::as_str).collect();
+        // Parent key: `None` = under the master; `Some(key)` = under the node
+        // with that key (an agent id, or an environment node key for grouped
+        // members). Environment node keys can never collide with sanitized
+        // agent ids because of the `\0` byte.
+        let mut children: BTreeMap<Option<String>, Vec<PanelNode>> = BTreeMap::new();
         for (id, tracked) in &self.subagents.tracked {
-            // Treat an unknown parent as a root so its subtree is not lost.
-            let parent = tracked
-                .info
-                .parent_id
-                .clone()
-                .filter(|p| self.subagents.tracked.contains_key(p));
-            children.entry(parent).or_default().push(id.clone());
+            let parent = if grouped.contains(id.as_str()) {
+                // Grouped members always nest under their environment row.
+                tracked
+                    .info
+                    .environment
+                    .as_ref()
+                    .map(|e| PanelNode::env_key(&e.environment_ref))
+            } else {
+                // Treat an unknown parent as a root so its subtree is not lost.
+                tracked
+                    .info
+                    .parent_id
+                    .clone()
+                    .filter(|p| self.subagents.tracked.contains_key(p))
+            };
+            children
+                .entry(parent)
+                .or_default()
+                .push(PanelNode::Agent(id.clone()));
         }
         // Push siblings reversed (with their connector) so popping preserves order.
-        // Stack item: (id, own_prefix, descendant_continuation_prefix).
+        // Stack item: (node, own_prefix, descendant_continuation_prefix).
         let push_children =
-            |stack: &mut Vec<(String, String, String)>, kids: &[String], cont: &str| {
+            |stack: &mut Vec<(PanelNode, String, String)>, kids: &[PanelNode], cont: &str| {
                 let n = kids.len();
                 for (i, kid) in kids.iter().enumerate().rev() {
                     let last = i == n - 1;
@@ -444,16 +513,16 @@ impl App {
                     ));
                 }
             };
+        let mut roots: Vec<PanelNode> = children.remove(&None).unwrap_or_default();
+        roots.extend(groups.keys().map(|r| PanelNode::Environment(r.clone())));
         let mut out = Vec::new();
-        let mut stack: Vec<(String, String, String)> = Vec::new();
-        if let Some(roots) = children.get(&None) {
-            push_children(&mut stack, roots, "");
-        }
-        while let Some((id, own_prefix, cont)) = stack.pop() {
-            out.push((id.clone(), own_prefix));
-            if let Some(kids) = children.get(&Some(id.clone())) {
+        let mut stack: Vec<(PanelNode, String, String)> = Vec::new();
+        push_children(&mut stack, &roots, "");
+        while let Some((node, own_prefix, cont)) = stack.pop() {
+            if let Some(kids) = children.get(&Some(node.child_key())) {
                 push_children(&mut stack, kids, &cont);
             }
+            out.push((node, own_prefix));
         }
         out
     }
@@ -534,20 +603,41 @@ impl App {
             " ".to_string()
         };
         let stalk_vis = visible_width(&row.prefix);
-        let timer = self.panel_row_timer(row.id.as_deref(), now);
+        // Environment rows have no per-agent timer; `id: None` must not fall
+        // back to the master uptime (#1369 slice 4).
+        let timer = if row.is_environment() {
+            String::new()
+        } else {
+            self.panel_row_timer(row.id.as_deref(), now)
+        };
         let observer = self.panel_row_observer(row.id.as_deref()).unwrap_or("");
         let observer_vis = visible_width(observer);
+        // Dim solo-environment badge between the tree stalk and the name
+        // (#1369 slice 4); rendered as its own dim span plus one space.
+        let badge = row.badge.as_deref().unwrap_or("");
+        let badge_vis = if badge.is_empty() {
+            0
+        } else {
+            visible_width(badge) + 1
+        };
+        let badge_span = if badge.is_empty() {
+            String::new()
+        } else {
+            format!("{} ", theme::dim(badge))
+        };
         let usable = width.saturating_sub(1);
-        let name_avail = usable.saturating_sub(1 + stalk_vis + 1 + observer_vis + timer.len());
+        let name_avail =
+            usable.saturating_sub(1 + stalk_vis + badge_vis + 1 + observer_vis + timer.len());
         let name = truncate_to_width(&sanitize_panel_label(&row.label), name_avail, Some("…"));
         let name_vis = visible_width(&name);
         let mut name = status_colored_name(&row.status, &name);
         if active {
             name = theme::bold(&name);
         }
-        let pad = usable.saturating_sub(1 + stalk_vis + name_vis + observer_vis + timer.len());
+        let pad = usable
+            .saturating_sub(1 + stalk_vis + badge_vis + name_vis + observer_vis + timer.len());
         let line = format!(
-            "{selbar}{}{name}{observer}{}{} ",
+            "{selbar}{}{badge_span}{name}{observer}{}{} ",
             theme::dim(&row.prefix),
             " ".repeat(pad),
             theme::dim(&timer),
@@ -597,103 +687,53 @@ impl App {
             mss
         }
     }
-
-    // ── Main-pane workflow indicator (selected agent) ──────────────────
-
-    /// The main pane's top chrome for the selected agent (#820 / #1288 / #1309):
-    /// a title line (`agent · status · elapsed · #issue workflow`) plus, when a
-    /// workflow is active, one compact progress line framed by separator rules
-    /// above and below (`────` / content / `────`). Title always renders; the
-    /// compact indicator is appended only when `render_compact_line` has content.
-    /// Phase pills and shortcut hints from the old multi-line status box (#1246)
-    /// must not return — only the top/bottom rule separators around the single
-    /// compact line.
-    pub(super) fn render_main_pane_workflow(
-        &self,
-        width: usize,
-        box_width: usize,
-        now: tokio::time::Instant,
-    ) -> Vec<String> {
-        if width < 4 {
-            return Vec::new();
-        }
-        let state = self.active_workflow_bar();
-        let mut out = vec![pad_cell(&self.main_pane_title(state, now), width)];
-        if let Some(content) = workflow_bar::render_compact_line(state) {
-            let rule_width = box_width.max(1);
-            let inner = rule_width.saturating_sub(2);
-            let rule = theme::dim(&"─".repeat(rule_width));
-            // Truncate the label with ellipsis (#1288), then pad the framed row
-            // to the same width as the separator rules so framing stays flush.
-            let framed = format!(
-                " {} ",
-                crate::components::utils::truncate_to_width(&content, inner, Some("…")),
-            );
-            out.push(rule.clone());
-            out.push(pad_cell(&framed, rule_width));
-            out.push(rule);
-        }
-        out
-    }
-
-    /// Build the main-pane title line for the active agent (#820).
-    fn main_pane_title(
-        &self,
-        state: &workflow_bar::WorkflowBarState,
-        now: tokio::time::Instant,
-    ) -> String {
-        let (name, status) = match self.subagents.active_agent_id.as_deref() {
-            None => ("Master".to_string(), self.master_status().to_string()),
-            Some(id) => {
-                // Selection is UUID-keyed; paint the human display label (#1378).
-                let tracked = self.subagents.tracked.get(id);
-                let label = tracked
-                    .map(|t| {
-                        t.info
-                            .display_name
-                            .as_deref()
-                            .filter(|s| !s.is_empty())
-                            .unwrap_or(t.info.agent_id.as_str())
-                            .to_string()
-                    })
-                    .unwrap_or_else(|| id.to_string());
-                let status = tracked.map(|t| t.info.status.clone()).unwrap_or_default();
-                (label, status)
-            }
-        };
-        let elapsed = self.panel_row_elapsed(self.subagents.active_agent_id.as_deref(), now);
-        let mut title = format!(
-            "{} {} {} {}",
-            theme::bold(&sanitize_panel_label(&name)),
-            theme::dim("·"),
-            status_colored_name(&status, &sanitize_panel_label(&status)),
-            theme::dim(&elapsed),
-        );
-        if let Some(n) = state.issue_number {
-            let auto = if state.workflow_auto_continue {
-                "auto:on"
-            } else {
-                "auto:off"
-            };
-            title.push_str(&format!(
-                " {} {} {} {}",
-                theme::dim("·"),
-                theme::accent(&theme::bold(&format!("#{n}"))),
-                theme::dim("workflow"),
-                theme::dim(auto),
-            ));
-        }
-        title
-    }
 }
 
 struct PanelRow {
     id: Option<String>,
+    /// `Some(ref)` when this is a selectable environment row for a shared
+    /// environment (#1369 slice 4); `id` is `None` for such rows.
+    env_ref: Option<String>,
     /// Tree connector stalk drawn before the name (`├ `/`└ ` + ancestor `│ `).
     prefix: String,
+    /// Dim environment ref drawn between the stalk and the name for an agent
+    /// running alone in its environment (#1369 slice 4).
+    badge: Option<String>,
     label: String,
     status: String,
     /// `(steps_completed, steps_total)` when the agent has an active workflow —
     /// drives the per-step progress bar drawn beneath the name row.
     workflow: Option<(u32, u32)>,
+}
+
+impl PanelRow {
+    /// Whether this is a selectable environment row (not master, not an agent).
+    fn is_environment(&self) -> bool {
+        self.id.is_none() && self.env_ref.is_some()
+    }
+}
+
+/// One node in the panel tree walk: a tracked agent, or a shared-environment
+/// grouping row (#1369 slice 4).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PanelNode {
+    Agent(String),
+    Environment(String),
+}
+
+impl PanelNode {
+    /// Parent-map key for members nesting under an environment node. The `\0`
+    /// byte cannot appear in sanitized agent ids, so environment keys can
+    /// never collide with them.
+    fn env_key(env_ref: &str) -> String {
+        format!("\0env:{env_ref}")
+    }
+
+    /// The key this node's children are registered under in the parent map.
+    fn child_key(&self) -> String {
+        match self {
+            Self::Agent(id) => id.clone(),
+            Self::Environment(env_ref) => Self::env_key(env_ref),
+        }
+    }
 }

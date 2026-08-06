@@ -323,6 +323,8 @@ async fn forwarded_child_workflow_state_does_not_clobber_parent_bar() {
             parent_id: None,
             workflow: None,
             read_only: false,
+            execution_backend: None,
+            environment: None,
         }],
     });
     // A workflow_state forwarded up from the child (agent_id = "child", a
@@ -429,6 +431,8 @@ async fn handles_subagent_workflow_and_error_events() {
         parent_id: None,
         workflow: None,
         read_only: false,
+        execution_backend: None,
+        environment: None,
     };
     app.handle_event(Event::SubagentStateChanged {
         subagents: vec![info.clone()],

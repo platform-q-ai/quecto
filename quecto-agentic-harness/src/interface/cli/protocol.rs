@@ -224,6 +224,20 @@ pub struct SubagentInfo {
     /// The TUI renders an observer marker next to its name when true (#966).
     #[serde(default)]
     pub read_only: bool,
+    /// How this sub-agent runs: `local` process or script-managed (`script`).
+    /// Additive versioned field (#1369 slice 4); defaults to `local` for
+    /// snapshots from older producers.
+    #[serde(default = "default_execution_backend")]
+    pub execution_backend: String,
+    /// Environment metadata for script-managed sub-agents; absent for local
+    /// ones. Additive versioned field (#1369 slice 4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment:
+        Option<crate::infrastructure::tools::subagent_environment_wire::SubagentEnvironmentWire>,
+}
+
+fn default_execution_backend() -> String {
+    crate::infrastructure::tools::subagent_environment_wire::BACKEND_LOCAL.to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -290,6 +304,15 @@ pub fn build_subagent_info_list(
             .iter()
             .map(|(id, entry)| {
                 let display_name = entry.effective_display_name(id).to_string();
+                let environment =
+                    crate::infrastructure::tools::subagent_environment_wire::environment_wire(
+                        entry,
+                    );
+                let execution_backend =
+                    crate::infrastructure::tools::subagent_environment_wire::execution_backend(
+                        entry,
+                        environment.as_ref(),
+                    );
                 SubagentInfo {
                     agent_id: display_name.clone(),
                     agent_uuid: Some(entry.agent_uuid.to_string()),
@@ -302,6 +325,8 @@ pub fn build_subagent_info_list(
                     parent_id: entry.parent_id.clone(),
                     workflow: entry.workflow.clone(),
                     read_only: entry.read_only,
+                    execution_backend,
+                    environment,
                 }
             })
             .collect()
@@ -461,3 +486,7 @@ mod shape_tests;
 #[cfg(test)]
 #[path = "protocol_1060_tests.rs"]
 mod protocol_1060_tests;
+
+#[cfg(test)]
+#[path = "protocol_environment_tests.rs"]
+mod protocol_environment_tests;

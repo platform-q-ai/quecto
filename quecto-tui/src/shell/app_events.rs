@@ -311,6 +311,8 @@ impl App {
             parent_id: None,
             workflow: None,
             read_only: spawn_args_are_read_only(args),
+            execution_backend: None,
+            environment: None,
         });
         // Mark this as an unconfirmed local guess: the kernel has not registered
         // the child yet, so a snapshot taken in that window must not evict it

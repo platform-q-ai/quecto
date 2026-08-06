@@ -187,6 +187,21 @@ pub fn build_state_changed_event_locked(guard: &HashMap<String, SubagentEntry>) 
                 if let Some(parent) = &entry.parent_id {
                     obj.insert("parentId".into(), serde_json::json!(parent));
                 }
+                // #1369 slice 4: additive versioned fields — execution backend
+                // always, environment object only for script-managed entries.
+                let environment = super::subagent_environment_wire::environment_wire(entry);
+                obj.insert(
+                    "executionBackend".into(),
+                    serde_json::json!(super::subagent_environment_wire::execution_backend(
+                        entry,
+                        environment.as_ref(),
+                    )),
+                );
+                if let Some(env) = environment {
+                    if let Ok(env) = serde_json::to_value(env) {
+                        obj.insert("environment".into(), env);
+                    }
+                }
                 if let Some(workflow) = &entry.workflow {
                     if let Ok(w) = serde_json::to_value(workflow) {
                         obj.insert("workflow".into(), w);
@@ -208,6 +223,9 @@ pub fn build_state_changed_event_locked(guard: &HashMap<String, SubagentEntry>) 
 #[cfg(test)]
 #[path = "subagent_cascade_cov_tests.rs"]
 mod cov_tests;
+#[cfg(test)]
+#[path = "subagent_environment_wire_tests.rs"]
+mod environment_wire_tests;
 #[cfg(test)]
 #[path = "subagent_cascade_tests.rs"]
 mod tests;

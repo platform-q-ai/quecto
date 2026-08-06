@@ -95,6 +95,8 @@ pub fn subagent_with_socket(
             steps_total: t,
         }),
         read_only: false,
+        execution_backend: None,
+        environment: None,
     }
 }
 

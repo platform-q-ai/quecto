@@ -1211,7 +1211,11 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// keep them ratcheted so future changes cannot grow usage silently.
 /// #1350 adds one required workspace wire event handler in the TUI shell so
 /// socket clients can resolve the harness workspace instead of their CWD.
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 116;
+/// #1369 slice 4 adds one site in `agents/controller_subagent_environment.rs`:
+/// the environment-detail chrome reads the shared `SubagentEnvironmentInfo`
+/// metadata carried on tracked entries — necessary wire use for environment
+/// grouping, not unrelated growth.
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 117;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///

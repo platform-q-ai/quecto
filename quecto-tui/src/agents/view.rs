@@ -33,6 +33,15 @@ impl RosterInfo for SubagentInfoEvent {
         if self.parent_id.is_none() {
             self.parent_id = previous.parent_id.clone();
         }
+        // Sparse `get_subagents` refreshes omit the environment metadata a
+        // live event reported; keep the last-known backend/environment so
+        // badges, grouping and details survive roster polls (#1369 slice 4).
+        if self.execution_backend.is_none() {
+            self.execution_backend = previous.execution_backend.clone();
+        }
+        if self.environment.is_none() {
+            self.environment = previous.environment.clone();
+        }
     }
 }
 
@@ -122,6 +131,9 @@ pub(crate) struct SubagentUi {
     pub(crate) session_order: Vec<String>,
     /// The agent whose session is shown in the main body. `None` = master.
     pub(crate) active_agent_id: Option<String>,
+    /// The shared environment whose details render in the main-pane chrome
+    /// after its panel row was selected (#1369 slice 4). `None` = agent chrome.
+    pub(crate) selected_environment: Option<String>,
     /// Left-panel selection cursor over the flattened (master + tree) rows.
     pub(crate) panel_nav: ListNavigator,
     /// Fan-in for events from direct sub-agent connections (#800).
@@ -156,6 +168,7 @@ impl SubagentUi {
             sessions: BTreeMap::new(),
             session_order: Vec::new(),
             active_agent_id: None,
+            selected_environment: None,
             panel_nav: ListNavigator::new(),
             event_tx,
             event_rx,

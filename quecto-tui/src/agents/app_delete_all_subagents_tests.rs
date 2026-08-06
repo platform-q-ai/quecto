@@ -18,6 +18,8 @@ fn subagent(id: &str) -> SubagentInfoEvent {
         parent_id: None,
         read_only: false,
         workflow: None,
+        execution_backend: None,
+        environment: None,
     }
 }
 
