@@ -409,9 +409,11 @@ impl AgentCmdTool {
         }
 
         let mut removed: Vec<_> = removed.into_iter().collect();
+        // Parent-initiated kill is not a post-mortem: skip inspect, same as
+        // kill_container's member teardown.
         super::subagent_cleanup::cleanup_removed_entries_once(
             &mut removed,
-            super::subagent_cleanup::FinalizeMode::Exit,
+            super::subagent_cleanup::FinalizeMode::ParentKill,
         )
         .await;
 

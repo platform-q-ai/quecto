@@ -135,7 +135,8 @@ pub(super) async fn cleanup_removed_entries_once(
 pub(super) fn cleanup_removed_entries_sync(
     removed: &mut [(String, super::subagent_registry::SubagentEntry)],
 ) {
-    run_cleanup_jobs_sync(drain_cleanup_jobs(removed, FinalizeMode::Exit));
+    // Process shutdown is parent-initiated, not a post-mortem: skip inspect.
+    run_cleanup_jobs_sync(drain_cleanup_jobs(removed, FinalizeMode::ParentKill));
 }
 
 /// Remove one member from its environment; the final removal of a running
