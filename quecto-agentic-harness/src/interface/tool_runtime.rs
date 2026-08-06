@@ -196,6 +196,15 @@ pub(crate) fn build_tool_runtime(
         stderr,
     } = args;
 
+    // PR #1401 review: the parent may have been launched with a RELATIVE
+    // `--config` (or hit the relative `.quecto` base-dir fallback). Container
+    // spawns reuse this path as their trusted-config fallback, which demands
+    // an absolute path — canonicalize once at the composition root so the
+    // documented zero-config container spawn holds regardless of how the
+    // parent was launched. An uncanonicalizable path is forwarded verbatim so
+    // the spawn-time absolute-path error still fires with the real value.
+    let parent_config_path = canonical_parent_config_path(parent_config_path);
+
     let mut policy_state = ToolRuntimePolicyState::for_entrypoint(entrypoint);
     policy_state.inherited_tool_policy = inherited_tool_policy.clone();
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
@@ -406,6 +415,15 @@ mod catalogue_tests;
 #[cfg(test)]
 #[path = "tool_runtime_profile_tests.rs"]
 mod profile_tests;
+
+/// Canonicalize the parent's own config path before it is plumbed into the
+/// tool runtime (PR #1401 review): container spawns fall back to this path
+/// and require it to be absolute, but the parent may have been started with a
+/// relative `--config`. A path that cannot be canonicalized (e.g. it no
+/// longer exists) is kept verbatim so downstream errors name the real value.
+fn canonical_parent_config_path(path: Option<std::path::PathBuf>) -> Option<std::path::PathBuf> {
+    path.map(|p| std::fs::canonicalize(&p).unwrap_or(p))
+}
 
 pub(crate) fn load_workflow_spec(
     path: &std::path::Path,

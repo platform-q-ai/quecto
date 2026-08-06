@@ -743,3 +743,43 @@ async fn environment_body_lists_per_member_socket_modes() {
         );
     }
 }
+
+#[tokio::test]
+async fn environment_body_stays_head_anchored_on_short_terminals() {
+    // PR #1401 review: overflow used to tail-slice the environment body like a
+    // conversation, dropping the "Container environment" header and the
+    // container-info disclaimer first and leaving an unlabeled member roster.
+    // The body is head-anchored instead: header + disclaimer always survive
+    // and the roster tail is elided with a marker.
+    let mut h = TuiHarness::sized(120, 16).await;
+    h.event(Event::AgentStart);
+    let agents: Vec<serde_json::Value> = (0..12)
+        .map(|i| env_agent_json(&format!("member{i:02}"), "C1"))
+        .collect();
+    h.event_line(&state_changed_line(agents));
+
+    let rows = panel_rows(&h.left_panel());
+    let target = rows
+        .iter()
+        .position(|l| l.contains("C1") && !l.contains("member"))
+        .unwrap_or_else(|| panic!("no selectable environment row for C1:\n{}", rows.join("\n")));
+    h.press(Key::Tab);
+    for _ in 0..target {
+        h.press(Key::Down);
+    }
+    h.press(Key::Enter);
+
+    let top = h.main_pane();
+    assert!(
+        top.contains("Container environment"),
+        "the container-info header must survive overflow truncation:\n{top}"
+    );
+    assert!(
+        top.contains("container info only"),
+        "the container-info disclaimer must survive overflow truncation:\n{top}"
+    );
+    assert!(
+        top.contains("more container-info lines"),
+        "overflow must elide the roster tail with a marker, not the header:\n{top}"
+    );
+}

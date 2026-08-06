@@ -451,7 +451,9 @@ impl App {
         // Environment selected (#1369 follow-up): the main pane body is
         // container info ONLY — no parent/agent transcript may render beneath
         // the environment chrome, so the conversation is suppressed entirely.
-        let mut chat_lines = match self.render_environment_body(width) {
+        let environment_body = self.render_environment_body(width);
+        let head_anchored = environment_body.is_some();
+        let mut chat_lines = match environment_body {
             Some(body) => body,
             None => {
                 let chat = self.active_chat_mut();
@@ -460,10 +462,26 @@ impl App {
             }
         };
 
-        // If chat is taller than available space, show only the tail (auto-scroll).
+        // If chat is taller than available space, show only the tail
+        // (auto-scroll) — EXCEPT for the environment body (PR #1401 review):
+        // that pane is head-anchored so the "Container environment" header and
+        // the container-info disclaimer are never the lines that get dropped;
+        // the member-roster tail is elided with a marker instead.
         if chat_lines.len() > chat_height {
-            let start = chat_lines.len() - chat_height;
-            chat_lines = chat_lines[start..].to_vec();
+            if head_anchored {
+                if chat_height > 0 {
+                    let hidden = chat_lines.len() + 1 - chat_height;
+                    chat_lines.truncate(chat_height - 1);
+                    chat_lines.push(theme::dim(&format!(
+                        "… {hidden} more container-info lines — resize to see all"
+                    )));
+                } else {
+                    chat_lines.clear();
+                }
+            } else {
+                let start = chat_lines.len() - chat_height;
+                chat_lines = chat_lines[start..].to_vec();
+            }
         }
         while chat_lines.len() < chat_height {
             chat_lines.insert(0, String::new());

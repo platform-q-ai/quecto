@@ -127,6 +127,13 @@ fn docker_adapter_keeps_its_load_bearing_properties() {
         "$socket_dir:$socket_dir:rw",
         "$child_binary:$child_binary:ro",
         "$HOME/.quecto:$HOME/.quecto:rw",
+        // PR #1401 review: host-side clone of the agent-supplied repo URL must
+        // whitelist git transports (no `ext::` command execution on the host).
+        "GIT_ALLOW_PROTOCOL",
+        // PR #1401 review: provider API keys travel via a 0600 mounted file
+        // sourced before exec — never `docker run -e` (docker-inspect leak).
+        "umask 077",
+        "provider-env",
     ] {
         assert!(
             create.contains(needle),
@@ -137,6 +144,11 @@ fn docker_adapter_keeps_its_load_bearing_properties() {
     assert!(
         !create.contains("QUECTO_BASE_DIR="),
         "docker create must never override QUECTO_BASE_DIR (credentials/config home)"
+    );
+    assert!(
+        !create.contains(r#"-e "$key=${!key}""#),
+        "docker create must not inline provider API keys with `docker run -e` — \
+         they persist in the container config and leak via `docker inspect`"
     );
     let kill = read_workspace_file(DOCKER_SCRIPTS[3]);
     for needle in [

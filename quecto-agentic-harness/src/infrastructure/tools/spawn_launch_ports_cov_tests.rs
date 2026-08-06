@@ -158,3 +158,55 @@ async fn contract_accessor_yields_working_production_ports() {
     assert_eq!(identity.session_name, "worker");
     assert!(!identity.registry_key.is_empty());
 }
+
+#[test]
+fn container_child_cli_args_fall_back_to_parents_config_and_local_does_not() {
+    // PR #1401 review: the child of a zero-config container spawn must be
+    // launched with the parent's effective config — the same path that
+    // authorized its environment — while local spawns keep the old chain.
+    let parent_cfg = std::path::PathBuf::from("/abs/team.json");
+    let tool = tool().with_parent_config_path(Some(parent_cfg.clone()));
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let mut cfg = config();
+    cfg.container = crate::domain::subagent::ContainerSelection::New {
+        repo: None,
+        container_script: None,
+        name: None,
+    };
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    let args = ports.build_cli_args(&identity, &cfg).unwrap();
+    let args: Vec<String> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let pos = args.iter().position(|a| a == "--config").expect(
+        "container spawn without explicit config forwards the parent's config to the child",
+    );
+    assert_eq!(args[pos + 1], parent_cfg.to_string_lossy());
+
+    // An explicit spawn `config` still wins for container spawns.
+    let mut explicit_cfg = cfg.clone();
+    explicit_cfg.config_path = Some(std::path::PathBuf::from("/abs/explicit.json"));
+    let mut ports2 = SpawnLaunchPorts::new(&tool);
+    let identity2 = ports2.allocate_identity(&explicit_cfg).unwrap();
+    let args2: Vec<String> = ports2
+        .build_cli_args(&identity2, &explicit_cfg)
+        .unwrap()
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let pos2 = args2.iter().position(|a| a == "--config").unwrap();
+    assert_eq!(args2[pos2 + 1], "/abs/explicit.json");
+
+    // Local spawns keep the explicit→inherited chain: no parent fallback.
+    let mut ports3 = SpawnLaunchPorts::new(&tool);
+    let local_cfg = config();
+    let identity3 = ports3.allocate_identity(&local_cfg).unwrap();
+    let args3: Vec<String> = ports3
+        .build_cli_args(&identity3, &local_cfg)
+        .unwrap()
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert!(!args3.iter().any(|a| a == "--config"));
+}

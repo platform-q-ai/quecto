@@ -88,7 +88,12 @@ mkdir "$workspace_path"
 printf '%s\n' "$QUECTO_CONTAINER_ENVIRONMENT_REF" >"$env_dir/ref"
 
 log "checking out $QUECTO_CONTAINER_REPO"
-git clone --quiet -- "$QUECTO_CONTAINER_REPO" "$workspace_path/repo"
+# SECURITY (PR #1401 review): the repo URL is agent-supplied and this clone
+# runs on the HOST, before any container exists. Whitelist git transports so
+# command-running helpers (`ext::sh -c ...`) cannot execute host commands —
+# a containment bypass for the adapter whose whole point is isolation.
+GIT_ALLOW_PROTOCOL="file:https:ssh:git" \
+  git clone --quiet -- "$QUECTO_CONTAINER_REPO" "$workspace_path/repo"
 
 # --- Runtime-specific section (Docker) ----------------------------------
 mounts=(
@@ -106,14 +111,44 @@ fi
 # default). Overriding it inside the container detaches the child from the
 # identity-mounted $HOME/.quecto and breaks OAuth providers — do not set it.
 envs=(-e "HOME=$HOME")
+# SECURITY (PR #1401 review): provider API keys must NOT be passed with
+# `docker run -e KEY=value` — that bakes them into the container config,
+# readable for the container's whole lifetime via `docker inspect` and
+# persisted in /var/lib/docker/containers/<id>/config.v2.json. Instead they
+# are written to a 0600 file in the 0700 state dir, identity-mounted ro, and
+# sourced by a bootstrap shell that `exec`s the child — so the child still
+# ends up as PID 1 with the keys in its environment, but the keys never
+# appear in the docker-side container config. (/proc/1/environ inside the
+# container is unavoidable: joiners there already share $HOME/.quecto.)
+secret_env_file=""
+secret_keys=()
 for key in ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY; do
-  if [ -n "${!key:-}" ]; then envs+=(-e "$key=${!key}"); fi
+  if [ -n "${!key:-}" ]; then secret_keys+=("$key"); fi
 done
-docker run -d --name "$container" \
-  --label "quecto.environment_id=$environment_id" \
-  "${mounts[@]}" "${envs[@]}" \
-  -w "$workspace_path/repo" \
-  "$image" "$@" >/dev/null
+if [ "${#secret_keys[@]}" -gt 0 ]; then
+  secret_env_file="$env_dir/provider-env"
+  (umask 077 && : >"$secret_env_file")
+  for key in "${secret_keys[@]}"; do
+    value="${!key}"
+    printf "export %s='%s'\n" "$key" "${value//\'/\'\\\'\'}" >>"$secret_env_file"
+  done
+  mounts+=(-v "$secret_env_file:$secret_env_file:ro")
+fi
+if [ -n "$secret_env_file" ]; then
+  # `sh -c` sources the 0600 file then exec-replaces itself, leaving the
+  # child as the container's PID 1. Requires /bin/sh in the image.
+  docker run -d --name "$container" \
+    --label "quecto.environment_id=$environment_id" \
+    "${mounts[@]}" "${envs[@]}" \
+    -w "$workspace_path/repo" \
+    "$image" /bin/sh -c '. "$0" && exec "$@"' "$secret_env_file" "$@" >/dev/null
+else
+  docker run -d --name "$container" \
+    --label "quecto.environment_id=$environment_id" \
+    "${mounts[@]}" "${envs[@]}" \
+    -w "$workspace_path/repo" \
+    "$image" "$@" >/dev/null
+fi
 # ------------------------------------------------------------------------
 
 printf '%s\n' "$container" >"$env_dir/container"
