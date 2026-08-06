@@ -298,6 +298,28 @@ fn restore_run_clears_ordering_gaps() {
 }
 
 #[test]
+fn restore_run_truncates_extra_persisted_done_flags() {
+    let mut engine = WorkflowEngine::new(
+        cfg(vec![template_with_steps("t", vec![step("a"), step("b")])]),
+        false,
+    )
+    .unwrap();
+    engine.restore_run(WorkflowRunPersisted {
+        template_id: Some("t".into()),
+        done: vec![true, true, true],
+        active_issue: None,
+    });
+
+    assert_eq!(engine.mode(), WorkflowMode::Complete);
+    let snapshot = engine.snapshot(true);
+    assert_eq!(snapshot.progress.done, 2);
+    assert_eq!(snapshot.progress.total, 2);
+    assert_eq!(snapshot.progress.percent, 100);
+    assert_eq!(snapshot.steps.len(), 2);
+    assert_eq!(engine.progress().total, 2);
+}
+
+#[test]
 fn guards_block_until_before_step_key_threshold() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), true).unwrap();
     engine.select_template("feature", None).unwrap();

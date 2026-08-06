@@ -50,6 +50,7 @@ impl WorkflowEngine {
         {
             let template = &self.templates[template_index];
             let mut done = persisted.done;
+            done.truncate(template.steps.len());
             done.resize(template.steps.len(), false);
             let mut seen_gap = false;
             for flag in &mut done {
@@ -448,13 +449,14 @@ impl WorkflowEngine {
 
     pub fn snapshot(&self, enabled: bool) -> WorkflowSnapshot {
         let active_template = self.active_template().map(summary_for_template);
+        let visible_count = self.visible_step_count();
         let steps = self
             .active_template()
             .map(|t| {
                 t.steps
                     .iter()
                     .enumerate()
-                    .filter(|(idx, _)| self.is_visible_step_index(*idx))
+                    .filter(|(idx, _)| *idx < visible_count)
                     .map(|(idx, _)| status_for_step(t, idx, self.is_step_done_index(idx)))
                     .collect()
             })
@@ -501,6 +503,7 @@ impl WorkflowEngine {
         };
         let progress = self.visible_progress();
         let mode = self.mode();
+        let visible_count = self.visible_step_count();
         let mut out = format!(
             "## Active Workflow\nTemplate: {} ({})\nProgress: {}/{}\n",
             template.label, template.id, progress.done, progress.total
@@ -517,7 +520,7 @@ impl WorkflowEngine {
             // Future steps (even if skipped/done out of order) and their
             // guidance stay hidden until they become part of visible progress,
             // so agents cannot act on later-step instructions prematurely.
-            if !self.is_visible_step_index(idx) {
+            if idx >= visible_count {
                 continue;
             }
             if done {
@@ -541,7 +544,10 @@ impl WorkflowEngine {
             let visible_guards: Vec<_> = template
                 .guards
                 .iter()
-                .filter(|g| self.is_visible_step_key(&g.before_step_key))
+                .filter(|g| {
+                    self.step_key_index(&g.before_step_key)
+                        .is_some_and(|idx| idx < visible_count)
+                })
                 .collect();
             if !visible_guards.is_empty() {
                 out.push_str("\nGuards:\n");
@@ -578,17 +584,12 @@ impl WorkflowEngine {
         }
     }
 
-    fn is_visible_step_index(&self, idx: usize) -> bool {
-        idx < self.visible_step_count()
-    }
-
-    fn is_visible_step_key(&self, key: &str) -> bool {
+    fn step_key_index(&self, key: &str) -> Option<usize> {
         self.active_template()
             .and_then(|template| template.steps.iter().position(|step| step.key == key))
-            .is_some_and(|idx| self.is_visible_step_index(idx))
     }
 
-    pub fn all_step_statuses(&self) -> Vec<WorkflowStepStatus> {
+    pub(crate) fn all_step_statuses(&self) -> Vec<WorkflowStepStatus> {
         self.active_template()
             .map(|template| {
                 template

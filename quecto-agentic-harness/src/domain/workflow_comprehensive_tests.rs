@@ -420,12 +420,7 @@ fn status_text_shows_only_contiguous_completed_steps_and_current_step() {
     assert!(status.contains(current.guidance.as_deref().unwrap()));
 
     let current_index = current.index;
-    let snap = WorkflowSnapshot {
-        steps: engine.all_step_statuses(),
-        ..engine.snapshot(true)
-    };
-    let future_steps: Vec<_> = snap
-        .steps
+    let future_steps: Vec<_> = all_steps
         .iter()
         .filter(|step| step.index > current_index)
         .collect();

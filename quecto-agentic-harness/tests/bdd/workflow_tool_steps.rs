@@ -340,19 +340,29 @@ fn then_workflow_tool_result_should_hide_future_incomplete_steps(world: &mut Que
         .current_step()
         .expect("workflow must have an incomplete current step")
         .index;
-    let all_steps = engine.all_step_statuses();
-    let future_incomplete: Vec<_> = all_steps
+    let done_flags = engine
+        .persisted_run()
+        .expect("workflow run should be active")
+        .done;
+    let template = guarded_template();
+    let future_incomplete: Vec<_> = template
+        .steps
         .iter()
-        .filter(|step| !step.done && step.index > current_index)
+        .enumerate()
+        .filter(|(idx, _)| {
+            let index = *idx as u32 + 1;
+            !done_flags.get(*idx).copied().unwrap_or(false) && index > current_index
+        })
+        .map(|(idx, step)| (idx as u32 + 1, step))
         .collect();
     assert!(
         !future_incomplete.is_empty(),
         "scenario must include at least one future incomplete step"
     );
-    for step in future_incomplete {
+    for (index, step) in future_incomplete {
         for hidden in [
-            format!("[ ] {}.", step.index),
-            format!("{}. {}", step.index, step.label),
+            format!("[ ] {}.", index),
+            format!("{}. {}", index, step.label),
             step.label.clone(),
         ] {
             assert!(
