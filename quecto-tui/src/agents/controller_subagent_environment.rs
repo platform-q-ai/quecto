@@ -76,8 +76,8 @@ impl App {
     /// Aggregate status across every member of the environment `key`: the
     /// most-degraded value wins, so a stale forwarded member's copy cannot
     /// show `running` after the environment began dying (review #1392).
-    /// Unknown labels rank between `running` and the terminal states so new
-    /// wire values stay visible rather than being masked.
+    /// Unknown labels rank just above `running`, so a new wire value beats a
+    /// healthy member but is still masked by any known terminal state.
     pub(super) fn environment_status(&self, key: &str) -> String {
         fn rank(status: &str) -> u8 {
             match status {
