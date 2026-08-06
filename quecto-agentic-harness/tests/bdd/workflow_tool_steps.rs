@@ -27,7 +27,7 @@ fn guarded_template() -> WorkflowTemplate {
                 key: "verify".to_string(),
                 label: "Verify".to_string(),
                 phase: "green".to_string(),
-                guidance: None,
+                guidance: Some("verify the result".to_string()),
             },
         ],
         guards: vec![WorkflowGuardRule {
@@ -340,9 +340,8 @@ fn then_workflow_tool_result_should_hide_future_incomplete_steps(world: &mut Que
         .current_step()
         .expect("workflow must have an incomplete current step")
         .index;
-    let snapshot = engine.snapshot(true);
-    let future_incomplete: Vec<_> = snapshot
-        .steps
+    let all_steps = engine.all_step_statuses();
+    let future_incomplete: Vec<_> = all_steps
         .iter()
         .filter(|step| !step.done && step.index > current_index)
         .collect();

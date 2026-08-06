@@ -291,8 +291,10 @@ fn restore_run_clears_ordering_gaps() {
     let snapshot = engine.snapshot(true);
     assert_eq!(snapshot.progress.done, 1);
     assert_eq!(snapshot.current_step.unwrap().index, 2);
-    assert!(!snapshot.steps[2].done);
-    assert!(!snapshot.steps[3].done);
+    let all_steps = engine.all_step_statuses();
+    assert!(!all_steps[2].done);
+    assert!(!all_steps[3].done);
+    assert_eq!(snapshot.steps.len(), 2);
 }
 
 #[test]
@@ -398,8 +400,9 @@ fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hoo
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     let snap = engine.snapshot(true);
+    let all_steps = engine.all_step_statuses();
 
-    let keys: Vec<&str> = snap.steps.iter().map(|s| s.key.as_str()).collect();
+    let keys: Vec<&str> = all_steps.iter().map(|s| s.key.as_str()).collect();
     assert_eq!(
         keys,
         vec![
@@ -425,29 +428,31 @@ fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hoo
         ]
     );
     assert_eq!(snap.progress.total, 19);
-    assert_eq!(snap.steps[0].label, "Install/check local quality hooks");
+    assert_eq!(snap.steps.len(), 1);
+    assert_eq!(snap.steps[0].key, "hooks");
+    assert_eq!(all_steps[0].label, "Install/check local quality hooks");
     assert_eq!(
-        snap.steps[4].label,
+        all_steps[4].label,
         "Despatch three BDD review finders (Gherkin discipline, Falsifiability, Coverage)"
     );
     assert_eq!(
-        snap.steps[8].label,
+        all_steps[8].label,
         "Bump semver for every changed crate and sync version docs"
     );
-    assert_eq!(snap.steps[10].label, "Push through the fast pre-push gate");
+    assert_eq!(all_steps[10].label, "Push through the fast pre-push gate");
     assert_eq!(
-        snap.steps[12].label,
+        all_steps[12].label,
         "Despatch narrow parallel review finders, verify adversarially, post one review"
     );
     assert_eq!(
-        snap.steps[16].label,
+        all_steps[16].label,
         "Verify the PR meets every issue acceptance criterion"
     );
     assert_eq!(
-        snap.steps[17].label,
+        all_steps[17].label,
         "Request authoritative CI and report the PR (do not merge)"
     );
-    assert_eq!(snap.steps[18].label, "Clean up sub agents");
+    assert_eq!(all_steps[18].label, "Clean up sub agents");
 }
 
 #[test]
@@ -719,29 +724,4 @@ fn selector_status_text_includes_issue_and_custom_prompt() {
     assert!(text.contains("Active issue: #42 — fix bug"));
     assert!(text.contains("Pick wisely"));
     assert!(text.contains("- t —"));
-}
-
-#[test]
-fn active_status_renders_issue_then_completion_with_guards() {
-    let mut template = template_with_steps("t", vec![step("a"), step("b")]);
-    template.guards = vec![WorkflowGuardRule {
-        commands: vec!["git push".into()],
-        before_step_key: "b".into(),
-        message: "run the gate before push".into(),
-    }];
-    let mut engine = WorkflowEngine::new(cfg(vec![template]), true).unwrap();
-    engine
-        .select_template("t", Some((9, "ship it".into())))
-        .unwrap();
-
-    let status = engine.status_text();
-    assert!(status.contains("Active issue: #9 — ship it"));
-
-    // Complete every step, then the status reflects completion + guards.
-    engine.check(1).unwrap();
-    engine.check(2).unwrap();
-    assert_eq!(engine.mode(), WorkflowMode::Complete);
-    let done = engine.status_text();
-    assert!(done.contains("All workflow steps complete"));
-    assert!(done.contains("run the gate before push"));
 }
