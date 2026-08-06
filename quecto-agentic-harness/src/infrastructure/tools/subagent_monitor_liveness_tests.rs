@@ -7,6 +7,7 @@ use super::*;
 use crate::domain::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
 };
+use crate::infrastructure::tools::subagent_registry::ExitSignalKind;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -88,8 +89,22 @@ async fn repeated_death_signals_trigger_one_inspect_and_one_terminal_transition(
 
     // The production death-signal entry point (monitor EOF *and* reset both
     // route here) delivered twice for the same member.
-    notify_child_exited(&registry, "agent-1", None, None).await;
-    notify_child_exited(&registry, "agent-1", None, None).await;
+    notify_child_exited(
+        &registry,
+        "agent-1",
+        None,
+        None,
+        ExitSignalKind::ConnectionClosed,
+    )
+    .await;
+    notify_child_exited(
+        &registry,
+        "agent-1",
+        None,
+        None,
+        ExitSignalKind::ConnectionClosed,
+    )
+    .await;
 
     let text = std::fs::read_to_string(&log).unwrap_or_default();
     assert_eq!(
@@ -124,8 +139,22 @@ async fn duplicate_signals_after_inspect_failure_still_inspect_once() {
         .unwrap()
         .insert("agent-2".to_string(), entry);
 
-    notify_child_exited(&registry, "agent-2", None, None).await;
-    notify_child_exited(&registry, "agent-2", None, None).await;
+    notify_child_exited(
+        &registry,
+        "agent-2",
+        None,
+        None,
+        ExitSignalKind::ConnectionClosed,
+    )
+    .await;
+    notify_child_exited(
+        &registry,
+        "agent-2",
+        None,
+        None,
+        ExitSignalKind::ConnectionClosed,
+    )
+    .await;
 
     let text = std::fs::read_to_string(&log).unwrap_or_default();
     assert_eq!(

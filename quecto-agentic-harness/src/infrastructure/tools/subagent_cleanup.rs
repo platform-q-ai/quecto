@@ -20,6 +20,11 @@ use crate::domain::environment_registry::EnvironmentRegistry;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum FinalizeMode {
     Exit,
+    /// Parent-initiated `kill_container` termination: death by our own hand
+    /// is not a post-mortem, so no inspect runs and no inspect failure can
+    /// stick to a cleanly killed environment. The environment-level kill and
+    /// status transitions belong to the caller's already-held kill claim.
+    ParentKill,
     /// Rollback of a failed join into an environment someone else created.
     LaunchRollback,
     /// Rollback of the launch that created the environment: the environment
@@ -156,6 +161,9 @@ fn remove_member_and_finalize(
     if mode == FinalizeMode::Exit {
         run_inspect_once(environments, env_ref, &agent_uuid);
     }
+    // ParentKill members fall through to plain membership removal: the
+    // caller's begin_kill claim owns the environment-level teardown, so the
+    // removal below cannot mint a final-member claim (status is Killing).
     let Ok(removal) = environments.remove_member(env_ref, &agent_uuid) else {
         return;
     };
@@ -216,10 +224,18 @@ fn run_inspect_once(environments: &EnvironmentRegistry, env_ref: &str, agent_uui
     }
 }
 
+/// Bound on one retained-inspect invocation. A hung inspect script must not
+/// stall the death pipeline indefinitely: the exit signal (and the awaits it
+/// wakes) fires only after this job finishes, and `classify_dead_socket`'s
+/// grace window is sized just above this bound.
+pub(super) const INSPECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Inspect script contract: invoked with `QUECTO_CONTAINER_ENVIRONMENT_ID`,
 /// prints one JSON object `{"status": "...", "metadata": {...}}` on stdout.
 /// The result is parsed through the same strict wire path as create/exec:
-/// unknown keys, trailing data, and non-UTF8 output are rejected.
+/// unknown keys, trailing data, and non-UTF8 output are rejected. The
+/// subprocess is bounded by [`INSPECT_TIMEOUT`]; on timeout it is killed and
+/// an inspect failure is persisted with the retained argv kept for retry.
 fn run_inspect_sync(environment_id: &str, argv: &[String]) -> Result<serde_json::Value, String> {
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -233,9 +249,7 @@ fn run_inspect_sync(environment_id: &str, argv: &[String]) -> Result<serde_json:
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
-    let output = cmd
-        .output()
-        .map_err(|e| format!("failed to invoke retained inspect: {e}"))?;
+    let output = output_with_timeout(cmd, INSPECT_TIMEOUT)?;
     if !output.status.success() {
         return Err(format!(
             "retained inspect exited with {}: {}",
@@ -253,6 +267,51 @@ fn run_inspect_sync(environment_id: &str, argv: &[String]) -> Result<serde_json:
         object.insert("inspect_status".to_string(), serde_json::json!(status));
     }
     Ok(metadata)
+}
+
+/// Run a command to completion with a hard wall-clock bound, killing it on
+/// timeout. Runs on a blocking worker (teardown jobs), so the poll loop never
+/// occupies an async runtime thread. Output pipes are drained after exit;
+/// inspect payloads are one small JSON object, far below pipe capacity.
+pub(super) fn output_with_timeout(
+    mut cmd: std::process::Command,
+    timeout: std::time::Duration,
+) -> Result<std::process::Output, String> {
+    use std::io::Read;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("failed to invoke retained inspect: {e}"))?;
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "retained inspect timed out after {}s and was killed; retained argv kept for retry",
+                        timeout.as_secs()
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Err(e) => return Err(format!("failed to reap retained inspect: {e}")),
+        }
+    };
+    let mut stdout = Vec::new();
+    if let Some(mut pipe) = child.stdout.take() {
+        let _ = pipe.read_to_end(&mut stdout);
+    }
+    let mut stderr = Vec::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = pipe.read_to_end(&mut stderr);
+    }
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 fn run_script_sync(environment_id: &str, argv: &[String]) {

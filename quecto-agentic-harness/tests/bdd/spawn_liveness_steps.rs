@@ -395,6 +395,16 @@ fn then_await_reports_status(world: &mut QuectoWorld, agent_id: String, status: 
     world.agent_cmd_result = Some(result);
 }
 
+#[then(expr = "the last await reason should be {string}")]
+fn then_last_await_reason(world: &mut QuectoWorld, reason: String) {
+    let result = world.agent_cmd_result.as_ref().expect("await result");
+    assert!(
+        result.content.contains(&format!("\"reason\":\"{reason}\"")),
+        "expected await reason {reason}: {}",
+        result.content
+    );
+}
+
 #[then(
     expr = "the script-managed runtime should have inspected an environment exactly {int} time(s)"
 )]

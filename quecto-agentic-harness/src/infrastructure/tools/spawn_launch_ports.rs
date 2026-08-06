@@ -248,6 +248,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     let _ = tx.send(Some(ExitSignal {
                         exit_code: None,
                         signal: Some(15),
+                        kind: Default::default(),
                     }));
                 }
                 crate::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry);
@@ -341,15 +342,18 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 self.tool.broadcast_tx.clone(),
                 self.tool.parent_id.clone(),
             );
-            let proxy_bridge_handle = prepared
-                .proxy_bridge
-                .take()
-                .map(|bridge| std::sync::Arc::new(bridge.into_handle()));
+            let proxy_bridge = prepared.proxy_bridge.take().map(|bridge| {
+                let (socket, handle) = bridge.into_parts();
+                (socket, std::sync::Arc::new(handle))
+            });
             {
                 let mut entries = self.tool.registry.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(entry) = entries.get_mut(&identity.registry_key) {
                     entry.monitor_handle = Some(std::sync::Arc::new(monitor_handle));
-                    entry.proxy_bridge_handle = proxy_bridge_handle;
+                    if let Some((socket, handle)) = proxy_bridge {
+                        entry.proxy_bridge_socket = Some(socket);
+                        entry.proxy_bridge_handle = Some(handle);
+                    }
                 }
             }
             if let Some(child) = prepared.child.take() {

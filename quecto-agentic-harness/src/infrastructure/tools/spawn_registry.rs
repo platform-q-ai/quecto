@@ -54,6 +54,7 @@ pub fn shutdown_all_with_count(registry: &SubagentRegistry) -> usize {
             let _ = tx.send(Some(ExitSignal {
                 exit_code: None,
                 signal: Some(15),
+                kind: Default::default(),
             }));
         }
         // Abort monitor task if running (#522).

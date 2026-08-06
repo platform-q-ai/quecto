@@ -105,7 +105,17 @@ A `create`/`exec` result must carry **exactly one** endpoint:
 Results carrying both or neither endpoint fail the launch with rollback.
 In proxy mode Quecto binds a private parent-side bridge socket and never
 connects to (or falls back to) the direct socket path that was passed in
-the child's CLI args.
+the child's CLI args. A bridged connection is torn down — including its
+proxy process — as soon as either side closes, so dropped probe or
+one-shot command connections never leave proxies (or their connections
+into the child) lingering.
+
+Proxy readiness probes the bridge across the launch's readiness budget:
+a probe that reads EOF (the proxy could not reach the child yet) is
+retried; the endpoint is ready once a probe survives a quiet window.
+Residual assumption: a proxy that hangs without producing EOF while the
+child is unreachable is indistinguishable from a live-but-quiet child;
+such a launch fails at the initial prompt and rolls back.
 
 After readiness the parent holds one persistent monitor connection to the
 endpoint. EOF or connection reset on it IS the child's death signal — no
@@ -114,6 +124,10 @@ retained `inspect` runs exactly once for that member (repeated EOF/reset
 signals do not re-run it), the authoritative environment record is
 updated before the member is removed, and the exit feeds `await`, passive
 completion notes, snapshots, and live events exactly like a local child.
+Because no exit status exists for a script-managed death, the `await`
+reason reports how the death was observed — `connection_closed` (EOF or
+reset) or `never_reachable` (the endpoint never accepted the monitor
+connection) — never a fabricated `exit_code_0`.
 
 ## Script contract
 
@@ -201,7 +215,11 @@ stderr preserved as the last error.
 Invoked with `QUECTO_CONTAINER_ENVIRONMENT_ID` set to the runtime
 `environment_id`, exactly once per dead member, after the member's death
 is pushed (EOF/reset) and before the member is removed from the
-environment record. It must print exactly one JSON object:
+environment record. A parent-initiated `kill_container` is not a
+post-mortem: members terminated by it are not inspected. The inspect
+subprocess is bounded (5s); on timeout it is killed and an inspect
+failure is persisted, keeping the retained argv for retry. It must print
+exactly one JSON object:
 
 ```json
 {

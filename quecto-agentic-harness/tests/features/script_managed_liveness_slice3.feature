@@ -63,6 +63,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     And script-managed child "eof-impl-slice3" is running in an inspectable environment with task "EOF_IMPL_MARKER"
     When the script-managed child "eof-impl-slice3" is killed behind Quecto's back
     Then awaiting subagent "eof-impl-slice3" should report status "exited"
+    And the last await reason should be "connection_closed"
     And the script-managed runtime should have inspected an environment exactly 1 time
     And the script-managed runtime should have killed an environment exactly 1 time
     And the container listing should include "C1" with status "stopped" and 0 members

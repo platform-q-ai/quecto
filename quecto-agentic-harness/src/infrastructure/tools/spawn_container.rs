@@ -61,7 +61,7 @@ impl PreparedChild {
             let _ = child.wait().await;
         }
         if let Some(bridge) = self.proxy_bridge.take() {
-            bridge.abort();
+            bridge.teardown();
         }
         run_cleanup_once(self.cleanup_environment_id.clone(), &mut self.cleanup_argv).await;
         if let (Some(environments), Some(env_ref)) = (&self.environments, &self.environment_ref) {

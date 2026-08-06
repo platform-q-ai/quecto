@@ -20,7 +20,7 @@ async fn bridge_pumps_both_directions_through_the_proxy_process() {
     let mut buf = [0u8; 18];
     conn.read_exact(&mut buf).await.unwrap();
     assert_eq!(&buf, b"ping-through-proxy");
-    bridge.abort();
+    bridge.teardown();
 }
 
 #[tokio::test]
@@ -38,7 +38,7 @@ async fn proxy_death_is_pushed_to_the_parent_as_eof() {
         .expect("EOF must be pushed promptly")
         .unwrap();
     assert_eq!(n, 0, "dead proxy must read as EOF");
-    bridge.abort();
+    bridge.teardown();
 }
 
 #[tokio::test]
@@ -47,7 +47,7 @@ async fn bridge_socket_path_is_distinct_from_the_requested_direct_path() {
     let requested = dir.path().join("quecto-agent-abc.sock");
     let bridge = materialize(vec!["cat".to_string()], dir.path(), "abc").unwrap();
     assert_ne!(bridge.socket_path, requested);
-    bridge.abort();
+    bridge.teardown();
 }
 
 #[tokio::test]
@@ -73,7 +73,7 @@ async fn wait_for_proxy_ready_accepts_a_held_open_connection() {
     )
     .unwrap();
     wait_for_proxy_ready(&bridge.socket_path).await.unwrap();
-    bridge.abort();
+    bridge.teardown();
 }
 
 #[tokio::test]
@@ -100,5 +100,80 @@ async fn bridge_one_survives_an_unspawnable_proxy_argv() {
     // Connection closes (EOF or reset) rather than hanging or panicking.
     let read = tokio::time::timeout(std::time::Duration::from_secs(5), conn.read(&mut buf)).await;
     assert!(matches!(read, Ok(Ok(0)) | Ok(Err(_))));
-    bridge.abort();
+    bridge.teardown();
+}
+
+/// #1391 review: a bridged connection that the parent drops must tear down
+/// its proxy process even when the child side never writes — otherwise every
+/// dropped probe/await connection leaks a live proxy for the child's
+/// lifetime.
+#[tokio::test]
+async fn dropped_connection_tears_down_the_proxy_process() {
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("proxy.pid");
+    let proxy = dir.path().join("proxy.sh");
+    std::fs::write(
+        &proxy,
+        format!(
+            "#!/usr/bin/env bash\necho $$ > '{}'\nexec sleep 30\n",
+            pid_file.display()
+        ),
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut p = std::fs::metadata(&proxy).unwrap().permissions();
+        p.set_mode(0o700);
+        std::fs::set_permissions(&proxy, p).unwrap();
+    }
+
+    let bridge = materialize(
+        vec![proxy.to_string_lossy().to_string()],
+        dir.path(),
+        "leak-test",
+    )
+    .unwrap();
+    let conn = tokio::net::UnixStream::connect(&bridge.socket_path)
+        .await
+        .unwrap();
+    // Wait for the proxy to start, then drop the parent connection.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    while !pid_file.exists() && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let pid: i32 = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    drop(conn);
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        let alive = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .unwrap()
+            .success();
+        if !alive {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "proxy process {pid} still alive after parent connection dropped"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    bridge.teardown();
+}
+
+#[tokio::test]
+async fn into_parts_hands_over_socket_and_handle() {
+    let dir = tempfile::tempdir().unwrap();
+    let bridge = materialize(vec!["true".to_string()], dir.path(), "parts-test").unwrap();
+    let expected = bridge.socket_path.clone();
+    let (socket, handle) = bridge.into_parts();
+    assert_eq!(socket, expected);
+    handle.abort();
+    let _ = std::fs::remove_file(&socket);
 }

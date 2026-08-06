@@ -184,6 +184,12 @@ impl EnvironmentRegistry {
     /// A stopped environment stays listed and its ref is never reused.
     pub fn remove(&self, environment_ref: &str) -> Option<EnvironmentRecord> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        // Prune the removed environment's inspect bookkeeping with it; refs
+        // are never reused, so nothing can resurrect these keys.
+        state
+            .inspect_claims
+            .retain(|(env_ref, _)| env_ref != environment_ref);
+        state.inspect_failures.remove(environment_ref);
         state.entries.remove(environment_ref)
     }
 

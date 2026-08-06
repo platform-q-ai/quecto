@@ -22,15 +22,33 @@ pub(super) struct ProxyBridge {
 }
 
 impl ProxyBridge {
-    /// Stop accepting new connections. In-flight bridged connections belong
-    /// to their own tasks and end when either side closes.
-    pub(super) fn abort(&self) {
+    /// Stop accepting new connections and remove the bridge socket file so
+    /// nothing can connect to a dead child's bridge. In-flight bridged
+    /// connections belong to their own tasks and end when either side closes.
+    pub(super) fn teardown(&self) {
         self.handle.abort();
+        let _ = std::fs::remove_file(&self.socket_path);
     }
 
-    /// Hand the accept-loop handle to the registry entry that now owns it.
-    pub(super) fn into_handle(self) -> tokio::task::JoinHandle<()> {
-        self.handle
+    /// Hand the accept-loop handle and socket path to the registry entry that
+    /// now owns their teardown.
+    pub(super) fn into_parts(self) -> (PathBuf, tokio::task::JoinHandle<()>) {
+        (self.socket_path, self.handle)
+    }
+}
+
+/// Tear down a bridge owned by a registry entry: abort the accept loop and
+/// remove the bridge socket file. Callable from any teardown path (terminal
+/// EOF death, cascade removal, session shutdown).
+pub(super) fn teardown_entry_bridge(
+    handle: Option<&std::sync::Arc<tokio::task::JoinHandle<()>>>,
+    socket_path: Option<&Path>,
+) {
+    if let Some(handle) = handle {
+        handle.abort();
+    }
+    if let Some(path) = socket_path {
+        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -76,10 +94,16 @@ async fn accept_loop(listener: tokio::net::UnixListener, argv: Vec<String>) {
     }
 }
 
-/// Serve one bridged connection: run the proxy argv and pump both directions.
-/// The child->parent direction is authoritative for liveness: when the proxy's
-/// stdout closes (child or proxy died), the parent-side connection is shut
-/// down so its reader observes EOF.
+/// Serve one bridged connection: run the proxy argv and pump both directions,
+/// racing them so either side closing tears the pair down.
+///
+/// - Proxy stdout closing (child or proxy died) shuts the parent connection
+///   down so its reader observes EOF — death stays pushed.
+/// - The parent connection closing (quecto clients never half-close their
+///   write side, so read-side EOF means the connection is gone) kills the
+///   proxy immediately. Without this, a dropped probe or await connection
+///   would leak a live proxy process — and its open connection into the
+///   child — for the child's entire lifetime.
 async fn bridge_one(conn: tokio::net::UnixStream, argv: Vec<String>) {
     let mut cmd = tokio::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]);
@@ -101,24 +125,34 @@ async fn bridge_one(conn: tokio::net::UnixStream, argv: Vec<String>) {
         return;
     };
     let (mut conn_read, mut conn_write) = conn.into_split();
-    let parent_to_proxy = tokio::spawn(async move {
-        let _ = tokio::io::copy(&mut conn_read, &mut stdin).await;
-        // Parent closed its write half: propagate EOF to the proxy's stdin.
-        drop(stdin);
-    });
-    let _ = tokio::io::copy(&mut stdout, &mut conn_write).await;
-    // Proxy stdout closed (child death or proxy exit): push EOF to the parent.
-    use tokio::io::AsyncWriteExt;
-    let _ = conn_write.shutdown().await;
-    parent_to_proxy.abort();
+    tokio::select! {
+        _ = async {
+            let _ = tokio::io::copy(&mut conn_read, &mut stdin).await;
+        } => {
+            // Parent connection closed: nobody is reading responses anymore.
+        }
+        _ = async {
+            let _ = tokio::io::copy(&mut stdout, &mut conn_write).await;
+        } => {
+            // Proxy stdout closed (child death or proxy exit): push EOF to
+            // the parent-side reader.
+            use tokio::io::AsyncWriteExt;
+            let _ = conn_write.shutdown().await;
+        }
+    }
     let _ = proxy.kill().await;
     let _ = proxy.wait().await;
 }
 
 /// Wait until the child answers THROUGH the bridge (never via any direct
-/// path): a probe connection whose proxy immediately loses its child reads
-/// EOF at once; a live child keeps the probe connection open. Bounded retry,
-/// no lifecycle polling afterwards.
+/// path): a probe connection whose proxy loses its child reads EOF and is
+/// retried across the full readiness budget; ready only when a probe
+/// survives its quiet window. Bounded retry, no lifecycle polling afterwards.
+///
+/// Residual assumption (documented in docs/container-scripts.md): a proxy
+/// that can neither reach the child nor fail with EOF — it simply hangs —
+/// is indistinguishable from a live-but-quiet child until first real use;
+/// the launch then fails at the initial prompt and rolls back.
 pub(super) async fn wait_for_proxy_ready(
     socket_path: &Path,
 ) -> Result<(), crate::domain::error::DomainError> {

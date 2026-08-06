@@ -195,6 +195,7 @@ async fn execute_await_exit_signal_wakes_immediately_with_reason() {
             .send(Some(ExitSignal {
                 exit_code: Some(7),
                 signal: None,
+                kind: Default::default(),
             }))
             .unwrap();
     });
@@ -225,6 +226,7 @@ async fn execute_await_dead_socket_with_fired_exit_signal_reports_exited() {
         .send(Some(ExitSignal {
             exit_code: None,
             signal: None,
+            kind: crate::infrastructure::tools::subagent_registry::ExitSignalKind::ConnectionClosed,
         }))
         .unwrap();
     let (tool, registry) =
@@ -237,7 +239,7 @@ async fn execute_await_dead_socket_with_fired_exit_signal_reports_exited() {
             .unwrap(),
     );
     assert_eq!(got.status, "exited");
-    assert_eq!(got.reason.as_deref(), Some("exit_code_0"));
+    assert_eq!(got.reason.as_deref(), Some("connection_closed"));
     assert!(
         start.elapsed() < std::time::Duration::from_secs(2),
         "pushed death must classify immediately, not after a grace poll"
@@ -385,6 +387,7 @@ async fn execute_await_exited_status_uses_signal_reason_from_registry() {
         .send(Some(ExitSignal {
             exit_code: None,
             signal: Some(15),
+            kind: Default::default(),
         }))
         .unwrap();
     let (tool, registry) = tool_with_entry("sig", socket, SubagentStatus::Exited, Some(exit_tx));
@@ -509,4 +512,35 @@ async fn execute_await_poisoned_locks_recover_for_lookup_duplicate_and_removed()
     assert!(
         registry.lock().unwrap_or_else(|e| e.into_inner())["poison"].completion_consumed_by_await
     );
+}
+
+/// #1391 review: signal-less deaths must render how they were observed, not a
+/// fabricated clean exit.
+#[test]
+fn exit_signal_reason_reports_death_observation_kind() {
+    use crate::infrastructure::tools::subagent_registry::{ExitSignal, ExitSignalKind};
+    let closed = ExitSignal {
+        exit_code: None,
+        signal: None,
+        kind: ExitSignalKind::ConnectionClosed,
+    };
+    assert_eq!(exit_signal_reason(&closed), "connection_closed");
+    let unreachable = ExitSignal {
+        exit_code: None,
+        signal: None,
+        kind: ExitSignalKind::NeverReachable,
+    };
+    assert_eq!(exit_signal_reason(&unreachable), "never_reachable");
+    let unknown = ExitSignal {
+        exit_code: None,
+        signal: None,
+        kind: ExitSignalKind::ProcessExit,
+    };
+    assert_eq!(exit_signal_reason(&unknown), "exit_status_unknown");
+    let coded = ExitSignal {
+        exit_code: Some(3),
+        signal: None,
+        kind: ExitSignalKind::ConnectionClosed,
+    };
+    assert_eq!(exit_signal_reason(&coded), "exit_code_3");
 }

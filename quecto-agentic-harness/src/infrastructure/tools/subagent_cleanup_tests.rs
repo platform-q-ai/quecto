@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use super::subagent_cleanup::cleanup_registered_once;
+use super::subagent_cleanup::{
+    FinalizeMode, cleanup_registered_once, cleanup_removed_entries_once, output_with_timeout,
+};
 use super::subagent_registry::{SubagentEntry, SubagentRegistry};
 
 fn cleanup_script(log: &std::path::Path) -> std::path::PathBuf {
@@ -330,4 +332,86 @@ async fn owned_launch_rollback_discards_the_environment_record_entirely() {
     assert!(environments.get(&env_ref).is_none());
     assert!(environments.entries().is_empty());
     assert_eq!(environments.mint_ref(), "C2");
+}
+
+fn logging_fail_script(log: &std::path::Path, dir: &std::path::Path) -> String {
+    let script = dir.join("inspect-fail.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/usr/bin/env bash\necho \"$QUECTO_CONTAINER_ENVIRONMENT_ID\" >> '{}'\nexit 1\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut p = std::fs::metadata(&script).unwrap().permissions();
+        p.set_mode(0o700);
+        std::fs::set_permissions(&script, p).unwrap();
+    }
+    script.to_string_lossy().to_string()
+}
+
+/// #1391 review: a parent-initiated kill is not a post-mortem — members it
+/// terminates are never inspected, so a failing inspect script cannot stick
+/// a permanent error onto a cleanly killed environment.
+#[tokio::test]
+async fn parent_kill_members_are_not_inspected_and_no_error_sticks() {
+    use crate::domain::environment_registry::{EnvironmentRegistry, EnvironmentStatus};
+
+    let temp = tempfile::tempdir().unwrap();
+    let inspect_log = temp.path().join("inspect.log");
+    let inspect = logging_fail_script(&inspect_log, temp.path());
+
+    let environments = EnvironmentRegistry::new();
+    let env_ref = environments.mint_ref();
+    let mut record = committed_env_record(
+        &env_ref,
+        vec!["true".into()],
+        vec![],
+        vec!["member".to_string()],
+    );
+    record.retained_inspect_argv = vec![inspect];
+    environments.commit(record);
+
+    // The kill_container flow claims the environment first, then tears down
+    // members with FinalizeMode::ParentKill.
+    let claim = environments.begin_kill(&env_ref).unwrap();
+    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/member.sock"), 0);
+    entry.environment_registry = Some(environments.clone());
+    entry.environment_ref = Some(env_ref.clone());
+    let mut removed = vec![("member".to_string(), entry)];
+    cleanup_removed_entries_once(&mut removed, FinalizeMode::ParentKill).await;
+    environments.complete_kill(claim);
+
+    assert!(
+        !inspect_log.exists(),
+        "parent-kill member must not be inspected"
+    );
+    let record = environments.get(&env_ref).unwrap();
+    assert_eq!(record.status, EnvironmentStatus::Stopped);
+    assert!(record.members.is_empty());
+    assert!(record.last_error.is_none());
+}
+
+/// #1391 review: the inspect subprocess is bounded — a hung script is killed
+/// and reported as a timeout instead of stalling the death pipeline.
+#[test]
+fn output_with_timeout_kills_hung_commands_and_passes_fast_ones() {
+    let mut hung = std::process::Command::new("sleep");
+    hung.arg("30");
+    let started = std::time::Instant::now();
+    let err = output_with_timeout(hung, std::time::Duration::from_millis(200)).unwrap_err();
+    assert!(err.contains("timed out"), "{err}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+
+    let mut fast = std::process::Command::new("echo");
+    fast.arg("ok");
+    fast.stdout(std::process::Stdio::piped());
+    fast.stderr(std::process::Stdio::piped());
+    let output = output_with_timeout(fast, std::time::Duration::from_secs(5)).unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
 }

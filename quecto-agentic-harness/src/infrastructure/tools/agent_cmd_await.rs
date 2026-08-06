@@ -44,12 +44,20 @@ fn elapsed_ms(start: tokio::time::Instant) -> u64 {
 fn exit_signal_reason(
     signal: &crate::infrastructure::tools::subagent_registry::ExitSignal,
 ) -> String {
+    use crate::infrastructure::tools::subagent_registry::ExitSignalKind;
     if let Some(code) = signal.exit_code {
         format!("exit_code_{code}")
     } else if let Some(sig) = signal.signal {
         format!("signal_{sig}")
     } else {
-        "exit_code_0".to_string()
+        // No status exists: report HOW the death was observed instead of
+        // fabricating a clean exit for a child that may have been killed
+        // behind quecto's back (#1369 slice 3).
+        match signal.kind {
+            ExitSignalKind::ConnectionClosed => "connection_closed".to_string(),
+            ExitSignalKind::NeverReachable => "never_reachable".to_string(),
+            ExitSignalKind::ProcessExit => "exit_status_unknown".to_string(),
+        }
     }
 }
 
@@ -215,7 +223,10 @@ impl AgentCmdTool {
                 None | Some((SubagentStatus::Exited, _)) => {
                     // Agent removed from registry or marked Exited. Read the
                     // exit signal from the registry entry for the actual exit
-                    // code/signal; fall back to exit_code_0 if unavailable.
+                    // code/signal/observation kind; only an entry that never
+                    // published a signal at all falls back to exit_code_0
+                    // (the pre-signal legacy contract for locally reaped
+                    // children).
                     let reason = {
                         let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
                         entries
@@ -225,15 +236,7 @@ impl AgentCmdTool {
                                 let rx = tx.subscribe();
                                 rx.borrow().clone()
                             })
-                            .map(|es| {
-                                if let Some(code) = es.exit_code {
-                                    format!("exit_code_{code}")
-                                } else if let Some(sig) = es.signal {
-                                    format!("signal_{sig}")
-                                } else {
-                                    "exit_code_0".into()
-                                }
-                            })
+                            .map(|es| exit_signal_reason(&es))
                             .or(Some("exit_code_0".into()))
                     };
                     mark_completion_consumed_by_await(&self.registry, &registry_key);
@@ -419,11 +422,14 @@ impl AgentCmdTool {
     /// monitor observed (or is about to observe) EOF and will mark the entry
     /// exited. An already-delivered exit signal (read from the in-hand watch
     /// channel's current value — `subscribe` marks it seen, so `changed()`
-    /// alone would miss it) short-circuits to `exited` immediately, even
-    /// while a slow post-mortem inspect is still running. Otherwise the push
-    /// gets a short grace window, bounded by the caller's own await deadline
-    /// so a small `timeout` is never exceeded; a child that stays non-exited
-    /// on a dead socket keeps the fail-fast `connection_failed` contract.
+    /// alone would miss it) short-circuits to `exited` immediately. The
+    /// signal itself fires only after the post-mortem inspect completes, and
+    /// the inspect subprocess is bounded (`INSPECT_TIMEOUT`), so the grace
+    /// window here is sized to outlast it: an awaiter arriving mid-inspect
+    /// still classifies as `exited` rather than `connection_failed` —
+    /// unless the caller's own await deadline (which always wins) elapses
+    /// first. A child that stays non-exited on a dead socket keeps the
+    /// fail-fast `connection_failed` contract.
     async fn classify_dead_socket(
         &self,
         registry_key: &str,
@@ -432,7 +438,9 @@ impl AgentCmdTool {
         exit_rx: Option<&ExitSignalRx>,
         deadline: tokio::time::Instant,
     ) -> Result<(), ToolResult> {
-        let grace = (tokio::time::Instant::now() + Duration::from_secs(3)).min(deadline);
+        // Must exceed subagent_cleanup::INSPECT_TIMEOUT so a hung-then-killed
+        // inspect cannot make a dead-socket await misreport connection_failed.
+        let grace = (tokio::time::Instant::now() + Duration::from_secs(6)).min(deadline);
         loop {
             // A pushed death that already fired IS the answer — never
             // misclassify it as connection_failed behind a grace timer.

@@ -584,6 +584,7 @@ async fn test_await_exit_signal_returns_exit_code() {
         let _ = exit_tx.send(Some(ExitSignal {
             exit_code: Some(1),
             signal: None,
+            kind: Default::default(),
         }));
     });
 

@@ -454,6 +454,7 @@ impl AgentCmdTool {
                 let _ = tx.send(Some(super::subagent_registry::ExitSignal {
                     exit_code: None,
                     signal: Some(15), // SIGTERM
+                    kind: Default::default(),
                 }));
             }
             // Abort the monitor task and SIGTERM the child process. The reaper

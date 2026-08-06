@@ -194,6 +194,7 @@ async fn notify_child_exited(
     agent_id: &str,
     notify_tx: Option<&NotificationTx>,
     broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
+    kind: super::subagent_registry::ExitSignalKind,
 ) {
     // #1369 slice 3: a script-managed child has no local process to reap, so
     // the monitor connection's EOF/reset IS its death signal. Feed the
@@ -213,12 +214,30 @@ async fn notify_child_exited(
     // aggregate already updated, per the documented contract.
     super::subagent_cleanup::cleanup_registered_once(registry, agent_id).await;
     if let Some(tx) = exit_tx {
-        let _ = tx.send(Some(super::subagent_registry::ExitSignal {
+        // No exit status exists for a script-managed death: the kind keeps
+        // the await reason honest (connection_closed / never_reachable)
+        // instead of fabricating a clean exit. send_replace stores the value
+        // even when no awaiter currently holds a receiver, so a LATER await
+        // still reads the honest reason instead of the exit_code_0 fallback.
+        tx.send_replace(Some(super::subagent_registry::ExitSignal {
             exit_code: None,
             signal: None,
+            kind,
         }));
     }
     let sequence = update_entry_next_sequence(registry, agent_id, mark_exited);
+    // Terminal transition: nothing may connect to a dead child's bridge, so
+    // tear the accept loop and its socket file down while the entry itself
+    // stays listed as exited.
+    {
+        let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = entries.get_mut(agent_id) {
+            super::spawn_proxy_bridge::teardown_entry_bridge(
+                entry.proxy_bridge_handle.take().as_ref(),
+                entry.proxy_bridge_socket.take().as_deref(),
+            );
+        }
+    }
     if let Some(tx) = broadcast_tx {
         // Push the terminal transition onto the live event stream (snapshots
         // and the TUI roster observe it without polling).
@@ -287,7 +306,14 @@ async fn monitor_loop(
                     SubagentLifecycleEvent::SocketConnectFailed,
                 );
             });
-            notify_child_exited(registry, agent_id, notify_tx, broadcast_tx).await;
+            notify_child_exited(
+                registry,
+                agent_id,
+                notify_tx,
+                broadcast_tx,
+                super::subagent_registry::ExitSignalKind::NeverReachable,
+            )
+            .await;
             return;
         }
     };
@@ -331,7 +357,14 @@ async fn monitor_loop(
             }
             MonitorRead::Skip => continue,
             MonitorRead::Closed => {
-                notify_child_exited(registry, agent_id, notify_tx, broadcast_tx).await;
+                notify_child_exited(
+                    registry,
+                    agent_id,
+                    notify_tx,
+                    broadcast_tx,
+                    super::subagent_registry::ExitSignalKind::ConnectionClosed,
+                )
+                .await;
                 return;
             }
         }
