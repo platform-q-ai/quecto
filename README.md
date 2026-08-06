@@ -2,7 +2,7 @@
 
 This repository is a Cargo workspace containing the Quecto agentic harness and related packages.
 
-Current version: **0.102.0** (harness / `quecto` binary). Companion crate versions are declared in each package `Cargo.toml`.
+Current version: **0.103.0** (harness / `quecto` binary). Companion crate versions are declared in each package `Cargo.toml`.
 
 ## Packages
 
@@ -25,4 +25,4 @@ Package-specific source, tests, docs, and fixtures are colocated under each pack
 - Terminal UI: [`quecto-tui/README.md`](quecto-tui/README.md)
 - MCP bridge: [`quecto-mcp/README.md`](quecto-mcp/README.md)
 - Docker harness for local TUI development: [`docs/docker-harness.md`](docs/docker-harness.md)
-- Script-managed subagent environments: [`docs/container-scripts.md`](docs/container-scripts.md) (reference script: [`scripts/container-script-reference.sh`](scripts/container-script-reference.sh))
+- Container runtimes for subagents: [`docs/container-runtimes.md`](docs/container-runtimes.md) (canonical reference runtime: [`scripts/container-runtime/`](scripts/container-runtime/))

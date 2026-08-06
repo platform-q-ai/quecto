@@ -6,7 +6,7 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.102.0**.
+Current version: **0.103.0**.
 
 ## Quick Start
 
@@ -816,6 +816,7 @@ Human guides (full reference). The agent `docs` tool embeds a short **operating 
 | [Subagents](docs/subagents.md) | Spawning and controlling UDS-mode subagents with `spawn` and `agent_cmd` tools |
 | [Workflow](docs/workflow.md) | UDS-only template-based workflow engine with default dormant tool availability, selector mode, guards, and live prompt injection |
 | [Models & providers](docs/runtime-models-providers.md) | `models.json` registry and provider setup |
+| [Container runtimes](../docs/container-runtimes.md) | Script-managed subagent environments: the `container_scripts` contract and the canonical reference runtime |
 | [Contributor Cookbooks](docs/contributor-cookbooks.md) | Change maps for common harness work: tools, UDS commands, providers, events, persistence, subagents, and context policy |
 
 ## Tech stack
