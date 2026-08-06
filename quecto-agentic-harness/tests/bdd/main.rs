@@ -805,6 +805,12 @@ pub struct QuectoWorld {
     pub spawn_broadcast_rx: Option<tokio::sync::broadcast::Receiver<String>>,
     /// Agent UUIDs captured per agent_id from successful spawns (#1369 slice 2)
     pub agent_spawn_uuids: std::collections::HashMap<String, String>,
+    /// Slice 2 empty-state BDD: in-flight gated spawn (tool moves into the
+    /// thread and returns with the result) and the gate file releasing it.
+    pub gated_spawn: Option<
+        std::thread::JoinHandle<(quecto::infrastructure::tools::spawn::SpawnTool, ToolResult)>,
+    >,
+    pub gate_path: Option<std::path::PathBuf>,
     /// Environment refs captured per agent_id from successful spawns (#1369 slice 2)
     pub agent_env_refs: std::collections::HashMap<String, String>,
     /// Workspaces captured per agent_id from successful spawns (#1369 slice 2)

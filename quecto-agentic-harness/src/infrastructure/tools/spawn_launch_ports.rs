@@ -23,6 +23,7 @@ pub(super) struct SpawnLaunchPorts<'a> {
     tool: &'a SpawnTool,
     agent_uuid: Option<AgentUuid>,
     socket_path: Option<PathBuf>,
+    owns_environment: bool,
 }
 
 impl<'a> SpawnLaunchPorts<'a> {
@@ -31,6 +32,7 @@ impl<'a> SpawnLaunchPorts<'a> {
             tool,
             agent_uuid: None,
             socket_path: None,
+            owns_environment: false,
         }
     }
 }
@@ -161,6 +163,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         prepared: &'b mut Self::Prepared,
     ) -> LaunchFuture<'b, Result<PreparedRuntime, DomainError>> {
         Box::pin(async move {
+            self.owns_environment = prepared.owns_environment();
             let socket_path = self
                 .socket_path
                 .as_ref()
@@ -221,12 +224,15 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 crate::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry);
             }
             // Launch rollback: the environment's retained cleanup (not kill)
-            // runs when the launch fails after creation (#1369 slice 2).
-            super::subagent_cleanup::cleanup_removed_entries_once(
-                &mut removed,
-                super::subagent_cleanup::FinalizeMode::LaunchRollback,
-            )
-            .await;
+            // runs when the launch fails after creation (#1369 slice 2). A
+            // creator's rollback also discards the record — the environment
+            // never became usable, so it must not be listed as stopped.
+            let mode = if self.owns_environment {
+                super::subagent_cleanup::FinalizeMode::LaunchRollbackOwned
+            } else {
+                super::subagent_cleanup::FinalizeMode::LaunchRollback
+            };
+            super::subagent_cleanup::cleanup_removed_entries_once(&mut removed, mode).await;
         })
     }
 
@@ -279,9 +285,20 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     .environment_registry
                     .add_member(env_ref, &identity.registry_key)
                 {
-                    let mut entries = self.tool.registry.lock().unwrap_or_else(|e| e.into_inner());
-                    entries.remove(&identity.registry_key);
-                    drop(entries);
+                    // Unregister AND re-broadcast the survivor set: the entry
+                    // was announced by register_and_broadcast, so clients must
+                    // see it withdrawn, not linger as a phantom agent.
+                    let event = {
+                        let mut entries =
+                            self.tool.registry.lock().unwrap_or_else(|e| e.into_inner());
+                        entries.remove(&identity.registry_key);
+                        self.tool.broadcast_tx.as_ref().map(|_| {
+                            crate::infrastructure::tools::subagent_cascade::build_state_changed_event_locked(&entries)
+                        })
+                    };
+                    if let (Some(tx), Some(event)) = (self.tool.broadcast_tx.as_ref(), event) {
+                        let _ = tx.send(event);
+                    }
                     return Err(DomainError::Tool(format!(
                         "cannot register into environment {env_ref}: {e}"
                     )));

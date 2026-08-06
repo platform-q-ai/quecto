@@ -158,8 +158,10 @@ impl EnvironmentRegistry {
         state.entries.insert(record.environment_ref.clone(), record);
     }
 
-    /// Remove a committed environment (launch rollback/uncommit only; a
-    /// stopped environment stays listed and its ref is never reused).
+    /// Remove a committed environment. Used only when the launch that
+    /// CREATED the environment rolls back (before or after registration):
+    /// the environment never became usable, so no stopped record is listed.
+    /// A stopped environment stays listed and its ref is never reused.
     pub fn remove(&self, environment_ref: &str) -> Option<EnvironmentRecord> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.entries.remove(environment_ref)

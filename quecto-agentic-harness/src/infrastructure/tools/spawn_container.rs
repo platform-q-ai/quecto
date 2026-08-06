@@ -35,6 +35,12 @@ impl PreparedChild {
         }
     }
 
+    /// True when this launch created its environment (rather than joining an
+    /// existing one) and therefore owns the record on rollback.
+    pub fn owns_environment(&self) -> bool {
+        self.environments.is_some()
+    }
+
     pub fn cleanup_plan(&self) -> (Option<String>, Vec<String>) {
         (
             self.cleanup_environment_id.clone(),

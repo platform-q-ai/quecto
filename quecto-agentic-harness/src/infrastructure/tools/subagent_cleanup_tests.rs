@@ -296,3 +296,36 @@ fn run_kill_sync_reports_missing_argv_and_failures_truthfully() {
     );
     assert!(super::subagent_cleanup::run_kill_sync("env-x", &["true".to_string()]).is_ok());
 }
+
+#[tokio::test]
+async fn owned_launch_rollback_discards_the_environment_record_entirely() {
+    let temp = tempfile::tempdir().unwrap();
+    let cleanup_log = temp.path().join("cleanup.log");
+    let cleanup = cleanup_script(&cleanup_log);
+
+    let environments = crate::domain::environment_registry::EnvironmentRegistry::new();
+    let env_ref = environments.mint_ref();
+    environments.commit(committed_env_record(
+        &env_ref,
+        vec![],
+        vec!["/bin/sh".to_string(), cleanup.to_string_lossy().to_string()],
+        vec!["creator".to_string()],
+    ));
+
+    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/creator.sock"), 0);
+    entry.environment_registry = Some(environments.clone());
+    entry.environment_ref = Some(env_ref.clone());
+    let mut removed = vec![("creator".to_string(), entry)];
+    super::subagent_cleanup::cleanup_removed_entries_once(
+        &mut removed,
+        super::subagent_cleanup::FinalizeMode::LaunchRollbackOwned,
+    )
+    .await;
+
+    assert!(cleanup_log.exists(), "rollback must run retained cleanup");
+    // A creator rollback leaves NO record: the environment never became
+    // usable, matching pre-registration rollback. The ref stays consumed.
+    assert!(environments.get(&env_ref).is_none());
+    assert!(environments.entries().is_empty());
+    assert_eq!(environments.mint_ref(), "C2");
+}

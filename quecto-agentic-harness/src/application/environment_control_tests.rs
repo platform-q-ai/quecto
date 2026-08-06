@@ -218,3 +218,44 @@ fn resolve_target_supports_names_for_control_operations() {
         EnvironmentStatus::Stopped
     );
 }
+
+#[test]
+fn kill_container_without_retained_kill_argv_fails_before_any_claim() {
+    let reg = EnvironmentRegistry::new();
+    let env_ref = reg.mint_ref();
+    reg.commit(EnvironmentRecord {
+        environment_ref: env_ref.clone(),
+        environment_id: format!("runtime-{env_ref}"),
+        environment_uuid: format!("uuid-{env_ref}"),
+        name: None,
+        workspace_path: std::path::PathBuf::from("/ws/kill-less"),
+        repository: "https://example.invalid/repo.git".to_string(),
+        script_name: "default".to_string(),
+        retained_exec_argv: vec!["exec.sh".to_string()],
+        retained_kill_argv: vec![],
+        retained_cleanup_argv: vec!["cleanup.sh".to_string()],
+        members: vec!["agent-a".to_string()],
+        status: EnvironmentStatus::Running,
+        metadata: serde_json::json!({}),
+        last_error: None,
+    });
+    let port = Arc::new(SpyKillPort::default());
+    let uc = EnvironmentControlUseCase::new(reg.clone(), port.clone());
+
+    let err = block_on(uc.kill_container(&EnvironmentTarget::Ref(env_ref.clone()))).unwrap_err();
+    assert!(err.contains("no retained kill argv"), "{err}");
+    assert_eq!(port.calls.load(Ordering::SeqCst), 0);
+
+    // No state transition: still Running with its member, so joins keep
+    // working and the final-member exit cleanup fallback stays reachable.
+    let record = reg.get(&env_ref).unwrap();
+    assert_eq!(record.status, EnvironmentStatus::Running);
+    assert_eq!(record.members, vec!["agent-a".to_string()]);
+    assert!(
+        reg.resolve(&EnvironmentTarget::Ref(env_ref.clone()))
+            .is_ok()
+    );
+    // The final-member removal still mints the cleanup claim.
+    let claim = reg.remove_member(&env_ref, "agent-a").unwrap();
+    assert!(claim.is_some());
+}

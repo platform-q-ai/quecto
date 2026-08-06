@@ -142,3 +142,12 @@ Feature: Shared script-managed environments
     When I kill subagent "impl-final2-slice2"
     Then the script-managed runtime should have killed an environment exactly 1 time
     And the container listing should include "C1" with status "stopped" and 0 members
+
+  @done @container-env
+  Scenario: A created environment lists as empty until its first member registers
+    Given shared script-managed subagent spawning is available
+    When I start spawning subagent "env-empty-slice2" into a gated new environment
+    Then the container listing should eventually include "C1" with status "empty" and 0 members
+    When I release the gated environment child
+    And the gated spawn for "env-empty-slice2" completes successfully
+    Then the container listing should include "C1" with status "running" and 1 member

@@ -77,7 +77,8 @@ async fn ports_ready_rollback_prompt_uncommit_and_success_paths() {
 /// entry is removed again.
 #[tokio::test]
 async fn register_into_a_stopped_environment_fails_and_unregisters() {
-    let tool = tool();
+    let (btx, mut brx) = tokio::sync::broadcast::channel::<String>(8);
+    let tool = tool().with_event_forwarding(Some(btx), None);
     let env_ref = tool.environment_registry.mint_ref();
     tool.environment_registry
         .commit(crate::domain::environment_registry::EnvironmentRecord {
@@ -128,6 +129,17 @@ async fn register_into_a_stopped_environment_fails_and_unregisters() {
             .members
             .is_empty(),
         "no membership may be recorded in a stopped environment"
+    );
+    // The refused registration must be withdrawn from subscribers too: the
+    // last broadcast survivor set may not contain the phantom agent.
+    let mut last_event = None;
+    while let Ok(event) = brx.try_recv() {
+        last_event = Some(event);
+    }
+    let last_event = last_event.expect("registration and withdrawal were broadcast");
+    assert!(
+        !last_event.contains(&identity.registry_key),
+        "withdrawal broadcast must omit the phantom agent: {last_event}"
     );
 }
 

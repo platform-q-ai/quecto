@@ -63,10 +63,10 @@ impl EnvironmentKillPort for ScriptEnvironmentKill {
         record: &'a EnvironmentRecord,
     ) -> LaunchFuture<'a, Result<(), String>> {
         Box::pin(async move {
-            // The argv guard must precede member termination: an environment
-            // whose script set has no `kill` must refuse kill_container with
-            // its members untouched, not strand dead members in a permanently
-            // cleanup-failed environment.
+            // Kill-less script sets are refused by the use case before any
+            // claim is taken (leaving the environment Running); this guard is
+            // defense-in-depth so a contract violation cannot terminate
+            // members or panic on an empty argv.
             if record.retained_kill_argv.is_empty() {
                 return Err(format!(
                     "environment {} has no retained kill argv; its script set does not support kill_container",

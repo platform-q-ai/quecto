@@ -20,7 +20,13 @@ use crate::domain::environment_registry::EnvironmentRegistry;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum FinalizeMode {
     Exit,
+    /// Rollback of a failed join into an environment someone else created.
     LaunchRollback,
+    /// Rollback of the launch that created the environment: the environment
+    /// never became usable, so after the retained cleanup runs its record is
+    /// discarded entirely (matching pre-registration rollback, which leaves
+    /// no committed entry) instead of being listed as stopped.
+    LaunchRollbackOwned,
 }
 
 /// One claimed teardown unit: an optional environment membership to remove
@@ -154,8 +160,11 @@ fn remove_member_and_finalize(
     };
     // A launch rollback runs the retained cleanup, never the kill: the
     // documented `cleanup` contract covers launches that fail after creation.
-    let run_cleanup_instead_of_kill =
-        mode == FinalizeMode::LaunchRollback || record.retained_kill_argv.is_empty();
+    let launch_rollback = matches!(
+        mode,
+        FinalizeMode::LaunchRollback | FinalizeMode::LaunchRollbackOwned
+    );
+    let run_cleanup_instead_of_kill = launch_rollback || record.retained_kill_argv.is_empty();
     if run_cleanup_instead_of_kill {
         // Prefer the cleanup argv retained on the environment record — it
         // survives the creator exiting first — falling back to the removed
@@ -167,6 +176,9 @@ fn remove_member_and_finalize(
             run_script_sync(&env_id, &argv);
         }
         environments.complete_kill(claim);
+        if mode == FinalizeMode::LaunchRollbackOwned {
+            environments.remove(env_ref);
+        }
         return;
     }
     match run_kill_sync(&record.environment_id, &record.retained_kill_argv) {

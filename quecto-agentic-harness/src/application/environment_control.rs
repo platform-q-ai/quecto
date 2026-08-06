@@ -55,6 +55,15 @@ impl EnvironmentControlUseCase {
     /// only after success. Failure persists a retryable cleanup-failed state.
     pub async fn kill_container(&self, target: &EnvironmentTarget) -> Result<(), String> {
         let resolved = self.registry.resolve(target).map_err(|e| e.to_string())?;
+        // Refuse before claiming: a script set with no `kill` must leave the
+        // environment Running and its members untouched, so joins keep working
+        // and final-member exit still runs the retained cleanup fallback.
+        if resolved.retained_kill_argv.is_empty() {
+            return Err(format!(
+                "environment {} has no retained kill argv; its script set does not support kill_container",
+                resolved.environment_ref
+            ));
+        }
         let claim = self
             .registry
             .begin_kill(&resolved.environment_ref)

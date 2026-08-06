@@ -680,3 +680,134 @@ fn then_listing_status_last_error(world: &mut QuectoWorld, env_ref: String, stat
         "cleanup failure must persist an actionable last error: {entry}"
     );
 }
+
+// --- Slice 2 "empty" state: a committed environment before its first member ---
+
+#[when(expr = "I start spawning subagent {string} into a gated new environment")]
+fn when_start_gated_spawn(world: &mut QuectoWorld, agent_id: String) {
+    let base = base_path(world);
+    let cfg_path = PathBuf::from(world.config_path.clone().unwrap());
+    let log = shared_log_path(world);
+    let gate = cfg_path.parent().unwrap().join("child-gate.marker");
+    let _ = std::fs::remove_file(&gate);
+
+    // Same create contract as the shared fixture, but the child only starts
+    // (and its socket only opens) once the gate file exists — holding the
+    // environment in its committed-but-memberless window.
+    let create = base.join("env-create-gated.sh");
+    write_executable(
+        &create,
+        format!(
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+env_id="env-gated-$$"
+echo "{{\"kind\":\"create\",\"script\":\"${{QUECTO_CONTAINER_SCRIPT:-}}\",\"env_ref\":\"${{QUECTO_CONTAINER_ENVIRONMENT_REF:-}}\",\"env_id\":\"$env_id\"}}" >> '{log}'
+socket_path=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--" ]; then shift; break; fi
+  shift
+done
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--socket" ]; then socket_path="$arg"; break; fi
+  prev="$arg"
+done
+( while [ ! -e '{gate}' ]; do sleep 0.05; done; "$@" ) >/dev/null 2>&1 &
+printf '{{"environment_id":"%s","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$env_id" "$PWD/workspace-$env_id" "$socket_path"
+"#,
+            log = log.display(),
+            gate = gate.display(),
+        ),
+    );
+    let mut v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
+    v["container_scripts"]["scripts"]["default"]["create"] =
+        serde_json::json!([create.to_string_lossy()]);
+    std::fs::write(&cfg_path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+    world.gate_path = Some(gate);
+
+    let tool = world.spawn_tool.take().expect("spawn tool");
+    let args = serde_json::json!({
+        "agent_id": agent_id,
+        "task": "GATED_EMPTY_MARKER",
+        "container": true,
+        "read_only": true,
+        "config": world.config_path.clone().unwrap(),
+    });
+    world.gated_spawn = Some(std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = match rt.block_on(tool.execute(&args.to_string())) {
+            Ok(r) => r,
+            Err(e) => ToolResult {
+                content: e.to_string(),
+                is_error: true,
+                image_blocks: vec![],
+            },
+        };
+        (tool, result)
+    }));
+}
+
+#[then(
+    expr = "the container listing should eventually include {string} with status {string} and {int} members"
+)]
+fn then_listing_eventually(world: &mut QuectoWorld, env_ref: String, status: String, n: i32) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    loop {
+        let result = run_container_command(
+            world,
+            serde_json::json!({"agent_id": "*", "command": "get_containers"}),
+        );
+        if !result.is_error {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result.content) {
+                if let Some(entry) = parsed["containers"]
+                    .as_array()
+                    .and_then(|cs| cs.iter().find(|c| c["ref"].as_str() == Some(&env_ref)))
+                {
+                    if entry["status"].as_str() == Some(&status) {
+                        assert_eq!(
+                            entry["members"].as_array().map(|m| m.len()),
+                            Some(n as usize),
+                            "entry: {entry}"
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "environment {env_ref} never reached status {status}: {:?}",
+            result.content
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+#[when("I release the gated environment child")]
+fn when_release_gate(world: &mut QuectoWorld) {
+    std::fs::write(world.gate_path.as_ref().expect("gate path"), b"go").unwrap();
+}
+
+#[when(expr = "the gated spawn for {string} completes successfully")]
+fn when_gated_spawn_completes(world: &mut QuectoWorld, agent_id: String) {
+    let (tool, result) = world
+        .gated_spawn
+        .take()
+        .expect("gated spawn in flight")
+        .join()
+        .expect("gated spawn thread");
+    world.spawn_tool = Some(tool);
+    assert!(!result.is_error, "gated spawn failed: {}", result.content);
+    if let Some(env_ref) = result
+        .content
+        .split("environment_ref=")
+        .nth(1)
+        .and_then(|s| s.split_whitespace().next())
+    {
+        world
+            .agent_env_refs
+            .insert(agent_id, env_ref.trim_end_matches(')').to_string());
+    }
+    world.spawn_result = Some(result);
+}
