@@ -46,26 +46,23 @@ impl App {
         groups
     }
 
-    /// Every tracked member of the environment `key`, in sorted-map order —
+    /// Every tracked member id of the environment `key`, in sorted-map order —
     /// the SINGLE membership predicate shared by the panel-facing aggregates
     /// and the main-pane body (PR #1401 review: the roster rules must not be
     /// re-derived per call site, or the nested panel rows and the container
     /// body could silently diverge). `environment_groups` builds group keys
     /// from the same `group_key()` field; keep the two in lockstep.
-    pub(super) fn environment_members(
-        &self,
-        key: &str,
-    ) -> Vec<&crate::agents::roster::TrackedSubagent<crate::protocol::client::SubagentInfoEvent>>
-    {
+    pub(super) fn environment_member_ids(&self, key: &str) -> Vec<String> {
         self.subagents
             .tracked
-            .values()
-            .filter(|t| {
+            .iter()
+            .filter(|(_, t)| {
                 t.info
                     .environment
                     .as_ref()
                     .is_some_and(|e| e.group_key() == key)
             })
+            .map(|(id, _)| id.clone())
             .collect()
     }
 
@@ -74,9 +71,9 @@ impl App {
     /// refreshes). Per-member fields (`socket_mode`) must NOT be read from this
     /// arbitrary member — use [`Self::environment_socket_mode`].
     pub(super) fn environment_info(&self, key: &str) -> Option<&SubagentEnvironmentInfo> {
-        self.environment_members(key)
+        self.environment_member_ids(key)
             .into_iter()
-            .find_map(|t| t.info.environment.as_ref())
+            .find_map(|id| self.subagents.tracked.get(&id)?.info.environment.as_ref())
     }
 
     /// Aggregate status across every member of the environment `key`: the
@@ -95,9 +92,9 @@ impl App {
                 _ => 1,
             }
         }
-        self.environment_members(key)
+        self.environment_member_ids(key)
             .into_iter()
-            .filter_map(|t| t.info.environment.as_ref())
+            .filter_map(|id| self.subagents.tracked.get(&id)?.info.environment.as_ref())
             .map(|e| e.status.as_str())
             .filter(|s| !s.is_empty())
             .max_by_key(|s| (rank(s), s.to_string()))
@@ -110,9 +107,9 @@ impl App {
     /// (socket mode is per-member, review #1392), `-` when unreported.
     pub(super) fn environment_socket_mode(&self, key: &str) -> String {
         let mut modes: Vec<&str> = self
-            .environment_members(key)
+            .environment_member_ids(key)
             .into_iter()
-            .filter_map(|t| t.info.environment.as_ref())
+            .filter_map(|id| self.subagents.tracked.get(&id)?.info.environment.as_ref())
             .map(|e| e.socket_mode.as_str())
             .filter(|m| !m.is_empty())
             .collect();
@@ -235,7 +232,11 @@ impl App {
         // (per-member field, review #1392 — never read from an arbitrary
         // member's shared copy). Shares the single membership predicate with
         // the panel aggregates (PR #1401 review).
-        let members = self.environment_members(env_key);
+        let member_ids = self.environment_member_ids(env_key);
+        let members: Vec<_> = member_ids
+            .iter()
+            .filter_map(|id| self.subagents.tracked.get(id))
+            .collect();
         let count = members.len();
         for (i, t) in members.into_iter().enumerate() {
             let connector = if i + 1 == count { "└ " } else { "├ " };
