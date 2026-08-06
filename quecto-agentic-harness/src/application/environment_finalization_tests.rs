@@ -26,6 +26,9 @@ struct SpyFinalizationPort {
     kills: Mutex<Vec<ScriptCall>>,
     cleanups: Mutex<Vec<ScriptCall>>,
     events: Mutex<Vec<ScriptEvent>>,
+    members_observed_at_inspect: Mutex<Vec<Vec<String>>>,
+    observed_registry: Option<EnvironmentRegistry>,
+    observed_env_ref: Option<String>,
     inspect_result: Mutex<Result<serde_json::Value, String>>,
     fail_kill: bool,
 }
@@ -37,6 +40,9 @@ impl Default for SpyFinalizationPort {
             kills: Mutex::new(Vec::new()),
             cleanups: Mutex::new(Vec::new()),
             events: Mutex::new(Vec::new()),
+            members_observed_at_inspect: Mutex::new(Vec::new()),
+            observed_registry: None,
+            observed_env_ref: None,
             inspect_result: Mutex::new(Ok(serde_json::json!({}))),
             fail_kill: false,
         }
@@ -51,6 +57,18 @@ impl EnvironmentFinalizationPort for SpyFinalizationPort {
     ) -> LaunchFuture<'a, Result<serde_json::Value, String>> {
         Box::pin(async move {
             self.events.lock().unwrap().push(ScriptEvent::Inspect);
+            if let (Some(registry), Some(env_ref)) =
+                (&self.observed_registry, &self.observed_env_ref)
+            {
+                let members = registry
+                    .get(env_ref)
+                    .map(|record| record.members)
+                    .unwrap_or_default();
+                self.members_observed_at_inspect
+                    .lock()
+                    .unwrap()
+                    .push(members);
+            }
             self.inspects.lock().unwrap().push(ScriptCall {
                 environment_id: environment_id.to_string(),
                 argv: argv.to_vec(),
@@ -229,6 +247,9 @@ fn exit_finalization_runs_retained_inspect_before_removal_and_merges_metadata() 
     );
     let expected_environment_id = registry.get(&env_ref).unwrap().environment_id;
     let port = Arc::new(SpyFinalizationPort {
+        members_observed_at_inspect: Mutex::new(Vec::new()),
+        observed_registry: Some(registry.clone()),
+        observed_env_ref: Some(env_ref.clone()),
         inspect_result: Mutex::new(Ok(serde_json::json!({"postmortem": "captured"}))),
         ..Default::default()
     });
@@ -246,6 +267,11 @@ fn exit_finalization_runs_retained_inspect_before_removal_and_merges_metadata() 
     assert_eq!(
         port.events.lock().unwrap().as_slice(),
         &[ScriptEvent::Inspect, ScriptEvent::Kill]
+    );
+    assert_eq!(
+        port.members_observed_at_inspect.lock().unwrap().as_slice(),
+        &[vec!["agent-a".to_string()]],
+        "inspect must run before remove_member deletes the final member"
     );
     let record = registry.get(&env_ref).unwrap();
     assert_eq!(record.status, EnvironmentStatus::Stopped);
