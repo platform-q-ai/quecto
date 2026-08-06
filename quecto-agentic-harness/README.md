@@ -467,6 +467,9 @@ Config file: `~/.quecto/config.json`
         "enabled": false,
         "max_response_kb": 32
       }
+    },
+    "rust_ast_graph": {
+      "enabled": false
     }
   },
   "workflow": {
@@ -618,7 +621,7 @@ External tool binaries (`rg`, `fd`) are resolved from `PATH`; missing binaries r
 | `ls` | List directory contents. Case-insensitive sort, `/` suffix for directories, configurable limit (default 500, max 5000), 50KB output cap |
 | `grep` | Search file contents with ripgrep (`rg --json`). Regex or literal, case-insensitive option, context lines from file cache, 100-match / 50KB limit, 500-char line truncation |
 | `find` | Find files by glob pattern with fd. Respects nested `.gitignore` files, path-segment patterns via `--full-path`, configurable limit (default 1000), 50KB output cap |
-| `rust_ast_graph` | Navigate Rust workspaces through a compact syntax-derived graph: overview, symbol lookup, neighbors, references, call candidates, and structural queries. Excludes comments/string literals by default and labels non compiler-resolved results |
+| `rust_ast_graph` | Optional: navigate Rust workspaces through a compact syntax-derived graph when `tools.rust_ast_graph.enabled` is true. Supports overview, symbol lookup, neighbors, references, call candidates, and structural queries. Excludes comments/string literals by default and labels non compiler-resolved results |
 | `recall` | Retrieve a spilled tool output by its spill ID (e.g. `turn20:bash:0`). Use `recall("list")` for the full index |
 | `spawn` | Spawn a background UDS-mode subagent for long-running tasks |
 | `agent_cmd` | Send commands to spawned UDS subagents: `prompt`, `steer`, `follow_up`, `abort`, `kill`, `await`, `get_state`, `get_messages` (optional `count`/`before` — omit both for the newest history page, N for last N, `before` pages backward), `get_session_stats`, `get_subagents`, `get_subagents_all`, `get_containers`, `kill_container`, `get_tool_catalogue`, `set_model`, `set_effort`, `clear_history`. **Model-facing schema:** `await` is currently hidden from the tool enum/description; prefer spawn → end turn → passive completion note → `get_messages`. Do not poll `get_subagents` / `get_subagents_all` or sleep as a wait loop. |

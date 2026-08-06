@@ -2,6 +2,8 @@
 
 Use `rust_ast_graph` when Rust symbol navigation would otherwise require broad `grep` and full-file reads. It builds an on-demand, sandbox-limited, syntax-derived graph of `.rs` files in the current workspace or an optional `path` scope.
 
+The tool is disabled by default in the runtime catalogue. Enable it explicitly with config (`tools.rust_ast_graph.enabled = true`) before relying on these examples.
+
 The tool is intentionally **syntax-derived, not compiler/type-proven**. Treat references and calls as lexical or syntactic candidates; verify consequential edits with focused reads and tests.
 
 ## Common actions

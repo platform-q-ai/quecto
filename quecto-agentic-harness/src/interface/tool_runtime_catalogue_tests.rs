@@ -25,8 +25,18 @@ fn build_runtime_with_entrypoint(
     spawned: bool,
     disabled_tools: &[String],
 ) -> crate::interface::tool_runtime::ToolRuntimeBuild {
-    let tmp = tempfile::tempdir().expect("tempdir");
     let config = crate::infrastructure::config::Config::default();
+    build_runtime_with_config(entrypoint, profile_context, spawned, disabled_tools, config)
+}
+
+fn build_runtime_with_config(
+    entrypoint: ToolEntrypoint,
+    profile_context: ToolRuntimeProfileContext,
+    spawned: bool,
+    disabled_tools: &[String],
+    config: crate::infrastructure::config::Config,
+) -> crate::interface::tool_runtime::ToolRuntimeBuild {
+    let tmp = tempfile::tempdir().expect("tempdir");
     let client = reqwest::Client::new();
     let workspace = tmp.path().to_path_buf();
     let sandbox =
@@ -101,16 +111,7 @@ fn fresh_parent_runtime_catalogue_leaves_unrestricted_tools_available_to_parent_
     let built = build_runtime_with_flags(ToolRuntimeProfileContext::Parent, false, &[]);
 
     for name in [
-        "bash",
-        "docs",
-        "edit",
-        "find",
-        "grep",
-        "ls",
-        "read",
-        "recall",
-        "rust_ast_graph",
-        "write",
+        "bash", "docs", "edit", "find", "grep", "ls", "read", "recall", "write",
     ] {
         let entry = built
             .catalogue_entries
@@ -129,6 +130,62 @@ fn fresh_parent_runtime_catalogue_leaves_unrestricted_tools_available_to_parent_
         assert!(entry.effective_parent_enabled, "{name} parent enabled");
         assert!(entry.effective_child_enabled, "{name} child enabled");
     }
+}
+
+#[test]
+fn rust_ast_graph_is_registered_but_disabled_by_default() {
+    let built = build_runtime_with_flags(ToolRuntimeProfileContext::Parent, false, &[]);
+
+    let entry = built
+        .catalogue_entries
+        .iter()
+        .find(|entry| entry.name == "rust_ast_graph")
+        .expect("rust_ast_graph should remain registered for catalogue state");
+    assert!(!entry.default_enabled);
+    assert_eq!(
+        entry.explicit_restriction,
+        Some(ToolRestrictionReason::EntrypointDefault)
+    );
+    assert_eq!(entry.runtime_availability, ToolAvailability::Disabled);
+    assert!(!entry.effective_enabled);
+    assert_eq!(entry.health, ToolHealth::Disabled);
+    assert!(
+        !built
+            .registry
+            .definitions()
+            .iter()
+            .any(|definition| definition.name == "rust_ast_graph")
+    );
+}
+
+#[test]
+fn rust_ast_graph_config_enables_tool() {
+    let mut config = crate::infrastructure::config::Config::default();
+    config.tools.rust_ast_graph.enabled = true;
+
+    let built = build_runtime_with_config(
+        ToolEntrypoint::Repl,
+        ToolRuntimeProfileContext::Parent,
+        false,
+        &[],
+        config,
+    );
+
+    let entry = built
+        .catalogue_entries
+        .iter()
+        .find(|entry| entry.name == "rust_ast_graph")
+        .expect("rust_ast_graph should be registered");
+    assert!(entry.default_enabled);
+    assert_eq!(entry.explicit_restriction, None);
+    assert!(entry.effective_enabled);
+    assert!(
+        built
+            .registry
+            .definitions()
+            .iter()
+            .any(|definition| definition.name == "rust_ast_graph")
+    );
 }
 
 #[test]
