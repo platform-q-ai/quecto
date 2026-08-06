@@ -409,11 +409,11 @@ fn status_text_shows_only_contiguous_completed_steps_and_current_step() {
     engine.skip(4).unwrap();
 
     let status = engine.status_text();
-    let progress = engine.progress();
     let current = engine.current_step().unwrap();
     let all_steps = engine.all_step_statuses();
     let completed = &all_steps[0];
-    assert!(status.contains(&format!("Progress: {}/{}", progress.done, progress.total)));
+    assert!(status.contains("Progress: 1/19"));
+    assert!(!status.contains("Progress: 2/19"));
     assert!(status.contains(&format!("[✓] {}. {}", completed.index, completed.label)));
     assert!(status.contains("CURRENT STEP"));
     assert!(status.contains(&format!("{}. {}", current.index, current.label)));
@@ -450,6 +450,8 @@ fn status_text_shows_only_contiguous_completed_steps_and_current_step() {
     }
 
     let visible_snapshot = engine.snapshot(true);
+    assert_eq!(visible_snapshot.progress.done, 1);
+    assert_eq!(visible_snapshot.progress.total, 19);
     assert_eq!(visible_snapshot.steps.len(), current_index as usize);
     assert!(
         visible_snapshot

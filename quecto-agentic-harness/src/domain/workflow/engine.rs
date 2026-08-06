@@ -215,8 +215,22 @@ impl WorkflowEngine {
     }
 
     pub fn progress(&self) -> WorkflowProgress {
+        self.progress_for_done(self.run.done.iter().filter(|d| **d).count() as u32)
+    }
+
+    fn visible_progress(&self) -> WorkflowProgress {
+        let visible_done = self
+            .run
+            .done
+            .iter()
+            .take(self.visible_step_count())
+            .filter(|done| **done)
+            .count() as u32;
+        self.progress_for_done(visible_done)
+    }
+
+    fn progress_for_done(&self, done: u32) -> WorkflowProgress {
         let total = self.run.done.len() as u32;
-        let done = self.run.done.iter().filter(|d| **d).count() as u32;
         WorkflowProgress {
             done,
             total,
@@ -245,7 +259,7 @@ impl WorkflowEngine {
             Some(step) => format!("\n{}", step_focus_text(&step, heading)),
             None => "\nAll workflow steps complete.".to_string(),
         };
-        let progress = self.progress();
+        let progress = self.visible_progress();
         out.push_str(&format!(
             "\nProgress: {}/{} steps complete.",
             progress.done, progress.total
@@ -451,7 +465,7 @@ impl WorkflowEngine {
             mode: self.mode(),
             active_template,
             active_issue: self.run.active_issue.clone(),
-            progress: self.progress(),
+            progress: self.visible_progress(),
             current_step: self.current_step(),
             steps,
             available_templates: self.list_templates(),
@@ -485,7 +499,7 @@ impl WorkflowEngine {
             Some(t) => t,
             None => return self.selector_status_text(),
         };
-        let progress = self.progress();
+        let progress = self.visible_progress();
         let mode = self.mode();
         let mut out = format!(
             "## Active Workflow\nTemplate: {} ({})\nProgress: {}/{}\n",
