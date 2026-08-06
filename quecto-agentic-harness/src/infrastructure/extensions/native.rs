@@ -191,7 +191,7 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
         deps.base_dir,
     )
     .with_socket_dir(deps.socket_dir)
-    .with_environment_registry(environment_registry);
+    .with_environment_registry(environment_registry.clone());
     if let Some(snapshot) = deps.inherited_tool_policy {
         spawn = spawn.with_inherited_tool_policy(snapshot);
     }
@@ -199,11 +199,23 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
         .with_registry(registry.clone())
         .with_notify_tx(notification_tx.clone())
         .with_event_forwarding(deps.broadcast_tx.clone(), deps.parent_session_name);
+    let environment_control = std::sync::Arc::new(
+        crate::environment_control_app::EnvironmentControlUseCase::new(
+            environment_registry,
+            std::sync::Arc::new(
+                crate::infrastructure::tools::environment_kill::ScriptEnvironmentKill::new(
+                    registry.clone(),
+                    deps.broadcast_tx.clone(),
+                ),
+            ),
+        ),
+    );
     let agent_cmd = crate::infrastructure::tools::agent_cmd::AgentCmdTool::with_active_awaits(
         registry.clone(),
         active_awaits,
     )
-    .with_broadcast(deps.broadcast_tx);
+    .with_broadcast(deps.broadcast_tx)
+    .with_environment_control(environment_control);
 
     AgentControlToolBuild {
         extensions: vec![Arc::new(NativeExtension::with_tools(

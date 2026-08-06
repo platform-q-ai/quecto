@@ -36,6 +36,12 @@ pub struct ContainerScriptConfig {
     pub create: Vec<String>,
     #[serde(default)]
     pub cleanup: Vec<String>,
+    /// Argv for joining an existing environment (#1369 slice 2).
+    #[serde(default)]
+    pub exec: Vec<String>,
+    /// Argv for stopping an environment (#1369 slice 2).
+    #[serde(default)]
+    pub kill: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -638,6 +644,9 @@ impl std::error::Error for ConfigError {}
 #[path = "config_effort_1066_tests.rs"]
 mod effort_1066_tests;
 
+#[cfg(test)]
+#[path = "config_container_slice2_tests.rs"]
+mod container_slice2_tests;
 #[cfg(test)]
 #[path = "config_cov_tests.rs"]
 mod cov_tests;

@@ -23,6 +23,7 @@ pub(super) struct SpawnLaunchPorts<'a> {
     tool: &'a SpawnTool,
     agent_uuid: Option<AgentUuid>,
     socket_path: Option<PathBuf>,
+    owns_environment: bool,
 }
 
 impl<'a> SpawnLaunchPorts<'a> {
@@ -31,6 +32,7 @@ impl<'a> SpawnLaunchPorts<'a> {
             tool,
             agent_uuid: None,
             socket_path: None,
+            owns_environment: false,
         }
     }
 }
@@ -161,6 +163,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         prepared: &'b mut Self::Prepared,
     ) -> LaunchFuture<'b, Result<PreparedRuntime, DomainError>> {
         Box::pin(async move {
+            self.owns_environment = prepared.owns_environment();
             let socket_path = self
                 .socket_path
                 .as_ref()
@@ -220,7 +223,16 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 }
                 crate::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry);
             }
-            super::subagent_cleanup::cleanup_removed_entries_once(&mut removed);
+            // Launch rollback: the environment's retained cleanup (not kill)
+            // runs when the launch fails after creation (#1369 slice 2). A
+            // creator's rollback also discards the record — the environment
+            // never became usable, so it must not be listed as stopped.
+            let mode = if self.owns_environment {
+                super::subagent_cleanup::FinalizeMode::LaunchRollbackOwned
+            } else {
+                super::subagent_cleanup::FinalizeMode::LaunchRollback
+            };
+            super::subagent_cleanup::cleanup_removed_entries_once(&mut removed, mode).await;
         })
     }
 
@@ -261,6 +273,37 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 &identity.session_name,
                 entry,
             )?;
+            // Slice 2 (#1369): every registered environment child — creator or
+            // joiner — becomes a member of its environment; the registry key is
+            // the agent UUID. add_member is refused once the environment is no
+            // longer running (a join racing a kill), in which case the launch
+            // fails: unregister the entry we just added and let the use case
+            // roll back.
+            if let Some(env_ref) = prepared.environment_ref.as_deref() {
+                if let Err(e) = self
+                    .tool
+                    .environment_registry
+                    .add_member(env_ref, &identity.registry_key)
+                {
+                    // Unregister AND re-broadcast the survivor set: the entry
+                    // was announced by register_and_broadcast, so clients must
+                    // see it withdrawn, not linger as a phantom agent.
+                    let event = {
+                        let mut entries =
+                            self.tool.registry.lock().unwrap_or_else(|e| e.into_inner());
+                        entries.remove(&identity.registry_key);
+                        self.tool.broadcast_tx.as_ref().map(|_| {
+                            crate::infrastructure::tools::subagent_cascade::build_state_changed_event_locked(&entries)
+                        })
+                    };
+                    if let (Some(tx), Some(event)) = (self.tool.broadcast_tx.as_ref(), event) {
+                        let _ = tx.send(event);
+                    }
+                    return Err(DomainError::Tool(format!(
+                        "cannot register into environment {env_ref}: {e}"
+                    )));
+                }
+            }
             let monitor_handle = super::subagent_monitor::spawn_monitor_task(
                 identity.registry_key.clone(),
                 runtime.socket_path.clone(),
@@ -300,7 +343,17 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
     }
     fn success(&self, identity: &LaunchIdentity, environment_ref: Option<&str>) -> ToolResult {
         let env_ref = environment_ref
-            .map(|r| format!(" environment_ref={r}"))
+            .map(|r| {
+                // Members of one environment share its reported workspace, so
+                // the spawn result names it alongside the ref (#1369 slice 2).
+                let workspace = self
+                    .tool
+                    .environment_registry
+                    .get(r)
+                    .map(|record| format!(" workspace={}", record.workspace_path.display()))
+                    .unwrap_or_default();
+                format!(" environment_ref={r}{workspace}")
+            })
             .unwrap_or_default();
         ToolResult {
             content: format!(

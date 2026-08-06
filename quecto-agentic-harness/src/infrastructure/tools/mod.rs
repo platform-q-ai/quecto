@@ -1,7 +1,9 @@
 pub mod agent_cmd;
+mod agent_cmd_containers;
 pub mod bash;
 pub mod command_match;
 pub mod docs;
+pub mod environment_kill;
 pub mod filesystem;
 pub mod find;
 pub mod grep;

@@ -138,6 +138,12 @@ impl SpawnTool {
         self
     }
 
+    /// The session-scoped environment registry this tool commits to. Shared
+    /// with the environment control use case at composition (#1369 slice 2).
+    pub fn environment_registry(&self) -> &EnvironmentRegistry {
+        &self.environment_registry
+    }
+
     /// Set the directory for child agent UDS sockets.
     pub fn with_socket_dir(mut self, socket_dir: PathBuf) -> Self {
         self.socket_dir = socket_dir;

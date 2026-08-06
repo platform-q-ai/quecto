@@ -46,6 +46,8 @@ const SUPPORTED_COMMANDS: &[&str] = &[
     "get_session_stats",
     "get_subagents",
     "get_subagents_all",
+    "get_containers",
+    "kill_container",
     "get_tool_catalogue",
     "set_model",
     "set_effort",
@@ -82,6 +84,10 @@ pub struct AgentCmdTool {
     /// when `kill` cascade-removes an agent's sub-tree, so connected clients (the
     /// TUI panel) drop the dead agents promptly (#831).
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    /// Environment control use case for `get_containers` / `kill_container`
+    /// (#1369 slice 2). This tool only decodes/delegates/encodes.
+    environment_control:
+        Option<std::sync::Arc<crate::environment_control_app::EnvironmentControlUseCase>>,
 }
 
 impl AgentCmdTool {
@@ -91,6 +97,7 @@ impl AgentCmdTool {
             registry,
             active_awaits: new_active_awaits(),
             broadcast_tx: None,
+            environment_control: None,
         }
     }
 
@@ -100,7 +107,20 @@ impl AgentCmdTool {
             registry,
             active_awaits,
             broadcast_tx: None,
+            environment_control: None,
         }
+    }
+
+    /// Attach the session's environment control use case so `get_containers`
+    /// and `kill_container` can delegate to it (#1369 slice 2).
+    pub fn with_environment_control(
+        mut self,
+        environment_control: std::sync::Arc<
+            crate::environment_control_app::EnvironmentControlUseCase,
+        >,
+    ) -> Self {
+        self.environment_control = Some(environment_control);
+        self
     }
 
     /// Attach the broadcast channel so `kill` can announce the survivor set after
@@ -276,6 +296,13 @@ impl AgentCmdTool {
         if command == "get_subagents_all" {
             return Some(self.list_all_subagents());
         }
+        None
+    }
+
+    /// Handle the `kill` command (async: container teardown scripts run on a
+    /// blocking worker and are awaited).
+    async fn try_kill_command(&self, args: &serde_json::Value) -> Option<ToolResult> {
+        let command = args.get("command").and_then(|v| v.as_str())?;
         if command != "kill" {
             return None;
         }
@@ -296,7 +323,7 @@ impl AgentCmdTool {
                 image_blocks: vec![],
             });
         }
-        Some(self.kill_agent(agent_id))
+        Some(self.kill_agent(agent_id).await)
     }
 
     /// Queueable forwarded commands carry `"ack":"accept"` — the child acks
@@ -338,7 +365,7 @@ impl AgentCmdTool {
 
     /// Kill a specific subagent by ID: SIGTERM + cascade-remove its sub-tree from
     /// the registry, then broadcast the survivor set (#559, #831).
-    fn kill_agent(&self, agent_id: &str) -> ToolResult {
+    async fn kill_agent(&self, agent_id: &str) -> ToolResult {
         let registry_key = {
             let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
             entries
@@ -382,7 +409,11 @@ impl AgentCmdTool {
         }
 
         let mut removed: Vec<_> = removed.into_iter().collect();
-        super::subagent_cleanup::cleanup_removed_entries_once(&mut removed);
+        super::subagent_cleanup::cleanup_removed_entries_once(
+            &mut removed,
+            super::subagent_cleanup::FinalizeMode::Exit,
+        )
+        .await;
 
         // Broadcast the survivor set so the TUI panel drops the whole dead
         // sub-tree promptly (#831). Best-effort send: no subscribers is fine.
@@ -468,7 +499,8 @@ impl Tool for AgentCmdTool {
                 "Send a command to a spawned subagent. \
                 Supported commands: prompt, steer, follow_up, abort, kill, await, \
                 get_state, get_messages, get_session_stats, \
-                get_subagents, get_subagents_all, get_tool_catalogue, set_model, clear_history. \
+                get_subagents, get_subagents_all, get_containers, kill_container, \
+                get_tool_catalogue, set_model, clear_history. \
                 Spawned subagents are auto-noted PASSIVELY: a one-line completion \
                 note arrives WITHOUT blocking and enters your context at your NEXT \
                 turn, so await is OPTIONAL. Use await only when you must BLOCK \
@@ -484,14 +516,15 @@ impl Tool for AgentCmdTool {
                 count. get_messages is the stable committed transcript API, intended for \
                 full or end-of-turn output inspection. Busy responses are tagged \
                 snapshot:true; transcript data may lag the active turn.",
-                r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent; use '*' for command=get_subagents_all"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","await","get_state","get_messages","get_session_stats","get_subagents","get_subagents_all","get_tool_catalogue","set_model","set_effort","clear_history"],"description":"Command to send. get_subagents_all lists this parent agent's tracked subagents without targeting a child. kill terminates the subagent process. await blocks until idle, exited, timeout, or error; then inspect output with get_messages (use count for the last N messages)."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages (omit for the newest history page; N for last N)"},"before":{"type":"string","description":"Paging cursor for get_messages (#1061): a message id from a prior response's before field; returns the adjacent older page"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"},"timeout":{"type":"integer","description":"Maximum wall-clock seconds to wait for await command (default: 300)"},"idle_timeout":{"type":"integer","description":"Seconds agent must stay idle before await returns (default: 5). Set to 0 for immediate return on first idle."}},"required":["agent_id","command"]}"#,
+                r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent; use '*' for command=get_subagents_all"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","await","get_state","get_messages","get_session_stats","get_subagents","get_subagents_all","get_containers","kill_container","get_tool_catalogue","set_model","set_effort","clear_history"],"description":"Command to send. get_subagents_all lists this parent agent's tracked subagents without targeting a child. kill terminates the subagent process. await blocks until idle, exited, timeout, or error; then inspect output with get_messages (use count for the last N messages)."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages (omit for the newest history page; N for last N)"},"before":{"type":"string","description":"Paging cursor for get_messages (#1061): a message id from a prior response's before field; returns the adjacent older page"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"},"ref":{"type":"string","description":"Environment ref (e.g. C1) for kill_container (agent_id '*')"},"name":{"type":"string","description":"Environment name for kill_container (alternative to ref)"},"timeout":{"type":"integer","description":"Maximum wall-clock seconds to wait for await command (default: 300)"},"idle_timeout":{"type":"integer","description":"Seconds agent must stay idle before await returns (default: 5). Set to 0 for immediate return on first idle."}},"required":["agent_id","command"]}"#,
             )
         } else {
             (
                 "Send a command to a spawned subagent. \
                 Supported commands: prompt, steer, follow_up, abort, kill, \
                 get_state, get_messages, get_session_stats, \
-                get_subagents, get_subagents_all, get_tool_catalogue, set_model, clear_history. \
+                get_subagents, get_subagents_all, get_containers, kill_container, \
+                get_tool_catalogue, set_model, clear_history. \
                 COMPLETION SEQUENCE (required): (1) spawn returns when the socket is ready — \
                 do not wait in this turn. (2) End your turn or do other non-blocking parent \
                 work; do NOT poll get_subagents/get_subagents_all/get_state in a loop, do NOT \
@@ -503,7 +536,7 @@ impl Tool for AgentCmdTool {
                 not a wait loop). get_messages is the stable committed transcript API \
                 (newest bounded history page; count for last N; hasMoreBefore/before pages \
                 older). Busy get_messages may be snapshot:true and lag.",
-                r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent; use '*' for command=get_subagents_all"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","get_state","get_messages","get_session_stats","get_subagents","get_subagents_all","get_tool_catalogue","set_model","set_effort","clear_history"],"description":"Command to send. After spawn, wait for the passive completion note on a later turn — do not poll get_subagents* or sleep. Then get_messages (count 1-5) for the report. get_subagents_all is inventory/cleanup (agent_id '*'), not a wait loop. kill terminates the child process."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages (omit for the newest history page; N for last N)"},"before":{"type":"string","description":"Paging cursor for get_messages (#1061): a message id from a prior response's before field; returns the adjacent older page"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"}},"required":["agent_id","command"]}"#,
+                r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent; use '*' for command=get_subagents_all"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","get_state","get_messages","get_session_stats","get_subagents","get_subagents_all","get_containers","kill_container","get_tool_catalogue","set_model","set_effort","clear_history"],"description":"Command to send. After spawn, wait for the passive completion note on a later turn — do not poll get_subagents* or sleep. Then get_messages (count 1-5) for the report. get_subagents_all is inventory/cleanup (agent_id '*'), not a wait loop. kill terminates the child process."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages (omit for the newest history page; N for last N)"},"before":{"type":"string","description":"Paging cursor for get_messages (#1061): a message id from a prior response's before field; returns the adjacent older page"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"},"ref":{"type":"string","description":"Environment ref (e.g. C1) for kill_container (agent_id '*')"},"name":{"type":"string","description":"Environment name for kill_container (alternative to ref)"}},"required":["agent_id","command"]}"#,
             )
         };
         ToolDefinition {
@@ -524,12 +557,26 @@ impl Tool for AgentCmdTool {
             let parsed = serde_json::from_str::<serde_json::Value>(&args);
 
             if let Ok(ref value) = parsed {
+                // Session-level container commands decode/delegate/encode via
+                // the environment control use case (#1369 slice 2).
+                if super::agent_cmd_containers::is_container_command(value) {
+                    return Ok(super::agent_cmd_containers::execute_container_command(
+                        self.environment_control.as_ref(),
+                        value,
+                    )
+                    .await);
+                }
                 // Check for async local commands first (#612).
                 if Self::is_await_value(value) {
                     return self.execute_await(&args).await;
                 }
                 // Check for sync locally-handled commands (#559).
                 if let Some(result) = self.try_local_command(value) {
+                    return Ok(result);
+                }
+                // kill is local but async: environment teardown scripts must
+                // run off the runtime thread and be awaited (#1369 slice 2).
+                if let Some(result) = self.try_kill_command(value).await {
                     return Ok(result);
                 }
             }

@@ -618,7 +618,7 @@ fn given_live_subagent_spawning_available(world: &mut QuectoWorld) {
 // --- Live spawn + agent_cmd end-to-end regression steps ---
 
 #[given("a live SpawnTool and AgentCmdTool backed by a mock LLM child")]
-fn given_live_spawn_agent_cmd_mock_child(world: &mut QuectoWorld) {
+pub(crate) fn given_live_spawn_agent_cmd_mock_child(world: &mut QuectoWorld) {
     ensure_temp_dir(world);
     let rt = tokio::runtime::Runtime::new().unwrap();
     let server = rt.block_on(wiremock::MockServer::start());
@@ -1100,11 +1100,11 @@ fn then_unsupported_field_error(world: &mut QuectoWorld, field: String) {
     let r = world.spawn_result.as_ref().unwrap();
     assert!(r.is_error && r.content.contains(&field), "{}", r.content);
 }
-#[then("the spawn result should fail because existing containers are unsupported")]
+#[then("the spawn result should fail because existing mode requires a ref or name")]
 fn then_existing_error(world: &mut QuectoWorld) {
     let r = world.spawn_result.as_ref().unwrap();
     assert!(
-        r.is_error && r.content.contains("existing"),
+        r.is_error && r.content.contains("exactly one of 'ref' or 'name'"),
         "{}",
         r.content
     );

@@ -313,6 +313,7 @@ PY
         ContainerSelection::New {
             repo: Some("https://example.invalid/contract.git".into()),
             container_script: None,
+            name: None,
         }
     }
 
