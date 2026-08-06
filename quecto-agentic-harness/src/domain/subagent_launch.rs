@@ -66,8 +66,8 @@ pub trait SubagentLaunchPorts {
 /// A launch result carries EXACTLY ONE endpoint mode: a direct UDS socket the
 /// parent connects to, or a validated proxy argv the parent runs per
 /// connection as a stdio<->child bridge. The prepared endpoint is carried
-/// transactionally through readiness, prompt routing, commands, await, and
-/// monitor construction — never reconstructed from a requested path or a
+/// transactionally through readiness, prompt routing, commands, passive
+/// completion reporting, and monitor construction — never reconstructed from a requested path or a
 /// mutable registry entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParentEndpoint {
