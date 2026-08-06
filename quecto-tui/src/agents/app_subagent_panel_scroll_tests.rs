@@ -1,3 +1,4 @@
+use super::app_subagent_environment_tests::{env_agent_json, state_changed_line};
 use super::tui_harness::*;
 use crate::protocol::client::Event;
 use crate::shell::keys::Key;
@@ -160,5 +161,44 @@ async fn focused_panel_environment_highlight_is_not_restored_by_live_sync() {
         selected_panel_label(&h.full_frame()).is_some_and(|line| line.contains("bravo")),
         "focused panel cursor should remain on bravo after stale env clears:\n{}",
         h.left_panel()
+    );
+}
+
+#[tokio::test]
+async fn committing_master_clears_stale_environment_panel_nav_key() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    let agents = vec![env_agent_json("impl", "C2"), env_agent_json("rev", "C2")];
+    h.event_line(&state_changed_line(agents.clone()));
+
+    let rows = panel_rows(&h.left_panel());
+    let env_target = rows
+        .iter()
+        .position(|l| l.contains("C2") && !l.contains("impl") && !l.contains("rev"))
+        .expect("selectable environment row");
+    h.press(Key::Tab);
+    for _ in 0..env_target {
+        h.press(Key::Down);
+    }
+    h.press(Key::Enter);
+    assert!(
+        h.main_pane().contains("pr-env"),
+        "precondition: environment chrome shows after committing environment"
+    );
+
+    h.press(Key::Tab);
+    h.app_mut().panel_highlight_row(1);
+    assert_eq!(
+        h.app_mut().panel_highlight_index(),
+        0,
+        "precondition: focused panel cursor moved back to Master"
+    );
+    h.press(Key::Enter);
+    assert_eq!(h.app_mut().active_agent_id(), None, "Master is committed");
+    h.event_line(&state_changed_line(agents));
+    assert_eq!(
+        h.app_mut().panel_highlight_index(),
+        0,
+        "a live update after committing Master must not restore the stale environment row"
     );
 }

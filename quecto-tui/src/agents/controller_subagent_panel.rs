@@ -409,8 +409,12 @@ impl App {
             self.select_agent(None);
             return;
         }
-        self.subagents.selected_environment = None;
         let target = row.id.clone();
+        self.subagents.selected_environment = None;
+        self.subagents.panel_nav_key = target
+            .as_deref()
+            .map(|id| format!("agent:{id}"))
+            .or_else(|| Some("master".to_string()));
         self.select_agent(target.as_deref());
     }
 
@@ -431,6 +435,22 @@ impl App {
     }
 
     fn sync_panel_selection_to_active_with(&mut self, rows: &[PanelRow]) {
+        if matches!(self.subagents.focus, Focus::Panel) {
+            // While the user is navigating the panel, cursor identity owns the
+            // highlight. A committed environment still owns main-pane chrome,
+            // but it must not snap the focused panel away from the user's row.
+            // This also lets committing Master overwrite a stale env key even
+            // when the active session was already Master.
+            if let Some(key) = self.subagents.panel_nav_key.as_deref() {
+                if let Some(idx) = rows.iter().position(|r| Self::panel_row_key(r) == key) {
+                    self.subagents.panel_nav.set_selected(idx);
+                    return;
+                }
+            }
+            self.subagents.panel_nav.clamp(rows.len());
+            self.remember_panel_nav_key_from_rows(rows);
+            return;
+        }
         // A committed environment selection owns the cursor: with an
         // environment selected `active_agent_id` is `None`, which would
         // otherwise match the Master row and silently snap the cursor away
@@ -446,17 +466,6 @@ impl App {
             // The group dissolved (member exited/refreshed away): drop the
             // stale selection so the chrome and cursor fall back together.
             self.subagents.selected_environment = None;
-        }
-        if matches!(self.subagents.focus, Focus::Panel) {
-            if let Some(key) = self.subagents.panel_nav_key.as_deref() {
-                if let Some(idx) = rows.iter().position(|r| Self::panel_row_key(r) == key) {
-                    self.subagents.panel_nav.set_selected(idx);
-                    return;
-                }
-            }
-            self.subagents.panel_nav.clamp(rows.len());
-            self.remember_panel_nav_key_from_rows(rows);
-            return;
         }
         if let Some(idx) = rows
             .iter()
