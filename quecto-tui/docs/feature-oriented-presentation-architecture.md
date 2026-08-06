@@ -354,6 +354,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/tui_harness_tool_policy.rs` | `shell` tool policy test-harness event helpers (#1334 PR 4) |
 | `shell/tui_harness_disconnect.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/tui_harness_events.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
+| `shell/tui_harness_panel.rs` | `shell` shared panel-chrome text helpers for test suites (#1369 slice 5) |
 | `shell/tui_harness_probes.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/warn_capture.rs` | `shell` diagnostics/runtime adapter (relocated, #1257 Phase 1) |
 | `workflow/controller_workflow.rs` | `workflow` (relocated, #1257 Phase 5) |

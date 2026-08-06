@@ -251,3 +251,26 @@ pub(super) fn spawn_command_reader(
         }
     });
 }
+
+/// Lines present (normalized) in exactly one frame and absent from both
+/// neighbours — a line that flashes in and out.
+pub fn transient_in(frames: &[Vec<String>]) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    if frames.len() < 3 {
+        return out;
+    }
+    for i in 1..frames.len() - 1 {
+        for line in &frames[i] {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let key = normalize(line);
+            let in_prev = frames[i - 1].iter().any(|l| normalize(l) == key);
+            let in_next = frames[i + 1].iter().any(|l| normalize(l) == key);
+            if !in_prev && !in_next {
+                out.push((i, line.clone()));
+            }
+        }
+    }
+    out
+}

@@ -32,7 +32,6 @@ mod disconnect;
 mod events;
 // Re-export the scenario event builders so callers keep using
 // `tui_harness::subagent(..)` etc. `normalize` stays module-internal.
-use events::normalize;
 pub use events::*;
 
 const DEFAULT_WIDTH: usize = 120;
@@ -723,44 +722,9 @@ impl TuiHarness {
     }
 }
 
-/// Lines present (normalized) in exactly one frame and absent from both
-/// neighbours — a line that flashes in and out.
-pub(super) fn transient_in(frames: &[Vec<String>]) -> Vec<(usize, String)> {
-    let mut out = Vec::new();
-    if frames.len() < 3 {
-        return out;
-    }
-    for i in 1..frames.len() - 1 {
-        for line in &frames[i] {
-            if line.trim().is_empty() {
-                continue;
-            }
-            let key = normalize(line);
-            let in_prev = frames[i - 1].iter().any(|l| normalize(l) == key);
-            let in_next = frames[i + 1].iter().any(|l| normalize(l) == key);
-            if !in_prev && !in_next {
-                out.push((i, line.clone()));
-            }
-        }
-    }
-    out
-}
-/// A panel row's text after the selection column and tree-stalk characters —
-/// the row's own label region, badge included. Shared here so panel-chrome
-/// assertions in every test suite track the render code's glyph set.
-pub fn after_stalk(row: &str) -> &str {
-    row.trim_start_matches(['▌', ' ', '│', '├', '└'])
-}
-
-/// Non-empty panel row lines, excluding the bottom key-hint line. Shared here
-/// so the footer-hint filter cannot drift from the rendered chrome.
-pub fn panel_rows(panel: &str) -> Vec<String> {
-    panel
-        .lines()
-        .map(|l| l.trim_end().to_string())
-        .filter(|l| !l.trim().is_empty() && !l.contains("⇥ pane"))
-        .collect()
-}
+#[path = "tui_harness_panel.rs"]
+mod panel;
+pub use panel::{after_stalk, panel_rows};
 
 #[path = "tui_harness_probes.rs"]
 mod probes;
