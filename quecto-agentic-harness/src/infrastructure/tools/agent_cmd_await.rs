@@ -440,7 +440,13 @@ impl AgentCmdTool {
     ) -> Result<(), ToolResult> {
         // Must exceed subagent_cleanup::INSPECT_TIMEOUT so a hung-then-killed
         // inspect cannot make a dead-socket await misreport connection_failed.
-        let grace = (tokio::time::Instant::now() + Duration::from_secs(6)).min(deadline);
+        // Without an exit-signal channel no pushed death can ever arrive, so
+        // waiting would only delay the honest connection_failed answer.
+        let grace = if exit_rx.is_some() {
+            (tokio::time::Instant::now() + Duration::from_secs(6)).min(deadline)
+        } else {
+            tokio::time::Instant::now()
+        };
         loop {
             // A pushed death that already fired IS the answer — never
             // misclassify it as connection_failed behind a grace timer.
