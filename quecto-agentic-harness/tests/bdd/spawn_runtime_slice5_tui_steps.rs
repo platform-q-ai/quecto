@@ -139,24 +139,41 @@ fn then_tui_groups_under_env(world: &mut QuectoWorld, a: String, b: String, env_
     }
 }
 
-#[then(expr = "the TUI panel should show {string} as a flat row with environment badge {string}")]
-fn then_tui_flat_badge_row(world: &mut QuectoWorld, id: String, env_ref: String) {
+#[then(expr = "the TUI panel should nest solo member {string} beneath environment row {string}")]
+fn then_tui_solo_nested_row(world: &mut QuectoWorld, id: String, env_ref: String) {
+    // Solo environments render exactly like multi-member ones: a selectable
+    // environment row with the single agent nested beneath it (no inline
+    // badge on the agent's own row).
     let panel = panel(world);
     let rows = panel_rows(&panel);
-    let row = rows
+    let env_idx = rows
         .iter()
-        .find(|l| l.contains(&id))
-        .unwrap_or_else(|| panic!("no panel row for {id}:\n{panel}"));
-    assert!(
-        row.contains(&env_ref),
-        "solo agent {id} must carry the {env_ref} badge on its own row:\n{panel}"
-    );
-    // The badge sits ON the agent's row: exactly one panel row mentions the
-    // ref, so no separate selectable environment row exists for it.
-    let ref_rows = rows.iter().filter(|l| l.contains(&env_ref)).count();
+        .position(|l| is_environment_row(l, &env_ref))
+        .unwrap_or_else(|| panic!("no selectable environment row for {env_ref}:\n{panel}"));
+    let matches: Vec<usize> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.contains(id.as_str()))
+        .map(|(i, _)| i)
+        .collect();
     assert_eq!(
-        ref_rows, 1,
-        "a solo environment must occupy exactly one row (the agent's own):\n{panel}"
+        matches.len(),
+        1,
+        "solo member {id} must appear exactly once, nested beneath its environment row:\n{panel}"
+    );
+    let idx = matches[0];
+    assert!(
+        idx > env_idx,
+        "solo member {id} must be nested beneath the {env_ref} environment row:\n{panel}"
+    );
+    assert!(
+        rows[idx].contains('├') || rows[idx].contains('└'),
+        "solo member {id} must carry a nested tree connector:\n{}",
+        rows[idx]
+    );
+    assert!(
+        !after_stalk(&rows[idx]).contains(&env_ref),
+        "solo member {id} must not carry an inline {env_ref} badge on its own row:\n{panel}"
     );
 }
 

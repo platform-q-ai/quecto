@@ -19,6 +19,7 @@ fn bundled_native_registration_preserves_provider_ids() {
     register_bundled_native_tools(
         &mut registry,
         build_agent_control_tool_extensions(AgentControlToolDeps {
+            parent_config_path: None,
             base_dir: tmp.path().to_path_buf(),
             socket_dir: tmp.path().to_path_buf(),
             restrict_to_workspace: true,

@@ -47,6 +47,7 @@ fn build_runtime_with_entrypoint(
         spawned,
         restrict_to_workspace: true,
         parent_session_name: None,
+        parent_config_path: None,
         disabled_tools,
         inherited_tool_policy: None,
         workflow: ToolRuntimeWorkflowPolicy::disabled(tmp.path(), Some(tmp.path())),

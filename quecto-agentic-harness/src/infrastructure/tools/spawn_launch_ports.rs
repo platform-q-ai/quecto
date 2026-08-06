@@ -118,8 +118,24 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         } else {
             None
         };
-        let effective_config =
-            effective_config_path(config.config_path.as_ref(), inherited_runtime_config_path());
+        // PR #1401 review: a container child must launch with the SAME config
+        // that authorized/created its environment. When the spawn call omits
+        // `config`, the container path (`load_container_config`) falls back to
+        // the parent's effective config — mirror that exact chain here so the
+        // child is never silently started on its default config while its
+        // environment was defined by the parent's. Local spawns keep the
+        // pre-existing explicit→inherited chain unchanged.
+        let effective_config = match config.container {
+            crate::domain::subagent::ContainerSelection::Local => {
+                effective_config_path(config.config_path.as_ref(), inherited_runtime_config_path())
+            }
+            _ => config.config_path.clone().or_else(|| {
+                effective_config_path(
+                    self.tool.parent_config_path.as_ref(),
+                    inherited_runtime_config_path(),
+                )
+            }),
+        };
         Ok(super::spawn_launch_args::build_child_cli_args(
             &super::spawn_launch_args::ChildLaunchSpec {
                 session_name: child_session_key(agent_uuid),
@@ -145,6 +161,13 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         cli_args: &'b [std::ffi::OsString],
     ) -> LaunchFuture<'b, Result<Self::Prepared, DomainError>> {
         Box::pin(async move {
+            // The parent's own effective config (composition-plumbed CLI path,
+            // else the inherited runtime config) is the container-config
+            // fallback when the spawn call omits `config` (#1369 follow-up).
+            let parent_config = effective_config_path(
+                self.tool.parent_config_path.as_ref(),
+                inherited_runtime_config_path(),
+            );
             super::spawn_container::spawn_prepared_child(
                 config,
                 &super::spawn_container::ChildCommand {
@@ -153,6 +176,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     base_dir: &self.tool.base_dir,
                 },
                 &self.tool.environment_registry,
+                parent_config.as_deref(),
             )
             .await
         })
