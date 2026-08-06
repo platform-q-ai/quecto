@@ -1361,6 +1361,8 @@ mod security_steps;
 mod session_steps;
 mod spawn_env_steps;
 mod spawn_liveness_steps;
+mod spawn_runtime_slice5_steps;
+mod spawn_runtime_slice5_tui_steps;
 mod spawn_tool_steps;
 mod subagent_bar_fixes_steps;
 mod subagent_monitor_steps;

@@ -149,7 +149,7 @@ async fn bridge_one(conn: tokio::net::UnixStream, argv: Vec<String>) {
 /// retried across the full readiness budget; ready only when a probe
 /// survives its quiet window. Bounded retry, no lifecycle polling afterwards.
 ///
-/// Residual assumption (documented in docs/container-scripts.md): a proxy
+/// Residual assumption (documented in docs/container-runtimes.md): a proxy
 /// that can neither reach the child nor fail with EOF — it simply hangs —
 /// is indistinguishable from a live-but-quiet child until first real use;
 /// the launch then fails at the initial prompt and rolls back.

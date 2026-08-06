@@ -1,11 +1,13 @@
-# Script-managed subagent environments (`container_scripts`)
+# Container runtimes for subagents (`container_scripts`)
 
 Quecto can spawn a subagent into an isolated, script-managed environment
 (e.g. a container) instead of a local child process. Quecto itself is
 runtime-agnostic: it invokes an executable you configure, and that
 executable owns Docker/Podman/devcontainer/whatever details. This is the
 single canonical user document for the feature; the single canonical
-reference script is [`scripts/container-script-reference.sh`](../scripts/container-script-reference.sh).
+reference runtime lives at [`scripts/container-runtime/`](../scripts/container-runtime/)
+(`create.sh`, `exec.sh`, `inspect.sh`, `kill.sh` — see
+"[The canonical reference runtime](#the-canonical-reference-runtime)").
 
 ## Spawning
 
@@ -248,3 +250,83 @@ launch fails after creation (readiness, registration, or initial-prompt
 failure) — even when a `kill` is configured. For script sets without a
 configured `kill`, the retained `cleanup` argv also serves as the
 final-member teardown fallback.
+
+## The canonical reference runtime
+
+The repository ships one canonical reference runtime — a script set that
+implements every operation of the contract above and is executed end to end
+by the epic acceptance suite
+(`quecto-agentic-harness/tests/features/script_managed_runtime_slice5.feature`)
+through the production script adapter and strict parser:
+
+- [`scripts/container-runtime/create.sh`](../scripts/container-runtime/create.sh)
+- [`scripts/container-runtime/exec.sh`](../scripts/container-runtime/exec.sh)
+- [`scripts/container-runtime/inspect.sh`](../scripts/container-runtime/inspect.sh)
+- [`scripts/container-runtime/kill.sh`](../scripts/container-runtime/kill.sh)
+
+The reference runtime is **host-local**: it needs no Docker and runs
+everywhere (including CI). Each script takes `--state-dir <dir>` — a trusted
+root under which it keeps one directory per environment (checkout workspace,
+recorded child pids, invocation records). `create.sh` checks the repository
+out into `<state>/<environment_id>/workspace/repo` and starts the child
+directly on the host; `exec.sh` starts a joining child sharing that
+workspace; `inspect.sh` reports whether any recorded child is still alive;
+`kill.sh` serves both the `kill` and `cleanup` operations, distinguished by
+`--op kill` / `--op cleanup`, and performs trusted-root containment (the
+environment directory must resolve under the `--state-dir` root) before any
+destructive removal. All scripts fail fast (`set -euo pipefail`), log to
+stderr only, encode stdout results with a real JSON encoder (`jq`, which
+must be installed), and pass the repository URL as a literal argv element
+(never shell-interpolated).
+
+A matching configuration (using `container_scripts.default` selection):
+
+```json
+{
+  "container_scripts": {
+    "default": "container-runtime",
+    "scripts": {
+      "container-runtime": {
+        "create": ["/repo/scripts/container-runtime/create.sh", "--state-dir", "/var/tmp/quecto-envs"],
+        "exec": ["/repo/scripts/container-runtime/exec.sh", "--state-dir", "/var/tmp/quecto-envs"],
+        "inspect": ["/repo/scripts/container-runtime/inspect.sh", "--state-dir", "/var/tmp/quecto-envs"],
+        "kill": ["/repo/scripts/container-runtime/kill.sh", "--state-dir", "/var/tmp/quecto-envs", "--op", "kill"],
+        "cleanup": ["/repo/scripts/container-runtime/kill.sh", "--state-dir", "/var/tmp/quecto-envs", "--op", "cleanup"]
+      }
+    }
+  }
+}
+```
+
+The reference runtime reports a direct `socket_path` endpoint. The
+`socket_proxy` endpoint form is an authoring option for runtimes whose
+sockets are only reachable inside the environment (see "Endpoints and
+liveness"); its production behavior — bridge lifecycle, readiness probing,
+EOF-pushed death — is exercised by the proxy scenarios in
+`quecto-agentic-harness/tests/features/script_managed_liveness_slice3.feature`.
+
+## How to author another runtime adapter
+
+To adapt the reference runtime to Docker, Podman, devcontainers, or any
+other isolation mechanism, copy `scripts/container-runtime/` and replace
+only the marked `--- Runtime-specific section ---` in each script; the argv
+parsing, environment-variable handling, and JSON results stay identical.
+Rules an author must keep:
+
+1. **Structured argv, no shell interpolation.** Every configured operation
+   is an argv array executed directly; treat `QUECTO_CONTAINER_REPO` and the
+   child command after `--` as opaque literals.
+2. **Start the child exactly once.** `create`/`exec` own the child's whole
+   lifetime inside the environment; Quecto never starts a fallback child.
+3. **Exactly one JSON object on stdout**, produced by a real JSON encoder,
+   with exactly the documented fields (`environment_id`, `workspace_path`,
+   `metadata`, and exactly one of `socket_path`/`socket_proxy` for `create`;
+   `metadata` plus one endpoint for `exec`; `metadata` plus optional
+   `status` for `inspect`). Logs go to stderr only.
+4. **Honor the identity split.** `create` receives the session ref in
+   `QUECTO_CONTAINER_ENVIRONMENT_REF`; every later operation receives the
+   runtime-owned id you reported, in `QUECTO_CONTAINER_ENVIRONMENT_ID`.
+5. **Trusted-root containment before destructive cleanup.** Never remove a
+   path you have not proven to resolve under your own trusted state root.
+6. **Keep runtime knowledge in the scripts.** Quecto's Rust code contains no
+   Docker/Podman/devcontainer special cases and must never need any.
