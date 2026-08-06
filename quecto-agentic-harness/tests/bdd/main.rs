@@ -785,7 +785,7 @@ pub struct QuectoWorld {
     pub notify_rx: Option<quecto::infrastructure::tools::subagent_registry::NotificationRx>,
     /// Count from drain operation
     pub notify_drain_count: Option<usize>,
-    /// Parent session under test for #816 auto-await idle delivery
+    /// Parent session under test for #816 passive completion-note idle delivery
     pub notify_parent_session: Option<quecto::interface::cli::uds_session::AgentSession>,
     /// Per-agent completion sequence counter (kept out of the Gherkin, #816)
     pub notify_seq: std::collections::HashMap<String, u64>,

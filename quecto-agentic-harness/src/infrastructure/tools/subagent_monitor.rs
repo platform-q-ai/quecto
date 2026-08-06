@@ -63,9 +63,9 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             // retained from the previous run — dropping it here prevents the
             // retry/backstop paths from attributing an old stall to this run.
             entry.pending_stall = None;
-            // Re-arm the auto-await dedupe (#auto-await-idle): a new run means a
-            // future terminal completion must notify again, even if a prior run's
-            // completion was consumed by a manual `await`.
+            // Re-arm the passive-note dedupe: a new run means a future terminal
+            // completion must notify again, even if a prior run's completion was
+            // already consumed.
             entry.completion_consumed_by_await = false;
             entry.stalled_armed = true;
             entry.updated_at = Instant::now();

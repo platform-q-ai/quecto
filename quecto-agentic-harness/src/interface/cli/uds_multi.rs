@@ -347,7 +347,7 @@ async fn run_dispatch_loop(
                 let (agent_id, sequence) = notif.dedupe_key();
                 let (dedupe_ref, _) = notif.await_dedupe_key();
                 tracing::info!(%agent_id, sequence, "recording subagent completion note");
-                // Auto-await dedupe: if a manual `await` already reported this
+                // Auto-await dedupe: if this completion was already reported
                 // terminal completion (flag set on the registry entry), CONSUME
                 // the flag and SKIP both the passive note enqueue and the
                 // SubagentNotification emit — the parent already has the result.
@@ -670,7 +670,7 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
 
 // ─── Broadcast prompt execution ───────────────────────────────────────────────
 
-// Re-exported for the auto-await dedupe unit tests (uds_subagent_notify_tests).
+// Re-exported for the passive-note dedupe unit tests (uds_subagent_notify_tests).
 #[cfg(test)]
 pub(in crate::interface::cli) use super::uds_cancel::forward_notification_broadcast;
 #[cfg(test)]

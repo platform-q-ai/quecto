@@ -251,7 +251,7 @@ fn then_no_notification(world: &mut QuectoWorld) {
 }
 
 // ===========================================================================
-// #816: auto-await — completion notes surface at the parent's idle boundary
+// #816: passive completion notes surface at the parent's idle boundary
 // ===========================================================================
 
 /// Next monotonic completion sequence for `agent_id` — kept here, out of the

@@ -241,7 +241,7 @@ fn registry_with_worker() -> SubagentRegistry {
 // The Broadcast arm is covered in uds_subagent_notify_tests.rs via
 // `forward_notification_broadcast`; these pin the Writer arm, which must
 // still collect notifications for LLM injection (never silently drop)
-// while honouring the auto-await dedupe.
+// while honouring the passive-note dedupe.
 
 #[test]
 fn writer_sink_collects_notification_when_not_awaited() {

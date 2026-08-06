@@ -599,7 +599,7 @@ pub(crate) use uds_turn_progress::publish_turn_progress;
 
 /// Handle one subagent notification received mid-turn: broadcast it to clients
 /// when the sink is `Broadcast`, and collect it for LLM injection unless the
-/// auto-await dedupe suppresses it. On a `Writer` sink the notification is
+/// passive-note dedupe suppresses it. On a `Writer` sink the notification is
 /// still collected (never silently dropped) — only the client fan-out is a
 /// broadcast-only concern (#994).
 fn collect_notification(
@@ -624,8 +624,8 @@ fn collect_notification(
 ///
 /// Returns `true` when the passive completion note was delivered (so the caller
 /// should also collect it for LLM injection), or `false` when it was SUPPRESSED
-/// because a manual `await` already consumed this terminal completion
-/// (auto-await dedupe). The `SubagentStateChanged` panel update is always
+/// because a this terminal completion was already consumed
+/// (passive-note dedupe). The `SubagentStateChanged` panel update is always
 /// emitted regardless. Race-free because the dispatch/drain loop is
 /// single-threaded: the await tool set the flag before this notification is
 /// processed.

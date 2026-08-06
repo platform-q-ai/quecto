@@ -7,7 +7,7 @@
 ## Context
 
 Subagents are a defining capability of the harness. A parent agent can spawn a
-child harness process, send it prompts, steer or follow up, await completion,
+child harness process, send it prompts, steer or follow up, observe passive completion,
 query state, retrieve messages, receive passive completion notes, and forward
 selected UDS commands to the child.
 
@@ -63,7 +63,7 @@ The state machine should distinguish:
 
 - process lifecycle from agent-run lifecycle;
 - parent registry metadata from child-reported state;
-- passive completion notes from explicit `await` results;
+- passive completion notes from transcript inspection results;
 - local parent history from child history resolved over forwarded commands.
 
 This decision does not require changing the public subagent tool schema or UDS
@@ -71,7 +71,7 @@ wire events immediately. Public shape changes require separate protocol work.
 
 ## Consequences
 
-- Race-sensitive behaviour such as completion notes, `await`, kill, abort, and
+- Race-sensitive behaviour such as completion notes, kill, abort, and
   child message retrieval becomes easier to specify.
 - Tests can assert legal transitions and idempotency/coalescing rules.
 - Parent-facing status can be derived from lifecycle state rather than scattered

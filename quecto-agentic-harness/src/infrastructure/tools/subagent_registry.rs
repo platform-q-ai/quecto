@@ -32,8 +32,8 @@ pub struct SubagentEntry {
     /// Description of the last terminal/run-level error (for example agent_error).
     pub last_error: Option<String>,
     /// Run-level agent error (for example provider/model failure). Unlike a tool
-    /// error, this means the prompt run failed and `agent_cmd await` should
-    /// return a structured error instead of waiting for recovery.
+    /// error, this means the prompt run failed and passive completion notes should
+    /// report failure rather than completion.
     pub run_error: Option<String>,
     /// When this entry was last updated by the monitor.
     pub updated_at: Instant,
@@ -256,7 +256,7 @@ fn resolve_unique_retained_display_name(
 }
 
 /// Mark `agent_ref`'s entry as having had its current-run terminal completion
-/// consumed by a manual `await` (auto-await dedupe). `agent_ref` may be a live
+/// consumed by a completion consumer (passive-note dedupe). `agent_ref` may be a live
 /// display label, retained exited display label, or UUID; the flag is always
 /// stored on the UUID-keyed entry (#1378). No-op if the entry no longer exists.
 pub fn mark_completion_consumed_by_await(registry: &SubagentRegistry, agent_ref: &str) {
@@ -273,13 +273,11 @@ pub fn mark_completion_consumed_by_await(registry: &SubagentRegistry, agent_ref:
     }
 }
 
-/// Check-and-consume the await-dedupe flag for `agent_ref`. Returns `true` when
-/// the passive completion note should be SUPPRESSED because a manual `await`
-/// already reported this terminal result; in that case the flag is cleared so a
-/// future re-run still notifies. Returns `false` otherwise. Race-free against
-/// `execute_await`: the UDS dispatch loop is single-threaded, so the await tool
-/// call sets the flag before the loop processes the queued notification.
-/// `agent_ref` may be a live / retained-exited display label or UUID (#1378).
+/// Check-and-consume the completion-dedupe flag for `agent_ref`. Returns `true`
+/// when the passive completion note should be SUPPRESSED because this terminal
+/// result was already reported; in that case the flag is cleared so a future
+/// re-run still notifies. `agent_ref` may be a live / retained-exited display
+/// label or UUID (#1378).
 pub fn take_completion_consumed_by_await(registry: &SubagentRegistry, agent_ref: &str) -> bool {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     let Ok(key) = resolve_registry_key_for_await_dedupe(&entries, agent_ref) else {
@@ -298,10 +296,10 @@ pub fn take_completion_consumed_by_await(registry: &SubagentRegistry, agent_ref:
     false
 }
 
-/// Check-and-consume the await-dedupe flag for `agent_id` against an OPTIONAL
-/// registry, the form both UDS dispatch paths hold (#828). Returns `true` when
-/// the passive completion note should be suppressed (a manual `await` already
-/// reported it); `false` when there is no registry or no pending flag. Wraps
+/// Check-and-consume the completion-dedupe flag for `agent_id` against an
+/// OPTIONAL registry, the form both UDS dispatch paths hold (#828). Returns
+/// `true` when the passive completion note should be suppressed; `false` when
+/// there is no registry or no pending flag. Wraps
 /// [`take_completion_consumed_by_await`] so the predicate lives in ONE place.
 pub fn consume_await_dedupe(registry: &Option<SubagentRegistry>, agent_id: &str) -> bool {
     registry

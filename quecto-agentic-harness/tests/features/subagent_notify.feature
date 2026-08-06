@@ -73,7 +73,7 @@ Feature: Auto-notify a parent when a sub-agent ends a turn
     When the monitor processes an agent_start event
     Then no notification should be sent
 
-  # --- #816: auto-await — completion notes surface only at the parent's idle boundary ---
+  # --- #816: passive completion notes surface only at the parent's idle boundary ---
 
   Scenario: A completed child auto-delivers one idle note with no manual await
     Given a parent session with no pending notes

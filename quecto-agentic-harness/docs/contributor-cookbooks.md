@@ -226,7 +226,7 @@ or `agent_cmd` surface that exposes it.
 - `src/domain/subagent.rs` for shared validation or vocabulary.
 - `src/infrastructure/tools/spawn*.rs`, `subagent_registry.rs`,
   `subagent_monitor*.rs`, `subagent_lifecycle.rs`, and
-  `subagent_await_result.rs` for process/run state.
+  `subagent_lifecycle.rs` and `subagent_registry.rs` for process/run state.
 - `src/infrastructure/tools/agent_cmd*.rs` for parent-to-child commands.
 - `src/interface/cli/uds_dispatch_forwarding.rs`,
   `uds_dispatch_get_message_forward.rs`, and `uds_control_forward.rs` for UDS
@@ -234,8 +234,8 @@ or `agent_cmd` surface that exposes it.
 
 **Tests to add/update:**
 
-- Lifecycle transition tests for launch, socket readiness, busy/idle, await,
-  timeout, completion notes, exit/failure, and kill.
+- Lifecycle transition tests for launch, socket readiness, busy/idle,
+  completion notes, exit/failure, and kill.
 - Forwarding tests for child-targeted commands and result recovery.
 - BDD under `tests/features/subagent*.feature` only for user-observable flows.
 
@@ -243,7 +243,7 @@ or `agent_cmd` surface that exposes it.
 
 - Update `docs/subagents.md` and `docs/uds-protocol.md` when commands, events,
   or notification semantics change.
-- Preserve passive completion-note and explicit-await deduplication semantics.
+- Preserve passive completion-note coalescing semantics.
 - `get_subagents` must continue to expose enough identity/state for the unit
   tree.
 

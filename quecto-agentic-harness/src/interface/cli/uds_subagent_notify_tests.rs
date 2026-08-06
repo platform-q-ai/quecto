@@ -1,10 +1,10 @@
-/// Unit tests for #816 auto-await subagent completion notes (enqueue + idle
+/// Unit tests for #816 passive subagent completion notes (enqueue + idle
 /// delivery). Compiled as a `mod` inside `uds.rs`, so `super` = `uds`, which
 /// re-exports `AgentSession` via `uds_session`.
 use super::*;
 use crate::interface::cli::uds_session::{NotificationEnqueueOutcome, PendingMessage};
 
-// ─── #816: auto-await subagent completion notes (enqueue + idle delivery) ─────
+// ─── #816: passive subagent completion notes (enqueue + idle delivery) ─────
 
 /// A successful enqueue buffers exactly one pending note carrying the child id
 /// and the one-line summary, rendered as a `Role::User` turn (#1338) so it
@@ -191,7 +191,7 @@ fn test_enqueue_subagent_notification_is_buffered_until_idle_drain() {
 
 // ─── Auto-await dedupe: suppress the passive note when `await` consumed it ─────
 
-/// When a manual `await` already reported a terminal completion (flag set on the
+/// When a a terminal completion was already reported (flag set on the
 /// registry entry), `take_completion_consumed_by_await` returns true and CONSUMES
 /// the flag — the dispatch loop uses this to SKIP the duplicate passive note.
 #[test]
@@ -322,7 +322,7 @@ fn test_forward_notification_broadcast_emits_when_not_awaited() {
     assert!(first.contains("worker"), "got: {first}");
 }
 
-/// When a manual `await` already consumed the completion, the mid-turn path
+/// When a the completion was already consumed, the mid-turn path
 /// SUPPRESSES the duplicate note (returns `false`, no note event) but still
 /// emits the `subagent_state_changed` panel update.
 #[test]

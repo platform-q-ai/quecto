@@ -18,8 +18,7 @@
 //!      `steer`/`abort` keep interrupting via the cancel side-channel that the
 //!      reader already fires.
 //!
-//! Completion still surfaces later via the passive auto-await note (#816) or an
-//! explicit `agent_cmd await` — those paths are untouched. The marker gates this
+//! Completion still surfaces later via the passive passive completion note (#816) through the passive completion-note path (#816). The marker gates this
 //! behaviour to the `agent_cmd` forward path only, so interactive TUI/CLI
 //! clients (which never set it) see no protocol change.
 

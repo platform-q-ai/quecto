@@ -128,9 +128,7 @@ when its prior context is relevant and safe for the new assignment.
 ### Non-blocking execution and result recovery
 
 `spawn` returns when the child **socket** is ready — not when the task finishes.
-Completion is **multi-turn**. The production `agent_cmd` tool schema currently
-**hides** blocking `await` from the model (`AWAIT_VISIBLE_IN_SCHEMA = false` in
-`agent_cmd.rs`); dispatch still accepts it if invented. Prefer the passive path.
+Completion is **multi-turn**. The `agent_cmd await` command has been removed; use the passive completion note plus `get_messages` path below.
 
 #### Required sequence
 
@@ -158,9 +156,6 @@ Completion is **multi-turn**. The production `agent_cmd` tool schema currently
 If you need the child’s answer before you can help the user, **yield the turn**
 and continue when the note arrives; do not invent a same-turn wait.
 
-(Sections below that document `await` describe the still-implemented command for
-operators/tests and for flipping `AWAIT_VISIBLE_IN_SCHEMA` back on — not the
-default agent-facing path.)
 
 ### Safety for delegated work
 
@@ -380,7 +375,7 @@ output (see [Notification model](#notification-model)).
     },
     "command": {
       "type": "string",
-      "enum": ["prompt", "steer", "follow_up", "abort", "kill", "await",
+      "enum": ["prompt", "steer", "follow_up", "abort", "kill",
                "get_state", "get_messages",
                "get_session_stats", "get_subagents", "get_tool_catalogue",
                "list_tools", "set_model", "set_effort", "clear_history"],
@@ -397,14 +392,6 @@ output (see [Notification model](#notification-model)).
     "before": {
       "type": "string",
       "description": "Paging cursor for get_messages: a message id from a prior response's before field; returns the adjacent older page"
-    },
-    "timeout": {
-      "type": "integer",
-      "description": "Max seconds for await (default: 300)"
-    },
-    "idle_timeout": {
-      "type": "integer",
-      "description": "Seconds agent must stay idle before await returns (default: 5). Set to 0 for immediate return."
     }
   },
   "required": ["agent_id", "command"]
@@ -420,7 +407,6 @@ output (see [Notification model](#notification-model)).
 | `follow_up` | Queue a message for after the current run | Yes |
 | `abort` | Full stop: cancel the current run, kill in-flight tool/child processes, and suppress workflow auto-continue (does not resume) | No |
 | `kill` | Terminate the subagent process (SIGTERM) | No |
-| `await` | Block until the subagent reaches a terminal state | No |
 | `get_state` | Inspect live/in-flight supervision state: phase, current/recent tools, progress, message count, model/effort, streaming, and workflow | No |
 | `get_messages` | Inspect the stable committed transcript, normally after the turn ends (omit `count` for the newest page; pass `count` for the last N; pass `before` to page older history). A busy snapshot can lag the active turn | No |
 | `get_session_stats` | Get token usage and cost | No |
@@ -450,14 +436,10 @@ output (see [Notification model](#notification-model)).
 
 ## Notification model
 
-There are two ways to learn that a child finished: a **non-blocking passive
-auto-note** (the default) and a **blocking manual `await`**.
-
-### Non-blocking: passive auto-notes (default)
-
-Spawned agents are **auto-noted passively**. When a child reaches a terminal
-state (completed / errored / exited) the parent automatically receives a single
-**one-line completion note** — no `await` call required. The note is:
+Spawned agents are completed via **non-blocking passive auto-notes**. When a
+child reaches a terminal state (completed / errored / exited), the parent
+automatically receives a single **one-line completion note** — no wait command is
+available or required. The note is:
 
 - **Non-blocking** — it never interrupts a running turn and never makes an idle
   parent act. It is delivered as a `role:"system"` (operator-channel) message
@@ -474,30 +456,14 @@ state (completed / errored / exited) the parent automatically receives a single
   collapse to one note (latest wins), so a noisy child costs at most one extra
   turn.
 
-### Blocking: manual `await`
-
-`await` is **optional**. Use it when you must **block synchronously** until the
-child finishes *within the same turn* before continuing (see below). When you
-`await` a completion, that completion's **duplicate auto-note is suppressed** —
-you get the awaited result, not a redundant note for the same event. A later
-re-run of the same child will auto-note again.
-
-### When to use which
-
-- **Default to the passive auto-note** — spawn, keep working, and react when the
-  one-line note arrives at your next turn. This is best for fire-and-forget or
-  parallel children whose results you don't need *right now*.
-- **Use `await` only when a result gates your next step in the same turn** — for
-  example a reviewer whose verdict you must read before continuing.
-
-In both cases the note/await result is a **summary only**; to read the child's
-full output call `get_messages` (optionally with `count` for the last N messages).
-Intermediate child tool errors are the child's problem: they remain visible in
-the child transcript/tool stream but do not interrupt the parent, set
+The note is a **summary only**; to read the child's full output call
+`get_messages` (optionally with `count` for the last N messages). Intermediate
+child tool errors are the child's problem: they remain visible in the child
+transcript/tool stream but do not interrupt the parent, set
 `get_subagents.lastError`, or mark the child `status:error` unless the run later
 emits a true terminal failure signal.
 
-### What you can see without `await`
+### What you can see before completion
 
 - **Workflow state changes** are forwarded onto the parent's event stream
   (identity-tagged with `agent_id` + `parent_id`). See "Observing the unit
@@ -509,19 +475,16 @@ emits a true terminal failure signal.
   in-flight transcript content.
 
 Neither command registers as a notification. A single call that catches the
-agent mid-run tells you nothing about what happens next.
+agent mid-run tells you nothing about what happens next. Do not poll these
+commands in a loop waiting for completion.
 
-### The auto-note is a summary, not the result
-
-The one-line completion note tells you *that* a child finished and gives a brief
-outcome — it does **not** contain the child's full output. If you care about the
-result, read it explicitly:
+### Canonical pattern: passive note + tail
 
 ```json
-// 1. Spawn — the child is auto-awaited from here on.
+// 1. Spawn — returns when the child socket is ready, not when work is done.
 {"name": "spawn", "arguments": {"agent_id": "worker", "task": "do the thing"}}
 
-// 2. (do other work) — at your next idle turn you receive, automatically:
+// 2. End the parent turn or do independent work. At the next idle turn you receive:
 //    Agent 'worker' completed and is ready for inspection
 
 // 3. Inspect the full output when the note tells you the child is done.
@@ -530,100 +493,6 @@ result, read it explicitly:
 
 **Common mistake:** treating the one-line note as the child's result. Always
 tail the output to see what the agent actually produced.
-
-### Canonical pattern (blocking): await + tail
-
-When you must not continue until the child has finished — for example a reviewer
-whose verdict gates the next step — `await` it, then read the tail with `get_messages`:
-
-```json
-// 1. Spawn
-{"name": "spawn", "arguments": {"agent_id": "worker", "task": "do the thing"}}
-
-// 2. Block until idle, exited, error, or timeout
-{"name": "agent_cmd", "arguments": {"agent_id": "worker", "command": "await", "timeout": 60}}
-
-// 3. Inspect output (check the actual result or error)
-{"name": "agent_cmd", "arguments": {"agent_id": "worker", "command": "get_messages", "count": 5}}
-```
-
-`await` reports *that* something happened (idle/exited/error/timeout) but not
-*what*; `get_messages` (with `count`) shows the final assistant message or error details.
-
-### `await` — block until a subagent finishes
-
-The `await` command blocks the calling tool until the target subagent reaches
-a terminal state — idle, exited, or timeout. This eliminates the need for
-polling loops that burn LLM tokens.
-
-**Parameters:**
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `timeout` | integer (seconds) | 300 | Max wall-clock wait time |
-| `idle_timeout` | integer (seconds) | 5 | Seconds the agent must stay idle before returning. Resets if the agent resumes streaming (e.g. auto-continue between workflow steps). Set to 0 for immediate return on first idle. |
-
-**Return value (structured JSON):**
-
-```json
-{
-  "status": "idle",
-  "reason": "completed",
-  "agent_id": "bookmarks-v1",
-  "elapsed_ms": 47200,
-  "workflow": {
-    "mode": "complete",
-    "steps_completed": 7,
-    "steps_total": 7
-  }
-}
-```
-
-| Status | Reason | Description |
-|--------|--------|-------------|
-| `idle` | `idle` | Agent stayed idle for the full `idle_timeout` window (or immediately when `idle_timeout: 0`) |
-| `exited` | `exit_code_0` | Process exited cleanly |
-| `exited` | `exit_code_<N>` | Process exited with error code N |
-| `exited` | `signal_<N>` | Process killed by signal N |
-| `timeout` | `null` | Wall-clock `timeout` exceeded |
-| `error` | `agent_not_found` | Agent ID not in registry |
-| `error` | `connection_failed` | Socket exists but connection refused |
-| `error` | `another_await_active` | Another `await` is already waiting on this agent |
-
-> The `status`/`reason` fields above describe the await **lifecycle** (how the
-> wait ended). They are distinct from the typed **verdict** in `result.status`
-> (`completed` / `incomplete` / `failed` / `running`), which is what a parent
-> branches on. An `idle` lifecycle yields a `completed` verdict only when the
-> agent's workflow actually reached `complete`; otherwise the verdict is
-> `incomplete`. So a finished idle agent returns `reason: "idle"`, not
-> `reason: "completed"`.
-
-**Examples:**
-
-```json
-{"name": "agent_cmd", "arguments": {"agent_id": "reviewer", "command": "await", "timeout": 600}}
-```
-
-```json
-{"name": "agent_cmd", "arguments": {"agent_id": "reviewer", "command": "await", "idle_timeout": 0}}
-```
-
-**Key behaviors:**
-
-- **Auto-continue safe:** The `idle_timeout` window correctly filters brief
-  idle gaps between auto-continue workflow steps.
-- **One awaiter per agent:** Only one `await` can be *in flight* per agent at a
-  time. A second **concurrent** `await` — from another connection/caller or a
-  racing turn — returns `"another_await_active"` immediately. Note that multiple
-  `await`s issued as sibling tool calls within a single turn are executed
-  **sequentially** by the agent loop, so they do not overlap and each succeeds in
-  turn; you only see `"another_await_active"` when two awaiters genuinely race the
-  same agent.
-- **Interacts with abort/steer/kill:** `abort` and `steer` do not interrupt
-  `await` — it continues waiting. `kill` causes `await` to return with
-  `"exited"` status.
-- **Workflow snapshot:** The `workflow` field is a read-only snapshot of
-  workflow state at the moment of return (null if workflow is not enabled).
 
 ## Observing the unit tree
 
@@ -873,7 +742,7 @@ each bound to a single-dimension review workflow. The whole tree stays
 observable: every descendant's `workflow_state` is forwarded up your event stream
 tagged with that agent's id, and the TUI shows each agent's own workflow bar.
 
-### Fire-and-forget with auto-await
+### Fire-and-forget with passive completion notes
 
 ```
 "Spawn agent_id='researcher' with task='Analyze the codebase and write findings to /tmp/report.md'.

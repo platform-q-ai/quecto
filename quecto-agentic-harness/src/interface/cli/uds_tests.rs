@@ -684,7 +684,7 @@ fn display_title_applies_presentation_policy() {
 #[path = "uds_progress_clear_tests.rs"]
 mod progress_clear_tests;
 
-// #816 auto-await subagent completion notes (enqueue + idle delivery).
+// #816 passive subagent completion notes (enqueue + idle delivery).
 #[path = "uds_subagent_notify_tests.rs"]
 mod subagent_notify_tests;
 

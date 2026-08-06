@@ -78,12 +78,12 @@ See also the [UDS protocol reference](../uds-protocol.md) and
 **Primary code:** `src/infrastructure/tools/spawn.rs`,
 `spawn_binary.rs`, `subagent_registry.rs`, `subagent_monitor.rs`,
 `subagent_monitor_stall.rs`, `subagent_monitor_merge.rs`,
-`subagent_await_result.rs`, and `agent_cmd.rs`.
+and `agent_cmd.rs`.
 
 Subagents are spawned harness processes supervised by the parent. The parent
 tracks process launch, socket connection/readiness, forwarded child events,
 message-history retrieval, busy/idle snapshots, terminal exit/failure, passive
-completion notifications, and explicit `agent_cmd await` calls.
+completion notifications, and `agent_cmd get_messages` transcript reads.
 
 Important invariants before Phase 4:
 
