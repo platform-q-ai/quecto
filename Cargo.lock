@@ -1498,7 +1498,7 @@ dependencies = [
 
 [[package]]
 name = "quecto-agentic-harness"
-version = "0.104.0"
+version = "0.104.1"
 dependencies = [
  "base64",
  "cucumber",
@@ -1597,7 +1597,7 @@ dependencies = [
 
 [[package]]
 name = "quecto-tui"
-version = "0.75.0"
+version = "0.76.0"
 dependencies = [
  "cucumber",
  "futures",

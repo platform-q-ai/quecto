@@ -1,11 +1,11 @@
 @tui @env-grouping
-Feature: Environment visibility and grouping in the sub-agent panel (#1369 slice 4)
+Feature: Environment visibility and grouping in the sub-agent panel (#1369 slice 4, follow-up revision)
   As a human operator coordinating container-backed sub-agents from one TUI
-  I want isolated PR environments distinguished in the left panel — solo agents
-  compact with a dim environment badge, shared environments grouped under one
-  selectable environment row — and the selected environment's details in the
-  main pane
-  So that I can understand the environment layout of the session at a glance
+  I want every script-managed environment — one member or many — rendered as a
+  selectable CN environment row with its member agents nested beneath it, and
+  the selected environment's container information shown alone in the main pane
+  So that container data is always reachable through the CN row and never reads
+  as if a conversation belongs to the container
 
   # Wired to step definitions in tests/bdd/tui_environment_grouping_steps.rs,
   # which drive the REAL render path through the headless render harness
@@ -14,15 +14,16 @@ Feature: Environment visibility and grouping in the sub-agent panel (#1369 slice
   # quecto-tui/src/agents/app_subagent_environment_tests.rs.
 
   @done
-  Scenario: A solo script-managed agent renders as a flat row with a dim environment badge
+  Scenario: A solo script-managed agent renders as a full environment group
     Given a TUI on a 120-column terminal tracking sub-agent "impl" running alone in environment "C1"
-    Then the panel row for "impl" shows the environment badge "C1" between the tree stalk and the name
-    And the panel renders no separate environment row for "C1"
+    Then the panel shows one environment row for "C1"
+    And the agent "impl" is nested beneath the "C1" environment row with the last-child connector
+    And the agent "impl" appears exactly once, beneath the environment row
 
   @done
-  Scenario: The solo environment badge survives narrow-panel truncation
+  Scenario: The solo environment group survives narrow-panel truncation
     Given a TUI on a 48-column terminal tracking sub-agent "implementer-having-a-very-long-name" running alone in environment "C1"
-    Then the panel row keeps the "C1" badge
+    Then the panel shows one environment row for "C1"
     And the agent name is truncated within the clamped panel width
 
   @done
@@ -39,10 +40,26 @@ Feature: Environment visibility and grouping in the sub-agent panel (#1369 slice
     Then the main pane shows environment details for "C2" including name, status, repository, branch, runtime id, workspace and socket mode
 
   @done
-  Scenario: The solo environment badge survives a sparse roster refresh
+  Scenario: Selecting an environment row shows container information only
+    Given a TUI on a 120-column terminal tracking sub-agents "impl" and "rev" sharing environment "C2"
+    And a parent conversation is on screen
+    When I select the environment row "C2" through panel navigation
+    Then the main pane carries a container-info header and lists the members "impl" and "rev"
+    And the main pane does not render the parent conversation
+    When I select the master row through panel navigation
+    Then the main pane renders the parent conversation again
+
+  @done
+  Scenario: Selecting a solo environment row shows its container information
+    Given a TUI on a 120-column terminal tracking sub-agent "impl" running alone in environment "C1"
+    When I select the environment row "C1" through panel navigation
+    Then the main pane shows environment details for "C1" including name, status, repository, branch, runtime id, workspace and socket mode
+
+  @done
+  Scenario: The environment group survives a sparse roster refresh
     Given a TUI on a 120-column terminal tracking sub-agent "impl" running alone in environment "C1"
     When a sparse get_subagents roster refresh omits the environment metadata for "impl"
-    Then the panel row for "impl" still shows the environment badge "C1"
+    Then the panel shows one environment row for "C1"
 
   @done
   Scenario: Environment details survive a live update followed by a sparse snapshot refresh

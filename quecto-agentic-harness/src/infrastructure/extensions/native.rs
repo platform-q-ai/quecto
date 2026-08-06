@@ -176,6 +176,9 @@ pub struct AgentControlToolDeps {
     pub parent_session_name: Option<String>,
     pub inherited_tool_policy:
         Option<crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot>,
+    /// The parent agent's own config path (#1369 follow-up): container spawns
+    /// without an explicit `config` argument fall back to it.
+    pub parent_config_path: Option<PathBuf>,
 }
 
 pub struct AgentControlToolBuild {
@@ -197,7 +200,8 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
         deps.base_dir,
     )
     .with_socket_dir(deps.socket_dir)
-    .with_environment_registry(environment_registry.clone());
+    .with_environment_registry(environment_registry.clone())
+    .with_parent_config_path(deps.parent_config_path);
     if let Some(snapshot) = deps.inherited_tool_policy {
         spawn = spawn.with_inherited_tool_policy(snapshot);
     }

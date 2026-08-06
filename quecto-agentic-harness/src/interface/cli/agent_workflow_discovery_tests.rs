@@ -68,6 +68,7 @@ fn build(
     let tmp = tempfile::TempDir::new().unwrap();
     build_tool_registry(ToolRegistryArgs {
         base_dir: tmp.path(),
+        config_path: tmp.path(),
         config,
         http_client: &reqwest::Client::new(),
         flags,

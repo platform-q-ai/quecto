@@ -494,32 +494,17 @@ impl App {
         };
         let observer = self.panel_row_observer(row.id.as_deref()).unwrap_or("");
         let observer_vis = visible_width(observer);
-        // Dim solo-environment badge between the tree stalk and the name
-        // (#1369 slice 4); rendered as its own dim span plus one space.
-        let badge = row.badge.as_deref().unwrap_or("");
-        let badge_vis = if badge.is_empty() {
-            0
-        } else {
-            visible_width(badge) + 1
-        };
-        let badge_span = if badge.is_empty() {
-            String::new()
-        } else {
-            format!("{} ", theme::dim(badge))
-        };
         let usable = width.saturating_sub(1);
-        let name_avail =
-            usable.saturating_sub(1 + stalk_vis + badge_vis + 1 + observer_vis + timer.len());
+        let name_avail = usable.saturating_sub(1 + stalk_vis + 1 + observer_vis + timer.len());
         let name = truncate_to_width(&sanitize_panel_label(&row.label), name_avail, Some("…"));
         let name_vis = visible_width(&name);
         let mut name = status_colored_name(&row.status, &name);
         if active {
             name = theme::bold(&name);
         }
-        let pad = usable
-            .saturating_sub(1 + stalk_vis + badge_vis + name_vis + observer_vis + timer.len());
+        let pad = usable.saturating_sub(1 + stalk_vis + name_vis + observer_vis + timer.len());
         let line = format!(
-            "{selbar}{}{badge_span}{name}{observer}{}{} ",
+            "{selbar}{}{name}{observer}{}{} ",
             theme::dim(&row.prefix),
             " ".repeat(pad),
             theme::dim(&timer),

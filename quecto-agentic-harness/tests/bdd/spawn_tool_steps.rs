@@ -751,6 +751,64 @@ fn given_script_spawn_parent_repo(world: &mut QuectoWorld, repo: String) {
     given_script_spawn(world, "default".to_string(), Some(repo), None);
 }
 
+/// Rebuild the world's SpawnTool with a parent-level config path, as the
+/// composition root does when the parent agent itself was launched with a
+/// config (#1369 follow-up: container config fallback).
+fn rebuild_spawn_tool_with_parent_config(world: &mut QuectoWorld, parent_config: PathBuf) {
+    let base = base_path(world);
+    let registry = world
+        .agent_cmd_registry
+        .clone()
+        .expect("registry from live spawn setup");
+    world.spawn_tool = Some(
+        SpawnTool::with_base_dir(vec![], true, base.clone())
+            .with_socket_dir(base.join("sockets"))
+            .with_registry(registry)
+            .with_parent_config_path(Some(parent_config)),
+    );
+}
+
+#[given(
+    expr = "script-managed subagent spawning is available through the parent's config path with default script {string}"
+)]
+fn given_script_spawn_via_parent_config(world: &mut QuectoWorld, script: String) {
+    given_script_spawn(world, script, None, None);
+    let parent_config = PathBuf::from(world.config_path.clone().expect("config path"));
+    rebuild_spawn_tool_with_parent_config(world, parent_config);
+}
+
+#[given(
+    expr = "script-managed subagent spawning is available through the inherited runtime config with default script {string}"
+)]
+fn given_script_spawn_via_inherited_runtime_config(world: &mut QuectoWorld, script: String) {
+    given_script_spawn(world, script, None, None);
+    // No composition-plumbed parent config path (the base SpawnTool from
+    // `given_script_spawn` carries none) — the only config source is the
+    // inherited QUECTO_RUNTIME_CONFIG_PATH a spawned child would receive.
+    let inherited = world.config_path.clone().expect("config path");
+    // SAFETY: the scenario is tagged @serial, so no other scenario runs concurrently in this process while the process-wide env is mutated.
+    unsafe { std::env::set_var("QUECTO_RUNTIME_CONFIG_PATH", inherited) };
+    world.restore_inherited_runtime_config = true;
+}
+
+#[given("script-managed subagent spawning is available with no parent config path")]
+fn given_script_spawn_no_config_source(world: &mut QuectoWorld) {
+    given_live_spawn_agent_cmd_mock_child(world);
+    // The world's base SpawnTool has no parent config path; clearing the
+    // inherited runtime config leaves genuinely NO container-config source.
+    // SAFETY: the scenario is tagged @serial, so no other scenario runs concurrently in this process while the process-wide env is mutated.
+    unsafe { std::env::remove_var("QUECTO_RUNTIME_CONFIG_PATH") };
+}
+
+#[given(
+    expr = "script-managed subagent spawning is available through an unusable parent config path with default script {string}"
+)]
+fn given_script_spawn_with_unusable_parent_config(world: &mut QuectoWorld, script: String) {
+    given_script_spawn(world, script, None, None);
+    let unusable = base_path(world).join("nonexistent-parent-config.json");
+    rebuild_spawn_tool_with_parent_config(world, unusable);
+}
+
 #[given(expr = "script-managed child {string} is running with task {string}")]
 fn given_script_child_running(world: &mut QuectoWorld, agent_id: String, task: String) {
     given_script_spawn_default(world, "default".to_string());
@@ -884,6 +942,15 @@ fn when_spawn_script_default(world: &mut QuectoWorld, agent_id: String, task: St
     );
 }
 
+#[when(
+    expr = "I spawn script-managed subagent {string} with an explicit config argument and task {string}"
+)]
+fn when_spawn_script_explicit_config(world: &mut QuectoWorld, agent_id: String, task: String) {
+    // The explicit `config` argument is the load-bearing part of this When:
+    // `execute_spawn_json` injects the scenario's config path into the call.
+    when_spawn_script_default(world, agent_id, task);
+}
+
 #[when(expr = "I spawn script-managed subagent {string} with script {string} and task {string}")]
 fn when_spawn_script_named(
     world: &mut QuectoWorld,
@@ -921,8 +988,37 @@ fn when_spawn_existing(world: &mut QuectoWorld, agent_id: String) {
     );
 }
 
+#[when(
+    expr = "I spawn script-managed subagent {string} without a config argument and task {string}"
+)]
+fn when_spawn_script_no_config_arg(world: &mut QuectoWorld, agent_id: String, task: String) {
+    execute_spawn_json_without_config(
+        world,
+        serde_json::json!({"agent_id":agent_id,"task":task,"container":true,"read_only":true}),
+    );
+}
+
+#[then("the spawn result should fail because container spawning requires a config")]
+fn then_container_requires_config_error(world: &mut QuectoWorld) {
+    let r = world.spawn_result.as_ref().unwrap();
+    // Exact missing-config message: the loose "container spawn requires"
+    // prefix also matches the absolute-path error, which would let this
+    // scenario pass for the wrong reason.
+    assert!(
+        r.is_error
+            && r.content
+                .contains("requires --config so container_scripts can be loaded"),
+        "{}",
+        r.content
+    );
+}
+
 fn execute_spawn_json(world: &mut QuectoWorld, mut args: serde_json::Value) {
     args["config"] = serde_json::json!(world.config_path.clone().unwrap());
+    execute_spawn_json_without_config(world, args);
+}
+
+fn execute_spawn_json_without_config(world: &mut QuectoWorld, args: serde_json::Value) {
     let tool = world.spawn_tool.as_ref().expect("spawn tool");
     let rt = tokio::runtime::Runtime::new().unwrap();
     world.spawn_result = Some(match rt.block_on(tool.execute(&args.to_string())) {

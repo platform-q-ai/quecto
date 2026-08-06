@@ -28,8 +28,11 @@ targets fail without guessing.
 
 - `repo` omitted → the parent checkout's `remote.origin.url` is used and
   must exist; explicit `repo` is passed to the script literally.
-- Container spawns require the spawn call to pass `config` with an
-  absolute path so `container_scripts` can be loaded from a trusted file.
+- `container_scripts` load from a trusted config file: an explicit `config`
+  argument in the spawn call wins; when it is omitted, the spawn falls back
+  to the parent's own effective config path, so container spawns normally
+  need no `config` argument. Whichever path applies must be absolute; when
+  neither source exists the spawn fails with a clear error.
 
 A successful spawn returns a session-scoped environment reference
 (`environment_ref=C1`, `C2`, ...). Refs are minted once per session and
@@ -114,10 +117,16 @@ into the child) lingering.
 
 Proxy readiness probes the bridge across the launch's readiness budget:
 a probe that reads EOF (the proxy could not reach the child yet) is
-retried; the endpoint is ready once a probe survives a quiet window.
-Residual assumption: a proxy that hangs without producing EOF while the
-child is unreachable is indistinguishable from a live-but-quiet child;
-such a launch fails at the initial prompt and rolls back.
+retried; the endpoint is bridge-ready once a probe survives a quiet
+window. For proxy launches with an initial task, an initial prompt send
+failure is folded back into the same launch readiness retry budget before
+rollback, so a proxy that connected before the child accepted commands
+gets another chance without ever falling back to a direct socket or
+polling lifecycle state after launch. Because the child protocol cannot
+prove whether an ambiguous lost acceptance response was observed after the
+child queued the prompt, proxy-managed initial tasks must remain
+idempotent: a retry may resend the same initial task if delivery succeeded
+but the acknowledgement did not return before the retry deadline.
 
 After readiness the parent holds one persistent monitor connection to the
 endpoint. EOF or connection reset on it IS the child's death signal — no
@@ -315,6 +324,90 @@ sockets are only reachable inside the environment (see "Endpoints and
 liveness"); its production behavior — bridge lifecycle, readiness probing,
 EOF-pushed death — is exercised by the proxy scenarios in
 `quecto-agentic-harness/tests/features/script_managed_liveness_slice3.feature`.
+
+## The official Docker adapter
+
+Alongside the host-local reference set (which remains the CI-exercised
+default), the repository ships an official Docker adapter implementing the
+same contract:
+
+- [`scripts/container-runtime/docker/create.sh`](../scripts/container-runtime/docker/create.sh)
+- [`scripts/container-runtime/docker/exec.sh`](../scripts/container-runtime/docker/exec.sh)
+- [`scripts/container-runtime/docker/inspect.sh`](../scripts/container-runtime/docker/inspect.sh)
+- [`scripts/container-runtime/docker/kill.sh`](../scripts/container-runtime/docker/kill.sh)
+
+Design properties:
+
+- **One container per environment, child as PID 1.** `create.sh` starts the
+  child as the container's main process, so Docker's view of the container is
+  exactly the child's liveness; `exec.sh` joins later members with
+  `docker exec` into the same container.
+- **Identity bind-mounts.** The per-environment workspace (rw), the parent's
+  socket dir (rw), the child binary (ro), the child's `--config` file (ro,
+  when outside `$HOME/.quecto`), and `$HOME/.quecto` (rw) are mounted at the
+  same path inside and outside, so the child's CLI args need no rewriting and
+  the UDS socket it binds appears directly on the host.
+- **`HOME` preserved, `QUECTO_BASE_DIR` never overridden.** `QUECTO_BASE_DIR`
+  is quecto's credentials/config home; overriding it inside the container
+  detaches the child from the identity-mounted `$HOME/.quecto` and breaks
+  OAuth providers. The scripts carry a comment warning against this.
+- **Image selection.** `--image <img>` on the create argv, or the
+  `QUECTO_DOCKER_IMAGE` environment variable, with a sensible local default
+  (`quecto-box:local`).
+- **Rollback and containment.** `create.sh` installs an ERR trap that removes
+  partial state and `docker rm -f`s any container it managed to start; every
+  destructive operation proves the environment id contains no path
+  separators and resolves under the trusted `--state-dir` root, mirroring the
+  host-local set. `kill.sh` serves `--op kill` / `--op cleanup` and logs each
+  operation to the state root.
+- **Strict JSON contract.** All stdout results are emitted with `jq`, exactly
+  matching the `create`/`exec`/`inspect` wire contracts above.
+- **Host-side clone is transport-restricted.** The repo URL is agent-supplied
+  and cloned on the host before any container exists, so `create.sh` runs
+  `git clone` under `GIT_ALLOW_PROTOCOL=file:https:ssh:git` — command-running
+  transports (`ext::…`) can never execute host commands (PR #1401 review).
+- **Provider API keys never enter the docker-side container config.**
+  `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` are written to
+  a `0600` file in the `0700` state dir, identity-mounted read-only, and
+  sourced by a bootstrap `sh` that `exec`s the child (which therefore still
+  ends up as PID 1). Passing them with `docker run -e` would persist them in
+  the container config, readable via `docker inspect` for the container's
+  whole lifetime (PR #1401 review). Requires `/bin/sh` in the image.
+- **GitHub access works inside the environment.** Agent workflows need `gh`
+  and git-over-https pushes, and a host keyring is unreachable from a
+  container. `create.sh` resolves the token host-side (`gh auth token`) and
+  ships it as `GH_TOKEN`/`GITHUB_TOKEN` through the same `0600` secret file;
+  git identity (global gitconfig only, for determinism) and the
+  `gh auth git-credential` helper travel as non-secret `GIT_CONFIG_*`
+  environment entries, so the host gitconfig — which may carry LFS filters or
+  keyring helpers the image lacks — is never mounted. `exec.sh` gives joiners
+  the identical contract (including sourcing the secret file). Requires `gh`
+  in the image for API/push use; everything else degrades gracefully when no
+  token is available.
+
+A matching configuration:
+
+```json
+{
+  "container_scripts": {
+    "default": "docker",
+    "scripts": {
+      "docker": {
+        "create": ["/repo/scripts/container-runtime/docker/create.sh", "--state-dir", "/var/tmp/quecto-docker-envs"],
+        "exec": ["/repo/scripts/container-runtime/docker/exec.sh", "--state-dir", "/var/tmp/quecto-docker-envs"],
+        "inspect": ["/repo/scripts/container-runtime/docker/inspect.sh", "--state-dir", "/var/tmp/quecto-docker-envs"],
+        "kill": ["/repo/scripts/container-runtime/docker/kill.sh", "--state-dir", "/var/tmp/quecto-docker-envs", "--op", "kill"],
+        "cleanup": ["/repo/scripts/container-runtime/docker/kill.sh", "--state-dir", "/var/tmp/quecto-docker-envs", "--op", "cleanup"]
+      }
+    }
+  }
+}
+```
+
+CI has no Docker daemon, so the Docker adapter is not exercised by the CI
+BDD lanes; it is verified manually against a local Docker daemon, and its
+shape (existence, fail-fast mode, contract needles, cross-links) is pinned
+by `quecto-agentic-harness/tests/container_runtime_docs.rs`.
 
 ## How to author another runtime adapter
 

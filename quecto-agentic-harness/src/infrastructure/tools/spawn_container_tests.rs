@@ -141,7 +141,7 @@ fn script_selection_and_repo_defaults_are_resolved() {
 fn local_selection_has_no_repo_or_container_config_requirement() {
     let config = base_config(ContainerSelection::Local);
     assert!(selected_repo(&config, Path::new("/tmp")).unwrap().is_none());
-    assert!(load_container_config(&config).is_err());
+    assert!(load_container_config(&config, None).is_err());
 }
 
 #[test]
@@ -152,7 +152,60 @@ fn relative_config_path_is_rejected_for_container_config() {
         name: None,
     });
     config.config_path = Some(PathBuf::from("relative.toml"));
-    assert!(load_container_config(&config).is_err());
+    assert!(load_container_config(&config, None).is_err());
+}
+
+fn write_scripts_config(dir: &std::path::Path, default: &str) -> PathBuf {
+    let path = dir.join(format!("config-{default}.json"));
+    let config = serde_json::json!({
+        "container_scripts": {
+            "default": default,
+            "scripts": {
+                default: {"create": ["/bin/true"], "cleanup": ["/bin/true"]}
+            }
+        }
+    });
+    std::fs::write(&path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+    path
+}
+
+#[test]
+fn parent_config_path_is_the_fallback_when_spawn_config_is_omitted() {
+    let dir = TempDir::new().unwrap();
+    let parent = write_scripts_config(dir.path(), "parentset");
+    let config = base_config(ContainerSelection::New {
+        repo: None,
+        container_script: None,
+        name: None,
+    });
+    let loaded = load_container_config(&config, Some(&parent)).unwrap();
+    assert_eq!(loaded.container_scripts.default, "parentset");
+}
+
+#[test]
+fn explicit_spawn_config_wins_over_the_parent_config_path() {
+    let dir = TempDir::new().unwrap();
+    let parent = write_scripts_config(dir.path(), "parentset");
+    let explicit = write_scripts_config(dir.path(), "explicitset");
+    let mut config = base_config(ContainerSelection::New {
+        repo: None,
+        container_script: None,
+        name: None,
+    });
+    config.config_path = Some(explicit);
+    let loaded = load_container_config(&config, Some(&parent)).unwrap();
+    assert_eq!(loaded.container_scripts.default, "explicitset");
+}
+
+#[test]
+fn relative_parent_config_path_is_rejected_for_container_config() {
+    let config = base_config(ContainerSelection::New {
+        repo: None,
+        container_script: None,
+        name: None,
+    });
+    let err = load_container_config(&config, Some(Path::new("relative.toml"))).unwrap_err();
+    assert!(err.to_string().contains("absolute"), "{err}");
 }
 
 #[test]
@@ -203,7 +256,8 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
                 cli_args: &[],
                 base_dir: Path::new("/tmp"),
             },
-            &EnvironmentRegistry::new()
+            &EnvironmentRegistry::new(),
+            None,
         )
         .await
         .is_err()
@@ -222,7 +276,8 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
                 cli_args: &[],
                 base_dir: Path::new("/tmp"),
             },
-            &EnvironmentRegistry::new()
+            &EnvironmentRegistry::new(),
+            None,
         )
         .await
         .is_err()
@@ -237,7 +292,8 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
                 cli_args: &[],
                 base_dir: Path::new("/tmp"),
             },
-            &EnvironmentRegistry::new()
+            &EnvironmentRegistry::new(),
+            None,
         )
         .await
         .is_err()
@@ -273,7 +329,8 @@ cleanup = ["echo"]
                 cli_args: &[],
                 base_dir: dir.path(),
             },
-            &EnvironmentRegistry::new()
+            &EnvironmentRegistry::new(),
+            None,
         )
         .await
         .is_err()
@@ -345,6 +402,7 @@ async fn script_env_includes_optional_selection_values() {
             base_dir: dir.path(),
         },
         &registry,
+        None,
     )
     .await
     .unwrap();
@@ -371,6 +429,7 @@ async fn local_child_success_has_no_cleanup_plan() {
             base_dir: Path::new("/tmp"),
         },
         &EnvironmentRegistry::new(),
+        None,
     )
     .await
     .unwrap();
@@ -448,6 +507,7 @@ async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
             base_dir: dir.path(),
         },
         &registry,
+        None,
     )
     .await
     .unwrap();

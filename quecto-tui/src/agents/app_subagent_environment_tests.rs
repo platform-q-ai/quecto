@@ -1,15 +1,17 @@
-//! Environment visibility and grouping in the sub-agent panel (#1369 slice 4).
+//! Environment visibility and grouping in the sub-agent panel (#1369 slice 4,
+//! revised by the #1369 follow-up).
 //!
 //! Drives the REAL render path through the headless harness and the REAL wire
-//! deserializer (`event_line`), asserting the hybrid rendering rule: one agent
-//! in an environment → flat row with a dim `CN` badge; two or more agents →
-//! one selectable environment row with agents nested below.
+//! deserializer (`event_line`), asserting the uniform grouping rule: EVERY
+//! environment — one member or many — renders one selectable `CN` environment
+//! row with its member agents nested below, and selecting the row shows
+//! container information only in the main pane.
 
 use super::tui_harness::*;
 use crate::protocol::client::Event;
 use crate::shell::keys::Key;
 
-fn env_agent_json(id: &str, env_ref: &str) -> serde_json::Value {
+pub(crate) fn env_agent_json(id: &str, env_ref: &str) -> serde_json::Value {
     serde_json::json!({
         "agentId": id,
         "displayName": id,
@@ -42,7 +44,7 @@ fn local_agent_json(id: &str) -> serde_json::Value {
     })
 }
 
-fn state_changed_line(agents: Vec<serde_json::Value>) -> String {
+pub(crate) fn state_changed_line(agents: Vec<serde_json::Value>) -> String {
     serde_json::json!({ "type": "subagent_state_changed", "subagents": agents }).to_string()
 }
 
@@ -88,53 +90,82 @@ async fn panel_width_still_clamps_to_half_the_terminal() {
 }
 
 #[tokio::test]
-async fn solo_environment_agent_renders_flat_row_with_badge_between_stalk_and_name() {
+async fn solo_environment_agent_renders_as_a_full_environment_group() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     h.event_line(&state_changed_line(vec![env_agent_json("impl", "C1")]));
 
     let panel = h.left_panel();
     let rows = panel_rows(&panel);
-    let row = rows
+    // Follow-up revision to #1369 slice 4: a single member renders exactly
+    // like multi-member environments — one selectable environment row …
+    let env_rows: Vec<usize> = rows
         .iter()
-        .find(|l| l.contains("impl"))
-        .unwrap_or_else(|| panic!("no panel row for impl:\n{panel}"));
-    let stalk = row
-        .find('└')
-        .or_else(|| row.find('├'))
-        .unwrap_or_else(|| panic!("solo row must keep its tree stalk:\n{row}"));
-    let badge = row
-        .find("C1")
-        .unwrap_or_else(|| panic!("solo row must carry the C1 badge:\n{panel}"));
-    let name = row.find("impl").expect("row contains the agent name");
-    assert!(
-        stalk < badge && badge < name,
-        "the C1 badge must sit between the tree stalk and the name:\n{row}"
-    );
-    // Flat rendering: no separate environment row for a solo environment.
+        .enumerate()
+        .filter(|(_, l)| l.contains("C1") && !l.contains("impl"))
+        .map(|(i, _)| i)
+        .collect();
     assert_eq!(
-        rows.iter().filter(|l| l.contains("C1")).count(),
+        env_rows.len(),
         1,
-        "a solo environment must occupy exactly one row:\n{panel}"
+        "a solo environment must render one selectable environment row:\n{panel}"
+    );
+    // … with the single agent nested beneath it with the last-child connector.
+    let idx = rows
+        .iter()
+        .position(|l| l.contains("impl"))
+        .unwrap_or_else(|| panic!("no row for member impl:\n{panel}"));
+    assert!(
+        idx > env_rows[0],
+        "the solo member must nest beneath the environment row:\n{panel}"
+    );
+    // Structural nesting, not mere ordering: a flat root-level row after the
+    // environment row (same depth) must fail here.
+    assert!(
+        label_depth(&rows[idx]) > label_depth(&rows[env_rows[0]]),
+        "the solo member must nest strictly deeper than the environment row:\n{panel}"
+    );
+    assert!(
+        rows[idx].contains('└'),
+        "the solo member must carry the └ nested tree connector:\n{}",
+        rows[idx]
+    );
+    // No inline badge remains: the member row leads with the agent name.
+    assert!(
+        after_stalk(&rows[idx]).starts_with("impl"),
+        "the nested member row must place the name directly after the stalk (no badge):\n{}",
+        rows[idx]
     );
 }
 
 #[tokio::test]
-async fn solo_environment_badge_is_dim_styled() {
+async fn selecting_a_solo_environment_row_shows_container_details() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     h.event_line(&state_changed_line(vec![env_agent_json("impl", "C1")]));
 
-    let raw = h.full_frame_raw();
-    let dim_badge = crate::components::theme::dim("C1");
-    assert!(
-        raw.contains(&dim_badge),
-        "the C1 badge must render in the dim style, raw frame:\n{raw}"
-    );
+    let rows = panel_rows(&h.left_panel());
+    let target = rows
+        .iter()
+        .position(|l| l.contains("C1") && !l.contains("impl"))
+        .unwrap_or_else(|| panic!("no selectable environment row for C1:\n{}", rows.join("\n")));
+    h.press(Key::Tab);
+    for _ in 0..target {
+        h.press(Key::Down);
+    }
+    h.press(Key::Enter);
+
+    let top = h.main_pane();
+    for needle in ["C1", "pr-env", "status: running", "rt-9001", "/work/pr-42"] {
+        assert!(
+            top.contains(needle),
+            "solo environment details must include {needle:?}, got:\n{top}"
+        );
+    }
 }
 
 #[tokio::test]
-async fn solo_badge_and_name_truncate_at_narrow_widths() {
+async fn env_row_and_nested_name_truncate_at_narrow_widths() {
     let mut h = TuiHarness::sized(48, 40).await;
     h.event(Event::AgentStart);
     h.event_line(&state_changed_line(vec![env_agent_json(
@@ -143,17 +174,19 @@ async fn solo_badge_and_name_truncate_at_narrow_widths() {
     )]));
 
     let panel = h.left_panel();
-    let row = panel_rows(&panel)
-        .into_iter()
-        .find(|l| l.contains("C1"))
-        .unwrap_or_else(|| panic!("narrow row must keep the C1 badge:\n{panel}"));
+    let rows = panel_rows(&panel);
     assert!(
-        row.contains('…'),
-        "the long agent name must truncate with an ellipsis inside the clamped panel:\n{row}"
+        rows.iter()
+            .any(|l| l.contains("C1") && !l.contains("implementer")),
+        "the narrow panel must keep the C1 environment row:\n{panel}"
     );
+    let row = rows
+        .iter()
+        .find(|l| l.contains('…'))
+        .unwrap_or_else(|| panic!("the long nested name must truncate with an ellipsis:\n{panel}"));
     assert!(
         unicode_width::UnicodeWidthStr::width(row.as_str()) <= 24,
-        "the badged row must fit the 24-column clamped panel:\n{row}"
+        "the nested member row must fit the 24-column clamped panel:\n{row}"
     );
 }
 
@@ -190,6 +223,11 @@ async fn shared_environment_groups_agents_under_one_selectable_environment_row()
         assert!(
             idx > env_idx,
             "member {id} must nest beneath the environment row:\n{panel}"
+        );
+        // Structural nesting, not mere ordering (see the solo-group test).
+        assert!(
+            label_depth(&rows[idx]) > label_depth(&rows[env_idx]),
+            "member {id} must nest strictly deeper than the environment row:\n{panel}"
         );
         assert!(
             rows[idx].contains(connector),
@@ -255,13 +293,10 @@ async fn environment_metadata_survives_sparse_snapshot_refresh() {
     h.event_line(&get_subagents_response_line(vec![local_agent_json("impl")]));
 
     let panel = h.left_panel();
-    let row = panel_rows(&panel)
-        .into_iter()
-        .find(|l| l.contains("impl"))
-        .unwrap_or_else(|| panic!("no panel row for impl:\n{panel}"));
+    let rows = panel_rows(&panel);
     assert!(
-        row.contains("C1"),
-        "sticky merge must preserve the environment badge through a sparse refresh:\n{panel}"
+        rows.iter().any(|l| l.contains("C1") && !l.contains("impl")),
+        "sticky merge must preserve the environment row through a sparse refresh:\n{panel}"
     );
 }
 
@@ -371,10 +406,10 @@ async fn authoritative_local_backend_clears_stale_environment() {
     );
 }
 
-/// Review #1392 (security): the solo badge is wire-controlled — escape
+/// Review #1392 (security): the environment ref is wire-controlled — escape
 /// sequences in `environment.ref` must be sanitized before rendering.
 #[tokio::test]
-async fn solo_badge_sanitizes_escape_sequences_in_environment_ref() {
+async fn environment_ref_sanitizes_escape_sequences() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     let mut agent = env_agent_json("impl", "C1");
@@ -394,7 +429,8 @@ async fn solo_badge_sanitizes_escape_sequences_in_environment_ref() {
 
 /// Review #1392: session-scoped refs collide across forwarded sessions — two
 /// environments sharing the ref `C1` but carrying different uuids must NOT be
-/// merged into one group.
+/// merged into one group; each renders its own `C1` environment row with its
+/// member nested beneath (follow-up revision: solo environments group too).
 #[tokio::test]
 async fn same_ref_different_uuid_environments_do_not_group() {
     let mut h = TuiHarness::new().await;
@@ -407,11 +443,13 @@ async fn same_ref_different_uuid_environments_do_not_group() {
 
     let panel = h.left_panel();
     let rows = panel_rows(&panel);
-    assert!(
-        !rows
-            .iter()
-            .any(|l| l.contains("C1") && !l.contains("impl") && !l.contains("grand")),
-        "distinct uuids must not merge into one environment row:\n{panel}"
+    let env_rows = rows
+        .iter()
+        .filter(|l| l.contains("C1") && !l.contains("impl") && !l.contains("grand"))
+        .count();
+    assert_eq!(
+        env_rows, 2,
+        "distinct uuids must render two separate C1 environment rows:\n{panel}"
     );
     for id in ["impl", "grand"] {
         let row = rows
@@ -419,8 +457,8 @@ async fn same_ref_different_uuid_environments_do_not_group() {
             .find(|l| l.contains(id))
             .unwrap_or_else(|| panic!("no row for {id}:\n{panel}"));
         assert!(
-            row.contains("C1"),
-            "each solo agent keeps its own C1 badge:\n{row}"
+            row.contains('└'),
+            "each member nests beneath its own environment row:\n{row}"
         );
     }
 }
@@ -564,12 +602,14 @@ async fn divergent_member_statuses_aggregate_worst_wins_in_chrome() {
 }
 
 #[tokio::test]
-async fn mixed_producers_degrade_to_solo_rows_without_crashing() {
+async fn mixed_producers_degrade_to_two_environment_rows_without_crashing() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     // One member's producer reports the environment uuid, the other's
     // predates it (empty uuid → ref fallback). Accepted compat degradation:
-    // two solo badge rows, no group row, no crash (review #1392).
+    // two environment rows painted with the same ref, each with its own
+    // member nested — no merged group, no crash (review #1392, revised by
+    // the #1369 follow-up: solo environments group too).
     let mut modern = env_agent_json("impl", "C1");
     modern["environment"]["uuid"] = serde_json::json!("env-uuid-1");
     let legacy = env_agent_json("rev", "C1");
@@ -582,14 +622,14 @@ async fn mixed_producers_degrade_to_solo_rows_without_crashing() {
         .count();
     assert_eq!(
         group_rows,
-        0,
-        "mixed producers must not form a group row:\n{}",
+        2,
+        "mixed producers must degrade to two separate environment rows:\n{}",
         rows.join("\n")
     );
     for id in ["impl", "rev"] {
         assert!(
-            rows.iter().any(|l| l.contains(id) && l.contains("C1")),
-            "member {id} must render as a solo row with the C1 badge:\n{}",
+            rows.iter().any(|l| l.contains(id) && l.contains('└')),
+            "member {id} must nest beneath its own environment row:\n{}",
             rows.join("\n")
         );
     }

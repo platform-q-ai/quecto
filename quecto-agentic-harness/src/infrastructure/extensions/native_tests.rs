@@ -281,6 +281,7 @@ fn build_session_tool_extensions_supplies_recall() {
 fn build_agent_control_tool_extensions_supplies_spawn_and_agent_cmd() {
     let tmp = tempfile::TempDir::new().unwrap();
     let built = build_agent_control_tool_extensions(AgentControlToolDeps {
+        parent_config_path: None,
         base_dir: tmp.path().to_path_buf(),
         socket_dir: tmp.path().to_path_buf(),
         restrict_to_workspace: true,

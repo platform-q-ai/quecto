@@ -19,15 +19,9 @@ pub(crate) struct AgentOutput<'a> {
     pub(crate) stderr: &'a mut String,
 }
 
-/// Outcome of a deadline-bounded agent run.
-pub(crate) enum DeadlineResult {
-    /// Agent completed (successfully or with error) within the deadline.
-    Completed(Result<crate::domain::agent::AgentResult, crate::domain::error::DomainError>),
-    /// The deadline expired before the agent finished.
-    TimedOut,
-}
-
+mod agent_deadline;
 mod flag_parse;
+pub(crate) use agent_deadline::{DeadlineResult, run_with_deadline};
 mod flag_private;
 pub(crate) use flag_parse::AgentFlags;
 use flag_parse::{
@@ -349,6 +343,7 @@ pub(crate) fn build_agent_from_config(
         workspace,
     } = match build_tool_registry(ToolRegistryArgs {
         base_dir,
+        config_path,
         config: &config,
         http_client: &http_client,
         flags,
@@ -554,30 +549,6 @@ use crate::interface::shared::scrub_ephemeral_spill;
 /// that may conflict with test harness runtimes). After timeout, the scoped
 /// thread still runs until the in-flight LLM/tool call completes (bounded by
 /// per-tool and HTTP client timeouts), then the scope exits.
-pub(crate) fn run_with_deadline(
-    rt: &tokio::runtime::Runtime,
-    agent: &mut AgentLoopImpl,
-    messages: &mut Vec<Message>,
-    timeout_secs: u64,
-) -> DeadlineResult {
-    let dur = std::time::Duration::from_secs(timeout_secs);
-    let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    let deadline = std::time::Instant::now() + dur;
-
-    std::thread::scope(|s| {
-        s.spawn(|| {
-            let result = rt.block_on(agent.process(messages));
-            let _ = tx.send(result);
-        });
-
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        match rx.recv_timeout(remaining) {
-            Ok(result) => DeadlineResult::Completed(result),
-            Err(_) => DeadlineResult::TimedOut,
-        }
-    })
-}
-
 /// Resolve the UDS session key. Ephemeral → empty (no persistence). An explicit
 /// Resolve UDS persistence key.
 fn resolve_uds_session_key(ephemeral: bool, session_name: Option<&str>) -> String {

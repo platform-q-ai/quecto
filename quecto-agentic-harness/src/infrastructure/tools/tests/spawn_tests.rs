@@ -566,10 +566,14 @@ fn test_definition_documents_container_spawning() {
             "container description misses {needle}"
         );
     }
-    // The absolute-config requirement is stated where agents will read it.
+    // The absolute-path requirement AND the parent-config fallback are stated
+    // where agents will read them (#1369 follow-up).
     let config_desc = schema["properties"]["config"]["description"]
         .as_str()
         .unwrap();
     assert!(config_desc.contains("container"));
     assert!(config_desc.contains("absolute"));
+    assert!(config_desc.contains("falls back to the parent's own effective config path"));
+    assert!(config_desc.contains("explicit config here wins"));
+    assert!(desc.contains("parent's own effective config path"));
 }

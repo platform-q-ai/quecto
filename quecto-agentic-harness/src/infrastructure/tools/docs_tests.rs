@@ -196,6 +196,7 @@ fn subagents_embed_teaches_container_environments() {
         "get_containers",
         "kill_container",
         "absolute path",
+        "parent's own effective config path",
     ] {
         assert!(doc.contains(needle), "subagents embed misses {needle}");
     }

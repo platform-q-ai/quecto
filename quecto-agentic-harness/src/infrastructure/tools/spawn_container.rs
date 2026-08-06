@@ -89,6 +89,7 @@ pub(super) async fn spawn_prepared_child(
     config: &SubagentConfig,
     child: &ChildCommand<'_>,
     environments: &EnvironmentRegistry,
+    parent_config_path: Option<&Path>,
 ) -> Result<PreparedChild, DomainError> {
     match &config.container {
         ContainerSelection::Local => spawn_local_child(child),
@@ -98,7 +99,7 @@ pub(super) async fn spawn_prepared_child(
             spawn_script_managed_child(
                 config,
                 child,
-                &load_container_config(config)?,
+                &load_container_config(config, parent_config_path)?,
                 container_script,
                 environments,
             )
@@ -257,12 +258,24 @@ fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, DomainEr
     })
 }
 
-fn load_container_config(config: &SubagentConfig) -> Result<Config, DomainError> {
-    let cfg_path = config.config_path.as_ref().ok_or_else(|| {
-        DomainError::Tool(
-            "container spawn requires --config so container_scripts can be loaded".into(),
-        )
-    })?;
+/// Resolve the trusted config file `container_scripts` loads from: an explicit
+/// spawn `config` argument wins; without one the parent's own effective config
+/// path is used (#1369 follow-up), so `container: true` works without the
+/// caller hunting for the config location. Whichever path is chosen must be
+/// absolute — the trusted-path requirement is not relaxed by the fallback.
+fn load_container_config(
+    config: &SubagentConfig,
+    parent_config_path: Option<&Path>,
+) -> Result<Config, DomainError> {
+    let cfg_path = config
+        .config_path
+        .as_deref()
+        .or(parent_config_path)
+        .ok_or_else(|| {
+            DomainError::Tool(
+                "container spawn requires --config so container_scripts can be loaded".into(),
+            )
+        })?;
     if !cfg_path.is_absolute() {
         return Err(DomainError::Tool(
             "container spawn requires an absolute trusted config path".into(),
