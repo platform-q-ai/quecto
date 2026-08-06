@@ -221,7 +221,7 @@ fn test_completion_consumed_by_await_suppresses_note() {
     );
 }
 
-/// Without a prior `await`, the flag is clear so the completion note is delivered
+/// When no legacy completion consumer set the dedupe flag, the completion note is delivered
 /// (enqueued) as before — the default passive path.
 #[test]
 fn test_completion_without_await_enqueues() {

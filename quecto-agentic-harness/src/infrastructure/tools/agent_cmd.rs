@@ -138,7 +138,7 @@ impl AgentCmdTool {
         // follow_up/abort) carry `"ack":"accept"` so a BUSY child's reader acks
         // ACCEPTANCE immediately instead of leaving the parent frozen until the
         // child's turn completes (#876); completion still arrives via the
-        // passive completion note / `await`.
+        // passive completion note.
         let json_cmd = match command.as_str() {
             "prompt" => {
                 let message = args

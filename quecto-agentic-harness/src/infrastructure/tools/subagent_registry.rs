@@ -48,14 +48,14 @@ pub struct SubagentEntry {
     /// Monotonic notification id for this subagent.
     pub notification_sequence: u64,
     /// Exit signal sender — the reaper task sends the exit code/signal through
-    /// this channel so that a waiting `await` call can return immediately (#612).
+    /// this channel so legacy lifecycle observers can return immediately (#612).
     pub exit_signal_tx: Option<ExitSignalTx>,
     /// The spawning agent's id, for reconstructing the unit tree (PRD Stage B).
     pub parent_id: Option<String>,
     /// Latest workflow snapshot reported by the child's monitor (PRD Stage B).
     pub workflow: Option<WorkflowSnapshot>,
-    /// Set by `execute_await`'s TERMINAL result, consumed by the dispatch loop to
-    /// suppress the duplicate passive note, re-armed on a new run (#await-dedupe).
+    /// Legacy completion-dedupe flag consumed by the dispatch loop to suppress a
+    /// duplicate passive note, re-armed on a new run (#await-dedupe).
     pub completion_consumed_by_await: bool,
     /// Terminal-completion latch (#904): consumed by the first `complete`-mode
     /// `agent_end`, re-armed when the workflow leaves `complete`.
@@ -171,7 +171,7 @@ impl SubagentEntry {
 /// entries), then fall back to live-only display-name resolution (#1378).
 ///
 /// Live-only display resolution keeps dead agents non-targetable for NEW
-/// commands (socket lookup / await arming). Await-dedupe uses
+/// commands (socket lookup / lifecycle arming). Completion dedupe uses
 /// [`resolve_registry_key_for_await_dedupe`] so an exit note that still shows
 /// the display label can coalesce against a retained Exited entry.
 pub fn resolve_registry_key(
@@ -186,7 +186,7 @@ pub fn resolve_registry_key(
 }
 
 /// Like [`resolve_registry_key`], but display-label fallback also matches a
-/// unique retained **exited** entry. Used only for await-dedupe coalescing so
+/// unique retained **exited** entry. Used only for legacy completion-dedupe coalescing so
 /// notes that embed the user-facing label still suppress after `mark_exited`
 /// (#1378 adversarial re-review). Does not re-arm sockets or resume sessions.
 pub fn resolve_registry_key_for_await_dedupe(
