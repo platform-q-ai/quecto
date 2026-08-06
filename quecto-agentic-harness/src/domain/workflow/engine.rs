@@ -504,22 +504,20 @@ impl WorkflowEngine {
         }
         for (idx, step) in template.steps.iter().enumerate() {
             let done = *self.run.done.get(idx).unwrap_or(&false);
-            // Completed steps stay compact; every INCOMPLETE step (current and
-            // upcoming) shows its full guidance, so an agent reading the status
-            // ahead of time sees the instructions for steps it hasn't reached
-            // yet (not just the bare label).
+            // Status is an agent-control surface, not a full lookahead plan:
+            // show completed history plus the current step only. Future
+            // incomplete steps (and their guidance) stay hidden until they
+            // become current, so agents cannot act on later-step instructions
+            // prematurely.
             if done {
                 out.push_str(&format!("  [✓] {}. {}\n", idx + 1, step.label));
                 continue;
             }
-            let marker = if current_idx == Some(idx + 1) {
-                "CURRENT STEP → "
-            } else {
-                "  [ ] "
-            };
+            if current_idx != Some(idx + 1) {
+                continue;
+            }
             out.push_str(&format!(
-                "{}{}. {} [{}]\n",
-                marker,
+                "CURRENT STEP → {}. {} [{}]\n",
                 idx + 1,
                 step.label,
                 phase_display_name(&step.phase)

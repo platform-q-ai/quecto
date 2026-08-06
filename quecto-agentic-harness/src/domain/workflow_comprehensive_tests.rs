@@ -398,17 +398,45 @@ fn step_handoff_text_carries_progress_and_active_issue() {
 }
 
 #[test]
-fn status_text_shows_guidance_for_incomplete_non_current_steps() {
-    // Regression: the status view used to render guidance only for the CURRENT
-    // step, so an agent reading the workflow ahead of time saw later steps as
-    // bare labels (e.g. the reviewers step). Now every INCOMPLETE step shows its
-    // guidance, while completed steps stay compact.
+fn status_text_shows_only_completed_steps_and_current_step() {
+    // Workflow status is an agent-control surface: it should orient the agent
+    // with already-completed context plus the current step, without leaking
+    // future incomplete step labels or guidance that could encourage read-ahead.
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.select_template("feature", None).unwrap();
-    // Current step is step 1 (hooks); reviewers is a later, non-current step.
+    engine.check(1).unwrap();
+
     let status = engine.status_text();
+    assert!(status.contains("Progress: 1/19"));
+    assert!(status.contains("[✓] 1. Install/check local quality hooks"));
     assert!(status.contains("CURRENT STEP"));
-    // An upcoming, non-current step's guidance is visible:
-    assert!(status.contains("INLINE review comment"));
-    assert!(status.contains("addPullRequestReview"));
+    assert!(status.contains("2. Update Scenarios / Add new features"));
+    assert!(status.contains("acceptance criteria"));
+
+    let current_index = engine.current_step().unwrap().index;
+    let snap = engine.snapshot(true);
+    let future_steps: Vec<_> = snap
+        .steps
+        .iter()
+        .filter(|step| !step.done && step.index > current_index)
+        .collect();
+    assert!(!future_steps.is_empty());
+    for step in future_steps {
+        for hidden in [
+            format!("[ ] {}.", step.index),
+            format!("{}. {}", step.index, step.label),
+            step.label.clone(),
+        ] {
+            assert!(
+                !status.contains(&hidden),
+                "status should hide future step identifier '{hidden}': {status}"
+            );
+        }
+        if let Some(guidance) = &step.guidance {
+            assert!(
+                !status.contains(guidance),
+                "status should hide future step guidance '{guidance}': {status}"
+            );
+        }
+    }
 }

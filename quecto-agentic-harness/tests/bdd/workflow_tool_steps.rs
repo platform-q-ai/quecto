@@ -100,8 +100,8 @@ fn given_workflow_events_are_cleared(world: &mut QuectoWorld) {
         .clear();
 }
 
-#[given(expr = "workflow step {int} is checked through the tool")]
-fn given_workflow_step_is_checked_through_tool(world: &mut QuectoWorld, number: usize) {
+#[given(expr = "workflow step {int} is complete")]
+fn given_workflow_step_is_complete(world: &mut QuectoWorld, number: usize) {
     execute_workflow_action(world, &format!(r#"{{"action":"check","step":{}}}"#, number));
     assert!(
         !world.workflow_tool_result.as_ref().unwrap().is_error,
@@ -296,6 +296,80 @@ fn then_workflow_tool_result_should_be_error(world: &mut QuectoWorld) {
         "expected workflow error, got: {}",
         result.content
     );
+}
+
+#[then("the workflow tool result should show completed previous steps")]
+fn then_workflow_tool_result_should_show_completed_previous_steps(world: &mut QuectoWorld) {
+    let result = world
+        .workflow_tool_result
+        .as_ref()
+        .expect("workflow result not set");
+    let engine = workflow_tool(world).engine().lock().unwrap();
+    let current_index = engine
+        .current_step()
+        .expect("workflow must have an incomplete current step")
+        .index;
+    let snapshot = engine.snapshot(true);
+    let previous_completed: Vec<_> = snapshot
+        .steps
+        .iter()
+        .filter(|step| step.done && step.index < current_index)
+        .collect();
+    assert!(
+        !previous_completed.is_empty(),
+        "scenario must include at least one completed previous step"
+    );
+    for step in previous_completed {
+        let expected = format!("[✓] {}. {}", step.index, step.label);
+        assert!(
+            result.content.contains(&expected),
+            "workflow status should show completed previous step '{expected}': {}",
+            result.content
+        );
+    }
+}
+
+#[then("the workflow tool result should hide future incomplete steps")]
+fn then_workflow_tool_result_should_hide_future_incomplete_steps(world: &mut QuectoWorld) {
+    let result = world
+        .workflow_tool_result
+        .as_ref()
+        .expect("workflow result not set");
+    let engine = workflow_tool(world).engine().lock().unwrap();
+    let current_index = engine
+        .current_step()
+        .expect("workflow must have an incomplete current step")
+        .index;
+    let snapshot = engine.snapshot(true);
+    let future_incomplete: Vec<_> = snapshot
+        .steps
+        .iter()
+        .filter(|step| !step.done && step.index > current_index)
+        .collect();
+    assert!(
+        !future_incomplete.is_empty(),
+        "scenario must include at least one future incomplete step"
+    );
+    for step in future_incomplete {
+        for hidden in [
+            format!("[ ] {}.", step.index),
+            format!("{}. {}", step.index, step.label),
+            step.label.clone(),
+        ] {
+            assert!(
+                !result.content.contains(&hidden),
+                "workflow status should hide future step identifier '{hidden}': {}",
+                result.content
+            );
+        }
+        if let Some(guidance) = &step.guidance {
+            assert!(
+                !result.content.contains(guidance),
+                "workflow status should hide future step guidance '{guidance}': {}",
+                result.content
+            );
+        }
+    }
 }
 
 #[then(expr = "the workflow tool result should contain {string}")]
