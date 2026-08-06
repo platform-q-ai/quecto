@@ -1,6 +1,6 @@
 [package]
 name = "quecto-agentic-harness"
-version = "0.104.0"
+version = "0.104.1"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
 license = "LicenseRef-Proprietary"
@@ -30,6 +30,7 @@ serde_json = { version = "1", features = ["raw_value"] }
 # Utilities
 uuid = { version = "1", features = ["v4"] }
 humantime = "2"
+futures = "0.3"
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
