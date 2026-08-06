@@ -367,6 +367,17 @@ Design properties:
   ends up as PID 1). Passing them with `docker run -e` would persist them in
   the container config, readable via `docker inspect` for the container's
   whole lifetime (PR #1401 review). Requires `/bin/sh` in the image.
+- **GitHub access works inside the environment.** Agent workflows need `gh`
+  and git-over-https pushes, and a host keyring is unreachable from a
+  container. `create.sh` resolves the token host-side (`gh auth token`) and
+  ships it as `GH_TOKEN`/`GITHUB_TOKEN` through the same `0600` secret file;
+  git identity (global gitconfig only, for determinism) and the
+  `gh auth git-credential` helper travel as non-secret `GIT_CONFIG_*`
+  environment entries, so the host gitconfig — which may carry LFS filters or
+  keyring helpers the image lacks — is never mounted. `exec.sh` gives joiners
+  the identical contract (including sourcing the secret file). Requires `gh`
+  in the image for API/push use; everything else degrades gracefully when no
+  token is available.
 
 A matching configuration:
 

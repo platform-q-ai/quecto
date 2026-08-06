@@ -68,8 +68,32 @@ workspace_path="$env_dir/workspace"
 workdir="$workspace_path/repo"
 [ -d "$workdir" ] || workdir="$workspace_path"
 
-docker exec -d -w "$workdir" -e "HOME=$HOME" \
-  "$container" "$@"
+envs=(-e "HOME=$HOME")
+# Joiners get the same environment contract as the creator: git identity +
+# gh credential helper as non-secret GIT_CONFIG_* entries, and the 0600
+# provider-env file (API keys + GH token) sourced by a bootstrap so secrets
+# never enter the docker-side exec config.
+gcfg_i=0
+add_git_cfg() {
+  envs+=(-e "GIT_CONFIG_KEY_${gcfg_i}=$1" -e "GIT_CONFIG_VALUE_${gcfg_i}=$2")
+  gcfg_i=$((gcfg_i + 1))
+}
+git_name="$(git config --global --get user.name 2>/dev/null || true)"
+git_email="$(git config --global --get user.email 2>/dev/null || true)"
+[ -n "$git_name" ] && add_git_cfg user.name "$git_name"
+[ -n "$git_email" ] && add_git_cfg user.email "$git_email"
+secret_env_file="$env_dir/provider-env"
+if [ -f "$secret_env_file" ] && grep -q '^export GH_TOKEN=' "$secret_env_file"; then
+  add_git_cfg credential.https://github.com.helper "!gh auth git-credential"
+fi
+[ "$gcfg_i" -gt 0 ] && envs+=(-e "GIT_CONFIG_COUNT=$gcfg_i")
+if [ -f "$secret_env_file" ]; then
+  docker exec -d -w "$workdir" "${envs[@]}" \
+    "$container" /bin/sh -c '. "$0" && exec "$@"' "$secret_env_file" "$@"
+else
+  docker exec -d -w "$workdir" "${envs[@]}" \
+    "$container" "$@"
+fi
 
 jq -cn --arg container "$container" --arg socket "$socket_path" \
   '{container: $container, socket: $socket}' >>"$env_dir/children.jsonl"

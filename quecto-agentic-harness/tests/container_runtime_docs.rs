@@ -106,6 +106,26 @@ fn readme_links_the_canonical_runtime_doc_and_scripts() {
 }
 
 #[test]
+fn docker_exec_gives_joiners_the_creator_environment_contract() {
+    // Joiners must source the same 0600 secret file (API keys + GH token)
+    // and receive the same non-secret git wiring as the creator.
+    let exec = read_workspace_file(DOCKER_SCRIPTS[1]);
+    for needle in [
+        "provider-env",
+        "GIT_CONFIG_COUNT",
+        "gh auth git-credential",
+        "git config --global --get user.name",
+        r#"'. "$0" && exec "$@"'"#,
+    ] {
+        assert!(
+            exec.contains(needle),
+            "{} should contain {needle}",
+            DOCKER_SCRIPTS[1]
+        );
+    }
+}
+
+#[test]
 fn docker_adapter_keeps_its_load_bearing_properties() {
     // Contract needles for the Docker adapter: strict jq-encoded JSON,
     // identity mounts, rollback, id containment, op logging, and the
@@ -134,6 +154,16 @@ fn docker_adapter_keeps_its_load_bearing_properties() {
         // sourced before exec — never `docker run -e` (docker-inspect leak).
         "umask 077",
         "provider-env",
+        // GitHub access for in-container workflows: host-side token resolve
+        // into the same 0600 secret file (keyrings are container-unreachable),
+        // gh credential helper + deterministic global-git identity via
+        // GIT_CONFIG_* env entries, host gitconfig never mounted.
+        "gh auth token",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "gh auth git-credential",
+        "GIT_CONFIG_COUNT",
+        "git config --global --get user.name",
     ] {
         assert!(
             create.contains(needle),

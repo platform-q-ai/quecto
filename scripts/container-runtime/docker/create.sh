@@ -121,17 +121,48 @@ envs=(-e "HOME=$HOME")
 # appear in the docker-side container config. (/proc/1/environ inside the
 # container is unavoidable: joiners there already share $HOME/.quecto.)
 secret_env_file=""
-secret_keys=()
+append_secret() {
+  # $1=name $2=value — single-quote-escaped export into the 0600 env file.
+  if [ -z "$secret_env_file" ]; then
+    secret_env_file="$env_dir/provider-env"
+    (umask 077 && : >"$secret_env_file")
+  fi
+  local value="$2"
+  printf "export %s='%s'\n" "$1" "${value//\'/\'\\\'\'}" >>"$secret_env_file"
+}
 for key in ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY; do
-  if [ -n "${!key:-}" ]; then secret_keys+=("$key"); fi
+  if [ -n "${!key:-}" ]; then append_secret "$key" "${!key}"; fi
 done
-if [ "${#secret_keys[@]}" -gt 0 ]; then
-  secret_env_file="$env_dir/provider-env"
-  (umask 077 && : >"$secret_env_file")
-  for key in "${secret_keys[@]}"; do
-    value="${!key}"
-    printf "export %s='%s'\n" "$key" "${value//\'/\'\\\'\'}" >>"$secret_env_file"
-  done
+# GitHub access for agents inside the environment (workflows need `gh` and
+# git-over-https pushes). A host keyring is unreachable from a container, so
+# the token is resolved host-side (`gh auth token`) and rides in via the same
+# 0600 secret file; git identity and the gh credential helper are non-secret
+# and travel as GIT_CONFIG_* env entries, so the host gitconfig (which may
+# carry LFS filters or keyring helpers the image lacks) is never mounted.
+gh_token=""
+if command -v gh >/dev/null 2>&1; then
+  gh_token="$(gh auth token 2>/dev/null || true)"
+fi
+if [ -n "$gh_token" ]; then
+  append_secret GH_TOKEN "$gh_token"
+  append_secret GITHUB_TOKEN "$gh_token"
+fi
+gcfg_i=0
+add_git_cfg() {
+  envs+=(-e "GIT_CONFIG_KEY_${gcfg_i}=$1" -e "GIT_CONFIG_VALUE_${gcfg_i}=$2")
+  gcfg_i=$((gcfg_i + 1))
+}
+# Deterministic identity: the global gitconfig only (repo-local identity at
+# the parent's cwd is an accident of where the spawn ran).
+git_name="$(git config --global --get user.name 2>/dev/null || true)"
+git_email="$(git config --global --get user.email 2>/dev/null || true)"
+[ -n "$git_name" ] && add_git_cfg user.name "$git_name"
+[ -n "$git_email" ] && add_git_cfg user.email "$git_email"
+if [ -n "$gh_token" ]; then
+  add_git_cfg credential.https://github.com.helper "!gh auth git-credential"
+fi
+[ "$gcfg_i" -gt 0 ] && envs+=(-e "GIT_CONFIG_COUNT=$gcfg_i")
+if [ -n "$secret_env_file" ]; then
   mounts+=(-v "$secret_env_file:$secret_env_file:ro")
 fi
 if [ -n "$secret_env_file" ]; then
