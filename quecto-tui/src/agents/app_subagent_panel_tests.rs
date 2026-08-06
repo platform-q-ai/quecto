@@ -12,7 +12,7 @@ use crate::protocol::client::{Event, SubagentInfoEvent, SubagentWorkflow};
 use crate::shell::keys::Key;
 
 /// A `SubagentInfoEvent` with an explicit parent (for tree tests) and socket.
-fn child(id: &str, status: &str, parent: Option<&str>) -> SubagentInfoEvent {
+pub(super) fn child(id: &str, status: &str, parent: Option<&str>) -> SubagentInfoEvent {
     SubagentInfoEvent {
         agent_uuid: None,
         display_name: None,

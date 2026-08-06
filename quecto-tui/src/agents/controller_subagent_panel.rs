@@ -326,21 +326,35 @@ impl App {
     }
 
     /// Move the panel highlight down by multiple rows (mouse wheel/page-like
-    /// panel scrolling) without switching the active session.
+    /// panel scrolling) without switching the active session. Unlike arrow-key
+    /// navigation, scroll/page input is clamped at the list edge so a wheel tick
+    /// at the bottom never wraps back to Master.
     pub(super) fn panel_highlight_next_by(&mut self, rows: usize) {
         let len = self.panel_rows().len();
-        for _ in 0..rows {
-            self.subagents.panel_nav.move_next(len);
+        if len == 0 {
+            self.subagents.panel_nav.set_selected(0);
+            return;
         }
+        let selected = self.subagents.panel_nav.selected();
+        self.subagents
+            .panel_nav
+            .set_selected(selected.saturating_add(rows).min(len - 1));
     }
 
     /// Move the panel highlight up by multiple rows (mouse wheel/page-like
-    /// panel scrolling) without switching the active session.
+    /// panel scrolling) without switching the active session. Unlike arrow-key
+    /// navigation, scroll/page input is clamped at the list edge so a wheel tick
+    /// at the top never wraps to the bottom.
     pub(super) fn panel_highlight_previous_by(&mut self, rows: usize) {
         let len = self.panel_rows().len();
-        for _ in 0..rows {
-            self.subagents.panel_nav.move_previous(len);
+        if len == 0 {
+            self.subagents.panel_nav.set_selected(0);
+            return;
         }
+        let selected = self.subagents.panel_nav.selected();
+        self.subagents
+            .panel_nav
+            .set_selected(selected.saturating_sub(rows));
     }
 
     /// Jump the panel highlight to a 1-based row number (digits 1–9). Row 1 is
@@ -403,6 +417,10 @@ impl App {
             // The group dissolved (member exited/refreshed away): drop the
             // stale selection so the chrome and cursor fall back together.
             self.subagents.selected_environment = None;
+        }
+        if matches!(self.subagents.focus, Focus::Panel) {
+            self.subagents.panel_nav.clamp(rows.len());
+            return;
         }
         if let Some(idx) = rows
             .iter()
