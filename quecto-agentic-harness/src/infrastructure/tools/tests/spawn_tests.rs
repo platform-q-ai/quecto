@@ -541,3 +541,35 @@ fn child_runtime_paths_are_uuid_keyed() {
         "quecto-wfspec-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee-4242.json"
     );
 }
+
+#[test]
+fn test_definition_documents_container_spawning() {
+    let tool = test_tool();
+    let def = tool.definition();
+    let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
+    let container = &schema["properties"]["container"];
+    let desc = container["description"]
+        .as_str()
+        .expect("container documented");
+    // Every accepted input form is discoverable from the schema alone.
+    for needle in [
+        "false",
+        "true",
+        "\"mode\":\"new\"",
+        "\"mode\":\"existing\"",
+        "environment_ref=",
+        "get_containers",
+        "kill_container",
+    ] {
+        assert!(
+            desc.contains(needle),
+            "container description misses {needle}"
+        );
+    }
+    // The absolute-config requirement is stated where agents will read it.
+    let config_desc = schema["properties"]["config"]["description"]
+        .as_str()
+        .unwrap();
+    assert!(config_desc.contains("container"));
+    assert!(config_desc.contains("absolute"));
+}
