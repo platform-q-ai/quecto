@@ -48,6 +48,7 @@ impl App {
         self.subagents.awaited_agent_id = None;
         self.subagents.selected_environment = None;
         self.subagents.panel_nav = crate::components::list_navigator::ListNavigator::new();
+        self.subagents.panel_nav_key = Some("master".to_string());
         self.notify("Deleting all subagents", NotifyLevel::Info);
     }
 
@@ -102,6 +103,10 @@ impl App {
         }
         if self.subagents.awaited_agent_id.as_deref() == Some(from) {
             self.subagents.awaited_agent_id = Some(to.to_string());
+        }
+        let from_key = format!("agent:{from}");
+        if self.subagents.panel_nav_key.as_deref() == Some(from_key.as_str()) {
+            self.subagents.panel_nav_key = Some(format!("agent:{to}"));
         }
 
         self.sync_panel_selection_to_active();

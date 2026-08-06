@@ -2,6 +2,13 @@ use super::tui_harness::*;
 use crate::protocol::client::Event;
 use crate::shell::keys::Key;
 
+fn selected_panel_label(panel: &str) -> Option<String> {
+    panel
+        .lines()
+        .find(|line| line.contains('▌'))
+        .map(str::to_string)
+}
+
 #[tokio::test]
 async fn panel_scroll_and_page_keys_clamp_at_list_edges() {
     let mut h = TuiHarness::sized(80, 8).await;
@@ -75,5 +82,83 @@ async fn focused_panel_scroll_survives_live_agent_updates() {
     assert!(
         after.contains("worker-02"),
         "panel scroll viewport should remain stable across live updates:\n{after}"
+    );
+}
+
+#[tokio::test]
+async fn focused_panel_selection_tracks_agent_identity_across_roster_reorder() {
+    let mut h = TuiHarness::sized(80, 8).await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![
+        subagent("alpha", "running", None),
+        subagent("bravo", "running", None),
+        subagent("charlie", "running", None),
+    ]));
+
+    h.press(Key::Tab);
+    h.press(Key::Down);
+    h.press(Key::Down);
+    assert!(
+        selected_panel_label(&h.full_frame()).is_some_and(|line| line.contains("bravo")),
+        "precondition: focused panel cursor should be on bravo before reorder:\n{}",
+        h.left_panel()
+    );
+
+    h.event(subagents_changed(vec![
+        subagent("aardvark", "running", None),
+        subagent("alpha", "running", None),
+        subagent("bravo", "idle", None),
+        subagent("charlie", "running", None),
+    ]));
+
+    assert!(
+        selected_panel_label(&h.full_frame()).is_some_and(|line| line.contains("bravo")),
+        "focused panel cursor must follow the same agent identity across roster reorder:\n{}",
+        h.left_panel()
+    );
+    h.press(Key::Enter);
+    assert_eq!(
+        h.app_mut().active_agent_id(),
+        Some("bravo"),
+        "Enter must commit the identity the user highlighted before the live reorder"
+    );
+}
+
+#[tokio::test]
+async fn focused_panel_environment_highlight_is_not_restored_by_live_sync() {
+    let mut h = TuiHarness::sized(80, 8).await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![
+        subagent("alpha", "running", None),
+        subagent("bravo", "running", None),
+        subagent("charlie", "running", None),
+    ]));
+
+    h.press(Key::Tab);
+    h.press(Key::Down);
+    h.press(Key::Down);
+    let selected = h.app_mut().panel_highlight_index();
+    assert!(
+        selected_panel_label(&h.full_frame()).is_some_and(|line| line.contains("bravo")),
+        "precondition: focused panel cursor should be on bravo:\n{}",
+        h.left_panel()
+    );
+
+    h.app_mut().subagents.selected_environment = Some("stale-env".to_string());
+    h.event(subagents_changed(vec![
+        subagent("alpha", "idle", None),
+        subagent("bravo", "idle", None),
+        subagent("charlie", "idle", None),
+    ]));
+
+    assert_eq!(
+        h.app_mut().panel_highlight_index(),
+        selected,
+        "Focus::Panel must prevent stale committed environment sync from snapping to active/master"
+    );
+    assert!(
+        selected_panel_label(&h.full_frame()).is_some_and(|line| line.contains("bravo")),
+        "focused panel cursor should remain on bravo after stale env clears:\n{}",
+        h.left_panel()
     );
 }
