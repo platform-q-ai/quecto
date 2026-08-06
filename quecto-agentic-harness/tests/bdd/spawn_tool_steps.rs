@@ -788,6 +788,7 @@ fn given_script_spawn_via_inherited_runtime_config(world: &mut QuectoWorld, scri
     let inherited = world.config_path.clone().expect("config path");
     // SAFETY: the scenario is tagged @serial, so no other scenario runs concurrently in this process while the process-wide env is mutated.
     unsafe { std::env::set_var("QUECTO_RUNTIME_CONFIG_PATH", inherited) };
+    world.restore_inherited_runtime_config = true;
 }
 
 #[given("script-managed subagent spawning is available with no parent config path")]

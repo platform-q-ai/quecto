@@ -414,6 +414,26 @@ fn then_container_info_pane(world: &mut TuiWorld, a: String, b: String) {
     }
 }
 
+#[when("I select the master row through panel navigation")]
+fn when_select_master_row(world: &mut TuiWorld) {
+    // The master row is row 1. Navigation wraps and the cursor remembers its
+    // last position, so use the digit-jump (1 = master) instead of walking.
+    drive(world, |h| {
+        h.press(Key::Tab);
+        h.press(Key::Char('1'));
+        h.press(Key::Enter);
+    });
+}
+
+#[then("the main pane renders the parent conversation again")]
+fn then_conversation_restored(world: &mut TuiWorld) {
+    let top = drive(world, |h| h.main_pane());
+    assert!(
+        top.contains("PARENT_CONVERSATION_MARKER"),
+        "deselecting the environment must restore the transcript:\n{top}"
+    );
+}
+
 #[then("the main pane does not render the parent conversation")]
 fn then_no_parent_conversation(world: &mut TuiWorld) {
     let top = drive(world, |h| h.main_pane());

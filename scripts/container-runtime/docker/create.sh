@@ -73,6 +73,12 @@ done
 [ -n "$socket_path" ] || die "child command has no --socket argument"
 socket_dir="$(dirname "$socket_path")"
 [ -d "$socket_dir" ] || die "socket dir $socket_dir does not exist"
+# Validate BEFORE any environment state exists: `die` exits without firing
+# the ERR trap, so every die-able check must precede the mktemp below or a
+# failed create would leak an unreported env dir forever.
+if [ -n "$config_path" ]; then
+  [ -f "$config_path" ] || die "child --config $config_path does not exist"
+fi
 
 mkdir -p -m 700 "$state_dir"
 [ -O "$state_dir" ] || die "state dir $state_dir is not owned by the current user"
@@ -103,7 +109,6 @@ mounts=(
   -v "$HOME/.quecto:$HOME/.quecto:rw"
 )
 if [ -n "$config_path" ] && [[ "$config_path" != "$HOME/.quecto/"* ]]; then
-  [ -f "$config_path" ] || die "child --config $config_path does not exist"
   mounts+=(-v "$config_path:$config_path:ro")
 fi
 # HOME is preserved and QUECTO_BASE_DIR is deliberately NOT overridden:
