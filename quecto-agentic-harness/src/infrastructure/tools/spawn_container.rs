@@ -88,7 +88,90 @@ pub(super) async fn spawn_prepared_child(
             )
             .await
         }
+        ContainerSelection::Existing { target } => {
+            join_script_managed_child(child, environments, target).await
+        }
     }
+}
+
+/// Join an existing committed environment (#1369 slice 2): resolve the target
+/// through the authoritative registry, then run the environment's *retained*
+/// exec argv — never the currently configured script set.
+async fn join_script_managed_child(
+    child: &ChildCommand<'_>,
+    environments: &EnvironmentRegistry,
+    target: &crate::domain::environment_registry::EnvironmentTarget,
+) -> Result<PreparedChild, DomainError> {
+    let record = environments
+        .resolve_joinable(target)
+        .map_err(|e| DomainError::Tool(e.to_string()))?;
+    if record.retained_exec_argv.is_empty() {
+        return Err(DomainError::Tool(format!(
+            "environment {} has no retained exec argv; its script set does not support joins",
+            record.environment_ref
+        )));
+    }
+    let mut cmd = script_command(&record.retained_exec_argv, child.binary, child.cli_args);
+    cmd.env("QUECTO_CONTAINER_SCRIPT", &record.script_name);
+    cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", &record.environment_id);
+    apply_common_child_env(&mut cmd, child.base_dir);
+    cmd.stdout(std::process::Stdio::piped());
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| DomainError::Tool(format!("failed to invoke script-managed exec: {e}")))?;
+    if !output.status.success() {
+        return Err(DomainError::Tool(format!(
+            "script-managed exec failed with status {}",
+            output.status
+        )));
+    }
+    let socket_path = parse_exec_result(&output.stdout)?;
+    Ok(PreparedChild {
+        child: None,
+        environment_ref: Some(record.environment_ref),
+        socket_path: Some(socket_path),
+        cleanup_environment_id: None,
+        cleanup_argv: Vec::new(),
+        // Joining never owns the environment: a failed join must not
+        // uncommit or stop it.
+        environments: None,
+    })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExecResultWire {
+    metadata: serde_json::Value,
+    #[serde(default)]
+    socket_path: std::path::PathBuf,
+    #[serde(default)]
+    socket_proxy: Option<serde_json::Value>,
+}
+
+fn parse_exec_result(stdout: &[u8]) -> Result<std::path::PathBuf, DomainError> {
+    let text = std::str::from_utf8(stdout).map_err(|e| {
+        DomainError::Tool(format!("script-managed exec returned non-UTF8 JSON: {e}"))
+    })?;
+    let mut de = serde_json::Deserializer::from_str(text);
+    let wire = ExecResultWire::deserialize(&mut de).map_err(|e| {
+        DomainError::Tool(format!(
+            "script-managed exec returned invalid JSON contract: {e}"
+        ))
+    })?;
+    de.end().map_err(|e| {
+        DomainError::Tool(format!("script-managed exec returned extra JSON data: {e}"))
+    })?;
+    if wire.socket_path.as_os_str().is_empty()
+        || wire.socket_proxy.is_some()
+        || !wire.metadata.is_object()
+    {
+        return Err(DomainError::Tool(
+            "script-managed exec result must contain a metadata object and direct socket_path only"
+                .into(),
+        ));
+    }
+    Ok(wire.socket_path)
 }
 
 fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, DomainError> {
@@ -133,15 +216,14 @@ async fn spawn_script_managed_child(
     let script_name = script_name(selected_script, cfg)?;
     let script = script_config(cfg, script_name)?;
     validate_script(script)?;
+    let repository = selected_repo(config, child.base_dir)?.unwrap_or_default();
     let environment_ref = environments.mint_ref();
-    let mut cmd = create_command(script, child.binary, child.cli_args);
-    set_script_env(
-        &mut cmd,
-        config,
-        script_name,
-        &environment_ref,
-        child.base_dir,
-    )?;
+    let mut cmd = script_command(&script.create, child.binary, child.cli_args);
+    if !repository.is_empty() {
+        cmd.env("QUECTO_CONTAINER_REPO", &repository);
+    }
+    cmd.env("QUECTO_CONTAINER_SCRIPT", script_name);
+    cmd.env("QUECTO_CONTAINER_ENVIRONMENT_REF", &environment_ref);
     apply_common_child_env(&mut cmd, child.base_dir);
     cmd.stdout(std::process::Stdio::piped());
     let output = cmd
@@ -167,8 +249,17 @@ async fn spawn_script_managed_child(
     environments.commit(EnvironmentRecord {
         environment_ref: environment_ref.clone(),
         environment_id: result.environment_id.clone(),
+        environment_uuid: crate::domain::environment_registry::mint_environment_uuid(),
+        name: environment_name(config),
         workspace_path: result.workspace_path.clone(),
+        repository,
         script_name: script_name.to_string(),
+        retained_exec_argv: script.exec.clone(),
+        retained_kill_argv: script.kill.clone(),
+        members: Vec::new(),
+        status: crate::domain::environment_registry::EnvironmentStatus::Running,
+        metadata: result.metadata.clone(),
+        last_error: None,
     });
     Ok(PreparedChild {
         child: None,
@@ -196,6 +287,14 @@ struct CreateResult {
     environment_id: String,
     workspace_path: std::path::PathBuf,
     socket_path: std::path::PathBuf,
+    metadata: serde_json::Value,
+}
+
+fn environment_name(config: &SubagentConfig) -> Option<String> {
+    match &config.container {
+        ContainerSelection::New { name, .. } => name.clone(),
+        _ => None,
+    }
 }
 
 /// Best-effort extraction of `environment_id` from a rejected create result so
@@ -243,6 +342,7 @@ fn parse_create_result(stdout: &[u8]) -> Result<CreateResult, DomainError> {
         environment_id: wire.environment_id,
         workspace_path: wire.workspace_path,
         socket_path: wire.socket_path,
+        metadata: wire.metadata,
     })
 }
 
@@ -270,32 +370,19 @@ fn script_config<'a>(
     })
 }
 
-fn create_command(
-    script: &ContainerScriptConfig,
+/// Argv-safe script invocation: `<argv...> -- <child binary> <child args...>`.
+/// Shared by the create and (retained) exec operations.
+fn script_command(
+    argv: &[String],
     binary: &Path,
     cli_args: &[std::ffi::OsString],
 ) -> tokio::process::Command {
-    let mut cmd = tokio::process::Command::new(&script.create[0]);
-    cmd.args(&script.create[1..]);
+    let mut cmd = tokio::process::Command::new(&argv[0]);
+    cmd.args(&argv[1..]);
     cmd.arg("--");
     cmd.arg(binary);
     cmd.args(cli_args);
     cmd
-}
-
-fn set_script_env(
-    cmd: &mut tokio::process::Command,
-    config: &SubagentConfig,
-    script_name: &str,
-    env_ref: &str,
-    base_dir: &Path,
-) -> Result<(), DomainError> {
-    if let Some(repo) = selected_repo(config, base_dir)? {
-        cmd.env("QUECTO_CONTAINER_REPO", repo);
-    }
-    cmd.env("QUECTO_CONTAINER_SCRIPT", script_name);
-    cmd.env("QUECTO_CONTAINER_ENVIRONMENT_REF", env_ref);
-    Ok(())
 }
 
 fn selected_repo(config: &SubagentConfig, base_dir: &Path) -> Result<Option<String>, DomainError> {
@@ -304,7 +391,7 @@ fn selected_repo(config: &SubagentConfig, base_dir: &Path) -> Result<Option<Stri
             repo: Some(repo), ..
         } => Ok(Some(repo.clone())),
         ContainerSelection::New { repo: None, .. } => discover_parent_repo(base_dir).map(Some),
-        ContainerSelection::Local => Ok(None),
+        ContainerSelection::Local | ContainerSelection::Existing { .. } => Ok(None),
     }
 }
 
@@ -358,6 +445,8 @@ fn validate_script(script: &ContainerScriptConfig) -> Result<(), DomainError> {
         .create
         .iter()
         .chain(script.cleanup.iter())
+        .chain(script.exec.iter())
+        .chain(script.kill.iter())
         .any(|s| unsafe_arg(s))
     {
         return Err(DomainError::Tool(

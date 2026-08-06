@@ -53,10 +53,10 @@ Feature: Script-managed subagent spawning
       | runtime |
 
   @done @container-spawn
-  Scenario: Existing container mode is rejected before environment creation
+  Scenario: Existing container mode without a target is rejected before environment creation
     Given script-managed subagent spawning is available with default script "default"
     When I spawn subagent "container-existing-slice1" into an existing container
-    Then the spawn result should fail because existing containers are unsupported
+    Then the spawn result should fail because existing mode requires a ref or name
     And the script-managed runtime should not have been invoked
     And the spawn result should not include an environment reference
 

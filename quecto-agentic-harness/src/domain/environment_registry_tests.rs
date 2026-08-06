@@ -4,8 +4,17 @@ fn record(env_ref: &str, id: &str) -> EnvironmentRecord {
     EnvironmentRecord {
         environment_ref: env_ref.to_string(),
         environment_id: id.to_string(),
+        environment_uuid: mint_environment_uuid(),
+        name: None,
         workspace_path: PathBuf::from("/workspace"),
+        repository: "https://example.invalid/repo.git".to_string(),
         script_name: "default".to_string(),
+        retained_exec_argv: vec![],
+        retained_kill_argv: vec![],
+        members: vec![],
+        status: EnvironmentStatus::Running,
+        metadata: serde_json::json!({}),
+        last_error: None,
     }
 }
 

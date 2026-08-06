@@ -261,6 +261,15 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 &identity.session_name,
                 entry,
             )?;
+            // Slice 2 (#1369): every registered environment child — creator or
+            // joiner — becomes a member of its environment; the registry key is
+            // the agent UUID.
+            if let Some(env_ref) = prepared.environment_ref.as_deref() {
+                let _ = self
+                    .tool
+                    .environment_registry
+                    .add_member(env_ref, &identity.registry_key);
+            }
             let monitor_handle = super::subagent_monitor::spawn_monitor_task(
                 identity.registry_key.clone(),
                 runtime.socket_path.clone(),
@@ -300,7 +309,17 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
     }
     fn success(&self, identity: &LaunchIdentity, environment_ref: Option<&str>) -> ToolResult {
         let env_ref = environment_ref
-            .map(|r| format!(" environment_ref={r}"))
+            .map(|r| {
+                // Members of one environment share its reported workspace, so
+                // the spawn result names it alongside the ref (#1369 slice 2).
+                let workspace = self
+                    .tool
+                    .environment_registry
+                    .get(r)
+                    .map(|record| format!(" workspace={}", record.workspace_path.display()))
+                    .unwrap_or_default();
+                format!(" environment_ref={r}{workspace}")
+            })
             .unwrap_or_default();
         ToolResult {
             content: format!(

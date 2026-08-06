@@ -803,6 +803,14 @@ pub struct QuectoWorld {
     pub cascade_broadcast: Option<Option<serde_json::Value>>,
     /// Broadcast receiver for SpawnTool immediate-visibility scenarios (#1028 wave 4)
     pub spawn_broadcast_rx: Option<tokio::sync::broadcast::Receiver<String>>,
+    /// Agent UUIDs captured per agent_id from successful spawns (#1369 slice 2)
+    pub agent_spawn_uuids: std::collections::HashMap<String, String>,
+    /// Environment refs captured per agent_id from successful spawns (#1369 slice 2)
+    pub agent_env_refs: std::collections::HashMap<String, String>,
+    /// Workspaces captured per agent_id from successful spawns (#1369 slice 2)
+    pub agent_workspaces: std::collections::HashMap<String, String>,
+    /// Result of the last get_containers/kill_container command (#1369 slice 2)
+    pub container_cmd_result: Option<ToolResult>,
     /// Monitor abort handle for cancellation test
     pub monitor_abort_handle: Option<tokio::task::JoinHandle<()>>,
     /// Tokio runtime for abort handle test (keeps spawned task alive)
@@ -1340,6 +1348,7 @@ mod repo_docs_steps;
 mod sandbox_steps;
 mod security_steps;
 mod session_steps;
+mod spawn_env_steps;
 mod spawn_tool_steps;
 mod subagent_bar_fixes_steps;
 mod subagent_monitor_steps;

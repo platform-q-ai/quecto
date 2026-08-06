@@ -7,6 +7,8 @@ mod agent_loop;
 mod audit_sink;
 #[path = "contracts/context_spill_store.rs"]
 mod context_spill_store;
+#[path = "contracts/environment_kill_port.rs"]
+mod environment_kill_port;
 #[path = "contracts/extension.rs"]
 mod extension;
 #[path = "contracts/llm_provider.rs"]

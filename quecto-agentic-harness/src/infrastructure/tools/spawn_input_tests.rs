@@ -45,7 +45,8 @@ fn parse_accepts_true_false_and_new_object() {
         parsed,
         ContainerSelection::New {
             repo: Some("r".into()),
-            container_script: Some("s".into())
+            container_script: Some("s".into()),
+            name: None,
         }
     );
 }

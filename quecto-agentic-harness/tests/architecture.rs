@@ -230,6 +230,41 @@ fn domain_layer_has_no_runtime_io_calls() {
 }
 
 #[test]
+fn environment_control_orchestration_stays_out_of_interface_handlers() {
+    // Binding boundary from #1369: environment transactions (`get_containers`,
+    // `kill_container`, ref/name resolution, kill claims) are an application
+    // use case. UDS handlers and the agent_cmd adapter may only decode
+    // arguments, delegate to `EnvironmentControlUseCase`, and encode results —
+    // kill_container orchestration must never live in `uds_query.rs`.
+    let handler_files = [
+        "src/interface/cli/uds_query.rs",
+        "src/infrastructure/tools/agent_cmd.rs",
+        "src/infrastructure/tools/agent_cmd_containers.rs",
+    ];
+    let forbidden = [
+        "begin_kill",
+        "complete_kill",
+        "fail_kill",
+        "remove_member",
+        "add_member",
+        "kill_environment",
+        "EnvironmentRegistry",
+        "EnvironmentKillPort",
+    ];
+    for path in handler_files {
+        let content =
+            fs::read_to_string(path).unwrap_or_else(|e| panic!("read handler file {path}: {e}"));
+        for token in forbidden {
+            assert!(
+                !content.contains(token),
+                "{path} must delegate environment control to EnvironmentControlUseCase; \
+                 found forbidden token '{token}'"
+            );
+        }
+    }
+}
+
+#[test]
 fn public_ports_have_contract_tests() {
     let mut files = Vec::new();
     collect_rs_files(Path::new("src/domain"), &mut files);

@@ -108,6 +108,13 @@ pub enum ContainerSelection {
     New {
         repo: Option<String>,
         container_script: Option<String>,
+        /// Optional environment name for later `{"mode":"existing","name"}`
+        /// joins and `kill_container` targeting (#1369 slice 2).
+        name: Option<String>,
+    },
+    /// Join an existing session environment by ref or name (#1369 slice 2).
+    Existing {
+        target: super::environment_registry::EnvironmentTarget,
     },
 }
 
