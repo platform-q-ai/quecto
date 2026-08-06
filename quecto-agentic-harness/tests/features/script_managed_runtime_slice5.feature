@@ -126,7 +126,7 @@ Feature: Canonical container-runtime scripts and multi-PR orchestration
     And read-only subagent "session-rev-slice5" has joined existing environment ref "C1" with task "SESSION_REV_MARKER"
     When the TUI renders the session's live subagent state
     Then the TUI panel should group "session-pr1-slice5" and "session-rev-slice5" under environment row "C1"
-    And the TUI panel should show "session-pr2-slice5" as a flat row with environment badge "C2"
+    And the TUI panel should nest solo member "session-pr2-slice5" beneath environment row "C2"
 
   @done @container-runtime
   Scenario: Killing one environment leaves the other environment's agents reachable
