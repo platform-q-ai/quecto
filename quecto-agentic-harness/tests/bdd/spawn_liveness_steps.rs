@@ -22,6 +22,10 @@ fn decoy_marker_path(world: &QuectoWorld) -> PathBuf {
     cfg_dir(world).join("decoy.marker")
 }
 
+fn slow_accept_marker_path(world: &QuectoWorld) -> PathBuf {
+    cfg_dir(world).join("slow-accept.marker")
+}
+
 fn load_config(world: &QuectoWorld) -> (PathBuf, serde_json::Value) {
     let cfg_path = PathBuf::from(world.config_path.clone().unwrap());
     let v = serde_json::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
@@ -134,6 +138,7 @@ fn given_proxy_script_spawn(world: &mut QuectoWorld) {
     let base = base_path(world);
     let log = shared_log_path(world);
     let decoy_marker = decoy_marker_path(world);
+    let slow_accept_marker = slow_accept_marker_path(world);
 
     // The bridge program lives in its OWN file: the proxy contract pumps the
     // parent connection over the process's real stdio, so the program must
@@ -141,10 +146,26 @@ fn given_proxy_script_spawn(world: &mut QuectoWorld) {
     let bridge_py = base.join("env-proxy-bridge.py");
     std::fs::write(
         &bridge_py,
-        r#"import os, socket, sys, threading
+        r#"import os, select, socket, sys, threading
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.connect(sys.argv[1])
+marker = '__SLOW_ACCEPT_MARKER__'
+prefetched = b''
+if os.path.exists(marker):
+    readable, _, _ = select.select([0], [], [], 0.2)
+    if readable:
+        prefetched = os.read(0, 65536)
+        if b'PROXY_RETRY_MARKER' in prefetched:
+            try:
+                os.unlink(marker)
+            except FileNotFoundError:
+                pass
+            sys.exit(1)
 def pump():
+    global prefetched
+    if prefetched:
+        s.sendall(prefetched)
+        prefetched = b''
     while True:
         d = os.read(0, 65536)
         if not d:
@@ -160,7 +181,11 @@ while True:
     if not d:
         break
     os.write(1, d)
-"#,
+"#
+        .replace(
+            "__SLOW_ACCEPT_MARKER__",
+            &slow_accept_marker.display().to_string(),
+        ),
     )
     .unwrap();
     let proxy = base.join("env-proxy.sh");
@@ -225,6 +250,10 @@ printf '{"environment_id":"%s","workspace_path":"%s","metadata":{},"socket_proxy
 "#
     .replace("__LOG__", &log.display().to_string())
     .replace("__DECOY_MARKER__", &decoy_marker.display().to_string())
+    .replace(
+        "__SLOW_ACCEPT_MARKER__",
+        &slow_accept_marker.display().to_string(),
+    )
     .replace("__PROXY__", &proxy.display().to_string());
     write_executable(&create, create_script);
 
@@ -260,6 +289,11 @@ fn given_proxy_liveness_spawn(world: &mut QuectoWorld) {
 #[given("a decoy direct socket is planted at the requested child socket path")]
 fn given_decoy_direct_socket(world: &mut QuectoWorld) {
     std::fs::write(decoy_marker_path(world), b"decoy").unwrap();
+}
+
+#[given("the next proxy-only child is not yet accepting commands")]
+fn given_next_proxy_child_not_yet_accepting_commands(world: &mut QuectoWorld) {
+    std::fs::write(slow_accept_marker_path(world), b"slow-accept").unwrap();
 }
 
 #[given("the script-managed create result carries both a socket path and a socket proxy")]
