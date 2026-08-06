@@ -319,6 +319,8 @@ mod app_subagent_environment;
 mod app_subagent_feed;
 #[path = "../agents/controller_subagent_panel.rs"]
 mod app_subagent_panel;
+#[path = "../agents/controller_subagent_panel_rows.rs"]
+mod app_subagent_panel_rows;
 #[path = "app_submit.rs"]
 mod app_submit;
 use crate::agents::roster::{
