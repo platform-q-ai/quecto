@@ -114,6 +114,42 @@ Feature: Agent Tool System
     Then the [ToolResult] should contain "entries limit reached"
     And the [ToolResult] should not be an error
 
+  @done @rust-ast-graph
+  Scenario: Rust AST graph supports symbol navigation and structural queries
+    Given a tool workspace
+    And a file "Cargo.toml" exists with content "[package]\nname = \"demo\"\n"
+    And a file "src/lib.rs" exists with content "pub mod nested;\nuse crate::nested::Worker;\nfn helper() {}\npub struct App;\ntrait Run { fn run(&self); }\nimpl Run for App { fn run(&self) { helper(); } }\npub async fn start() { helper(); }\n// fn comment_only() {}\nconst S: &str = \"string_only()\";\n"
+    And a file "src/nested/mod.rs" exists with content "pub struct Worker;\nimpl Worker { pub fn new() -> Self { Worker } }\n"
+    When the agent executes tool "rust_ast_graph" with args:
+      | action | overview |
+      | limit  | 20       |
+    Then the [ToolResult] should contain "demo"
+    And the [ToolResult] should contain "App"
+    And the [ToolResult] should not be an error
+    When the agent executes tool "rust_ast_graph" with args:
+      | action | find_symbol |
+      | symbol | App         |
+      | limit  | 10          |
+    Then the [ToolResult] should contain "src/lib.rs"
+    And the [ToolResult] should contain "pub struct App"
+    And the [ToolResult] should not be an error
+    When the agent executes tool "rust_ast_graph" with args:
+      | action        | calls  |
+      | symbol        | helper |
+      | limit         | 10     |
+      | snippet_lines | 1      |
+    Then the [ToolResult] should contain "syntactic call candidate"
+    And the [ToolResult] should contain "helper();"
+    And the [ToolResult] should not contain "fn helper()"
+    And the [ToolResult] should not be an error
+    When the agent executes tool "rust_ast_graph" with args:
+      | action | query           |
+      | query  | async_functions |
+      | limit  | 10              |
+    Then the [ToolResult] should contain "start"
+    And the [ToolResult] should contain "async fn"
+    And the [ToolResult] should not be an error
+
   @rust-ast-graph
   Scenario: Tool registry lists core tools
     Given a tool workspace
