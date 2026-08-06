@@ -259,6 +259,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `agents/controller_subagent_environment.rs` | `agents` environment grouping model and main-pane chrome (#1369 slice 4; split from `controller_subagent_panel.rs` for the 750-line baseline) |
 | `agents/controller_subagent_panel.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/controller_subagent_panel_helpers.rs` | `agents` (panel free helpers split, #1378) |
+| `agents/controller_subagent_panel_rows.rs` | `agents` panel row model (master + tree + environment-group rows; split from `controller_subagent_panel.rs` for the 750-line baseline, #1369 slice 4 review) |
 | `agents/controller_subagent_stream.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/controller_subagents.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/feed.rs` | `agents` (relocated, #1257 Phase 4) |
