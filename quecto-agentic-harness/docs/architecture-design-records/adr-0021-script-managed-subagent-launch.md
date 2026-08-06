@@ -21,6 +21,6 @@ Issue #1369 Slice 1 adds script-managed subagent creation while preserving the e
 
 Architecture tests enforce that domain/application do not perform runtime I/O or process construction. Public domain/application launch ports require shared behavioral contract tests under `tests/contracts/`. Future slices extend the same registry and ports rather than adding parallel launch pipelines.
 
-Register-failure rollback is currently enforced only by the application-level contract suite: registration has no production failure mode in this slice, so no scenario fabricates one. It gains a genuine production seam when registration becomes fallible (Slice 2 environment membership).
+Register-failure rollback has a production seam: subagent registration rejects duplicate durable registry keys instead of replacing an existing entry. The application-level contract suite continues to enforce cleanup exactly once on registration failure, and infrastructure tests cover the real duplicate-key failure mode without fabricating adapter failures.
 
 Slice 2 note: the final-member kill claim is minted inside infrastructure's `remove_member_and_finalize` rather than the application use case, because the claim must be granted atomically with the domain registry's membership removal; explicit `kill_container` remains an application use case and interface adapters stay decode/delegate/encode.
