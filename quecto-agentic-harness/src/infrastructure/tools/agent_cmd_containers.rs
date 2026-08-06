@@ -81,6 +81,7 @@ fn encode_listing(records: Vec<EnvironmentRecord>) -> ToolResult {
                 "repository": record.repository,
                 "environment_uuid": record.environment_uuid,
                 "members": record.members,
+                "metadata": record.metadata,
                 "last_error": record.last_error,
             })
         })

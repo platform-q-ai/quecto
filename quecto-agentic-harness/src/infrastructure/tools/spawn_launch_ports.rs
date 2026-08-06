@@ -164,24 +164,53 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
     ) -> LaunchFuture<'b, Result<PreparedRuntime, DomainError>> {
         Box::pin(async move {
             self.owns_environment = prepared.owns_environment();
-            let socket_path = self
-                .socket_path
-                .as_ref()
-                .expect("socket path allocated")
-                .clone();
-            let actual_socket_path = prepared.socket_path.clone().unwrap_or(socket_path);
             let pid = prepared
                 .child
                 .as_ref()
                 .and_then(|child| child.id())
                 .unwrap_or(0);
-            if let Some(child) = &mut prepared.child {
-                self.tool
-                    .wait_for_socket_or_child_exit(&actual_socket_path, child)
-                    .await?;
-            } else {
-                self.tool.wait_for_socket(&actual_socket_path).await?;
-            }
+            // #1369 slice 3: the endpoint the launch adapter prepared is
+            // authoritative from here on. Only a LOCAL child (no endpoint)
+            // uses the requested socket path; a proxy endpoint is
+            // materialized into a parent-owned bridge socket and never falls
+            // back to any requested direct path.
+            let actual_socket_path = match prepared.endpoint.clone() {
+                None => {
+                    let socket_path = self
+                        .socket_path
+                        .as_ref()
+                        .expect("socket path allocated")
+                        .clone();
+                    let child = prepared.child.as_mut().expect("local launch owns a child");
+                    self.tool
+                        .wait_for_socket_or_child_exit(&socket_path, child)
+                        .await?;
+                    socket_path
+                }
+                Some(crate::subagent_launch_app::ParentEndpoint::Direct { socket_path }) => {
+                    self.tool.wait_for_socket(&socket_path).await?;
+                    socket_path
+                }
+                Some(crate::subagent_launch_app::ParentEndpoint::Proxy { argv }) => {
+                    let agent_key = self
+                        .agent_uuid
+                        .as_ref()
+                        .expect("identity allocated")
+                        .to_string();
+                    let bridge = super::spawn_proxy_bridge::materialize(
+                        argv,
+                        &self.tool.socket_dir,
+                        &agent_key,
+                    )
+                    .map_err(|e| {
+                        DomainError::Tool(format!("failed to bind proxy bridge socket: {e}"))
+                    })?;
+                    let bridge_path = bridge.socket_path.clone();
+                    prepared.proxy_bridge = Some(bridge);
+                    super::spawn_proxy_bridge::wait_for_proxy_ready(&bridge_path).await?;
+                    bridge_path
+                }
+            };
             Ok(PreparedRuntime {
                 socket_path: actual_socket_path,
                 pid,
@@ -312,10 +341,15 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 self.tool.broadcast_tx.clone(),
                 self.tool.parent_id.clone(),
             );
+            let proxy_bridge_handle = prepared
+                .proxy_bridge
+                .take()
+                .map(|bridge| std::sync::Arc::new(bridge.into_handle()));
             {
                 let mut entries = self.tool.registry.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(entry) = entries.get_mut(&identity.registry_key) {
                     entry.monitor_handle = Some(std::sync::Arc::new(monitor_handle));
+                    entry.proxy_bridge_handle = proxy_bridge_handle;
                 }
             }
             if let Some(child) = prepared.child.take() {

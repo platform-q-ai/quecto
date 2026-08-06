@@ -4,13 +4,19 @@ use std::path::Path;
 use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry};
 use crate::domain::error::DomainError;
 use crate::domain::subagent::{ContainerSelection, SubagentConfig};
+use crate::domain::subagent_launch::ParentEndpoint;
 use crate::infrastructure::config::{Config, ContainerScriptConfig};
 
 #[derive(Debug)]
 pub(super) struct PreparedChild {
     pub child: Option<tokio::process::Child>,
     pub environment_ref: Option<String>,
-    pub socket_path: Option<std::path::PathBuf>,
+    /// Typed parent endpoint from the create/exec result (#1369 slice 3).
+    /// `None` for local children, whose requested socket path is authoritative.
+    pub endpoint: Option<ParentEndpoint>,
+    /// Proxy bridge materialized at readiness; carried so registration can
+    /// take ownership and rollback can abort it.
+    pub proxy_bridge: Option<super::spawn_proxy_bridge::ProxyBridge>,
     cleanup_environment_id: Option<String>,
     cleanup_argv: Vec<String>,
     /// Session registry the environment was committed to, so rollback can
@@ -23,12 +29,13 @@ impl PreparedChild {
     pub(super) fn new_for_test(
         child: Option<tokio::process::Child>,
         environment_ref: Option<String>,
-        socket_path: Option<std::path::PathBuf>,
+        endpoint: Option<ParentEndpoint>,
     ) -> Self {
         Self {
             child,
             environment_ref,
-            socket_path,
+            endpoint,
+            proxy_bridge: None,
             cleanup_environment_id: None,
             cleanup_argv: vec![],
             environments: None,
@@ -52,6 +59,9 @@ impl PreparedChild {
         if let Some(child) = &mut self.child {
             let _ = child.kill().await;
             let _ = child.wait().await;
+        }
+        if let Some(bridge) = self.proxy_bridge.take() {
+            bridge.abort();
         }
         run_cleanup_once(self.cleanup_environment_id.clone(), &mut self.cleanup_argv).await;
         if let (Some(environments), Some(env_ref)) = (&self.environments, &self.environment_ref) {
@@ -132,11 +142,12 @@ async fn join_script_managed_child(
             output.status
         )));
     }
-    let socket_path = parse_exec_result(&output.stdout)?;
+    let endpoint = parse_exec_result(&output.stdout)?;
     Ok(PreparedChild {
         child: None,
         environment_ref: Some(record.environment_ref),
-        socket_path: Some(socket_path),
+        endpoint: Some(endpoint),
+        proxy_bridge: None,
         cleanup_environment_id: None,
         cleanup_argv: Vec::new(),
         // Joining never owns the environment: a failed join must not
@@ -150,9 +161,18 @@ async fn join_script_managed_child(
 struct ExecResultWire {
     metadata: serde_json::Value,
     #[serde(default)]
-    socket_path: std::path::PathBuf,
+    socket_path: Option<std::path::PathBuf>,
     #[serde(default)]
-    socket_proxy: Option<serde_json::Value>,
+    socket_proxy: Option<SocketProxyWire>,
+}
+
+/// Wire shape of a validated proxy endpoint (#1369 slice 3): an argv the
+/// parent runs per connection as a stdio<->child bridge. Unknown keys (for
+/// example a `shell` string) are rejected — argv-only, no interpolation.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SocketProxyWire {
+    argv: Vec<String>,
 }
 
 /// Strict wire parse shared by the create and exec result contracts: UTF-8
@@ -181,25 +201,40 @@ fn parse_strict_wire<T: serde::de::DeserializeOwned>(
     Ok(wire)
 }
 
-/// Shared endpoint validation for the create and exec results: a metadata
-/// object and a non-empty direct `socket_path` (no `socket_proxy`).
-fn invalid_direct_endpoint(
-    socket_path: &Path,
-    socket_proxy: &Option<serde_json::Value>,
+/// Shared endpoint validation for the create and exec results (#1369 slice
+/// 3): a metadata object plus EXACTLY ONE of a non-empty direct `socket_path`
+/// or a validated `socket_proxy` argv.
+fn endpoint_from_wire(
+    socket_path: Option<std::path::PathBuf>,
+    socket_proxy: Option<SocketProxyWire>,
     metadata: &serde_json::Value,
-) -> bool {
-    socket_path.as_os_str().is_empty() || socket_proxy.is_some() || !metadata.is_object()
+    operation: &str,
+) -> Result<ParentEndpoint, DomainError> {
+    if !metadata.is_object() {
+        return Err(DomainError::Tool(format!(
+            "script-managed {operation} result must contain a metadata object"
+        )));
+    }
+    let socket_path = socket_path.filter(|p| !p.as_os_str().is_empty());
+    match (socket_path, socket_proxy) {
+        (Some(socket_path), None) => Ok(ParentEndpoint::Direct { socket_path }),
+        (None, Some(proxy)) => {
+            if proxy.argv.is_empty() || proxy.argv.iter().any(|s| unsafe_arg(s)) {
+                return Err(DomainError::Tool(format!(
+                    "script-managed {operation} result socket_proxy argv must be non-empty and safe"
+                )));
+            }
+            Ok(ParentEndpoint::Proxy { argv: proxy.argv })
+        }
+        (Some(_), Some(_)) | (None, None) => Err(DomainError::Tool(format!(
+            "script-managed {operation} result must carry exactly one of socket_path or socket_proxy"
+        ))),
+    }
 }
 
-fn parse_exec_result(stdout: &[u8]) -> Result<std::path::PathBuf, DomainError> {
+fn parse_exec_result(stdout: &[u8]) -> Result<ParentEndpoint, DomainError> {
     let wire: ExecResultWire = parse_strict_wire(stdout, "exec")?;
-    if invalid_direct_endpoint(&wire.socket_path, &wire.socket_proxy, &wire.metadata) {
-        return Err(DomainError::Tool(
-            "script-managed exec result must contain a metadata object and direct socket_path only"
-                .into(),
-        ));
-    }
-    Ok(wire.socket_path)
+    endpoint_from_wire(wire.socket_path, wire.socket_proxy, &wire.metadata, "exec")
 }
 
 fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, DomainError> {
@@ -212,7 +247,8 @@ fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, DomainEr
     Ok(PreparedChild {
         child: Some(child),
         environment_ref: None,
-        socket_path: None,
+        endpoint: None,
+        proxy_bridge: None,
         cleanup_environment_id: None,
         cleanup_argv: Vec::new(),
         environments: None,
@@ -285,6 +321,7 @@ async fn spawn_script_managed_child(
         retained_exec_argv: script.exec.clone(),
         retained_kill_argv: script.kill.clone(),
         retained_cleanup_argv: script.cleanup.clone(),
+        retained_inspect_argv: script.inspect.clone(),
         members: Vec::new(),
         status: crate::domain::environment_registry::EnvironmentStatus::Running,
         metadata: result.metadata.clone(),
@@ -293,7 +330,8 @@ async fn spawn_script_managed_child(
     Ok(PreparedChild {
         child: None,
         environment_ref: Some(environment_ref),
-        socket_path: Some(result.socket_path),
+        endpoint: Some(result.endpoint),
+        proxy_bridge: None,
         cleanup_environment_id: Some(result.environment_id),
         cleanup_argv: script.cleanup.clone(),
         environments: Some(environments.clone()),
@@ -307,15 +345,16 @@ struct CreateResultWire {
     workspace_path: std::path::PathBuf,
     metadata: serde_json::Value,
     #[serde(default)]
-    socket_path: std::path::PathBuf,
+    socket_path: Option<std::path::PathBuf>,
     #[serde(default)]
-    socket_proxy: Option<serde_json::Value>,
+    socket_proxy: Option<SocketProxyWire>,
 }
 
+#[derive(Debug)]
 struct CreateResult {
     environment_id: String,
     workspace_path: std::path::PathBuf,
-    socket_path: std::path::PathBuf,
+    endpoint: ParentEndpoint,
     metadata: serde_json::Value,
 }
 
@@ -346,16 +385,21 @@ fn salvage_environment_id(stdout: &[u8]) -> Option<String> {
 
 fn parse_create_result(stdout: &[u8]) -> Result<CreateResult, DomainError> {
     let wire: CreateResultWire = parse_strict_wire(stdout, "create")?;
-    if wire.environment_id.is_empty()
-        || wire.workspace_path.as_os_str().is_empty()
-        || invalid_direct_endpoint(&wire.socket_path, &wire.socket_proxy, &wire.metadata)
-    {
-        return Err(DomainError::Tool("script-managed create result must contain environment_id, workspace_path, metadata object, and direct socket_path only".into()));
+    if wire.environment_id.is_empty() || wire.workspace_path.as_os_str().is_empty() {
+        return Err(DomainError::Tool(
+            "script-managed create result must contain environment_id and workspace_path".into(),
+        ));
     }
+    let endpoint = endpoint_from_wire(
+        wire.socket_path,
+        wire.socket_proxy,
+        &wire.metadata,
+        "create",
+    )?;
     Ok(CreateResult {
         environment_id: wire.environment_id,
         workspace_path: wire.workspace_path,
-        socket_path: wire.socket_path,
+        endpoint,
         metadata: wire.metadata,
     })
 }
@@ -461,6 +505,7 @@ fn validate_script(script: &ContainerScriptConfig) -> Result<(), DomainError> {
         .chain(script.cleanup.iter())
         .chain(script.exec.iter())
         .chain(script.kill.iter())
+        .chain(script.inspect.iter())
         .any(|s| unsafe_arg(s))
     {
         return Err(DomainError::Tool(
@@ -499,3 +544,7 @@ fn apply_common_child_env(cmd: &mut tokio::process::Command, base_dir: &Path) {
 #[cfg(test)]
 #[path = "spawn_container_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "spawn_container_slice3_tests.rs"]
+mod slice3_tests;

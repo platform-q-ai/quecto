@@ -82,7 +82,7 @@ async fn wave3_agent_error_notification_and_exit_sequence_paths() {
         &serde_json::json!({"type":"tool_execution_start"})
     ));
 
-    notify_child_exited(&registry, "bot", Some(&tx)).await;
+    notify_child_exited(&registry, "bot", Some(&tx), None).await;
     assert!(rx.try_recv().unwrap().to_message().contains("exited"));
     assert!(matches!(
         registry.lock().unwrap()["bot"].status,
@@ -124,7 +124,7 @@ fn should_broadcast_and_entry_workflow_mode_cover_remaining_arms() {
 async fn notify_child_exited_missing_agent_sends_sequence_zero_note() {
     let registry = super::super::subagent_registry::new_registry();
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-    notify_child_exited(&registry, "ghost", Some(&tx)).await;
+    notify_child_exited(&registry, "ghost", Some(&tx), None).await;
     let note = rx.try_recv().unwrap();
     assert_eq!(note.sequence, 0);
     assert!(note.to_message().contains("ghost"));
@@ -162,7 +162,7 @@ async fn notify_child_exited_claims_script_cleanup_once() {
     entry.cleanup_environment_id = Some("env-clean".into());
     entry.cleanup_argv = vec!["true".into()];
     registry.lock().unwrap().insert("bot".into(), entry);
-    notify_child_exited(&registry, "bot", None).await;
+    notify_child_exited(&registry, "bot", None, None).await;
     let entry = &registry.lock().unwrap()["bot"];
     assert!(entry.cleanup_environment_id.is_none());
     assert!(entry.cleanup_argv.is_empty());

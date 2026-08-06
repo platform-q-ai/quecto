@@ -84,6 +84,9 @@ pub fn terminate_removed_entry(entry: &SubagentEntry) {
     if let Some(ref handle) = entry.monitor_handle {
         handle.abort();
     }
+    if let Some(ref handle) = entry.proxy_bridge_handle {
+        handle.abort();
+    }
     if entry.pid != 0 {
         sigterm_pid(entry.pid);
     }

@@ -39,6 +39,9 @@ pub struct SubagentEntry {
     pub updated_at: Instant,
     /// Abort handle for the monitor task (if running).
     pub monitor_handle: Option<Arc<tokio::task::JoinHandle<()>>>,
+    /// Abort handle for the proxy-endpoint bridge accept loop (#1369 slice
+    /// 3), owned so tearing the entry down stops accepting new connections.
+    pub proxy_bridge_handle: Option<Arc<tokio::task::JoinHandle<()>>>,
     /// Monotonic notification id for this subagent.
     pub notification_sequence: u64,
     /// Exit signal sender — the reaper task sends the exit code/signal through
@@ -129,6 +132,7 @@ impl SubagentEntry {
             run_error: None,
             updated_at: Instant::now(),
             monitor_handle: None,
+            proxy_bridge_handle: None,
             notification_sequence: 0,
             exit_signal_tx: None,
             parent_id: None,

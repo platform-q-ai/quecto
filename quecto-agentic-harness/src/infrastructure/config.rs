@@ -42,6 +42,9 @@ pub struct ContainerScriptConfig {
     /// Argv for stopping an environment (#1369 slice 2).
     #[serde(default)]
     pub kill: Vec<String>,
+    /// Argv for the post-mortem inspect of a dead member (#1369 slice 3).
+    #[serde(default)]
+    pub inspect: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

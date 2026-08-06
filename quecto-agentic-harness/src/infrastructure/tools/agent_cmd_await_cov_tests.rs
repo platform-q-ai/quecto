@@ -123,6 +123,22 @@ async fn execute_await_reports_agent_not_found_and_connection_failed() {
     assert_eq!(failed.reason.as_deref(), Some("connection_failed"));
 }
 
+/// #1369 slice 3: a dead socket on an entry the monitor already marked Exited
+/// is a pushed death, not a connection error — await reports `exited` like a
+/// local child.
+#[tokio::test]
+async fn execute_await_reports_exited_for_dead_socket_of_exited_entry() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let dead_socket = tmp.path().join("gone.sock");
+    let (tool, _) = tool_with_entry("pushed", dead_socket, SubagentStatus::Exited, None);
+    let result = parse_result(
+        tool.execute_await(r#"{"agent_id":"pushed","timeout":5}"#)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(result.status, "exited");
+}
+
 #[tokio::test]
 async fn execute_await_idle_fetches_workflow_snapshot_and_marks_consumed() {
     let tmp = tempfile::TempDir::new().unwrap();

@@ -3,7 +3,8 @@ use crate::domain::subagent::SubagentConfig;
 use crate::domain::tool::ToolResult;
 
 pub use crate::domain::subagent_launch::{
-    LaunchFuture, LaunchIdentity, PreparedRuntime, RegisteredLaunch, SubagentLaunchPorts,
+    LaunchFuture, LaunchIdentity, ParentEndpoint, PreparedRuntime, RegisteredLaunch,
+    SubagentLaunchPorts,
 };
 
 /// Pure application orchestration for a subagent launch transaction.

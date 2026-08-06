@@ -817,6 +817,11 @@ pub struct QuectoWorld {
     pub agent_workspaces: std::collections::HashMap<String, String>,
     /// Result of the last get_containers/kill_container command (#1369 slice 2)
     pub container_cmd_result: Option<ToolResult>,
+    /// Scenario-scoped runtime for script-managed environment steps (#1369
+    /// slice 3): keeps monitor/liveness/bridge tasks alive ACROSS steps so
+    /// EOF-pushed death can actually be observed (a per-step runtime would
+    /// kill the monitor when the step returns).
+    pub env_rt: Option<std::sync::Arc<tokio::runtime::Runtime>>,
     /// Monitor abort handle for cancellation test
     pub monitor_abort_handle: Option<tokio::task::JoinHandle<()>>,
     /// Tokio runtime for abort handle test (keeps spawned task alive)
@@ -1355,6 +1360,7 @@ mod sandbox_steps;
 mod security_steps;
 mod session_steps;
 mod spawn_env_steps;
+mod spawn_liveness_steps;
 mod spawn_tool_steps;
 mod subagent_bar_fixes_steps;
 mod subagent_monitor_steps;

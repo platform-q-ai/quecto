@@ -148,6 +148,14 @@ fn remove_member_and_finalize(
     entry_cleanup_plan: Option<(String, Vec<String>)>,
     mode: FinalizeMode,
 ) {
+    // #1369 slice 3: a normal member death runs the environment's retained
+    // inspect exactly once post-mortem, updating the authoritative aggregate
+    // BEFORE the member is removed (so the outcome also survives the removal
+    // emptying the environment). Launch rollbacks are not deaths: the child
+    // never became usable, so no inspect runs.
+    if mode == FinalizeMode::Exit {
+        run_inspect_once(environments, env_ref, &agent_uuid);
+    }
     let Ok(removal) = environments.remove_member(env_ref, &agent_uuid) else {
         return;
     };
@@ -185,6 +193,63 @@ fn remove_member_and_finalize(
         Ok(()) => environments.complete_kill(claim),
         Err(e) => environments.fail_kill(claim, &e),
     }
+}
+
+/// Run the environment's retained inspect for one dead member, exactly once:
+/// only the death signal that wins the `begin_inspect` claim invokes the
+/// script; repeated EOF/reset for the same member claims nothing. Success
+/// merges the inspect metadata into the aggregate; failure persists an
+/// actionable error while keeping the retained argv for retry.
+fn run_inspect_once(environments: &EnvironmentRegistry, env_ref: &str, agent_uuid: &str) {
+    let Some(record) = environments.get(env_ref) else {
+        return;
+    };
+    if record.retained_inspect_argv.is_empty() {
+        return;
+    }
+    let Some(claim) = environments.begin_inspect(env_ref, agent_uuid) else {
+        return;
+    };
+    match run_inspect_sync(&record.environment_id, &record.retained_inspect_argv) {
+        Ok(metadata) => environments.record_inspect_success(claim, metadata),
+        Err(e) => environments.record_inspect_failure(claim, &e),
+    }
+}
+
+/// Inspect script contract: invoked with `QUECTO_CONTAINER_ENVIRONMENT_ID`,
+/// prints one JSON object `{"status": "...", "metadata": {...}}` on stdout.
+fn run_inspect_sync(environment_id: &str, argv: &[String]) -> Result<serde_json::Value, String> {
+    #[derive(serde::Deserialize)]
+    struct InspectResultWire {
+        #[serde(default)]
+        status: Option<String>,
+        metadata: serde_json::Value,
+    }
+    let mut cmd = std::process::Command::new(&argv[0]);
+    cmd.args(&argv[1..]);
+    cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", environment_id);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    let output = cmd
+        .output()
+        .map_err(|e| format!("failed to invoke retained inspect: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "retained inspect exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let wire: InspectResultWire = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("retained inspect returned invalid JSON contract: {e}"))?;
+    if !wire.metadata.is_object() {
+        return Err("retained inspect result must contain a metadata object".to_string());
+    }
+    let mut metadata = wire.metadata;
+    if let (Some(object), Some(status)) = (metadata.as_object_mut(), wire.status) {
+        object.insert("inspect_status".to_string(), serde_json::json!(status));
+    }
+    Ok(metadata)
 }
 
 fn run_script_sync(environment_id: &str, argv: &[String]) {

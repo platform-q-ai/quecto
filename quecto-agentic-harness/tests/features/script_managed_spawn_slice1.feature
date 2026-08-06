@@ -113,14 +113,9 @@ Feature: Script-managed subagent spawning
     And child "container-protocol-slice1" should be reachable
     And child "container-protocol-slice1" should receive "PROTOCOL_PROMPT_MARKER"
 
-  @done @container-spawn
-  Scenario: Script-managed proxy endpoint is unsupported in this slice
-    Given script-managed subagent spawning returns a proxy endpoint
-    When I spawn script-managed subagent "container-proxy-slice1" with default selection and task "PROXY_MARKER"
-    Then the spawn result should fail because proxy endpoints are unsupported
-    And the script-managed runtime should have cleaned up exactly 1 environment
-    And child "container-proxy-slice1" should not be reachable
-    And the subagent registry should not contain "container-proxy-slice1"
+  # The proxy-endpoint-unsupported scenario was retired in slice 3 (#1369):
+  # validated `socket_proxy` endpoints are now a supported launch mode, covered
+  # by tests/features/script_managed_liveness_slice3.feature.
 
   @done @container-spawn
   Scenario Outline: Rollback after script-managed transaction failure cleans up exactly once
