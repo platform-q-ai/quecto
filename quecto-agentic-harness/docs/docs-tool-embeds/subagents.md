@@ -23,10 +23,10 @@ You already have `spawn` and `agent_cmd` tool schemas — use those for paramete
 
 ## Container environments (script-managed spawning)
 
-When the session config defines `container_scripts`, `spawn` can place a child in an isolated, script-managed environment (e.g. a container with its own repository checkout) instead of a local process:
+When a config file defines `container_scripts`, `spawn` can place a child in an isolated, script-managed environment (e.g. a container with its own repository checkout) instead of a local process:
 
 - `container: true` — new environment via the default script set. `{"mode":"new","repo"?,"container_script"?,"name"?}` — explicit repository/script/name (omitted `repo` uses the parent checkout's origin URL).
-- Container spawns **require `config` with an absolute path** in the same spawn call.
+- New-environment spawns (`true` / `mode: "new"`) **require `config` with an absolute path** in the same spawn call — the scripts load from that file. Joins (`mode: "existing"`) use the environment's retained scripts and need no `config`.
 - Success returns `environment_ref=C1` (session-scoped, never reused). The child is a normal subagent — the whole completion sequence above applies unchanged.
 - Add a teammate to a running environment: `container: {"mode":"existing","ref":"C1"}` (or `"name"`). Members share the environment's workspace but keep their own agent identity.
 - `agent_cmd get_containers` (`agent_id: "*"`) lists every environment with status (`running`/`empty`/`killing`/`stopped`/`cleanup-failed`), workspace, and members. `kill_container` with `ref` or `name` stops one: all members are terminated and the environment's kill script runs exactly once; a failed kill is retryable by calling it again.
