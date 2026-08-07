@@ -153,11 +153,11 @@ async fn bridge_one(conn: tokio::net::UnixStream, argv: Vec<String>) {
 /// that can neither reach the child nor fail with EOF — it simply hangs —
 /// is indistinguishable from a live-but-quiet child until first real use;
 /// the launch then fails at the initial prompt and rolls back.
-pub(super) async fn wait_for_proxy_ready(
+pub(super) async fn wait_for_proxy_ready_until(
     socket_path: &Path,
+    deadline: tokio::time::Instant,
 ) -> Result<(), crate::domain::error::DomainError> {
     use tokio::io::AsyncReadExt;
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         if let Ok(mut probe) = tokio::net::UnixStream::connect(socket_path).await {
             let mut byte = [0u8; 1];

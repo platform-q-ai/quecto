@@ -20,6 +20,14 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     And the proxy bridge should have been used at least 1 time
 
   @done @container-liveness
+  Scenario: Proxy launch retries while the child is not yet accepting commands
+    Given proxy-capable script-managed subagent spawning is available
+    And the next proxy-only child is not yet accepting commands
+    When I spawn script-managed subagent "proxy-retry-1396" into a new proxy-only environment with task "PROXY_RETRY_MARKER"
+    Then the spawn result should not be an error
+    And child "proxy-retry-1396" should receive "PROXY_RETRY_MARKER"
+
+  @done @container-liveness
   Scenario: Proxy-only environment supports prompt and message delivery
     Given proxy-capable script-managed subagent spawning is available
     And script-managed child "proxy-prompt-slice3" is running in a proxy-only environment with task "PROXY_TASK_MARKER"

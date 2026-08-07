@@ -24,6 +24,7 @@ pub(super) struct SpawnLaunchPorts<'a> {
     agent_uuid: Option<AgentUuid>,
     socket_path: Option<PathBuf>,
     owns_environment: bool,
+    initial_prompt_retry_deadline: Option<tokio::time::Instant>,
 }
 
 impl<'a> SpawnLaunchPorts<'a> {
@@ -33,6 +34,7 @@ impl<'a> SpawnLaunchPorts<'a> {
             agent_uuid: None,
             socket_path: None,
             owns_environment: false,
+            initial_prompt_retry_deadline: None,
         }
     }
 }
@@ -216,6 +218,9 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     socket_path
                 }
                 Some(crate::subagent_launch_app::ParentEndpoint::Proxy { argv }) => {
+                    let readiness_deadline =
+                        tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+                    self.initial_prompt_retry_deadline = Some(readiness_deadline);
                     let agent_key = self
                         .agent_uuid
                         .as_ref()
@@ -231,7 +236,11 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     })?;
                     let bridge_path = bridge.socket_path.clone();
                     prepared.proxy_bridge = Some(bridge);
-                    super::spawn_proxy_bridge::wait_for_proxy_ready(&bridge_path).await?;
+                    super::spawn_proxy_bridge::wait_for_proxy_ready_until(
+                        &bridge_path,
+                        readiness_deadline,
+                    )
+                    .await?;
                     bridge_path
                 }
             };
@@ -241,6 +250,10 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 environment_ref: prepared.environment_ref.clone(),
             })
         })
+    }
+
+    fn initial_prompt_retry_deadline(&self) -> Option<tokio::time::Instant> {
+        self.initial_prompt_retry_deadline
     }
 
     fn rollback_prepared<'b>(
@@ -400,8 +413,26 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         &'b mut self,
         socket_path: &'b Path,
         task: &'b str,
+        deadline: Option<tokio::time::Instant>,
     ) -> LaunchFuture<'b, Result<(), DomainError>> {
-        Box::pin(async move { send_initial_prompt_to_socket(socket_path, task).await })
+        Box::pin(async move {
+            match deadline {
+                Some(deadline) => {
+                    match tokio::time::timeout_at(
+                        deadline,
+                        send_initial_prompt_to_socket(socket_path, task),
+                    )
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(_) => Err(DomainError::Tool(
+                            "initial prompt send exceeded readiness deadline".into(),
+                        )),
+                    }
+                }
+                None => send_initial_prompt_to_socket(socket_path, task).await,
+            }
+        })
     }
     fn success(&self, identity: &LaunchIdentity, environment_ref: Option<&str>) -> ToolResult {
         let env_ref = environment_ref

@@ -19,6 +19,13 @@ pub type LaunchFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub trait SubagentLaunchPorts {
     type Prepared;
 
+    /// Deadline until which failures while sending the initial prompt should be
+    /// treated as readiness failures and retried inside the launch readiness budget.
+    /// Direct endpoints have completed protocol-level readiness by this point;
+    /// proxy endpoints may only have proven that the bridge accepted a
+    /// connection, so their first command can be the first child-level probe.
+    fn initial_prompt_retry_deadline(&self) -> Option<tokio::time::Instant>;
+
     fn allocate_identity(&mut self, config: &SubagentConfig)
     -> Result<LaunchIdentity, DomainError>;
     fn build_cli_args<'a>(
@@ -57,6 +64,7 @@ pub trait SubagentLaunchPorts {
         &'a mut self,
         socket_path: &'a Path,
         task: &'a str,
+        deadline: Option<tokio::time::Instant>,
     ) -> LaunchFuture<'a, Result<(), DomainError>>;
     fn success(&self, identity: &LaunchIdentity, environment_ref: Option<&str>) -> ToolResult;
 }

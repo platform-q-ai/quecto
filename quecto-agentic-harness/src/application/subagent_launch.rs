@@ -56,15 +56,44 @@ where
         };
 
         if let Some(task) = config.task.as_deref() {
-            if let Err(e) = self
-                .ports
-                .send_initial_prompt(&registered.socket_path, task)
-                .await
-            {
-                self.ports
-                    .uncommit_registered(&registered.registry_key)
-                    .await;
-                return Err(e);
+            let retry_until = self.ports.initial_prompt_retry_deadline();
+            loop {
+                if let Some(deadline) = retry_until {
+                    if tokio::time::Instant::now() >= deadline {
+                        self.ports
+                            .uncommit_registered(&registered.registry_key)
+                            .await;
+                        return Err(DomainError::Tool(
+                            "initial prompt retry deadline expired".into(),
+                        ));
+                    }
+                }
+                match self
+                    .ports
+                    .send_initial_prompt(&registered.socket_path, task, retry_until)
+                    .await
+                {
+                    Ok(()) => break,
+                    Err(e) => {
+                        let Some(deadline) = retry_until else {
+                            self.ports
+                                .uncommit_registered(&registered.registry_key)
+                                .await;
+                            return Err(e);
+                        };
+                        let now = tokio::time::Instant::now();
+                        if now >= deadline {
+                            self.ports
+                                .uncommit_registered(&registered.registry_key)
+                                .await;
+                            return Err(e);
+                        }
+                        tokio::time::sleep_until(
+                            now + std::time::Duration::from_millis(100).min(deadline - now),
+                        )
+                        .await;
+                    }
+                }
             }
         }
 
