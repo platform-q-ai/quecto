@@ -134,8 +134,9 @@ fn container_config_selection_uses_the_default_label_and_enumerates_on_errors() 
         "{err}"
     );
 
-    // A map with no default label enumerates too (spawn-time re-read guard:
-    // Config::load validates this, but the file can change between).
+    // Defensive-arm only: in production Config::load rejects a non-empty map
+    // with no default before this code runs; the arm still enumerates so a
+    // future bypass cannot fail silently.
     let mut unlabeled = configured_container_configs();
     unlabeled
         .container_configs
@@ -638,4 +639,29 @@ async fn join_fails_for_unknown_target_and_missing_retained_exec() {
     .await
     .unwrap_err();
     assert!(err.to_string().contains("retained exec"), "{err}");
+}
+
+#[test]
+fn explicit_selection_also_fails_at_load_when_no_default_is_labeled() {
+    // #1410 accepted trade-off: exactly-one-default is a LOAD invariant, so a
+    // config file with entries but no `"default": true` label blocks ALL
+    // container spawns — including explicitly named selection, which needs no
+    // default. Explicit selection is only reachable through a valid config.
+    let dir = TempDir::new().unwrap();
+    let cfg_path = dir.path().join("config.json");
+    std::fs::write(
+        &cfg_path,
+        r#"{"container_configs":{"a":{"create":["c"],"cleanup":["k"]}}}"#,
+    )
+    .unwrap();
+    let mut config = base_config(ContainerSelection::New {
+        container_config: Some("a".into()),
+        name: None,
+    });
+    config.config_path = Some(cfg_path);
+    let err = load_container_config(&config, None)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("no container config is labeled"), "{err}");
+    assert!(err.contains("a"), "error must enumerate names: {err}");
 }
