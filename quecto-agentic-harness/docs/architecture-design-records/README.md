@@ -32,6 +32,7 @@ edit a superseded ADR receives — its reasoning stays intact as history).
 | [0019](adr-0019-role-segregated-domain-ports.md) | Domain Ports Are Segregated by Role When They Grow | 🕒 Proposed | Broad ports split into role-focused traits when caller pressure justifies it. |
 | [0020](adr-0020-unified-tool-model-with-native-and-uds-adapters.md) | Unified Tool Model with Native and UDS Delivery Adapters | ✅ Accepted | Quecto has one tool model and policy pipeline; native and UDS are delivery adapters with descriptor-owned runtime availability. |
 | [0021](adr-0021-script-managed-subagent-launch.md) | Script-Managed Subagent Launch Uses Clean Architecture Ports | ✅ Accepted | Script-managed subagent launch uses pure domain/application ports, infrastructure adapters, thin interfaces, session registry wiring, and runtime-agnostic scripts. |
+| [0022](adr-0022-self-contained-container-configs.md) | Self-Contained Named Container Configs | ✅ Accepted | Container configs are named, self-contained working-context definitions (baked repo + auth, default label, roster in the tool schema); Quecto resolves no source and the parent's location is irrelevant. |
 
 ## The ADR-0008 protocol series
 
