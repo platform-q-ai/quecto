@@ -91,3 +91,7 @@ async fn run_retained_kill(record: &EnvironmentRecord) -> Result<(), String> {
     ));
     super::subagent_cleanup::retained_kill_outcome(cmd.output().await)
 }
+
+#[cfg(test)]
+#[path = "environment_kill_tests.rs"]
+mod tests;

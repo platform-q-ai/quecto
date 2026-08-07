@@ -684,10 +684,6 @@ fn display_title_applies_presentation_policy() {
 #[path = "uds_progress_clear_tests.rs"]
 mod progress_clear_tests;
 
-// #816 auto-await subagent completion notes (enqueue + idle delivery).
-#[path = "uds_subagent_notify_tests.rs"]
-mod subagent_notify_tests;
-
 #[test]
 fn session_summary_to_json_projects_stable_wire_fields() {
     let summary = crate::domain::session::SessionSummary {

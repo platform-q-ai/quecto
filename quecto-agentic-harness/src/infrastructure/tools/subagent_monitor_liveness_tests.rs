@@ -119,7 +119,7 @@ async fn repeated_death_signals_trigger_one_inspect_and_one_terminal_transition(
     let entry = entries.get("agent-1").unwrap();
     assert_eq!(entry.status, SubagentStatus::Exited, "one terminal state");
     drop(entries);
-    // The pushed death fed the existing exit signal so pending awaits wake.
+    // The pushed death fed the existing exit signal so lifecycle observers wake.
     assert!(exit_rx.borrow_and_update().is_some());
 }
 

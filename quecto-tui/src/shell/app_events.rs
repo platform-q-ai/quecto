@@ -202,15 +202,6 @@ impl App {
             args.to_string()
         };
         self.update_tool_spinner(&tool_name, &args, &args_str);
-        // Mark the awaited sub-agent so its row shows a per-row "awaiting"
-        // indicator instead of the shared spinner line.
-        if tool_name == "agent_cmd"
-            && crate::protocol::presentation_payloads::string_field(&args, "command").as_deref()
-                == Some("await")
-        {
-            self.subagents.awaited_agent_id =
-                crate::protocol::presentation_payloads::string_field(&args, "agent_id");
-        }
         let is_spawn = tool_name == "spawn";
         // Every model-issued tool call — even one whose box is suppressed (spawn)
         // — appends a tool-call + tool-result message pair to the conversation
@@ -237,15 +228,6 @@ impl App {
         };
         let msg = match tool_name {
             "spawn" => format!("Spawning {}...", sanitized_arg(args, "agent_id", "agent")),
-            // For `await`, keep a generic, stable message — the awaited agent is
-            // marked on its own sub-agent row, so the shared line stays put.
-            "agent_cmd"
-                if crate::protocol::presentation_payloads::string_field(args, "command")
-                    .as_deref()
-                    == Some("await") =>
-            {
-                "Working... (Esc to interrupt)".to_string()
-            }
             "agent_cmd" => format!(
                 "{} → {}...",
                 sanitized_arg(args, "command", "?"),
@@ -338,9 +320,6 @@ impl App {
         }
         if is_subagent_tool(&tool_name) {
             self.send_command(Command::GetSubagents { id: None });
-        }
-        if self.subagents.awaited_agent_id.is_some() {
-            self.subagents.awaited_agent_id = None;
         }
         if let Some(spinner) = &mut self.spinner {
             spinner.set_message("Working... (Esc to interrupt)");

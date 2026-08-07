@@ -82,21 +82,6 @@ pub(crate) fn redact_secrets(input: &str) -> String {
     PATTERNS.replace_all(input, "[REDACTED]").into_owned()
 }
 
-/// [`redact_secrets`] then bound the result to `max_len` bytes, appending an
-/// ellipsis marker when truncated (truncation respects char boundaries).
-pub(crate) fn redact_and_bound(input: &str, max_len: usize) -> String {
-    let redacted = redact_secrets(input);
-    if redacted.len() > max_len {
-        let mut end = max_len;
-        while !redacted.is_char_boundary(end) {
-            end -= 1;
-        }
-        format!("{}…[truncated]", &redacted[..end])
-    } else {
-        redacted
-    }
-}
-
 #[cfg(test)]
 #[path = "redaction_tests.rs"]
 mod tests;

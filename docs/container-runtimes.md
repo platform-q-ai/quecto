@@ -133,11 +133,11 @@ endpoint. EOF or connection reset on it IS the child's death signal — no
 lifecycle polling, no wrapper process. On death, the environment's
 retained `inspect` runs exactly once for that member (repeated EOF/reset
 signals do not re-run it), the authoritative environment record is
-updated before the member is removed, and the exit feeds `await`, passive
-completion notes, snapshots, and live events exactly like a local child.
-Because no exit status exists for a script-managed death, the `await`
-reason reports how the death was observed — `connection_closed` (EOF or
-reset) or `never_reachable` (the endpoint never accepted the monitor
+updated before the member is removed, and the exit feeds passive
+completion notes, snapshots, and live events exactly like a local child. Because no exit status exists for a
+script-managed death, lifecycle observers report how the death was
+observed — `connection_closed` (EOF or reset) or `never_reachable` (the
+endpoint never accepted the monitor
 connection) — never a fabricated `exit_code_0`.
 
 ## Script contract

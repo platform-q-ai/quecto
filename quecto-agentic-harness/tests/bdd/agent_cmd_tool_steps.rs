@@ -590,6 +590,20 @@ fn then_agent_cmd_def_desc_not_empty(world: &mut QuectoWorld) {
     assert!(!def.description.is_empty());
 }
 
+#[then(expr = "the agent_cmd tool definition description should contain {string}")]
+fn then_agent_cmd_def_desc_contains(world: &mut QuectoWorld, expected: String) {
+    let tool = world
+        .agent_cmd_tool
+        .as_ref()
+        .expect("agent_cmd_tool not set");
+    let def = tool.definition();
+    assert!(
+        def.description.contains(&expected),
+        "expected description to contain '{expected}', got: {}",
+        def.description
+    );
+}
+
 #[then(expr = "the agent_cmd tool definition description should not contain {string}")]
 fn then_agent_cmd_def_desc_not_contains(world: &mut QuectoWorld, unexpected: String) {
     let tool = world

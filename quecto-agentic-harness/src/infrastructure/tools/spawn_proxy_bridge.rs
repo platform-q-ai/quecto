@@ -4,7 +4,7 @@
 //! a direct `socket_path`. The parent then owns a private bridge socket: each
 //! connection accepted on it runs the validated proxy argv and pumps bytes
 //! between the connection and the proxy process's stdio. Every existing
-//! socket consumer — prompt routing, agent_cmd commands, await, and the
+//! socket consumer — prompt routing, agent_cmd commands, and the
 //! monitor's persistent liveness connection — connects to the bridge path the
 //! launch captured, never to any requested direct path. When the child (or
 //! its environment/proxy) dies, the proxy's stdout reaches EOF and the bridge
@@ -101,7 +101,7 @@ async fn accept_loop(listener: tokio::net::UnixListener, argv: Vec<String>) {
 ///   down so its reader observes EOF — death stays pushed.
 /// - The parent connection closing (quecto clients never half-close their
 ///   write side, so read-side EOF means the connection is gone) kills the
-///   proxy immediately. Without this, a dropped probe or await connection
+///   proxy immediately. Without this, a dropped probe or command connection
 ///   would leak a live proxy process — and its open connection into the
 ///   child — for the child's entire lifetime.
 async fn bridge_one(conn: tokio::net::UnixStream, argv: Vec<String>) {
