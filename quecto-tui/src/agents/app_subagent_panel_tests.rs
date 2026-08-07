@@ -12,7 +12,7 @@ use crate::protocol::client::{Event, SubagentInfoEvent, SubagentWorkflow};
 use crate::shell::keys::Key;
 
 /// A `SubagentInfoEvent` with an explicit parent (for tree tests) and socket.
-fn child(id: &str, status: &str, parent: Option<&str>) -> SubagentInfoEvent {
+pub(super) fn child(id: &str, status: &str, parent: Option<&str>) -> SubagentInfoEvent {
     SubagentInfoEvent {
         agent_uuid: None,
         display_name: None,
@@ -307,6 +307,35 @@ async fn partial_child_view_push_does_not_evict_intermediate_parent() {
     assert!(
         row_index("grandchildB") > row_index("childA"),
         "grandchildB must stay BELOW childA after a partial push:\n{frame}"
+    );
+}
+
+#[tokio::test]
+async fn panel_mouse_wheel_scrolls_overflowing_agent_list_when_panel_focused() {
+    let mut h = TuiHarness::sized(80, 8).await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(
+        (0..12)
+            .map(|i| subagent(&format!("worker-{i:02}"), "running", None))
+            .collect(),
+    ));
+
+    h.app_mut().handle_key(Key::Tab);
+    h.app_mut().handle_key(Key::ScrollDown);
+
+    assert_eq!(
+        h.app_mut().panel_highlight_index(),
+        3,
+        "mouse wheel down in the focused left panel should move the panel cursor, not the chat"
+    );
+    let panel = h.left_panel();
+    assert!(
+        panel.contains("worker-02"),
+        "scrolling the focused panel should reveal rows below the fold:\n{panel}"
+    );
+    assert!(
+        !panel.contains("worker-11"),
+        "one wheel tick should preserve a stable local viewport instead of jumping to the end:\n{panel}"
     );
 }
 

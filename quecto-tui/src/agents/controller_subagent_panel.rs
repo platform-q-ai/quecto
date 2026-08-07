@@ -165,6 +165,10 @@ impl App {
             return;
         }
         self.subagents.active_agent_id = new_active.clone();
+        self.subagents.panel_nav_key = new_active
+            .as_deref()
+            .map(|id| format!("agent:{id}"))
+            .or_else(|| Some("master".to_string()));
         self.sync_panel_selection_to_active();
         let Some(id) = new_active else {
             // Restore model/effort markers from master footer (#1085).
@@ -312,17 +316,71 @@ impl App {
 
     // ── Panel keyboard navigation (#802 focus model) ──────────────────
 
+    fn panel_row_key(row: &PanelRow) -> String {
+        if let Some(env_key) = row.env_key.as_deref() {
+            format!("env:{env_key}")
+        } else if let Some(id) = row.id.as_deref() {
+            format!("agent:{id}")
+        } else {
+            "master".to_string()
+        }
+    }
+
+    fn remember_panel_nav_key_from_rows(&mut self, rows: &[PanelRow]) {
+        self.subagents.panel_nav_key = rows
+            .get(self.subagents.panel_nav.selected())
+            .map(Self::panel_row_key);
+    }
+
     /// Move the panel highlight up (toward the master) WITHOUT switching the
     /// active session — commit happens only on Enter/Tab (#802).
     pub(super) fn panel_highlight_previous(&mut self) {
-        let len = self.panel_rows().len();
-        self.subagents.panel_nav.move_previous(len);
+        let rows = self.panel_rows();
+        self.subagents.panel_nav.move_previous(rows.len());
+        self.remember_panel_nav_key_from_rows(&rows);
     }
 
     /// Move the panel highlight down WITHOUT switching the active session.
     pub(super) fn panel_highlight_next(&mut self) {
+        let rows = self.panel_rows();
+        self.subagents.panel_nav.move_next(rows.len());
+        self.remember_panel_nav_key_from_rows(&rows);
+    }
+
+    /// Move the panel highlight down by multiple rows (mouse wheel/page-like
+    /// panel scrolling) without switching the active session. Unlike arrow-key
+    /// navigation, scroll/page input is clamped at the list edge so a wheel tick
+    /// at the bottom never wraps back to Master.
+    pub(super) fn panel_highlight_next_by(&mut self, rows: usize) {
         let len = self.panel_rows().len();
-        self.subagents.panel_nav.move_next(len);
+        if len == 0 {
+            self.subagents.panel_nav.set_selected(0);
+            return;
+        }
+        let selected = self.subagents.panel_nav.selected();
+        self.subagents
+            .panel_nav
+            .set_selected(selected.saturating_add(rows).min(len - 1));
+        let rows = self.panel_rows();
+        self.remember_panel_nav_key_from_rows(&rows);
+    }
+
+    /// Move the panel highlight up by multiple rows (mouse wheel/page-like
+    /// panel scrolling) without switching the active session. Unlike arrow-key
+    /// navigation, scroll/page input is clamped at the list edge so a wheel tick
+    /// at the top never wraps to the bottom.
+    pub(super) fn panel_highlight_previous_by(&mut self, rows: usize) {
+        let len = self.panel_rows().len();
+        if len == 0 {
+            self.subagents.panel_nav.set_selected(0);
+            return;
+        }
+        let selected = self.subagents.panel_nav.selected();
+        self.subagents
+            .panel_nav
+            .set_selected(selected.saturating_sub(rows));
+        let rows = self.panel_rows();
+        self.remember_panel_nav_key_from_rows(&rows);
     }
 
     /// Jump the panel highlight to a 1-based row number (digits 1–9). Row 1 is
@@ -331,6 +389,8 @@ impl App {
         let len = self.panel_rows().len();
         if one_based >= 1 && one_based <= len {
             self.subagents.panel_nav.set_selected(one_based - 1);
+            let rows = self.panel_rows();
+            self.remember_panel_nav_key_from_rows(&rows);
         }
     }
 
@@ -345,11 +405,16 @@ impl App {
             // Selecting an environment row shows its details in the main-pane
             // chrome over the master body (#1369 slice 4).
             self.subagents.selected_environment = row.env_key.clone();
+            self.subagents.panel_nav_key = row.env_key.as_deref().map(|key| format!("env:{key}"));
             self.select_agent(None);
             return;
         }
-        self.subagents.selected_environment = None;
         let target = row.id.clone();
+        self.subagents.selected_environment = None;
+        self.subagents.panel_nav_key = target
+            .as_deref()
+            .map(|id| format!("agent:{id}"))
+            .or_else(|| Some("master".to_string()));
         self.select_agent(target.as_deref());
     }
 
@@ -370,6 +435,22 @@ impl App {
     }
 
     fn sync_panel_selection_to_active_with(&mut self, rows: &[PanelRow]) {
+        if matches!(self.subagents.focus, Focus::Panel) {
+            // While the user is navigating the panel, cursor identity owns the
+            // highlight. A committed environment still owns main-pane chrome,
+            // but it must not snap the focused panel away from the user's row.
+            // This also lets committing Master overwrite a stale env key even
+            // when the active session was already Master.
+            if let Some(key) = self.subagents.panel_nav_key.as_deref() {
+                if let Some(idx) = rows.iter().position(|r| Self::panel_row_key(r) == key) {
+                    self.subagents.panel_nav.set_selected(idx);
+                    return;
+                }
+            }
+            self.subagents.panel_nav.clamp(rows.len());
+            self.remember_panel_nav_key_from_rows(rows);
+            return;
+        }
         // A committed environment selection owns the cursor: with an
         // environment selected `active_agent_id` is `None`, which would
         // otherwise match the Master row and silently snap the cursor away

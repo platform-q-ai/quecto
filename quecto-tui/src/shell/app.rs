@@ -614,6 +614,9 @@ mod app_subagent_first_tests;
 #[path = "../agents/app_subagent_panel_observer_tests.rs"]
 mod app_subagent_panel_observer_tests;
 #[cfg(test)]
+#[path = "../agents/app_subagent_panel_scroll_tests.rs"]
+mod app_subagent_panel_scroll_tests;
+#[cfg(test)]
 #[path = "../agents/app_subagent_panel_tests.rs"]
 mod app_subagent_panel_tests;
 #[cfg(test)]

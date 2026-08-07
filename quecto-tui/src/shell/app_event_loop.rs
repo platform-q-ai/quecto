@@ -625,6 +625,8 @@ impl App {
         match key {
             Key::Up | Key::Char('k') => self.panel_highlight_previous(),
             Key::Down | Key::Char('j') => self.panel_highlight_next(),
+            Key::ScrollUp | Key::PageUp => self.panel_highlight_previous_by(MOUSE_SCROLL_LINES),
+            Key::ScrollDown | Key::PageDown => self.panel_highlight_next_by(MOUSE_SCROLL_LINES),
             Key::Char(c @ '1'..='9') => {
                 self.panel_highlight_row(*c as usize - '0' as usize);
             }

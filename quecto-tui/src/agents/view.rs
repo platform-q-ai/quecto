@@ -140,6 +140,10 @@ pub(crate) struct SubagentUi {
     pub(crate) selected_environment: Option<String>,
     /// Left-panel selection cursor over the flattened (master + tree) rows.
     pub(crate) panel_nav: ListNavigator,
+    /// Durable identity for the focused panel cursor. The row index is only a
+    /// viewport coordinate; live roster updates can reorder rows, so focused
+    /// navigation preserves/commits by this key when possible.
+    pub(crate) panel_nav_key: Option<String>,
     /// Fan-in for events from direct sub-agent connections (#800).
     pub(crate) event_tx: mpsc::Sender<(String, Event)>,
     pub(crate) event_rx: mpsc::Receiver<(String, Event)>,
@@ -173,6 +177,7 @@ impl SubagentUi {
             active_agent_id: None,
             selected_environment: None,
             panel_nav: ListNavigator::new(),
+            panel_nav_key: None,
             event_tx,
             event_rx,
             feeds: BTreeMap::new(),
