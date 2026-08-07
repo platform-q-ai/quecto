@@ -656,8 +656,7 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
 
 // ─── Broadcast prompt execution ───────────────────────────────────────────────
 
-// Re-exported for the passive-note dedupe unit tests (uds_subagent_notify_tests).
-#[cfg(test)]
+// Test modules for multi-client dispatch and passive-note delivery.
 #[cfg(test)]
 #[path = "uds_multi_accept_loop_tests.rs"]
 mod accept_loop_tests;

@@ -197,7 +197,7 @@ async fn notify_child_exited(
 ) {
     // #1369 slice 3: a script-managed child has no local process to reap, so
     // the monitor connection's EOF/reset IS its death signal. Feed the
-    // existing exit signal so pending awaits wake instantly; the local-child
+    // existing exit signal so lifecycle observers wake instantly; the local-child
     // reaper keeps owning the signal (with the real exit status) when a
     // process exists.
     let exit_tx = {
