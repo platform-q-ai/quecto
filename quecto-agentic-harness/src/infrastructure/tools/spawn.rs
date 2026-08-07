@@ -34,7 +34,9 @@ const EMPTY_ROSTER: &str = "none configured";
 /// Session-start roster line for the tool description (#1410): the available
 /// container configs from the parent's effective config, with the default
 /// marked. Composition-time IO — called once when the tool is built, never
-/// from `definition()`.
+/// from `definition()`. Deliberately uses the same loader (`Config::load`) as
+/// the spawn-time `load_container_config`, so the roster and spawn selection
+/// cannot diverge on loader behavior.
 fn container_config_roster(parent_config_path: Option<&Path>) -> String {
     let Some(path) = parent_config_path else {
         return EMPTY_ROSTER.to_string();

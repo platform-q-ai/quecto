@@ -281,8 +281,15 @@ fn load_container_config(
             "container spawn requires an absolute trusted config path".into(),
         ));
     }
-    Config::load(&cfg_path.to_string_lossy())
-        .map_err(|e| DomainError::Tool(format!("invalid container_configs configuration: {e}")))
+    Config::load(&cfg_path.to_string_lossy()).map_err(|e| match e {
+        // ContainerConfigs errors already name the section — wrapping them
+        // again would stutter ("invalid container_configs configuration:
+        // invalid container_configs: ...").
+        e @ crate::infrastructure::config::ConfigError::ContainerConfigs(_) => {
+            DomainError::Tool(e.to_string())
+        }
+        e => DomainError::Tool(format!("invalid container_configs configuration: {e}")),
+    })
 }
 
 async fn spawn_script_managed_child(
@@ -443,9 +450,9 @@ fn container_config_name<'a>(
     if let Some(name) = selected.as_deref() {
         return Ok(name);
     }
-    // Config::load validated exactly-one-default for non-empty maps, but this
-    // config file is re-read at spawn time and could have been edited since —
-    // enumerate here too rather than assuming.
+    // Config::load enforces exactly-one-default for non-empty maps, so the
+    // only way to arrive here without one is an empty map: container spawning
+    // was requested but no container configs are defined.
     let mut defaults: Vec<&str> = cfg
         .container_configs
         .iter()
@@ -455,12 +462,8 @@ fn container_config_name<'a>(
     defaults.sort_unstable();
     match defaults.as_slice() {
         [only] => Ok(only),
-        [] => Err(DomainError::Tool(format!(
-            "no container config is labeled \"default\": true (available container configs: {})",
-            enumerate_names(cfg)
-        ))),
         _ => Err(DomainError::Tool(format!(
-            "multiple container configs are labeled \"default\": true (available container configs: {})",
+            "no container config is labeled \"default\": true (available container configs: {})",
             enumerate_names(cfg)
         ))),
     }

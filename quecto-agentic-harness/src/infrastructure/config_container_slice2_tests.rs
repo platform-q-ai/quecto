@@ -1,6 +1,6 @@
 //! Slice 2 (#1369): container configs gain `exec` and `kill` operations.
 
-use super::ContainerConfig;
+use super::{Config, ContainerConfig};
 
 #[test]
 fn container_config_accepts_exec_argv() {
@@ -69,4 +69,33 @@ fn container_configs_require_exactly_one_default_label() {
     // Empty maps stay valid: containers are optional.
     let empty = serde_json::from_str::<super::Config>("{}").unwrap();
     assert!(empty.validate_container_configs_for_test().is_ok());
+}
+
+#[test]
+fn legacy_container_scripts_key_fails_load_with_rename_guidance() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("config.json");
+    std::fs::write(
+        &path,
+        r#"{"container_scripts": {"default": "docker", "scripts": {}}}"#,
+    )
+    .unwrap();
+    let err = Config::load(&path.to_string_lossy())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("renamed to `container_configs`"), "{err}");
+    assert!(err.contains("docs/container-runtimes.md"), "{err}");
+    // The new key alongside the old one still fails: the old key must be
+    // removed, not shadowed.
+    std::fs::write(
+        &path,
+        r#"{"container_scripts": {}, "container_configs": {"a": {"default": true, "create": ["x"], "cleanup": ["y"]}}}"#,
+    )
+    .unwrap();
+    assert!(
+        Config::load(&path.to_string_lossy())
+            .unwrap_err()
+            .to_string()
+            .contains("renamed"),
+    );
 }

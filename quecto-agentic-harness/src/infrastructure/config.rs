@@ -319,6 +319,17 @@ impl Config {
         };
         let mut value: serde_json::Value =
             serde_json::from_str(&content).map_err(ConfigError::Parse)?;
+        // Honest breaking-window signal, not a compat shim: the pre-#1410 key
+        // would otherwise be silently ignored and containers would quietly
+        // become "none configured".
+        if value.get("container_scripts").is_some() {
+            return Err(ConfigError::ContainerConfigs(
+                "the `container_scripts` key was renamed to `container_configs` (#1410); \
+                 entries are now a flat map of container configs with exactly one labeled \
+                 \"default\": true — see docs/container-runtimes.md"
+                    .into(),
+            ));
+        }
         let resolved_references = resolve_workflow_step_entries(&mut value, Path::new(path))?;
         // Deserializing the resolved Value loses line/column error context, so
         // only pay that cost when a reference was actually substituted.

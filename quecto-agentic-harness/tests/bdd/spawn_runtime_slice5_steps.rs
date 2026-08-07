@@ -552,3 +552,13 @@ fn then_workspace_checkout_marker(world: &mut QuectoWorld, agent_id: String, mar
         checkout.display()
     );
 }
+
+#[then("the spawn result should say the workspace is an empty sandbox")]
+fn then_sandbox_result_says_empty(world: &mut QuectoWorld) {
+    let result = world.spawn_result.as_ref().expect("spawn result");
+    assert!(
+        result.content.contains("(sandbox: empty workspace)"),
+        "spawn result must state the sandbox has an empty workspace, got: {}",
+        result.content
+    );
+}

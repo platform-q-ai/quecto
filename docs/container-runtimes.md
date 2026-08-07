@@ -68,6 +68,13 @@ refuses such environments up front, leaving every member untouched.
 
 ## Configuration
 
+> **Migrating from pre-#1410 configs:** the `container_scripts` key was
+> renamed to `container_configs` and its shape changed (flat map of named
+> container configs; the default is labeled `"default": true` on one entry;
+> repositories are baked into each config's `create` argv via `--repo`).
+> A config still containing `container_scripts` fails to load with an error
+> pointing here — rename and reshape the section.
+
 ```json
 {
   "container_configs": {

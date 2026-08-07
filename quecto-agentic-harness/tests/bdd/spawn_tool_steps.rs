@@ -1225,8 +1225,10 @@ fn then_existing_error(world: &mut QuectoWorld) {
 fn then_config_error(world: &mut QuectoWorld, err: String) {
     let expected = match err.as_str() {
         // The default label is validated at config LOAD time (#1410), so the
-        // spawn surfaces the load error, which enumerates the config names.
-        "no default label" => "no container config is labeled",
+        // spawn surfaces the ConfigError (its Display carries the section
+        // prefix) — pin that prefix so this scenario cannot silently drift to
+        // a different error path.
+        "no default label" => "invalid container_configs: no container config is labeled",
         "missing create argv" | "empty create argv" => {
             "invalid container_configs configuration: missing create argv"
         }

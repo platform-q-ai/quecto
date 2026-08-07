@@ -40,6 +40,7 @@ Feature: Canonical container-runtime scripts and multi-PR orchestration
     And the canonical container-runtime script set is configured
     When I spawn canonical subagent "canon-sandbox-slice5" with config "sandbox" and task "CANON_SANDBOX_MARKER"
     Then the spawn result should not be an error
+    And the spawn result should say the workspace is an empty sandbox
     And child "canon-sandbox-slice5" should receive "CANON_SANDBOX_MARKER"
     And the workspace for "canon-sandbox-slice5" should be empty
 
