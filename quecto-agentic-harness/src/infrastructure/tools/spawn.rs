@@ -29,6 +29,38 @@ use super::subagent_registry::NotificationTx;
 #[cfg(test)]
 pub use super::subagent_registry::SubagentStatus;
 
+const EMPTY_ROSTER: &str = "none configured";
+
+/// Session-start roster line for the tool description (#1410): the available
+/// container configs from the parent's effective config, with the default
+/// marked. Composition-time IO — called once when the tool is built, never
+/// from `definition()`. Deliberately uses the same loader (`Config::load`) as
+/// the spawn-time `load_container_config`, so the roster and spawn selection
+/// cannot diverge on loader behavior.
+fn container_config_roster(parent_config_path: Option<&Path>) -> String {
+    let Some(path) = parent_config_path else {
+        return EMPTY_ROSTER.to_string();
+    };
+    let Ok(cfg) = crate::infrastructure::config::Config::load(&path.to_string_lossy()) else {
+        return "unavailable (config failed to load)".to_string();
+    };
+    let names = super::spawn_container::container_config_names(&cfg);
+    if names.is_empty() {
+        return EMPTY_ROSTER.to_string();
+    }
+    names
+        .iter()
+        .map(|name| {
+            if cfg.container_configs[name].default {
+                format!("{name} (default)")
+            } else {
+                name.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// non-string entry is an LLM-addressable error, not a silent skip.
 fn parse_disable_tools(args: &serde_json::Value) -> Result<Vec<String>, String> {
     let mut tools: Vec<String> = Vec::new();
@@ -96,8 +128,13 @@ pub struct SpawnTool {
     pub(super) environment_registry: EnvironmentRegistry,
     /// The parent agent's own config path, plumbed from the composition root
     /// (#1369 follow-up). Container spawns without an explicit `config`
-    /// argument fall back to it for loading `container_scripts`.
+    /// argument fall back to it for loading `container_configs`.
     pub(super) parent_config_path: Option<PathBuf>,
+    /// Session-start snapshot of the configured container configs, baked into
+    /// the tool description so agents see the menu from turn one (#1410).
+    /// Staleness is accepted: the config file is still consulted at spawn
+    /// time, and selection errors enumerate the live names.
+    pub(super) container_config_roster: String,
 }
 
 impl SpawnTool {
@@ -114,6 +151,7 @@ impl SpawnTool {
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
             environment_registry: EnvironmentRegistry::new(),
             parent_config_path: None,
+            container_config_roster: EMPTY_ROSTER.to_string(),
         }
     }
 
@@ -135,6 +173,7 @@ impl SpawnTool {
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
             environment_registry: EnvironmentRegistry::new(),
             parent_config_path: None,
+            container_config_roster: EMPTY_ROSTER.to_string(),
         }
     }
 
@@ -143,6 +182,7 @@ impl SpawnTool {
     /// (#1369 follow-up). `None` leaves only the inherited runtime config
     /// (`QUECTO_RUNTIME_CONFIG_PATH`) as a fallback source.
     pub fn with_parent_config_path(mut self, parent_config_path: Option<PathBuf>) -> Self {
+        self.container_config_roster = container_config_roster(parent_config_path.as_deref());
         self.parent_config_path = parent_config_path;
         self
     }
@@ -411,16 +451,20 @@ impl Tool for SpawnTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "spawn".into(),
-            description: "Spawn a subagent as a background UDS-mode process. \
+            description: format!(
+                "Spawn a subagent as a background UDS-mode process. \
                 Returns as soon as the child socket is ready — not when the task finishes. \
                 REQUIRED sequence: spawn → end this turn (or do other non-blocking work) → \
                 on your NEXT turn a passive one-line completion note arrives → then \
                 agent_cmd get_messages (count 1-5) for the report. Do NOT poll \
                 get_subagents/get_subagents_all/get_state, sleep, or busy-wait in this turn. \
                 The note is a lifecycle summary only, not the child's answer. Multiple \
-                completions may be deduped into one note."
-                .into(),
-            parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"Initial task to send to the subagent (optional — starts idle if omitted)"},"agent_id":{"type":"string","description":"Session name for the subagent (used to address it via agent_cmd)"},"system":{"type":"string","description":"System prompt for the subagent"},"config":{"type":"string","description":"Path to a config file to pass to the child agent via --config (optional). For NEW-environment container spawns (container true or mode \"new\") container_scripts load from a trusted absolute path: an explicit config here wins; when omitted, the spawn falls back to the parent's own effective config path, so you normally do NOT need to pass it. Whichever path applies must be absolute. Joins via mode \"existing\" use the environment's retained scripts and never need it."},"container":{"description":"Launch adapter selection. Omitted or false: local child process (default). true: new script-managed environment via container_scripts.default (loaded from the explicit config argument if given, else from the parent's own effective config path). {\"mode\":\"new\",\"repo\"?,\"container_script\"?,\"name\"?}: new environment with optional explicit repository URL (defaults to the parent checkout remote.origin.url), script-set name, and environment name. {\"mode\":\"existing\",\"ref\"|\"name\"}: add this agent to an existing environment by its session ref (e.g. C1) or unambiguous name. A successful container spawn returns environment_ref=CN; list environments with agent_cmd get_containers and stop them with kill_container. Unknown fields are rejected."},"model":{"type":"string","description":"Model for the child in provider/model form (e.g. 'openai/gpt-5.5'), same format as agent_cmd set_model. Forwarded to the child as --model at launch so its FIRST turn runs on this model. Precedence: explicit model > --config > built-in default. Invalid combinations are rejected with a clear error."},"effort":{"type":"string","description":"Reasoning effort for the child. Must be one of: none, low, medium, high, xhigh, max. Forwarded as --effort at launch. Precedence: explicit spawn effort > child forwarded agents.defaults.effort > inherited QUECTO_AGENTS_DEFAULTS_EFFORT > provider default."},"provider":{"type":"string","description":"Provider name for the child model (alternative to model; must be paired with model_id)"},"model_id":{"type":"string","description":"Model id for the child model (used with provider)"},"workflow":{"type":"boolean","description":"Start the child agent with --workflow (requires --mode uds, always enabled for spawned agents)"},"workflow_guards":{"type":"boolean","description":"Start the child agent with --workflow-guards (requires --workflow)"},"disable_tools":{"type":"array","items":{"type":"string"},"description":"Tool names to disable and hide from the child model before its session starts (forwarded as --disable-tool per entry), e.g. [\"write\",\"edit\"]. Disabled tools remain described for policy/UI callers, reject execution, and cannot be re-registered at runtime. Entries must be strings."},"read_only":{"type":"boolean","description":"Convenience that disables the 'write' and 'edit' tools in the child (equivalent to disable_tools:[\"write\",\"edit\"]); unions with any explicit disable_tools. Use to launch read-only children such as reviewers."},"workflow_spec":{"type":"object","description":"Assign a binding workflow to the child by value. Provide the full template inline: {\"template\":{\"id\":...,\"label\":...,\"description\":...,\"steps\":[{\"key\":...,\"label\":...,\"phase\":...}]}}. The child runs exactly this template in Active mode (no template selection) and it overrides the child's default template library.","properties":{"template":{"type":"object"}}}}}"#.into(),
+                completions may be deduped into one note. \
+                Available container configs: {}.",
+                self.container_config_roster
+            )
+            .into(),
+            parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"Initial task to send to the subagent (optional — starts idle if omitted)"},"agent_id":{"type":"string","description":"Session name for the subagent (used to address it via agent_cmd)"},"system":{"type":"string","description":"System prompt for the subagent"},"config":{"type":"string","description":"Path to a config file to pass to the child agent via --config (optional). For NEW-environment container spawns (container true or mode \"new\") container_configs load from a trusted absolute path: an explicit config here wins; when omitted, the spawn falls back to the parent's own effective config path, so you normally do NOT need to pass it. Whichever path applies must be absolute. Joins via mode \"existing\" use the environment's retained container config and never need it."},"container":{"description":"Launch adapter selection. Omitted or false: local child process (default). true: new container via the container config labeled default (see the tool description for the available container configs). {\"mode\":\"new\",\"container_config\"?,\"name\"?}: new container via the named config, with an optional container name for later joins/kills. A container config is self-contained: its repository and auth are baked into the config itself — there is NO repo field, and the parent's location or checkout is irrelevant. A config with no repository is a sandbox (empty workspace). {\"mode\":\"existing\",\"ref\"|\"name\"}: add this agent to a running container by its session ref (e.g. C1) or unambiguous name. A successful container spawn returns environment_ref=CN; list containers with agent_cmd get_containers and stop them with kill_container. Unknown fields are rejected."},"model":{"type":"string","description":"Model for the child in provider/model form (e.g. 'openai/gpt-5.5'), same format as agent_cmd set_model. Forwarded to the child as --model at launch so its FIRST turn runs on this model. Precedence: explicit model > --config > built-in default. Invalid combinations are rejected with a clear error."},"effort":{"type":"string","description":"Reasoning effort for the child. Must be one of: none, low, medium, high, xhigh, max. Forwarded as --effort at launch. Precedence: explicit spawn effort > child forwarded agents.defaults.effort > inherited QUECTO_AGENTS_DEFAULTS_EFFORT > provider default."},"provider":{"type":"string","description":"Provider name for the child model (alternative to model; must be paired with model_id)"},"model_id":{"type":"string","description":"Model id for the child model (used with provider)"},"workflow":{"type":"boolean","description":"Start the child agent with --workflow (requires --mode uds, always enabled for spawned agents)"},"workflow_guards":{"type":"boolean","description":"Start the child agent with --workflow-guards (requires --workflow)"},"disable_tools":{"type":"array","items":{"type":"string"},"description":"Tool names to disable and hide from the child model before its session starts (forwarded as --disable-tool per entry), e.g. [\"write\",\"edit\"]. Disabled tools remain described for policy/UI callers, reject execution, and cannot be re-registered at runtime. Entries must be strings."},"read_only":{"type":"boolean","description":"Convenience that disables the 'write' and 'edit' tools in the child (equivalent to disable_tools:[\"write\",\"edit\"]); unions with any explicit disable_tools. Use to launch read-only children such as reviewers."},"workflow_spec":{"type":"object","description":"Assign a binding workflow to the child by value. Provide the full template inline: {\"template\":{\"id\":...,\"label\":...,\"description\":...,\"steps\":[{\"key\":...,\"label\":...,\"phase\":...}]}}. The child runs exactly this template in Active mode (no template selection) and it overrides the child's default template library.","properties":{"template":{"type":"object"}}}}}"#.into(),
         }
     }
 

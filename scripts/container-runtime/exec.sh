@@ -3,7 +3,7 @@
 #
 # Adds another agent to an EXISTING environment (see docs/container-runtimes.md):
 #   exec-argv... -- <child-binary> <child-args...>
-# Environment: QUECTO_CONTAINER_SCRIPT (retained script-set name) and
+# Environment: QUECTO_CONTAINER_CONFIG (retained container-config name) and
 # QUECTO_CONTAINER_ENVIRONMENT_ID (the runtime environment_id reported by
 # create.sh — NOT the session `C1` ref).
 #

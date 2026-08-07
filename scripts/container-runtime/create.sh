@@ -2,9 +2,13 @@
 # Canonical Quecto container-runtime reference script: `create` (#1369).
 #
 # Contract (see docs/container-runtimes.md):
-#   create-argv... -- <child-binary> <child-args...>
-# Environment: QUECTO_CONTAINER_REPO, QUECTO_CONTAINER_SCRIPT,
-#              QUECTO_CONTAINER_ENVIRONMENT_REF
+#   create-argv... [--repo <url>] -- <child-binary> <child-args...>
+# Environment: QUECTO_CONTAINER_CONFIG, QUECTO_CONTAINER_ENVIRONMENT_REF
+#
+# The repository is BAKED INTO the container config's own argv via --repo
+# (#1410): Quecto passes no source information, and the parent's location is
+# irrelevant. A config without --repo is a sandbox: empty workspace, no
+# clone, still fully valid.
 #
 # This reference runtime is host-local: it checks the repository out into a
 # per-environment workspace under --state-dir and starts the child directly on
@@ -24,11 +28,17 @@ die() {
 command -v jq >/dev/null 2>&1 || die "jq is required to encode the create result"
 
 state_dir=""
+repo=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
   --state-dir)
     [ "$#" -ge 2 ] || die "--state-dir needs a value"
     state_dir="$2"
+    shift 2
+    ;;
+  --repo)
+    [ "$#" -ge 2 ] || die "--repo needs a value"
+    repo="$2"
     shift 2
     ;;
   --)
@@ -43,7 +53,6 @@ done
 # Identity split: create receives the session REF; exec/kill/inspect/cleanup
 # instead receive QUECTO_CONTAINER_ENVIRONMENT_ID (the id minted below).
 [ -n "${QUECTO_CONTAINER_ENVIRONMENT_REF:-}" ] || die "QUECTO_CONTAINER_ENVIRONMENT_REF must be set"
-[ -n "${QUECTO_CONTAINER_REPO:-}" ] || die "QUECTO_CONTAINER_REPO must be set"
 
 # The child's CLI carries the UDS endpoint the parent will connect to.
 socket_path=""
@@ -76,19 +85,27 @@ workspace_path="$env_dir/workspace"
 mkdir "$workspace_path"
 printf '%s\n' "$QUECTO_CONTAINER_ENVIRONMENT_REF" >"$env_dir/ref"
 
-# Safe repository handling: the URL is one literal argv element after `--`,
-# never shell-interpolated, and the clone target is confined to the workspace.
-log "checking out $QUECTO_CONTAINER_REPO"
-git clone --quiet -- "$QUECTO_CONTAINER_REPO" "$workspace_path/repo"
+# Safe repository handling: the URL is one literal argv element from this
+# config's own --repo, never shell-interpolated, and the clone target is
+# confined to the workspace. No --repo → sandbox config: the workspace stays
+# empty and the child starts in it directly.
+child_cwd="$workspace_path"
+source="none"
+if [ -n "$repo" ]; then
+  log "checking out $repo"
+  git clone --quiet -- "$repo" "$workspace_path/repo"
+  child_cwd="$workspace_path/repo"
+  source="repo"
+fi
 
 # --- Runtime-specific section -------------------------------------------
 # A real adapter creates the isolated environment here (e.g. `docker run`
 # with the workspace mounted) and starts the child inside it EXACTLY once,
 # with the socket path shared back to the host. The host-local reference
-# starts the child directly, INSIDE the environment's checkout so the agent
-# genuinely operates in its isolated workspace. Quecto never starts a
-# fallback child itself.
-(cd "$workspace_path/repo" && exec "$@") >/dev/null 2>&1 &
+# starts the child directly, INSIDE the environment's checkout (or the empty
+# sandbox workspace) so the agent genuinely operates in its isolated
+# workspace. Quecto never starts a fallback child itself.
+(cd "$child_cwd" && exec "$@") >/dev/null 2>&1 &
 child_pid=$!
 # ------------------------------------------------------------------------
 
@@ -97,9 +114,13 @@ jq -cn --argjson pid "$child_pid" --arg socket "$socket_path" \
 printf '%s\n' "$environment_id" >>"$state_dir/creates.log"
 
 # Exactly one JSON object on stdout — encoded with a real JSON encoder.
+# metadata.repository is how listings/TUI learn the source truthfully: the
+# config owns its repository, so only the script can report it (#1410).
 jq -cn \
   --arg id "$environment_id" \
   --arg workspace "$workspace_path" \
   --arg socket "$socket_path" \
-  --arg script "${QUECTO_CONTAINER_SCRIPT:-}" \
-  '{environment_id: $id, workspace_path: $workspace, metadata: {runtime: "host-local", script: $script}, socket_path: $socket}'
+  --arg config "${QUECTO_CONTAINER_CONFIG:-}" \
+  --arg source "$source" \
+  --arg repository "$repo" \
+  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: "host-local", config: $config, source: $source} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket}'

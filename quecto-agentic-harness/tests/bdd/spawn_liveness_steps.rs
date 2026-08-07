@@ -59,8 +59,7 @@ echo "{{\"kind\":\"inspect\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
         ),
     );
     let (cfg_path, mut v) = load_config(world);
-    v["container_scripts"]["scripts"]["default"]["inspect"] =
-        serde_json::json!([inspect.to_string_lossy()]);
+    v["container_configs"]["default"]["inspect"] = serde_json::json!([inspect.to_string_lossy()]);
     store_config(&cfg_path, &v);
 }
 
@@ -81,10 +80,8 @@ fn given_liveness_script_spawn(world: &mut QuectoWorld, inspect_fails: bool) {
     configure_inspect_script(world, inspect_fails);
 
     let (cfg_path, mut v) = load_config(world);
-    v["container_scripts"]["scripts"]["default"]["create"] =
-        serde_json::json!([create.to_string_lossy()]);
-    v["container_scripts"]["scripts"]["default"]["exec"] =
-        serde_json::json!([exec.to_string_lossy()]);
+    v["container_configs"]["default"]["create"] = serde_json::json!([create.to_string_lossy()]);
+    v["container_configs"]["default"]["exec"] = serde_json::json!([exec.to_string_lossy()]);
     store_config(&cfg_path, &v);
 }
 
@@ -108,7 +105,7 @@ fn pid_logging_script(log: &Path, kind: &str, env_id_expr: &str, is_create: bool
         r#"#!/usr/bin/env bash
 set -euo pipefail
 {env_line}
-echo "{{\"kind\":\"{kind}\",\"script\":\"${{QUECTO_CONTAINER_SCRIPT:-}}\",\"env_ref\":\"${{QUECTO_CONTAINER_ENVIRONMENT_REF:-}}\",\"env_id\":\"$env_id\"}}" >> '{log}'
+echo "{{\"kind\":\"{kind}\",\"script\":\"${{QUECTO_CONTAINER_CONFIG:-}}\",\"env_ref\":\"${{QUECTO_CONTAINER_ENVIRONMENT_REF:-}}\",\"env_id\":\"$env_id\"}}" >> '{log}'
 socket_path=""
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "--" ]; then shift; break; fi
@@ -202,7 +199,7 @@ exec python3 '__BRIDGE__' "$1"
     let create_script = r#"#!/usr/bin/env bash
 set -euo pipefail
 env_id="env-proxy-$RANDOM-$$"
-echo "{\"kind\":\"create\",\"script\":\"${QUECTO_CONTAINER_SCRIPT:-}\",\"env_ref\":\"${QUECTO_CONTAINER_ENVIRONMENT_REF:-}\",\"env_id\":\"$env_id\"}" >> '__LOG__'
+echo "{\"kind\":\"create\",\"script\":\"${QUECTO_CONTAINER_CONFIG:-}\",\"env_ref\":\"${QUECTO_CONTAINER_ENVIRONMENT_REF:-}\",\"env_id\":\"$env_id\"}" >> '__LOG__'
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "--" ]; then shift; break; fi
   shift
@@ -258,8 +255,7 @@ printf '{"environment_id":"%s","workspace_path":"%s","metadata":{},"socket_proxy
     write_executable(&create, create_script);
 
     let (cfg_path, mut v) = load_config(world);
-    v["container_scripts"]["scripts"]["default"]["create"] =
-        serde_json::json!([create.to_string_lossy()]);
+    v["container_configs"]["default"]["create"] = serde_json::json!([create.to_string_lossy()]);
     store_config(&cfg_path, &v);
 }
 
@@ -304,14 +300,13 @@ fn given_create_result_both_endpoints(world: &mut QuectoWorld) {
     let script = r#"#!/usr/bin/env bash
 set -euo pipefail
 env_id="env-both-$$"
-echo "{\"kind\":\"create\",\"script\":\"${QUECTO_CONTAINER_SCRIPT:-}\",\"env_ref\":\"${QUECTO_CONTAINER_ENVIRONMENT_REF:-}\",\"env_id\":\"$env_id\"}" >> '__LOG__'
+echo "{\"kind\":\"create\",\"script\":\"${QUECTO_CONTAINER_CONFIG:-}\",\"env_ref\":\"${QUECTO_CONTAINER_ENVIRONMENT_REF:-}\",\"env_id\":\"$env_id\"}" >> '__LOG__'
 printf '{"environment_id":"%s","workspace_path":"%s","metadata":{},"socket_path":"%s","socket_proxy":{"argv":["/bin/true"]}}' "$env_id" "$PWD/workspace-$env_id" "$PWD/never-used.sock"
 "#
     .replace("__LOG__", &log.display().to_string());
     write_executable(&both, script);
     let (cfg_path, mut v) = load_config(world);
-    v["container_scripts"]["scripts"]["default"]["create"] =
-        serde_json::json!([both.to_string_lossy()]);
+    v["container_configs"]["default"]["create"] = serde_json::json!([both.to_string_lossy()]);
     store_config(&cfg_path, &v);
 }
 

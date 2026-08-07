@@ -557,6 +557,9 @@ fn test_definition_documents_container_spawning() {
         "true",
         "\"mode\":\"new\"",
         "\"mode\":\"existing\"",
+        "container_config",
+        "sandbox",
+        "self-contained",
         "environment_ref=",
         "get_containers",
         "kill_container",
@@ -575,5 +578,48 @@ fn test_definition_documents_container_spawning() {
     assert!(config_desc.contains("absolute"));
     assert!(config_desc.contains("falls back to the parent's own effective config path"));
     assert!(config_desc.contains("explicit config here wins"));
-    assert!(desc.contains("parent's own effective config path"));
+}
+
+#[test]
+fn test_definition_carries_the_container_config_roster() {
+    // #1410: the tool description is the agent's session-start menu.
+    let no_config = SpawnTool::new(vec![], true);
+    assert!(
+        no_config
+            .definition()
+            .description
+            .contains("Available container configs: none configured."),
+        "{}",
+        no_config.definition().description
+    );
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let cfg = dir.path().join("config.json");
+    std::fs::write(
+        &cfg,
+        r#"{"container_configs":{
+            "quecto":{"default":true,"create":["/bin/true"],"cleanup":["/bin/true"]},
+            "alpha":{"create":["/bin/true"],"cleanup":["/bin/true"]}}}"#,
+    )
+    .unwrap();
+    let tool = SpawnTool::new(vec![], true).with_parent_config_path(Some(cfg));
+    assert!(
+        tool.definition()
+            .description
+            .contains("Available container configs: alpha, quecto (default)."),
+        "{}",
+        tool.definition().description
+    );
+
+    // A config that fails to load must degrade honestly, not panic.
+    let broken = dir.path().join("broken.json");
+    std::fs::write(&broken, "{not json").unwrap();
+    let tool = SpawnTool::new(vec![], true).with_parent_config_path(Some(broken));
+    assert!(
+        tool.definition()
+            .description
+            .contains("Available container configs: unavailable (config failed to load)."),
+        "{}",
+        tool.definition().description
+    );
 }

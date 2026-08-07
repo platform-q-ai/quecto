@@ -634,3 +634,33 @@ async fn mixed_producers_degrade_to_two_environment_rows_without_crashing() {
         );
     }
 }
+
+#[tokio::test]
+async fn sandbox_environment_renders_dash_for_missing_repository() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    let mut a = env_agent_json("sbx", "C3");
+    a["environment"]["repository"] = serde_json::json!("");
+    h.event_line(&state_changed_line(vec![a.clone(), {
+        let mut b = env_agent_json("sbx2", "C3");
+        b["environment"]["repository"] = serde_json::json!("");
+        b
+    }]));
+
+    let rows = panel_rows(&h.left_panel());
+    let target = rows
+        .iter()
+        .position(|l| l.contains("C3") && !l.contains("sbx"))
+        .unwrap_or_else(|| panic!("no selectable environment row for C3:\n{}", rows.join("\n")));
+    h.press(Key::Tab);
+    for _ in 0..target {
+        h.press(Key::Down);
+    }
+    h.press(Key::Enter);
+
+    let top = h.main_pane();
+    assert!(
+        top.contains("repo: -"),
+        "sandbox chrome must render `-` for the absent repository, got:\n{top}"
+    );
+}

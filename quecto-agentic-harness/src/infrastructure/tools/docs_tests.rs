@@ -177,8 +177,11 @@ async fn top_level_quick_start_still_available() {
 fn subagents_embed_teaches_container_environments() {
     let doc = lookup_doc("subagents").expect("subagents embed");
     for needle in [
-        "Container environments",
+        "Container spawning",
         "container: true",
+        "container_config",
+        "Available container configs",
+        "sandbox",
         "\"mode\":\"existing\"",
         "environment_ref=C1",
         "get_containers",
