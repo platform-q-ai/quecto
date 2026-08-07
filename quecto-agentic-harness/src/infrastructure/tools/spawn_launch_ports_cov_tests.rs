@@ -181,8 +181,7 @@ fn container_child_cli_args_fall_back_to_parents_config_and_local_does_not() {
     let mut ports = SpawnLaunchPorts::new(&tool);
     let mut cfg = config();
     cfg.container = crate::domain::subagent::ContainerSelection::New {
-        repo: None,
-        container_script: None,
+        container_config: None,
         name: None,
     };
     let identity = ports.allocate_identity(&cfg).unwrap();

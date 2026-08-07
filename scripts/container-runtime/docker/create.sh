@@ -5,7 +5,10 @@
 # local Docker daemon; the CI-exercised default remains the host-local set.
 #
 #   create.sh --state-dir <dir> [--image <img>] -- <child-binary> <child-args...>
-# Environment: QUECTO_CONTAINER_REPO, QUECTO_CONTAINER_SCRIPT,
+# The repository is BAKED INTO the container config's own argv via --repo
+# (#1410): Quecto passes no source information. No --repo → sandbox config
+# (empty workspace, no clone).
+# Environment: QUECTO_CONTAINER_CONFIG,
 #              QUECTO_CONTAINER_ENVIRONMENT_REF
 #
 # Design: one container per environment; the child IS the container's main
@@ -31,12 +34,18 @@ command -v jq >/dev/null 2>&1 || die "jq is required to encode the create result
 command -v docker >/dev/null 2>&1 || die "docker is required"
 
 state_dir=""
+repo=""
 image="${QUECTO_DOCKER_IMAGE:-quecto-box:local}"
 while [ "$#" -gt 0 ]; do
   case "$1" in
   --state-dir)
     [ "$#" -ge 2 ] || die "--state-dir needs a value"
     state_dir="$2"
+    shift 2
+    ;;
+  --repo)
+    [ "$#" -ge 2 ] || die "--repo needs a value"
+    repo="$2"
     shift 2
     ;;
   --image)
@@ -54,7 +63,6 @@ done
 [ -n "$state_dir" ] || die "--state-dir is required"
 [ "$#" -gt 0 ] || die "missing child command after --"
 [ -n "${QUECTO_CONTAINER_ENVIRONMENT_REF:-}" ] || die "QUECTO_CONTAINER_ENVIRONMENT_REF must be set"
-[ -n "${QUECTO_CONTAINER_REPO:-}" ] || die "QUECTO_CONTAINER_REPO must be set"
 
 child_binary="$1"
 [ -x "$child_binary" ] || die "child binary $child_binary is not executable"
@@ -93,13 +101,22 @@ workspace_path="$env_dir/workspace"
 mkdir "$workspace_path"
 printf '%s\n' "$QUECTO_CONTAINER_ENVIRONMENT_REF" >"$env_dir/ref"
 
-log "checking out $QUECTO_CONTAINER_REPO"
-# SECURITY (PR #1401 review): the repo URL is agent-supplied and this clone
-# runs on the HOST, before any container exists. Whitelist git transports so
-# command-running helpers (`ext::sh -c ...`) cannot execute host commands —
-# a containment bypass for the adapter whose whole point is isolation.
-GIT_ALLOW_PROTOCOL="file:https:ssh:git" \
-  git clone --quiet -- "$QUECTO_CONTAINER_REPO" "$workspace_path/repo"
+# The clone source is this config's own --repo (#1410); no --repo → sandbox.
+child_cwd="$workspace_path"
+source="none"
+if [ -n "$repo" ]; then
+  log "checking out $repo"
+  # SECURITY (PR #1401 review): this clone runs on the HOST, before any
+  # container exists. Whitelist git transports so command-running helpers
+  # (`ext::sh -c ...`) cannot execute host commands — a containment bypass
+  # for the adapter whose whole point is isolation. The URL is now baked
+  # into the trusted config's argv rather than agent-supplied, but the
+  # restriction stays: config files travel.
+  GIT_ALLOW_PROTOCOL="file:https:ssh:git" \
+    git clone --quiet -- "$repo" "$workspace_path/repo"
+  child_cwd="$workspace_path/repo"
+  source="repo"
+fi
 
 # --- Runtime-specific section (Docker) ----------------------------------
 mounts=(
@@ -176,13 +193,13 @@ if [ -n "$secret_env_file" ]; then
   docker run -d --name "$container" \
     --label "quecto.environment_id=$environment_id" \
     "${mounts[@]}" "${envs[@]}" \
-    -w "$workspace_path/repo" \
+    -w "$child_cwd" \
     "$image" /bin/sh -c '. "$0" && exec "$@"' "$secret_env_file" "$@" >/dev/null
 else
   docker run -d --name "$container" \
     --label "quecto.environment_id=$environment_id" \
     "${mounts[@]}" "${envs[@]}" \
-    -w "$workspace_path/repo" \
+    -w "$child_cwd" \
     "$image" "$@" >/dev/null
 fi
 # ------------------------------------------------------------------------
@@ -192,11 +209,15 @@ jq -cn --arg container "$container" --arg socket "$socket_path" \
   '{container: $container, socket: $socket}' >>"$env_dir/children.jsonl"
 printf '%s\n' "$environment_id" >>"$state_dir/creates.log"
 
+# metadata.repository is how listings/TUI learn the source truthfully: the
+# config owns its repository, so only the script can report it (#1410).
 jq -cn \
   --arg id "$environment_id" \
   --arg workspace "$workspace_path" \
   --arg socket "$socket_path" \
-  --arg script "${QUECTO_CONTAINER_SCRIPT:-}" \
+  --arg config "${QUECTO_CONTAINER_CONFIG:-}" \
   --arg image "$image" \
   --arg container "$container" \
-  '{environment_id: $id, workspace_path: $workspace, metadata: {runtime: "docker", image: $image, container: $container, script: $script}, socket_path: $socket}'
+  --arg source "$source" \
+  --arg repository "$repo" \
+  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: "docker", image: $image, container: $container, config: $config, source: $source} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket}'

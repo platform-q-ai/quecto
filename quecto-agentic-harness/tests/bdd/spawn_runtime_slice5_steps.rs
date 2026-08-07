@@ -113,27 +113,6 @@ fn given_repository_fixtures(world: &mut QuectoWorld, a: String, b: String) {
     }
 }
 
-#[given(expr = "the parent session's repository is fixture {string}")]
-fn given_parent_repository_fixture(world: &mut QuectoWorld, name: String) {
-    // Omitted-repo spawns discover the parent checkout's origin, so pointing
-    // origin at the fixture makes the canonical create script clone it.
-    let base = base_path(world);
-    let repo = fixture_repo_path(world, &name);
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(&base)
-        .args(["remote", "remove", "origin"])
-        .status()
-        .ok();
-    let status = std::process::Command::new("git")
-        .arg("-C")
-        .arg(&base)
-        .args(["remote", "add", "origin", repo.to_str().unwrap()])
-        .status()
-        .expect("git remote add origin fixture");
-    assert!(status.success(), "git remote add origin failed");
-}
-
 #[given("the canonical container-runtime script set is configured")]
 fn given_canonical_runtime(world: &mut QuectoWorld) {
     // Full production wiring (SpawnTool, environment control, notification and
@@ -158,19 +137,31 @@ fn given_canonical_runtime(world: &mut QuectoWorld) {
     let cfg_path = PathBuf::from(world.config_path.clone().unwrap());
     let mut cfg: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
-    cfg["container_scripts"] = serde_json::json!({
-        "default": "container-runtime",
-        "scripts": {
-            "container-runtime": {
-                "create": script("create.sh", &[]),
-                "exec": script("exec.sh", &[]),
-                "inspect": script("inspect.sh", &[]),
-                // One kill.sh serves both operations; --op tags each recorded
-                // invocation so assertions can prove WHICH operation ran.
-                "kill": script("kill.sh", &["--op", "kill"]),
-                "cleanup": script("kill.sh", &["--op", "cleanup"]),
-            }
-        }
+    // Each container config is self-contained (#1410): the DEFAULT config
+    // bakes fixture repo-a into its own create argv, the per-fixture configs
+    // bake theirs, "missing-repo" bakes a nonexistent path, and "sandbox"
+    // bakes no repository at all. The parent's location never matters.
+    let repo_a = fixture_repo_path(world, "repo-a");
+    let repo_b = fixture_repo_path(world, "repo-b");
+    let missing = base_path(world).join("fixtures").join("does-not-exist");
+    let entry = |create_extra: &[&str], default: bool| {
+        serde_json::json!({
+            "default": default,
+            "create": script("create.sh", create_extra),
+            "exec": script("exec.sh", &[]),
+            "inspect": script("inspect.sh", &[]),
+            // One kill.sh serves both operations; --op tags each recorded
+            // invocation so assertions can prove WHICH operation ran.
+            "kill": script("kill.sh", &["--op", "kill"]),
+            "cleanup": script("kill.sh", &["--op", "cleanup"]),
+        })
+    };
+    cfg["container_configs"] = serde_json::json!({
+        "container-runtime": entry(&["--repo", repo_a.to_str().unwrap()], true),
+        "repo-a": entry(&["--repo", repo_a.to_str().unwrap()], false),
+        "repo-b": entry(&["--repo", repo_b.to_str().unwrap()], false),
+        "missing-repo": entry(&["--repo", missing.to_str().unwrap()], false),
+        "sandbox": entry(&[], false),
     });
     std::fs::write(&cfg_path, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
 }
@@ -194,6 +185,50 @@ fn when_spawn_canonical_new(world: &mut QuectoWorld, agent_id: String, task: Str
     );
 }
 
+#[when(expr = "I spawn canonical subagent {string} with config {string} and task {string}")]
+fn when_spawn_canonical_named_config(
+    world: &mut QuectoWorld,
+    agent_id: String,
+    config: String,
+    task: String,
+) {
+    spawn_env_steps::execute_env_spawn(
+        world,
+        &agent_id,
+        serde_json::json!({
+            "agent_id": agent_id,
+            "task": task,
+            "container": {"mode": "new", "container_config": config},
+            "read_only": false,
+        }),
+    );
+}
+
+#[then(expr = "the workspace for {string} should be empty")]
+fn then_workspace_empty(world: &mut QuectoWorld, agent_id: String) {
+    // Sandbox configs (#1410): the reported workspace exists and contains
+    // nothing — no checkout was made and none was required.
+    let workspace = world
+        .agent_workspaces
+        .get(&agent_id)
+        .cloned()
+        .unwrap_or_else(|| panic!("no captured workspace for {agent_id}"));
+    let workspace = PathBuf::from(workspace);
+    assert!(
+        workspace.is_dir(),
+        "workspace missing: {}",
+        workspace.display()
+    );
+    let entries: Vec<_> = std::fs::read_dir(&workspace)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert!(
+        entries.is_empty(),
+        "sandbox workspace should be empty, found: {entries:?}"
+    );
+}
+
 #[when(
     expr = "I spawn canonical subagent {string} for repository fixture {string} with task {string}"
 )]
@@ -203,14 +238,14 @@ fn when_spawn_canonical_repo(
     repo: String,
     task: String,
 ) {
-    let repo_path = fixture_repo_path(world, &repo);
     spawn_env_steps::execute_env_spawn(
         world,
         &agent_id,
         serde_json::json!({
             "agent_id": agent_id,
             "task": task,
-            "container": {"mode": "new", "repo": repo_path.to_string_lossy()},
+            // The fixture repo is baked into the config named after it (#1410).
+            "container": {"mode": "new", "container_config": repo},
             "read_only": false,
         }),
     );
@@ -247,14 +282,14 @@ fn given_canonical_running_repo(
 
 #[when(expr = "I spawn canonical subagent {string} for a missing repository with task {string}")]
 fn when_spawn_canonical_missing_repo(world: &mut QuectoWorld, agent_id: String, task: String) {
-    let missing = base_path(world).join("fixtures").join("does-not-exist");
     spawn_env_steps::execute_env_spawn(
         world,
         &agent_id,
         serde_json::json!({
             "agent_id": agent_id,
             "task": task,
-            "container": {"mode": "new", "repo": missing.to_string_lossy()},
+            // The nonexistent repository is baked into this config (#1410).
+            "container": {"mode": "new", "container_config": "missing-repo"},
             "read_only": false,
         }),
     );

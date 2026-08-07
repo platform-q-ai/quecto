@@ -1,4 +1,4 @@
-# Container runtimes for subagents (`container_scripts`)
+# Container runtimes for subagents (`container_configs`)
 
 Quecto can spawn a subagent into an isolated, script-managed environment
 (e.g. a container) instead of a local child process. Quecto itself is
@@ -16,8 +16,8 @@ The `spawn` tool's `container` field selects the launch adapter:
 | `container` value | Behavior |
 | --- | --- |
 | omitted or `false` | Local child process (default, unchanged) |
-| `true` | New environment via the `container_scripts.default` script set |
-| `{"mode": "new", "repo"?: "...", "container_script"?: "...", "name"?: "..."}` | New environment; optional explicit repository URL, script-set name, and environment name |
+| `true` | New container via the config labeled `"default": true` |
+| `{"mode": "new", "container_config"?: "...", "name"?: "..."}` | New container via the named config, with an optional container name |
 | `{"mode": "existing", "ref": "C1"}` | Join the existing session environment `C1` via its retained `exec` script |
 | `{"mode": "existing", "name": "review-env"}` | Join an existing environment by its (unambiguous) name |
 
@@ -26,9 +26,12 @@ Unknown fields are rejected. Runtime-specific fields (`branch`, `pr`,
 `ref`/`name`; unknown, ambiguous, stopped, or stale (kill pending/failed)
 targets fail without guessing.
 
-- `repo` omitted → the parent checkout's `remote.origin.url` is used and
-  must exist; explicit `repo` is passed to the script literally.
-- `container_scripts` load from a trusted config file: an explicit `config`
+- There is **no `repo` field** (#1410): a container config is a complete,
+  self-contained definition of a working context — its repository URL and any
+  auth it needs are baked into the config's own argv, and the parent's
+  location or checkout is irrelevant. A config with no repository is a
+  **sandbox**: empty workspace, fully valid.
+- `container_configs` load from a trusted config file: an explicit `config`
   argument in the spawn call wins; when it is omitted, the spawn falls back
   to the parent's own effective config path, so container spawns normally
   need no `config` argument. Whichever path applies must be absolute; when
@@ -67,32 +70,42 @@ refuses such environments up front, leaving every member untouched.
 
 ```json
 {
-  "container_scripts": {
-    "default": "devcontainer",
-    "scripts": {
-      "devcontainer": {
-        "create": ["/abs/path/to/create-script"],
-        "cleanup": ["/abs/path/to/cleanup-script"],
-        "exec": ["/abs/path/to/exec-script"],
-        "kill": ["/abs/path/to/kill-script"],
-        "inspect": ["/abs/path/to/inspect-script"]
-      }
+  "container_configs": {
+    "quecto": {
+      "default": true,
+      "create": ["/abs/path/to/create-script", "--repo", "https://github.com/platform-q-ai/quecto"],
+      "cleanup": ["/abs/path/to/cleanup-script"],
+      "exec": ["/abs/path/to/exec-script"],
+      "kill": ["/abs/path/to/kill-script"],
+      "inspect": ["/abs/path/to/inspect-script"]
+    },
+    "sandbox": {
+      "create": ["/abs/path/to/create-script"],
+      "cleanup": ["/abs/path/to/cleanup-script"]
     }
   }
 }
 ```
 
-`default` names the script set used for `container: true`. Each script
-set's operations are argv arrays executed directly — no shell
-interpolation. `create` and `cleanup` are required; `exec` (joining),
-`kill` (explicit stop), and `inspect` (post-mortem) are optional but
-needed for `mode: existing`, `kill_container`, and death diagnostics
-respectively. Missing, unknown, empty required, or unsafe (empty/NUL
-argument) configuration fails before any script runs.
+Each entry is a named **container config**: a complete, self-contained
+definition of a working context. Exactly one entry must carry
+`"default": true` — the config `container: true` selects; zero or multiple
+default labels fail at config **load** time with an error naming the
+configured entries. Operations are argv arrays executed directly — no
+shell interpolation — and the repository (with any auth it needs) is part
+of the config's own argv (`--repo` for the shipped scripts), never
+something Quecto resolves or passes. `create` and `cleanup` are required;
+`exec` (joining), `kill` (explicit stop), and `inspect` (post-mortem) are
+optional but needed for `mode: existing`, `kill_container`, and death
+diagnostics respectively. Missing, unknown, empty required, or unsafe
+(empty/NUL argument) configuration fails before any script runs, and
+selection errors enumerate the available config names so an agent can
+offer the menu. The spawn tool's description also carries the roster
+(`Available container configs: ...`) as a session-start snapshot.
 
-The script set in effect when an environment is **created** is retained
-with the environment: later joins, kills, and inspects use the retained
-`exec`/`kill`/`inspect` argv even if `container_scripts.default` changes
+The container config in effect when an environment is **created** is
+retained with the environment: later joins, kills, and inspects use the
+retained `exec`/`kill`/`inspect` argv even if the labeled default changes
 afterwards.
 
 ## Endpoints and liveness (direct vs proxy)
@@ -150,12 +163,14 @@ Invoked as:
 create-argv... -- <child-binary> <child-args...>
 ```
 
-Environment variables provided to the script:
+The repository is part of `create-argv` itself — the shipped scripts take
+`--repo <url>` there, and a config that omits it is a sandbox (empty
+workspace). Quecto passes **no source information**; environment variables
+provided to the script:
 
 | Variable | Meaning |
 | --- | --- |
-| `QUECTO_CONTAINER_REPO` | Repository URL to check out (explicit or discovered) |
-| `QUECTO_CONTAINER_SCRIPT` | Name of the selected script set |
+| `QUECTO_CONTAINER_CONFIG` | Name of the selected container config |
 | `QUECTO_CONTAINER_ENVIRONMENT_REF` | The minted session ref (`C1`, ...) |
 | `QUECTO_BASE_DIR` | Parent agent's base directory (set only when the parent has one) |
 
@@ -178,7 +193,10 @@ liveness"). Extra JSON data after the object is rejected. A non-zero exit
 or an invalid contract fails the launch and rolls back.
 
 The create result must contain exactly these fields — unknown keys are
-rejected.
+rejected. When the config cloned a repository, the script should report it
+as `metadata.repository`: that is how `get_containers` listings and the
+TUI learn the source truthfully (sandbox configs report none and list an
+empty repository).
 
 ### `exec`
 
@@ -188,8 +206,8 @@ Invoked to add another agent to an existing environment:
 exec-argv... -- <child-binary> <child-args...>
 ```
 
-Environment variables: `QUECTO_CONTAINER_SCRIPT` (the retained script-set
-name) and `QUECTO_CONTAINER_ENVIRONMENT_ID` (the runtime `environment_id`
+Environment variables: `QUECTO_CONTAINER_CONFIG` (the retained container
+config's name) and `QUECTO_CONTAINER_ENVIRONMENT_ID` (the runtime `environment_id`
 reported by `create` — not the session `C` ref). The script must start the
 child inside the existing environment exactly once and print exactly one
 JSON object:
@@ -280,10 +298,12 @@ recorded child pids, invocation records). The root is created owner-only
 (mode 700) and adopted only when owned by the invoking user, and each
 environment directory is minted with `mktemp -d` — an unpredictable name
 that fails hard rather than reuse (or follow a symlink planted at) an
-existing path. `create.sh` checks the repository out into
+existing path. `create.sh` clones the repository baked into its own argv
+(`--repo <url>`; omit it for a sandbox config with an empty workspace) into
 `<state>/<environment_id>/workspace/repo` and starts the child directly on
-the host with the checkout as its working directory, so the agent genuinely
-operates inside its isolated workspace; a failure after state allocation
+the host with the checkout (or the sandbox workspace) as its working
+directory, so the agent genuinely operates inside its isolated workspace; a
+failure after state allocation
 (e.g. a failed clone) rolls the partially created environment directory back
 so nothing unreachable by `cleanup` is ever leaked. `exec.sh` starts a
 joining child in that same checkout;
@@ -299,20 +319,19 @@ stderr only, encode stdout results with a real JSON encoder (`jq`, which
 must be installed), and pass the repository URL as a literal argv element
 (never shell-interpolated).
 
-A matching configuration (using `container_scripts.default` selection):
+A matching configuration (the `--repo` baked into the create argv makes
+this config self-contained; drop it for a sandbox config):
 
 ```json
 {
-  "container_scripts": {
-    "default": "container-runtime",
-    "scripts": {
-      "container-runtime": {
-        "create": ["/repo/scripts/container-runtime/create.sh", "--state-dir", "/var/tmp/quecto-envs"],
+  "container_configs": {
+    "container-runtime": {
+        "default": true,
+        "create": ["/repo/scripts/container-runtime/create.sh", "--state-dir", "/var/tmp/quecto-envs", "--repo", "https://github.com/you/project"],
         "exec": ["/repo/scripts/container-runtime/exec.sh", "--state-dir", "/var/tmp/quecto-envs"],
         "inspect": ["/repo/scripts/container-runtime/inspect.sh", "--state-dir", "/var/tmp/quecto-envs"],
         "kill": ["/repo/scripts/container-runtime/kill.sh", "--state-dir", "/var/tmp/quecto-envs", "--op", "kill"],
         "cleanup": ["/repo/scripts/container-runtime/kill.sh", "--state-dir", "/var/tmp/quecto-envs", "--op", "cleanup"]
-      }
     }
   }
 }
@@ -362,10 +381,11 @@ Design properties:
   operation to the state root.
 - **Strict JSON contract.** All stdout results are emitted with `jq`, exactly
   matching the `create`/`exec`/`inspect` wire contracts above.
-- **Host-side clone is transport-restricted.** The repo URL is agent-supplied
-  and cloned on the host before any container exists, so `create.sh` runs
-  `git clone` under `GIT_ALLOW_PROTOCOL=file:https:ssh:git` — command-running
-  transports (`ext::…`) can never execute host commands (PR #1401 review).
+- **Host-side clone is transport-restricted.** The repo URL from the config's
+  own `--repo` argv is cloned on the host before any container exists, so
+  `create.sh` runs `git clone` under `GIT_ALLOW_PROTOCOL=file:https:ssh:git` —
+  command-running transports (`ext::…`) can never execute host commands
+  (PR #1401 review; config files travel, so the restriction stays).
 - **Provider API keys never enter the docker-side container config.**
   `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` are written to
   a `0600` file in the `0700` state dir, identity-mounted read-only, and
@@ -389,16 +409,14 @@ A matching configuration:
 
 ```json
 {
-  "container_scripts": {
-    "default": "docker",
-    "scripts": {
-      "docker": {
-        "create": ["/repo/scripts/container-runtime/docker/create.sh", "--state-dir", "/var/tmp/quecto-docker-envs"],
+  "container_configs": {
+    "docker": {
+        "default": true,
+        "create": ["/repo/scripts/container-runtime/docker/create.sh", "--state-dir", "/var/tmp/quecto-docker-envs", "--repo", "https://github.com/you/project"],
         "exec": ["/repo/scripts/container-runtime/docker/exec.sh", "--state-dir", "/var/tmp/quecto-docker-envs"],
         "inspect": ["/repo/scripts/container-runtime/docker/inspect.sh", "--state-dir", "/var/tmp/quecto-docker-envs"],
         "kill": ["/repo/scripts/container-runtime/docker/kill.sh", "--state-dir", "/var/tmp/quecto-docker-envs", "--op", "kill"],
         "cleanup": ["/repo/scripts/container-runtime/docker/kill.sh", "--state-dir", "/var/tmp/quecto-docker-envs", "--op", "cleanup"]
-      }
     }
   }
 }
@@ -418,7 +436,7 @@ parsing, environment-variable handling, and JSON results stay identical.
 Rules an author must keep:
 
 1. **Structured argv, no shell interpolation.** Every configured operation
-   is an argv array executed directly; treat `QUECTO_CONTAINER_REPO` and the
+   is an argv array executed directly; treat your own `--repo` value and the
    child command after `--` as opaque literals.
 2. **Start the child exactly once.** `create`/`exec` own the child's whole
    lifetime inside the environment; Quecto never starts a fallback child.

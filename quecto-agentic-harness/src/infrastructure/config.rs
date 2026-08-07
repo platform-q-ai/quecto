@@ -16,22 +16,22 @@ pub struct Config {
     pub tools: ToolsConfig,
     #[serde(default)]
     pub workflow: WorkflowConfig,
+    /// Named container configs (#1410): each entry is a complete,
+    /// self-contained definition of a container working context (repository,
+    /// auth, and runtime mechanics all live in the config's own argv).
+    /// Exactly one entry must carry `"default": true` when any are defined —
+    /// validated at load time, not at spawn time.
     #[serde(default)]
-    pub container_scripts: ContainerScriptsConfig,
+    pub container_configs: HashMap<String, ContainerConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
-pub struct ContainerScriptsConfig {
+pub struct ContainerConfig {
+    /// Marks the config `container: true` selects. The label travels with
+    /// the entry when copied between config files.
     #[serde(default)]
-    pub default: String,
-    #[serde(default)]
-    pub scripts: HashMap<String, ContainerScriptConfig>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct ContainerScriptConfig {
+    pub default: bool,
     #[serde(default)]
     pub create: Vec<String>,
     #[serde(default)]
@@ -328,6 +328,7 @@ impl Config {
             serde_json::from_str(&content).map_err(ConfigError::Parse)?
         };
         config.validate_effort()?;
+        config.validate_container_configs()?;
         Ok(config)
     }
 
@@ -342,6 +343,39 @@ impl Config {
         Ok(())
     }
 
+    /// Exactly one container config must be labeled `"default": true` when
+    /// any are defined (#1410). Zero or multiple defaults fail here, at load
+    /// time, naming the configured entries so the caller can fix the file.
+    fn validate_container_configs(&self) -> Result<(), ConfigError> {
+        if self.container_configs.is_empty() {
+            return Ok(());
+        }
+        let mut names: Vec<&str> = self.container_configs.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        let defaults: Vec<&str> = names
+            .iter()
+            .copied()
+            .filter(|name| self.container_configs[*name].default)
+            .collect();
+        match defaults.as_slice() {
+            [_] => Ok(()),
+            [] => Err(ConfigError::ContainerConfigs(format!(
+                "no container config is labeled \"default\": true (configured: {})",
+                names.join(", ")
+            ))),
+            multiple => Err(ConfigError::ContainerConfigs(format!(
+                "multiple container configs are labeled \"default\": true ({}); exactly one is allowed",
+                multiple.join(", ")
+            ))),
+        }
+    }
+
+    /// Test-only seam for the load-time default-label validation (#1410).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn validate_container_configs_for_test(&self) -> Result<(), ConfigError> {
+        self.validate_container_configs()
+    }
+
     /// Load config from a JSON file, then apply environment variable overrides.
     ///
     /// Environment variable naming convention: `QUECTO_AGENTS_DEFAULTS_MODEL`
@@ -353,6 +387,7 @@ impl Config {
         let mut config = Self::load(path)?;
         Self::apply_env_overrides(&mut config, env_overrides);
         config.validate_effort()?;
+        config.validate_container_configs()?;
         Ok(config)
     }
 
@@ -618,6 +653,8 @@ pub enum ConfigError {
     WorkflowTemplate(String),
     /// Unrecognised `agents.defaults.effort` value (#1066).
     InvalidEffort(String),
+    /// Invalid `container_configs` default labeling (#1410).
+    ContainerConfigs(String),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -637,6 +674,9 @@ impl std::fmt::Display for ConfigError {
                 v,
                 crate::domain::provider::EffortLevel::VALID_VALUES
             ),
+            ConfigError::ContainerConfigs(err) => {
+                write!(f, "invalid container_configs: {err}")
+            }
         }
     }
 }
