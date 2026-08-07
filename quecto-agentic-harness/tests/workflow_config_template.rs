@@ -1046,7 +1046,7 @@ fn feature_js_bdd_review_is_strict() {
 }
 
 // NOTE: the former `reviewer_mechanic_deduplicated` guard was removed. It
-// required the shared spawn/await/read mechanic to live in exactly one shared
+// required the shared spawn/read mechanic to live in exactly one shared
 // field (`shared_guidance`) and forbade the review steps from restating it — but
 // `shared_guidance` is not a `WorkflowTemplate` field, so serde dropped it and
 // the read-only instruction never reached a running agent. Correctness beats

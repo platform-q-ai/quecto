@@ -299,11 +299,11 @@ changing turn orchestration.
 **Deliverables:**
 
 1. Introduce lifecycle state and event vocabulary.
-2. Wire process monitor, registry, await handling, passive completion notes, and
+2. Wire process monitor, registry, passive completion notes, and
    child command forwarding through the lifecycle model where appropriate.
-3. Add transition tests for launch, socket readiness, idle/busy, await timeout,
+3. Add transition tests for launch, socket readiness, idle/busy,
    completion note coalescing, exit/failure, and kill.
-4. Ensure parent-facing `get_subagents`, `agent_cmd await`, and passive notes
+4. Ensure parent-facing `get_subagents`, `agent_cmd get_messages`, and passive notes
    preserve existing semantics.
 
 **Acceptance criteria:**
@@ -311,8 +311,8 @@ changing turn orchestration.
 - Existing subagent monitor/registry/tool tests pass.
 - New tests assert legal lifecycle transitions.
 - Race-prone behaviours have explicit tests:
-  - completion before await;
-  - await before completion;
+  - completion before observation;
+  - observation before completion;
   - kill during busy;
   - child exits before socket ready.
 

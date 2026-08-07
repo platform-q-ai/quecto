@@ -1,6 +1,6 @@
 # Issue #1378 acceptance criteria
 
-- Each spawn mints a fresh hidden `AgentUuid`; display labels never key sockets, persisted child sessions, registry entries, parent/child edges, monitor/reaper, or await-dedupe.
+- Each spawn mints a fresh hidden `AgentUuid`; display labels never key sockets, persisted child sessions, registry entries, parent/child edges, monitor/reaper, or notification dedupe.
 - Reusing a display label after the previous agent exits creates a clean session with a different UUID/session key and no inherited context.
 - Parent tools keep accepting display labels for live agents only and resolve them through domain policy.
 - A second live agent with the same display label is rejected with a clear duplicate-name error.

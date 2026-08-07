@@ -2,7 +2,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
   As a parent agent
   I want script-managed children reachable over direct or proxy endpoints and
   their deaths pushed via EOF with exactly one post-mortem inspect
-  So that container children appear in status/await exactly like local children without polling
+  So that container children appear in status and result inspection exactly like local children without polling
 
   # Slice 3 of #1369: typed direct/proxy parent endpoint, transactional endpoint
   # ownership, EOF-pushed death, exactly-once inspect updating the authoritative
@@ -56,11 +56,11 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     And the subagent registry should not contain "proxy-both-slice3"
 
   @done @container-liveness
-  Scenario: Proxy-only child death is pushed via EOF through await with one inspect
+  Scenario: Proxy-only child death is pushed via EOF with one inspect
     Given proxy-capable liveness script-managed subagent spawning is available
     And script-managed child "proxy-eof-slice3" is running in a proxy-only environment with task "PROXY_EOF_MARKER"
     When the script-managed child "proxy-eof-slice3" is killed behind Quecto's back
-    Then awaiting subagent "proxy-eof-slice3" should report status "exited"
+    Then the subagent snapshot should report "proxy-eof-slice3" as exited
     And the script-managed runtime should have inspected an environment exactly 1 time
     And the script-managed runtime should have killed an environment exactly 1 time
     And the container listing should include "C1" with status "stopped" and 0 members
@@ -70,14 +70,13 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     Given liveness script-managed subagent spawning is available
     And script-managed child "eof-impl-slice3" is running in an inspectable environment with task "EOF_IMPL_MARKER"
     When the script-managed child "eof-impl-slice3" is killed behind Quecto's back
-    Then awaiting subagent "eof-impl-slice3" should report status "exited"
-    And the last await reason should be "connection_closed"
+    Then the subagent snapshot should report "eof-impl-slice3" as exited
     And the script-managed runtime should have inspected an environment exactly 1 time
     And the script-managed runtime should have killed an environment exactly 1 time
     And the container listing should include "C1" with status "stopped" and 0 members
 
   @done @container-liveness
-  Scenario: Child death with no pending await surfaces the note, snapshot, and live event
+  Scenario: Child death surfaces the passive note, snapshot, and live event
     Given liveness script-managed subagent spawning is available
     And script-managed child "surface-slice3" is running in an inspectable environment with task "SURFACE_MARKER"
     When the script-managed child "surface-slice3" is killed behind Quecto's back
@@ -91,14 +90,14 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     And script-managed child "race-slice3" is running in an inspectable environment with task "RACE_MARKER"
     And the environment registry entry "C1" has been removed out from under the monitor
     When the script-managed child "race-slice3" is killed behind Quecto's back
-    Then awaiting subagent "race-slice3" should report status "exited"
+    Then the subagent snapshot should report "race-slice3" as exited
 
   @done @container-liveness
   Scenario: Inspect result survives zero members and is visible via get_containers
     Given liveness script-managed subagent spawning is available
     And script-managed child "inspectok-slice3" is running in an inspectable environment with task "INSPECT_OK_MARKER"
     When the script-managed child "inspectok-slice3" is killed behind Quecto's back
-    Then awaiting subagent "inspectok-slice3" should report status "exited"
+    Then the subagent snapshot should report "inspectok-slice3" as exited
     And the container listing entry "C1" should carry inspect metadata "cause" with value "oom-killed"
     And the container listing should include "C1" with status "stopped" and 0 members
 
@@ -107,7 +106,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     Given liveness script-managed subagent spawning is available with an inspect script that fails
     And script-managed child "inspectfail-slice3" is running in an inspectable environment with task "INSPECT_FAIL_MARKER"
     When the script-managed child "inspectfail-slice3" is killed behind Quecto's back
-    Then awaiting subagent "inspectfail-slice3" should report status "exited"
+    Then the subagent snapshot should report "inspectfail-slice3" as exited
     And the script-managed runtime should have inspected an environment exactly 1 time
     And the container listing entry "C1" should record an inspect error
 
@@ -117,7 +116,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     And script-managed child "share-impl-slice3" is running in an inspectable environment with task "SHARE_IMPL_MARKER"
     And read-only subagent "share-obs-slice3" has joined existing environment ref "C1" with task "SHARE_OBS_MARKER"
     When the script-managed child "share-obs-slice3" is killed behind Quecto's back
-    Then awaiting subagent "share-obs-slice3" should report status "exited"
+    Then the subagent snapshot should report "share-obs-slice3" as exited
     And the script-managed runtime should have inspected an environment exactly 1 time
     And the script-managed runtime should have killed an environment exactly 0 times
     And the container listing should include "C1" with status "running" and 1 member
@@ -130,7 +129,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     And read-only subagent "final-obs-slice3" has joined existing environment ref "C1" with task "FINAL_OBS_MARKER"
     And subagent "final-obs-slice3" has already exited behind Quecto's back
     When the script-managed child "final-impl-slice3" is killed behind Quecto's back
-    Then awaiting subagent "final-impl-slice3" should report status "exited"
+    Then the subagent snapshot should report "final-impl-slice3" as exited
     And the script-managed runtime should have killed an environment exactly 1 time
     And the script-managed runtime should have inspected an environment exactly 2 times
     And the container listing should include "C1" with status "stopped" and 0 members

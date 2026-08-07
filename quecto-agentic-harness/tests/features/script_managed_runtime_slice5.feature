@@ -96,8 +96,7 @@ Feature: Canonical container-runtime scripts and multi-PR orchestration
     And the parent session's repository is fixture "repo-a"
     And canonical subagent "canon-death-slice5" is running in a new environment with task "CANON_DEATH_MARKER"
     When the canonical child "canon-death-slice5" is killed behind Quecto's back
-    Then awaiting subagent "canon-death-slice5" should report status "exited"
-    And the last await reason should be "connection_closed"
+    Then the subagent snapshot should report "canon-death-slice5" as exited
     And the canonical runtime should have recorded exactly 1 inspect invocation for the environment of "canon-death-slice5"
     And the canonical runtime should have recorded exactly 1 "kill" operation for the environment of "canon-death-slice5"
     And the container listing should include "C1" with status "stopped" and 0 members

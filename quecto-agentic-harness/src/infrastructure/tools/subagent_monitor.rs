@@ -63,10 +63,9 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             // retained from the previous run — dropping it here prevents the
             // retry/backstop paths from attributing an old stall to this run.
             entry.pending_stall = None;
-            // Re-arm the auto-await dedupe (#auto-await-idle): a new run means a
-            // future terminal completion must notify again, even if a prior run's
-            // completion was consumed by a manual `await`.
-            entry.completion_consumed_by_await = false;
+            // Re-arm the passive-note dedupe: a new run means a future terminal
+            // completion must notify again, even if a prior run's completion was
+            // already consumed.
             entry.stalled_armed = true;
             entry.updated_at = Instant::now();
         }
@@ -198,7 +197,7 @@ async fn notify_child_exited(
 ) {
     // #1369 slice 3: a script-managed child has no local process to reap, so
     // the monitor connection's EOF/reset IS its death signal. Feed the
-    // existing exit signal so pending awaits wake instantly; the local-child
+    // existing exit signal so lifecycle observers wake instantly; the local-child
     // reaper keeps owning the signal (with the real exit status) when a
     // process exists.
     let exit_tx = {

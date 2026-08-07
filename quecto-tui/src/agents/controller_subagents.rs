@@ -45,7 +45,6 @@ impl App {
         self.subagents.session_order.clear();
         self.subagents.feeds.clear();
         self.subagents.active_agent_id = None;
-        self.subagents.awaited_agent_id = None;
         self.subagents.selected_environment = None;
         self.subagents.panel_nav = crate::components::list_navigator::ListNavigator::new();
         self.subagents.panel_nav_key = Some("master".to_string());
@@ -100,9 +99,6 @@ impl App {
 
         if self.subagents.active_agent_id.as_deref() == Some(from) {
             self.subagents.active_agent_id = Some(to.to_string());
-        }
-        if self.subagents.awaited_agent_id.as_deref() == Some(from) {
-            self.subagents.awaited_agent_id = Some(to.to_string());
         }
         let from_key = format!("agent:{from}");
         if self.subagents.panel_nav_key.as_deref() == Some(from_key.as_str()) {

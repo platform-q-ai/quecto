@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use super::*;
 use crate::components::selectable_item_modal::{
-    ScopeSelection, SelectableItemModal, SelectableItemModalResult,
+    ScopeSelection, SearchFieldWeights, SelectableItemModal, SelectableItemModalResult,
 };
 use crate::protocol::client::{
     Command, ToolCatalogueEntry, ToolPolicyApplyMode, ToolPolicyMutation, ToolScope,
@@ -69,6 +69,7 @@ impl App {
             .label(|entry| entry.name.clone())
             .description(|entry| entry.source.clone())
             .search_metadata(|entry| vec![entry.stable_id.clone()])
+            .search_weights(SearchFieldWeights::tool_lookup())
             .build()
         {
             Ok(modal) => self.tool_policy_modal = Some(modal.with_scope_selection(scopes)),

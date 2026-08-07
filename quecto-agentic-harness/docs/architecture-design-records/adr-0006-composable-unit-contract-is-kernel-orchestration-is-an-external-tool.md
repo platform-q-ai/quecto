@@ -9,8 +9,7 @@
 Quecto's recursive unit contract is: sub-agents are the same binary over the same
 protocol as parents; a parent can spawn a child with a by-value, binding
 `workflow_spec`; children return typed results; identity-tagged events let any
-consumer reconstruct the tree. The spec-based assignment, typed `agent_cmd await`
-result, and identity-tagged event bus have shipped; per-unit journaling/resume,
+consumer reconstruct the tree. The spec-based assignment, passive completion notes, and identity-tagged event bus have shipped; per-unit journaling/resume,
 verification gates, and isolation bounds (budget/depth/concurrency) remain planned
 kernel work. Separately, a **taskgraph** (DAG / fan-out / fan-in / dependency
 orchestration) is useful, but putting a graph engine into the kernel would enlarge
@@ -21,7 +20,7 @@ the workflow engine and introduce a privileged orchestrator role.
 Keep the **composable unit contract** in the kernel; implement **taskgraph / DAG
 orchestration** as an external tool.
 
-- Kernel-owned: `spawn`, `workflow_spec`, typed `agent_cmd await` result,
+- Kernel-owned: `spawn`, `workflow_spec`, passive completion notes,
   identity-tagged event bus, per-unit workflow engine, and future per-unit
   journaling/resume/verification/bounds.
 - Tool-owned: graph construction, dependency scheduling, fan-out/fan-in policy,

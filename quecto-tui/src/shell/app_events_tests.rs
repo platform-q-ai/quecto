@@ -226,16 +226,14 @@ async fn handles_agent_cmd_spinner_and_subagent_refresh() {
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "cmd-1".into(),
         tool_name: "agent_cmd".into(),
-        args: serde_json::json!({"agent_id":"worker-1", "command":"await"}),
+        args: serde_json::json!({"agent_id":"worker-1", "command":"get_state"}),
     });
-    // An `await` agent_cmd marks the awaited agent and rewrites the spinner to
-    // the generic interruptible message (the awaited agent shows on its own row).
-    let awaiting = "Working... (Esc to interrupt)";
     assert_eq!(
         app.spinner.as_ref().unwrap().message(),
-        awaiting,
-        "await sets generic msg"
+        "get_state → worker-1...",
+        "agent_cmd includes command and target"
     );
+    let awaiting = "Working... (Esc to interrupt)";
     app.handle_event(Event::ToolExecutionEnd {
         tool_call_id: "cmd-1".into(),
         tool_name: "agent_cmd".into(),
@@ -507,24 +505,6 @@ async fn update_tool_spinner_formats_spawn_message() {
         assert!(
             msg.contains("my-agent"),
             "spawn spinner should mention agent_id: {msg}"
-        );
-    }
-}
-
-#[tokio::test]
-async fn update_tool_spinner_formats_agent_cmd_await_message() {
-    let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
-    app.handle_event(Event::ToolExecutionStart {
-        tool_call_id: "cmd-1".into(),
-        tool_name: "agent_cmd".into(),
-        args: serde_json::json!({"agent_id": "worker-1", "command": "await"}),
-    });
-    if let Some(ref spinner) = app.spinner {
-        let msg = spinner.message();
-        assert!(
-            msg.contains("Working... (Esc to interrupt)"),
-            "agent_cmd await should have stable message: {msg}"
         );
     }
 }

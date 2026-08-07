@@ -340,9 +340,9 @@ fn given_proxy_child_running(world: &mut QuectoWorld, agent_id: String, task: St
 #[given(expr = "subagent {string} has already exited behind Quecto's back")]
 fn given_already_exited_behind_back(world: &mut QuectoWorld, agent_id: String) {
     when_child_killed_behind_back(world, agent_id.clone());
-    // Context step: the death must be fully observed (await returns exited)
+    // Context step: the death must be fully observed in the subagent snapshot
     // before the scenario's own trigger fires.
-    then_await_reports_status(world, agent_id, "exited".to_string());
+    then_snapshot_reports_exited(world, agent_id);
 }
 
 #[given(
@@ -406,38 +406,6 @@ fn when_child_killed_behind_back(world: &mut QuectoWorld, agent_id: String) {
 }
 
 // --- Then ---
-
-#[then(expr = "awaiting subagent {string} should report status {string}")]
-fn then_await_reports_status(world: &mut QuectoWorld, agent_id: String, status: String) {
-    // Address by durable UUID: display-label resolution is live-only, and the
-    // whole point here is observing a child that may already be exited.
-    let target = world
-        .agent_spawn_uuids
-        .get(&agent_id)
-        .cloned()
-        .unwrap_or_else(|| agent_id.clone());
-    let result = run_container_command(
-        world,
-        serde_json::json!({"agent_id": target, "command": "await", "timeout": 15}),
-    );
-    assert!(!result.is_error, "await failed: {}", result.content);
-    assert!(
-        result.content.contains(&format!("\"status\":\"{status}\"")),
-        "expected await status {status}: {}",
-        result.content
-    );
-    world.agent_cmd_result = Some(result);
-}
-
-#[then(expr = "the last await reason should be {string}")]
-fn then_last_await_reason(world: &mut QuectoWorld, reason: String) {
-    let result = world.agent_cmd_result.as_ref().expect("await result");
-    assert!(
-        result.content.contains(&format!("\"reason\":\"{reason}\"")),
-        "expected await reason {reason}: {}",
-        result.content
-    );
-}
 
 #[then(
     expr = "the script-managed runtime should have inspected an environment exactly {int} time(s)"

@@ -126,10 +126,6 @@ pub(crate) struct SubagentUi {
     pub(crate) tracked: BTreeMap<String, TrackedSubagent<SubagentInfoEvent>>,
     /// Animation frame for the subagent spinner, advanced on each spinner tick.
     pub(crate) frame: usize,
-    /// The sub-agent the parent is currently blocked on via `agent_cmd await`,
-    /// if any. Rendered as a per-row "awaiting" indicator instead of a shared
-    /// spinner line.
-    pub(crate) awaited_agent_id: Option<String>,
     /// Per-sub-agent session views, keyed by agent id (#800). The master is not
     /// in this map — it is top-level App state and `active_agent_id == None`.
     pub(crate) sessions: BTreeMap<String, SessionView>,
@@ -176,7 +172,6 @@ impl SubagentUi {
         Self {
             tracked: BTreeMap::new(),
             frame: 0,
-            awaited_agent_id: None,
             sessions: BTreeMap::new(),
             session_order: Vec::new(),
             active_agent_id: None,

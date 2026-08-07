@@ -98,6 +98,45 @@ async fn tool_default_set_session_key_is_inert() {
 }
 
 #[test]
+fn noop_tool_exercises_default_spawn_policy_snapshot_methods() {
+    let tool = NoopTool;
+    tool.set_inherited_child_policy_snapshot_for_spawn(std::collections::BTreeMap::new());
+    assert!(tool.inherited_child_policy_snapshot_for_spawn().is_none());
+}
+
+#[test]
+fn empty_registry_exercises_runtime_lifecycle_defaults() {
+    let mut reg = EmptyRegistry { defs: vec![] };
+    assert!(reg.unregister_runtime_tools_for_owner("owner").is_empty());
+    assert!(!reg.register_uds_tool(std::sync::Arc::new(NoopTool)));
+    assert_eq!(reg.extension_names(), Vec::<String>::new());
+    assert!(!reg.register_extension(std::sync::Arc::new(NoopTool)));
+    reg.unregister_extension("missing");
+    assert!(reg.unregister_extensions_for_owner("owner").is_empty());
+    assert!(!reg.register_uds_extension(std::sync::Arc::new(NoopTool)));
+    assert!(reg.can_register_uds_tool_for_owner("tool", "owner"));
+    assert!(reg.can_register_uds_tool_for_owner_with_stable_id("tool", "owner", Some("stable")));
+    assert!(!reg.register_uds_tool_for_owner(
+        std::sync::Arc::new(NoopTool),
+        std::borrow::Cow::Borrowed("owner")
+    ));
+    assert!(!reg.register_uds_tool_for_owner_with_stable_id(
+        std::sync::Arc::new(NoopTool),
+        std::borrow::Cow::Borrowed("owner"),
+        Some("stable".into())
+    ));
+    assert!(reg.can_register_uds_extension_for_owner("tool", "owner"));
+    reg.set_inherited_child_policy_snapshot_for_spawn(std::collections::BTreeMap::new());
+    assert!(reg.captured_spawn_snapshot().is_none());
+    assert!(!reg.register_uds_extension_for_owner(
+        std::sync::Arc::new(NoopTool),
+        std::borrow::Cow::Borrowed("owner")
+    ));
+    assert!(!reg.enable_tool("missing"));
+    assert!(!reg.disable_tool("missing"));
+}
+
+#[test]
 fn tool_result_and_image_block_construct() {
     let r = ToolResult {
         content: "ok".into(),

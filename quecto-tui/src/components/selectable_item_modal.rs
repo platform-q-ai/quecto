@@ -8,7 +8,7 @@ use std::fmt;
 
 use crate::components::ansi::sanitize_control;
 use crate::components::component::Component;
-use crate::components::fuzzy::fuzzy_filter;
+use crate::components::fuzzy::fuzzy_match;
 use crate::components::list_navigator::ListNavigator;
 use crate::components::list_rows::{DescriptionMode, ListRow, render_windowed};
 use crate::components::select_overlay::build_select_overlay;
@@ -84,7 +84,42 @@ struct SelectableItemRow {
     id: String,
     label: String,
     description: Option<String>,
-    search_text: String,
+    search_fields: Vec<SearchField>,
+}
+
+#[derive(Debug, Clone)]
+struct SearchField {
+    text: String,
+    text_lower: String,
+    weight: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SearchFieldWeights {
+    pub id: f64,
+    pub label: f64,
+    pub metadata: f64,
+    pub description: f64,
+}
+
+impl SearchFieldWeights {
+    pub const fn neutral() -> Self {
+        Self {
+            id: 0.0,
+            label: 0.0,
+            metadata: 0.0,
+            description: 0.0,
+        }
+    }
+
+    pub const fn tool_lookup() -> Self {
+        Self {
+            id: 0.0,
+            label: 5.0,
+            metadata: 2.0,
+            description: 45.0,
+        }
+    }
 }
 
 /// Provider contract for domain-owned selectable item sources.
@@ -116,6 +151,7 @@ pub struct SelectableItemModalBuilder<T> {
     label: Option<StringAccessor<T>>,
     description: Option<OptionalStringAccessor<T>>,
     search_metadata: Option<MetadataAccessor<T>>,
+    search_weights: SearchFieldWeights,
 }
 
 impl<T> Default for SelectableItemModalBuilder<T> {
@@ -127,6 +163,7 @@ impl<T> Default for SelectableItemModalBuilder<T> {
             label: None,
             description: None,
             search_metadata: None,
+            search_weights: SearchFieldWeights::neutral(),
         }
     }
 }
@@ -162,6 +199,11 @@ impl<T> SelectableItemModalBuilder<T> {
         self
     }
 
+    pub fn search_weights(mut self, weights: SearchFieldWeights) -> Self {
+        self.search_weights = weights;
+        self
+    }
+
     pub fn build(self) -> Result<SelectableItemModal, SelectableItemModalError> {
         let id = self.id.ok_or(SelectableItemModalError::MissingIdAccessor)?;
         let label = self
@@ -190,16 +232,26 @@ impl<T> SelectableItemModalBuilder<T> {
                 .into_iter()
                 .map(|s| sanitize_control(&s))
                 .collect();
-            let mut search_parts = vec![sanitized_id, label.clone()];
+            let mut search_fields = vec![
+                SearchField::new(sanitized_id, self.search_weights.id),
+                SearchField::new(label.clone(), self.search_weights.label),
+            ];
+            search_fields.extend(
+                metadata
+                    .into_iter()
+                    .map(|text| SearchField::new(text, self.search_weights.metadata)),
+            );
             if let Some(desc) = &description {
-                search_parts.push(desc.clone());
+                search_fields.push(SearchField::new(
+                    desc.clone(),
+                    self.search_weights.description,
+                ));
             }
-            search_parts.extend(metadata);
             rows.push(SelectableItemRow {
                 id,
                 label,
                 description,
-                search_text: search_parts.join(" "),
+                search_fields,
             });
         }
 
@@ -221,8 +273,9 @@ impl<T> SelectableItemModalBuilder<T> {
             navigator: ListNavigator::new(),
             result: SelectableItemModalResult::Pending,
             cached_max_label_width: 10,
+            selection_manually_moved: false,
         };
-        modal.update_filter();
+        modal.update_filter(false);
         Ok(modal)
     }
 }
@@ -240,6 +293,76 @@ pub struct SelectableItemModal {
     navigator: ListNavigator,
     result: SelectableItemModalResult,
     cached_max_label_width: usize,
+    selection_manually_moved: bool,
+}
+
+impl SearchField {
+    fn new(text: String, weight: f64) -> Self {
+        let text_lower = text.to_lowercase();
+        Self {
+            text,
+            text_lower,
+            weight,
+        }
+    }
+}
+
+fn selectable_item_search_score(row: &SelectableItemRow, query: &str) -> Option<f64> {
+    let query_lower = query.to_lowercase();
+    let tokens = query_lower.split_whitespace().collect::<Vec<_>>();
+    if tokens.is_empty() {
+        return Some(0.0);
+    }
+
+    let mut total = 0.0;
+    for token in tokens {
+        let token_score = row
+            .search_fields
+            .iter()
+            .filter_map(|field| score_field(token, field))
+            .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))?;
+        total += token_score;
+    }
+    Some(total)
+}
+
+fn score_field(query: &str, field: &SearchField) -> Option<f64> {
+    let text = field.text.as_str();
+    let text_lower = field.text_lower.as_str();
+    let mut score = field.weight + (text_lower.chars().count() as f64 * 0.03);
+
+    if let Some(pos) = text_lower.find(query) {
+        score += pos as f64 * 0.15;
+        if pos == 0 {
+            score -= 30.0;
+        } else if text_lower[..pos]
+            .chars()
+            .last()
+            .is_some_and(is_search_boundary)
+        {
+            score -= 20.0;
+        } else {
+            score -= 10.0;
+        }
+        return Some(score);
+    }
+
+    let fuzzy = fuzzy_match(query, text);
+    fuzzy.matches.then_some(score + 80.0 + fuzzy.score)
+}
+
+fn selected_visible_position(
+    rows: &[SelectableItemRow],
+    visible_indices: &[usize],
+    selected_id: &str,
+) -> Option<usize> {
+    visible_indices
+        .iter()
+        .position(|idx| rows[*idx].id == selected_id)
+}
+
+fn is_search_boundary(ch: char) -> bool {
+    matches!(ch, ' ' | '-' | '_' | '.' | '/' | ':')
 }
 
 impl SelectableItemModal {
@@ -353,19 +476,27 @@ impl SelectableItemModal {
         self.rows.get(idx)
     }
 
-    fn update_filter(&mut self) {
-        let previous_id = self.selected_item().map(str::to_owned);
+    fn update_filter(&mut self, preserve_selection: bool) {
+        let previous_id = preserve_selection
+            .then(|| self.selected_item().map(str::to_owned))
+            .flatten();
         self.visible_indices = if self.query.is_empty() {
             (0..self.rows.len()).collect()
         } else {
-            fuzzy_filter(&self.rows, &self.query, |row| row.search_text.as_str())
-                .into_iter()
-                .filter_map(|row| {
-                    self.rows
-                        .iter()
-                        .position(|candidate| std::ptr::eq(candidate, row))
+            let mut scored = self
+                .rows
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, row)| {
+                    selectable_item_search_score(row, &self.query).map(|score| (idx, score))
                 })
-                .collect()
+                .collect::<Vec<_>>();
+            scored.sort_by(|a, b| {
+                a.1.partial_cmp(&b.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.0.cmp(&b.0))
+            });
+            scored.into_iter().map(|(idx, _)| idx).collect()
         };
         self.cached_max_label_width = self
             .visible_indices
@@ -374,13 +505,13 @@ impl SelectableItemModal {
             .max()
             .unwrap_or(10)
             .min(40);
-        if let Some(previous_id) = previous_id
-            && let Some(pos) = self
-                .visible_indices
-                .iter()
-                .position(|idx| self.rows[*idx].id == previous_id)
+        if let Some(pos) = previous_id
+            .as_deref()
+            .and_then(|id| selected_visible_position(&self.rows, &self.visible_indices, id))
         {
             self.navigator.set_selected(pos);
+        } else {
+            self.navigator.set_selected(0);
         }
         self.navigator.clamp(self.visible_indices.len());
     }
@@ -531,8 +662,14 @@ impl Component for SelectableItemModal {
 
     fn handle_input(&mut self, key: &Key) -> bool {
         match key {
-            Key::Up => self.navigator.move_previous(self.visible_indices.len()),
-            Key::Down => self.navigator.move_next(self.visible_indices.len()),
+            Key::Up => {
+                self.navigator.move_previous(self.visible_indices.len());
+                self.selection_manually_moved = true;
+            }
+            Key::Down => {
+                self.navigator.move_next(self.visible_indices.len());
+                self.selection_manually_moved = true;
+            }
             Key::Enter => {
                 self.result = if self.scope_mode {
                     SelectableItemModalResult::AppliedScopes(self.working_scopes.clone())
@@ -547,13 +684,13 @@ impl Component for SelectableItemModal {
             }
             Key::Backspace => {
                 self.query.pop();
-                self.update_filter();
+                self.update_filter(true);
             }
-            Key::Char(' ') => self.toggle_selected(),
+            Key::Char(' ') if self.query.is_empty() => self.toggle_selected(),
             Key::Char(c) => {
                 if self.query.len() < MAX_QUERY_LEN {
                     self.query.push(*c);
-                    self.update_filter();
+                    self.update_filter(self.selection_manually_moved);
                 }
             }
             Key::CtrlShift('a') => self.enable_visible(),
@@ -581,6 +718,9 @@ pub fn build_selectable_item_modal_overlay(
     })
 }
 
+#[cfg(test)]
+#[path = "selectable_item_modal_ranking_tests.rs"]
+mod ranking_tests;
 #[cfg(test)]
 #[path = "selectable_item_modal_tests.rs"]
 mod tests;
