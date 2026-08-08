@@ -67,6 +67,8 @@ pub enum AgentCommand {
     SetToolPolicy {
         mutations: Vec<ToolPolicyMutationPayload>,
         mode: ToolPolicyApplyModePayload,
+        operation: ToolPolicyOperationPayload,
+        unlisted_scope: Option<ToolPolicyScopePayload>,
     },
 }
 
@@ -82,11 +84,20 @@ pub struct ToolPolicyMutationPayload {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum ToolPolicyApplyModePayload {
+    #[default]
     ImmediateIfIdle,
     AtNextTurnBoundary,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ToolPolicyOperationPayload {
+    #[default]
+    Patch,
+    Replace,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

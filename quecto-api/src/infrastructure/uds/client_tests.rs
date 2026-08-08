@@ -100,6 +100,8 @@ fn control_commands_serialize_to_wire() {
                 reason: Some("test".into()),
             }],
             mode: crate::application::ports::agent_gateway::ToolPolicyApplyModePayload::AtNextTurnBoundary,
+            operation: crate::application::ports::agent_gateway::ToolPolicyOperationPayload::Patch,
+            unlisted_scope: None,
         },
         "p1",
     );

@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 #[path = "client_policy_types.rs"]
 mod client_policy_types;
 pub use client_policy_types::{
-    ToolCatalogueEntry, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyResult, ToolScope,
+    ToolCatalogueEntry, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyOperation,
+    ToolPolicyResult, ToolScope,
 };
 use std::path::Path;
 use tokio::io::BufReader;
@@ -107,6 +108,9 @@ pub enum Command {
         id: Option<String>,
         mutations: Vec<ToolPolicyMutation>,
         mode: ToolPolicyApplyMode,
+        operation: ToolPolicyOperation,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unlisted_scope: Option<ToolScope>,
     },
     ListModels {
         #[serde(skip_serializing_if = "Option::is_none")]

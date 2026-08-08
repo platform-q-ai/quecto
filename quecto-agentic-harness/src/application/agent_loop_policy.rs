@@ -2,7 +2,7 @@ use super::agent_loop::AgentLoopImpl;
 use crate::domain::agent::AgentProgressEvent;
 use crate::domain::tool::{
     ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus,
-    ToolPolicyReconciliation,
+    ToolPolicyReconciliation, ToolPolicyRequest,
 };
 use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolCatalogueEntry};
 use crate::domain::tool_id::stable_tool_id;
@@ -228,12 +228,34 @@ impl AgentLoopImpl {
             || (mode == ToolPolicyApplyMode::ImmediateIfIdle
                 && self.turn_in_flight.load(Ordering::SeqCst))
         {
-            self.queue_tool_policy_mutation(mutations);
+            self.queue_tool_policy_request(ToolPolicyRequest::patch(mutations.to_vec()));
             return None;
         }
-        let reconciliation = self
-            .tool_registry
-            .apply_tool_policy_mutations(mutations, mode);
+        let reconciliation =
+            self.request_tool_policy(ToolPolicyRequest::patch(mutations.to_vec()), mode)?;
+        Some(reconciliation)
+    }
+
+    pub fn request_tool_policy(
+        &mut self,
+        request: ToolPolicyRequest,
+        mode: ToolPolicyApplyMode,
+    ) -> Option<ToolPolicyReconciliation> {
+        if mode == ToolPolicyApplyMode::AtNextTurnBoundary
+            || (mode == ToolPolicyApplyMode::ImmediateIfIdle
+                && self.turn_in_flight.load(Ordering::SeqCst))
+        {
+            self.queue_tool_policy_request(request);
+            return None;
+        }
+        let reconciliation = match request.operation {
+            crate::domain::tool::ToolPolicyOperation::Patch => self
+                .tool_registry
+                .apply_tool_policy_mutations(&request.mutations, mode),
+            crate::domain::tool::ToolPolicyOperation::Replace => {
+                self.tool_registry.apply_tool_policy_request(&request, mode)
+            }
+        };
         self.record_applied_tool_policy_overlay(&reconciliation);
         self.refresh_spawn_inherited_child_policy_snapshot();
         self.notify_tool_policy_changed(&reconciliation, "immediate");
@@ -253,20 +275,24 @@ impl AgentLoopImpl {
     }
 
     pub fn queue_tool_policy_mutation(&self, mutations: &[ToolPolicyMutation]) {
-        let mut pending = self
-            .pending_tool_policy_mutations
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        pending.extend_from_slice(mutations);
+        self.queue_tool_policy_request(ToolPolicyRequest::patch(mutations.to_vec()));
     }
 
-    fn drain_pending_tool_policy_mutations(
+    pub fn queue_tool_policy_request(&self, request: ToolPolicyRequest) {
+        let mut pending = self
+            .pending_tool_policy_requests
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        pending.push(request);
+    }
+
+    fn drain_pending_tool_policy_requests(
         &mut self,
         clear_in_flight: bool,
     ) -> Option<ToolPolicyReconciliation> {
-        let mutations = {
+        let requests = {
             let mut pending = self
-                .pending_tool_policy_mutations
+                .pending_tool_policy_requests
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             if pending.is_empty() {
@@ -281,22 +307,37 @@ impl AgentLoopImpl {
             self.clear_turn_in_flight();
         }
 
-        let reconciliation = self
-            .tool_registry
-            .apply_tool_policy_mutations(&mutations, ToolPolicyApplyMode::AtNextTurnBoundary);
-        self.record_applied_tool_policy_overlay(&reconciliation);
+        let mut combined = ToolPolicyReconciliation {
+            mode: ToolPolicyApplyMode::AtNextTurnBoundary,
+            results: Vec::new(),
+        };
+        for request in requests {
+            let reconciliation = match request.operation {
+                crate::domain::tool::ToolPolicyOperation::Patch => {
+                    self.tool_registry.apply_tool_policy_mutations(
+                        &request.mutations,
+                        ToolPolicyApplyMode::AtNextTurnBoundary,
+                    )
+                }
+                crate::domain::tool::ToolPolicyOperation::Replace => self
+                    .tool_registry
+                    .apply_tool_policy_request(&request, ToolPolicyApplyMode::AtNextTurnBoundary),
+            };
+            self.record_applied_tool_policy_overlay(&reconciliation);
+            combined.results.extend(reconciliation.results);
+        }
         self.refresh_spawn_inherited_child_policy_snapshot();
-        self.notify_tool_policy_changed(&reconciliation, "turn_boundary");
-        Some(reconciliation)
+        self.notify_tool_policy_changed(&combined, "turn_boundary");
+        Some(combined)
     }
 
     pub(super) fn drain_tool_policy_mutations_at_internal_boundary(
         &mut self,
     ) -> Option<ToolPolicyReconciliation> {
-        self.drain_pending_tool_policy_mutations(false)
+        self.drain_pending_tool_policy_requests(false)
     }
 
     pub fn drain_tool_policy_mutations_at_boundary(&mut self) -> Option<ToolPolicyReconciliation> {
-        self.drain_pending_tool_policy_mutations(true)
+        self.drain_pending_tool_policy_requests(true)
     }
 }

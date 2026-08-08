@@ -29,6 +29,13 @@ pub enum ToolPolicyApplyMode {
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ToolPolicyOperation {
+    Patch,
+    Replace,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ToolScope {
     None,

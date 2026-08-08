@@ -139,6 +139,10 @@ pub enum AgentCommand {
         mutations: Vec<ToolPolicyMutationCommand>,
         #[serde(default = "default_tool_policy_apply_mode")]
         mode: ToolPolicyApplyModeCommand,
+        #[serde(default = "default_tool_policy_operation")]
+        operation: ToolPolicyOperationCommand,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unlisted_scope: Option<ProfileAvailabilityScope>,
     },
     /// Force a provider/model config reload.
     Reload {
@@ -268,8 +272,19 @@ pub enum ToolPolicyApplyModeCommand {
     AtNextTurnBoundary,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ToolPolicyOperationCommand {
+    Patch,
+    Replace,
+}
+
 fn default_tool_policy_apply_mode() -> ToolPolicyApplyModeCommand {
     ToolPolicyApplyModeCommand::ImmediateIfIdle
+}
+
+fn default_tool_policy_operation() -> ToolPolicyOperationCommand {
+    ToolPolicyOperationCommand::Patch
 }
 
 impl AgentCommand {

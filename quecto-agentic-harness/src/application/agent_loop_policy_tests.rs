@@ -100,6 +100,7 @@ impl crate::domain::tool::ToolPolicyMutator for MockRegistry {
                 .any(|definition| definition.name.as_ref() == mutation.name);
             results.push(ToolPolicyMutationResult {
                 name: mutation.name.clone(),
+                requested_identifier: None,
                 requested_availability: mutation.availability,
                 requested_scope: mutation.scope,
                 status,
@@ -179,6 +180,7 @@ impl crate::domain::tool::ToolPolicyMutator for RestrictedMockRegistry {
                 .iter()
                 .map(|mutation| ToolPolicyMutationResult {
                     name: mutation.name.clone(),
+                    requested_identifier: None,
                     requested_availability: mutation.availability,
                     requested_scope: mutation.scope,
                     status: ToolPolicyMutationStatus::BlockedByRestriction,

@@ -17,8 +17,12 @@ pub(super) use super::uds_dispatch_session::{
 use super::uds_dispatch_session::{handle_new_session, handle_resume_session, handle_rewind_to};
 use super::{AgentCommand, AgentEvent};
 use super::{DispatchCtx, emit_event_to_broadcast_or_writer};
-use crate::domain::tool::{ToolPolicyApplyMode, ToolPolicyMutation};
-use crate::interface::cli::protocol::{ToolPolicyApplyModeCommand, ToolPolicyMutationCommand};
+use crate::domain::tool::{
+    ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyOperation, ToolPolicyRequest,
+};
+use crate::interface::cli::protocol::{
+    ToolPolicyApplyModeCommand, ToolPolicyMutationCommand, ToolPolicyOperationCommand,
+};
 use crate::interface::cli::uds_ext_protocol;
 
 pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
@@ -98,8 +102,25 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             handle_set_effort(ctx, id.as_deref(), &type_name, &effort).await
         }
         AgentCommand::SetToolPolicy {
-            mutations, mode, ..
-        } => handle_set_tool_policy(ctx, id.as_deref(), &type_name, mutations, mode).await,
+            mutations,
+            mode,
+            operation,
+            unlisted_scope,
+            ..
+        } => {
+            handle_set_tool_policy(
+                ctx,
+                id.as_deref(),
+                &type_name,
+                SetToolPolicyCommandParts {
+                    mutations,
+                    mode,
+                    operation,
+                    unlisted_scope,
+                },
+            )
+            .await
+        }
         AgentCommand::Reload { .. } => {
             super::super::uds_reload::handle_reload(ctx, id.as_deref(), &type_name).await
         }
@@ -133,13 +154,25 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
     }
 }
 
+pub(super) struct SetToolPolicyCommandParts {
+    pub(super) mutations: Vec<ToolPolicyMutationCommand>,
+    pub(super) mode: ToolPolicyApplyModeCommand,
+    pub(super) operation: ToolPolicyOperationCommand,
+    pub(super) unlisted_scope: Option<crate::domain::tool_descriptor::ProfileAvailabilityScope>,
+}
+
 pub(super) async fn handle_set_tool_policy(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
     type_name: &str,
-    mutations: Vec<ToolPolicyMutationCommand>,
-    mode: ToolPolicyApplyModeCommand,
+    command: SetToolPolicyCommandParts,
 ) -> bool {
+    let SetToolPolicyCommandParts {
+        mutations,
+        mode,
+        operation,
+        unlisted_scope,
+    } = command;
     let mut domain_mutations = Vec::with_capacity(mutations.len());
     for mutation in mutations {
         let Some(name) = mutation.tool_id.or(mutation.name) else {
@@ -161,9 +194,23 @@ pub(super) async fn handle_set_tool_policy(
         ToolPolicyApplyModeCommand::ImmediateIfIdle => ToolPolicyApplyMode::ImmediateIfIdle,
         ToolPolicyApplyModeCommand::AtNextTurnBoundary => ToolPolicyApplyMode::AtNextTurnBoundary,
     };
-    let reconciliation = ctx
-        .agent
-        .request_tool_policy_mutation(&domain_mutations, apply_mode);
+    let request = match operation {
+        ToolPolicyOperationCommand::Patch => ToolPolicyRequest {
+            operation: ToolPolicyOperation::Patch,
+            mutations: domain_mutations,
+            unlisted_scope: None,
+        },
+        ToolPolicyOperationCommand::Replace => {
+            let Some(scope) = unlisted_scope else {
+                let ev =
+                    AgentEvent::err(id, type_name, "replace tool policy requires unlistedScope");
+                emit_event_to_broadcast_or_writer(ctx, &ev).await;
+                return false;
+            };
+            ToolPolicyRequest::replace(domain_mutations, scope)
+        }
+    };
+    let reconciliation = ctx.agent.request_tool_policy(request, apply_mode);
     let data = match reconciliation {
         Some(reconciliation) => serde_json::to_value(&reconciliation).unwrap_or_default(),
         None => serde_json::json!({

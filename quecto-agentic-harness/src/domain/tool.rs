@@ -244,6 +244,41 @@ pub enum ToolPolicyApplyMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum ToolPolicyOperation {
+    Patch,
+    Replace,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolPolicyRequest {
+    pub operation: ToolPolicyOperation,
+    pub mutations: Vec<ToolPolicyMutation>,
+    pub unlisted_scope: Option<ProfileAvailabilityScope>,
+}
+
+impl ToolPolicyRequest {
+    pub fn patch(mutations: Vec<ToolPolicyMutation>) -> Self {
+        Self {
+            operation: ToolPolicyOperation::Patch,
+            mutations,
+            unlisted_scope: None,
+        }
+    }
+
+    pub fn replace(
+        mutations: Vec<ToolPolicyMutation>,
+        unlisted_scope: ProfileAvailabilityScope,
+    ) -> Self {
+        Self {
+            operation: ToolPolicyOperation::Replace,
+            mutations,
+            unlisted_scope: Some(unlisted_scope),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum ToolPolicyMutationStatus {
     Applied,
     AlreadyInState,
@@ -255,6 +290,8 @@ pub enum ToolPolicyMutationStatus {
 #[serde(rename_all = "camelCase")]
 pub struct ToolPolicyMutationResult {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_identifier: Option<String>,
     pub requested_availability: ToolAvailability,
     pub requested_scope: ProfileAvailabilityScope,
     pub status: ToolPolicyMutationStatus,
@@ -277,12 +314,22 @@ pub trait ToolPolicyMutator: Send + Sync {
         mutations: &[ToolPolicyMutation],
         mode: ToolPolicyApplyMode,
     ) -> ToolPolicyReconciliation {
+        self.apply_tool_policy_request(&ToolPolicyRequest::patch(mutations.to_vec()), mode)
+    }
+
+    fn apply_tool_policy_request(
+        &mut self,
+        request: &ToolPolicyRequest,
+        mode: ToolPolicyApplyMode,
+    ) -> ToolPolicyReconciliation {
         ToolPolicyReconciliation {
             mode,
-            results: mutations
+            results: request
+                .mutations
                 .iter()
                 .map(|mutation| ToolPolicyMutationResult {
                     name: mutation.name.clone(),
+                    requested_identifier: None,
                     requested_availability: mutation.availability,
                     requested_scope: mutation.scope,
                     status: ToolPolicyMutationStatus::UnknownTool,

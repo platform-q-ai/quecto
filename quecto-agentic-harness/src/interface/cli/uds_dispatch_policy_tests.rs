@@ -48,6 +48,8 @@ async fn dispatch_set_tool_policy_applies_and_catalogue_reflects_scope() {
             reason: Some("test".into()),
         }],
         mode: ToolPolicyApplyModeCommand::ImmediateIfIdle,
+        operation: crate::interface::cli::protocol::ToolPolicyOperationCommand::Patch,
+        unlisted_scope: None,
     };
     {
         let mut ctx = fx.ctx();
@@ -90,6 +92,8 @@ async fn dispatch_set_tool_policy_prefers_tool_id_when_name_also_present() {
             reason: Some("test".into()),
         }],
         mode: ToolPolicyApplyModeCommand::ImmediateIfIdle,
+        operation: crate::interface::cli::protocol::ToolPolicyOperationCommand::Patch,
+        unlisted_scope: None,
     };
     {
         let mut ctx = fx.ctx();
@@ -134,6 +138,8 @@ async fn dispatch_set_tool_policy_tool_id_only_still_applies() {
             reason: Some("test".into()),
         }],
         mode: ToolPolicyApplyModeCommand::ImmediateIfIdle,
+        operation: crate::interface::cli::protocol::ToolPolicyOperationCommand::Patch,
+        unlisted_scope: None,
     };
     {
         let mut ctx = fx.ctx();

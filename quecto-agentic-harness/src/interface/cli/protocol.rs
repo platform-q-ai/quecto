@@ -20,7 +20,7 @@ pub fn parse_command_line(line: &str) -> Result<AgentCommand, String> {
 mod protocol_commands;
 pub use protocol_commands::{
     AgentCommand, StreamingBehavior, ToolPolicyApplyModeCommand, ToolPolicyMutationCommand,
-    ToolRegistration,
+    ToolPolicyOperationCommand, ToolRegistration,
 };
 
 // ─── Events (stdout) ─────────────────────────────────────────────────────────

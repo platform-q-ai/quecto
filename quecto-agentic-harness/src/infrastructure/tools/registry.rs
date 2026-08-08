@@ -8,8 +8,8 @@ pub use super::registration::ToolRegistration;
 use crate::domain::error::DomainError;
 use crate::domain::tool::{
     Tool, ToolDefinition, ToolGuard, ToolPolicyApplyMode, ToolPolicyMutation,
-    ToolPolicyMutationResult, ToolPolicyMutationStatus, ToolPolicyReconciliation,
-    ToolProfileContext, ToolResult,
+    ToolPolicyMutationResult, ToolPolicyMutationStatus, ToolPolicyOperation,
+    ToolPolicyReconciliation, ToolPolicyRequest, ToolProfileContext, ToolResult,
 };
 use crate::domain::tool_descriptor::{
     ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolDescriptor,
@@ -457,8 +457,38 @@ impl ToolRegistryImpl {
         mutations: &[ToolPolicyMutation],
         mode: ToolPolicyApplyMode,
     ) -> ToolPolicyReconciliation {
-        let mut results = Vec::with_capacity(mutations.len());
-        for mutation in mutations {
+        self.apply_tool_policy_request(&ToolPolicyRequest::patch(mutations.to_vec()), mode)
+    }
+
+    pub fn apply_tool_policy_request(
+        &mut self,
+        request: &ToolPolicyRequest,
+        mode: ToolPolicyApplyMode,
+    ) -> ToolPolicyReconciliation {
+        let mut requested = request.mutations.clone();
+        if request.operation == ToolPolicyOperation::Replace {
+            let unlisted_scope = request
+                .unlisted_scope
+                .unwrap_or(ProfileAvailabilityScope::None);
+            let mut listed = std::collections::HashSet::new();
+            for mutation in &requested {
+                let resolved = self
+                    .resolve_tool_policy_id(&mutation.name)
+                    .unwrap_or_else(|_| mutation.name.clone());
+                listed.insert(resolved);
+            }
+            for name in self.tools.keys() {
+                if !listed.contains(name) {
+                    requested.push(ToolPolicyMutation::set_scope(
+                        name.clone(),
+                        unlisted_scope,
+                        "set_tool_policy replace unlisted",
+                    ));
+                }
+            }
+        }
+        let mut results = Vec::with_capacity(requested.len());
+        for mutation in &requested {
             let resolved_name = self
                 .resolve_tool_policy_id(&mutation.name)
                 .unwrap_or_else(|_| mutation.name.clone());
@@ -482,8 +512,12 @@ impl ToolRegistryImpl {
                 }
             };
             let after = self.catalogue_entry(&resolved_name);
+            let requested_identifier = (mutation.name != resolved_name
+                || status == ToolPolicyMutationStatus::UnknownTool)
+                .then(|| mutation.name.clone());
             results.push(ToolPolicyMutationResult {
-                name: mutation.name.clone(),
+                name: resolved_name.clone(),
+                requested_identifier,
                 requested_availability: mutation.availability,
                 requested_scope: mutation.scope,
                 status,

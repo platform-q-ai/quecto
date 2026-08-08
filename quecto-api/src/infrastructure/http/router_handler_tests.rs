@@ -205,6 +205,8 @@ async fn set_tool_policy_handler_success_and_validation() {
                 reason: Some("test".into()),
             }],
             mode: ToolPolicyApplyModePayload::ImmediateIfIdle,
+            operation: ToolPolicyOperationPayload::Patch,
+            unlisted_scope: None,
         }),
     )
     .await
@@ -216,6 +218,8 @@ async fn set_tool_policy_handler_success_and_validation() {
         Json(SetToolPolicyRequest {
             mutations: Vec::new(),
             mode: ToolPolicyApplyModePayload::ImmediateIfIdle,
+            operation: ToolPolicyOperationPayload::Patch,
+            unlisted_scope: None,
         }),
     )
     .await
