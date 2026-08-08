@@ -48,9 +48,9 @@ fn snapshot_in_active_mode_has_steps_and_current_step() {
         .unwrap();
     let snap = engine.snapshot(true);
     assert_eq!(snap.mode, WorkflowMode::Active);
-    assert_eq!(snap.progress.total, 19);
+    assert_eq!(snap.progress.total, 20);
     assert_eq!(snap.current_step.unwrap().key, "hooks");
-    assert_eq!(snap.steps.len(), 19);
+    assert_eq!(snap.steps.len(), 20);
     assert!(snap.guards_enabled);
 }
 
@@ -409,6 +409,6 @@ fn status_text_shows_guidance_for_incomplete_non_current_steps() {
     let status = engine.status_text();
     assert!(status.contains("CURRENT STEP"));
     // An upcoming, non-current step's guidance is visible:
-    assert!(status.contains("INLINE review comment"));
-    assert!(status.contains("addPullRequestReview"));
+    assert!(status.contains("one submitted non-pending review"));
+    assert!(status.contains("non-pending review"));
 }

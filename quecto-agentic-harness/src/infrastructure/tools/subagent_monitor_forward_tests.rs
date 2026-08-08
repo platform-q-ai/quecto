@@ -352,7 +352,7 @@ fn forwarded_grandchild_workflow_does_not_overwrite_child_entry() {
     child.workflow = Some(super::super::subagent_registry::WorkflowSnapshot {
         mode: "active".into(),
         steps_completed: 6,
-        steps_total: 19,
+        steps_total: 20,
     });
     registry.lock().unwrap().insert("child".to_string(), child);
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
@@ -369,8 +369,8 @@ fn forwarded_grandchild_workflow_does_not_overwrite_child_entry() {
         .expect("child keeps its own workflow");
     assert_eq!(
         (wf.steps_completed, wf.steps_total),
-        (6, 19),
-        "child's own 6/19 must survive a grandchild's forwarded 2/4"
+        (6, 20),
+        "child's own 6/20 must survive a grandchild's forwarded 2/4"
     );
     // The forwarded event preserves the grandchild identity going up the tree.
     let fwd: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
