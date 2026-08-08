@@ -24,6 +24,7 @@ fn embedded_canonical_folder_parses_into_both_templates() {
             "flake-hunt",
             "investigate",
             "plan",
+            "plan2",
             "prd",
             "refactor",
             "remove",

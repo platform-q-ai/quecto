@@ -1,0 +1,97 @@
+{
+  "label": "Plan 2",
+  "description": "Produce an execution-ready plan with canonical issue acceptance criteria, evidence-backed Clean Architecture/SOLID analysis, explicit ADR conformance, and independently verifiable phases. Plans only — no implementation. If you decide to use sub agents, always set openai-oauth/gpt-5.5 · effort: low.",
+  "when_to_use": "Use experimentally when planning already-agreed work and evaluating stronger issue-readiness, architecture, ADR, and conformance preparation. Do NOT use to decide WHAT to build or to implement changes.",
+  "guards": [
+    {
+      "commands": [
+        "git commit",
+        "git push",
+        "git merge",
+        "gh pr merge"
+      ],
+      "before_step_key": "deliver",
+      "message": "This workflow produces a plan, not implementation. Complete all planning and review gates before delivering it; never merge."
+    }
+  ],
+  "steps": [
+    {
+      "key": "context",
+      "label": "Ground the plan in the issue and code",
+      "phase": "setup",
+      "guidance": "Resolve the linked issue and read its body, comments, and referenced PRD or design documents. Do not create a replacement issue when an issue was supplied. Verify every material assumption about current behaviour and code with file:line citations. Record the intended outcome, constraints, non-goals, unresolved requirements, and verified starting state. If a product decision is missing, stop and identify it rather than inventing a requirement. Done when the planning inputs and current state are evidence-backed."
+    },
+    {
+      "key": "issue_readiness",
+      "label": "Prepare canonical acceptance criteria and non-goals",
+      "phase": "setup",
+      "guidance": "Draft stable identifiers and GitHub checkboxes for independently checkable behavioural acceptance criteria: `- [ ] **AC1:** ...`. Include applicable positive, negative, boundary, failure, compatibility, documentation, and protocol outcomes without prescribing implementation. Draft explicit out-of-scope/non-goals. Keep issue AC boxes unchecked: they represent verified outcomes and are checked only by implementation conformance. Record ambiguities as blockers. Do not update GitHub yet. Done when `ISSUE READINESS: PASS` is supportable and every criterion is observable and unambiguous."
+    },
+    {
+      "key": "architecture",
+      "label": "Analyze Clean Architecture and SOLID impact",
+      "phase": "setup",
+      "guidance": "Inspect affected code paths, architecture tests, ports, adapters, shared mechanisms, and external consumers. Produce cited analysis of affected layers, responsibility ownership, dependency direction, existing mechanisms to reuse, public API impact, and abstraction altitude. Evaluate SOLID only where concretely applicable: mixed responsibilities, extension points, substitutability, interface width, and dependency inversion; explicitly mark irrelevant principles rather than inventing abstractions. Identify forbidden test-only production paths and speculative surface. Done when the intended ownership and dependency direction are explicit and evidence-backed."
+    },
+    {
+      "key": "adrs",
+      "label": "Inventory ADRs and establish conformance",
+      "phase": "setup",
+      "guidance": "Search the repository ADR directory/index, affected documentation and code references, and issue/PR references. Build a table of each relevant ADR, status, relevance, and how the plan complies. Record the search locations even when no ADR applies. An apparent conflict with an accepted ADR blocks delivery unless the plan includes the repository's process to amend or supersede it. Decide whether the work creates a durable architectural decision requiring a new ADR; do not propose one for a local implementation detail. Done when `ADR CONFORMANCE: PASS` is supportable or the conflict is escalated."
+    },
+    {
+      "key": "verification_matrix",
+      "label": "Map every acceptance criterion to verification",
+      "phase": "red",
+      "guidance": "Create an AC-to-plan-to-verification matrix with columns for stable AC id, planned phase, scenario/test or inspection, test level, and required RED, mutation, parity, command, or documentary evidence. Every AC must have planned verification; every planned test must trace to an AC, regression risk, or stated invariant. A requirement discovered here returns to issue readiness. Done when no AC is unmapped and conformance can later inspect objective evidence rather than plan claims."
+    },
+    {
+      "key": "draft",
+      "label": "Draft independently verifiable phases",
+      "phase": "green",
+      "guidance": "Draft a top-level `## Execution Checklist` with one checkbox per phase, followed by one section per phase. Each phase must state its deliverable, AC ids covered, architectural owner/layer, relevant ADR constraints, expected mechanisms or indicative files, verification commands/evidence, concrete `### Task checklist`, and green-tree exit condition. Order phases by dependency; each must be independently verifiable and leave the tree green. Preserve shape-specific discipline such as feature RED/GREEN, bug reproduction, or refactor characterization/mutation/parity. Include non-goals and open questions. Done when an executor can begin phase 1 without inventing architecture, requirements, or verification."
+    },
+    {
+      "key": "requirements_review",
+      "label": "Review acceptance criteria and testability",
+      "phase": "review",
+      "guidance": "Spawn a read-only reviewer focused only on requirement quality and testability. Check that ACs are behavioural, independently checkable, complete across relevant boundaries and failures, free of hidden implementation prescriptions, and all mapped to planned evidence; check that non-goals make scope conformance possible. Require concrete evidence for findings. Address every valid finding and rerun this lens after material AC or verification changes. Done when `ISSUE READINESS: PASS` has no surviving valid finding."
+    },
+    {
+      "key": "architecture_review",
+      "label": "Review Clean Architecture and SOLID adherence",
+      "phase": "review",
+      "guidance": "Spawn a read-only architecture reviewer. Check responsibility ownership, layer boundaries, dependency direction, runtime I/O placement, port/interface width, public API necessity, reuse altitude, caller-side workarounds, test-only production paths, and speculative abstractions. Review intermediate phases as well as the final design: no phase may knowingly leave the architecture invalid. Reject ceremonial SOLID preferences without concrete impact. Address every valid finding and rerun after material architectural changes. Done when `ARCHITECTURE/SOLID: PASS` has cited evidence and no surviving valid finding."
+    },
+    {
+      "key": "adr_review",
+      "label": "Review ADR coverage and conformance",
+      "phase": "review",
+      "guidance": "Spawn a read-only ADR reviewer. Verify that the ADR search was adequate, all relevant accepted decisions were found, compliance claims match their actual text and status, conflicts are surfaced, and a new ADR is proposed only for a genuine durable decision. Address every valid finding and rerun after material changes. Done when `ADR CONFORMANCE: PASS` has no surviving valid finding."
+    },
+    {
+      "key": "sequence_review",
+      "label": "Review sequencing, scope, and simplicity",
+      "phase": "review",
+      "guidance": "Spawn a read-only reviewer focused on code-citation accuracy, dependency ordering, independently green phases, implementation-template classification, YAGNI, regression risks, and scope adherence. Every finding must identify a concrete execution, correctness, architectural, or maintainability impact. Address valid findings or decline them with evidence. Done when the plan is executable, minimally scoped, and no valid sequencing finding survives."
+    },
+    {
+      "key": "deliver",
+      "label": "Update the issue and attach the approved plan",
+      "phase": "ci_cd",
+      "guidance": "First confirm all three gates: `ISSUE READINESS: PASS`, `ARCHITECTURE/SOLID: PASS`, and `ADR CONFORMANCE: PASS`. Preserve unrelated issue-body content while updating its canonical Acceptance Criteria section to the approved stable unchecked checkbox ACs and its Out of scope/Non-goals section to the approved boundary. Then post the detailed plan as an issue comment and add its permalink to the issue body when practical. The issue body is canonical for requirements; the comment is canonical for execution detail. Never check AC boxes merely because planning finished. If running an experiment or dry run, do not mutate GitHub: emit the proposed issue-body patch and plan comment as artifacts instead. Done when the approved requirements and plan have stable locations, or dry-run artifacts are reported."
+    },
+    {
+      "key": "follow_ups",
+      "label": "Record deferred work without scope expansion",
+      "phase": "ci_cd",
+      "guidance": "Review deferred, declined, discovered-out-of-scope, and open items. In normal mode, file a follow-up issue only when it is concrete and independently actionable; otherwise record the explicit reason no issue is warranted. In experiment or dry-run mode, do not create GitHub issues: return proposed follow-up issue payloads as artifacts. Done when nothing actionable is silently dropped and the current plan has not expanded."
+    },
+    {
+      "key": "report",
+      "label": "Report gates and hand off",
+      "phase": "ci_cd",
+      "guidance": "Report the issue and plan locations (or dry-run artifacts), phase count, AC count, architecture ownership, relevant ADRs, the three gate verdicts, key decisions, and unresolved human questions. Recommend the correct implementation template for every phase (`feature`, `bugfix`, `refactor`, `remove`, or `chore`). Terminate straggler subagents. Done when the executor has a concise handoff and no repository implementation was performed."
+    }
+  ]
+}
