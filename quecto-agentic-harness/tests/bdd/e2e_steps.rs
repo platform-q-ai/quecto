@@ -708,7 +708,7 @@ fn responses_for_prompt(prompt: &str) -> Vec<serde_json::Value> {
             responses.push(workflow_call("list_templates", serde_json::json!({})));
         }
         if lower.contains("all steps complete") {
-            for step in 1..=19 {
+            for step in 1..=20 {
                 responses.push(workflow_call("check", serde_json::json!({ "step": step })));
             }
             responses.push(workflow_call("status", serde_json::json!({})));
