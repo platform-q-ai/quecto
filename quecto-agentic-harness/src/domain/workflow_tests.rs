@@ -46,9 +46,7 @@ fn single_template_config_binds_to_active_on_select() {
         templates: vec![template],
     };
     let mut engine = WorkflowEngine::new(config, false).unwrap();
-    // Before selection the engine is in selector mode...
     assert_eq!(engine.mode(), WorkflowMode::SelectingTemplate);
-    // ...and binding it to the only template activates it immediately.
     engine.select_template("review", None).unwrap();
     assert_eq!(engine.mode(), WorkflowMode::Active);
     assert_eq!(engine.list_templates().len(), 1);
@@ -102,7 +100,6 @@ fn bound_engine_rejects_switching_template() {
         engine.select_template("b", None).is_err(),
         "a bound engine must not switch to a different template"
     );
-    // Re-selecting the SAME bound template is allowed (reset relies on it).
     assert!(engine.select_template("a", None).is_ok());
 }
 
@@ -526,7 +523,6 @@ fn workflow_error_display_renders_inner_message() {
     ];
     let rendered: Vec<String> = cases.iter().map(|e| e.to_string()).collect();
     assert_eq!(rendered, vec!["u", "i", "o", "n", "c", "g"]);
-    // Exercise the std::error::Error impl too.
     let err: &dyn std::error::Error = &cases[0];
     assert_eq!(err.to_string(), "u");
 }
@@ -586,8 +582,6 @@ fn workflow_run_default_is_empty() {
     assert!(run.done.is_empty());
     assert_eq!(run.active_issue, None);
 }
-
-// ── WorkflowEngine validation error paths (config-level) ──────────────────
 
 fn cfg(templates: Vec<WorkflowTemplate>) -> WorkflowConfig {
     WorkflowConfig {
@@ -747,7 +741,6 @@ fn active_status_renders_issue_then_completion_with_guards() {
     let status = engine.status_text();
     assert!(status.contains("Active issue: #9 — ship it"));
 
-    // Complete every step, then the status reflects completion + guards.
     engine.check(1).unwrap();
     engine.check(2).unwrap();
     assert_eq!(engine.mode(), WorkflowMode::Complete);
