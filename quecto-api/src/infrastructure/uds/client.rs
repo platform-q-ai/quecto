@@ -283,8 +283,22 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
         AgentCommand::GetToolCatalogue => {
             serde_json::json!({"type": "get_tool_catalogue", "id": id})
         }
-        AgentCommand::SetToolPolicy { mutations, mode } => {
-            serde_json::json!({"type": "set_tool_policy", "id": id, "mutations": mutations, "mode": mode})
+        AgentCommand::SetToolPolicy {
+            mutations,
+            mode,
+            operation,
+            unlisted_scope,
+        } => {
+            let mut obj = serde_json::json!({"type": "set_tool_policy", "id": id, "mutations": mutations, "mode": mode});
+            if operation
+                == crate::application::ports::agent_gateway::ToolPolicyOperationPayload::Replace
+            {
+                obj["operation"] = serde_json::to_value(operation).unwrap();
+            }
+            if let Some(scope) = unlisted_scope {
+                obj["unlistedScope"] = serde_json::to_value(scope).unwrap();
+            }
+            obj
         }
     }
 }

@@ -9,7 +9,7 @@ use crate::domain::error::DomainError;
 use crate::domain::tool::{
     RuntimeToolLifecycleRegistry, SessionAwareTools, Tool, ToolCatalog, ToolDefinition,
     ToolExecutor, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyReconciliation,
-    ToolProfileContext, ToolResult,
+    ToolPolicyRequest, ToolProfileContext, ToolResult,
 };
 use crate::domain::tool_descriptor::{
     ProfileAvailabilityScope, ToolCatalogueEntry, ToolDescriptor,
@@ -121,6 +121,14 @@ impl crate::domain::tool::ToolPolicyMutator for ToolRegistryImpl {
         mode: ToolPolicyApplyMode,
     ) -> ToolPolicyReconciliation {
         self.apply_tool_policy_mutations(mutations, mode)
+    }
+
+    fn apply_tool_policy_request(
+        &mut self,
+        request: &ToolPolicyRequest,
+        mode: ToolPolicyApplyMode,
+    ) -> ToolPolicyReconciliation {
+        self.apply_tool_policy_request(request, mode)
     }
 }
 

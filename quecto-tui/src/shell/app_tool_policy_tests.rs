@@ -41,9 +41,27 @@ async fn ctrl_t_opens_tool_policy_modal_and_apply_sends_mutations() {
     h.app_mut().handle_key(crate::shell::keys::Key::Char(' '));
     h.app_mut().handle_key(crate::shell::keys::Key::Enter);
     let sent = h.drain_commands().await.join("\n");
-    assert!(sent.contains("\"type\":\"set_tool_policy\""), "{sent}");
-    assert!(sent.contains("\"toolId\":\"tool-alpha\""), "{sent}");
-    assert!(sent.contains("\"scope\":\"parent\""), "{sent}");
+    let value: serde_json::Value = serde_json::from_str(&sent).expect(&sent);
+    assert_eq!(value["type"], "set_tool_policy");
+    assert_eq!(value["operation"], "replace");
+    assert_eq!(value["unlistedScope"], "none");
+    assert_eq!(value["mutations"][0]["toolId"], "tool-alpha");
+    assert_eq!(value["mutations"][0]["scope"], "parent");
+}
+
+#[tokio::test]
+async fn empty_tool_policy_modal_apply_sends_complete_profile_replace() {
+    let mut h = harness().await;
+
+    h.app_mut().open_tool_policy_modal_now();
+    h.app_mut().handle_key(crate::shell::keys::Key::Enter);
+
+    let sent = h.drain_commands().await.join("\n");
+    let value: serde_json::Value = serde_json::from_str(&sent).expect(&sent);
+    assert_eq!(value["type"], "set_tool_policy");
+    assert_eq!(value["operation"], "replace");
+    assert_eq!(value["unlistedScope"], "none");
+    assert_eq!(value["mutations"].as_array().unwrap().len(), 0);
 }
 
 #[tokio::test]

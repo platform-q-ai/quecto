@@ -15,8 +15,8 @@ use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent
 use crate::domain::provider_error::classify_provider_error;
 use crate::domain::session::ContextSpillStore;
 use crate::domain::tool::{
-    RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolPolicyMutation,
-    ToolProfileContext, ToolRegistry,
+    RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolProfileContext,
+    ToolRegistry,
 };
 use std::pin::Pin;
 use std::sync::Arc;
@@ -119,7 +119,8 @@ pub struct AgentLoopImpl {
     /// Context-management boundary for pruning, spilling, dirty-prefix, and
     /// user-facing context gauge decisions.
     context_manager: ContextManager,
-    pub(super) pending_tool_policy_mutations: std::sync::Mutex<Vec<ToolPolicyMutation>>,
+    pub(super) pending_tool_policy_requests:
+        std::sync::Mutex<Vec<crate::domain::tool::ToolPolicyRequest>>,
     pub(super) tool_policy_state: std::sync::Mutex<ToolPolicyState>,
     pub(super) turn_in_flight: std::sync::atomic::AtomicBool,
     pub(super) tool_profile_context: ToolProfileContext,
@@ -162,7 +163,7 @@ impl AgentLoopImpl {
             audit_log: config.audit_log,
             durable_prefix_dirty: std::sync::atomic::AtomicBool::new(false),
             context_manager,
-            pending_tool_policy_mutations: std::sync::Mutex::new(Vec::new()),
+            pending_tool_policy_requests: std::sync::Mutex::new(Vec::new()),
             tool_policy_state: std::sync::Mutex::new(ToolPolicyState::default()),
             turn_in_flight: std::sync::atomic::AtomicBool::new(false),
             tool_profile_context: config.tool_profile_context,

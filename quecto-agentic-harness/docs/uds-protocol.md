@@ -678,6 +678,35 @@ Returns an empty `tools` array only when no tools are registered in the process.
 
 ---
 
+### `set_tool_policy`
+
+Mutate the live tool-policy overlay used by subsequent model-visible tool catalogues. The command is backward compatible: omitting `operation` keeps legacy patch semantics.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"set_tool_policy"` | yes | |
+| `id` | string | no | Correlation ID |
+| `mutations` | array | yes for patch; may be empty for replace | Listed tool policy changes. Each item identifies a tool by `toolId` (stable id, preferred) or `name`, plus `scope` (`"none"`, `"parent"`, `"child"`, or `"both"`) and optional `reason`. |
+| `mode` | `"immediateIfIdle"` \| `"atNextTurnBoundary"` | no | Defaults to `"immediateIfIdle"`. Timing is unchanged by `operation`: if the agent is busy, immediate requests queue for the next boundary. |
+| `operation` | `"patch"` \| `"replace"` | no | Defaults to `"patch"`. Patch changes only listed tools. Replace treats `mutations` as the complete desired profile and applies `unlistedScope` to every currently registered, unlisted tool. |
+| `unlistedScope` | scope string | required when `operation` is `"replace"` | Closed-world scope for registered tools not listed in `mutations`. |
+
+`replace` reconciliation reports public per-tool statuses for listed and unlisted current catalogue entries (`applied`, `alreadyInState`, `blockedByRestriction`, or `unknownTool`). Known entries report the resolved catalogue `name`; when the caller supplied a different identifier such as a stable `toolId`, results include `requestedIdentifier` for audit/display. Listed unknown/removed tools remain reported as `unknownTool`; stable-id-shaped identifiers are resolved only as stable ids and do not fall through to current tool names. Registered but unlisted tools are reconciled with `unlistedScope`. Restriction ceilings still prevent widening even in replace mode.
+
+Queued reconciliation outcomes are observable through the later `tool_policy_changed` event. When the initiating command included `id`, that event includes `correlationId` with the same value so clients can correlate application-time results to the queued request.
+
+Examples:
+
+```json
+{"type":"set_tool_policy","mutations":[{"name":"read","scope":"child"}]}
+```
+
+```json
+{"type":"set_tool_policy","operation":"replace","unlistedScope":"none","mutations":[{"toolId":"tool-read","scope":"both"}]}
+```
+
+---
+
 ### `register_tools`
 
 Register one or more tools from a connected extension client. See Extensions guide (`docs {"name":"extensions"}`) for full details.

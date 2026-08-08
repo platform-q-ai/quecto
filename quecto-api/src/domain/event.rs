@@ -71,6 +71,8 @@ pub enum AgentEvent {
         results: Vec<serde_json::Value>,
         apply_mode: String,
         reason: String,
+        #[serde(default)]
+        correlation_id: Option<String>,
     },
     /// A spawned child appended messages this turn (#1060: refs-based, so the
     /// full content is not re-carried). Preserved rather than falling through to

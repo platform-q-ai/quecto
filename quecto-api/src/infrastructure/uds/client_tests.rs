@@ -100,6 +100,8 @@ fn control_commands_serialize_to_wire() {
                 reason: Some("test".into()),
             }],
             mode: crate::application::ports::agent_gateway::ToolPolicyApplyModePayload::AtNextTurnBoundary,
+            operation: crate::application::ports::agent_gateway::ToolPolicyOperationPayload::Patch,
+            unlisted_scope: None,
         },
         "p1",
     );
@@ -490,7 +492,7 @@ fn remaining_commands_serialize_to_wire() {
 
 #[test]
 fn tool_policy_changed_is_modeled_not_unknown() {
-    let wire = r#"{"type":"tool_policy_changed","changedTools":["alpha"],"results":[{"name":"alpha","before":{"effectiveScope":"both"},"after":{"effectiveScope":"child"}}],"applyMode":"immediateIfIdle","reason":"set_tool_policy"}"#;
+    let wire = r#"{"type":"tool_policy_changed","changedTools":["alpha"],"results":[{"name":"alpha","before":{"effectiveScope":"both"},"after":{"effectiveScope":"child"}}],"applyMode":"immediateIfIdle","reason":"set_tool_policy","correlationId":"req-1"}"#;
     let ev: AgentEvent = serde_json::from_str(wire).expect("parse");
     match &ev {
         AgentEvent::ToolPolicyChanged {
@@ -498,11 +500,13 @@ fn tool_policy_changed_is_modeled_not_unknown() {
             results,
             apply_mode,
             reason,
+            correlation_id,
         } => {
             assert_eq!(changed_tools, &vec!["alpha".to_string()]);
             assert_eq!(results[0]["after"]["effectiveScope"], "child");
             assert_eq!(apply_mode, "immediateIfIdle");
             assert_eq!(reason, "set_tool_policy");
+            assert_eq!(correlation_id.as_deref(), Some("req-1"));
         }
         other => panic!("expected ToolPolicyChanged, got {other:?}"),
     }

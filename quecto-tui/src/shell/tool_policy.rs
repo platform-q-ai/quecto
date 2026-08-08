@@ -5,7 +5,8 @@ use crate::components::selectable_item_modal::{
     ScopeSelection, SearchFieldWeights, SelectableItemModal, SelectableItemModalResult,
 };
 use crate::protocol::client::{
-    Command, ToolCatalogueEntry, ToolPolicyApplyMode, ToolPolicyMutation, ToolScope,
+    Command, ToolCatalogueEntry, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyOperation,
+    ToolScope,
 };
 
 impl From<ToolScope> for ScopeSelection {
@@ -102,13 +103,13 @@ impl App {
                             })
                     })
                     .collect::<Vec<_>>();
-                if !mutations.is_empty() {
-                    self.send_command(Command::SetToolPolicy {
-                        id: Some("tool-policy-apply".into()),
-                        mutations,
-                        mode: ToolPolicyApplyMode::ImmediateIfIdle,
-                    });
-                }
+                self.send_command(Command::SetToolPolicy {
+                    id: Some("tool-policy-apply".into()),
+                    mutations,
+                    mode: ToolPolicyApplyMode::ImmediateIfIdle,
+                    operation: ToolPolicyOperation::Replace,
+                    unlisted_scope: Some(ToolScope::None),
+                });
             }
             SelectableItemModalResult::Dismissed => {
                 self.tool_policy_modal = None;

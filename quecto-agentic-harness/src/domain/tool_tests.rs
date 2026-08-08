@@ -156,6 +156,7 @@ fn tool_policy_mutation_result_wire_uses_camel_case_fields_and_status() {
     // structs directly — field names and status must match protocol camelCase.
     let result = ToolPolicyMutationResult {
         name: "alpha".into(),
+        requested_identifier: Some("tool-alpha".into()),
         requested_availability: ToolAvailability::Enabled,
         requested_scope: ProfileAvailabilityScope::Parent,
         status: ToolPolicyMutationStatus::Applied,
@@ -176,6 +177,7 @@ fn tool_policy_mutation_result_wire_uses_camel_case_fields_and_status() {
     );
     assert!(wire.get("requested_scope").is_none());
     assert_eq!(wire["status"], "applied");
+    assert_eq!(wire["requestedIdentifier"], "tool-alpha");
     assert_eq!(wire["requestedAvailability"], "enabled");
     assert_eq!(wire["requestedScope"], "parent");
 
@@ -201,9 +203,11 @@ fn tool_policy_mutation_result_wire_uses_camel_case_fields_and_status() {
     assert_eq!(unknown_wire["status"], "unknownTool");
 
     let reconciliation = ToolPolicyReconciliation {
+        correlation_id: None,
         mode: ToolPolicyApplyMode::ImmediateIfIdle,
         results: vec![ToolPolicyMutationResult {
             name: "beta".into(),
+            requested_identifier: None,
             requested_availability: ToolAvailability::Disabled,
             requested_scope: ProfileAvailabilityScope::None,
             status: ToolPolicyMutationStatus::Applied,

@@ -13,6 +13,7 @@ use tower_http::cors::CorsLayer;
 
 use crate::application::ports::agent_gateway::{
     AgentCommand, AgentGateway, ToolPolicyApplyModePayload, ToolPolicyMutationPayload,
+    ToolPolicyOperationPayload, ToolPolicyScopePayload,
 };
 use crate::application::use_cases;
 use crate::domain::event::AgentEvent;
@@ -287,15 +288,29 @@ async fn tools_handler<G: AgentGateway>(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SetToolPolicyRequest {
+    #[serde(default)]
     mutations: Vec<ToolPolicyMutationPayload>,
+    #[serde(default)]
     mode: ToolPolicyApplyModePayload,
+    #[serde(default)]
+    operation: ToolPolicyOperationPayload,
+    #[serde(default)]
+    unlisted_scope: Option<ToolPolicyScopePayload>,
 }
 
 async fn set_tool_policy_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
     Json(body): Json<SetToolPolicyRequest>,
 ) -> impl IntoResponse {
-    match use_cases::set_tool_policy::execute(&state.gateway, body.mutations, body.mode).await {
+    match use_cases::set_tool_policy::execute(
+        &state.gateway,
+        body.mutations,
+        body.mode,
+        body.operation,
+        body.unlisted_scope,
+    )
+    .await
+    {
         Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
         Err(e) => api_error_response(e).into_response(),
     }
