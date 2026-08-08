@@ -436,7 +436,10 @@ fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hoo
         snap.steps[8].label,
         "Run local adversarial implementation review before commit"
     );
-    assert_eq!(snap.steps[10].label, "Bump changed crate versions and sync docs");
+    assert_eq!(
+        snap.steps[10].label,
+        "Bump changed crate versions and sync docs"
+    );
     assert_eq!(snap.steps[12].label, "Push through the fast pre-push gate");
     assert_eq!(
         snap.steps[14].label,
@@ -465,7 +468,11 @@ fn feature_template_guards_commit_push_and_merge_like_config_file() {
     );
     assert_eq!(feature.guards[0].before_step_key, "commit");
     assert!(feature.guards[0].message.contains("plan intake"));
-    assert!(feature.guards[0].message.contains("local adversarial review"));
+    assert!(
+        feature.guards[0]
+            .message
+            .contains("local adversarial review")
+    );
     assert_eq!(
         feature.guards[1].commands,
         vec!["gh pr edit --add-label merge-requested".to_string()]
