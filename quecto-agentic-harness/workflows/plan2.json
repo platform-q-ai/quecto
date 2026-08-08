@@ -25,7 +25,7 @@
       "key": "issue_readiness",
       "label": "Prepare canonical acceptance criteria and non-goals",
       "phase": "setup",
-      "guidance": "Draft stable identifiers and GitHub checkboxes for independently checkable behavioural acceptance criteria: `- [ ] **AC1:** ...`. Include applicable positive, negative, boundary, failure, compatibility, documentation, and protocol outcomes without prescribing implementation. Draft explicit out-of-scope/non-goals. Keep issue AC boxes unchecked: they represent verified outcomes and are checked only by implementation conformance. Record ambiguities as blockers. Do not update GitHub yet. Done when `ISSUE READINESS: PASS` is supportable and every criterion is observable and unambiguous."
+      "guidance": "Draft stable identifiers and GitHub checkboxes for independently checkable behavioural acceptance criteria: `- [ ] **AC1:** ...`. Include applicable positive, negative, boundary, failure, compatibility, documentation, and protocol outcomes without prescribing implementation. Draft explicit out-of-scope/non-goals. Keep issue AC boxes unchecked: they represent verified outcomes and are checked only by implementation conformance. Preserve every valid resolution permitted by the source issue unless repository evidence or an explicit recorded human decision eliminates it; never turn an example, suggestion, or candidate approach into a mandatory implementation choice. Record ambiguities as blockers. Do not update GitHub yet. Done when `ISSUE READINESS: PASS` is supportable and every criterion is observable and unambiguous."
     },
     {
       "key": "architecture",
