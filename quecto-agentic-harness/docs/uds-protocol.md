@@ -691,7 +691,9 @@ Mutate the live tool-policy overlay used by subsequent model-visible tool catalo
 | `operation` | `"patch"` \| `"replace"` | no | Defaults to `"patch"`. Patch changes only listed tools. Replace treats `mutations` as the complete desired profile and applies `unlistedScope` to every currently registered, unlisted tool. |
 | `unlistedScope` | scope string | required when `operation` is `"replace"` | Closed-world scope for registered tools not listed in `mutations`. |
 
-`replace` reconciliation reports public per-tool statuses for listed and unlisted current catalogue entries (`applied`, `alreadyInState`, `blockedByRestriction`, or `unknownTool`). Known entries report the resolved catalogue `name`; when the caller supplied a different identifier such as a stable `toolId`, results include `requestedIdentifier` for audit/display. Listed unknown/removed tools remain reported as `unknownTool`; registered but unlisted tools are reconciled with `unlistedScope`. Restriction ceilings still prevent widening even in replace mode.
+`replace` reconciliation reports public per-tool statuses for listed and unlisted current catalogue entries (`applied`, `alreadyInState`, `blockedByRestriction`, or `unknownTool`). Known entries report the resolved catalogue `name`; when the caller supplied a different identifier such as a stable `toolId`, results include `requestedIdentifier` for audit/display. Listed unknown/removed tools remain reported as `unknownTool`; stable-id-shaped identifiers are resolved only as stable ids and do not fall through to current tool names. Registered but unlisted tools are reconciled with `unlistedScope`. Restriction ceilings still prevent widening even in replace mode.
+
+Queued reconciliation outcomes are observable through the later `tool_policy_changed` event. When the initiating command included `id`, that event includes `correlationId` with the same value so clients can correlate application-time results to the queued request.
 
 Examples:
 

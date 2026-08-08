@@ -40,6 +40,7 @@ fn tool_policy_apply_mode_wire_uses_camel_case() {
     assert_eq!(command_mode, ToolPolicyApplyModeCommand::AtNextTurnBoundary);
 
     let reconciliation = crate::domain::tool::ToolPolicyReconciliation {
+        correlation_id: None,
         mode: crate::domain::tool::ToolPolicyApplyMode::AtNextTurnBoundary,
         results: vec![],
     };

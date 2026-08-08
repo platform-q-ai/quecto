@@ -103,15 +103,13 @@ impl App {
                             })
                     })
                     .collect::<Vec<_>>();
-                if !mutations.is_empty() {
-                    self.send_command(Command::SetToolPolicy {
-                        id: Some("tool-policy-apply".into()),
-                        mutations,
-                        mode: ToolPolicyApplyMode::ImmediateIfIdle,
-                        operation: ToolPolicyOperation::Replace,
-                        unlisted_scope: Some(ToolScope::None),
-                    });
-                }
+                self.send_command(Command::SetToolPolicy {
+                    id: Some("tool-policy-apply".into()),
+                    mutations,
+                    mode: ToolPolicyApplyMode::ImmediateIfIdle,
+                    operation: ToolPolicyOperation::Replace,
+                    unlisted_scope: Some(ToolScope::None),
+                });
             }
             SelectableItemModalResult::Dismissed => {
                 self.tool_policy_modal = None;

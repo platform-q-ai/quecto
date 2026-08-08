@@ -254,6 +254,7 @@ pub struct ToolPolicyRequest {
     pub operation: ToolPolicyOperation,
     pub mutations: Vec<ToolPolicyMutation>,
     pub unlisted_scope: Option<ProfileAvailabilityScope>,
+    pub correlation_id: Option<String>,
 }
 
 impl ToolPolicyRequest {
@@ -262,6 +263,7 @@ impl ToolPolicyRequest {
             operation: ToolPolicyOperation::Patch,
             mutations,
             unlisted_scope: None,
+            correlation_id: None,
         }
     }
 
@@ -273,6 +275,7 @@ impl ToolPolicyRequest {
             operation: ToolPolicyOperation::Replace,
             mutations,
             unlisted_scope: Some(unlisted_scope),
+            correlation_id: None,
         }
     }
 }
@@ -305,6 +308,8 @@ pub struct ToolPolicyMutationResult {
 pub struct ToolPolicyReconciliation {
     pub mode: ToolPolicyApplyMode,
     pub results: Vec<ToolPolicyMutationResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
 }
 
 /// Port: live runtime policy mutation for registered tools.
@@ -338,6 +343,7 @@ pub trait ToolPolicyMutator: Send + Sync {
                     reason: mutation.reason.clone(),
                 })
                 .collect(),
+            correlation_id: request.correlation_id.clone(),
         }
     }
 }

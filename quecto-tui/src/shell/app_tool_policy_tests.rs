@@ -50,6 +50,21 @@ async fn ctrl_t_opens_tool_policy_modal_and_apply_sends_mutations() {
 }
 
 #[tokio::test]
+async fn empty_tool_policy_modal_apply_sends_complete_profile_replace() {
+    let mut h = harness().await;
+
+    h.app_mut().open_tool_policy_modal_now();
+    h.app_mut().handle_key(crate::shell::keys::Key::Enter);
+
+    let sent = h.drain_commands().await.join("\n");
+    let value: serde_json::Value = serde_json::from_str(&sent).expect(&sent);
+    assert_eq!(value["type"], "set_tool_policy");
+    assert_eq!(value["operation"], "replace");
+    assert_eq!(value["unlistedScope"], "none");
+    assert_eq!(value["mutations"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
 async fn ctrl_t_with_empty_catalogue_waits_for_get_tool_catalogue_after_catalogue_update() {
     let mut h = harness().await;
 

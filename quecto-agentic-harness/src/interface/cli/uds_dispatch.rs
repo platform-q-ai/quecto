@@ -199,6 +199,7 @@ pub(super) async fn handle_set_tool_policy(
             operation: ToolPolicyOperation::Patch,
             mutations: domain_mutations,
             unlisted_scope: None,
+            correlation_id: id.map(str::to_string),
         },
         ToolPolicyOperationCommand::Replace => {
             let Some(scope) = unlisted_scope else {
@@ -207,7 +208,9 @@ pub(super) async fn handle_set_tool_policy(
                 emit_event_to_broadcast_or_writer(ctx, &ev).await;
                 return false;
             };
-            ToolPolicyRequest::replace(domain_mutations, scope)
+            let mut request = ToolPolicyRequest::replace(domain_mutations, scope);
+            request.correlation_id = id.map(str::to_string);
+            request
         }
     };
     let reconciliation = ctx.agent.request_tool_policy(request, apply_mode);

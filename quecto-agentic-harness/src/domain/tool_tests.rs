@@ -203,6 +203,7 @@ fn tool_policy_mutation_result_wire_uses_camel_case_fields_and_status() {
     assert_eq!(unknown_wire["status"], "unknownTool");
 
     let reconciliation = ToolPolicyReconciliation {
+        correlation_id: None,
         mode: ToolPolicyApplyMode::ImmediateIfIdle,
         results: vec![ToolPolicyMutationResult {
             name: "beta".into(),

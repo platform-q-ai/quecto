@@ -1,7 +1,9 @@
 use super::super::tests::*;
 use super::super::*;
 use super::RestrictedMockRegistry;
-use crate::domain::tool::{ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus};
+use crate::domain::tool::{
+    ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus, ToolPolicyRequest,
+};
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 use std::sync::Arc;
 
@@ -62,6 +64,41 @@ fn queued_drain_keeps_registry_catalogue_and_event_after_consistent() {
         .expect("event carries after snapshot");
     assert_eq!(event_after.effective_enabled, after.effective_enabled);
     assert_eq!(event_after.effective_scope, after.effective_scope);
+}
+
+#[test]
+fn queued_drain_event_carries_request_correlation_id() {
+    let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let events_cb = events.clone();
+    agent.set_progress_callback(Some(Arc::new(move |event| {
+        events_cb.lock().unwrap().push(event);
+    })));
+
+    let mut request =
+        ToolPolicyRequest::patch(vec![ToolPolicyMutation::disable("alpha", "queue disable")]);
+    request.correlation_id = Some("set-policy-1".to_string());
+    agent.queue_tool_policy_request(request);
+
+    let reconciliation = agent
+        .drain_tool_policy_mutations_at_boundary()
+        .expect("queued policy drains");
+    assert_eq!(
+        reconciliation.correlation_id.as_deref(),
+        Some("set-policy-1")
+    );
+
+    let events = events.lock().unwrap();
+    let changed = events.iter().find_map(|event| match event {
+        crate::domain::agent::AgentProgressEvent::ToolPolicyChanged { reconciliation, .. } => {
+            Some(reconciliation)
+        }
+        _ => None,
+    });
+    assert_eq!(
+        changed.and_then(|r| r.correlation_id.as_deref()),
+        Some("set-policy-1")
+    );
 }
 
 #[test]

@@ -119,7 +119,11 @@ impl crate::domain::tool::ToolPolicyMutator for MockRegistry {
                 reason: mutation.reason.clone(),
             });
         }
-        ToolPolicyReconciliation { mode, results }
+        ToolPolicyReconciliation {
+            mode,
+            results,
+            correlation_id: None,
+        }
     }
 }
 impl ToolRegistry for MockRegistry {}
@@ -176,6 +180,7 @@ impl crate::domain::tool::ToolPolicyMutator for RestrictedMockRegistry {
     ) -> ToolPolicyReconciliation {
         ToolPolicyReconciliation {
             mode,
+            correlation_id: None,
             results: mutations
                 .iter()
                 .map(|mutation| ToolPolicyMutationResult {

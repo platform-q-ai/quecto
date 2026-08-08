@@ -311,6 +311,8 @@ pub enum Event {
         results: Vec<ToolPolicyResult>,
         apply_mode: String,
         reason: String,
+        #[serde(rename = "correlationId", default)]
+        correlation_id: Option<String>,
     },
     /// Catch-all for unknown/future event types (forward-compatible).
     #[serde(other)]

@@ -394,9 +394,10 @@ impl ToolRegistryImpl {
     }
 
     fn catalogue_entry(&self, name: &str) -> Option<ToolCatalogueEntry> {
-        self.catalogue_entries()
-            .into_iter()
-            .find(|entry| entry.name.as_ref() == name || entry.stable_id.as_ref() == name)
+        let stable_id = name.starts_with("tool.v1:");
+        self.catalogue_entries().into_iter().find(|entry| {
+            entry.stable_id.as_ref() == name || (!stable_id && entry.name.as_ref() == name)
+        })
     }
 
     pub(super) fn effective_scope(metadata: &ToolRegistration) -> ProfileAvailabilityScope {
@@ -451,7 +452,6 @@ impl ToolRegistryImpl {
             .intersection(restriction)
     }
 
-    /// Apply live runtime policy mutations and return before/after snapshots.
     pub fn apply_tool_policy_mutations(
         &mut self,
         mutations: &[ToolPolicyMutation],
@@ -527,29 +527,29 @@ impl ToolRegistryImpl {
             });
         }
         self.refresh_spawn_inherited_child_policy_snapshot();
-        ToolPolicyReconciliation { mode, results }
+        ToolPolicyReconciliation {
+            mode,
+            results,
+            correlation_id: request.correlation_id.clone(),
+        }
     }
 
-    /// Runtime-disable a registered tool without removing its descriptor.
     pub fn disable_tool(&mut self, name: &str) -> bool {
         self.set_availability(name, ToolAvailability::Disabled)
     }
 
-    /// Mark a registered tool disabled by entrypoint defaults.
     pub fn disable_tool_by_entrypoint_default(&mut self, name: &str) -> bool {
         self.set_registration_metadata(name, |metadata| {
             *metadata = metadata.clone().with_entrypoint_default_enabled(false);
         })
     }
 
-    /// Mark a registered tool disabled by inherited spawn policy.
     pub fn disable_tool_by_spawn_restriction(&mut self, name: &str) -> bool {
         self.set_registration_metadata(name, |metadata| {
             *metadata = metadata.clone().with_spawn_restriction();
         })
     }
 
-    /// Runtime-enable a registered tool without restart.
     pub fn enable_tool(&mut self, name: &str) -> bool {
         self.set_registration_metadata(name, |metadata| {
             metadata.profile_scope = Some(ProfileAvailabilityScope::Both);
@@ -733,10 +733,6 @@ impl ToolRegistryImpl {
 mod trait_impls;
 
 #[cfg(test)]
-#[path = "registry_tests.rs"]
-mod tests;
-
-#[cfg(test)]
 #[path = "registry_catalogue_tests.rs"]
 mod catalogue_tests;
 #[cfg(test)]
@@ -748,3 +744,6 @@ mod policy_tests;
 #[cfg(test)]
 #[path = "registry_stable_id_tests.rs"]
 mod stable_id_tests;
+#[cfg(test)]
+#[path = "registry_tests.rs"]
+mod tests;

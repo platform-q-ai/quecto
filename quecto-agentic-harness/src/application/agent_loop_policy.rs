@@ -310,8 +310,12 @@ impl AgentLoopImpl {
         let mut combined = ToolPolicyReconciliation {
             mode: ToolPolicyApplyMode::AtNextTurnBoundary,
             results: Vec::new(),
+            correlation_id: None,
         };
         for request in requests {
+            if combined.correlation_id.is_none() {
+                combined.correlation_id = request.correlation_id.clone();
+            }
             let reconciliation = match request.operation {
                 crate::domain::tool::ToolPolicyOperation::Patch => {
                     self.tool_registry.apply_tool_policy_mutations(

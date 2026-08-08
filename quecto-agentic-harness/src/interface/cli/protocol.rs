@@ -112,6 +112,8 @@ pub enum AgentEvent {
         results: Vec<serde_json::Value>,
         apply_mode: String,
         reason: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        correlation_id: Option<String>,
     },
     /// Request sent to an extension client to execute a tool.
     ///

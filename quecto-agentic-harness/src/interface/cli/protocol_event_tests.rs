@@ -26,6 +26,7 @@ fn tool_policy_changed_event_serializes_apply_mode_and_results() {
         ],
         apply_mode: "atNextTurnBoundary".to_string(),
         reason: "queued".to_string(),
+        correlation_id: Some("req-1".to_string()),
     };
     let value = serde_json::to_value(event).unwrap();
     assert_eq!(value["type"], "tool_policy_changed");
@@ -35,4 +36,5 @@ fn tool_policy_changed_event_serializes_apply_mode_and_results() {
     assert_eq!(value["results"][0]["after"]["profileScope"], "child");
     assert_eq!(value["results"][0]["after"]["effectiveScope"], "child");
     assert_eq!(value["reason"], "queued");
+    assert_eq!(value["correlationId"], "req-1");
 }
