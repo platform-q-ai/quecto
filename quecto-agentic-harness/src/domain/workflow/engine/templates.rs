@@ -26,10 +26,6 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
             include_str!("../../../../workflows/feature.json"),
         ),
         (
-            "feature2",
-            include_str!("../../../../workflows/feature2.json"),
-        ),
-        (
             "adversarial-review",
             include_str!("../../../../workflows/adversarial-review.json"),
         ),
