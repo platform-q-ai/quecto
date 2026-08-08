@@ -83,9 +83,41 @@ Recurring judge findings:
 
 Workflow commit: `46ee0ecc`.
 
-Status: **not yet evaluated**.
-
 This version adds a draft-blind, independently verified and frozen planning baseline before AC or plan drafting. Later reviews compare against that baseline, classify unresolved choices as human blockers, bounded discovery, or speculative options to remove, and close findings only when the underlying risk is eliminated rather than textually accommodated.
+
+Results under the same judging basis and rubric as V2:
+
+| Rank | Candidate | Requirements /25 | Architecture /25 | ADR /20 | Executability /30 | Total | Verdict |
+|---:|---|---:|---:|---:|---:|---:|---|
+| 1 | [#1432](https://github.com/platform-q-ai/quecto/issues/1432) | 25 | 24 | 19 | 28 | 96 | PASS |
+| 2 | [#1429](https://github.com/platform-q-ai/quecto/issues/1429) | 25 | 24 | 19 | 27 | 95 | PASS |
+| 3 | [#1431](https://github.com/platform-q-ai/quecto/issues/1431) | 25 | 24 | 19 | 26 | 94 | PASS |
+| 4 | [#1430](https://github.com/platform-q-ai/quecto/issues/1430) | 24 | 23 | 19 | 27 | 93 | PASS |
+| 5 | [#1428](https://github.com/platform-q-ai/quecto/issues/1428) | — | — | — | — | 92 | PASS |
+
+Aggregate: mean **94.0**, hard-gate pass rate **5/5**, 95+ rate **2/5**, range **92–96**.
+
+The #1428 replacement judge's abbreviated final report did not preserve dimension scores, so those cells remain unknown rather than reconstructed.
+
+Comparison with V2:
+
+- mean: **93.8 → 94.0**;
+- hard-gate pass rate: **5/5 → 5/5**;
+- 95+ rate: **1/5 → 2/5**;
+- minimum score: **91 → 92**.
+
+Recurring findings:
+
+- bounded discovery is valid, but the decision artifact and objective selection criteria should be explicit before implementation;
+- planned verification commands may remain indicative where the exact implementation path is intentionally unresolved;
+- any proposed production failure mechanism must be a justified invariant, not a convenient test seam;
+- inspection plus targeted tests may be the appropriate evidence when proving the absence of a behavior.
+
+### Invalid V3 judging attempts
+
+The first V3 judging pass incorrectly added baseline-artifact availability to the judging basis. Previous rounds judged only the delivered issue/plan against source and repository evidence, and the baseline is an internal workflow mechanism rather than a required real-world deliverable. Scores **94, 92, 89, 92, 92** from that pass are invalid and excluded.
+
+A first replacement judge for #1431 also made a category error by evaluating the planning issue as completed implementation and requiring adapter tests to exist already. Its **72/100 FAIL** is invalid and excluded. A fresh planning judge produced the recorded **94/100 PASS**.
 
 ## Model experiment note
 
