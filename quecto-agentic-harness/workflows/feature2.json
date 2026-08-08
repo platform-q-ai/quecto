@@ -1,0 +1,136 @@
+{
+  "label": "Feature 2",
+  "description": "Implement one planned feature slice with plan intake, test design/review, RED/GREEN, disciplined refactor, local adversarial review before push, PR review, conformance, and handoff. Assumes a canonical issue plan already exists. If you decide to use sub agents, always set openai-oauth/gpt-5.5 · effort: low.",
+  "when_to_use": "Use experimentally for behaviour-adding or behaviour-changing work where the issue already has an execution plan from the plan workflow. Do NOT use to plan the work, to fix existing wrong behaviour without a planned feature slice, or for zero-behaviour-change restructures.",
+  "steps": [
+    "steps/shared/hooks",
+    {
+      "key": "plan_intake",
+      "label": "Read the issue plan and lock this PR scope",
+      "phase": "setup",
+      "guidance": "Read the issue body, comments, and canonical plan comment. Identify the exact planned phase this PR implements, the AC ids covered, non-goals, expected touched surfaces/files, architecture ownership, ADR/protocol/docs constraints, and deferred phases. Stop and report if the plan is missing, stale, ambiguous, internally inconsistent, or if the requested PR unintentionally spans multiple planned phases. Done when this branch has a written scope lock: phase, ACs, non-goals, expected surfaces, verification evidence, and deferred work."
+    },
+    {
+      "key": "test_design",
+      "label": "Design tests from the plan verification matrix",
+      "phase": "red",
+      "guidance": "Convert the plan's AC-to-verification matrix for this phase into concrete BDD scenarios, step tests, unit tests, integration tests, docs/protocol checks, or inspection checks as appropriate. Every new/changed test must trace to an AC id, a named regression risk, or a stated invariant. Include negative, boundary, compatibility, and documentation/protocol coverage when relevant. Do not write implementation code yet. Done when the planned test/check set covers every in-scope AC and no test asserts incidental implementation detail."
+    },
+    {
+      "key": "test_review",
+      "label": "Review tests before implementation",
+      "phase": "review",
+      "guidance": "Spawn read-only reviewer subagents in parallel, each with model openai-oauth/gpt-5.5 and effort low, focused on test quality before production implementation: AC coverage, BDD/Gherkin discipline, falsifiability, boundary/negative cases, compatibility, and implementation-detail assertions. Reviewers must not modify files. Address every valid finding before implementation: fix it or explicitly decline it with evidence. Done when all valid test-design findings are resolved and the test set is ready for RED/falsifiability evidence."
+    },
+    {
+      "key": "red",
+      "label": "Prove tests fail or are falsifiable before implementation",
+      "phase": "red",
+      "guidance": "Run only targeted new/changed tests. For new behavioural assertions, prove RED: each assertion fails before implementation for the expected reason. For characterization, compatibility, docs, architecture, or invariant checks that should already pass, prove falsifiability with a temporary mutation or equivalent demonstration, then revert mutation residue. A test that passes without implementation and has no falsifiability evidence is hollow. Done when every new/changed assertion has RED or mutation/falsifiability evidence and the tree contains no mutation residue."
+    },
+    {
+      "key": "green",
+      "label": "Implement the scoped phase",
+      "phase": "green",
+      "guidance": "Implement only the locked planned phase. Keep changes minimal but complete for the in-scope ACs. Do not implement later phases, broaden scope, or do opportunistic cleanup. Use the architecture ownership and ADR/protocol/docs constraints from the plan. Done when the previously failing targeted tests pass and no targeted existing test broke."
+    },
+    {
+      "key": "refactor_harden",
+      "label": "Refactor and harden before review",
+      "phase": "refactor",
+      "guidance": "With tests green, improve the implementation before commit. Prefer mechanism over bandaid; move logic to the right layer and altitude; reuse existing helpers; remove duplication; keep public API surface minimal and consumed; respect file-size limits; preserve behaviour intentionally. Audit deleted/replaced logic: for every deleted behaviour or guard, know where the invariant is re-established or why it is intentionally removed. Do not weaken tests to fit implementation. Done when the implementation is simpler, correctly layered, non-speculative, and targeted tests still pass."
+    },
+    {
+      "key": "local_review",
+      "label": "Run local adversarial implementation review before commit",
+      "phase": "review",
+      "guidance": "Before commit or push, spawn read-only local reviewers against the complete unpushed branch state. This is not a PR review and must happen while fixes are still cheap. In each reviewer prompt, explicitly instruct it to inspect: `git diff --stat master...HEAD`, `git diff master...HEAD`, `git diff --stat`, `git diff`, and `git diff --staged`, plus relevant repository files. If the branch has no commits yet, `master...HEAD` may be empty; the working-tree and staged diffs are still mandatory. Reviewers must not require a PR number, must not post to GitHub, and must not modify files. Spawn each reviewer with read_only true, model openai-oauth/gpt-5.5, and effort low. Use narrow angles: architecture/layering, reuse+altitude, removed-behaviour audit, cross-file effects, security/performance where relevant, test falsifiability, and scope/conformance to the plan phase. Findings must include file:line, consequence, and concrete failure scenario. Dedupe findings and adversarially verify material ones by trying to refute them against the same complete branch+working-tree diff. Fix every confirmed/plausible valid finding, or decline with cited rationale. If fixes change the diff materially, rerun affected local review angles before committing. Done when no confirmed/plausible local review finding remains unresolved."
+    },
+    {
+      "key": "verify",
+      "label": "Run targeted verification before commit",
+      "phase": "green",
+      "guidance": "Run formatting, targeted strict clippy for changed packages, targeted tests, and relevant architecture/contract/docs checks for this phase. Verify every in-scope AC has objective evidence from tests, commands, or inspection. Do not run full authoritative CI locally unless needed; that belongs after merge-requested. Fix failures before proceeding. Done when fmt/clippy/targeted tests/checks are green and AC evidence is recorded."
+    },
+    {
+      "key": "version_bump",
+      "label": "Bump changed crate versions and sync docs",
+      "phase": "ci_cd",
+      "guidance": "Bump only crates whose source changed, normally PATCH unless the change warrants MINOR. Keep version docs/assertions in sync for each changed crate. Do not bump unchanged crates. Done when version files, README/version assertions, and tests agree."
+    },
+    {
+      "key": "commit",
+      "label": "Commit the reviewed phase implementation",
+      "phase": "ci_cd",
+      "guidance": "If on the default branch, create a feature branch. Stage only intended files; never use broad `git add -A` or `git add .`. Commit after local review and verification are clean. The commit message should summarize the phase, ACs covered, and key evidence. Done when the intended files are committed on a feature branch."
+    },
+    {
+      "key": "push",
+      "label": "Push through the fast pre-push gate",
+      "phase": "ci_cd",
+      "guidance": "Push in the foreground and wait for the fast pre-push gate. Fix every failure and push again; never use --no-verify. Done when the latest push exits successfully."
+    },
+    {
+      "key": "pr",
+      "label": "Create the PR without requesting authoritative CI yet",
+      "phase": "ci_cd",
+      "guidance": "Open the PR against the default branch. The PR body must state the planned phase implemented, ACs covered, evidence/commands, local review findings fixed or declined, deferred phases, and any human decisions. Do not add merge-requested yet. Done when the PR is open with a clear phase-scoped body."
+    },
+    {
+      "key": "pr_reviewers",
+      "label": "Run PR adversarial review as final safety net",
+      "phase": "review",
+      "guidance": "Precondition: a PR exists. Run the existing adversarial PR review process: narrow read-only finders fetch the PR diff themselves, each with one angle; dedupe findings; spawn read-only verifiers to refute each material finding; post exactly one submitted GitHub review with surviving inline findings. This is a final safety net after local review, so findings should be fewer. Done when every surviving finding is posted in one submitted non-pending review."
+    },
+    {
+      "key": "fix_pr_review",
+      "label": "Fix valid PR review findings",
+      "phase": "review",
+      "guidance": "Triage every PR review finding. Confirm validity before changing code. Fix every valid finding or explicitly decline it with cited rationale. Push fixes through the fast gate. Do not request authoritative CI until review fixes are done. Done when every valid PR review finding is fixed or declined and pushed."
+    },
+    "steps/shared/resolve_threads",
+    {
+      "key": "conformance",
+      "label": "Verify conformance to the issue plan and acceptance criteria",
+      "phase": "review",
+      "guidance": "Verify the actual branch code against the issue ACs, this PR's planned phase checklist, non-goals, architecture/ADR constraints, and docs/protocol/version requirements. Cite file:line or command evidence for every in-scope AC. PR description claims do not count. Output a per-AC table and final verdict `CONFORMANCE: PASS` only if every in-scope AC is fully met and no non-goal was violated. On FAIL, fix and re-verify before continuing."
+    },
+    {
+      "key": "request_ci",
+      "label": "Request authoritative CI and wait",
+      "phase": "ci_cd",
+      "guidance": "After local review, PR review, fixes, thread resolution, and conformance pass, add `merge-requested` for the latest head and wait for authoritative CI. If another commit is pushed, repeat any affected review/conformance steps before re-requesting CI. Do not merge or set auto-merge. Done when authoritative CI passes for the latest head and the PR is ready for human merge."
+    },
+    {
+      "key": "cleanup",
+      "label": "Clean up and report handoff",
+      "phase": "ci_cd",
+      "guidance": "Terminate straggler subagents only after checking for any still running. Report PR URL, CI status, phase implemented, ACs covered, deferred phases, review/conformance status, and human decisions needed. Done when no orphaned subagents remain and the handoff is concise."
+    }
+  ],
+  "guards": [
+    {
+      "commands": [
+        "git commit",
+        "git push"
+      ],
+      "before_step_key": "commit",
+      "message": "Complete plan intake, test design/review, RED/falsifiability, GREEN, refactor/harden, local adversarial review, and targeted verification before committing or pushing."
+    },
+    {
+      "commands": [
+        "gh pr edit --add-label merge-requested"
+      ],
+      "before_step_key": "request_ci",
+      "message": "Do not request authoritative CI until PR review fixes, thread resolution, and conformance are complete."
+    },
+    {
+      "commands": [
+        "git merge",
+        "gh pr merge"
+      ],
+      "before_step_key": "cleanup",
+      "message": "This workflow does not merge. Report the PR for human merge only after CI passes."
+    }
+  ]
+}

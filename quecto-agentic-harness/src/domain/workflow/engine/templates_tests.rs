@@ -18,6 +18,7 @@ fn embedded_canonical_folder_parses_into_both_templates() {
         ids,
         [
             "feature",
+            "feature2",
             "adversarial-review",
             "bugfix",
             "chore",
