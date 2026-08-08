@@ -40,7 +40,6 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
             include_str!("../../../../workflows/investigate.json"),
         ),
         ("plan", include_str!("../../../../workflows/plan.json")),
-        ("plan2", include_str!("../../../../workflows/plan2.json")),
         ("prd", include_str!("../../../../workflows/prd.json")),
         (
             "refactor",
