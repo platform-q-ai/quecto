@@ -152,7 +152,7 @@ fn select_template_starts_run() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     assert_eq!(engine.mode(), WorkflowMode::Active);
-    assert_eq!(engine.progress().total, 19);
+    assert_eq!(engine.progress().total, 20);
     assert_eq!(engine.current_step().unwrap().index, 1);
 }
 
@@ -404,50 +404,50 @@ fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hoo
         keys,
         vec![
             "hooks",
-            "scenarios",
-            "tests",
+            "plan_intake",
+            "semantic_contract",
+            "test_design",
+            "test_review",
             "red",
-            "bdd_review",
             "green",
-            "refactor",
+            "refactor_harden",
+            "local_review",
             "verify",
             "version_bump",
             "commit",
             "push",
             "pr",
-            "reviewers",
-            "fix_reviews",
-            "push_fixes",
+            "pr_reviewers",
+            "fix_pr_review",
             "resolve_threads",
             "conformance",
-            "pre_merge",
+            "request_ci",
             "cleanup",
         ]
     );
-    assert_eq!(snap.progress.total, 19);
+    assert_eq!(snap.progress.total, 20);
     assert_eq!(snap.steps[0].label, "Install/check local quality hooks");
     assert_eq!(
-        snap.steps[4].label,
-        "Despatch three BDD review finders (Gherkin discipline, Falsifiability, Coverage)"
+        snap.steps[2].label,
+        "Build and challenge the feature semantic state-space"
     );
+    assert_eq!(snap.steps[4].label, "Review tests before implementation");
     assert_eq!(
         snap.steps[8].label,
-        "Bump semver for every changed crate and sync version docs"
+        "Run local adversarial implementation review before commit"
     );
-    assert_eq!(snap.steps[10].label, "Push through the fast pre-push gate");
+    assert_eq!(snap.steps[10].label, "Bump changed crate versions and sync docs");
+    assert_eq!(snap.steps[12].label, "Push through the fast pre-push gate");
     assert_eq!(
-        snap.steps[12].label,
-        "Despatch narrow parallel review finders, verify adversarially, post one review"
-    );
-    assert_eq!(
-        snap.steps[16].label,
-        "Verify the PR meets every issue acceptance criterion"
+        snap.steps[14].label,
+        "Run PR adversarial review as final safety net"
     );
     assert_eq!(
         snap.steps[17].label,
-        "Request authoritative CI and report the PR (do not merge)"
+        "Verify conformance to the issue plan and acceptance criteria"
     );
-    assert_eq!(snap.steps[18].label, "Clean up sub agents");
+    assert_eq!(snap.steps[18].label, "Request authoritative CI and wait");
+    assert_eq!(snap.steps[19].label, "Clean up and report handoff");
 }
 
 #[test]
@@ -458,23 +458,26 @@ fn feature_template_guards_commit_push_and_merge_like_config_file() {
         .find(|template| template.id == "feature")
         .expect("feature template exists");
 
-    assert_eq!(feature.guards.len(), 2);
+    assert_eq!(feature.guards.len(), 3);
     assert_eq!(
         feature.guards[0].commands,
         vec!["git commit".to_string(), "git push".to_string()]
     );
     assert_eq!(feature.guards[0].before_step_key, "commit");
-    assert!(
-        feature.guards[0]
-            .message
-            .contains("Complete hook setup and RED/GREEN work")
-    );
+    assert!(feature.guards[0].message.contains("plan intake"));
+    assert!(feature.guards[0].message.contains("local adversarial review"));
     assert_eq!(
         feature.guards[1].commands,
+        vec!["gh pr edit --add-label merge-requested".to_string()]
+    );
+    assert_eq!(feature.guards[1].before_step_key, "request_ci");
+    assert!(feature.guards[1].message.contains("PR review fixes"));
+    assert_eq!(
+        feature.guards[2].commands,
         vec!["git merge".to_string(), "gh pr merge".to_string()]
     );
-    assert_eq!(feature.guards[1].before_step_key, "cleanup");
-    assert!(feature.guards[1].message.contains("conformance gate"));
+    assert_eq!(feature.guards[2].before_step_key, "cleanup");
+    assert!(feature.guards[2].message.contains("does not merge"));
 }
 
 #[test]
