@@ -317,21 +317,18 @@ impl AgentLoopImpl {
                 combined.correlation_id = request.correlation_id.clone();
             }
             let reconciliation = match request.operation {
-                crate::domain::tool::ToolPolicyOperation::Patch => {
-                    self.tool_registry.apply_tool_policy_mutations(
-                        &request.mutations,
-                        ToolPolicyApplyMode::AtNextTurnBoundary,
-                    )
-                }
+                crate::domain::tool::ToolPolicyOperation::Patch => self
+                    .tool_registry
+                    .apply_tool_policy_request(&request, ToolPolicyApplyMode::AtNextTurnBoundary),
                 crate::domain::tool::ToolPolicyOperation::Replace => self
                     .tool_registry
                     .apply_tool_policy_request(&request, ToolPolicyApplyMode::AtNextTurnBoundary),
             };
             self.record_applied_tool_policy_overlay(&reconciliation);
+            self.notify_tool_policy_changed(&reconciliation, "turn_boundary");
             combined.results.extend(reconciliation.results);
         }
         self.refresh_spawn_inherited_child_policy_snapshot();
-        self.notify_tool_policy_changed(&combined, "turn_boundary");
         Some(combined)
     }
 

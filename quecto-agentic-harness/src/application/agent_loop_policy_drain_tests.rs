@@ -67,7 +67,7 @@ fn queued_drain_keeps_registry_catalogue_and_event_after_consistent() {
 }
 
 #[test]
-fn queued_drain_event_carries_request_correlation_id() {
+fn queued_drain_event_carries_each_request_correlation_id() {
     let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
     let events = Arc::new(std::sync::Mutex::new(Vec::new()));
     let events_cb = events.clone();
@@ -75,30 +75,31 @@ fn queued_drain_event_carries_request_correlation_id() {
         events_cb.lock().unwrap().push(event);
     })));
 
-    let mut request =
+    let mut first =
         ToolPolicyRequest::patch(vec![ToolPolicyMutation::disable("alpha", "queue disable")]);
-    request.correlation_id = Some("set-policy-1".to_string());
-    agent.queue_tool_policy_request(request);
+    first.correlation_id = Some("set-policy-1".to_string());
+    agent.queue_tool_policy_request(first);
+    let mut second =
+        ToolPolicyRequest::patch(vec![ToolPolicyMutation::enable("alpha", "queue enable")]);
+    second.correlation_id = Some("set-policy-2".to_string());
+    agent.queue_tool_policy_request(second);
 
     let reconciliation = agent
         .drain_tool_policy_mutations_at_boundary()
         .expect("queued policy drains");
-    assert_eq!(
-        reconciliation.correlation_id.as_deref(),
-        Some("set-policy-1")
-    );
+    assert_eq!(reconciliation.results.len(), 2);
 
     let events = events.lock().unwrap();
-    let changed = events.iter().find_map(|event| match event {
-        crate::domain::agent::AgentProgressEvent::ToolPolicyChanged { reconciliation, .. } => {
-            Some(reconciliation)
-        }
-        _ => None,
-    });
-    assert_eq!(
-        changed.and_then(|r| r.correlation_id.as_deref()),
-        Some("set-policy-1")
-    );
+    let correlations: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            crate::domain::agent::AgentProgressEvent::ToolPolicyChanged {
+                reconciliation, ..
+            } => reconciliation.correlation_id.as_deref(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(correlations, vec!["set-policy-1", "set-policy-2"]);
 }
 
 #[test]
