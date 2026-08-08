@@ -317,9 +317,14 @@ impl AgentLoopImpl {
                 combined.correlation_id = request.correlation_id.clone();
             }
             let reconciliation = match request.operation {
-                crate::domain::tool::ToolPolicyOperation::Patch => self
-                    .tool_registry
-                    .apply_tool_policy_request(&request, ToolPolicyApplyMode::AtNextTurnBoundary),
+                crate::domain::tool::ToolPolicyOperation::Patch => {
+                    let mut reconciliation = self.tool_registry.apply_tool_policy_mutations(
+                        &request.mutations,
+                        ToolPolicyApplyMode::AtNextTurnBoundary,
+                    );
+                    reconciliation.correlation_id = request.correlation_id.clone();
+                    reconciliation
+                }
                 crate::domain::tool::ToolPolicyOperation::Replace => self
                     .tool_registry
                     .apply_tool_policy_request(&request, ToolPolicyApplyMode::AtNextTurnBoundary),
