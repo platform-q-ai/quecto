@@ -45,6 +45,9 @@ mod subagent_monitor_registry;
 mod subagent_monitor_stall;
 mod subagent_monitor_truncate;
 pub mod subagent_registry;
+pub(crate) mod subagent_routing;
+#[cfg(test)]
+mod subagent_routing_tests;
 mod subagent_status;
 pub mod truncate;
 pub mod web_fetch;

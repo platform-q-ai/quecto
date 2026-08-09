@@ -36,6 +36,8 @@ pub enum AgentCommand {
     GetState {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+        #[serde(rename = "agent_id", default, skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
     },
     /// Return conversation history. Optional `count` returns the last N messages.
     ///
@@ -295,7 +297,7 @@ impl AgentCommand {
             Self::Steer { id, .. } => id.as_deref(),
             Self::FollowUp { id, .. } => id.as_deref(),
             Self::Abort { id } => id.as_deref(),
-            Self::GetState { id } => id.as_deref(),
+            Self::GetState { id, .. } => id.as_deref(),
             Self::GetMessages { id, .. } => id.as_deref(),
             Self::Sync { id, .. } => id.as_deref(),
             Self::GetToolCatalogue { id } => id.as_deref(),

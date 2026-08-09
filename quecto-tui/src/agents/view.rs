@@ -63,6 +63,7 @@ impl RosterInfo for SubagentInfoEvent {
 pub(crate) struct FeedState {
     pub(crate) cmd_tx: mpsc::Sender<Command>,
     pub(crate) handle: tokio::task::JoinHandle<()>,
+    pub(crate) inspection_only: bool,
     pub(crate) epoch: u64,
     pub(crate) rev: u64,
     pub(crate) last_fresh_at: Option<std::time::Instant>,
@@ -106,6 +107,7 @@ impl FeedState {
         Self {
             cmd_tx: runtime.cmd_tx,
             handle: runtime.handle,
+            inspection_only: runtime.inspection_only,
             epoch: sync.epoch,
             rev: sync.rev,
             last_fresh_at: sync.last_fresh_at,
@@ -144,7 +146,7 @@ pub(crate) struct SubagentUi {
     /// viewport coordinate; live roster updates can reorder rows, so focused
     /// navigation preserves/commits by this key when possible.
     pub(crate) panel_nav_key: Option<String>,
-    /// Fan-in for events from direct sub-agent connections (#800).
+    /// Fan-in for events from direct/routed sub-agent feeds (#800/#1442).
     pub(crate) event_tx: mpsc::Sender<(String, Event)>,
     pub(crate) event_rx: mpsc::Receiver<(String, Event)>,
     /// Per-subagent synced feed state keyed by agent id.

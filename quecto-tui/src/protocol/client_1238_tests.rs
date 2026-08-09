@@ -17,7 +17,10 @@ fn production_queue_sender() -> (CommandSender, mpsc::Receiver<String>) {
 #[tokio::test]
 async fn background_burst_fills_up_to_user_reserve_only() {
     let (sender, _rx) = production_queue_sender();
-    let background = Command::GetState { id: None };
+    let background = Command::GetState {
+        id: None,
+        agent_id: None,
+    };
     let background_budget = COMMAND_WRITER_QUEUE_CAPACITY - COMMAND_WRITER_USER_RESERVED;
 
     for index in 0..background_budget {
@@ -38,7 +41,10 @@ async fn background_burst_fills_up_to_user_reserve_only() {
 #[tokio::test]
 async fn user_follow_up_survives_background_filled_to_reserve() {
     let (sender, _rx) = production_queue_sender();
-    let background = Command::GetState { id: None };
+    let background = Command::GetState {
+        id: None,
+        agent_id: None,
+    };
     let follow_up = Command::FollowUp {
         id: None,
         message: "keep going".into(),
@@ -103,7 +109,10 @@ async fn small_closed_channel_still_reports_disconnected_not_false_backpressure(
     drop(rx);
     let sender = CommandSender { tx };
     let err = sender
-        .try_send(&Command::GetState { id: None })
+        .try_send(&Command::GetState {
+            id: None,
+            agent_id: None,
+        })
         .expect_err("closed channel must fail");
     assert!(
         matches!(err, ClientError::Disconnected),
@@ -136,10 +145,17 @@ fn interactive_user_command_kinds() {
         .is_interactive_user()
     );
     assert!(Command::Abort { id: None }.is_interactive_user());
-    assert!(!Command::GetState { id: None }.is_interactive_user());
+    assert!(
+        !Command::GetState {
+            id: None,
+            agent_id: None
+        }
+        .is_interactive_user()
+    );
     assert!(!Command::GetSubagents { id: None }.is_interactive_user());
     assert!(
         !Command::Sync {
+            agent_id: None,
             id: None,
             epoch: 0,
             since_rev: 0,
@@ -158,8 +174,12 @@ fn interactive_user_command_kinds() {
 #[tokio::test]
 async fn sync_may_use_the_outer_reserve_but_not_the_interactive_floor() {
     let (sender, _rx) = production_queue_sender();
-    let background = Command::GetState { id: None };
+    let background = Command::GetState {
+        id: None,
+        agent_id: None,
+    };
     let sync = Command::Sync {
+        agent_id: None,
         id: None,
         epoch: 1,
         since_rev: 0,
@@ -204,6 +224,7 @@ fn interactive_floor_is_strictly_inside_the_reserve() {
 async fn sync_alone_can_never_fill_past_the_interactive_floor() {
     let (sender, _rx) = production_queue_sender();
     let sync = Command::Sync {
+        agent_id: None,
         id: None,
         epoch: 1,
         since_rev: 0,
@@ -236,13 +257,20 @@ async fn sync_alone_can_never_fill_past_the_interactive_floor() {
 fn feed_liveness_command_kinds() {
     assert!(
         Command::Sync {
+            agent_id: None,
             id: None,
             epoch: 0,
             since_rev: 0,
         }
         .is_feed_liveness()
     );
-    assert!(!Command::GetState { id: None }.is_feed_liveness());
+    assert!(
+        !Command::GetState {
+            id: None,
+            agent_id: None
+        }
+        .is_feed_liveness()
+    );
     assert!(!Command::GetSubagents { id: None }.is_feed_liveness());
     assert!(
         !Command::Prompt {

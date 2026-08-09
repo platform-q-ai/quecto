@@ -183,7 +183,14 @@ mod cov2_tests {
 
         let mut ctx = fx.ctx();
         ctx.workflow_state = Some(state);
-        let value = query_response_data(&AgentCommand::GetState { id: None }, &ctx).unwrap();
+        let value = query_response_data(
+            &AgentCommand::GetState {
+                id: None,
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .unwrap();
         assert!(value.get("workflow").is_none());
         assert_eq!(value["model"], "stub");
     }

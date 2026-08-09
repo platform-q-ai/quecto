@@ -192,6 +192,7 @@ async fn tool_end_uuid_rekey_migrates_sessions_feeds_and_session_order() {
         crate::agents::view::FeedState {
             cmd_tx,
             handle: tokio::spawn(async {}),
+            inspection_only: false,
             epoch: 0,
             rev: 0,
             last_fresh_at: None,
@@ -289,6 +290,7 @@ async fn snapshot_uuid_migrate_moves_sessions_feeds_and_session_order() {
         crate::agents::view::FeedState {
             cmd_tx,
             handle: tokio::spawn(async {}),
+            inspection_only: false,
             epoch: 0,
             rev: 0,
             last_fresh_at: None,

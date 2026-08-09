@@ -133,6 +133,7 @@ impl App {
                     // tracks the new model (agent resets effort to low on switch).
                     let _ = self.send_to_active_subagent(Command::GetState {
                         id: Some("resync".into()),
+                        agent_id: None,
                     });
                 }
                 return;

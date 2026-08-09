@@ -525,7 +525,14 @@ fn subagent_state_changed_empty_list() {
 #[test]
 fn core_command_type_names() {
     assert_eq!(AgentCommand::Abort { id: None }.type_name(), "abort");
-    assert_eq!(AgentCommand::GetState { id: None }.type_name(), "get_state");
+    assert_eq!(
+        AgentCommand::GetState {
+            id: None,
+            agent_id: None
+        }
+        .type_name(),
+        "get_state"
+    );
     assert_eq!(
         AgentCommand::GetSessionStats { id: None }.type_name(),
         "get_session_stats"
