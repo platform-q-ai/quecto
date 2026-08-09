@@ -122,6 +122,61 @@ fn merge_marks_forwarded_script_descendant_socket_non_connectable() {
 }
 
 #[test]
+fn merge_clears_stale_socket_when_forwarded_descendant_becomes_non_connectable() {
+    let registry = new_registry();
+    add(&registry, "child", None);
+    let first = serde_json::json!({"type":"subagent_state_changed","subagents":[{
+        "agentId":"grand",
+        "parentId":"child",
+        "status":"running",
+        "pid":42,
+        "socketPath":"/tmp/previously-connectable-grand.sock"
+    }]});
+    merge_and_forward_state_changed(&first, &registry, "child").unwrap();
+    assert_eq!(
+        registry.lock().unwrap()["grand"].socket_path,
+        std::path::PathBuf::from("/tmp/previously-connectable-grand.sock")
+    );
+
+    let update = serde_json::json!({"type":"subagent_state_changed","subagents":[{
+        "agentId":"grand",
+        "parentId":"child",
+        "status":"running",
+        "pid":43,
+        "socketPath":"/tmp/container-local-grand.sock",
+        "executionBackend":"script",
+        "environment":{
+            "ref":"C1",
+            "uuid":"env-uuid",
+            "status":"running",
+            "repository":"",
+            "runtimeId":"runtime",
+            "workspace":"/workspace",
+            "socketMode":"direct"
+        }
+    }]});
+
+    let forwarded = merge_and_forward_state_changed(&update, &registry, "child").unwrap();
+    let guard = registry.lock().unwrap();
+    assert!(
+        guard["grand"].socket_path.as_os_str().is_empty(),
+        "non-connectable update must clear the previously stored reachable socket"
+    );
+    drop(guard);
+    let wire: serde_json::Value = serde_json::from_str(&forwarded).unwrap();
+    let grand = wire["subagents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["agentId"] == "grand")
+        .unwrap();
+    assert!(
+        grand.get("socketPath").is_none(),
+        "forwarded full snapshot must not retain a stale reachable socket"
+    );
+}
+
+#[test]
 fn merge_ignores_non_state_and_line_wrapper_rejects_bad_input() {
     let registry = new_registry();
     assert!(

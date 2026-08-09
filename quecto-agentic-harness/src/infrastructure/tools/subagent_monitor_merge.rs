@@ -138,9 +138,7 @@ fn merge_descendants(
             .and_then(|v| v.as_str())
             .map(str::to_string);
         entry.pid = pid;
-        if !socket_path.as_os_str().is_empty() {
-            entry.socket_path = socket_path;
-        }
+        entry.socket_path = socket_path;
         entry.parent_id = d
             .get("parentId")
             .and_then(|v| v.as_str())
