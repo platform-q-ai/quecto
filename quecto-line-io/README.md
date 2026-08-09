@@ -21,9 +21,11 @@ emitter and consumer shares one payload cap and one framing implementation.
 - Clean EOF before any frame prefix bytes is `Ok(None)`.
 - EOF after a partial frame prefix, or inside a declared in-cap frame payload,
   is an `UnexpectedEof` I/O error.
-- An over-cap frame declaration is rejected as oversized as soon as its prefix
-  is known; a full oversized payload is discarded so a following frame can be
-  read without resynchronizing.
+- An over-cap frame declaration is rejected as oversized without buffering the
+  declared payload; when the declared bytes are present, they are discarded so a
+  following frame can be read without resynchronizing. If the peer withholds
+  those bytes, callers should treat the connection as a protocol/transport
+  failure rather than expecting resynchronization.
 - Legacy oversized lines recover only after a newline delimiter is consumed.
 - Byte-preserving APIs (`*_into` and framed reads) leave invalid UTF-8 unchanged;
   `read_bounded_line` returns lossy `String` content for legacy convenience.

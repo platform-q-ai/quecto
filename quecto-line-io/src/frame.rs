@@ -44,9 +44,10 @@ pub const PROTOCOL_ANNOUNCE_PREFIX: &str = "quecto-agent-protocol: ";
 ///
 /// EOF outcomes are intentionally distinct: EOF before any prefix byte is
 /// `Ok(None)`, EOF in the 4-byte prefix or inside an in-cap declared payload is
-/// `FrameError::Io(UnexpectedEof)`, and an over-cap declaration is
-/// `FrameError::Oversized` as soon as the prefix is known, even if the peer
-/// closes before sending the declared payload.
+/// `FrameError::Io(UnexpectedEof)`, and an over-cap declaration is reported as
+/// `FrameError::Oversized` without buffering the declared payload. The reader
+/// may first discard declared bytes that are present so a following frame can be
+/// read without resynchronizing.
 #[derive(Debug)]
 pub enum FrameError {
     /// The peer declared a frame larger than `max`. The declared size was
