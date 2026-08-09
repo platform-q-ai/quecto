@@ -523,6 +523,7 @@ impl Tool for SpawnTool {
                             cleanup_argv: Vec::new(),
                             environment_registry: None,
                             environment_ref: None,
+                            process_owner: super::process_tree::ProcessOwner::DirectPid,
                         });
                         if let Err(e) = register_and_broadcast(
                             &self.registry,

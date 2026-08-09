@@ -326,6 +326,7 @@ fn initial_entry_taskless_is_idle() {
         cleanup_argv: Vec::new(),
         environment_registry: None,
         environment_ref: None,
+        process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
     });
     assert_eq!(entry.status, SubagentStatus::Idle);
     assert_eq!(entry.parent_id.as_deref(), Some("parent"));
@@ -347,6 +348,7 @@ fn initial_entry_with_task_stays_starting() {
         cleanup_argv: Vec::new(),
         environment_registry: None,
         environment_ref: None,
+        process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
     });
     assert_eq!(
         entry.status,
@@ -373,6 +375,7 @@ fn initial_entry_taskless_broadcasts_idle_via_register() {
         cleanup_argv: Vec::new(),
         environment_registry: None,
         environment_ref: None,
+        process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
     });
     super::register_and_broadcast(&registry, Some(&tx), "idle-worker", entry).unwrap();
     let line = rx

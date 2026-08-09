@@ -89,7 +89,7 @@ pub fn terminate_removed_entry(entry: &SubagentEntry) {
         entry.proxy_bridge_socket.as_deref(),
     );
     if entry.pid != 0 {
-        sigterm_pid(entry.pid);
+        super::process_tree::terminate_owned_process_tree(entry.pid, entry.process_owner);
     }
 }
 
@@ -102,18 +102,6 @@ pub fn terminate_removed_entry(entry: &SubagentEntry) {
 /// guards the `u32 -> pid_t` narrowing so an out-of-range pid can never wrap
 /// negative and turn into a process-group signal (Linux pid_max keeps this
 /// unreachable, but the cast is a footgun worth closing).
-pub(crate) fn sigterm_pid(pid: u32) {
-    #[cfg(unix)]
-    if let Ok(pid) = i32::try_from(pid) {
-        // SAFETY: FFI call to `libc::kill` with an owned pid and a constant signal.
-        unsafe {
-            libc::kill(pid, libc::SIGTERM);
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = pid;
-}
-
 /// Cascade-remove `agent_id`'s dead sub-tree from the registry and, if anything
 /// was actually removed, return both the removed entries (for process cleanup)
 /// and a canonical `subagent_state_changed` event carrying the SURVIVORS only —
