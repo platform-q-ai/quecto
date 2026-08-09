@@ -91,16 +91,37 @@ impl App {
         } else {
             let root_sender = self.client.clone_sender();
             let task = async move {
-                let _ = root_sender.try_send(&Command::GetState {
-                    id: Some(format!("subagent-state:{agent_id}:initial")),
-                    agent_id: Some(agent_id.clone()),
-                });
-                let _ = root_sender.try_send(&Command::Sync {
-                    id: Some(format!("subagent-sync:{agent_id}:initial")),
-                    epoch: 0,
-                    since_rev: 0,
-                    agent_id: Some(agent_id.clone()),
-                });
+                let _ = root_sender.try_send(
+                    &Command::GetState {
+                        id: Some("initial".into()),
+                        agent_id: None,
+                    }
+                    .with_inspection_agent_id(&agent_id)
+                    .expect("get_state is routable inspection"),
+                );
+                let _ = root_sender.try_send(
+                    &Command::Sync {
+                        id: Some("initial".into()),
+                        epoch: 0,
+                        since_rev: 0,
+                        agent_id: None,
+                    }
+                    .with_inspection_agent_id(&agent_id)
+                    .expect("sync is routable inspection"),
+                );
+                // A cold routed feed has no direct child stream to backfill from.
+                // Request the child's newest transcript page explicitly so an
+                // already-idle nested container child renders when focused even
+                // if sync has no new delta to project.
+                let _ = root_sender.try_send(
+                    &Command::GetMessagesTail {
+                        id: Some("initial".into()),
+                        count: 20,
+                        agent_id: None,
+                    }
+                    .with_inspection_agent_id(&agent_id)
+                    .expect("get_messages_tail is routable inspection"),
+                );
                 while let Some(cmd) = cmd_rx.recv().await {
                     if let Some(routed) = cmd.with_inspection_agent_id(&agent_id) {
                         let _ = root_sender.try_send(&routed);

@@ -145,12 +145,23 @@ impl App {
         }
         if let Event::Response {
             command,
+            success,
             data: Some(data),
             ..
         } = &ev
         {
             if command == "sync" {
                 self.route_sync_response(agent_id, data);
+                return;
+            }
+            if (command == "get_messages" || command == "get_messages_tail") && *success {
+                if !self.is_retained_or_tracked_agent(agent_id) {
+                    return;
+                }
+                self.ensure_session(agent_id);
+                if let Some(session) = self.subagents.sessions.get_mut(agent_id) {
+                    Self::reconcile_master_backfill_history(session, data, false);
+                }
                 return;
             }
             if command == "get_state" {
