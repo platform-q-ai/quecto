@@ -1,6 +1,6 @@
 [package]
 name = "quecto-mcp"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "MCP client UDS extension for Quecto"
 license = "LicenseRef-Proprietary"

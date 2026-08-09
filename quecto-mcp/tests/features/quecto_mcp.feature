@@ -19,6 +19,25 @@ Feature: Quecto MCP UDS extension
       | community.feed.list             |
       | community.channels.send_message |
 
+  Scenario: Filters discovered MCP tools with allowlist, prefix, and denylist precedence
+    Given discovered MCP tools:
+      | name                            |
+      | community.feed.list             |
+      | community.channels.send_message |
+      | ticket.read                     |
+    When I filter tools with prefix "community." allowlist "community.feed.list,ticket.read" and denylist "community.feed.list"
+    Then the filtered MCP tool names should be:
+      | name |
+
+  Scenario: Allows explicit allowlist to disable the default Community prefix
+    Given discovered MCP tools:
+      | name        |
+      | ticket.read |
+    When I filter tools with allowlist "ticket.read"
+    Then the filtered MCP tool names should be:
+      | name        |
+      | ticket.read |
+
   Scenario: Builds a Quecto tool registration from an MCP tool
     Given an MCP tool named "community.feed.list"
     And the MCP tool description is "List feed posts"
@@ -39,3 +58,24 @@ Feature: Quecto MCP UDS extension
     Given an MCP tool named "community.feed.list"
     When I build a Quecto registration with name prefix "mcp_"
     Then the Quecto tool name should be "mcp_community_feed_list"
+
+  Scenario: Rejects invalid configured Quecto tool name prefix
+    Given an MCP tool named "community.feed.list"
+    When I try to build a Quecto registration with name prefix "1_"
+    Then quecto-mcp should reject the MCP tool configuration
+
+  Scenario: Rejects MCP tool name collisions
+    Given discovered MCP tools:
+      | name |
+      | a.b  |
+      | a_b  |
+    When I build Quecto tool registrations for the discovered tools
+    Then quecto-mcp should reject the MCP tool configuration
+
+  Scenario: Rejects duplicate MCP tool names
+    Given discovered MCP tools:
+      | name                |
+      | community.feed.list |
+      | community.feed.list |
+    When I build Quecto tool registrations for the discovered tools
+    Then quecto-mcp should reject the MCP tool configuration
