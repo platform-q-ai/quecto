@@ -717,6 +717,9 @@ mod client_defence_tests;
 #[path = "client_legacy_tests.rs"]
 mod client_legacy_tests;
 #[cfg(test)]
+#[path = "client_line_cap_tests.rs"]
+mod client_line_cap_tests;
+#[cfg(test)]
 #[path = "client_policy_tests.rs"]
 mod client_policy_tests;
 #[cfg(test)]
