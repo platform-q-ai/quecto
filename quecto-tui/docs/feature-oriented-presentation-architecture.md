@@ -316,6 +316,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/agent_ledger_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/client.rs` | `protocol` UDS client and wire DTOs (relocated, #1257 Phase 2) |
 | `protocol/client_classes.rs` | `protocol` command admission classes + test-harness queue constructor (split from `client.rs` for the 750-line baseline, child-progress-freeze fix 2026-07-29) |
+| `protocol/inspection_routing.rs` | `protocol` safe routed subagent inspection command mapping (#1442; split from `client.rs` for the 750-line baseline) |
 | `protocol/client_policy_types.rs` | `protocol` catalogue-backed tool policy wire DTOs (#1334 Phase 4) |
 | `protocol/mod.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/model_payloads.rs` | `protocol` mapper feeding `models` (relocated, #1257 Phase 2) |

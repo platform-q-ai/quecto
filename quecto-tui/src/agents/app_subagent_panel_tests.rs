@@ -683,3 +683,47 @@ async fn master_is_modeled_as_active_session_like_subagents() {
         "returning to master restores its still-running unified flag"
     );
 }
+
+#[tokio::test]
+async fn selecting_no_socket_subagent_requests_routed_history_tail() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent("nested", "idle", None)]));
+
+    h.app_mut().select_agent(Some("nested"));
+
+    let commands = h.drain_commands().await;
+    let tail_id = commands
+        .iter()
+        .find_map(|line| {
+            let v: serde_json::Value = serde_json::from_str(line).ok()?;
+            (v["type"] == "get_messages_tail" && v["agent_id"] == "nested")
+                .then(|| v["id"].as_str().unwrap().to_string())
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "focusing a no-socket nested child must request routed transcript history; commands: {commands:?}"
+            )
+        });
+
+    h.event(Event::Response {
+        id: Some(tail_id),
+        command: "get_messages_tail".into(),
+        success: true,
+        data: Some(serde_json::json!({
+            "messages": [
+                {"id":"u1", "role":"user", "content":"probe"},
+                {"id":"a1", "role":"assistant", "content":"NESTED_TRANSCRIPT_VISIBLE"}
+            ],
+            "before":"u1",
+            "hasMoreBefore": false
+        })),
+        error: None,
+    });
+
+    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    assert!(
+        frame.contains("NESTED_TRANSCRIPT_VISIBLE"),
+        "routed transcript history must render in the focused child main panel; frame:\n{frame}"
+    );
+}

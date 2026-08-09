@@ -25,6 +25,7 @@ impl App {
             let id = self.next_rewind_request_id("open");
             self.rewind.pending_open_id = Some(id.clone());
             self.send_command(Command::GetMessages {
+                agent_id: None,
                 id: Some(id),
                 before: None,
             });

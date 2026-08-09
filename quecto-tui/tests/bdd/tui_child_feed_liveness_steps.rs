@@ -13,11 +13,15 @@ use quecto_tui::shell::app::tui_harness::TuiHarness;
 const CHILD: &str = "child-1";
 
 fn background() -> Command {
-    Command::GetState { id: None }
+    Command::GetState {
+        id: None,
+        agent_id: None,
+    }
 }
 
 fn sync() -> Command {
     Command::Sync {
+        agent_id: None,
         id: None,
         epoch: 1,
         since_rev: 0,

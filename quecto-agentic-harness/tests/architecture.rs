@@ -1215,7 +1215,7 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// the environment-detail chrome reads the shared `SubagentEnvironmentInfo`
 /// metadata carried on tracked entries — necessary wire use for environment
 /// grouping, not unrelated growth.
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 115;
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 116;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///

@@ -239,9 +239,7 @@ pub fn lookup_subagent_socket(
         .get(&key)
         .ok_or_else(|| format!("subagent '{}' not found in registry", agent_id))?;
     if entry.socket_path.as_os_str().is_empty() {
-        return Err(format!(
-            "subagent '{agent_id}' is listed but has no ancestor-connectable socket (nested container descendant sockets are not reachable from this session)"
-        ));
+        return Err(super::subagent_routing::non_connectable_error(agent_id));
     }
     Ok(entry.socket_path.clone())
 }

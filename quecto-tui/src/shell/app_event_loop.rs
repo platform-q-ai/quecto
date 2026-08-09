@@ -103,6 +103,7 @@ impl App {
         // Query initial state from agent through the shared command path so
         // startup send failures surface in the UI like user-initiated sends.
         self.send_command(Command::GetState {
+            agent_id: None,
             id: Some("init".into()),
         });
         // Query initial subagent state (#525).

@@ -27,6 +27,7 @@ fn command_prompt_with_streaming_behavior() {
 #[test]
 fn command_get_state_serializes() {
     let cmd = Command::GetState {
+        agent_id: None,
         id: Some("gs-1".into()),
     };
     let json = serde_json::to_string(&cmd).unwrap();
@@ -293,6 +294,7 @@ fn command_set_workflow_automation_serializes() {
 #[test]
 fn command_get_messages_serializes() {
     let cmd = Command::GetMessages {
+        agent_id: None,
         id: None,
         before: None,
     };
@@ -519,6 +521,7 @@ async fn client_send_serializes_command_line() {
 
     client
         .send(&Command::GetState {
+            agent_id: None,
             id: Some("state-1".into()),
         })
         .await

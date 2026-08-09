@@ -63,12 +63,16 @@ pub enum Command {
     GetState {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+        #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
     },
     GetMessages {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         before: Option<String>,
+        #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
     },
     GetMessagesTail {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -180,6 +184,8 @@ pub enum Command {
         epoch: u64,
         #[serde(rename = "sinceRev")]
         since_rev: u64,
+        #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
     },
 }
 /// An event received from the agent.
@@ -385,7 +391,10 @@ pub struct CommandSender {
     tx: mpsc::Sender<String>,
 }
 impl Command {
-    /// Non-sensitive command kind for user-facing diagnostics.
+    pub fn with_inspection_agent_id(&self, agent_id: &str) -> Option<Self> {
+        super::inspection_routing::with_inspection_agent_id(self, agent_id)
+    }
+
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Prompt { .. } => "prompt",

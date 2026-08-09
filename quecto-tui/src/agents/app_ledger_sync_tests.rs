@@ -8,6 +8,7 @@ fn feed_with_rx() -> (FeedState, mpsc::Receiver<Command>) {
         FeedState {
             cmd_tx,
             handle,
+            inspection_only: false,
             epoch: 0,
             rev: 0,
             last_fresh_at: None,
@@ -181,13 +182,17 @@ fn full_channel_feed() -> (FeedState, mpsc::Receiver<Command>) {
     // Capacity-1 channel, prefilled: the next try_send is refused.
     let (cmd_tx, cmd_rx) = mpsc::channel(1);
     cmd_tx
-        .try_send(Command::GetState { id: None })
+        .try_send(Command::GetState {
+            id: None,
+            agent_id: None,
+        })
         .expect("prefill");
     let handle = tokio::spawn(async {});
     (
         FeedState {
             cmd_tx,
             handle,
+            inspection_only: false,
             epoch: 0,
             rev: 0,
             last_fresh_at: None,

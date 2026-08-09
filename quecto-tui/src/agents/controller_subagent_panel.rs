@@ -148,6 +148,9 @@ impl App {
         let Some(feed) = self.subagents.feeds.get(&id) else {
             return false;
         };
+        if feed.inspection_only && cmd.with_inspection_agent_id(&id).is_none() {
+            return false;
+        }
         // Exact active-agent-id lookup is the command-routing guard: callers
         // cannot accidentally route through a stale non-active feed entry.
         feed.cmd_tx.try_send(cmd).is_ok()
@@ -268,6 +271,7 @@ impl App {
         if stale {
             if let Some(feed) = self.subagents.feeds.get_mut(id) {
                 let _ = feed.cmd_tx.try_send(Command::Sync {
+                    agent_id: None,
                     id: Some("subagent-sync".into()),
                     epoch: feed.epoch,
                     since_rev: feed.rev,

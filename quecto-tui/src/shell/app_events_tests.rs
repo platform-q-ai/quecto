@@ -555,6 +555,7 @@ async fn command_send_failure_becomes_error_notification() {
     let mut app = App::new(Terminal::new(), client);
 
     app.send_command(Command::GetState {
+        agent_id: None,
         id: Some("test".into()),
     });
     let failure = tokio::time::timeout(

@@ -472,8 +472,22 @@ impl Tool for AgentCmdTool {
                 }
             };
 
+            let route = if let Some(routable) =
+                super::subagent_routing::RoutableInspectionCommand::from_agent_cmd(&command)
+            {
+                debug_assert!(matches!(
+                    routable,
+                    super::subagent_routing::RoutableInspectionCommand::GetMessages
+                        | super::subagent_routing::RoutableInspectionCommand::GetState
+                ));
+                super::subagent_routing::resolve_inspection_route(&self.registry, &agent_id)
+            } else {
+                self.lookup_socket(&agent_id).map(|socket_path| {
+                    super::subagent_routing::InspectionRoute::Direct { socket_path }
+                })
+            };
             // Look up the socket.
-            let socket_path = match self.lookup_socket(&agent_id) {
+            let route = match route {
                 Ok(p) => p,
                 Err(e) => {
                     return Ok(ToolResult {
@@ -489,15 +503,30 @@ impl Tool for AgentCmdTool {
             // turn-completion deadline — the parent must never freeze its turn
             // for the child's full processing (#876/#880).
             // `command` is threaded from parse_and_build — no second args parse.
+            let mut json_cmd = json_cmd;
+            let socket_path = match &route {
+                super::subagent_routing::InspectionRoute::Direct { socket_path } => socket_path,
+                super::subagent_routing::InspectionRoute::ViaAncestor {
+                    ancestor_socket_path,
+                    target_id,
+                    ..
+                } => {
+                    if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&json_cmd) {
+                        value["agent_id"] = serde_json::json!(target_id);
+                        json_cmd = value.to_string();
+                    }
+                    ancestor_socket_path
+                }
+            };
             let send = if Self::is_control_command(&command) {
                 send_uds_command_with_timeout(
-                    &socket_path,
+                    socket_path,
                     &json_cmd,
                     super::subagent_registry::INSPECTOR_RESPONSE_TIMEOUT,
                 )
                 .await
             } else {
-                send_uds_command(&socket_path, &json_cmd).await
+                send_uds_command(socket_path, &json_cmd).await
             };
 
             // Send the command via UDS. Lifecycle state comes from the child's
