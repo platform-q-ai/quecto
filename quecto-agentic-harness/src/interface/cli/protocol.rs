@@ -323,7 +323,8 @@ pub fn build_subagent_info_list(
                     last_tool: entry.last_tool.clone(),
                     last_error: entry.last_error.clone(),
                     pid: entry.pid,
-                    socket_path: Some(entry.socket_path.to_string_lossy().into_owned()),
+                    socket_path: (!entry.socket_path.as_os_str().is_empty())
+                        .then(|| entry.socket_path.to_string_lossy().into_owned()),
                     parent_id: entry.parent_id.clone(),
                     workflow: entry.workflow.clone(),
                     read_only: entry.read_only,
