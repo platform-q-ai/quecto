@@ -122,6 +122,43 @@ fn merge_marks_forwarded_script_descendant_socket_non_connectable() {
 }
 
 #[test]
+fn merge_marks_local_descendant_of_script_parent_non_connectable() {
+    let registry = new_registry();
+    add(&registry, "container-child", None);
+    registry
+        .lock()
+        .unwrap()
+        .get_mut("container-child")
+        .unwrap()
+        .environment_ref = Some("C1".to_string());
+    let event = serde_json::json!({"type":"subagent_state_changed","subagents":[{
+        "agentId":"nested-local",
+        "parentId":"container-child",
+        "status":"idle",
+        "pid":8,
+        "socketPath":"/tmp/quecto-agent-nested-local.sock",
+        "executionBackend":"local"
+    }]});
+
+    let forwarded = merge_and_forward_state_changed(&event, &registry, "container-child").unwrap();
+    assert!(
+        registry.lock().unwrap()["nested-local"]
+            .socket_path
+            .as_os_str()
+            .is_empty(),
+        "a local child socket inside a script-managed parent is not ancestor-connectable"
+    );
+    let wire: serde_json::Value = serde_json::from_str(&forwarded).unwrap();
+    let nested = wire["subagents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["agentId"] == "nested-local")
+        .unwrap();
+    assert!(nested.get("socketPath").is_none());
+}
+
+#[test]
 fn merge_clears_stale_socket_when_forwarded_descendant_becomes_non_connectable() {
     let registry = new_registry();
     add(&registry, "child", None);

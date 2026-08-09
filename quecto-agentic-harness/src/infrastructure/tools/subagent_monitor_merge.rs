@@ -74,6 +74,15 @@ fn merge_descendants(
         );
     }
     let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+    // A child launched inside a script-managed environment sees its own local
+    // descendants' sockets, but an ancestor outside that environment does not.
+    // The descendants correctly report `executionBackend: local` relative to
+    // their immediate parent, so reachability must also account for the
+    // forwarding parent's environment boundary.
+    let forwarding_child_crosses_environment =
+        guard.get(forwarding_child_id).is_some_and(|entry| {
+            entry.environment_ref.is_some() || entry.forwarded_environment.is_some()
+        });
     let mut pushed_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     for d in descendants.iter().take(MAX_FORWARDED_SUBAGENTS) {
         // Prefer additive agentUuid for durable registry keys; wire agentId is
@@ -105,7 +114,11 @@ fn merge_descendants(
             display_label.to_string()
         };
         pushed_ids.insert(registry_key.clone());
-        let socket_path = if forwarded_script_descendant_socket_is_ancestor_local(d) {
+        let socket_path = if forwarded_script_descendant_socket_is_ancestor_local(d)
+            || (forwarding_child_crosses_environment
+                && d.get("executionBackend").and_then(|v| v.as_str())
+                    == Some(super::subagent_environment_wire::BACKEND_LOCAL))
+        {
             std::path::PathBuf::new()
         } else {
             d.get("socketPath")
