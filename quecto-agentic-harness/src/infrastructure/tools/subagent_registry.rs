@@ -235,10 +235,15 @@ pub fn lookup_subagent_socket(
             format!("duplicate live subagent display label '{display_name}'")
         }
     })?;
-    entries
+    let entry = entries
         .get(&key)
-        .map(|e| e.socket_path.clone())
-        .ok_or_else(|| format!("subagent '{}' not found in registry", agent_id))
+        .ok_or_else(|| format!("subagent '{}' not found in registry", agent_id))?;
+    if entry.socket_path.as_os_str().is_empty() {
+        return Err(format!(
+            "subagent '{agent_id}' is listed but has no ancestor-connectable socket (nested container descendant sockets are not reachable from this session)"
+        ));
+    }
+    Ok(entry.socket_path.clone())
 }
 
 /// Send a framed JSON command to a sub-agent's UDS socket and read back the

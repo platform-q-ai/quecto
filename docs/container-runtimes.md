@@ -350,6 +350,10 @@ sockets are only reachable inside the environment (see "Endpoints and
 liveness"); its production behavior — bridge lifecycle, readiness probing,
 EOF-pushed death — is exercised by the proxy scenarios in
 `quecto-agentic-harness/tests/features/script_managed_liveness_slice3.feature`.
+Forwarded nested descendants do not run the top-level endpoint negotiation in
+their ancestor session; when such a descendant reports a script-managed direct
+socket, ancestors omit `socketPath` and live commands return a clear
+non-connectable-socket error instead of exposing the container-local path.
 
 ## The official Docker adapter
 

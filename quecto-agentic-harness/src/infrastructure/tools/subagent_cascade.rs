@@ -180,10 +180,12 @@ pub fn build_state_changed_event_locked(guard: &HashMap<String, SubagentEntry>) 
                 }
                 obj.insert("pid".into(), serde_json::json!(entry.pid));
                 obj.insert("readOnly".into(), serde_json::json!(entry.read_only));
-                obj.insert(
-                    "socketPath".into(),
-                    serde_json::json!(entry.socket_path.to_string_lossy()),
-                );
+                if !entry.socket_path.as_os_str().is_empty() {
+                    obj.insert(
+                        "socketPath".into(),
+                        serde_json::json!(entry.socket_path.to_string_lossy()),
+                    );
+                }
                 if let Some(parent) = &entry.parent_id {
                     obj.insert("parentId".into(), serde_json::json!(parent));
                 }
