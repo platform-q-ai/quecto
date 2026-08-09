@@ -31,12 +31,10 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt};
 /// drops unread (#1047). Hand-pinning the value in a dependent crate instead
 /// of referencing this constant reintroduces that failure mode.
 ///
-/// Raised 1 MiB → 8 MiB as an INTERIM so `get_message` can deliver single
-/// messages that exceed the old cap (a >cap message is otherwise unrecoverable
-/// because a single message's content is not shrinkable/pageable today). The
-/// complete fix is chunked/paged `get_message` transfer — see #1094 — after
-/// which this can drop back. The bound stays finite (readers still reject
-/// larger frames before buffering, preserving ADR-0008's anti-OOM guarantee).
+/// The bound stays finite (readers still reject larger frames before buffering,
+/// preserving ADR-0008's anti-OOM guarantee). Large message recovery is handled
+/// by existing ranged `get_message` requests in consumer crates; this crate does
+/// not define a new chunking format or a different cap for that path.
 pub const PROTOCOL_LINE_CAP_BYTES: usize = 8 * 1_048_576;
 
 /// A single `\n`-terminated (or EOF-terminated final) line, capped to at most
@@ -156,7 +154,11 @@ where
 /// Returns `Ok(None)` at EOF with no trailing partial data. Returns
 /// `Ok(Some(BoundedLineRead { truncated: true, .. }))` when the line on the
 /// wire exceeded `max_bytes`; `bytes_read` is the number of bytes consumed from
-/// the reader, including discarded bytes and the newline when present.
+/// the reader, including discarded bytes and the newline when present. If a
+/// previous read grew `line` above the reclaim threshold, the next call shrinks
+/// the reusable allocation toward the smaller of the initial reusable capacity
+/// and `max_bytes` before reading, so retained memory does not scale with a
+/// past legal or oversized message.
 ///
 /// # Caveats
 /// - **Not cancellation-safe.** If the returned future is dropped before

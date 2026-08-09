@@ -41,6 +41,12 @@ pub const PROTOCOL_ANNOUNCE_PREFIX: &str = "quecto-agent-protocol: ";
 
 /// Errors from the framed reader/writer, distinct from I/O errors so callers
 /// can log a clean protocol error and keep the connection alive.
+///
+/// EOF outcomes are intentionally distinct: EOF before any prefix byte is
+/// `Ok(None)`, EOF in the 4-byte prefix or inside an in-cap declared payload is
+/// `FrameError::Io(UnexpectedEof)`, and an over-cap declaration is
+/// `FrameError::Oversized` as soon as the prefix is known, even if the peer
+/// closes before sending the declared payload.
 #[derive(Debug)]
 pub enum FrameError {
     /// The peer declared a frame larger than `max`. The declared size was
@@ -83,7 +89,9 @@ impl From<std::io::Error> for FrameError {
 /// deprecation window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Incoming {
-    /// A length-prefixed frame's payload (UTF-8 JSON bytes).
+    /// A length-prefixed frame's payload bytes. The protocol payload is JSON,
+    /// but this low-level reader preserves bytes exactly; callers decide when
+    /// and how to validate UTF-8.
     Frame(Vec<u8>),
     /// A legacy `\n`-terminated NDJSON line's content (without the `\n`),
     /// accepted only for the deprecation window.
