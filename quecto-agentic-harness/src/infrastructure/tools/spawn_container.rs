@@ -17,6 +17,7 @@ pub(super) struct PreparedChild {
     /// Proxy bridge materialized at readiness; carried so registration can
     /// take ownership and rollback can abort it.
     pub proxy_bridge: Option<super::spawn_proxy_bridge::ProxyBridge>,
+    pub process_owner: super::process_tree::ProcessOwner,
     cleanup_environment_id: Option<String>,
     cleanup_argv: Vec<String>,
     /// Session registry the environment was committed to, so rollback can
@@ -36,6 +37,7 @@ impl PreparedChild {
             environment_ref,
             endpoint,
             proxy_bridge: None,
+            process_owner: super::process_tree::ProcessOwner::DirectPid,
             cleanup_environment_id: None,
             cleanup_argv: vec![],
             environments: None,
@@ -57,7 +59,11 @@ impl PreparedChild {
 
     pub async fn rollback_once(&mut self) {
         if let Some(child) = &mut self.child {
-            let _ = child.kill().await;
+            if let Some(pid) = child.id() {
+                super::process_tree::terminate_owned_process_tree(pid, self.process_owner);
+            } else {
+                let _ = child.kill().await;
+            }
             let _ = child.wait().await;
         }
         if let Some(bridge) = self.proxy_bridge.take() {
@@ -149,6 +155,7 @@ async fn join_script_managed_child(
         environment_ref: Some(record.environment_ref),
         endpoint: Some(endpoint),
         proxy_bridge: None,
+        process_owner: super::process_tree::ProcessOwner::DirectPid,
         cleanup_environment_id: None,
         cleanup_argv: Vec::new(),
         // Joining never owns the environment: a failed join must not
@@ -244,6 +251,8 @@ fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, DomainEr
     let mut cmd = tokio::process::Command::new(child.binary);
     cmd.args(child.cli_args);
     apply_common_child_env(&mut cmd, child.base_dir);
+    #[cfg(unix)]
+    cmd.process_group(0);
     let child = cmd
         .spawn()
         .map_err(|e| DomainError::Tool(format!("failed to spawn subagent: {e}")))?;
@@ -252,6 +261,7 @@ fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, DomainEr
         environment_ref: None,
         endpoint: None,
         proxy_bridge: None,
+        process_owner: super::process_tree::ProcessOwner::LocalProcessGroup,
         cleanup_environment_id: None,
         cleanup_argv: Vec::new(),
         environments: None,
@@ -353,6 +363,7 @@ async fn spawn_script_managed_child(
         environment_ref: Some(environment_ref),
         endpoint: Some(result.endpoint),
         proxy_bridge: None,
+        process_owner: super::process_tree::ProcessOwner::DirectPid,
         cleanup_environment_id: Some(result.environment_id),
         cleanup_argv: container.cleanup.clone(),
         environments: Some(environments.clone()),
