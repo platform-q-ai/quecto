@@ -75,7 +75,7 @@ fn selectable_item_modal_filters_across_label_description_and_metadata() {
     assert!(!rendered.contains("Alpha Model"), "{rendered}");
 
     let mut modal = build_modal();
-    for c in "OAuth".chars() {
+    for c in "OpenAI OAuth".chars() {
         assert!(modal.handle_input(&Key::Char(c)));
     }
     assert_eq!(modal.visible_count(), 1);
@@ -459,12 +459,25 @@ fn selectable_item_modal_scope_mode_bulk_actions_update_visible_scopes() {
             ("alpha".to_string(), ScopeSelection::None),
             ("beta".to_string(), ScopeSelection::Child),
             ("gamma".to_string(), ScopeSelection::Both),
-        ]));
+        ]))
+        .with_space_toggle_while_filtering();
 
     for c in "uniquezz".chars() {
         modal.handle_input(&Key::Char(c));
     }
     assert_eq!(modal.selected_item(), Some("beta"));
+
+    assert!(modal.handle_input(&Key::Char(' ')));
+    assert_eq!(modal.selected_item(), Some("beta"));
+    assert!(modal.handle_input(&Key::Enter));
+    assert_eq!(
+        modal.take_result(),
+        SelectableItemModalResult::AppliedScopes(BTreeMap::from([
+            ("alpha".to_string(), ScopeSelection::None),
+            ("beta".to_string(), ScopeSelection::Both),
+            ("gamma".to_string(), ScopeSelection::Both),
+        ]))
+    );
 
     assert!(modal.handle_input(&Key::CtrlShift('a')));
     assert!(modal.handle_input(&Key::Enter));
