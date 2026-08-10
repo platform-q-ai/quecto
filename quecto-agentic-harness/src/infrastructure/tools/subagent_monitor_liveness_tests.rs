@@ -115,10 +115,10 @@ async fn repeated_death_signals_trigger_one_inspect_and_one_terminal_transition(
     let record = environments.get(&env_ref).unwrap();
     assert_eq!(record.metadata["cause"], serde_json::json!("oom-killed"));
     assert!(record.members.is_empty());
-    let entries = registry.lock().unwrap();
-    let entry = entries.get("agent-1").unwrap();
-    assert_eq!(entry.status, SubagentStatus::Exited, "one terminal state");
-    drop(entries);
+    assert!(
+        !registry.lock().unwrap().contains_key("agent-1"),
+        "dead script-managed member is cascade-pruned"
+    );
     // The pushed death fed the existing exit signal so lifecycle observers wake.
     assert!(exit_rx.borrow_and_update().is_some());
 }

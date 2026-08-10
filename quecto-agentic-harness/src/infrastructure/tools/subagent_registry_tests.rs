@@ -140,6 +140,7 @@ fn test_errored_message_format() {
 fn test_exited_message_format() {
     let n = SubagentNotification::Exited {
         agent_id: "formatter".into(),
+        reason: None,
     };
     let msg = n.to_message();
     assert!(msg.contains("formatter"));
@@ -362,6 +363,7 @@ async fn test_notification_drain() {
                 i as u64 + 1,
                 SubagentNotification::Exited {
                     agent_id: format!("bot-{}", i),
+                    reason: None,
                 },
             ))
             .await;
