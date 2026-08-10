@@ -1,7 +1,7 @@
 use super::*;
 use crate::infrastructure::config::{Config, ContainerConfig};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 fn config_with(name: &str, default: bool, create: &str) -> Config {
@@ -379,4 +379,40 @@ fn prompt_approval_non_interactive_denies_untrusted_identity() {
     };
 
     assert!(!prompt_approval(&identity));
+}
+
+#[test]
+fn default_trust_record_approved_is_noop_and_derived_surfaces_are_used() {
+    struct DenyOnly;
+    impl RepoLocalContainerConfigTrust for DenyOnly {
+        fn decide(&mut self, _identity: &RepoLocalConfigIdentity) -> TrustDecision {
+            TrustDecision::Denied
+        }
+    }
+
+    let identity = RepoLocalConfigIdentity {
+        path: PathBuf::from("/tmp/repo/.quecto/config.json"),
+        content_hash: "abc123".into(),
+    };
+    let mut trust = DenyOnly;
+
+    trust.record_approved(&identity);
+    assert_eq!(trust.decide(&identity), TrustDecision::Denied);
+    assert_eq!(TrustDecision::Approved.clone(), TrustDecision::Approved);
+    assert_eq!(identity.clone(), identity);
+    assert!(format!("{:?}", identity).contains("abc123"));
+
+    let effective = EffectiveContainerConfigs {
+        config: Config::default(),
+        diagnostics: vec!["untrusted".into()],
+    };
+    let cloned = effective.clone();
+    assert!(format!("{:?}", cloned).contains("untrusted"));
+
+    let store = TrustStore::default();
+    assert!(format!("{:?}", store).contains("approved"));
+    assert!(
+        format!("{:?}", PersistentRepoLocalContainerConfigTrust::default())
+            .contains("prompt_on_miss")
+    );
 }
