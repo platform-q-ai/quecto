@@ -32,13 +32,15 @@ impl App {
             return;
         }
         // Fetch the rendered text lazily: the policy can force recovery without
-        // reading it, and `latest_assistant_text` clones the whole assistant
+        // reading it, and the bounded assistant text scan clones the assistant
         // body — which can be megabytes for an inlined command dump.
         use crate::conversation::turn_recovery::TurnOutcome;
         let open_tool_calls = self.open_tool_calls;
         let tools_this_turn = self.tools_this_turn;
+        let target_end = self.master_session.chat.entry_count();
+        let target_start = self.active_turn_start.min(target_end);
         let needs_recovery = TurnOutcome::forced_without_text(refs, open_tool_calls) || {
-            let assistant_text = self.latest_assistant_text();
+            let assistant_text = self.latest_assistant_text_in_range(target_start, target_end);
             TurnOutcome {
                 refs,
                 assistant_text: &assistant_text,
@@ -59,15 +61,9 @@ impl App {
             return;
         }
         let batch_id = format!("recovery-batch-{}", super::app_events::uuid_like());
-        let target_end = self.master_session.chat.entry_count();
         self.message_recovery_batches.insert(
             batch_id.clone(),
-            MessageRecoveryBatch::new(
-                refs.to_vec(),
-                self.active_turn_start.min(target_end),
-                target_end,
-                None,
-            ),
+            MessageRecoveryBatch::new(refs.to_vec(), target_start, target_end, None),
         );
         for message_id in refs {
             if self
@@ -103,10 +99,9 @@ impl App {
         }
     }
 
-    fn latest_assistant_text(&self) -> String {
-        self.master_session
-            .chat
-            .entries()
+    fn latest_assistant_text_in_range(&self, start: usize, end: usize) -> String {
+        let entries = self.master_session.chat.entries();
+        entries[start.min(entries.len())..end.min(entries.len())]
             .iter()
             .rev()
             .find_map(|e| match e {
@@ -319,6 +314,52 @@ pub(crate) fn recovered_chat_entries(
 mod recovery_cov_tests {
     use super::*;
     use crate::components::chat::ChatEntry;
+
+    fn app_for_recovery_test() -> App {
+        App::new(
+            crate::shell::terminal::Terminal::new(),
+            crate::protocol::client::Client::disconnected_for_tests(),
+        )
+    }
+
+    #[test]
+    fn recovery_decision_ignores_assistant_text_before_active_turn() {
+        let mut app = app_for_recovery_test();
+        app.master_session.chat.add_entry(ChatEntry::Assistant {
+            text: "previous complete answer".to_string(),
+            streaming: false,
+        });
+        app.active_turn_start = app.master_session.chat.entry_count();
+
+        app.maybe_recover_from_refs(&["current-ref".to_string()]);
+
+        assert_eq!(app.pending_message_recovery.len(), 1);
+        assert_eq!(app.message_recovery_batches.len(), 1);
+        let batch = app.message_recovery_batches.values().next().unwrap();
+        assert_eq!(batch.target_start, app.active_turn_start);
+        assert_eq!(batch.target_end, app.master_session.chat.entry_count());
+        let pending = app.pending_message_recovery.values().next().unwrap();
+        assert_eq!(pending.message_id, "current-ref");
+    }
+
+    #[test]
+    fn recovery_decision_uses_complete_assistant_text_in_active_turn() {
+        let mut app = app_for_recovery_test();
+        app.master_session.chat.add_entry(ChatEntry::Assistant {
+            text: "previous complete answer".to_string(),
+            streaming: false,
+        });
+        app.active_turn_start = app.master_session.chat.entry_count();
+        app.master_session.chat.add_entry(ChatEntry::Assistant {
+            text: "current complete answer".to_string(),
+            streaming: false,
+        });
+
+        app.maybe_recover_from_refs(&["current-ref".to_string()]);
+
+        assert!(app.pending_message_recovery.is_empty());
+        assert!(app.message_recovery_batches.is_empty());
+    }
 
     #[test]
     fn recovered_chat_entries_handles_suppressed_calls_errors_and_unknown_roles() {
