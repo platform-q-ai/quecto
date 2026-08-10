@@ -150,7 +150,6 @@ impl Chat {
     pub fn add_entry(&mut self, entry: ChatEntry) {
         self.entries.push(entry);
         self.render_cache.push(None);
-        self.scroll_offset = 0;
     }
 
     /// Append streaming token to the last assistant message, or create one.
@@ -197,7 +196,6 @@ impl Chat {
         self.render_cache = (0..self.entries.len()).map(|_| None).collect();
         self.combined_offsets.clear();
         self.combined_width = None;
-        self.scroll_offset = 0;
     }
 
     /// Start a tool execution — creates a ToolExecution entry.

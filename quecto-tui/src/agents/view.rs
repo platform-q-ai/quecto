@@ -262,7 +262,11 @@ impl SessionView {
         if clear_live {
             self.live_inflight.clear();
         }
+        let preserved_scroll_offset = self.chat.scroll_offset();
         self.chat.clear();
+        if preserved_scroll_offset > 0 {
+            self.chat.scroll_up(preserved_scroll_offset);
+        }
         for entry in ledger {
             self.chat
                 .add_entry(crate::agents::view::ledger_entry_to_chat_entry(entry));

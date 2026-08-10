@@ -553,6 +553,26 @@ fn scrolled_viewport_stays_anchored_when_tool_entries_arrive() {
 }
 
 #[test]
+fn scrolled_viewport_stays_anchored_when_message_entries_arrive() {
+    let mut chat = chat_with_streaming_history();
+
+    let height = 10;
+    chat.set_viewport_height(height);
+    chat.scroll_up(15);
+    let before = chat.render(80);
+
+    chat.add_entry(ChatEntry::Status {
+        text: "subagent completed".into(),
+    });
+    let after = chat.render(80);
+
+    assert_eq!(
+        after, before,
+        "new status/message entries must not snap a scrolled transcript to the tail"
+    );
+}
+
+#[test]
 fn viewport_clamps_to_full_oldest_page_instead_of_blank() {
     let mut chat = chat_with_streaming_history();
     let height = 10;
