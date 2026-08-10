@@ -56,7 +56,7 @@ impl App {
         if refs.iter().any(|message_id| {
             self.pending_message_recovery
                 .values()
-                .any(|pending| pending.message_id == *message_id)
+                .any(|pending| pending.agent_id.is_none() && pending.message_id == *message_id)
         }) {
             return;
         }
@@ -69,7 +69,7 @@ impl App {
             if self
                 .pending_message_recovery
                 .values()
-                .any(|pending| pending.message_id == *message_id)
+                .any(|pending| pending.agent_id.is_none() && pending.message_id == *message_id)
             {
                 continue;
             }

@@ -233,6 +233,62 @@ async fn child_empty_turn_recovery_ignores_previous_assistant() {
     );
 }
 
+/// Child recovery de-dupe is child-scoped: two children may legitimately share
+/// the same opaque message ref, so a pending recovery for one child must not
+/// suppress the other's request.
+#[tokio::test]
+async fn child_recovery_dedupe_allows_same_ref_for_different_children() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![
+        subagent("child-a", "running", Some(("active", 1, 3))),
+        subagent("child-b", "running", Some(("active", 1, 3))),
+    ]));
+
+    let ref_id = "shared-child-ref";
+    h.route("child-a", Event::AgentStart);
+    h.route(
+        "child-a",
+        Event::TurnEnd {
+            message: serde_json::json!({
+                "role":"assistant", "content":"", "messageRefs":[ref_id], "contentLength": 20
+            }),
+        },
+    );
+    let first_cmds = h.drain_commands().await;
+    assert!(
+        first_cmds
+            .iter()
+            .filter(|l| is_get_message_cmd(l))
+            .any(|l| {
+                let v: serde_json::Value = serde_json::from_str(l).unwrap();
+                v["agent_id"].as_str() == Some("child-a") && v["messageId"].as_str() == Some(ref_id)
+            }),
+        "first child must start recovery: {first_cmds:?}"
+    );
+
+    h.route("child-b", Event::AgentStart);
+    h.route(
+        "child-b",
+        Event::TurnEnd {
+            message: serde_json::json!({
+                "role":"assistant", "content":"", "messageRefs":[ref_id], "contentLength": 20
+            }),
+        },
+    );
+    let second_cmds = h.drain_commands().await;
+    assert!(
+        second_cmds
+            .iter()
+            .filter(|l| is_get_message_cmd(l))
+            .any(|l| {
+                let v: serde_json::Value = serde_json::from_str(l).unwrap();
+                v["agent_id"].as_str() == Some("child-b") && v["messageId"].as_str() == Some(ref_id)
+            }),
+        "second child with colliding ref must issue its own scoped recovery: {second_cmds:?}"
+    );
+}
+
 /// #1060: a tool message recovered with `isError` must reconstruct as an errored
 /// tool box, not a clean one.
 #[test]

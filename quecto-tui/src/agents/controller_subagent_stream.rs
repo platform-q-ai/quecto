@@ -470,9 +470,9 @@ impl App {
         // fill; creating a second batch here would issue zero fresh requests and
         // linger unfillable (F4 — mirrors the master guard).
         if refs.iter().any(|message_id| {
-            self.pending_message_recovery
-                .values()
-                .any(|pending| pending.message_id == *message_id)
+            self.pending_message_recovery.values().any(|pending| {
+                pending.agent_id.as_deref() == Some(agent_id) && pending.message_id == *message_id
+            })
         }) {
             return;
         }
