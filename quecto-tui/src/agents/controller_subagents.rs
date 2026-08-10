@@ -43,7 +43,9 @@ impl App {
         self.subagents.tracked.clear();
         self.subagents.sessions.clear();
         self.subagents.session_order.clear();
-        self.subagents.feeds.clear();
+        for (_, feed) in std::mem::take(&mut self.subagents.feeds) {
+            feed.handle.abort();
+        }
         self.subagents.active_agent_id = None;
         self.subagents.selected_environment = None;
         self.subagents.panel_nav = crate::components::list_navigator::ListNavigator::new();
