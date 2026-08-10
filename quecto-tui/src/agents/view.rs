@@ -271,6 +271,10 @@ impl SessionView {
             self.chat
                 .add_entry(crate::agents::view::ledger_entry_to_chat_entry(entry));
         }
+        // Projection rebuilds are authoritative snapshots. Discard trim deltas
+        // accumulated while rebuilding the committed prefix so callers only
+        // reconcile retention that happens after the live boundary is reset.
+        let _ = self.chat.take_retention_front_delta();
         let committed_entry_count = self.chat.entry_count();
         if attach_live {
             self.active_turn_start = committed_entry_count;

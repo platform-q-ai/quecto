@@ -213,3 +213,25 @@ fn ledger_1196_transcript_retention_is_bounded_but_can_recover_from_sync() {
             .any(|e| matches!(e, LedgerEntry::User { text } if text == "older recovered"))
     );
 }
+
+#[test]
+fn non_resync_recovered_older_messages_prepend_before_retained_newer_tail() {
+    let mut t = LedgerTranscript::default();
+    let newer: Vec<_> = (100..(100 + LEDGER_RETAINED_MESSAGE_CAP))
+        .map(|i| json!({"id": format!("m-{i}"), "role":"user", "content": format!("msg-{i}")}))
+        .collect();
+    t.apply_sync_delta(&delta(newer, false));
+
+    let entries = t.apply_sync_delta(&delta(
+        vec![json!({"id":"m-0","role":"user","content":"older recovered"})],
+        false,
+    ));
+
+    assert!(
+        matches!(entries.first(), Some(LedgerEntry::User { text }) if text == "older recovered")
+    );
+    assert!(
+        matches!(entries.last(), Some(LedgerEntry::User { text }) if text == &format!("msg-{}", 100 + LEDGER_RETAINED_MESSAGE_CAP - 2)),
+        "retention must drop from the newest end after prepending old recovery: {entries:?}"
+    );
+}

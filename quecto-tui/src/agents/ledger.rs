@@ -33,15 +33,17 @@ impl LedgerTranscript {
             self.messages.clear();
             self.order.clear();
         }
+        let mut new_ids = Vec::new();
         for message in &delta.messages {
             if let Some(id) = message.id().filter(|s| !s.is_empty()) {
                 let id = id.to_string();
                 if !self.messages.contains_key(&id) {
-                    self.order.push(id.clone());
+                    new_ids.push(id.clone());
                 }
                 self.messages.insert(id, message.clone());
             }
         }
+        self.insert_new_ids(delta, new_ids);
         self.enforce_retention();
         self.entries()
     }
@@ -49,6 +51,27 @@ impl LedgerTranscript {
     #[cfg(test)]
     pub(crate) fn retained_message_count(&self) -> usize {
         self.messages.len()
+    }
+
+    fn insert_new_ids(&mut self, delta: &SyncDelta, new_ids: Vec<String>) {
+        if new_ids.is_empty() {
+            return;
+        }
+        let recovered_older = !delta.resync
+            && self.order.len() >= LEDGER_RETAINED_MESSAGE_CAP
+            && delta.messages.len() == new_ids.len();
+        if recovered_older {
+            self.order.splice(0..0, new_ids);
+            let overflow = self.order.len().saturating_sub(LEDGER_RETAINED_MESSAGE_CAP);
+            for id in self
+                .order
+                .split_off(self.order.len().saturating_sub(overflow))
+            {
+                self.messages.remove(&id);
+            }
+        } else {
+            self.order.extend(new_ids);
+        }
     }
 
     fn enforce_retention(&mut self) {
