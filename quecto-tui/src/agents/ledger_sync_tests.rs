@@ -7,9 +7,13 @@ fn message(value: serde_json::Value) -> crate::protocol::agent_ledger_payloads::
 }
 
 fn delta(messages: Vec<serde_json::Value>, resync: bool) -> SyncDelta {
+    delta_with_rev(messages, resync, 9)
+}
+
+fn delta_with_rev(messages: Vec<serde_json::Value>, resync: bool, rev: u64) -> SyncDelta {
     SyncDelta {
         epoch: 1,
-        rev: 9,
+        rev,
         messages: messages.into_iter().map(message).collect(),
         next_rev: None,
         caught_up: true,
@@ -238,11 +242,12 @@ fn non_resync_recovered_older_messages_prepend_before_retained_newer_tail() {
     let newer: Vec<_> = (100..(100 + LEDGER_RETAINED_MESSAGE_CAP))
         .map(|i| json!({"id": format!("m-{i}"), "role":"user", "content": format!("msg-{i}")}))
         .collect();
-    t.apply_sync_delta(&delta(newer, false));
+    t.apply_sync_delta(&delta_with_rev(newer, false, 200));
 
-    let entries = t.apply_sync_delta(&delta(
+    let entries = t.apply_sync_delta(&delta_with_rev(
         vec![json!({"id":"m-0","role":"user","content":"older recovered"})],
         false,
+        100,
     ));
 
     assert!(
@@ -252,4 +257,58 @@ fn non_resync_recovered_older_messages_prepend_before_retained_newer_tail() {
         matches!(entries.last(), Some(LedgerEntry::User { text }) if text == &format!("msg-{}", 100 + LEDGER_RETAINED_MESSAGE_CAP - 2)),
         "retention must drop from the newest end after prepending old recovery: {entries:?}"
     );
+}
+
+#[test]
+fn nonnumeric_uuid_older_recovery_prepends_before_retained_tail() {
+    let mut t = LedgerTranscript::default();
+    let newer: Vec<_> = (0..LEDGER_RETAINED_MESSAGE_CAP)
+        .map(|i| json!({"id": format!("uuid-new-{i:04}-bbbb"), "role":"user", "content": format!("new-{i}")}))
+        .collect();
+    t.apply_sync_delta(&delta_with_rev(newer, false, 200));
+
+    let entries = t.apply_sync_delta(&delta_with_rev(
+        vec![json!({"id":"uuid-old-aaaa","role":"user","content":"older uuid recovered"})],
+        false,
+        100,
+    ));
+
+    assert!(
+        matches!(entries.first(), Some(LedgerEntry::User { text }) if text == "older uuid recovered")
+    );
+    assert!(
+        matches!(entries.last(), Some(LedgerEntry::User { text }) if text == &format!("new-{}", LEDGER_RETAINED_MESSAGE_CAP - 2))
+    );
+    assert!(t.retained_message_count() <= LEDGER_RETAINED_MESSAGE_CAP);
+}
+
+#[test]
+fn overlapping_anchor_older_page_prepends_new_prefix_messages() {
+    let mut t = LedgerTranscript::default();
+    let newer: Vec<_> = (100..(100 + LEDGER_RETAINED_MESSAGE_CAP))
+        .map(|i| json!({"id": format!("m-{i}"), "role":"user", "content": format!("msg-{i}")}))
+        .collect();
+    t.apply_sync_delta(&delta_with_rev(newer, false, 200));
+
+    let entries = t.apply_sync_delta(&delta_with_rev(
+        vec![
+            json!({"id":"m-50","role":"user","content":"older with anchor"}),
+            json!({"id":"m-100","role":"user","content":"msg-100 refreshed anchor"}),
+        ],
+        false,
+        100,
+    ));
+
+    assert!(
+        matches!(entries.first(), Some(LedgerEntry::User { text }) if text == "older with anchor")
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|e| matches!(e, LedgerEntry::User { text } if text == "msg-100 refreshed anchor"))
+    );
+    assert!(
+        matches!(entries.last(), Some(LedgerEntry::User { text }) if text == &format!("msg-{}", 100 + LEDGER_RETAINED_MESSAGE_CAP - 2))
+    );
+    assert!(t.retained_message_count() <= LEDGER_RETAINED_MESSAGE_CAP);
 }

@@ -25,6 +25,7 @@ pub(crate) enum LedgerEntry {
 pub(crate) struct LedgerTranscript {
     messages: HashMap<String, LedgerMessage>,
     order: Vec<String>,
+    rev: u64,
 }
 
 impl LedgerTranscript {
@@ -45,6 +46,7 @@ impl LedgerTranscript {
         }
         self.insert_new_ids(delta, new_ids);
         self.enforce_retention();
+        self.rev = self.rev.max(delta.rev);
         self.entries()
     }
 
@@ -59,10 +61,7 @@ impl LedgerTranscript {
         }
         let recovered_older = !delta.resync
             && self.order.len() >= LEDGER_RETAINED_MESSAGE_CAP
-            && delta.messages.len() == new_ids.len()
-            && self.order.first().is_some_and(|oldest_retained| {
-                new_ids.iter().all(|id| id_precedes(id, oldest_retained))
-            });
+            && delta.rev < self.rev;
         if recovered_older {
             self.order.splice(0..0, new_ids);
             let overflow = self.order.len().saturating_sub(LEDGER_RETAINED_MESSAGE_CAP);
@@ -92,24 +91,6 @@ impl LedgerTranscript {
     pub(crate) fn entries(&self) -> Vec<LedgerEntry> {
         ledger_entries(&self.order, &self.messages)
     }
-}
-
-fn id_precedes(candidate: &str, retained: &str) -> bool {
-    numeric_suffix(candidate)
-        .zip(numeric_suffix(retained))
-        .is_some_and(|(candidate, retained)| candidate < retained)
-}
-
-fn numeric_suffix(id: &str) -> Option<u64> {
-    let digits_start = id
-        .char_indices()
-        .rev()
-        .find_map(|(idx, ch)| (!ch.is_ascii_digit()).then_some(idx + ch.len_utf8()))
-        .unwrap_or(0);
-    if digits_start == id.len() {
-        return None;
-    }
-    id[digits_start..].parse().ok()
 }
 
 fn ledger_entries(refs: &[String], responses: &HashMap<String, LedgerMessage>) -> Vec<LedgerEntry> {
