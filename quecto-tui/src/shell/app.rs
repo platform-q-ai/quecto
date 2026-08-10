@@ -623,6 +623,9 @@ mod app_subagent_panel_tests;
 #[path = "../agents/app_subagent_roster_authority_tests.rs"]
 mod app_subagent_roster_authority_tests;
 #[cfg(test)]
+#[path = "../agents/app_subagent_scroll_1435_tests.rs"]
+mod app_subagent_scroll_1435_tests;
+#[cfg(test)]
 #[path = "../agents/app_subagent_workflow_sticky_tests.rs"]
 mod app_subagent_workflow_sticky_tests;
 #[cfg(test)]

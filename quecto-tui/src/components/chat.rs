@@ -150,6 +150,10 @@ impl Chat {
     pub fn add_entry(&mut self, entry: ChatEntry) {
         self.entries.push(entry);
         self.render_cache.push(None);
+    }
+
+    pub fn add_entry_follow_tail(&mut self, entry: ChatEntry) {
+        self.add_entry(entry);
         self.scroll_offset = 0;
     }
 
@@ -197,7 +201,6 @@ impl Chat {
         self.render_cache = (0..self.entries.len()).map(|_| None).collect();
         self.combined_offsets.clear();
         self.combined_width = None;
-        self.scroll_offset = 0;
     }
 
     /// Start a tool execution — creates a ToolExecution entry.
@@ -294,8 +297,6 @@ impl Chat {
         self.viewport_height = Some(height);
     }
 
-    /// Current scrollback offset (0 == pinned to the latest output). Exposed so
-    /// tests can assert that scroll keys actually moved the viewport.
     pub fn scroll_offset(&self) -> usize {
         self.scroll_offset
     }
