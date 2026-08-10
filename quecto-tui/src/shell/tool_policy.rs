@@ -73,7 +73,13 @@ impl App {
             .search_weights(SearchFieldWeights::tool_lookup())
             .build()
         {
-            Ok(modal) => self.tool_policy_modal = Some(modal.with_scope_selection(scopes)),
+            Ok(modal) => {
+                self.tool_policy_modal = Some(
+                    modal
+                        .with_scope_selection(scopes)
+                        .with_space_toggle_while_filtering(),
+                )
+            }
             Err(error) => self.notify(
                 &format!("Tool policy modal unavailable: {error}"),
                 NotifyLevel::Error,
