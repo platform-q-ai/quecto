@@ -35,6 +35,7 @@ pub(super) const ATTACH_BACKFILL_ID: &str = "attach-backfill";
 /// exact pending id (#1237). Readable prefixes are diagnostics only.
 const RESUME_MESSAGES_ID_PREFIX: &str = "resume-messages";
 const REWIND_REFRESH_ID_PREFIX: &str = "rewind-refresh";
+const REWIND_OPEN_ID_PREFIX: &str = "rewind-open";
 
 /// Kind of a matched own-client solicited transcript response (#1237).
 /// Status text is derived from kind, never from literal id equality.
@@ -143,6 +144,7 @@ impl App {
         }
         matches_family(id, RESUME_MESSAGES_ID_PREFIX)
             || matches_family(id, REWIND_REFRESH_ID_PREFIX)
+            || matches_family(id, REWIND_OPEN_ID_PREFIX)
             || matches_family(id, ATTACH_BACKFILL_ID_PREFIX)
     }
 
@@ -394,7 +396,7 @@ impl App {
             return;
         }
         if id.is_some_and(Self::is_foreign_solicited_get_messages_family) {
-            // Foreign (or stale bare-literal) resume/rewind/attach family id:
+            // Foreign (or stale bare-literal) resume/rewind-open/rewind-refresh/attach family id:
             // drop. Must not fall through to legacy replace — that is the
             // multi-client clobber (#1237).
             return;

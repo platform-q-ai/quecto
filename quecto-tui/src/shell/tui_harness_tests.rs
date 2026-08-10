@@ -638,16 +638,16 @@ mod workflow_display_regression {
 // RED until the rewind / model-registry / sub-agent-UI fields move into their
 // named owner structs; the driving side of each test is the real App path.
 
-/// Double-Escape at idle issues `rewind-open-1`; the rewind owner group must
-/// report the same sequence the wire command carries.
+/// Double-Escape at idle issues a readable `rewind-open-*` id; the rewind owner
+/// group must report the issued local sequence.
 #[tokio::test]
 async fn rewind_group_tracks_issued_request_ids() {
     let mut h = TuiHarness::new().await;
     h.issue_rewind_open();
     let cmds = h.drain_commands().await;
     assert!(
-        cmds.iter().any(|c| c.contains("rewind-open-1")),
-        "double-Escape should issue the rewind-open-1 correlation id: {cmds:?}"
+        cmds.iter().any(|c| c.contains("rewind-open-")),
+        "double-Escape should issue a rewind-open correlation id: {cmds:?}"
     );
     assert_eq!(
         h.rewind_group_request_seq(),
