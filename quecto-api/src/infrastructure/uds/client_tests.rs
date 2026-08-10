@@ -55,9 +55,8 @@ async fn oversized_event_line_is_dropped_but_later_valid_events_still_arrive() {
 }
 
 #[test]
-fn max_line_bytes_matches_documented_protocol_limit() {
-    // 8 MiB interim cap (#1094); derives from the shared line-io constant.
-    assert_eq!(MAX_LINE_BYTES, 8 * 1_048_576);
+fn max_line_bytes_matches_shared_line_io_cap() {
+    assert_eq!(MAX_LINE_BYTES, quecto_line_io::PROTOCOL_LINE_CAP_BYTES);
 }
 
 // ── #1061 lockstep: paged history cursor reaches the wire ────────────────

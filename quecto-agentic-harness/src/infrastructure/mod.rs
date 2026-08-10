@@ -16,4 +16,7 @@ pub mod tools;
 pub mod test_support;
 
 #[cfg(test)]
+mod line_cap_tests;
+
+#[cfg(test)]
 mod issue_996_efficiency_tests;

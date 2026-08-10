@@ -1,9 +1,9 @@
 use quecto_runtime_manager::{
     application::{ManagerConfig, RuntimeRegistry},
-    infrastructure::{AppState, serve},
+    infrastructure::{AppState, ProductionRuntimeLifecycle, serve},
 };
 use reqwest::{Certificate, Client};
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{collections::HashSet, net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 
 #[tokio::main]
@@ -56,6 +56,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         registry: Arc::new(Mutex::new(RuntimeRegistry::default())),
         token: manager_token,
         http: http_client(),
+        lifecycle: Arc::new(ProductionRuntimeLifecycle),
+        pending_starts: Arc::new(Mutex::new(HashSet::new())),
     };
 
     serve(state, addr).await?;

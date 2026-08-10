@@ -102,10 +102,17 @@ impl RuntimeRegistry {
         self.used_ports.remove(&port);
     }
 
+    #[cfg(test)]
+    pub fn reserve_port_for_test(&mut self, port: u16) {
+        self.used_ports.insert(port);
+    }
+
     pub fn stop(&mut self, runtime_ref: &str) -> bool {
-        let Some(mut runtime) = self.runtimes.remove(runtime_ref) else {
-            return false;
-        };
+        self.stop_and_take_pod(runtime_ref).is_some()
+    }
+
+    pub fn stop_and_take_pod(&mut self, runtime_ref: &str) -> Option<Option<String>> {
+        let mut runtime = self.runtimes.remove(runtime_ref)?;
 
         self.used_ports.remove(&runtime.port);
         for child in [&mut runtime.mcp, &mut runtime.api, &mut runtime.agent]
@@ -115,20 +122,21 @@ impl RuntimeRegistry {
             let _ = child.start_kill();
         }
         let _ = std::fs::remove_file(&runtime.socket_path);
-        true
+        Some(runtime.pod_name)
     }
 
     pub fn reap_one_oldest(&mut self) -> bool {
-        let Some(runtime_ref) = self
+        self.reap_one_oldest_pod().is_some()
+    }
+
+    pub fn reap_one_oldest_pod(&mut self) -> Option<Option<String>> {
+        let runtime_ref = self
             .runtimes
             .iter()
             .min_by_key(|(_, runtime)| runtime.last_used_at)
-            .map(|(runtime_ref, _)| runtime_ref.clone())
-        else {
-            return false;
-        };
+            .map(|(runtime_ref, _)| runtime_ref.clone())?;
 
-        self.stop(&runtime_ref)
+        self.stop_and_take_pod(&runtime_ref)
     }
 }
 
@@ -141,7 +149,7 @@ pub fn ensure_capacity(
         return Ok(());
     }
 
-    if registry.reap_one_oldest() {
+    if registry.reap_one_oldest_pod().is_some() {
         Ok(())
     } else {
         Err(ManagerError::RuntimeLimitReached)
