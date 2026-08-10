@@ -371,11 +371,13 @@ impl App {
                     });
                 }
             }
+            self.reconcile_master_retention_trim();
             return;
         }
         if own_page {
             // This client's own older page extends the loaded prefix.
             Self::reconcile_master_backfill_history(&mut self.master_session, &data, true);
+            self.reconcile_master_retention_trim();
             return;
         }
         if id.is_some_and(|id| id.starts_with("history-page-")) {
@@ -393,6 +395,7 @@ impl App {
                 self.pending_attach_backfill_id = None;
             }
             Self::reconcile_master_backfill_history(&mut self.master_session, &data, false);
+            self.reconcile_master_retention_trim();
             return;
         }
         if id.is_some_and(Self::is_foreign_solicited_get_messages_family) {

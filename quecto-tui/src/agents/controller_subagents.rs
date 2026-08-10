@@ -99,6 +99,17 @@ impl App {
             }
         });
 
+        for pending in self.pending_message_recovery.values_mut() {
+            if pending.agent_id.as_deref() == Some(from) {
+                pending.agent_id = Some(to.to_string());
+            }
+        }
+        for batch in self.message_recovery_batches.values_mut() {
+            if batch.agent_id.as_deref() == Some(from) {
+                batch.agent_id = Some(to.to_string());
+            }
+        }
+
         if self.subagents.active_agent_id.as_deref() == Some(from) {
             self.subagents.active_agent_id = Some(to.to_string());
         }

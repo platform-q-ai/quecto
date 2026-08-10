@@ -239,6 +239,7 @@ impl App {
         match &ev {
             Event::AgentStart | Event::TurnStart => {
                 if !session.running {
+                    let _ = session.chat.take_retention_front_delta();
                     session.active_turn_start = session.chat.entry_count();
                     // New turn: reset the per-turn tool count that drives
                     // end-of-turn ref-cardinality recovery (#1060 review, F2).
@@ -346,6 +347,7 @@ impl App {
             return early;
         }
         Self::apply_subagent_chat_event(session, ev);
+        session.reconcile_chat_retention_trim();
         early
     }
 
@@ -438,9 +440,9 @@ impl App {
         let Some(session) = self.subagents.sessions.get(agent_id) else {
             return;
         };
-        let assistant_text = session
-            .chat
-            .entries()
+        let target_end = session.chat.entry_count();
+        let target_start = session.active_turn_start.min(target_end);
+        let assistant_text = session.chat.entries()[target_start..target_end]
             .iter()
             .rev()
             .find_map(|e| match e {
@@ -468,9 +470,9 @@ impl App {
         // fill; creating a second batch here would issue zero fresh requests and
         // linger unfillable (F4 — mirrors the master guard).
         if refs.iter().any(|message_id| {
-            self.pending_message_recovery
-                .values()
-                .any(|pending| pending.message_id == *message_id)
+            self.pending_message_recovery.values().any(|pending| {
+                pending.agent_id.as_deref() == Some(agent_id) && pending.message_id == *message_id
+            })
         }) {
             return;
         }
@@ -478,12 +480,11 @@ impl App {
             "child-recovery-{agent_id}-{}",
             super::app_events::uuid_like()
         );
-        let target_end = session.chat.entry_count();
         self.message_recovery_batches.insert(
             batch_id.clone(),
             MessageRecoveryBatch::new(
                 refs.to_vec(),
-                session.active_turn_start.min(target_end),
+                target_start,
                 target_end,
                 Some(agent_id.to_string()),
             ),
@@ -634,6 +635,7 @@ impl App {
                 session.chat.replace_history_prefix(len, history)
             }
         }
+        session.reconcile_chat_retention_trim();
     }
 
     /// Render a passive sub-agent completion note, or DEFER it while the owning

@@ -56,7 +56,7 @@ impl App {
         if refs.iter().any(|message_id| {
             self.pending_message_recovery
                 .values()
-                .any(|pending| pending.message_id == *message_id)
+                .any(|pending| pending.agent_id.is_none() && pending.message_id == *message_id)
         }) {
             return;
         }
@@ -69,7 +69,7 @@ impl App {
             if self
                 .pending_message_recovery
                 .values()
-                .any(|pending| pending.message_id == *message_id)
+                .any(|pending| pending.agent_id.is_none() && pending.message_id == *message_id)
             {
                 continue;
             }
@@ -205,12 +205,14 @@ impl App {
                     batch.target_end,
                     entries,
                 );
+                self.reconcile_master_retention_trim();
             }
             Some(child) => {
                 if let Some(session) = self.subagents.sessions.get_mut(child) {
                     session
                         .chat
                         .replace_range(batch.target_start, batch.target_end, entries);
+                    session.reconcile_chat_retention_trim();
                 }
             }
         }
