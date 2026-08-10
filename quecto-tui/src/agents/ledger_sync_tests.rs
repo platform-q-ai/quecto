@@ -7,9 +7,13 @@ fn message(value: serde_json::Value) -> crate::protocol::agent_ledger_payloads::
 }
 
 fn delta(messages: Vec<serde_json::Value>, resync: bool) -> SyncDelta {
+    delta_with_rev(messages, resync, 9)
+}
+
+fn delta_with_rev(messages: Vec<serde_json::Value>, resync: bool, rev: u64) -> SyncDelta {
     SyncDelta {
         epoch: 1,
-        rev: 9,
+        rev,
         messages: messages.into_iter().map(message).collect(),
         next_rev: None,
         caught_up: true,
@@ -191,4 +195,146 @@ fn explicit_null_tool_arguments_render_as_null_not_empty_object() {
         matches!(&entries[0], LedgerEntry::ToolExecution { args, .. } if args == "{}"),
         "a missing arguments field still defaults to an empty object: {entries:?}"
     );
+}
+
+#[test]
+fn ledger_1196_transcript_retention_is_bounded_but_can_recover_from_sync() {
+    let mut t = LedgerTranscript::default();
+    let many = (0..(LEDGER_RETAINED_MESSAGE_CAP + 50))
+        .map(|i| json!({"id": format!("m-{i}"), "role":"user", "content": format!("msg-{i}")}))
+        .collect();
+    t.apply_sync_delta(&delta(many, false));
+    assert!(t.retained_message_count() <= LEDGER_RETAINED_MESSAGE_CAP);
+
+    let entries = t.apply_sync_delta(&delta(
+        vec![json!({"id":"older-0","role":"user","content":"older recovered"})],
+        true,
+    ));
+    assert!(t.retained_message_count() <= LEDGER_RETAINED_MESSAGE_CAP);
+    assert!(
+        entries
+            .iter()
+            .any(|e| matches!(e, LedgerEntry::User { text } if text == "older recovered"))
+    );
+}
+
+#[test]
+fn ordinary_tail_sync_appends_after_retained_full_ledger() {
+    let mut t = LedgerTranscript::default();
+    let initial: Vec<_> = (0..LEDGER_RETAINED_MESSAGE_CAP)
+        .map(|i| json!({"id": format!("m-{i}"), "role":"user", "content": format!("msg-{i}")}))
+        .collect();
+    t.apply_sync_delta(&delta(initial, false));
+
+    let entries = t.apply_sync_delta(&delta(
+        vec![json!({"id": format!("m-{LEDGER_RETAINED_MESSAGE_CAP}"), "role":"user", "content":"new tail"})],
+        false,
+    ));
+
+    assert!(matches!(entries.first(), Some(LedgerEntry::User { text }) if text == "msg-1"));
+    assert!(matches!(entries.last(), Some(LedgerEntry::User { text }) if text == "new tail"));
+    assert!(t.retained_message_count() <= LEDGER_RETAINED_MESSAGE_CAP);
+}
+
+#[test]
+fn non_resync_recovered_older_messages_prepend_before_retained_newer_tail() {
+    let mut t = LedgerTranscript::default();
+    let newer: Vec<_> = (100..(100 + LEDGER_RETAINED_MESSAGE_CAP))
+        .map(|i| json!({"id": format!("m-{i}"), "role":"user", "content": format!("msg-{i}")}))
+        .collect();
+    t.apply_sync_delta(&delta_with_rev(newer, false, 200));
+
+    let entries = t.apply_sync_delta(&delta_with_rev(
+        vec![json!({"id":"m-0","role":"user","content":"older recovered"})],
+        false,
+        100,
+    ));
+
+    assert!(
+        matches!(entries.first(), Some(LedgerEntry::User { text }) if text == "older recovered")
+    );
+    assert!(
+        matches!(entries.last(), Some(LedgerEntry::User { text }) if text == &format!("msg-{}", 100 + LEDGER_RETAINED_MESSAGE_CAP - 2)),
+        "retention must drop from the newest end after prepending old recovery: {entries:?}"
+    );
+}
+
+#[test]
+fn nonnumeric_uuid_older_recovery_prepends_before_retained_tail() {
+    let mut t = LedgerTranscript::default();
+    let newer: Vec<_> = (0..LEDGER_RETAINED_MESSAGE_CAP)
+        .map(|i| json!({"id": format!("uuid-new-{i:04}-bbbb"), "role":"user", "content": format!("new-{i}")}))
+        .collect();
+    t.apply_sync_delta(&delta_with_rev(newer, false, 200));
+
+    let entries = t.apply_sync_delta(&delta_with_rev(
+        vec![json!({"id":"uuid-old-aaaa","role":"user","content":"older uuid recovered"})],
+        false,
+        100,
+    ));
+
+    assert!(
+        matches!(entries.first(), Some(LedgerEntry::User { text }) if text == "older uuid recovered")
+    );
+    assert!(
+        matches!(entries.last(), Some(LedgerEntry::User { text }) if text == &format!("new-{}", LEDGER_RETAINED_MESSAGE_CAP - 2))
+    );
+    assert!(t.retained_message_count() <= LEDGER_RETAINED_MESSAGE_CAP);
+}
+
+#[test]
+fn resync_replaces_high_revision_so_later_tail_deltas_append() {
+    let mut t = LedgerTranscript::default();
+    let full: Vec<_> = (0..LEDGER_RETAINED_MESSAGE_CAP)
+        .map(|i| json!({"id": format!("old-high-{i}"), "role":"user", "content": format!("old-high-{i}")}))
+        .collect();
+    t.apply_sync_delta(&delta_with_rev(full, false, 500));
+
+    let resync: Vec<_> = (0..LEDGER_RETAINED_MESSAGE_CAP)
+        .map(
+            |i| json!({"id": format!("fresh-{i}"), "role":"user", "content": format!("fresh-{i}")}),
+        )
+        .collect();
+    t.apply_sync_delta(&delta_with_rev(resync, true, 100));
+
+    let entries = t.apply_sync_delta(&delta_with_rev(
+        vec![json!({"id":"fresh-tail","role":"user","content":"fresh tail"})],
+        false,
+        150,
+    ));
+
+    assert!(matches!(entries.first(), Some(LedgerEntry::User { text }) if text == "fresh-1"));
+    assert!(matches!(entries.last(), Some(LedgerEntry::User { text }) if text == "fresh tail"));
+    assert!(t.retained_message_count() <= LEDGER_RETAINED_MESSAGE_CAP);
+}
+
+#[test]
+fn overlapping_anchor_older_page_prepends_new_prefix_messages() {
+    let mut t = LedgerTranscript::default();
+    let newer: Vec<_> = (100..(100 + LEDGER_RETAINED_MESSAGE_CAP))
+        .map(|i| json!({"id": format!("m-{i}"), "role":"user", "content": format!("msg-{i}")}))
+        .collect();
+    t.apply_sync_delta(&delta_with_rev(newer, false, 200));
+
+    let entries = t.apply_sync_delta(&delta_with_rev(
+        vec![
+            json!({"id":"m-50","role":"user","content":"older with anchor"}),
+            json!({"id":"m-100","role":"user","content":"msg-100 refreshed anchor"}),
+        ],
+        false,
+        100,
+    ));
+
+    assert!(
+        matches!(entries.first(), Some(LedgerEntry::User { text }) if text == "older with anchor")
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|e| matches!(e, LedgerEntry::User { text } if text == "msg-100 refreshed anchor"))
+    );
+    assert!(
+        matches!(entries.last(), Some(LedgerEntry::User { text }) if text == &format!("msg-{}", 100 + LEDGER_RETAINED_MESSAGE_CAP - 2))
+    );
+    assert!(t.retained_message_count() <= LEDGER_RETAINED_MESSAGE_CAP);
 }
