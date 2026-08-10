@@ -53,6 +53,10 @@ pub enum AgentEvent {
         #[serde(default)]
         error: Option<String>,
     },
+    LedgerAdvanced {
+        epoch: u64,
+        rev: u64,
+    },
     /// Rich catalogue changed after tool registration/unregistration.
     #[serde(rename_all = "camelCase")]
     ToolCatalogueChanged {
@@ -85,7 +89,21 @@ pub enum AgentEvent {
         #[serde(rename = "messageRefs", default)]
         message_refs: Vec<String>,
     },
+    /// Future ledger checkpoint event shape; raw flattened payload is retained.
+    LedgerCheckpoint {
+        #[serde(flatten)]
+        payload: serde_json::Map<String, serde_json::Value>,
+    },
+    /// Future ledger resync hint shape; raw flattened payload is retained.
+    LedgerResyncRequired {
+        #[serde(flatten)]
+        payload: serde_json::Map<String, serde_json::Value>,
+    },
     /// Catch-all for unknown/future event types.
     #[serde(other)]
     Unknown,
 }
+
+#[cfg(test)]
+#[path = "event_tests.rs"]
+mod tests;
