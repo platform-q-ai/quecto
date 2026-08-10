@@ -253,6 +253,29 @@ async fn rewind_selector_pending_keeps_open() {
 }
 
 #[tokio::test]
+async fn independent_clients_mint_distinct_rewind_request_ids() {
+    let mut first = harness().await;
+    let mut second = harness().await;
+
+    for kind in ["open", "load", "to"] {
+        let first_id = first.app_mut().next_rewind_request_id(kind);
+        let second_id = second.app_mut().next_rewind_request_id(kind);
+        assert_ne!(
+            first_id, second_id,
+            "fresh clients must not reuse rewind {kind} request ids"
+        );
+        assert!(
+            first_id.starts_with(&format!("rewind-{kind}-")),
+            "{first_id}"
+        );
+        assert!(
+            second_id.starts_with(&format!("rewind-{kind}-")),
+            "{second_id}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn rewind_request_ids_are_monotonically_increasing() {
     let mut h = harness().await;
     let a = h.app_mut();
