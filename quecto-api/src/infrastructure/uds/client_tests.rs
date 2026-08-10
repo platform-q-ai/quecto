@@ -539,7 +539,7 @@ fn tool_policy_changed_is_modeled_not_unknown() {
 }
 
 #[tokio::test]
-async fn send_does_not_broadcast_correlated_response() {
+async fn send_also_broadcasts_correlated_response_to_subscribers() {
     let dir = tempfile::tempdir().unwrap();
     let path = spawn_echo_agent(&dir, "get_message").await;
     let gw = UdsGateway::connect(&path).await.unwrap();
@@ -556,10 +556,9 @@ async fn send_does_not_broadcast_correlated_response() {
         .await
         .unwrap();
     assert!(matches!(response, AgentEvent::Response { command, .. } if command == "get_message"));
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(100), sub.recv())
-            .await
-            .is_err(),
-        "correlated send response must not also be broadcast as a duplicate"
-    );
+    let broadcast = tokio::time::timeout(std::time::Duration::from_secs(2), sub.recv())
+        .await
+        .expect("correlated send response is broadcast to subscribers")
+        .expect("subscriber receives response");
+    assert!(matches!(broadcast, AgentEvent::Response { command, .. } if command == "get_message"));
 }

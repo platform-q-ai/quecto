@@ -148,40 +148,28 @@ async fn websocket_success_preserves_client_correlation_id() {
 }
 
 #[tokio::test]
-async fn websocket_typed_prompt_reaches_legacy_prompt_handler() {
+async fn websocket_typed_prompt_returns_direct_response() {
     let gateway = MockGateway {
         connected: true,
         ..MockGateway::default()
     };
-    let app = build_router(gateway.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
-        .await
-        .expect("websocket connects");
-    ws.send(tokio_tungstenite::tungstenite::Message::Text(
-        serde_json::json!({"type":"prompt","message":"hello"})
-            .to_string()
-            .into(),
-    ))
-    .await
-    .expect("typed prompt sends");
+    let response = ws_response_for(
+        gateway.clone(),
+        serde_json::json!({"type":"prompt","message":"hello"}),
+    )
+    .await;
 
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        loop {
-            if gateway.commands.lock().unwrap().iter().any(
-                |cmd| matches!(cmd, AgentCommand::Prompt { message, .. } if message == "hello"),
-            ) {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("typed prompt reaches gateway");
+    assert!(
+        gateway
+            .commands
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|cmd| matches!(cmd, AgentCommand::Prompt { message, .. } if message == "hello"),)
+    );
+    assert_eq!(response["type"], "response");
+    assert_eq!(response["command"], "get_message");
+    assert_eq!(response["success"], true);
 }
 
 #[tokio::test]

@@ -141,10 +141,8 @@ impl UdsGateway {
                         }
                         match serde_json::from_str::<AgentEvent>(trimmed) {
                             Ok(event) => {
-                                let mut delivered_to_pending = false;
                                 if let AgentEvent::Response { id: Some(id), .. } = &event {
                                     if let Some(pending) = reader_pending.lock().await.remove(id) {
-                                        delivered_to_pending = true;
                                         let _ = pending.tx.send(event.clone());
                                     }
                                 }
@@ -155,18 +153,16 @@ impl UdsGateway {
                                             (p.command == "prompt").then(|| id.clone())
                                         }) {
                                             if let Some(pending) = pending.remove(&id) {
-                                                delivered_to_pending = true;
                                                 let _ = pending.tx.send(event.clone());
                                             }
                                         }
                                     }
                                 }
-                                // Correlated direct-command responses are returned by
-                                // `send`; fan-out subscribers should not receive a
-                                // second copy. Other events are broadcast normally.
-                                if !delivered_to_pending {
-                                    let _ = reader_tx.send(event);
-                                }
+                                // Every subscriber gets a copy of every event. Direct
+                                // `send` waiters receive a clone via their oneshot;
+                                // WebSocket handlers suppress only their own returned
+                                // direct responses to avoid duplicate frames.
+                                let _ = reader_tx.send(event);
                             }
                             Err(e) => {
                                 let preview_len = trimmed.len().min(200);

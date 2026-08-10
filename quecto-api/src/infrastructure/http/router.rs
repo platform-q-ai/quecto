@@ -51,8 +51,6 @@ pub fn build_router<G: AgentGateway + Clone + 'static>(gateway: G) -> Router {
         .with_state(state)
 }
 
-// ── Health ────────────────────────────────────────────────────────────────────
-
 #[derive(Serialize)]
 struct HealthResponse {
     healthy: bool,
@@ -76,8 +74,6 @@ async fn health_handler<G: AgentGateway>(
         }),
     )
 }
-
-// ── Prompt ────────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct PromptRequest {
@@ -154,16 +150,27 @@ fn direct_response_id(event: &AgentEvent) -> Option<&str> {
     }
 }
 
-fn command_type_from_text(text: &str) -> Option<String> {
+fn command_string_from_text(text: &str, key: &str) -> Option<String> {
     serde_json::from_str::<serde_json::Value>(text)
         .ok()
-        .and_then(|value| value.get("type")?.as_str().map(ToOwned::to_owned))
+        .and_then(|value| value.get(key)?.as_str().map(ToOwned::to_owned))
+}
+
+fn command_type_from_text(text: &str) -> Option<String> {
+    command_string_from_text(text, "type")
 }
 
 fn command_id_from_text(text: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(text)
-        .ok()
-        .and_then(|value| value.get("id")?.as_str().map(ToOwned::to_owned))
+    command_string_from_text(text, "id")
+}
+
+fn event_response(
+    result: Result<AgentEvent, crate::domain::error::ApiError>,
+) -> axum::response::Response {
+    match result {
+        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
+        Err(e) => api_error_response(e).into_response(),
+    }
 }
 
 async fn prompt_handler<G: AgentGateway>(
@@ -201,29 +208,20 @@ async fn steer_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
     Json(body): Json<MessageRequest>,
 ) -> impl IntoResponse {
-    match use_cases::steer::execute(&state.gateway, body.message).await {
-        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
-        Err(e) => api_error_response(e).into_response(),
-    }
+    event_response(use_cases::steer::execute(&state.gateway, body.message).await)
 }
 
 async fn follow_up_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
     Json(body): Json<MessageRequest>,
 ) -> impl IntoResponse {
-    match use_cases::follow_up::execute(&state.gateway, body.message).await {
-        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
-        Err(e) => api_error_response(e).into_response(),
-    }
+    event_response(use_cases::follow_up::execute(&state.gateway, body.message).await)
 }
 
 async fn abort_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
 ) -> impl IntoResponse {
-    match use_cases::abort::execute(&state.gateway).await {
-        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
-        Err(e) => api_error_response(e).into_response(),
-    }
+    event_response(use_cases::abort::execute(&state.gateway).await)
 }
 
 // ── Set model ──────────────────────────────────────────────────────────────────
@@ -262,39 +260,25 @@ async fn set_effort_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
     Json(body): Json<SetEffortRequest>,
 ) -> impl IntoResponse {
-    match use_cases::set_effort::execute(&state.gateway, body.effort).await {
-        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
-        Err(e) => api_error_response(e).into_response(),
-    }
+    event_response(use_cases::set_effort::execute(&state.gateway, body.effort).await)
 }
 
 async fn clear_history_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
 ) -> impl IntoResponse {
-    match use_cases::clear_history::execute(&state.gateway).await {
-        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
-        Err(e) => api_error_response(e).into_response(),
-    }
+    event_response(use_cases::clear_history::execute(&state.gateway).await)
 }
-
-// ── Subagents / Tools ──────────────────────────────────────────────────────────
 
 async fn subagents_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
 ) -> impl IntoResponse {
-    match use_cases::get_subagents::execute(&state.gateway).await {
-        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
-        Err(e) => api_error_response(e).into_response(),
-    }
+    event_response(use_cases::get_subagents::execute(&state.gateway).await)
 }
 
 async fn tools_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
 ) -> impl IntoResponse {
-    match use_cases::tools::catalogue(&state.gateway).await {
-        Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
-        Err(e) => api_error_response(e).into_response(),
-    }
+    event_response(use_cases::tools::catalogue(&state.gateway).await)
 }
 
 #[derive(Deserialize)]
@@ -327,8 +311,6 @@ async fn set_tool_policy_handler<G: AgentGateway>(
         Err(e) => api_error_response(e).into_response(),
     }
 }
-
-// ── State ─────────────────────────────────────────────────────────────────────
 
 async fn state_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
@@ -650,12 +632,30 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
             }
             if let Ok(req) = serde_json::from_str::<PromptRequest>(&text) {
                 if !req.message.is_empty() {
-                    let _ = gateway
+                    let result = gateway
                         .send(AgentCommand::Prompt {
                             message: req.message,
                             streaming_behavior: req.streaming_behavior,
                         })
                         .await;
+                    let (event, suppress) = match result {
+                        Ok(event) => {
+                            let suppress = direct_response_id(&event)
+                                .map(str::to_owned)
+                                .into_iter()
+                                .collect();
+                            (event, suppress)
+                        }
+                        Err(err) => (
+                            ws_error_response(
+                                command_id_from_text(&text),
+                                "prompt",
+                                err.to_string(),
+                            ),
+                            Vec::new(),
+                        ),
+                    };
+                    let _ = command_event_tx.send((event, suppress)).await;
                 }
             }
         }
