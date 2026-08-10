@@ -269,6 +269,7 @@ impl<T> SelectableItemModalBuilder<T> {
             original_scopes: BTreeMap::new(),
             working_scopes: BTreeMap::new(),
             scope_mode: false,
+            toggle_space_while_filtering: false,
             query: String::new(),
             navigator: ListNavigator::new(),
             result: SelectableItemModalResult::Pending,
@@ -289,6 +290,7 @@ pub struct SelectableItemModal {
     original_scopes: BTreeMap<String, ScopeSelection>,
     working_scopes: BTreeMap<String, ScopeSelection>,
     scope_mode: bool,
+    toggle_space_while_filtering: bool,
     query: String,
     navigator: ListNavigator,
     result: SelectableItemModalResult,
@@ -405,6 +407,11 @@ impl SelectableItemModal {
 
     pub fn selected_item(&self) -> Option<&str> {
         self.selected_row().map(|row| row.id.as_str())
+    }
+
+    pub fn with_space_toggle_while_filtering(mut self) -> Self {
+        self.toggle_space_while_filtering = true;
+        self
     }
 
     pub fn with_scope_selection(mut self, scopes: BTreeMap<String, ScopeSelection>) -> Self {
@@ -686,7 +693,9 @@ impl Component for SelectableItemModal {
                 self.query.pop();
                 self.update_filter(true);
             }
-            Key::Char(' ') if self.query.is_empty() => self.toggle_selected(),
+            Key::Char(' ') if self.query.is_empty() || self.toggle_space_while_filtering => {
+                self.toggle_selected();
+            }
             Key::Char(c) => {
                 if self.query.len() < MAX_QUERY_LEN {
                     self.query.push(*c);
