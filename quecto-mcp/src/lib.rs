@@ -1,11 +1,16 @@
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
+
+mod config;
+mod model;
+pub use config::Config;
+pub use model::{McpTool, QuectoToolRegistration, RegisteredMcpTools};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -20,6 +25,8 @@ pub enum QuectoMcpError {
         first_mcp_name: String,
         second_mcp_name: String,
     },
+    #[error("invalid token source: {0}")]
+    InvalidTokenSource(String),
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("HTTP error: {0}")]
@@ -41,27 +48,6 @@ pub type Result<T> = std::result::Result<T, QuectoMcpError>;
 const MAX_MCP_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_UDS_LINE_BYTES: usize = 1024 * 1024;
 const MAX_CONCURRENT_TOOL_CALLS: usize = 8;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct McpTool {
-    pub name: String,
-    pub description: String,
-    pub input_schema: Value,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QuectoToolRegistration {
-    pub name: String,
-    pub description: String,
-    #[serde(rename = "parametersSchema")]
-    pub parameters_schema: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct RegisteredMcpTools {
-    pub registrations: Vec<QuectoToolRegistration>,
-    pub mapping: HashMap<String, String>,
-}
 
 pub fn mcp_name_to_quecto_name(name: &str) -> Result<String> {
     if name.trim().is_empty() {
@@ -124,16 +110,22 @@ pub fn build_mapping_with_name_prefix(
     name_prefix: &str,
 ) -> Result<HashMap<String, String>> {
     let mut mapping = HashMap::new();
+    let mut seen_mcp_names = HashSet::new();
     for tool in tools {
-        let safe = format!("{name_prefix}{}", mcp_name_to_quecto_name(&tool.name)?);
+        if !seen_mcp_names.insert(tool.name.clone()) {
+            return Err(QuectoMcpError::ToolNameCollision {
+                safe_name: mcp_name_to_quecto_name(&tool.name)?,
+                first_mcp_name: tool.name.clone(),
+                second_mcp_name: tool.name.clone(),
+            });
+        }
+        let safe = quecto_name_with_prefix(&tool.name, name_prefix)?;
         if let Some(existing) = mapping.insert(safe.clone(), tool.name.clone()) {
-            if existing != tool.name {
-                return Err(QuectoMcpError::ToolNameCollision {
-                    safe_name: safe,
-                    first_mcp_name: existing,
-                    second_mcp_name: tool.name.clone(),
-                });
-            }
+            return Err(QuectoMcpError::ToolNameCollision {
+                safe_name: safe,
+                first_mcp_name: existing,
+                second_mcp_name: tool.name.clone(),
+            });
         }
     }
     Ok(mapping)
@@ -143,12 +135,20 @@ pub fn build_registration(tool: &McpTool) -> Result<QuectoToolRegistration> {
     build_registration_with_name_prefix(tool, "")
 }
 
+fn quecto_name_with_prefix(mcp_name: &str, name_prefix: &str) -> Result<String> {
+    let safe = format!("{name_prefix}{}", mcp_name_to_quecto_name(mcp_name)?);
+    if safe != mcp_name_to_quecto_name(&safe)? {
+        return Err(QuectoMcpError::InvalidToolName(safe));
+    }
+    Ok(safe)
+}
+
 pub fn build_registration_with_name_prefix(
     tool: &McpTool,
     name_prefix: &str,
 ) -> Result<QuectoToolRegistration> {
     Ok(QuectoToolRegistration {
-        name: format!("{name_prefix}{}", mcp_name_to_quecto_name(&tool.name)?),
+        name: quecto_name_with_prefix(&tool.name, name_prefix)?,
         description: if tool.description.is_empty() {
             format!("MCP tool {}", tool.name)
         } else {
@@ -166,151 +166,11 @@ pub fn build_registrations_with_name_prefix(
     tools: &[McpTool],
     name_prefix: &str,
 ) -> Result<Vec<QuectoToolRegistration>> {
+    build_mapping_with_name_prefix(tools, name_prefix)?;
     tools
         .iter()
         .map(|tool| build_registration_with_name_prefix(tool, name_prefix))
         .collect()
-}
-
-#[derive(Debug, Clone)]
-pub struct Config {
-    pub socket: PathBuf,
-    pub mcp_url: String,
-    pub mcp_token: String,
-    pub mcp_server_name: String,
-    pub tool_prefixes: Vec<String>,
-    pub tool_allowlist: Vec<String>,
-    pub tool_denylist: Vec<String>,
-    pub name_prefix: String,
-    pub timeout: Duration,
-    pub register_timeout: Duration,
-    pub refresh_interval: Option<Duration>,
-}
-
-impl Config {
-    pub fn from_env_and_args(args: impl IntoIterator<Item = String>) -> Result<Self> {
-        let mut socket = std::env::var("QUECTO_SOCKET").ok().map(PathBuf::from);
-        let mut mcp_url = std::env::var("PERME8_MCP_URL").ok();
-        let mut mcp_token = std::env::var("PERME8_MCP_TOKEN").ok();
-        let mut tool_prefixes = std::env::var("QUECTO_MCP_TOOL_PREFIXES")
-            .ok()
-            .map(|s| split_csv(&s))
-            .unwrap_or_default();
-        let mut allowlist = Vec::new();
-        let mut denylist = Vec::new();
-        let mut server_name = "perme8-mcp".to_string();
-        let mut name_prefix = String::new();
-        let mut timeout = std::env::var("QUECTO_MCP_TIMEOUT_SECONDS")
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .map(Duration::from_secs)
-            .unwrap_or_else(|| Duration::from_secs(30));
-        let mut register_timeout = Duration::from_secs(10);
-        let refresh_interval = None;
-
-        let mut iter = args.into_iter().skip(1);
-        while let Some(arg) = iter.next() {
-            match arg.as_str() {
-                "--socket" => socket = iter.next().map(PathBuf::from),
-                "--mcp-url" => mcp_url = iter.next(),
-                "--mcp-token" => mcp_token = iter.next(),
-                "--mcp-server-name" => server_name = iter.next().unwrap_or(server_name),
-                "--tool-prefix" => {
-                    if let Some(prefix) = iter.next() {
-                        tool_prefixes.push(prefix);
-                    }
-                }
-                "--tool-allowlist" => {
-                    if let Some(value) = iter.next() {
-                        allowlist.extend(split_csv(&value));
-                    }
-                }
-                "--tool-denylist" => {
-                    if let Some(value) = iter.next() {
-                        denylist.extend(split_csv(&value));
-                    }
-                }
-                "--name-prefix" => name_prefix = iter.next().unwrap_or_default(),
-                "--refresh-interval" => {
-                    let _ = iter.next();
-                    return Err(QuectoMcpError::UnsupportedOption(
-                        "--refresh-interval is not implemented; restart quecto-mcp to refresh tool registrations".into(),
-                    ));
-                }
-                "--register-timeout" => {
-                    if let Some(value) = iter.next().and_then(|s| s.parse::<u64>().ok()) {
-                        register_timeout = Duration::from_secs(value);
-                    }
-                }
-                "--mcp-token-file" => {
-                    if let Some(path) = iter.next() {
-                        mcp_token = std::fs::read_to_string(path)
-                            .ok()
-                            .map(|s| s.trim().to_string());
-                    }
-                }
-                "--mcp-token-command" => {
-                    if let Some(command) = iter.next() {
-                        mcp_token = run_token_command(&command).ok();
-                    }
-                }
-                "--timeout" => {
-                    if let Some(value) = iter.next().and_then(|s| s.parse::<u64>().ok()) {
-                        timeout = Duration::from_secs(value);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        if tool_prefixes.is_empty() && allowlist.is_empty() {
-            tool_prefixes.push("community.".to_string());
-        }
-
-        Ok(Self {
-            socket: socket
-                .ok_or_else(|| QuectoMcpError::Quecto("missing --socket / QUECTO_SOCKET".into()))?,
-            mcp_url: mcp_url
-                .ok_or_else(|| QuectoMcpError::Mcp("missing --mcp-url / PERME8_MCP_URL".into()))?,
-            mcp_token: mcp_token.ok_or_else(|| {
-                QuectoMcpError::Mcp("missing --mcp-token / PERME8_MCP_TOKEN".into())
-            })?,
-            mcp_server_name: server_name,
-            tool_prefixes,
-            tool_allowlist: allowlist,
-            tool_denylist: denylist,
-            name_prefix,
-            timeout,
-            register_timeout,
-            refresh_interval,
-        })
-    }
-}
-
-fn split_csv(value: &str) -> Vec<String> {
-    value
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(ToOwned::to_owned)
-        .collect()
-}
-
-fn run_token_command(command: &str) -> std::io::Result<String> {
-    let argv = shlex::split(command).ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "invalid --mcp-token-command quoting",
-        )
-    })?;
-    let Some((program, args)) = argv.split_first() else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "empty --mcp-token-command",
-        ));
-    };
-    let output = std::process::Command::new(program).args(args).output()?;
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 #[derive(Debug, Clone)]
@@ -351,9 +211,8 @@ impl McpClient {
         if let Some(session) = session {
             *self.session_id.lock().await = Some(session);
         }
-        let _ = self
-            .post_json_rpc("notifications/initialized", serde_json::json!({}))
-            .await;
+        self.post_json_rpc("notifications/initialized", serde_json::json!({}))
+            .await?;
         Ok(())
     }
 
@@ -367,10 +226,16 @@ impl McpClient {
             .and_then(Value::as_array)
             .ok_or_else(|| QuectoMcpError::Mcp(format!("invalid tools/list response: {body}")))?;
 
-        Ok(tools
+        tools
             .iter()
-            .filter_map(|tool| {
-                let name = tool.get("name")?.as_str()?.to_string();
+            .map(|tool| {
+                let name = tool
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        QuectoMcpError::Mcp(format!("invalid tools/list tool entry: {tool}"))
+                    })?
+                    .to_string();
                 let description = tool
                     .get("description")
                     .and_then(Value::as_str)
@@ -381,13 +246,13 @@ impl McpClient {
                     .or_else(|| tool.get("input_schema"))
                     .cloned()
                     .unwrap_or_else(|| serde_json::json!({"type": "object"}));
-                Some(McpTool {
+                Ok(McpTool {
                     name,
                     description,
                     input_schema,
                 })
             })
-            .collect())
+            .collect()
     }
 
     pub async fn call_tool(&self, name: &str, arguments: Value) -> Result<String> {
@@ -492,7 +357,8 @@ pub enum QuectoEvent {
         tool_call_id: String,
         #[serde(rename = "toolName")]
         tool_name: String,
-        arguments: String,
+        #[serde(default)]
+        arguments: Value,
     },
     Response {
         id: Option<String>,
@@ -622,7 +488,7 @@ pub async fn serve_uds_extension(
                     return;
                 };
                 let (content, is_error) = match mcp_name {
-                    Some(mcp_name) => match serde_json::from_str::<Value>(&arguments) {
+                    Some(mcp_name) => match arguments_to_json(arguments) {
                         Ok(args) => {
                             let start = std::time::Instant::now();
                             tracing::info!(quecto_tool = %tool_name, mcp_tool = %mcp_name, "executing MCP-backed tool");
@@ -639,7 +505,7 @@ pub async fn serve_uds_extension(
                             );
                             result
                         }
-                        Err(err) => (format!("Invalid JSON arguments: {err}"), true),
+                        Err(err) => (err, true),
                     },
                     None => (format!("Unknown MCP-backed tool: {tool_name}"), true),
                 };
@@ -647,6 +513,29 @@ pub async fn serve_uds_extension(
                 let _ = result_tx.send(result).await;
             });
         }
+    }
+}
+
+fn arguments_to_json(arguments: Value) -> std::result::Result<Value, String> {
+    match arguments {
+        Value::String(raw) => {
+            serde_json::from_str(&raw).map_err(|err| format!("Invalid JSON arguments: {err}"))
+        }
+        other => Err(format!(
+            "Invalid execute_tool arguments: expected JSON string, got {}",
+            json_type_name(&other)
+        )),
+    }
+}
+
+fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
     }
 }
 

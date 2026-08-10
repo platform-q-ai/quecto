@@ -26,7 +26,10 @@ impl App {
                 self.master_session.footer.set_pwd_path(&root);
                 self.apply_git_branch(app_git::read_git_branch_from(&root));
             }
-            Event::Token { token } => self.master_session.chat.append_token(&token),
+            Event::Token { token } => {
+                self.master_session.chat.append_token(&token);
+                self.reconcile_master_retention_trim();
+            }
             Event::TurnStart => {}
             Event::TurnEnd { message } => self.handle_turn_end(message),
             Event::ToolExecutionStart {
@@ -137,6 +140,7 @@ impl App {
         self.agent_state.start();
         self.tools_this_turn = 0;
         self.open_tool_calls = 0;
+        let _ = self.master_session.chat.take_retention_front_delta();
         self.active_turn_start = self.master_session.chat.entry_count();
         // Mirror the abort-aware run state onto the master session's `running`
         // flag so the unified working indicator is driven by one per-session
@@ -144,6 +148,16 @@ impl App {
         self.master_session.running = true;
         self.master_session.footer.set_streaming(true);
         self.spinner = Some(Spinner::new("Working... (Esc to interrupt)"));
+    }
+
+    pub(super) fn reconcile_master_retention_trim(&mut self) {
+        let (trimmed, inserted) = self.master_session.chat.take_retention_front_delta();
+        if trimmed > 0 || inserted > 0 {
+            self.active_turn_start = self
+                .active_turn_start
+                .saturating_sub(trimmed)
+                .saturating_add(inserted);
+        }
     }
 
     fn handle_agent_end(&mut self) {
@@ -202,15 +216,6 @@ impl App {
             args.to_string()
         };
         self.update_tool_spinner(&tool_name, &args, &args_str);
-        // Mark the awaited sub-agent so its row shows a per-row "awaiting"
-        // indicator instead of the shared spinner line.
-        if tool_name == "agent_cmd"
-            && crate::protocol::presentation_payloads::string_field(&args, "command").as_deref()
-                == Some("await")
-        {
-            self.subagents.awaited_agent_id =
-                crate::protocol::presentation_payloads::string_field(&args, "agent_id");
-        }
         let is_spawn = tool_name == "spawn";
         // Every model-issued tool call — even one whose box is suppressed (spawn)
         // — appends a tool-call + tool-result message pair to the conversation
@@ -225,6 +230,7 @@ impl App {
             self.master_session
                 .chat
                 .start_tool(tool_call_id, tool_name, args_str);
+            self.reconcile_master_retention_trim();
         }
         if is_spawn {
             self.track_starting_subagent(&args);
@@ -237,15 +243,6 @@ impl App {
         };
         let msg = match tool_name {
             "spawn" => format!("Spawning {}...", sanitized_arg(args, "agent_id", "agent")),
-            // For `await`, keep a generic, stable message — the awaited agent is
-            // marked on its own sub-agent row, so the shared line stays put.
-            "agent_cmd"
-                if crate::protocol::presentation_payloads::string_field(args, "command")
-                    .as_deref()
-                    == Some("await") =>
-            {
-                "Working... (Esc to interrupt)".to_string()
-            }
             "agent_cmd" => format!(
                 "{} → {}...",
                 sanitized_arg(args, "command", "?"),
@@ -338,9 +335,6 @@ impl App {
         }
         if is_subagent_tool(&tool_name) {
             self.send_command(Command::GetSubagents { id: None });
-        }
-        if self.subagents.awaited_agent_id.is_some() {
-            self.subagents.awaited_agent_id = None;
         }
         if let Some(spinner) = &mut self.spinner {
             spinner.set_message("Working... (Esc to interrupt)");
@@ -521,10 +515,12 @@ mod cursor_tests;
 #[path = "app_events_readonly_tests.rs"]
 mod readonly_tests;
 
-/// A process-unique token for request/batch ids. Combines a wall-clock stamp
-/// (readability in logs) with a monotonic counter so two calls in the same
-/// nanosecond — `SystemTime` is not guaranteed strictly increasing — cannot
-/// collide and clobber each other's pending-recovery entry (#1060 review).
+/// A production-startup/process-unique token for request/batch ids. Combines
+/// the OS process id, a wall-clock stamp (readability in logs), and a
+/// monotonic counter so two calls in the same nanosecond — `SystemTime` is not
+/// guaranteed strictly increasing — cannot collide and clobber each other's
+/// pending-recovery entry (#1060
+/// review).
 pub(super) fn uuid_like() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -533,8 +529,9 @@ pub(super) fn uuid_like() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
+    let pid = std::process::id();
     let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("{nanos:x}-{seq:x}")
+    format!("{pid:x}-{nanos:x}-{seq:x}")
 }
 
 #[cfg(test)]

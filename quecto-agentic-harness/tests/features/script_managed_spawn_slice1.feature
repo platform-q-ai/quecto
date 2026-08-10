@@ -70,8 +70,7 @@ Feature: Script-managed subagent spawning
 
     Examples:
       | config_error |
-      | missing default |
-      | default name not found |
+      | no default label |
       | missing create argv |
       | empty create argv |
       | missing cleanup argv |
@@ -79,20 +78,28 @@ Feature: Script-managed subagent spawning
       | unknown config field |
 
   @done @container-spawn
-  Scenario: Omitted repository uses the parent repository URL
-    Given script-managed subagent spawning is available with parent repository "https://example.invalid/parent.git"
-    When I spawn script-managed subagent "container-parent-repo-slice1" with default selection and task "PARENT_REPO_MARKER"
+  Scenario: A container config's baked repository reaches its create script untouched
+    Given script-managed subagent spawning is available with baked repository "https://example.invalid/baked.git"
+    When I spawn script-managed subagent "container-baked-repo-slice1" with default selection and task "BAKED_REPO_MARKER"
     Then the spawn result should not be an error
-    And the script-managed runtime should have received repository "https://example.invalid/parent.git"
-    And child "container-parent-repo-slice1" should receive "PARENT_REPO_MARKER"
+    And the script-managed runtime should have received repository "https://example.invalid/baked.git"
+    And child "container-baked-repo-slice1" should receive "BAKED_REPO_MARKER"
 
   @done @container-spawn
-  Scenario: Explicit repository is passed literally to the script-managed runtime
+  Scenario: A sandbox config spawns from a parent outside any checkout with no repository
     Given script-managed subagent spawning is available with default script "default"
-    When I spawn script-managed subagent "container-repo-slice1" for repository "https://example.invalid/repo.git" and task "REPO_MARKER"
+    When I spawn script-managed subagent "container-sandbox-slice1" with default selection and task "SANDBOX_MARKER"
     Then the spawn result should not be an error
-    And the script-managed runtime should have received repository "https://example.invalid/repo.git"
-    And child "container-repo-slice1" should receive "REPO_MARKER"
+    And the script-managed runtime should have received no repository
+    And child "container-sandbox-slice1" should receive "SANDBOX_MARKER"
+
+  @done @container-spawn
+  Scenario: Unknown container config selection enumerates the available configs
+    Given script-managed subagent spawning is available with default script "default"
+    When I spawn script-managed subagent "container-unknown-config-slice1" with script "missing" and task "UNKNOWN_CONFIG_MARKER"
+    Then the spawn result should fail listing available container configs "alternate, default"
+    And the script-managed runtime should not have been invoked
+    And the spawn result should not include an environment reference
 
   @done @container-spawn
   Scenario: Script-managed creation starts exactly one child without local fallback

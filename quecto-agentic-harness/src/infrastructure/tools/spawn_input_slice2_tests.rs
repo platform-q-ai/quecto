@@ -50,21 +50,19 @@ fn existing_mode_requires_exactly_one_target() {
 #[test]
 fn existing_mode_rejects_new_only_fields() {
     let err = parse_container_selection(
+        &json!({"container":{"mode":"existing","ref":"C1","container_config":"alternate"}}),
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("container_config"),
+        "container_config is only valid for mode 'new': {err}"
+    );
+    let err = parse_container_selection(
         &json!({"container":{"mode":"existing","ref":"C1","repo":"https://example.invalid/r.git"}}),
     )
     .unwrap_err();
-    assert!(
-        err.contains("repo"),
-        "repo is only valid for mode 'new': {err}"
-    );
-    let err = parse_container_selection(
-        &json!({"container":{"mode":"existing","ref":"C1","container_script":"alternate"}}),
-    )
-    .unwrap_err();
-    assert!(
-        err.contains("container_script"),
-        "container_script is only valid for mode 'new': {err}"
-    );
+    // repo no longer exists anywhere on the surface: plain unknown field.
+    assert!(err.contains("unknown container field 'repo'"), "{err}");
 }
 
 #[test]
@@ -84,8 +82,7 @@ fn new_mode_accepts_optional_environment_name() {
     assert_eq!(
         parsed,
         Ok(ContainerSelection::New {
-            repo: None,
-            container_script: None,
+            container_config: None,
             name: Some("review-env".into()),
         }),
         "mode new must carry the optional environment name"

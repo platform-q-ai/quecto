@@ -649,6 +649,7 @@ async fn dispatch_routes_resume_session_ephemeral() {
 async fn dispatch_routes_fieldless_get_state() {
     let mut fx = Fixture::new();
     let cmd = AgentCommand::GetState {
+        agent_id: None,
         id: Some("g".into()),
     };
     let mut ctx = fx.ctx();

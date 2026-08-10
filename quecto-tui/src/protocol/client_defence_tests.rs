@@ -160,7 +160,13 @@ async fn oversized_outbound_command_emits_warning_and_keeps_writer_alive() {
         })
         .await
         .unwrap();
-    client.send(&Command::GetState { id: None }).await.unwrap();
+    client
+        .send(&Command::GetState {
+            id: None,
+            agent_id: None,
+        })
+        .await
+        .unwrap();
 
     server.await.unwrap();
     let captured = warnings.lock().unwrap();

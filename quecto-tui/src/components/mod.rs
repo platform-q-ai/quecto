@@ -1,6 +1,7 @@
 pub mod ansi;
 pub mod autocomplete;
 pub mod chat;
+mod chat_retention;
 pub mod component;
 pub mod editor;
 pub mod effort_selector;

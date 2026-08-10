@@ -6,7 +6,7 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.104.2**.
+Current version: **0.105.8**.
 
 ## Quick Start
 
@@ -620,7 +620,7 @@ External tool binaries (`rg`, `fd`) are resolved from `PATH`; missing binaries r
 | `find` | Find files by glob pattern with fd. Respects nested `.gitignore` files, path-segment patterns via `--full-path`, configurable limit (default 1000), 50KB output cap |
 | `recall` | Retrieve a spilled tool output by its spill ID (e.g. `turn20:bash:0`). Use `recall("list")` for the full index |
 | `spawn` | Spawn a background UDS-mode subagent for long-running tasks |
-| `agent_cmd` | Send commands to spawned UDS subagents: `prompt`, `steer`, `follow_up`, `abort`, `kill`, `await`, `get_state`, `get_messages` (optional `count`/`before` — omit both for the newest history page, N for last N, `before` pages backward), `get_session_stats`, `get_subagents`, `get_subagents_all`, `get_containers`, `kill_container`, `get_tool_catalogue`, `set_model`, `set_effort`, `clear_history`. **Model-facing schema:** `await` is currently hidden from the tool enum/description; prefer spawn → end turn → passive completion note → `get_messages`. Do not poll `get_subagents` / `get_subagents_all` or sleep as a wait loop. |
+| `agent_cmd` | Send commands to spawned UDS subagents: `prompt`, `steer`, `follow_up`, `abort`, `kill`, `get_state`, `get_messages` (optional `count`/`before` — omit both for the newest history page, N for last N, `before` pages backward), `get_session_stats`, `get_subagents`, `get_subagents_all`, `get_containers`, `kill_container`, `get_tool_catalogue`, `set_model`, `set_effort`, `clear_history`. Prefer spawn → end turn → passive completion note → `get_messages`. Do not poll `get_subagents` / `get_subagents_all` or sleep as a wait loop. |
 
 For `agent_cmd` command `get_subagents_all`, pass `agent_id` as `*` to list the current parent agent's tracked subagent registry instead of targeting a child agent.
 
@@ -816,7 +816,7 @@ Human guides (full reference). The agent `docs` tool embeds a short **operating 
 | [Subagents](docs/subagents.md) | Spawning and controlling UDS-mode subagents with `spawn` and `agent_cmd` tools |
 | [Workflow](docs/workflow.md) | UDS-only template-based workflow engine with default dormant tool availability, selector mode, guards, and live prompt injection |
 | [Models & providers](docs/runtime-models-providers.md) | `models.json` registry and provider setup |
-| [Container runtimes](../docs/container-runtimes.md) | Script-managed subagent environments: the `container_scripts` contract and the canonical reference runtime |
+| [Container runtimes](../docs/container-runtimes.md) | Script-managed subagent environments: the `container_configs` contract and the canonical reference runtime |
 | [Contributor Cookbooks](docs/contributor-cookbooks.md) | Change maps for common harness work: tools, UDS commands, providers, events, persistence, subagents, and context policy |
 
 ## Tech stack

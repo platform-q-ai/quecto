@@ -127,15 +127,6 @@ pub fn spawn_start(id: &str) -> Event {
     }
 }
 
-/// An `agent_cmd await` tool starting on `id` (marks the row "awaiting").
-pub fn await_start(id: &str) -> Event {
-    Event::ToolExecutionStart {
-        tool_call_id: format!("tc-await-{id}"),
-        tool_name: "agent_cmd".to_string(),
-        args: serde_json::json!({ "command": "await", "agent_id": id }),
-    }
-}
-
 /// A tool finishing (clears the awaiting marker / spinner message).
 pub fn tool_end(call_id: &str, tool: &str) -> Event {
     Event::ToolExecutionEnd {

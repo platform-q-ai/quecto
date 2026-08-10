@@ -1,7 +1,8 @@
 use super::*;
 
 pub(super) fn runtime_pod_name(runtime_ref: &str) -> String {
-    format!("quecto-runtime-{}", runtime_ref)
+    const PREFIX: &str = "quecto-runtime-";
+    let sanitized = runtime_ref
         .chars()
         .map(|ch| {
             if ch.is_ascii_alphanumeric() || ch == '-' {
@@ -10,8 +11,18 @@ pub(super) fn runtime_pod_name(runtime_ref: &str) -> String {
                 '-'
             }
         })
-        .take(63)
-        .collect()
+        .collect::<String>();
+    let suffix_budget = 63usize.saturating_sub(PREFIX.len() + 1);
+    let suffix = sanitized
+        .rsplit('-')
+        .next()
+        .unwrap_or(&sanitized)
+        .chars()
+        .take(suffix_budget)
+        .collect::<String>();
+    let prefix_budget = 63usize.saturating_sub(PREFIX.len() + suffix.len() + 1);
+    let head = sanitized.chars().take(prefix_budget).collect::<String>();
+    format!("{PREFIX}{head}-{suffix}")
 }
 
 pub(super) fn runtime_target_url(target_base: &str, path: &str, query: Option<&str>) -> String {

@@ -115,17 +115,20 @@ impl App {
             // channel) never delivered the prompt, so a User entry would diverge
             // UI from state.
             if self.send_to_active_subagent(cmd) {
-                self.active_chat_mut().add_entry(ChatEntry::User {
-                    text: text.to_string(),
-                });
+                self.active_chat_mut()
+                    .add_entry_follow_tail(ChatEntry::User {
+                        text: text.to_string(),
+                    });
             }
             return;
         }
 
         // Master session: add user message to chat and send to the primary agent.
-        self.master_session.chat.add_entry(ChatEntry::User {
-            text: text.to_string(),
-        });
+        self.master_session
+            .chat
+            .add_entry_follow_tail(ChatEntry::User {
+                text: text.to_string(),
+            });
         let cmd = if self.agent_state.is_running() {
             Command::FollowUp {
                 id: None,

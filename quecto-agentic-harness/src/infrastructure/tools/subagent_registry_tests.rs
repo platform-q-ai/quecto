@@ -108,36 +108,6 @@ fn test_entry_socket_path() {
     assert_eq!(entry.socket_path, PathBuf::from("/run/quecto.sock"));
 }
 
-// --- consume_await_dedupe (#828) ---
-
-#[test]
-fn consume_await_dedupe_handles_none_registry() {
-    // No registry at all: nothing to suppress.
-    assert!(!consume_await_dedupe(&None, "anyone"));
-}
-
-#[test]
-fn consume_await_dedupe_false_without_pending_flag() {
-    let r = new_registry();
-    r.lock()
-        .unwrap()
-        .insert("bot".into(), SubagentEntry::new(PathBuf::from("/s"), 1));
-    assert!(!consume_await_dedupe(&Some(r), "bot"));
-}
-
-#[test]
-fn consume_await_dedupe_consumes_pending_flag_once() {
-    let r = new_registry();
-    r.lock()
-        .unwrap()
-        .insert("bot".into(), SubagentEntry::new(PathBuf::from("/s"), 1));
-    mark_completion_consumed_by_await(&r, "bot");
-    let reg = Some(r);
-    // First check consumes the flag (suppress), second sees it cleared.
-    assert!(consume_await_dedupe(&reg, "bot"));
-    assert!(!consume_await_dedupe(&reg, "bot"));
-}
-
 // --- SubagentNotification (#523) ---
 
 #[test]
@@ -170,6 +140,7 @@ fn test_errored_message_format() {
 fn test_exited_message_format() {
     let n = SubagentNotification::Exited {
         agent_id: "formatter".into(),
+        reason: None,
     };
     let msg = n.to_message();
     assert!(msg.contains("formatter"));
@@ -392,6 +363,7 @@ async fn test_notification_drain() {
                 i as u64 + 1,
                 SubagentNotification::Exited {
                     agent_id: format!("bot-{}", i),
+                    reason: None,
                 },
             ))
             .await;

@@ -43,7 +43,7 @@ length-prefixed frames       shipped  ADR-0008        legacy NDJSON accepted
 JSON payloads                shipped  ADR-0011        binary rejected until measured
 message refs in agent_end    shipped  ADR-0008/#1060  legacy full messages absent/empty
 paged get_messages           open     #1061           count tail supported
-single get_message paging    open     #1094           large content may hit cap
+ranged get_message           shipped  #1060/#1093     large content walks offset/nextOffset
 subagent get_message forward shipped  #1060           parent history must not answer
 ```
 

@@ -2,6 +2,9 @@ use super::DispatchCtx;
 use super::uds_dispatch_get_message_forward::{ForwardGetMessage, forward_subagent_get_message};
 use super::{AgentCommand, AgentEvent};
 use crate::domain::ids::{AgentId, CommandId, MessageId, ToolCallId};
+use crate::infrastructure::tools::subagent_routing::{
+    InspectionRoute, RoutableInspectionCommand, UDS_INSPECTION_ALLOWLIST, resolve_inspection_route,
+};
 
 /// Pre-router for commands addressed to a spawned sub-agent.
 ///
@@ -12,6 +15,24 @@ pub(super) async fn try_forward_subagent_targeted_command(
     cmd: &AgentCommand,
     ctx: &mut DispatchCtx<'_>,
 ) -> Option<bool> {
+    let routable = RoutableInspectionCommand::from_uds_type(cmd.type_name())?;
+    debug_assert!(UDS_INSPECTION_ALLOWLIST.contains(&routable));
+    if let AgentCommand::GetState {
+        agent_id: Some(agent_id),
+        id,
+    } = cmd
+    {
+        let tn = cmd.type_name();
+        let ev = forward_subagent_get_state(
+            ctx,
+            id.as_deref().map(CommandId::from),
+            tn,
+            AgentId::from(agent_id.as_str()),
+        )
+        .await;
+        super::emit_response_or_frame_limit_error(ctx, id.as_deref(), tn, ev).await;
+        return Some(false);
+    }
     if let AgentCommand::GetMessages {
         count,
         before,
@@ -103,6 +124,50 @@ pub(super) async fn try_forward_subagent_targeted_command(
     None
 }
 
+pub(super) async fn forward_subagent_get_state(
+    ctx: &DispatchCtx<'_>,
+    id: Option<CommandId>,
+    tn: &str,
+    agent_id: AgentId,
+) -> AgentEvent {
+    use crate::infrastructure::tools::subagent_registry::{
+        INSPECTOR_RESPONSE_TIMEOUT, send_subagent_uds_command_with_timeout,
+    };
+    let id_ref = id.as_ref().map(CommandId::as_str);
+    let Some(registry) = ctx.subagent_registry.as_ref() else {
+        return AgentEvent::err(id_ref, tn, "no sub-agent registry available");
+    };
+    let route = match resolve_inspection_route(registry, agent_id.as_str()) {
+        Ok(route) => route,
+        Err(e) => return AgentEvent::err(id_ref, tn, e),
+    };
+    let mut cmd = serde_json::json!({ "type": "get_state" });
+    if let InspectionRoute::ViaAncestor { target_id, .. } = &route {
+        cmd["agent_id"] = serde_json::json!(target_id);
+    }
+    let socket_path = match &route {
+        InspectionRoute::Direct { socket_path } => socket_path,
+        InspectionRoute::ViaAncestor {
+            ancestor_socket_path,
+            ..
+        } => ancestor_socket_path,
+    };
+    match send_subagent_uds_command_with_timeout(
+        socket_path,
+        &cmd.to_string(),
+        INSPECTOR_RESPONSE_TIMEOUT,
+    )
+    .await
+    {
+        Ok(line) => match super::uds_forward_response::parse_forwarded_response(&line, "get_state")
+        {
+            Ok(data) => AgentEvent::ok(id_ref, tn, Some(data)),
+            Err(error) => AgentEvent::err(id_ref, tn, error),
+        },
+        Err(e) => AgentEvent::err(id_ref, tn, e.to_string()),
+    }
+}
+
 /// Forward a `get_messages` request to a spawned sub-agent and wrap its
 /// response as this command's reply (#795/#837/#843). With `count: Some(n)` the
 /// child returns its last-N tail; with `None` it returns its full history.
@@ -121,14 +186,14 @@ pub(super) async fn forward_subagent_get_messages(
     before: Option<MessageId>,
 ) -> AgentEvent {
     use crate::infrastructure::tools::subagent_registry::{
-        INSPECTOR_RESPONSE_TIMEOUT, lookup_subagent_socket, send_subagent_uds_command_with_timeout,
+        INSPECTOR_RESPONSE_TIMEOUT, send_subagent_uds_command_with_timeout,
     };
     let id_ref = id.as_ref().map(CommandId::as_str);
     let Some(registry) = ctx.subagent_registry.as_ref() else {
         return AgentEvent::err(id_ref, tn, "no sub-agent registry available");
     };
-    let socket_path = match lookup_subagent_socket(registry, agent_id.as_str()) {
-        Ok(path) => path,
+    let route = match resolve_inspection_route(registry, agent_id.as_str()) {
+        Ok(route) => route,
         Err(e) => return AgentEvent::err(id_ref, tn, e),
     };
     // Omit `count` entirely when None so the child returns its FULL history; a
@@ -140,11 +205,21 @@ pub(super) async fn forward_subagent_get_messages(
     if let Some(before) = before.as_ref() {
         cmd["before"] = serde_json::json!(before.as_str());
     }
+    if let InspectionRoute::ViaAncestor { target_id, .. } = &route {
+        cmd["agent_id"] = serde_json::json!(target_id);
+    }
+    let socket_path = match &route {
+        InspectionRoute::Direct { socket_path } => socket_path,
+        InspectionRoute::ViaAncestor {
+            ancestor_socket_path,
+            ..
+        } => ancestor_socket_path,
+    };
     let cmd = cmd.to_string();
     // This forward is awaited inline in the single shared dispatch loop, so it
     // uses the short interactive timeout — a slow/hung sub-agent must not stall
     // steer/abort/new-message for any client for the full agent_cmd 300s (#795).
-    match send_subagent_uds_command_with_timeout(&socket_path, &cmd, INSPECTOR_RESPONSE_TIMEOUT)
+    match send_subagent_uds_command_with_timeout(socket_path, &cmd, INSPECTOR_RESPONSE_TIMEOUT)
         .await
     {
         // Preserve child failures instead of rewriting them as parent success.

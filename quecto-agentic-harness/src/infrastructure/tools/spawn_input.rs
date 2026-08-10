@@ -20,8 +20,7 @@ fn parse_container_value(value: &serde_json::Value) -> Result<ContainerSelection
     match value {
         serde_json::Value::Bool(false) => Ok(ContainerSelection::Local),
         serde_json::Value::Bool(true) => Ok(ContainerSelection::New {
-            repo: None,
-            container_script: None,
+            container_config: None,
             name: None,
         }),
         serde_json::Value::Object(map) => parse_container_object(map),
@@ -43,10 +42,9 @@ fn parse_container_object(
 fn parse_new_mode(
     map: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<ContainerSelection, String> {
-    reject_unknown_container_fields(map, &["mode", "repo", "container_script", "name"])?;
+    reject_unknown_container_fields(map, &["mode", "container_config", "name"])?;
     Ok(ContainerSelection::New {
-        repo: optional_string(map, "repo")?,
-        container_script: optional_string(map, "container_script")?,
+        container_config: optional_string(map, "container_config")?,
         name: optional_string(map, "name")?,
     })
 }
@@ -54,7 +52,7 @@ fn parse_new_mode(
 fn parse_existing_mode(
     map: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<ContainerSelection, String> {
-    for new_only in ["repo", "container_script"] {
+    for new_only in ["container_config"] {
         if map.contains_key(new_only) {
             return Err(format!("container.{new_only} is only valid for mode 'new'"));
         }

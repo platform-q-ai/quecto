@@ -92,10 +92,7 @@ async fn wave3_agent_error_notification_and_exit_sequence_paths() {
     )
     .await;
     assert!(rx.try_recv().unwrap().to_message().contains("exited"));
-    assert!(matches!(
-        registry.lock().unwrap()["bot"].status,
-        SubagentStatus::Exited
-    ));
+    assert!(!registry.lock().unwrap().contains_key("bot"));
 }
 
 #[test]
@@ -185,9 +182,7 @@ async fn notify_child_exited_claims_script_cleanup_once() {
         ExitSignalKind::ConnectionClosed,
     )
     .await;
-    let entry = &registry.lock().unwrap()["bot"];
-    assert!(entry.cleanup_environment_id.is_none());
-    assert!(entry.cleanup_argv.is_empty());
+    assert!(!registry.lock().unwrap().contains_key("bot"));
 }
 
 fn poison_registry(registry: &SubagentRegistry) {

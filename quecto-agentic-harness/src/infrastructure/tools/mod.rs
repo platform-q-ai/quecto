@@ -12,6 +12,7 @@ pub(crate) mod inherited_tool_policy;
 #[path = "inherited_tool_policy_unit_tests.rs"]
 mod inherited_tool_policy_unit_tests;
 pub mod path_utils;
+mod process_tree;
 pub mod recall;
 pub mod registration;
 #[cfg(test)]
@@ -45,6 +46,9 @@ mod subagent_monitor_registry;
 mod subagent_monitor_stall;
 mod subagent_monitor_truncate;
 pub mod subagent_registry;
+pub(crate) mod subagent_routing;
+#[cfg(test)]
+mod subagent_routing_tests;
 mod subagent_status;
 pub mod truncate;
 pub mod web_fetch;

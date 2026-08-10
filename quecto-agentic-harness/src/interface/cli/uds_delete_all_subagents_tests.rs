@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentRegistry};
+use crate::infrastructure::tools::subagent_registry::{
+    ExitSignalKind, SubagentEntry, SubagentRegistry,
+};
 
 #[test]
 fn delete_all_subagents_clears_registry() {
@@ -42,6 +44,17 @@ fn delete_all_subagents_signals_awaiters_before_registry_cleanup() {
         .expect("delete-all-subagents should notify awaiters before removing registry entries");
     assert_eq!(signal.exit_code, None);
     assert_eq!(signal.signal, Some(15));
+    assert_eq!(signal.kind, ExitSignalKind::ProcessExit);
+    assert!(registry.lock().unwrap().is_empty());
+}
+
+#[test]
+fn delete_all_subagents_returns_zero_for_empty_registry() {
+    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+
+    let removed = super::delete_all_subagents_from_registry(&registry, None);
+
+    assert_eq!(removed, 0);
     assert!(registry.lock().unwrap().is_empty());
 }
 

@@ -171,29 +171,13 @@ fn error_without_tool_round_trip() {
 }
 
 #[test]
-fn subagent_await_round_trip() {
-    let event = AuditEvent::SubagentAwait {
-        agent_id: "bookmarks-v1".into(),
-        status: "idle".into(),
-        reason: Some("completed".into()),
-        elapsed_ms: 52000,
-    };
-    let json = serde_json::to_string(&event).unwrap();
-    let back: AuditEvent = serde_json::from_str(&json).unwrap();
-    assert_eq!(event, back);
-}
-
-#[test]
-fn subagent_await_null_reason_round_trip() {
-    let event = AuditEvent::SubagentAwait {
-        agent_id: "worker-1".into(),
-        status: "timeout".into(),
-        reason: None,
-        elapsed_ms: 120000,
-    };
-    let json = serde_json::to_string(&event).unwrap();
-    let back: AuditEvent = serde_json::from_str(&json).unwrap();
-    assert_eq!(event, back);
+fn subagent_await_audit_event_is_absent() {
+    let json = r#"{"event":"subagent_await","agent_id":"worker-1","status":"timeout","reason":null,"elapsed_ms":120000}"#;
+    let err = serde_json::from_str::<AuditEvent>(json).unwrap_err();
+    assert!(
+        err.to_string().contains("unknown variant `subagent_await`"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]

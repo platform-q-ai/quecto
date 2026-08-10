@@ -283,6 +283,77 @@ fn reopen_backfill_keeps_cursors_but_unlatches_the_guard() {
 }
 
 #[test]
+fn wholesale_replacement_clears_stale_prefix_before_later_snapshot() {
+    let mut p = HistoryPaging::default();
+    p.reconcile(&facts(3, true, false, false));
+    p.reconcile(&facts(2, true, false, true));
+    assert_eq!(
+        p.partial_prefix_len,
+        Some(5),
+        "arrange: old chat has retained prefix"
+    );
+
+    p.reopen_backfill();
+    assert_eq!(
+        p.reconcile(&facts(2, true, false, false)),
+        Some(PrefixPlan::Prepend),
+        "after a wholesale replacement, a fresh partial snapshot must not use \
+         the OLD transcript's prefix length as ReplacePrefix against the new chat"
+    );
+    assert_eq!(
+        p.partial_prefix_len,
+        Some(2),
+        "the retained prefix now belongs to the replacement transcript only"
+    );
+}
+
+#[test]
+fn short_wholesale_replacement_is_not_wiped_by_longer_stale_prefix() {
+    let mut p = HistoryPaging::default();
+    p.reconcile(&facts(6, true, false, false));
+    assert_eq!(
+        p.partial_prefix_len,
+        Some(6),
+        "arrange: stale prefix exceeds replacement"
+    );
+
+    p.reopen_backfill();
+    assert_eq!(
+        p.reconcile(&facts(1, true, false, false)),
+        Some(PrefixPlan::Prepend),
+        "a one-entry replacement must not produce ReplacePrefix(6), which \
+         would remove the whole new transcript in the caller"
+    );
+    assert_eq!(p.partial_prefix_len, Some(1));
+}
+
+#[test]
+fn wholesale_replacement_keeps_its_own_cursor_reachable_for_paging() {
+    let mut p = HistoryPaging::default();
+    p.reconcile(&facts(4, true, false, false));
+    assert_eq!(
+        p.partial_prefix_len,
+        Some(4),
+        "arrange: old partial state exists"
+    );
+
+    p.reopen_backfill();
+    assert_eq!(
+        p.reconcile(&PageFacts {
+            before: Some("replacement-cursor".into()),
+            has_more_before: true,
+            trimmed: false,
+            page_len: 2,
+            extend_prefix: false,
+        }),
+        Some(PrefixPlan::Prepend)
+    );
+
+    let issued = request(&mut p, true, Instant::now()).expect("replacement cursor pages");
+    assert_eq!(issued.before, "replacement-cursor");
+}
+
+#[test]
 fn the_page_sequence_wraps_instead_of_overflowing() {
     let mut p = HistoryPaging {
         page_seq: u64::MAX,

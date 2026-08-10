@@ -98,6 +98,45 @@ async fn tool_default_set_session_key_is_inert() {
 }
 
 #[test]
+fn noop_tool_exercises_default_spawn_policy_snapshot_methods() {
+    let tool = NoopTool;
+    tool.set_inherited_child_policy_snapshot_for_spawn(std::collections::BTreeMap::new());
+    assert!(tool.inherited_child_policy_snapshot_for_spawn().is_none());
+}
+
+#[test]
+fn empty_registry_exercises_runtime_lifecycle_defaults() {
+    let mut reg = EmptyRegistry { defs: vec![] };
+    assert!(reg.unregister_runtime_tools_for_owner("owner").is_empty());
+    assert!(!reg.register_uds_tool(std::sync::Arc::new(NoopTool)));
+    assert_eq!(reg.extension_names(), Vec::<String>::new());
+    assert!(!reg.register_extension(std::sync::Arc::new(NoopTool)));
+    reg.unregister_extension("missing");
+    assert!(reg.unregister_extensions_for_owner("owner").is_empty());
+    assert!(!reg.register_uds_extension(std::sync::Arc::new(NoopTool)));
+    assert!(reg.can_register_uds_tool_for_owner("tool", "owner"));
+    assert!(reg.can_register_uds_tool_for_owner_with_stable_id("tool", "owner", Some("stable")));
+    assert!(!reg.register_uds_tool_for_owner(
+        std::sync::Arc::new(NoopTool),
+        std::borrow::Cow::Borrowed("owner")
+    ));
+    assert!(!reg.register_uds_tool_for_owner_with_stable_id(
+        std::sync::Arc::new(NoopTool),
+        std::borrow::Cow::Borrowed("owner"),
+        Some("stable".into())
+    ));
+    assert!(reg.can_register_uds_extension_for_owner("tool", "owner"));
+    reg.set_inherited_child_policy_snapshot_for_spawn(std::collections::BTreeMap::new());
+    assert!(reg.captured_spawn_snapshot().is_none());
+    assert!(!reg.register_uds_extension_for_owner(
+        std::sync::Arc::new(NoopTool),
+        std::borrow::Cow::Borrowed("owner")
+    ));
+    assert!(!reg.enable_tool("missing"));
+    assert!(!reg.disable_tool("missing"));
+}
+
+#[test]
 fn tool_result_and_image_block_construct() {
     let r = ToolResult {
         content: "ok".into(),
@@ -117,6 +156,7 @@ fn tool_policy_mutation_result_wire_uses_camel_case_fields_and_status() {
     // structs directly — field names and status must match protocol camelCase.
     let result = ToolPolicyMutationResult {
         name: "alpha".into(),
+        requested_identifier: Some("tool-alpha".into()),
         requested_availability: ToolAvailability::Enabled,
         requested_scope: ProfileAvailabilityScope::Parent,
         status: ToolPolicyMutationStatus::Applied,
@@ -137,6 +177,7 @@ fn tool_policy_mutation_result_wire_uses_camel_case_fields_and_status() {
     );
     assert!(wire.get("requested_scope").is_none());
     assert_eq!(wire["status"], "applied");
+    assert_eq!(wire["requestedIdentifier"], "tool-alpha");
     assert_eq!(wire["requestedAvailability"], "enabled");
     assert_eq!(wire["requestedScope"], "parent");
 
@@ -162,9 +203,11 @@ fn tool_policy_mutation_result_wire_uses_camel_case_fields_and_status() {
     assert_eq!(unknown_wire["status"], "unknownTool");
 
     let reconciliation = ToolPolicyReconciliation {
+        correlation_id: None,
         mode: ToolPolicyApplyMode::ImmediateIfIdle,
         results: vec![ToolPolicyMutationResult {
             name: "beta".into(),
+            requested_identifier: None,
             requested_availability: ToolAvailability::Disabled,
             requested_scope: ProfileAvailabilityScope::None,
             status: ToolPolicyMutationStatus::Applied,

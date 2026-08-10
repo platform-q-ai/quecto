@@ -124,6 +124,7 @@ impl App {
     /// never goes stale (#1067).
     pub(super) fn send_state_resync(&mut self) {
         self.send_command(Command::GetState {
+            agent_id: None,
             id: Some("resync".into()),
         });
     }

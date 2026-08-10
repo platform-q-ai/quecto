@@ -381,3 +381,101 @@ async fn stub_recall_rejects_first_page_content_length_that_differs_from_stub_me
         "mismatched first page must mark the stub recall failed"
     );
 }
+
+#[tokio::test]
+async fn wholesale_replacement_with_stale_prefix_keeps_later_live_entries() {
+    let mut h = harness().await;
+    respond(
+        h.app_mut(),
+        Some(ATTACH_BACKFILL_ID),
+        "get_messages",
+        true,
+        page(&[("o3", "old newest")], Some("o3"), true),
+    );
+    let _ = h.drain_commands().await;
+    prime_active_viewport(h.app_mut());
+    h.app_mut().handle_key(Key::PageUp);
+    let commands = drained_get_messages_commands(&mut h).await;
+    let older_id = commands[0]["id"]
+        .as_str()
+        .expect("older-page id")
+        .to_string();
+    respond(
+        h.app_mut(),
+        Some(&older_id),
+        "get_messages",
+        true,
+        page(
+            &[("o1", "old first"), ("o2", "old second")],
+            Some("o1"),
+            true,
+        ),
+    );
+
+    respond(
+        h.app_mut(),
+        Some("resume-messages"),
+        "get_messages",
+        true,
+        page(&[("r1", "replacement newest")], Some("r1"), true),
+    );
+    h.app_mut()
+        .master_session
+        .chat
+        .add_entry(ChatEntry::Assistant {
+            text: "post replacement live entry".into(),
+            streaming: false,
+        });
+
+    respond(
+        h.app_mut(),
+        Some(ATTACH_BACKFILL_ID),
+        "get_messages",
+        true,
+        page(&[("r0", "replacement snapshot older")], Some("r0"), true),
+    );
+
+    widen_active_viewport(h.app_mut());
+    let frame = chat_text(h.app_mut());
+    assert!(frame.contains("replacement snapshot older"), "{frame}");
+    assert!(
+        frame.contains("post replacement live entry"),
+        "stale prefix must not delete live replacement entries:\n{frame}"
+    );
+    assert!(!frame.contains("old first"), "{frame}");
+}
+
+#[tokio::test]
+async fn short_wholesale_replacement_survives_longer_stale_prefix_on_later_snapshot() {
+    let mut h = harness().await;
+    respond(
+        h.app_mut(),
+        Some(ATTACH_BACKFILL_ID),
+        "get_messages",
+        true,
+        page(
+            &[("o1", "old one"), ("o2", "old two"), ("o3", "old three")],
+            Some("o1"),
+            true,
+        ),
+    );
+
+    respond(
+        h.app_mut(),
+        Some("resume-messages"),
+        "get_messages",
+        true,
+        page(&[("r1", "short replacement")], Some("r1"), true),
+    );
+    respond(
+        h.app_mut(),
+        Some(ATTACH_BACKFILL_ID),
+        "get_messages",
+        true,
+        page(&[("r0", "short replacement older")], Some("r0"), true),
+    );
+
+    widen_active_viewport(h.app_mut());
+    let frame = chat_text(h.app_mut());
+    assert!(frame.contains("short replacement"), "{frame}");
+}

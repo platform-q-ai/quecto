@@ -20,7 +20,7 @@ pub fn parse_command_line(line: &str) -> Result<AgentCommand, String> {
 mod protocol_commands;
 pub use protocol_commands::{
     AgentCommand, StreamingBehavior, ToolPolicyApplyModeCommand, ToolPolicyMutationCommand,
-    ToolRegistration,
+    ToolPolicyOperationCommand, ToolRegistration,
 };
 
 // ─── Events (stdout) ─────────────────────────────────────────────────────────
@@ -112,6 +112,8 @@ pub enum AgentEvent {
         results: Vec<serde_json::Value>,
         apply_mode: String,
         reason: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        correlation_id: Option<String>,
     },
     /// Request sent to an extension client to execute a tool.
     ///
@@ -321,7 +323,7 @@ pub fn build_subagent_info_list(
                     last_tool: entry.last_tool.clone(),
                     last_error: entry.last_error.clone(),
                     pid: entry.pid,
-                    socket_path: Some(entry.socket_path.to_string_lossy().into_owned()),
+                    socket_path: None,
                     parent_id: entry.parent_id.clone(),
                     workflow: entry.workflow.clone(),
                     read_only: entry.read_only,

@@ -1,6 +1,6 @@
 [package]
 name = "quecto-tui"
-version = "0.76.0"
+version = "0.76.6"
 edition = "2024"
 description = "Lightweight terminal UI client for quecto"
 license = "LicenseRef-Proprietary"
@@ -21,7 +21,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "tim
 # Serialization — framed JSON UDS protocol
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-quecto-line-io = { version = "0.2.0", path = "../quecto-line-io" }
+quecto-line-io = { version = "0.2.1", path = "../quecto-line-io" }
 
 # Warn-log dropped oversized inbound frames (#1112). The TUI installs no
 # subscriber itself — events are no-ops unless an embedder/test installs one,

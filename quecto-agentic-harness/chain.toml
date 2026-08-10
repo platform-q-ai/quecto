@@ -79,7 +79,6 @@ non_behavioral_features = [
   "tests/features/subagent.feature",
   "tests/features/subagent_monitor.feature",
   "tests/features/subagent_protocol.feature",
-  "tests/features/agent_cmd_await.feature",
   "tests/features/abort_double_fire.feature",
 
   # E2E harness features — they compose the whole stack; per-noun tags

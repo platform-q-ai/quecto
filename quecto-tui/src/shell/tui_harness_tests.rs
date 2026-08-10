@@ -100,7 +100,6 @@ async fn awaiting_indicator_gone_agents_live_in_panel() {
         subagent("other", "running", Some(("active", 1, 3))),
     ]));
 
-    h.event(await_start("worker"));
     let dump = h.dump();
     assert!(
         !dump.contains("awaiting"),
@@ -122,7 +121,7 @@ async fn awaiting_indicator_gone_agents_live_in_panel() {
 }
 
 /// A genuine `agent_cmd get_state` tool call must render a tool box in the chat,
-/// consistent with `get_messages`/`await` (#865). The box header carries the
+/// consistent with other `agent_cmd` query result previews (#865). The box header carries the
 /// `command → agent_id` detail. (The TUI's OWN internal get_state polling flows
 /// through Response events / `app_response.rs`, not this tool path, so it is
 /// unaffected and stays box-free.)
@@ -154,7 +153,7 @@ async fn agent_cmd_get_state_renders_a_tool_box() {
     );
     // Pin the box BODY, not just the header: the completed box shows a green
     // success tick, proving the result actually rendered into the box (the same
-    // result-preview path as `get_messages`/`await`), not an empty/pending shell.
+    // result-preview path as `get_messages`), not an empty/pending shell.
     assert!(
         dump.contains('✓'),
         "completed get_state box must render its success result body (#865):\n{dump}"
@@ -184,7 +183,7 @@ async fn agent_cmd_abort_and_kill_append_chat_entry_on_master_path() {
 }
 
 /// #871: control/destructive `agent_cmd` commands (abort/kill) must render a
-/// tool box in the chat, the same way `get_state`/`await` do. A frame-level
+/// tool box in the chat, the same way `get_state` does. A frame-level
 /// assertion guards against a predicate-only false positive.
 #[tokio::test]
 async fn agent_cmd_abort_and_kill_render_tool_boxes() {
@@ -639,16 +638,16 @@ mod workflow_display_regression {
 // RED until the rewind / model-registry / sub-agent-UI fields move into their
 // named owner structs; the driving side of each test is the real App path.
 
-/// Double-Escape at idle issues `rewind-open-1`; the rewind owner group must
-/// report the same sequence the wire command carries.
+/// Double-Escape at idle issues a readable `rewind-open-*` id; the rewind owner
+/// group must report the issued local sequence.
 #[tokio::test]
 async fn rewind_group_tracks_issued_request_ids() {
     let mut h = TuiHarness::new().await;
     h.issue_rewind_open();
     let cmds = h.drain_commands().await;
     assert!(
-        cmds.iter().any(|c| c.contains("rewind-open-1")),
-        "double-Escape should issue the rewind-open-1 correlation id: {cmds:?}"
+        cmds.iter().any(|c| c.contains("rewind-open-")),
+        "double-Escape should issue a rewind-open correlation id: {cmds:?}"
     );
     assert_eq!(
         h.rewind_group_request_seq(),

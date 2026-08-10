@@ -68,7 +68,12 @@ fn runtime_review_steps_are_read_only_at_runtime() {
     // the RUNTIME template returned by `default_templates()`, so a future move
     // back into an un-deserialized field fails here, not silently in prod.
     let f = feature();
-    for key in ["bdd_review", "reviewers"] {
+    for key in [
+        "semantic_contract",
+        "test_review",
+        "local_review",
+        "pr_reviewers",
+    ] {
         let g = f
             .steps
             .iter()
@@ -76,15 +81,13 @@ fn runtime_review_steps_are_read_only_at_runtime() {
             .and_then(|s| s.guidance.as_deref())
             .unwrap_or("");
         assert!(
-            g.contains("read_only") && g.contains("[\"write\", \"edit\"]"),
-            "runtime `{key}` guidance must instruct read_only spawns disabling [\"write\", \"edit\"]: {g}"
+            g.contains("read-only") || g.contains("read_only"),
+            "runtime `{key}` guidance must instruct read-only reviewer spawns: {g}"
         );
-        for keep in ["bash", "read", "grep", "find", "agent_cmd"] {
-            assert!(
-                g.contains(keep),
-                "runtime `{key}` guidance must name retained tool `{keep}`: {g}"
-            );
-        }
+        assert!(
+            g.contains("openai-oauth/gpt-5.5") || key == "pr_reviewers",
+            "runtime `{key}` guidance must pin the reviewer model when spawning directly: {g}"
+        );
     }
 }
 

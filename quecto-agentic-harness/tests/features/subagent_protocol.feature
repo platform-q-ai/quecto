@@ -135,21 +135,21 @@ Feature: Subagent protocol commands (#524)
 
   # ─── socket_path exposure for connect-on-select (#800) ───────────────────────
   # The TUI lazily opens a direct UDS connection to a SELECTED sub-agent's own
-  # socket. To do that it must learn the socket path; the kernel surfaces it on
-  # each SubagentInfo (local use only). The registry already knows the path.
+  # socket. #1442 routes inspection via the root/ancestor instead, so public
+  # SubagentInfo no longer exposes raw socket paths.
 
   @done
-  Scenario: build_subagent_info_list surfaces each subagent's socket_path
+  Scenario: build_subagent_info_list omits each subagent's socket_path
     Given a registry with subagent "worker" status "running" last_tool "bash" pid 7
     When I build a SubagentInfo list from the registry
-    Then subagent info "worker" should have socketPath "/tmp/test.sock"
+    Then subagent info "worker" should not have socketPath
 
   @done
-  Scenario: a SubagentInfo round-trips its socketPath over the wire
+  Scenario: a SubagentInfo omits socketPath over the wire
     Given a registry with subagent "worker" status "running" last_tool "bash" pid 7
     When I build a SubagentInfo list from the registry
     And I serialize the first subagent info
-    Then the round-tripped subagent info should have socketPath "/tmp/test.sock"
+    Then the round-tripped subagent info should not have socketPath
 
   @done
   Scenario: build_subagent_info_list maps all status values

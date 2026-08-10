@@ -145,13 +145,17 @@ impl TuiHarness {
     ) -> tokio::sync::mpsc::Receiver<crate::protocol::client::Command> {
         let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel(1);
         cmd_tx
-            .try_send(crate::protocol::client::Command::GetState { id: None })
+            .try_send(crate::protocol::client::Command::GetState {
+                id: None,
+                agent_id: None,
+            })
             .expect("prefill");
         self.app.subagents.feeds.insert(
             id.to_string(),
             crate::agents::view::FeedState {
                 cmd_tx,
                 handle: tokio::spawn(async {}),
+                inspection_only: false,
                 epoch: 0,
                 rev: 0,
                 last_fresh_at: None,

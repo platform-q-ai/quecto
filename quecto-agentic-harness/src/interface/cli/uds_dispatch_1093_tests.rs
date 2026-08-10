@@ -470,7 +470,8 @@ async fn get_message_metadata_too_large_returns_error_and_keeps_connection_usabl
     assert!(
         !dispatch_command(
             AgentCommand::GetState {
-                id: Some("after-error".into())
+                id: Some("after-error".into()),
+                agent_id: None,
             },
             &mut fx.ctx(Some(tx))
         )

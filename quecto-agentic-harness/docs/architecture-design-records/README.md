@@ -32,6 +32,7 @@ edit a superseded ADR receives — its reasoning stays intact as history).
 | [0019](adr-0019-role-segregated-domain-ports.md) | Domain Ports Are Segregated by Role When They Grow | 🕒 Proposed | Broad ports split into role-focused traits when caller pressure justifies it. |
 | [0020](adr-0020-unified-tool-model-with-native-and-uds-adapters.md) | Unified Tool Model with Native and UDS Delivery Adapters | ✅ Accepted | Quecto has one tool model and policy pipeline; native and UDS are delivery adapters with descriptor-owned runtime availability. |
 | [0021](adr-0021-script-managed-subagent-launch.md) | Script-Managed Subagent Launch Uses Clean Architecture Ports | ✅ Accepted | Script-managed subagent launch uses pure domain/application ports, infrastructure adapters, thin interfaces, session registry wiring, and runtime-agnostic scripts. |
+| [0022](adr-0022-self-contained-container-configs.md) | Self-Contained Named Container Configs | ✅ Accepted | Container configs are named, self-contained working-context definitions (baked repo + auth, default label, roster in the tool schema); Quecto resolves no source and the parent's location is irrelevant. |
 
 ## The ADR-0008 protocol series
 
@@ -42,10 +43,10 @@ ADR-0008 is delivered in parts, each tracked by an issue:
 | 1 | Length-prefixed framing (version negotiation) | #1059 | Done |
 | 2 | Bounded end-of-turn events — reference messages by stable id | #1060 (PR #1092) | Done — merged 2026-07-13 |
 | 3 | Paged history on connect/resume + TUI backfill | #1061 | Open |
-| 4 | Frame-size cap becomes a should-never-fire invariant; delete shrink/tail machinery | #1062 | Open (blocked on #1060, #1061; co-requisite #1094) |
+| 4 | Frame-size cap becomes a should-never-fire invariant; delete shrink/tail machinery | #1062 | Open (blocked on #1060 and #1061 completion; existing ranged `get_message` recovery covers the former #1094 large-message path) |
 
 Related `get_message` resolution-completeness work (makes the cap a true
-should-never-fire invariant): **#1094** (chunked/paged transfer for a single
-message larger than the frame cap) and **#1093** (recall full content from the
-spill store for collapsed refs, both resolvers). Per ADR-0011, all of this stays
-JSON on the wire.
+should-never-fire invariant): **#1093** (recall full content from the spill store
+for collapsed refs, both resolvers). Large content is recovered with the
+existing ranged `get_message` request/response fields; per ADR-0011, all of this
+stays JSON on the wire.

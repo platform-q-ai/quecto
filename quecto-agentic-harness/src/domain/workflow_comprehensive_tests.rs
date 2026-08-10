@@ -48,7 +48,7 @@ fn snapshot_in_active_mode_has_visible_steps_and_current_step() {
         .unwrap();
     let snap = engine.snapshot(true);
     assert_eq!(snap.mode, WorkflowMode::Active);
-    assert_eq!(snap.progress.total, 19);
+    assert_eq!(snap.progress.total, 20);
     assert_eq!(snap.current_step.unwrap().key, "hooks");
     assert_eq!(snap.steps.len(), 1);
     assert_eq!(snap.steps[0].key, "hooks");
@@ -70,7 +70,8 @@ fn active_status_mentions_guidance() {
     engine.check(1).unwrap();
     let status = engine.status_text();
     assert!(status.contains("CURRENT STEP"));
-    assert!(status.contains("acceptance criteria"));
+    assert!(status.contains("Read the issue body, comments, and canonical plan comment"));
+    assert!(!status.contains("acceptance criteria"));
 }
 
 #[test]
@@ -412,7 +413,7 @@ fn status_text_shows_only_contiguous_completed_steps_and_current_step() {
     let current = engine.current_step().unwrap();
     let all_steps = engine.all_step_statuses();
     let completed = &all_steps[0];
-    assert!(status.contains("Progress: 1/19"));
+    assert!(status.contains("Progress: 1/20"));
     assert!(!status.contains("Progress: 2/19"));
     assert!(status.contains(&format!("[✓] {}. {}", completed.index, completed.label)));
     assert!(status.contains("CURRENT STEP"));
@@ -446,7 +447,7 @@ fn status_text_shows_only_contiguous_completed_steps_and_current_step() {
 
     let visible_snapshot = engine.snapshot(true);
     assert_eq!(visible_snapshot.progress.done, 1);
-    assert_eq!(visible_snapshot.progress.total, 19);
+    assert_eq!(visible_snapshot.progress.total, 20);
     assert_eq!(visible_snapshot.steps.len(), current_index as usize);
     assert!(
         visible_snapshot

@@ -106,8 +106,10 @@ pub enum ContainerSelection {
     #[default]
     Local,
     New {
-        repo: Option<String>,
-        container_script: Option<String>,
+        /// Optional container-config name; omitted selects the config labeled
+        /// `"default": true`. The config itself owns its repository/auth
+        /// (#1410) — Quecto passes no source information.
+        container_config: Option<String>,
         /// Optional environment name for later `{"mode":"existing","name"}`
         /// joins and `kill_container` targeting (#1369 slice 2).
         name: Option<String>,

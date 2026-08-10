@@ -27,31 +27,38 @@ fn child_exit_before_socket_ready_is_terminal() {
 }
 
 #[test]
-fn await_before_completion_times_out_without_changing_busy_state() {
-    let state = State::SocketReady.transition(Event::RunStarted);
-
-    assert_eq!(state, State::Busy);
-    assert_eq!(state.transition(Event::AwaitTimedOut), State::Busy);
-    assert_eq!(state.status_projection(), SubagentStatus::Running);
-}
-
-#[test]
-fn completion_consumed_by_manual_await_keeps_child_idle() {
-    let state = State::Busy.transition(Event::RunEnded);
-
-    assert_eq!(state, State::Idle);
-    assert_eq!(
-        state.transition(Event::AwaitConsumedCompletion),
-        State::Idle
-    );
-}
-
-#[test]
 fn passive_note_emission_keeps_completed_child_idle() {
     let state = State::Busy.transition(Event::RunEnded);
 
     assert_eq!(state, State::Idle);
     assert_eq!(state.transition(Event::PassiveNoteEmitted), State::Idle);
+}
+
+#[test]
+fn passive_note_emission_is_non_terminal_and_does_not_imply_await() {
+    let ready = State::SocketReady.transition(Event::PassiveNoteEmitted);
+    let busy = State::Busy.transition(Event::PassiveNoteEmitted);
+    let failed = State::Failed.transition(Event::PassiveNoteEmitted);
+
+    assert_eq!(ready, State::SocketReady);
+    assert_eq!(ready.status_projection(), SubagentStatus::Starting);
+    assert_eq!(busy, State::Busy);
+    assert_eq!(busy.status_projection(), SubagentStatus::Running);
+    assert_eq!(failed, State::Failed);
+    assert_eq!(failed.status_projection(), SubagentStatus::Error);
+}
+
+#[test]
+fn kill_after_passive_completion_remains_cancelled_terminal() {
+    let state = State::Busy
+        .transition(Event::RunEnded)
+        .transition(Event::PassiveNoteEmitted)
+        .transition(Event::KillRequested);
+
+    assert_eq!(state, State::Killed);
+    assert_eq!(state.status_projection(), SubagentStatus::Exited);
+    assert_eq!(state.transition(Event::RunStarted), State::Killed);
+    assert_eq!(state.transition(Event::PassiveNoteEmitted), State::Killed);
 }
 
 #[test]

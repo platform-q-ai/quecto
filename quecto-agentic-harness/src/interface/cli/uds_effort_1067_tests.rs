@@ -125,7 +125,10 @@ fn get_state_exposes_configured_effort() {
     let mut fx = EffortFx::new(Some(EffortLevel::High));
     let ctx = fx.ctx();
     let state = crate::interface::cli::uds_query::query_response_data(
-        &AgentCommand::GetState { id: None },
+        &AgentCommand::GetState {
+            id: None,
+            agent_id: None,
+        },
         &ctx,
     )
     .expect("get_state must return data");
@@ -140,7 +143,10 @@ fn get_state_exposes_null_effort_when_unset() {
     let mut fx = EffortFx::new(None);
     let ctx = fx.ctx();
     let state = crate::interface::cli::uds_query::query_response_data(
-        &AgentCommand::GetState { id: None },
+        &AgentCommand::GetState {
+            id: None,
+            agent_id: None,
+        },
         &ctx,
     )
     .expect("get_state must return data");
@@ -163,7 +169,10 @@ fn get_state_exposes_provider_effort_vocabulary() {
     let mut fx = EffortFx::new(None);
     let ctx = fx.ctx();
     let state = crate::interface::cli::uds_query::query_response_data(
-        &AgentCommand::GetState { id: None },
+        &AgentCommand::GetState {
+            id: None,
+            agent_id: None,
+        },
         &ctx,
     )
     .expect("get_state must return data");

@@ -50,6 +50,7 @@ impl App {
             return;
         };
         self.send_command(Command::GetMessages {
+            agent_id: None,
             id: Some(id),
             before: Some(before),
         });

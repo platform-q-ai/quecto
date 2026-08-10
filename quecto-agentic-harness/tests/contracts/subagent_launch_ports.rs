@@ -300,12 +300,12 @@ PY
         std::fs::write(
             &cfg,
             serde_json::json!({
-                "container_scripts": {
-                    "default": "default",
-                    "scripts": {"default": {
+                "container_configs": {
+                    "default": {
+                        "default": true,
                         "create": [create.to_string_lossy()],
                         "cleanup": [cleanup.to_string_lossy()],
-                    }},
+                    },
                 }
             })
             .to_string(),
@@ -316,8 +316,7 @@ PY
 
     fn script_container() -> ContainerSelection {
         ContainerSelection::New {
-            repo: Some("https://example.invalid/contract.git".into()),
-            container_script: None,
+            container_config: None,
             name: None,
         }
     }

@@ -16,9 +16,31 @@ emitter and consumer shares one payload cap and one framing implementation.
   `read_frame_or_legacy_line` / `read_frame_or_legacy_line_into`,
   `write_message` with `WireMode::{Frame, LegacyLine}`.
 
+## Malformed-stream contract
+
+- Clean EOF before any frame prefix bytes is `Ok(None)`.
+- EOF after a partial frame prefix, or inside a declared in-cap frame payload,
+  is an `UnexpectedEof` I/O error.
+- An over-cap frame declaration is rejected as oversized without buffering the
+  declared payload; when the declared bytes are present, they are discarded so a
+  following frame can be read without resynchronizing. If the peer withholds
+  those bytes, callers should treat the connection as a protocol/transport
+  failure rather than expecting resynchronization.
+- Legacy oversized lines recover only after a newline delimiter is consumed.
+- Byte-preserving APIs (`*_into` and framed reads) leave invalid UTF-8 unchanged;
+  `read_bounded_line` returns lossy `String` content for legacy convenience.
+- Reusable-buffer APIs shrink previously large caller-owned buffers before the
+  next read, so retained capacity stays bounded and does not scale with a prior
+  large or malformed message.
+
+Dependents should derive protocol caps from `PROTOCOL_LINE_CAP_BYTES` or
+`PROTOCOL_FRAME_CAP_BYTES`, not from a separate numeric literal. Large message
+recovery uses the existing ranged `get_message` protocol in consumer crates;
+this crate does not introduce a new chunking format or cap value.
+
 ## Version
 
-See `Cargo.toml` (`0.2.0` at time of writing). This crate is a workspace
+See `Cargo.toml` (`0.2.1` at time of writing). This crate is a workspace
 library — not a shipped binary.
 
 ## See also

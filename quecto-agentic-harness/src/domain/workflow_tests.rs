@@ -46,9 +46,7 @@ fn single_template_config_binds_to_active_on_select() {
         templates: vec![template],
     };
     let mut engine = WorkflowEngine::new(config, false).unwrap();
-    // Before selection the engine is in selector mode...
     assert_eq!(engine.mode(), WorkflowMode::SelectingTemplate);
-    // ...and binding it to the only template activates it immediately.
     engine.select_template("review", None).unwrap();
     assert_eq!(engine.mode(), WorkflowMode::Active);
     assert_eq!(engine.list_templates().len(), 1);
@@ -102,7 +100,6 @@ fn bound_engine_rejects_switching_template() {
         engine.select_template("b", None).is_err(),
         "a bound engine must not switch to a different template"
     );
-    // Re-selecting the SAME bound template is allowed (reset relies on it).
     assert!(engine.select_template("a", None).is_ok());
 }
 
@@ -152,7 +149,7 @@ fn select_template_starts_run() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     assert_eq!(engine.mode(), WorkflowMode::Active);
-    assert_eq!(engine.progress().total, 19);
+    assert_eq!(engine.progress().total, 20);
     assert_eq!(engine.current_step().unwrap().index, 1);
 }
 
@@ -429,52 +426,55 @@ fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hoo
         keys,
         vec![
             "hooks",
-            "scenarios",
-            "tests",
+            "plan_intake",
+            "semantic_contract",
+            "test_design",
+            "test_review",
             "red",
-            "bdd_review",
             "green",
-            "refactor",
+            "refactor_harden",
+            "local_review",
             "verify",
             "version_bump",
             "commit",
             "push",
             "pr",
-            "reviewers",
-            "fix_reviews",
-            "push_fixes",
+            "pr_reviewers",
+            "fix_pr_review",
             "resolve_threads",
             "conformance",
-            "pre_merge",
+            "request_ci",
             "cleanup",
         ]
     );
-    assert_eq!(snap.progress.total, 19);
+    assert_eq!(snap.progress.total, 20);
     assert_eq!(snap.steps.len(), 1);
     assert_eq!(snap.steps[0].key, "hooks");
-    assert_eq!(all_steps[0].label, "Install/check local quality hooks");
+    assert_eq!(snap.steps[0].label, "Install/check local quality hooks");
     assert_eq!(
-        all_steps[4].label,
-        "Despatch three BDD review finders (Gherkin discipline, Falsifiability, Coverage)"
+        all_steps[2].label,
+        "Build and challenge the feature semantic state-space"
     );
+    assert_eq!(all_steps[4].label, "Review tests before implementation");
     assert_eq!(
         all_steps[8].label,
-        "Bump semver for every changed crate and sync version docs"
-    );
-    assert_eq!(all_steps[10].label, "Push through the fast pre-push gate");
-    assert_eq!(
-        all_steps[12].label,
-        "Despatch narrow parallel review finders, verify adversarially, post one review"
+        "Run local adversarial implementation review before commit"
     );
     assert_eq!(
-        all_steps[16].label,
-        "Verify the PR meets every issue acceptance criterion"
+        all_steps[10].label,
+        "Bump changed crate versions and sync docs"
+    );
+    assert_eq!(all_steps[12].label, "Push through the fast pre-push gate");
+    assert_eq!(
+        all_steps[14].label,
+        "Run PR adversarial review as final safety net"
     );
     assert_eq!(
         all_steps[17].label,
-        "Request authoritative CI and report the PR (do not merge)"
+        "Verify conformance to the issue plan and acceptance criteria"
     );
-    assert_eq!(all_steps[18].label, "Clean up sub agents");
+    assert_eq!(all_steps[18].label, "Request authoritative CI and wait");
+    assert_eq!(all_steps[19].label, "Clean up and report handoff");
 }
 
 #[test]
@@ -485,23 +485,30 @@ fn feature_template_guards_commit_push_and_merge_like_config_file() {
         .find(|template| template.id == "feature")
         .expect("feature template exists");
 
-    assert_eq!(feature.guards.len(), 2);
+    assert_eq!(feature.guards.len(), 3);
     assert_eq!(
         feature.guards[0].commands,
         vec!["git commit".to_string(), "git push".to_string()]
     );
     assert_eq!(feature.guards[0].before_step_key, "commit");
+    assert!(feature.guards[0].message.contains("plan intake"));
     assert!(
         feature.guards[0]
             .message
-            .contains("Complete hook setup and RED/GREEN work")
+            .contains("local adversarial review")
     );
     assert_eq!(
         feature.guards[1].commands,
+        vec!["gh pr edit --add-label merge-requested".to_string()]
+    );
+    assert_eq!(feature.guards[1].before_step_key, "request_ci");
+    assert!(feature.guards[1].message.contains("PR review fixes"));
+    assert_eq!(
+        feature.guards[2].commands,
         vec!["git merge".to_string(), "gh pr merge".to_string()]
     );
-    assert_eq!(feature.guards[1].before_step_key, "cleanup");
-    assert!(feature.guards[1].message.contains("conformance gate"));
+    assert_eq!(feature.guards[2].before_step_key, "cleanup");
+    assert!(feature.guards[2].message.contains("does not merge"));
 }
 
 #[test]
@@ -543,7 +550,6 @@ fn workflow_error_display_renders_inner_message() {
     ];
     let rendered: Vec<String> = cases.iter().map(|e| e.to_string()).collect();
     assert_eq!(rendered, vec!["u", "i", "o", "n", "c", "g"]);
-    // Exercise the std::error::Error impl too.
     let err: &dyn std::error::Error = &cases[0];
     assert_eq!(err.to_string(), "u");
 }
@@ -603,8 +609,6 @@ fn workflow_run_default_is_empty() {
     assert!(run.done.is_empty());
     assert_eq!(run.active_issue, None);
 }
-
-// ── WorkflowEngine validation error paths (config-level) ──────────────────
 
 fn cfg(templates: Vec<WorkflowTemplate>) -> WorkflowConfig {
     WorkflowConfig {
@@ -746,4 +750,28 @@ fn selector_status_text_includes_issue_and_custom_prompt() {
     assert!(text.contains("Active issue: #42 — fix bug"));
     assert!(text.contains("Pick wisely"));
     assert!(text.contains("- t —"));
+}
+
+#[test]
+fn active_status_renders_issue_then_completion_with_guards() {
+    let mut template = template_with_steps("t", vec![step("a"), step("b")]);
+    template.guards = vec![WorkflowGuardRule {
+        commands: vec!["git push".into()],
+        before_step_key: "b".into(),
+        message: "run the gate before push".into(),
+    }];
+    let mut engine = WorkflowEngine::new(cfg(vec![template]), true).unwrap();
+    engine
+        .select_template("t", Some((9, "ship it".into())))
+        .unwrap();
+
+    let status = engine.status_text();
+    assert!(status.contains("Active issue: #9 — ship it"));
+
+    engine.check(1).unwrap();
+    engine.check(2).unwrap();
+    assert_eq!(engine.mode(), WorkflowMode::Complete);
+    let done = engine.status_text();
+    assert!(done.contains("All workflow steps complete"));
+    assert!(done.contains("run the gate before push"));
 }

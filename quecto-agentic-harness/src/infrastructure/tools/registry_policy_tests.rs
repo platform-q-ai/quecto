@@ -1,6 +1,7 @@
 use super::tests::{DummyTestTool, test_registry};
 use crate::domain::tool::{
-    Tool, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus, ToolProfileContext,
+    Tool, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus, ToolPolicyRequest,
+    ToolProfileContext,
 };
 use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolRestrictionReason};
 use std::sync::Arc;
@@ -623,4 +624,127 @@ fn catalogue_scope_json_pins_literal_wire_names() {
     assert_eq!(json["effectiveParentEnabled"], false);
     assert_eq!(json["effectiveChildEnabled"], true);
     assert_eq!(json["profileEnabled"], true);
+}
+
+#[test]
+fn replace_request_applies_unlisted_scope_to_current_catalogue_and_preserves_patch_semantics() {
+    let (mut reg, _tmp) = test_registry();
+
+    let patch = reg.apply_tool_policy_mutations(
+        &[ToolPolicyMutation::set_scope(
+            "read",
+            ProfileAvailabilityScope::Child,
+            "patch read",
+        )],
+        ToolPolicyApplyMode::ImmediateIfIdle,
+    );
+    assert_eq!(patch.results.len(), 1);
+    assert_eq!(
+        reg.catalogue_entries()
+            .into_iter()
+            .find(|e| e.name == "bash")
+            .unwrap()
+            .effective_scope,
+        ProfileAvailabilityScope::Both
+    );
+
+    let replace = reg.apply_tool_policy_request(
+        &crate::domain::tool::ToolPolicyRequest::replace(
+            vec![ToolPolicyMutation::set_scope(
+                "read",
+                ProfileAvailabilityScope::Parent,
+                "listed read",
+            )],
+            ProfileAvailabilityScope::None,
+        ),
+        ToolPolicyApplyMode::ImmediateIfIdle,
+    );
+    let statuses: Vec<_> = replace
+        .results
+        .iter()
+        .map(|r| (&r.name, r.status, r.requested_scope))
+        .collect();
+    assert!(
+        statuses.contains(&(
+            &"read".to_string(),
+            ToolPolicyMutationStatus::Applied,
+            ProfileAvailabilityScope::Parent
+        )),
+        "{statuses:?}"
+    );
+    assert!(
+        statuses.iter().any(|(name, status, scope)| name == &"bash"
+            && *status == ToolPolicyMutationStatus::Applied
+            && *scope == ProfileAvailabilityScope::None),
+        "{statuses:?}"
+    );
+    assert_eq!(
+        reg.catalogue_entries()
+            .into_iter()
+            .find(|e| e.name == "read")
+            .unwrap()
+            .effective_scope,
+        ProfileAvailabilityScope::Parent
+    );
+    assert_eq!(
+        reg.catalogue_entries()
+            .into_iter()
+            .find(|e| e.name == "bash")
+            .unwrap()
+            .effective_scope,
+        ProfileAvailabilityScope::None
+    );
+}
+
+#[test]
+fn replace_reconciliation_preserves_requested_identifier_for_stable_id_audit() {
+    let (mut reg, _tmp) = test_registry();
+    let stable_id = reg.catalogue_entry("read").unwrap().stable_id.into_owned();
+
+    let known = reg.apply_tool_policy_request(
+        &ToolPolicyRequest::replace(
+            vec![ToolPolicyMutation::set_scope(
+                stable_id.clone(),
+                ProfileAvailabilityScope::Child,
+                "known stable id",
+            )],
+            ProfileAvailabilityScope::None,
+        ),
+        ToolPolicyApplyMode::ImmediateIfIdle,
+    );
+    let read = known
+        .results
+        .iter()
+        .find(|result| result.name == "read")
+        .unwrap();
+    assert_eq!(read.status, ToolPolicyMutationStatus::Applied);
+    assert_eq!(
+        read.requested_identifier.as_deref(),
+        Some(stable_id.as_str())
+    );
+
+    let unknown_id = "tool-removed".to_string();
+    let unknown = reg.apply_tool_policy_request(
+        &ToolPolicyRequest::replace(
+            vec![ToolPolicyMutation::set_scope(
+                unknown_id.clone(),
+                ProfileAvailabilityScope::Child,
+                "removed stable id",
+            )],
+            ProfileAvailabilityScope::None,
+        ),
+        ToolPolicyApplyMode::ImmediateIfIdle,
+    );
+    let removed = unknown
+        .results
+        .iter()
+        .find(|result| result.status == ToolPolicyMutationStatus::UnknownTool)
+        .unwrap();
+    assert_eq!(removed.name, unknown_id);
+    assert_eq!(
+        removed.requested_identifier.as_deref(),
+        Some(unknown_id.as_str())
+    );
+    assert!(removed.before.is_none());
+    assert!(removed.after.is_none());
 }

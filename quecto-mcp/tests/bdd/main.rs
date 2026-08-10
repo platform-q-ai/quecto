@@ -9,6 +9,7 @@ struct McpWorld {
     filtered: Vec<McpTool>,
     registration: Option<quecto_mcp::QuectoToolRegistration>,
     config: Option<quecto_mcp::Config>,
+    error: Option<String>,
 }
 
 #[given(expr = "an MCP tool named {string}")]
@@ -57,6 +58,27 @@ fn when_filter_prefix(world: &mut McpWorld, prefix: String) {
     world.filtered = filter_tools(&world.tools, &[prefix], &[], &[]).unwrap();
 }
 
+#[when(expr = "I filter tools with allowlist {string}")]
+fn when_filter_allowlist(world: &mut McpWorld, allowlist: String) {
+    world.filtered = filter_tools(&world.tools, &[], &split_csv(&allowlist), &[]).unwrap();
+}
+
+#[when(expr = "I filter tools with prefix {string} allowlist {string} and denylist {string}")]
+fn when_filter_precedence(
+    world: &mut McpWorld,
+    prefix: String,
+    allowlist: String,
+    denylist: String,
+) {
+    world.filtered = filter_tools(
+        &world.tools,
+        &[prefix],
+        &split_csv(&allowlist),
+        &split_csv(&denylist),
+    )
+    .unwrap();
+}
+
 #[given("required quecto-mcp connection arguments")]
 fn given_required_config_args(_world: &mut McpWorld) {}
 
@@ -71,6 +93,23 @@ fn when_build_registration_with_prefix(world: &mut McpWorld, prefix: String) {
     let tool = world.tool.as_ref().expect("tool");
     world.registration =
         Some(quecto_mcp::build_registration_with_name_prefix(tool, &prefix).unwrap());
+}
+
+#[when(expr = "I try to build a Quecto registration with name prefix {string}")]
+fn when_try_build_registration_with_prefix(world: &mut McpWorld, prefix: String) {
+    let tool = world.tool.as_ref().expect("tool");
+    world.error = quecto_mcp::build_registration_with_name_prefix(tool, &prefix)
+        .unwrap_err()
+        .to_string()
+        .into();
+}
+
+#[when("I build Quecto tool registrations for the discovered tools")]
+fn when_try_build_registrations(world: &mut McpWorld) {
+    world.error = quecto_mcp::build_registrations(&world.tools)
+        .unwrap_err()
+        .to_string()
+        .into();
 }
 
 #[when("I parse the quecto-mcp configuration")]
@@ -144,6 +183,11 @@ fn then_description(world: &mut McpWorld, expected: String) {
     );
 }
 
+#[then("quecto-mcp should reject the MCP tool configuration")]
+fn then_rejected(world: &mut McpWorld) {
+    assert!(world.error.is_some());
+}
+
 #[then(expr = "the Quecto tool schema should be {string}")]
 fn then_schema(world: &mut McpWorld, expected: String) {
     let expected = expected.replace("\\\"", "\"");
@@ -155,6 +199,15 @@ fn then_schema(world: &mut McpWorld, expected: String) {
             .parameters_schema,
         expected
     );
+}
+
+fn split_csv(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 #[tokio::main]

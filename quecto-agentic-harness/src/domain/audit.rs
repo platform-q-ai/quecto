@@ -77,13 +77,6 @@ pub enum AuditEvent {
         guard_message: String,
         before_step_key: String,
     },
-    #[cfg(any(test, feature = "test-support"))]
-    SubagentAwait {
-        agent_id: String,
-        status: String,
-        reason: Option<String>,
-        elapsed_ms: u64,
-    },
     Error {
         source: String,
         tool: Option<String>,

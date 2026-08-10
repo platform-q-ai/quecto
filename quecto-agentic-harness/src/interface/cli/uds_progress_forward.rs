@@ -54,6 +54,7 @@ pub(crate) async fn forward_event(ev: AgentProgressEvent, sink: &mut EventSink<'
             reconciliation,
             reason,
         } => {
+            let correlation_id = reconciliation.correlation_id.clone();
             sink.emit(&AgentEvent::ToolPolicyChanged {
                 changed_tools: reconciliation
                     .results
@@ -70,6 +71,7 @@ pub(crate) async fn forward_event(ev: AgentProgressEvent, sink: &mut EventSink<'
                     }
                 },
                 reason,
+                correlation_id,
             })
             .await;
         }
