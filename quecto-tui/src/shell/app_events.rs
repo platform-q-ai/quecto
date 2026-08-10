@@ -500,10 +500,11 @@ mod cursor_tests;
 #[path = "app_events_readonly_tests.rs"]
 mod readonly_tests;
 
-/// A process-unique token for request/batch ids. Combines the OS process id, a
-/// wall-clock stamp (readability in logs), and a monotonic counter so two calls
-/// in the same nanosecond — `SystemTime` is not guaranteed strictly increasing
-/// — cannot collide and clobber each other's pending-recovery entry (#1060
+/// A production-startup/process-unique token for request/batch ids. Combines
+/// the OS process id, a wall-clock stamp (readability in logs), and a
+/// monotonic counter so two calls in the same nanosecond — `SystemTime` is not
+/// guaranteed strictly increasing — cannot collide and clobber each other's
+/// pending-recovery entry (#1060
 /// review).
 pub(super) fn uuid_like() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
