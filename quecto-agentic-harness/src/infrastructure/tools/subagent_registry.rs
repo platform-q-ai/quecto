@@ -472,6 +472,16 @@ pub enum ExitSignalKind {
     NeverReachable,
 }
 
+impl ExitSignalKind {
+    pub fn to_wire_str(self) -> &'static str {
+        match self {
+            Self::ProcessExit => "process_exit",
+            Self::ConnectionClosed => "connection_closed",
+            Self::NeverReachable => "never_reachable",
+        }
+    }
+}
+
 pub type ExitSignalTx = tokio::sync::watch::Sender<Option<ExitSignal>>;
 pub type ExitSignalRx = tokio::sync::watch::Receiver<Option<ExitSignal>>;
 
@@ -499,7 +509,10 @@ pub enum SubagentNotification {
     /// Child agent's last tool execution returned an error.
     Errored { agent_id: String, error: String },
     /// Child agent process exited (connection closed or process reaped).
-    Exited { agent_id: String },
+    Exited {
+        agent_id: String,
+        reason: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -536,7 +549,7 @@ impl SequencedSubagentNotification {
             SubagentNotification::Completed { agent_id, .. }
             | SubagentNotification::Stalled { agent_id, .. }
             | SubagentNotification::Errored { agent_id, .. }
-            | SubagentNotification::Exited { agent_id } => agent_id.clone(),
+            | SubagentNotification::Exited { agent_id, .. } => agent_id.clone(),
         };
         (agent_id, self.sequence)
     }
@@ -568,7 +581,12 @@ impl SubagentNotification {
                 "Agent '{agent_id}' stalled: idle with workflow still {workflow_mode} at {steps_completed}/{steps_total}. Inspect output/state, then prompt, steer, abort, or kill it."
             ),
             Self::Errored { agent_id, error } => format!("Agent '{agent_id}' failed: {error}"),
-            Self::Exited { agent_id } => format!("Agent '{agent_id}' exited unexpectedly"),
+            Self::Exited { agent_id, reason } => match reason {
+                Some(reason) if !reason.is_empty() => {
+                    format!("Agent '{agent_id}' exited unexpectedly ({reason})")
+                }
+                _ => format!("Agent '{agent_id}' exited unexpectedly"),
+            },
         }
     }
 }
