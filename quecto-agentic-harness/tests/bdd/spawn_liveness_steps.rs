@@ -548,11 +548,22 @@ fn then_live_event_reports_exited(world: &mut QuectoWorld, agent_id: String) {
     loop {
         match rx.try_recv() {
             Ok(event) => {
-                if event.contains("subagent_state_changed")
-                    && event.contains(&agent_id)
-                    && event.contains("exited")
-                {
-                    return;
+                if !event.contains("subagent_state_changed") {
+                    continue;
+                }
+                let parsed: serde_json::Value = serde_json::from_str(&event)
+                    .unwrap_or_else(|e| panic!("state event must be JSON: {e}; got {event}"));
+                if let Some(subagents) = parsed["subagents"].as_array() {
+                    let exited = subagents.iter().any(|s| {
+                        s["agentId"].as_str() == Some(agent_id.as_str())
+                            && s["status"].as_str() == Some("exited")
+                    });
+                    let absent = subagents
+                        .iter()
+                        .all(|s| s["agentId"].as_str() != Some(agent_id.as_str()));
+                    if exited || absent {
+                        return;
+                    }
                 }
             }
             Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {

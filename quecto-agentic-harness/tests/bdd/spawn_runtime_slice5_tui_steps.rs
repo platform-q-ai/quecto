@@ -14,7 +14,7 @@ use super::*;
 /// for one to arrive.
 fn latest_state_line(
     world: &mut QuectoWorld,
-    accept: impl Fn(&serde_json::Value) -> bool,
+    mut accept: impl FnMut(&serde_json::Value) -> bool,
 ) -> String {
     let rx = world
         .spawn_broadcast_rx
@@ -179,19 +179,34 @@ fn then_tui_solo_nested_row(world: &mut QuectoWorld, id: String, env_ref: String
 
 #[then(expr = "the TUI renders subagent {string} as exited")]
 fn then_tui_renders_exited(world: &mut QuectoWorld, agent_id: String) {
-    // Wait for the REAL pushed state line reporting the agent as exited, then
-    // prove the TUI renders it in the exited style (dim name, not the
-    // green/yellow live colours).
+    // Wait for the REAL pushed state line reporting the agent as terminal. Under
+    // #1202 a dead script-managed member may be pruned immediately; either an
+    // exited row or absence from the survivor-only roster is terminal/non-live.
+    let mut pruned = false;
     let line = latest_state_line(world, |parsed| {
         parsed["subagents"].as_array().is_some_and(|subagents| {
-            subagents.iter().any(|s| {
+            let exited = subagents.iter().any(|s| {
                 s["agentId"].as_str() == Some(agent_id.as_str())
                     && s["status"].as_str() == Some("exited")
-            })
+            });
+            let absent = subagents
+                .iter()
+                .all(|s| s["agentId"].as_str() != Some(agent_id.as_str()));
+            if absent {
+                pruned = true;
+            }
+            exited || absent
         })
     });
     render_state_line(world, &line);
     let raw = drive(world, |h| h.full_frame_raw());
+    if pruned {
+        assert!(
+            !raw.lines().any(|l| l.contains(&agent_id)),
+            "pruned subagent {agent_id} must not render as live:\n{raw}"
+        );
+        return;
+    }
     let row = raw
         .lines()
         .find(|l| l.contains(&agent_id))
