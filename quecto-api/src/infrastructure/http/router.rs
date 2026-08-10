@@ -17,6 +17,7 @@ use crate::application::ports::agent_gateway::{
 };
 use crate::application::use_cases;
 use crate::domain::event::AgentEvent;
+use std::collections::HashSet;
 
 /// Shared application state, injected into every handler.
 pub struct AppState<G: AgentGateway> {
@@ -100,6 +101,13 @@ enum WsCommandRequest {
         offset: Option<usize>,
         limit: Option<usize>,
     },
+    Sync {
+        id: Option<String>,
+        epoch: u64,
+        #[serde(rename = "sinceRev")]
+        since_rev: u64,
+        agent_id: Option<String>,
+    },
 }
 
 fn default_wait_for_completion() -> bool {
@@ -135,11 +143,15 @@ fn with_response_id(event: AgentEvent, id: Option<String>) -> AgentEvent {
     }
 }
 
-fn is_direct_ws_command_response(event: &AgentEvent) -> bool {
-    matches!(
-        event,
-        AgentEvent::Response { command, .. } if command == "get_message"
-    )
+fn direct_response_id(event: &AgentEvent) -> Option<&str> {
+    match event {
+        AgentEvent::Response {
+            id: Some(id),
+            command,
+            ..
+        } if command == "get_message" || command == "sync" => Some(id.as_str()),
+        _ => None,
+    }
 }
 
 fn command_type_from_text(text: &str) -> Option<String> {
@@ -505,8 +517,6 @@ fn hex_encode(key: &str) -> String {
     encoded
 }
 
-// ── Stats ─────────────────────────────────────────────────────────────────────
-
 async fn stats_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
 ) -> impl IntoResponse {
@@ -519,8 +529,6 @@ async fn stats_handler<G: AgentGateway>(
         Err(e) => api_error_response(e).into_response(),
     }
 }
-
-// ── WebSocket ─────────────────────────────────────────────────────────────────
 
 async fn ws_handler<G: AgentGateway + Clone + 'static>(
     State(state): State<Arc<AppState<G>>>,
@@ -543,7 +551,8 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
     // We use a channel to coordinate: the reader task sends incoming messages,
     // and the main loop forwards events back to the client.
     let (incoming_tx, mut incoming_rx) = tokio::sync::mpsc::channel::<String>(32);
-    let (command_event_tx, mut command_event_rx) = tokio::sync::mpsc::channel::<AgentEvent>(32);
+    let (command_event_tx, mut command_event_rx) =
+        tokio::sync::mpsc::channel::<(AgentEvent, Vec<String>)>(32);
 
     let gateway = state.gateway.clone();
     let cmd_task = tokio::spawn(async move {
@@ -557,7 +566,7 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
                     offset,
                     limit,
                 }) => {
-                    let event = match gateway
+                    let (event, mut suppress): (AgentEvent, Vec<String>) = match gateway
                         .send(AgentCommand::GetMessage {
                             message_id,
                             agent_id,
@@ -567,23 +576,74 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
                         })
                         .await
                     {
-                        Ok(event) => with_response_id(event, id),
-                        Err(err) => ws_error_response(id, "get_message", err.to_string()),
+                        Ok(event) => {
+                            let suppress = direct_response_id(&event)
+                                .into_iter()
+                                .map(ToOwned::to_owned)
+                                .collect();
+                            (with_response_id(event, id), suppress)
+                        }
+                        Err(err) => (
+                            ws_error_response(id, "get_message", err.to_string()),
+                            Vec::new(),
+                        ),
                     };
-                    let _ = command_event_tx.send(event).await;
+                    suppress.extend(direct_response_id(&event).map(ToOwned::to_owned));
+                    let _ = command_event_tx.send((event, suppress)).await;
+                    continue;
+                }
+                Ok(WsCommandRequest::Sync {
+                    id,
+                    epoch,
+                    since_rev,
+                    agent_id,
+                }) => {
+                    let (event, mut suppress): (AgentEvent, Vec<String>) =
+                        match use_cases::sync_ledger::execute(
+                            &gateway,
+                            use_cases::sync_ledger::SyncInput {
+                                epoch,
+                                since_rev,
+                                agent_id,
+                            },
+                        )
+                        .await
+                        {
+                            Ok(event) => {
+                                let suppress = direct_response_id(&event)
+                                    .into_iter()
+                                    .map(ToOwned::to_owned)
+                                    .collect();
+                                (with_response_id(event, id), suppress)
+                            }
+                            Err(err) => {
+                                (ws_error_response(id, "sync", err.to_string()), Vec::new())
+                            }
+                        };
+                    suppress.extend(direct_response_id(&event).map(ToOwned::to_owned));
+                    let _ = command_event_tx.send((event, suppress)).await;
                     continue;
                 }
                 Err(err) => {
                     // Only malformed commands owned by this direct-command
                     // parser are errors here. Other typed payloads (notably
                     // `type: prompt`) retain the legacy PromptRequest fallback.
-                    if command_type_from_text(&text).as_deref() == Some("get_message") {
+                    if matches!(
+                        command_type_from_text(&text).as_deref(),
+                        Some("get_message" | "sync")
+                    ) {
+                        let command =
+                            command_type_from_text(&text).unwrap_or_else(|| "command".into());
                         let event = ws_error_response(
                             command_id_from_text(&text),
-                            "get_message",
+                            &command,
                             format!("invalid request: {err}"),
                         );
-                        let _ = command_event_tx.send(event).await;
+                        let suppress = direct_response_id(&event)
+                            .into_iter()
+                            .map(ToOwned::to_owned)
+                            .collect();
+                        let _ = command_event_tx.send((event, suppress)).await;
                         continue;
                     }
                 }
@@ -601,13 +661,16 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
         }
     });
 
+    let mut direct_response_ids = HashSet::<String>::new();
+
     // Main loop: concurrently read from WS and write agent events.
     loop {
         tokio::select! {
             // Direct command response → WS
             event = command_event_rx.recv() => {
                 match event {
-                    Some(ev) => {
+                    Some((ev, suppress_ids)) => {
+                        direct_response_ids.extend(suppress_ids);
                         if let Ok(json) = serde_json::to_string(&ev) {
                             if socket.send(Message::Text(json.into())).await.is_err() {
                                 break;
@@ -621,10 +684,11 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
             event = subscriber.recv() => {
                 match event {
                     Some(ev) => {
-                        // Direct get_message responses are returned by
+                        // Direct command responses are returned by
                         // `gateway.send` above. The real UDS gateway also
-                        // broadcasts them, so suppress that duplicate here.
-                        if is_direct_ws_command_response(&ev) {
+                        // broadcasts them, so suppress only the correlated
+                        // duplicate already returned on this WebSocket.
+                        if direct_response_id(&ev).is_some_and(|id| direct_response_ids.remove(id)) {
                             continue;
                         }
                         if let Ok(json) = serde_json::to_string(&ev) {
@@ -643,7 +707,8 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        let _ = incoming_tx.send(text.to_string()).await;
+                        let text = text.to_string();
+                        let _ = incoming_tx.send(text).await;
                     }
                     Some(Ok(Message::Close(_))) | None => break,
                     _ => {}
@@ -655,8 +720,6 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
     drop(incoming_tx);
     cmd_task.abort();
 }
-
-// ── Error mapping ─────────────────────────────────────────────────────────────
 
 fn api_error_response(
     err: crate::domain::error::ApiError,

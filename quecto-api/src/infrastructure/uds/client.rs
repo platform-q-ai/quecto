@@ -9,9 +9,16 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use std::collections::HashMap;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
-use tokio::sync::{broadcast, mpsc};
+
+use tokio::sync::{Mutex, broadcast, mpsc, oneshot};
+
+struct PendingResponse {
+    command: String,
+    tx: oneshot::Sender<AgentEvent>,
+}
 
 use quecto_line_io::{FrameError, WireMode, read_frame_or_legacy_line_into, write_message};
 
@@ -36,6 +43,8 @@ pub struct UdsGateway {
     cmd_tx: mpsc::Sender<String>,
     /// Broadcast sender — every incoming event is sent here.
     event_tx: broadcast::Sender<AgentEvent>,
+    /// One-shot waiters for correlated command responses.
+    pending_responses: Arc<Mutex<HashMap<String, PendingResponse>>>,
     /// Whether the background reader is still alive.
     connected: Arc<AtomicBool>,
 }
@@ -103,12 +112,14 @@ impl UdsGateway {
             }
         });
 
-        // Event broadcast
+        // Event broadcast and correlated direct-command waiters.
         let (event_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
+        let pending_responses = Arc::new(Mutex::new(HashMap::<String, PendingResponse>::new()));
         let connected = Arc::new(AtomicBool::new(true));
 
         // Event reader task
         let reader_tx = event_tx.clone();
+        let reader_pending = pending_responses.clone();
         let reader_connected = connected.clone();
         tokio::spawn(async move {
             let mut reader = BufReader::new(read_half);
@@ -130,8 +141,32 @@ impl UdsGateway {
                         }
                         match serde_json::from_str::<AgentEvent>(trimmed) {
                             Ok(event) => {
-                                // Ignore send errors — means no subscribers currently.
-                                let _ = reader_tx.send(event);
+                                let mut delivered_to_pending = false;
+                                if let AgentEvent::Response { id: Some(id), .. } = &event {
+                                    if let Some(pending) = reader_pending.lock().await.remove(id) {
+                                        delivered_to_pending = true;
+                                        let _ = pending.tx.send(event.clone());
+                                    }
+                                }
+                                if let AgentEvent::Response { command, .. } = &event {
+                                    if command == "agent_error" {
+                                        let mut pending = reader_pending.lock().await;
+                                        if let Some(id) = pending.iter().find_map(|(id, p)| {
+                                            (p.command == "prompt").then(|| id.clone())
+                                        }) {
+                                            if let Some(pending) = pending.remove(&id) {
+                                                delivered_to_pending = true;
+                                                let _ = pending.tx.send(event.clone());
+                                            }
+                                        }
+                                    }
+                                }
+                                // Correlated direct-command responses are returned by
+                                // `send`; fan-out subscribers should not receive a
+                                // second copy. Other events are broadcast normally.
+                                if !delivered_to_pending {
+                                    let _ = reader_tx.send(event);
+                                }
                             }
                             Err(e) => {
                                 let preview_len = trimmed.len().min(200);
@@ -162,6 +197,7 @@ impl UdsGateway {
         Ok(Self {
             cmd_tx,
             event_tx,
+            pending_responses,
             connected,
         })
     }
@@ -230,6 +266,17 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
         }
         AgentCommand::GetMessagesTail { count } => {
             serde_json::json!({"type": "get_messages_tail", "id": id, "count": count})
+        }
+        AgentCommand::Sync {
+            epoch,
+            since_rev,
+            agent_id,
+        } => {
+            let mut v = serde_json::json!({"type": "sync", "id": id, "epoch": epoch, "sinceRev": since_rev});
+            if let Some(agent_id) = agent_id {
+                v["agent_id"] = serde_json::Value::String(agent_id);
+            }
+            v
         }
         AgentCommand::GetMessage {
             message_id,
@@ -321,49 +368,30 @@ impl AgentGateway for UdsGateway {
                 .map_err(|e| ApiError::Internal(format!("serialization error: {e}")))?;
             line.push('\n');
 
-            // Subscribe BEFORE sending so we don't miss the response.
-            let mut rx = this.event_tx.subscribe();
-            this.send_raw(line).await?;
+            let (response_tx, response_rx) = oneshot::channel();
+            let command_name = json_value["type"].as_str().unwrap_or_default().to_owned();
+            this.pending_responses.lock().await.insert(
+                id.clone(),
+                PendingResponse {
+                    command: command_name,
+                    tx: response_tx,
+                },
+            );
 
-            // Wait for the correlated response event.
+            if let Err(err) = this.send_raw(line).await {
+                this.pending_responses.lock().await.remove(&id);
+                return Err(err);
+            }
+
+            // Wait for the correlated response event without depending on the
+            // lossy broadcast receiver used for fan-out subscribers.
             let timeout = tokio::time::Duration::from_secs(120);
-            let deadline = tokio::time::Instant::now() + timeout;
-
-            // Determine the command name for fallback matching (agent_error
-            // responses may not carry the correlation ID).
-            let command_name = match &json_value["type"] {
-                serde_json::Value::String(s) => s.clone(),
-                _ => String::new(),
-            };
-
-            loop {
-                match tokio::time::timeout_at(deadline, rx.recv()).await {
-                    Ok(Ok(event)) => {
-                        if let AgentEvent::Response {
-                            id: ref resp_id,
-                            ref command,
-                            ..
-                        } = event
-                        {
-                            // Match by correlation ID if present.
-                            if resp_id.as_deref() == Some(id.as_str()) {
-                                return Ok(event);
-                            }
-                            // Fallback: match agent_error responses for our
-                            // command type (they may omit the correlation ID).
-                            if command == "agent_error" && command_name == "prompt" {
-                                return Ok(event);
-                            }
-                        }
-                        // Not our response — keep waiting.
-                    }
-                    Ok(Err(broadcast::error::RecvError::Lagged(n))) => {
-                        tracing::warn!("send() subscriber lagged, dropped {n} events");
-                    }
-                    Ok(Err(broadcast::error::RecvError::Closed)) => {
-                        return Err(ApiError::AgentNotConnected);
-                    }
-                    Err(_) => return Err(ApiError::Timeout(timeout.as_secs())),
+            match tokio::time::timeout(timeout, response_rx).await {
+                Ok(Ok(event)) => Ok(event),
+                Ok(Err(_)) => Err(ApiError::AgentNotConnected),
+                Err(_) => {
+                    this.pending_responses.lock().await.remove(&id);
+                    Err(ApiError::Timeout(timeout.as_secs()))
                 }
             }
         })

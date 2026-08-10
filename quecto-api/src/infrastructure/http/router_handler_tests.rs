@@ -27,13 +27,9 @@ async fn status_of(resp: axum::response::Response) -> StatusCode {
 
 #[tokio::test]
 async fn health_handler_reports_connected_and_disconnected() {
-    let ok = health_handler(state_for(connected_gw()))
-        .await
-        .into_response();
+    let ok = health_handler(state_for(connected_gw())).await.into_response();
     assert_eq!(ok.status(), StatusCode::OK);
-    let down = health_handler(state_for(MockGateway::default()))
-        .await
-        .into_response();
+    let down = health_handler(state_for(MockGateway::default())).await.into_response();
     assert_eq!(down.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
@@ -83,63 +79,33 @@ async fn prompt_handler_forwards_and_maps_error() {
 async fn steer_follow_up_abort_handlers_forward() {
     assert_eq!(
         status_of(
-            steer_handler(
-                state_for(connected_gw()),
-                Json(MessageRequest {
-                    message: "go".into()
-                })
-            )
-            .await
-            .into_response()
-        )
-        .await,
-        StatusCode::OK
-    );
-    assert_eq!(
-        status_of(
-            follow_up_handler(
-                state_for(connected_gw()),
-                Json(MessageRequest {
-                    message: "later".into()
-                })
-            )
-            .await
-            .into_response()
-        )
-        .await,
-        StatusCode::OK
-    );
-    assert_eq!(
-        status_of(
-            abort_handler(state_for(connected_gw()))
+            steer_handler(state_for(connected_gw()), Json(MessageRequest { message: "go".into() }))
                 .await
                 .into_response()
         )
         .await,
         StatusCode::OK
     );
+    assert_eq!(
+        status_of(
+            follow_up_handler(state_for(connected_gw()), Json(MessageRequest { message: "later".into() }))
+                .await
+                .into_response()
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(status_of(abort_handler(state_for(connected_gw())).await.into_response()).await, StatusCode::OK);
     // disconnected → 503
     assert_eq!(
-        status_of(
-            abort_handler(state_for(MockGateway::default()))
-                .await
-                .into_response()
-        )
-        .await,
+        status_of(abort_handler(state_for(MockGateway::default())).await.into_response()).await,
         StatusCode::SERVICE_UNAVAILABLE
     );
 }
 
 #[tokio::test]
 async fn steer_handler_maps_internal_error_to_500() {
-    let resp = steer_handler(
-        state_for(failing_gw()),
-        Json(MessageRequest {
-            message: "x".into(),
-        }),
-    )
-    .await
-    .into_response();
+    let resp = steer_handler(state_for(failing_gw()), Json(MessageRequest { message: "x".into() })).await.into_response();
     assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
@@ -172,24 +138,14 @@ async fn set_model_handler_success_and_validation() {
 
 #[tokio::test]
 async fn set_effort_handler_success_and_validation() {
-    let ok = set_effort_handler(
-        state_for(connected_gw()),
-        Json(SetEffortRequest {
-            effort: "high".into(),
-        }),
-    )
-    .await
-    .into_response();
+    let ok = set_effort_handler(state_for(connected_gw()), Json(SetEffortRequest { effort: "high".into() }))
+        .await
+        .into_response();
     assert_eq!(ok.status(), StatusCode::OK);
 
-    let bad = set_effort_handler(
-        state_for(connected_gw()),
-        Json(SetEffortRequest {
-            effort: "turbo".into(),
-        }),
-    )
-    .await
-    .into_response();
+    let bad = set_effort_handler(state_for(connected_gw()), Json(SetEffortRequest { effort: "turbo".into() }))
+        .await
+        .into_response();
     assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -229,73 +185,45 @@ async fn set_tool_policy_handler_success_and_validation() {
 
 #[tokio::test]
 async fn clear_history_handler_connected_and_disconnected() {
-    let ok = clear_history_handler(state_for(connected_gw()))
-        .await
-        .into_response();
+    let ok = clear_history_handler(state_for(connected_gw())).await.into_response();
     assert_eq!(ok.status(), StatusCode::OK);
 
-    let down = clear_history_handler(state_for(MockGateway::default()))
-        .await
-        .into_response();
+    let down = clear_history_handler(state_for(MockGateway::default())).await.into_response();
     assert_eq!(down.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[tokio::test]
 async fn subagents_and_tools_handlers_forward() {
     for resp in [
-        subagents_handler(state_for(connected_gw()))
-            .await
-            .into_response(),
-        tools_handler(state_for(connected_gw()))
-            .await
-            .into_response(),
-        state_handler(state_for(connected_gw()))
-            .await
-            .into_response(),
+        subagents_handler(state_for(connected_gw())).await.into_response(),
+        tools_handler(state_for(connected_gw())).await.into_response(),
+        state_handler(state_for(connected_gw())).await.into_response(),
     ] {
         assert_eq!(resp.status(), StatusCode::OK);
     }
     // disconnected
     assert_eq!(
-        subagents_handler(state_for(MockGateway::default()))
-            .await
-            .into_response()
-            .status(),
+        subagents_handler(state_for(MockGateway::default())).await.into_response().status(),
         StatusCode::SERVICE_UNAVAILABLE
     );
 }
 
 #[tokio::test]
 async fn messages_handlers_connected_and_disconnected() {
-    let ok = messages_handler(
-        state_for(connected_gw()),
-        Query(MessagesQuery {
-            before: Some("c".into()),
-        }),
-    )
-    .await
-    .into_response();
-    assert_eq!(ok.status(), StatusCode::OK);
-
-    let down = messages_handler(
-        state_for(MockGateway::default()),
-        Query(MessagesQuery { before: None }),
-    )
-    .await
-    .into_response();
-    assert_eq!(down.status(), StatusCode::SERVICE_UNAVAILABLE);
-
-    let tail_ok = messages_tail_handler(state_for(connected_gw()), Query(TailQuery { n: Some(5) }))
+    let ok = messages_handler(state_for(connected_gw()), Query(MessagesQuery { before: Some("c".into()) }))
         .await
         .into_response();
+    assert_eq!(ok.status(), StatusCode::OK);
+
+    let down = messages_handler(state_for(MockGateway::default()), Query(MessagesQuery { before: None }))
+        .await
+        .into_response();
+    assert_eq!(down.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    let tail_ok = messages_tail_handler(state_for(connected_gw()), Query(TailQuery { n: Some(5) })).await.into_response();
     assert_eq!(tail_ok.status(), StatusCode::OK);
 
-    let tail_down = messages_tail_handler(
-        state_for(MockGateway::default()),
-        Query(TailQuery { n: None }),
-    )
-    .await
-    .into_response();
+    let tail_down = messages_tail_handler(state_for(MockGateway::default()), Query(TailQuery { n: None })).await.into_response();
     assert_eq!(tail_down.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
@@ -317,18 +245,9 @@ async fn message_handler_rejects_when_disconnected() {
 
 #[tokio::test]
 async fn stats_handler_connected_and_disconnected() {
+    assert_eq!(stats_handler(state_for(connected_gw())).await.into_response().status(), StatusCode::OK);
     assert_eq!(
-        stats_handler(state_for(connected_gw()))
-            .await
-            .into_response()
-            .status(),
-        StatusCode::OK
-    );
-    assert_eq!(
-        stats_handler(state_for(MockGateway::default()))
-            .await
-            .into_response()
-            .status(),
+        stats_handler(state_for(MockGateway::default())).await.into_response().status(),
         StatusCode::SERVICE_UNAVAILABLE
     );
 }
@@ -338,23 +257,11 @@ async fn stats_handler_connected_and_disconnected() {
 #[test]
 fn api_error_response_maps_every_variant() {
     use crate::domain::error::ApiError::*;
-    assert_eq!(
-        api_error_response(AgentNotConnected).0,
-        StatusCode::SERVICE_UNAVAILABLE
-    );
+    assert_eq!(api_error_response(AgentNotConnected).0, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(api_error_response(AgentBusy).0, StatusCode::CONFLICT);
-    assert_eq!(
-        api_error_response(Timeout(5)).0,
-        StatusCode::GATEWAY_TIMEOUT
-    );
-    assert_eq!(
-        api_error_response(InvalidRequest("x".into())).0,
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        api_error_response(Internal("x".into())).0,
-        StatusCode::INTERNAL_SERVER_ERROR
-    );
+    assert_eq!(api_error_response(Timeout(5)).0, StatusCode::GATEWAY_TIMEOUT);
+    assert_eq!(api_error_response(InvalidRequest("x".into())).0, StatusCode::BAD_REQUEST);
+    assert_eq!(api_error_response(Internal("x".into())).0, StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 // ── WS helper functions ─────────────────────────────────────────────────────────
@@ -376,29 +283,20 @@ fn with_response_id_overrides_only_response_events() {
         other => panic!("unexpected: {other:?}"),
     }
     // Non-Response passes through unchanged.
-    assert!(matches!(
-        with_response_id(AgentEvent::AgentStart, Some("x".into())),
-        AgentEvent::AgentStart
-    ));
+    assert!(matches!(with_response_id(AgentEvent::AgentStart, Some("x".into())), AgentEvent::AgentStart));
 }
 
 #[test]
-fn is_direct_ws_command_response_only_matches_get_message() {
-    assert!(is_direct_ws_command_response(&AgentEvent::Response {
-        id: None,
-        command: "get_message".into(),
+fn direct_response_id_matches_sync_id() {
+    let ev = AgentEvent::Response {
+        id: Some("sync-1".into()),
+        command: "sync".into(),
         success: true,
         data: None,
         error: None,
-    }));
-    assert!(!is_direct_ws_command_response(&AgentEvent::Response {
-        id: None,
-        command: "prompt".into(),
-        success: true,
-        data: None,
-        error: None,
-    }));
-    assert!(!is_direct_ws_command_response(&AgentEvent::AgentStart));
+    };
+    assert_eq!(direct_response_id(&ev), Some("sync-1"));
+    assert_eq!(direct_response_id(&AgentEvent::AgentStart), None);
 }
 
 #[test]
@@ -414,13 +312,7 @@ fn command_type_and_id_from_text() {
 fn ws_error_response_builds_failure_event() {
     let ev = ws_error_response(Some("i".into()), "get_message", "bad");
     match ev {
-        AgentEvent::Response {
-            id,
-            command,
-            success,
-            error,
-            ..
-        } => {
+        AgentEvent::Response { id, command, success, error, .. } => {
             assert_eq!(id.as_deref(), Some("i"));
             assert_eq!(command, "get_message");
             assert!(!success);
@@ -464,10 +356,7 @@ fn audit_log_path_uses_env_overrides() {
         std::env::set_var("QUECTO_SESSION_KEY", "sess:1");
     }
     let path = audit_log_path();
-    assert!(
-        path.to_string_lossy()
-            .contains("/tmp/quecto-test-base/audit/")
-    );
+    assert!(path.to_string_lossy().contains("/tmp/quecto-test-base/audit/"));
     assert!(path.to_string_lossy().ends_with("sess_1.jsonl"));
     // SAFETY: single-threaded test serialized by ENV_LOCK; sets/reads process env.
     unsafe {
@@ -515,11 +404,7 @@ async fn read_audit_events_paginates_existing_file() {
     let dir = tempfile::tempdir().unwrap();
     let audit_dir = dir.path().join("audit");
     std::fs::create_dir_all(&audit_dir).unwrap();
-    std::fs::write(
-        audit_dir.join("s.jsonl"),
-        "{\"a\":1}\n{\"a\":2}\n{\"a\":3}\ninvalid json\n",
-    )
-    .unwrap();
+    std::fs::write(audit_dir.join("s.jsonl"), "{\"a\":1}\n{\"a\":2}\n{\"a\":3}\ninvalid json\n").unwrap();
     // SAFETY: single-threaded test serialized by ENV_LOCK; sets/reads process env.
     unsafe {
         std::env::set_var("QUECTO_BASE_DIR", dir.path());
@@ -548,12 +433,7 @@ async fn audit_events_handler_returns_ok_envelope() {
         std::env::set_var("QUECTO_BASE_DIR", dir.path());
         std::env::set_var("QUECTO_SESSION_KEY", "h");
     }
-    let resp = audit_events_handler(Query(AuditEventsQuery {
-        after: None,
-        limit: None,
-    }))
-    .await
-    .into_response();
+    let resp = audit_events_handler(Query(AuditEventsQuery { after: None, limit: None })).await.into_response();
     assert_eq!(resp.status(), StatusCode::OK);
     // SAFETY: single-threaded test serialized by ENV_LOCK; sets/reads process env.
     unsafe {
@@ -570,24 +450,13 @@ async fn handlers_map_transport_failure_to_500() {
     // Every use-case-backed handler funnels gateway errors through
     // api_error_response; a failing gateway must surface as 500.
     assert_eq!(
-        follow_up_handler(
-            state_for(failing_gw()),
-            Json(MessageRequest {
-                message: "x".into()
-            })
-        )
-        .await
-        .into_response()
-        .status(),
-        StatusCode::INTERNAL_SERVER_ERROR
-    );
-    assert_eq!(
-        abort_handler(state_for(failing_gw()))
+        follow_up_handler(state_for(failing_gw()), Json(MessageRequest { message: "x".into() }))
             .await
             .into_response()
             .status(),
         StatusCode::INTERNAL_SERVER_ERROR
     );
+    assert_eq!(abort_handler(state_for(failing_gw())).await.into_response().status(), StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(
         set_model_handler(
             state_for(failing_gw()),
@@ -602,49 +471,19 @@ async fn handlers_map_transport_failure_to_500() {
         .status(),
         StatusCode::INTERNAL_SERVER_ERROR
     );
+    assert_eq!(subagents_handler(state_for(failing_gw())).await.into_response().status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(tools_handler(state_for(failing_gw())).await.into_response().status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(state_handler(state_for(failing_gw())).await.into_response().status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(stats_handler(state_for(failing_gw())).await.into_response().status(), StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(
-        subagents_handler(state_for(failing_gw()))
+        messages_handler(state_for(failing_gw()), Query(MessagesQuery { before: None }))
             .await
             .into_response()
             .status(),
         StatusCode::INTERNAL_SERVER_ERROR
     );
     assert_eq!(
-        tools_handler(state_for(failing_gw()))
-            .await
-            .into_response()
-            .status(),
-        StatusCode::INTERNAL_SERVER_ERROR
-    );
-    assert_eq!(
-        state_handler(state_for(failing_gw()))
-            .await
-            .into_response()
-            .status(),
-        StatusCode::INTERNAL_SERVER_ERROR
-    );
-    assert_eq!(
-        stats_handler(state_for(failing_gw()))
-            .await
-            .into_response()
-            .status(),
-        StatusCode::INTERNAL_SERVER_ERROR
-    );
-    assert_eq!(
-        messages_handler(
-            state_for(failing_gw()),
-            Query(MessagesQuery { before: None })
-        )
-        .await
-        .into_response()
-        .status(),
-        StatusCode::INTERNAL_SERVER_ERROR
-    );
-    assert_eq!(
-        messages_tail_handler(state_for(failing_gw()), Query(TailQuery { n: None }))
-            .await
-            .into_response()
-            .status(),
+        messages_tail_handler(state_for(failing_gw()), Query(TailQuery { n: None })).await.into_response().status(),
         StatusCode::INTERNAL_SERVER_ERROR
     );
     assert_eq!(
@@ -671,31 +510,13 @@ async fn websocket_closes_when_subscribe_fails() {
     #[derive(Clone)]
     struct NoSubscribeGateway;
     impl AgentGateway for NoSubscribeGateway {
-        fn send(
-            &self,
-            _cmd: AgentCommand,
-        ) -> Pin<Box<dyn Future<Output = Result<AgentEvent, ApiError>> + Send + '_>> {
+        fn send(&self, _cmd: AgentCommand) -> Pin<Box<dyn Future<Output = Result<AgentEvent, ApiError>> + Send + '_>> {
             Box::pin(async { Err(ApiError::AgentNotConnected) })
         }
-        fn enqueue(
-            &self,
-            cmd: AgentCommand,
-        ) -> Pin<Box<dyn Future<Output = Result<AgentEvent, ApiError>> + Send + '_>> {
+        fn enqueue(&self, cmd: AgentCommand) -> Pin<Box<dyn Future<Output = Result<AgentEvent, ApiError>> + Send + '_>> {
             self.send(cmd)
         }
-        fn subscribe(
-            &self,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<
-                            Box<dyn crate::application::ports::agent_gateway::EventSubscriber>,
-                            ApiError,
-                        >,
-                    > + Send
-                    + '_,
-            >,
-        > {
+        fn subscribe(&self) -> Pin<Box<dyn Future<Output = Result<Box<dyn crate::application::ports::agent_gateway::EventSubscriber>, ApiError>> + Send + '_>> {
             Box::pin(async { Err(ApiError::AgentNotConnected) })
         }
         fn is_connected(&self) -> bool {
@@ -709,18 +530,11 @@ async fn websocket_closes_when_subscribe_fails() {
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
-        .await
-        .expect("connect");
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws")).await.expect("connect");
     // The server should close the stream promptly.
-    let next = tokio::time::timeout(std::time::Duration::from_secs(2), ws.next())
-        .await
-        .expect("close arrives within 2s");
+    let next = tokio::time::timeout(std::time::Duration::from_secs(2), ws.next()).await.expect("close arrives within 2s");
     assert!(
-        matches!(
-            next,
-            None | Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | Some(Err(_))
-        ),
+        matches!(next, None | Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | Some(Err(_))),
         "expected close/end, got {next:?}"
     );
 }

@@ -139,6 +139,33 @@ fn get_messages_command_serializes_optional_before_cursor() {
 // ── #1060 lockstep: refs preserved through the API event model ──────────
 
 #[test]
+fn sync_command_serializes_to_wire_with_optional_agent_id() {
+    let root = command_to_json(
+        AgentCommand::Sync {
+            epoch: 4,
+            since_rev: 9,
+            agent_id: None,
+        },
+        "sync1",
+    );
+    assert_eq!(root["type"], "sync");
+    assert_eq!(root["id"], "sync1");
+    assert_eq!(root["epoch"], 4);
+    assert_eq!(root["sinceRev"], 9);
+    assert!(root.get("agent_id").is_none());
+
+    let child = command_to_json(
+        AgentCommand::Sync {
+            epoch: 5,
+            since_rev: 10,
+            agent_id: Some("worker".into()),
+        },
+        "sync2",
+    );
+    assert_eq!(child["agent_id"], "worker");
+}
+
+#[test]
 fn get_message_command_serializes_to_wire() {
     let v = command_to_json(
         AgentCommand::GetMessage {
@@ -509,4 +536,30 @@ fn tool_policy_changed_is_modeled_not_unknown() {
         }
         other => panic!("expected ToolPolicyChanged, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn send_does_not_broadcast_correlated_response() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = spawn_echo_agent(&dir, "get_message").await;
+    let gw = UdsGateway::connect(&path).await.unwrap();
+    let mut sub = gw.subscribe().await.unwrap();
+
+    let response = gw
+        .send(AgentCommand::GetMessage {
+            message_id: "m1".into(),
+            agent_id: None,
+            tool_call_id: None,
+            offset: None,
+            limit: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(response, AgentEvent::Response { command, .. } if command == "get_message"));
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), sub.recv())
+            .await
+            .is_err(),
+        "correlated send response must not also be broadcast as a duplicate"
+    );
 }

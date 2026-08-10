@@ -36,6 +36,12 @@ pub enum AgentCommand {
     GetMessagesTail {
         count: usize,
     },
+    /// Pull committed ledger messages after `since_rev` for `epoch`.
+    Sync {
+        epoch: u64,
+        since_rev: u64,
+        agent_id: Option<String>,
+    },
     /// #1060: resolve a single message by its stable id (the on-demand lookup
     /// path for refs carried on end-of-turn events). `agent_id` forwards the
     /// lookup to a spawned child.

@@ -15,67 +15,6 @@ struct MockGateway {
 
 struct PendingSubscriber;
 
-#[derive(Clone)]
-struct BroadcastingGateway {
-    events: tokio::sync::broadcast::Sender<AgentEvent>,
-}
-
-struct BroadcastSubscriber(tokio::sync::broadcast::Receiver<AgentEvent>);
-
-impl crate::application::ports::agent_gateway::EventSubscriber for BroadcastSubscriber {
-    fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<AgentEvent>> + Send + '_>> {
-        Box::pin(async { self.0.recv().await.ok() })
-    }
-}
-
-impl AgentGateway for BroadcastingGateway {
-    fn send(
-        &self,
-        _cmd: AgentCommand,
-    ) -> Pin<Box<dyn Future<Output = Result<AgentEvent, ApiError>> + Send + '_>> {
-        let events = self.events.clone();
-        Box::pin(async move {
-            let event = AgentEvent::Response {
-                id: Some("internal-id".into()),
-                command: "get_message".into(),
-                success: true,
-                data: Some(serde_json::json!({"content": "page"})),
-                error: None,
-            };
-            let _ = events.send(event.clone());
-            Ok(event)
-        })
-    }
-
-    fn enqueue(
-        &self,
-        cmd: AgentCommand,
-    ) -> Pin<Box<dyn Future<Output = Result<AgentEvent, ApiError>> + Send + '_>> {
-        self.send(cmd)
-    }
-
-    fn subscribe(
-        &self,
-    ) -> Pin<
-        Box<
-            dyn Future<
-                    Output = Result<
-                        Box<dyn crate::application::ports::agent_gateway::EventSubscriber>,
-                        ApiError,
-                    >,
-                > + Send
-                + '_,
-        >,
-    > {
-        let receiver = self.events.subscribe();
-        Box::pin(async move { Ok(Box::new(BroadcastSubscriber(receiver)) as _) })
-    }
-
-    fn is_connected(&self) -> bool {
-        true
-    }
-}
-
 impl crate::application::ports::agent_gateway::EventSubscriber for PendingSubscriber {
     fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<AgentEvent>> + Send + '_>> {
         Box::pin(std::future::pending())
@@ -93,9 +32,13 @@ impl AgentGateway for MockGateway {
             if let Some(message) = send_error {
                 return Err(ApiError::Internal(message));
             }
+            let command = match self.commands.lock().unwrap().last() {
+                Some(AgentCommand::Sync { .. }) => "sync",
+                _ => "get_message",
+            };
             Ok(AgentEvent::Response {
                 id: Some("req".into()),
-                command: "get_message".into(),
+                command: command.into(),
                 success: true,
                 data: Some(serde_json::json!({"ok": true})),
                 error: None,
@@ -183,43 +126,6 @@ async fn websocket_malformed_command_returns_structured_error() {
 }
 
 #[tokio::test]
-async fn websocket_broadcasting_gateway_delivers_one_direct_response() {
-    let (events, _) = tokio::sync::broadcast::channel(8);
-    let app = build_router(BroadcastingGateway { events });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
-        .await
-        .expect("websocket connects");
-    ws.send(tokio_tungstenite::tungstenite::Message::Text(
-        serde_json::json!({
-            "type":"get_message", "id":"client-id", "messageId":"m1"
-        })
-        .to_string()
-        .into(),
-    ))
-    .await
-    .unwrap();
-
-    let first = tokio::time::timeout(std::time::Duration::from_secs(2), ws.next())
-        .await
-        .expect("direct response arrives")
-        .unwrap()
-        .unwrap();
-    let value: serde_json::Value = serde_json::from_str(&first.into_text().unwrap()).unwrap();
-    assert_eq!(value["id"], "client-id");
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(100), ws.next())
-            .await
-            .is_err(),
-        "the gateway broadcast must not produce a duplicate WebSocket frame"
-    );
-}
-
-#[tokio::test]
 async fn websocket_success_preserves_client_correlation_id() {
     let response = ws_response_for(
         MockGateway {
@@ -276,6 +182,52 @@ async fn websocket_typed_prompt_reaches_legacy_prompt_handler() {
     })
     .await
     .expect("typed prompt reaches gateway");
+}
+
+#[tokio::test]
+async fn websocket_sync_forwards_cursor_and_agent_id() {
+    let gateway = MockGateway {
+        connected: true,
+        ..MockGateway::default()
+    };
+    let response = ws_response_for(
+        gateway.clone(),
+        serde_json::json!({
+            "type":"sync",
+            "id":"sync-client-1",
+            "epoch":7,
+            "sinceRev":3,
+            "agent_id":"worker"
+        }),
+    )
+    .await;
+
+    assert_eq!(response["id"], "sync-client-1");
+    assert_eq!(response["command"], "sync");
+    let commands = gateway.commands.lock().unwrap();
+    assert!(matches!(
+        &commands[..],
+        [AgentCommand::Sync { epoch: 7, since_rev: 3, agent_id }] if agent_id.as_deref() == Some("worker")
+    ));
+}
+
+#[tokio::test]
+async fn websocket_sync_rejects_invalid_shape_without_gateway_send() {
+    let gateway = MockGateway {
+        connected: true,
+        ..MockGateway::default()
+    };
+    let response = ws_response_for(
+        gateway.clone(),
+        serde_json::json!({"type":"sync","id":"bad-sync","epoch":7}),
+    )
+    .await;
+
+    assert_eq!(response["type"], "response");
+    assert_eq!(response["id"], "bad-sync");
+    assert_eq!(response["command"], "sync");
+    assert_eq!(response["success"], false);
+    assert!(gateway.commands.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
