@@ -212,18 +212,6 @@ async fn notify_child_exited(
     // (or its immediate `get_containers`) must observe the authoritative
     // aggregate already updated, per the documented contract.
     super::subagent_cleanup::cleanup_registered_once(registry, agent_id).await;
-    if let Some(tx) = exit_tx {
-        // No exit status exists for a script-managed death: the kind keeps
-        // the await reason honest (connection_closed / never_reachable)
-        // instead of fabricating a clean exit. send_replace stores the value
-        // even when no awaiter currently holds a receiver, so a LATER await
-        // still reads the honest reason instead of the exit_code_0 fallback.
-        tx.send_replace(Some(super::subagent_registry::ExitSignal {
-            exit_code: None,
-            signal: None,
-            kind,
-        }));
-    }
     let sequence = update_entry_next_sequence(registry, agent_id, mark_exited);
     // Terminal transition: nothing may connect to a dead child's bridge, so
     // tear the accept loop and its socket file down while the entry itself
@@ -266,6 +254,18 @@ async fn notify_child_exited(
             }));
         }
         super::subagent_cascade::terminate_removed_entry(entry);
+    }
+    if let Some(tx) = exit_tx {
+        // No exit status exists for a script-managed death: the kind keeps
+        // the await reason honest (connection_closed / never_reachable)
+        // instead of fabricating a clean exit. Publish only after cascade
+        // cleanup/broadcast and descendant signals so a woken awaiter observes
+        // the authoritative survivor set and terminal subtree.
+        tx.send_replace(Some(super::subagent_registry::ExitSignal {
+            exit_code: None,
+            signal: None,
+            kind,
+        }));
     }
     send_notification(
         notify_tx,

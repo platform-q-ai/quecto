@@ -12,6 +12,9 @@ async fn notify_child_exited_cascades_descendants_and_reports_reason() {
     let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(4);
     let mut parent = test_entry();
     parent.display_name = "parent".into();
+    let (parent_exit_tx, mut parent_exit_rx) =
+        super::super::subagent_registry::new_exit_signal_channel();
+    parent.exit_signal_tx = Some(parent_exit_tx);
     let mut child = test_entry();
     child.parent_id = Some("parent".into());
     let (child_exit_tx, mut child_exit_rx) =
@@ -60,7 +63,11 @@ async fn notify_child_exited_cascades_descendants_and_reports_reason() {
         note.to_message(),
         "Agent 'parent' exited unexpectedly (connection_closed)"
     );
-    for rx in [&mut child_exit_rx, &mut grandchild_exit_rx] {
+    for rx in [
+        &mut child_exit_rx,
+        &mut grandchild_exit_rx,
+        &mut parent_exit_rx,
+    ] {
         let descendant_exit = rx
             .borrow_and_update()
             .clone()
