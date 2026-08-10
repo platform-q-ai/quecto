@@ -287,15 +287,18 @@ fn with_response_id_overrides_only_response_events() {
 }
 
 #[test]
-fn direct_response_id_matches_sync_id() {
-    let ev = AgentEvent::Response {
-        id: Some("sync-1".into()),
-        command: "sync".into(),
-        success: true,
-        data: None,
-        error: None,
-    };
-    assert_eq!(direct_response_id(&ev), Some("sync-1"));
+fn direct_response_id_matches_any_response_id() {
+    for command in ["get_message", "sync", "prompt"] {
+        let id = format!("{command}-1");
+        let ev = AgentEvent::Response {
+            id: Some(id.clone()),
+            command: command.into(),
+            success: true,
+            data: None,
+            error: None,
+        };
+        assert_eq!(direct_response_id(&ev), Some(id.as_str()));
+    }
     assert_eq!(direct_response_id(&AgentEvent::AgentStart), None);
 }
 

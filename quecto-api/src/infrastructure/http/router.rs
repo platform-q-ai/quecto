@@ -138,11 +138,7 @@ fn with_response_id(event: AgentEvent, id: Option<String>) -> AgentEvent {
 
 fn direct_response_id(event: &AgentEvent) -> Option<&str> {
     match event {
-        AgentEvent::Response {
-            id: Some(id),
-            command,
-            ..
-        } if command == "get_message" || command == "sync" => Some(id.as_str()),
+        AgentEvent::Response { id: Some(id), .. } => Some(id.as_str()),
         _ => None,
     }
 }
