@@ -33,17 +33,16 @@ pub trait RepoLocalContainerConfigTrust {
 
 #[derive(Debug, Default)]
 pub struct PersistentRepoLocalContainerConfigTrust {
-    store_path: PathBuf,
+    store_path: Option<PathBuf>,
     prompt_on_miss: bool,
 }
 
 impl PersistentRepoLocalContainerConfigTrust {
     pub fn new() -> Self {
-        let root = dirs::state_dir()
-            .or_else(dirs::home_dir)
-            .unwrap_or_else(|| PathBuf::from("."));
         Self {
-            store_path: root.join(".quecto/container-config-trust.json"),
+            store_path: dirs::state_dir()
+                .or_else(dirs::home_dir)
+                .map(|root| root.join(".quecto/container-config-trust.json")),
             prompt_on_miss: true,
         }
     }
@@ -58,7 +57,7 @@ impl PersistentRepoLocalContainerConfigTrust {
     #[cfg(any(test, feature = "test-support"))]
     pub fn with_store_path(store_path: PathBuf) -> Self {
         Self {
-            store_path,
+            store_path: Some(store_path),
             prompt_on_miss: true,
         }
     }
@@ -66,14 +65,16 @@ impl PersistentRepoLocalContainerConfigTrust {
 
 impl RepoLocalContainerConfigTrust for PersistentRepoLocalContainerConfigTrust {
     fn decide(&mut self, identity: &RepoLocalConfigIdentity) -> TrustDecision {
-        let store = read_store(&self.store_path);
-        let path = identity.path.to_string_lossy().to_string();
-        if store
-            .approved
-            .get(&path)
-            .is_some_and(|hashes| hashes.contains(&identity.content_hash))
-        {
-            return TrustDecision::Approved;
+        if let Some(store_path) = &self.store_path {
+            let store = read_store(store_path);
+            let path = identity.path.to_string_lossy().to_string();
+            if store
+                .approved
+                .get(&path)
+                .is_some_and(|hashes| hashes.contains(&identity.content_hash))
+            {
+                return TrustDecision::Approved;
+            }
         }
         if !self.prompt_on_miss || !prompt_approval(identity) {
             return TrustDecision::Denied;
@@ -82,13 +83,16 @@ impl RepoLocalContainerConfigTrust for PersistentRepoLocalContainerConfigTrust {
     }
 
     fn record_approved(&mut self, identity: &RepoLocalConfigIdentity) {
-        let mut store = read_store(&self.store_path);
+        let Some(store_path) = &self.store_path else {
+            return;
+        };
+        let mut store = read_store(store_path);
         store
             .approved
             .entry(identity.path.to_string_lossy().to_string())
             .or_default()
             .insert(identity.content_hash.clone());
-        let _ = write_store(&self.store_path, &store);
+        let _ = write_store(store_path, &store);
     }
 }
 
