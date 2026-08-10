@@ -216,6 +216,28 @@ fn explicit_spawn_config_wins_over_the_parent_config_path() {
 }
 
 #[test]
+fn roster_config_loader_uses_read_only_trust_and_ignores_unapproved_repo_local_config() {
+    let dir = TempDir::new().unwrap();
+    let parent = write_container_configs(dir.path(), "parentset");
+    let checkout = dir.path().join("checkout");
+    std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
+    std::fs::write(
+        checkout.join(".quecto/config.json"),
+        r#"{"container_configs":{"localset":{"default":true,"create":["/bin/false"],"cleanup":["/bin/true"]}}}"#,
+    )
+    .unwrap();
+    let config = base_config(ContainerSelection::New {
+        container_config: None,
+        name: None,
+    });
+
+    let loaded = load_container_config_for_roster(&config, Some(&parent), &checkout).unwrap();
+
+    assert_eq!(container_config_name(&None, &loaded).unwrap(), "parentset");
+    assert!(!loaded.container_configs.contains_key("localset"));
+}
+
+#[test]
 fn relative_parent_config_path_is_rejected_for_container_config() {
     let config = base_config(ContainerSelection::New {
         container_config: None,
