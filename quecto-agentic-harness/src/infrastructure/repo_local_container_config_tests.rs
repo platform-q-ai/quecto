@@ -336,3 +336,47 @@ fn persistent_trust_persists_hash_and_read_only_denies_unknown_hash() {
     assert!(content.contains("abc123"), "{content}");
     assert!(!content.contains("def456"), "{content}");
 }
+
+#[test]
+fn persistent_trust_read_only_constructor_denies_unknown_without_prompt() {
+    let identity = RepoLocalConfigIdentity {
+        path: TempDir::new()
+            .unwrap()
+            .path()
+            .join("repo/.quecto/config.json"),
+        content_hash: "unknown".into(),
+    };
+
+    let mut trust = PersistentRepoLocalContainerConfigTrust::read_only();
+
+    assert_eq!(trust.decide(&identity), TrustDecision::Denied);
+}
+
+#[test]
+fn trust_store_invalid_json_is_treated_as_empty_and_parentless_write_succeeds() {
+    let store_dir = TempDir::new().unwrap();
+    let invalid_store = store_dir.path().join("trust.json");
+    std::fs::write(&invalid_store, "not json").unwrap();
+    assert!(read_store(&invalid_store).approved.is_empty());
+
+    let cwd = std::env::current_dir().unwrap();
+    std::env::set_current_dir(store_dir.path()).unwrap();
+    let result = write_store(Path::new("trust-parentless.json"), &TrustStore::default());
+    std::env::set_current_dir(cwd).unwrap();
+
+    result.unwrap();
+    assert!(store_dir.path().join("trust-parentless.json").exists());
+}
+
+#[test]
+fn prompt_approval_non_interactive_denies_untrusted_identity() {
+    let identity = RepoLocalConfigIdentity {
+        path: TempDir::new()
+            .unwrap()
+            .path()
+            .join("repo/.quecto/config.json"),
+        content_hash: "abc123".into(),
+    };
+
+    assert!(!prompt_approval(&identity));
+}
