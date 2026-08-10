@@ -197,21 +197,23 @@ fn apply_delta_appends_content_and_builds_tool_calls() {
         &serde_json::json!({ "content": "ab" }),
         &mut content,
         &mut tool_calls,
-    );
+    )
+    .unwrap();
     OpenAiProvider::apply_delta(
         &serde_json::json!({
             "tool_calls": [{ "index": 0, "id": "c1", "function": { "name": "bash", "arguments": "{" } }]
         }),
         &mut content,
         &mut tool_calls,
-    );
+    ).unwrap();
     OpenAiProvider::apply_delta(
         &serde_json::json!({
             "tool_calls": [{ "index": 0, "function": { "arguments": "}" } }]
         }),
         &mut content,
         &mut tool_calls,
-    );
+    )
+    .unwrap();
 
     assert_eq!(content, "ab");
     assert_eq!(tool_calls.len(), 1);
@@ -230,7 +232,7 @@ fn apply_delta_skips_index_at_or_above_cap() {
         }),
         &mut content,
         &mut tool_calls,
-    );
+    ).unwrap();
     assert!(tool_calls.is_empty());
 }
 
@@ -244,7 +246,7 @@ fn apply_delta_fills_gap_indices() {
         }),
         &mut content,
         &mut tool_calls,
-    );
+    ).unwrap();
     // Indices 0 and 1 are backfilled with empty placeholders.
     assert_eq!(tool_calls.len(), 3);
     assert_eq!(tool_calls[2].id, "c3");
@@ -412,6 +414,38 @@ async fn chat_stream_wiremock_success_assembles_sse_body() {
         .await
         .unwrap();
     assert_eq!(response.content.as_deref(), Some("ok"));
+}
+
+#[tokio::test]
+async fn chat_stream_rejects_over_limit_sse_body_without_buffering_full_response() {
+    use crate::domain::provider::LlmProvider;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let fragment = "a".repeat(512 * 1024);
+    let mut body = String::new();
+    for _ in 0..(super::openai_sse_parser::MAX_OPENAI_SSE_CONTENT_BYTES / fragment.len()) {
+        body.push_str(&format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":{}}}}}]}}\n\n",
+            serde_json::to_string(&fragment).unwrap()
+        ));
+    }
+    body.push_str("data: {\"choices\":[{\"delta\":{\"content\":\"b\"}}]}\n\n");
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(body))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAiProvider::new("sk-test".into(), Some(server.uri()));
+    let messages = vec![Message::user("hi")];
+    let err = provider
+        .chat_stream(req(&messages, &[], "gpt-test"))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("assistant content exceeds"), "{err}");
 }
 
 #[tokio::test]

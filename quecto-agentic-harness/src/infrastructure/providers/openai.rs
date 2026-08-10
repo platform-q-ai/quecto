@@ -228,7 +228,7 @@ impl OpenAiProvider {
             .json(&body);
         let request_builder = self.apply_auth_headers(request_builder);
 
-        let response = request_builder.send().await.map_err(|e| {
+        let mut response = request_builder.send().await.map_err(|e| {
             DomainError::Provider(format!(
                 "HTTP error: {}",
                 super::sse_common::format_send_error(&e)
@@ -245,14 +245,26 @@ impl OpenAiProvider {
             )));
         }
 
-        let full = response
-            .text()
-            .await
-            .map_err(|e| DomainError::Provider(format!("failed to read stream: {}", e)))?;
-
-        Self::parse_sse_response(&full)
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        openai_sse::pump_sse_bytes(&mut response, &tx).await;
+        drop(tx);
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::Done(response) => return Ok(response),
+                StreamEvent::Error(error) => return Err(DomainError::Provider(error)),
+                StreamEvent::TextDelta(_)
+                | StreamEvent::ThinkingDelta(_)
+                | StreamEvent::ToolCallStart { .. }
+                | StreamEvent::ToolCallDelta(_)
+                | StreamEvent::ToolCallEnd { .. } => {}
+            }
+        }
+        Err(DomainError::Provider(
+            "OpenAI SSE stream ended without completion".to_string(),
+        ))
     }
 
+    #[cfg(test)]
     fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> {
         openai_sse_parser::parse_sse_response(raw)
     }
@@ -301,7 +313,7 @@ impl OpenAiProvider {
         delta: &serde_json::Value,
         content: &mut String,
         tool_calls: &mut Vec<ToolCall>,
-    ) {
+    ) -> Result<(), DomainError> {
         openai_sse_parser::apply_delta(delta, content, tool_calls)
     }
 }
