@@ -43,10 +43,10 @@ ADR-0008 is delivered in parts, each tracked by an issue:
 | 1 | Length-prefixed framing (version negotiation) | #1059 | Done |
 | 2 | Bounded end-of-turn events — reference messages by stable id | #1060 (PR #1092) | Done — merged 2026-07-13 |
 | 3 | Paged history on connect/resume + TUI backfill | #1061 | Open |
-| 4 | Frame-size cap becomes a should-never-fire invariant; delete shrink/tail machinery | #1062 | Open (blocked on #1060, #1061; co-requisite #1094) |
+| 4 | Frame-size cap becomes a should-never-fire invariant; delete shrink/tail machinery | #1062 | Open (blocked on #1060 and #1061 completion; existing ranged `get_message` recovery covers the former #1094 large-message path) |
 
 Related `get_message` resolution-completeness work (makes the cap a true
-should-never-fire invariant): **#1094** (chunked/paged transfer for a single
-message larger than the frame cap) and **#1093** (recall full content from the
-spill store for collapsed refs, both resolvers). Per ADR-0011, all of this stays
-JSON on the wire.
+should-never-fire invariant): **#1093** (recall full content from the spill store
+for collapsed refs, both resolvers). Large content is recovered with the
+existing ranged `get_message` request/response fields; per ADR-0011, all of this
+stays JSON on the wire.

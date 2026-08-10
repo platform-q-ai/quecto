@@ -232,6 +232,7 @@ async fn register_and_broadcast_sends_state_changed_event() {
         cleanup_argv: Vec::new(),
         environment_registry: None,
         environment_ref: None,
+        process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
     });
 
     register_and_broadcast(&registry, Some(&tx), "child", entry).unwrap();
@@ -437,6 +438,7 @@ async fn register_and_broadcast_closed_receiver_still_inserts_entry() {
         cleanup_argv: Vec::new(),
         environment_registry: None,
         environment_ref: None,
+        process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
     });
 
     register_and_broadcast(&registry, Some(&tx), "closed", entry).unwrap();
@@ -474,6 +476,7 @@ async fn spawn_registry_poison_recovery_paths_do_not_drop_entries() {
             cleanup_argv: Vec::new(),
             environment_registry: None,
             environment_ref: None,
+            process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
         }),
     )
     .unwrap();
