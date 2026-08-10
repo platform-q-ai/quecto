@@ -4,7 +4,7 @@ HTTP/WebSocket gateway to a quecto agent over UDS.
 
 Connects to a running `quecto agent --mode uds` process via Unix domain socket
 and exposes its capabilities as a REST + WebSocket API for web applications.
-Version **0.5.1**.
+Version **0.5.2**.
 
 ## Endpoints
 

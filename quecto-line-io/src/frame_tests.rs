@@ -377,3 +377,164 @@ async fn into_reader_reports_version_mismatch_on_unknown_first_byte() {
         other => panic!("expected VersionMismatch, got {other:?}"),
     }
 }
+
+fn assert_unexpected_eof(err: FrameError) {
+    match err {
+        FrameError::Io(e) => assert_eq!(e.kind(), std::io::ErrorKind::UnexpectedEof),
+        other => panic!("expected UnexpectedEof, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn eof_matrix_matches_contract_for_allocating_and_into_framed_readers() {
+    for prefix_len in 1..FRAME_PREFIX_LEN {
+        let wire = vec![0u8; prefix_len];
+        let mut r = BufReader::new(&wire[..]);
+        assert_unexpected_eof(read_frame(&mut r, 8).await.unwrap_err());
+
+        let mut r = BufReader::new(&wire[..]);
+        let mut buf = Vec::new();
+        assert_unexpected_eof(
+            read_frame_or_legacy_line_into(&mut r, &mut buf, 8)
+                .await
+                .unwrap_err(),
+        );
+        assert!(
+            buf.is_empty(),
+            "partial prefix must not publish payload bytes"
+        );
+    }
+
+    let partial_payload = [0, 0, 0, 8, b'a', b'b', b'c'];
+    let mut r = BufReader::new(&partial_payload[..]);
+    assert_unexpected_eof(read_frame(&mut r, 8).await.unwrap_err());
+
+    let mut r = BufReader::new(&partial_payload[..]);
+    let mut buf = Vec::new();
+    assert_unexpected_eof(
+        read_frame_or_legacy_line_into(&mut r, &mut buf, 8)
+            .await
+            .unwrap_err(),
+    );
+    assert_ne!(
+        buf, b"abc",
+        "partial payload must not be accepted as a message"
+    );
+
+    let over_cap_prefix_only = 9u32.to_be_bytes();
+    let mut r = BufReader::new(&over_cap_prefix_only[..]);
+    assert!(matches!(
+        read_frame(&mut r, 8).await,
+        Err(FrameError::Oversized {
+            declared: 9,
+            max: 8
+        })
+    ));
+
+    let mut r = BufReader::new(&over_cap_prefix_only[..]);
+    let mut buf = Vec::new();
+    assert!(matches!(
+        read_frame_or_legacy_line_into(&mut r, &mut buf, 8).await,
+        Err(FrameError::Oversized {
+            declared: 9,
+            max: 8
+        })
+    ));
+}
+
+#[tokio::test]
+async fn oversized_legacy_line_recovers_only_after_delimiter_and_eof_is_clean() {
+    let mut wire = Vec::new();
+    wire.extend_from_slice(b"{");
+    wire.extend_from_slice(&[b'x'; 40]);
+    wire.extend_from_slice(b"\n{\"ok\":true}\n");
+    let mut r = BufReader::new(&wire[..]);
+    let mut buf = Vec::new();
+    assert!(matches!(
+        read_frame_or_legacy_line_into(&mut r, &mut buf, 32).await,
+        Err(FrameError::Oversized { .. })
+    ));
+    let mode = read_frame_or_legacy_line_into(&mut r, &mut buf, 32)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(mode, WireMode::LegacyLine);
+    assert_eq!(buf, br#"{"ok":true}"#);
+
+    let mut unterminated = Vec::new();
+    unterminated.extend_from_slice(b"{");
+    unterminated.extend_from_slice(&[b'x'; 16]);
+    let mut r = BufReader::new(&unterminated[..]);
+    let mut buf = Vec::new();
+    assert!(matches!(
+        read_frame_or_legacy_line_into(&mut r, &mut buf, 8).await,
+        Err(FrameError::Oversized { .. })
+    ));
+    assert!(
+        read_frame_or_legacy_line_into(&mut r, &mut buf, 8)
+            .await
+            .unwrap()
+            .is_none(),
+        "legacy EOF without a delimiter cannot recover another message"
+    );
+}
+
+#[tokio::test]
+async fn framed_reader_preserves_invalid_utf8_payload_bytes() {
+    let payload = [b'a', 0xFF, b'b'];
+    let wire = framed(&[&payload]).await;
+    let mut r = BufReader::new(&wire[..]);
+    let got = read_frame_or_legacy_line(&mut r, PROTOCOL_FRAME_CAP_BYTES)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got, Incoming::Frame(payload.to_vec()));
+}
+
+#[tokio::test]
+async fn reusable_frame_reader_reclaims_after_large_and_oversized_messages() {
+    let large = vec![b'x'; 70_000];
+    let small = b"{}";
+    let mut wire = framed(&[&large, small]).await;
+    let mut r = BufReader::new(&wire[..]);
+    let mut buf = Vec::new();
+    assert_eq!(
+        read_frame_or_legacy_line_into(&mut r, &mut buf, PROTOCOL_FRAME_CAP_BYTES)
+            .await
+            .unwrap(),
+        Some(WireMode::Framed)
+    );
+    assert!(
+        buf.capacity() > 64 * 1024,
+        "test setup must grow the buffer"
+    );
+    assert_eq!(
+        read_frame_or_legacy_line_into(&mut r, &mut buf, PROTOCOL_FRAME_CAP_BYTES)
+            .await
+            .unwrap(),
+        Some(WireMode::Framed)
+    );
+    assert_eq!(buf, small);
+    assert!(buf.capacity() <= 8 * 1024);
+
+    wire.clear();
+    wire.extend_from_slice(&70_000u32.to_be_bytes());
+    wire.extend_from_slice(&vec![b'x'; 70_000]);
+    write_frame(&mut wire, small, PROTOCOL_FRAME_CAP_BYTES)
+        .await
+        .unwrap();
+    let mut r = BufReader::new(&wire[..]);
+    buf = Vec::with_capacity(128 * 1024);
+    assert!(matches!(
+        read_frame_or_legacy_line_into(&mut r, &mut buf, 8).await,
+        Err(FrameError::Oversized { .. })
+    ));
+    assert_eq!(
+        read_frame_or_legacy_line_into(&mut r, &mut buf, PROTOCOL_FRAME_CAP_BYTES)
+            .await
+            .unwrap(),
+        Some(WireMode::Framed)
+    );
+    assert_eq!(buf, small);
+    assert!(buf.capacity() <= 8 * 1024);
+}

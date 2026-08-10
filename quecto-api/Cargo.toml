@@ -1,6 +1,6 @@
 [package]
 name = "quecto-api"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 description = "HTTP/WebSocket gateway to a quecto agent over UDS"
 license = "LicenseRef-Proprietary"
@@ -10,7 +10,7 @@ license = "LicenseRef-Proprietary"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "net", "sync", "io-util"] }
 
 # Shared bounded protocol reader (#1003)
-quecto-line-io = { version = "0.2.0", path = "../quecto-line-io" }
+quecto-line-io = { version = "0.2.1", path = "../quecto-line-io" }
 
 # HTTP server
 axum = { version = "0.8", features = ["ws"] }
