@@ -1,5 +1,3 @@
-// HTTP router — maps HTTP/WebSocket endpoints to application use cases.
-
 use std::{path::PathBuf, sync::Arc};
 
 use axum::extract::ws::{Message, WebSocket};
@@ -24,7 +22,6 @@ pub struct AppState<G: AgentGateway> {
     pub gateway: G,
 }
 
-/// Build the axum router.
 pub fn build_router<G: AgentGateway + Clone + 'static>(gateway: G) -> Router {
     let state = Arc::new(AppState { gateway });
     Router::new()
@@ -150,6 +147,13 @@ fn direct_response_id(event: &AgentEvent) -> Option<&str> {
     }
 }
 
+async fn send_ws_event(socket: &mut WebSocket, event: &AgentEvent) -> bool {
+    match serde_json::to_string(event) {
+        Ok(json) => socket.send(Message::Text(json.into())).await.is_ok(),
+        Err(_) => true,
+    }
+}
+
 fn command_string_from_text(text: &str, key: &str) -> Option<String> {
     serde_json::from_str::<serde_json::Value>(text)
         .ok()
@@ -197,8 +201,6 @@ async fn prompt_handler<G: AgentGateway>(
     }
 }
 
-// ── Steer / Follow-up / Abort ──────────────────────────────────────────────────
-
 #[derive(Deserialize)]
 struct MessageRequest {
     message: String,
@@ -224,8 +226,6 @@ async fn abort_handler<G: AgentGateway>(
     event_response(use_cases::abort::execute(&state.gateway).await)
 }
 
-// ── Set model ──────────────────────────────────────────────────────────────────
-
 #[derive(Deserialize)]
 struct SetModelRequest {
     model: Option<String>,
@@ -248,8 +248,6 @@ async fn set_model_handler<G: AgentGateway>(
         Err(e) => api_error_response(e).into_response(),
     }
 }
-
-// ── Set effort / Clear history ─────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct SetEffortRequest {
@@ -321,18 +319,11 @@ async fn state_handler<G: AgentGateway>(
     }
 }
 
-// ── Messages ──────────────────────────────────────────────────────────────────
-
 #[derive(Deserialize)]
 struct MessagesQuery {
-    /// #1061: page backward — a stable message id from a prior page's `before`.
     before: Option<String>,
 }
 
-/// #1061: history is paged. Returns the newest bounded page (or the page before
-/// `?before=<id>`); the response's `data` carries `before`/`hasMoreBefore` so
-/// clients walk older history explicitly instead of receiving one monolithic
-/// (and previously silently trimmed) snapshot.
 async fn messages_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
     Query(params): Query<MessagesQuery>,
@@ -355,17 +346,11 @@ async fn messages_handler<G: AgentGateway>(
 
 #[derive(Deserialize)]
 struct MessageQuery {
-    /// Forward the lookup to a spawned child agent by id (#1060).
     agent_id: Option<String>,
-    /// Byte offset into message content for bounded recovery (#1094).
     offset: Option<usize>,
-    /// Maximum content bytes to return for bounded recovery (#1094).
     limit: Option<usize>,
 }
 
-/// #1060: resolve a single message by its stable id — the on-demand lookup for
-/// refs carried on `agent_end` / `turn_end`, so a WS/REST client that only holds
-/// refs can fetch the full content.
 async fn message_handler<G: AgentGateway>(
     State(state): State<Arc<AppState<G>>>,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -414,8 +399,6 @@ async fn messages_tail_handler<G: AgentGateway>(
         Err(e) => api_error_response(e).into_response(),
     }
 }
-
-// ── Audit events ──────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct AuditEventsQuery {
@@ -520,7 +503,6 @@ async fn ws_handler<G: AgentGateway + Clone + 'static>(
 }
 
 async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket: WebSocket) {
-    // Subscribe to agent events.
     let mut subscriber = match state.gateway.subscribe().await {
         Ok(sub) => sub,
         Err(_) => {
@@ -529,9 +511,6 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
         }
     };
 
-    // Spawn a task that reads from the WebSocket and sends commands to the agent.
-    // We use a channel to coordinate: the reader task sends incoming messages,
-    // and the main loop forwards events back to the client.
     let (incoming_tx, mut incoming_rx) = tokio::sync::mpsc::channel::<String>(32);
     let (command_event_tx, mut command_event_rx) =
         tokio::sync::mpsc::channel::<(AgentEvent, Vec<String>)>(32);
@@ -663,24 +642,19 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
 
     let mut direct_response_ids = HashSet::<String>::new();
 
-    // Main loop: concurrently read from WS and write agent events.
     loop {
         tokio::select! {
-            // Direct command response → WS
             event = command_event_rx.recv() => {
                 match event {
                     Some((ev, suppress_ids)) => {
                         direct_response_ids.extend(suppress_ids);
-                        if let Ok(json) = serde_json::to_string(&ev) {
-                            if socket.send(Message::Text(json.into())).await.is_err() {
-                                break;
-                            }
+                        if !send_ws_event(&mut socket, &ev).await {
+                            break;
                         }
                     }
                     None => break,
                 }
             }
-            // Agent event → WS
             event = subscriber.recv() => {
                 match event {
                     Some(ev) => {
@@ -688,13 +662,37 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
                         // `gateway.send` above. The real UDS gateway also
                         // broadcasts them, so suppress only the correlated
                         // duplicate already returned on this WebSocket.
-                        if direct_response_id(&ev).is_some_and(|id| direct_response_ids.remove(id)) {
-                            continue;
-                        }
-                        if let Ok(json) = serde_json::to_string(&ev) {
-                            if socket.send(Message::Text(json.into())).await.is_err() {
-                                break;
+                        if let Some(id) = direct_response_id(&ev) {
+                            if direct_response_ids.remove(id) {
+                                continue;
                             }
+
+                            // UDS resolves send() and broadcasts back-to-back; if this
+                            // broadcast wins first, let the direct channel catch up.
+                            match tokio::time::timeout(
+                                std::time::Duration::from_millis(10),
+                                command_event_rx.recv(),
+                            )
+                            .await
+                            {
+                                Ok(Some((direct_ev, suppress_ids))) => {
+                                    direct_response_ids.extend(suppress_ids);
+                                    if direct_response_ids.remove(id) {
+                                        if !send_ws_event(&mut socket, &direct_ev).await {
+                                            break;
+                                        }
+                                        continue;
+                                    }
+                                    if !send_ws_event(&mut socket, &direct_ev).await {
+                                        break;
+                                    }
+                                }
+                                Ok(None) => break,
+                                Err(_) => {}
+                            }
+                        }
+                        if !send_ws_event(&mut socket, &ev).await {
+                            break;
                         }
                     }
                     None => {
@@ -703,7 +701,6 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
                     }
                 }
             }
-            // WS message → agent
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {

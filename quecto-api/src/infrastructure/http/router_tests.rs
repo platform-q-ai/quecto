@@ -5,6 +5,7 @@ use futures::{SinkExt, StreamExt};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use tokio::sync::Notify;
 
 #[derive(Clone, Default)]
 struct MockGateway {
@@ -18,6 +19,72 @@ struct PendingSubscriber;
 impl crate::application::ports::agent_gateway::EventSubscriber for PendingSubscriber {
     fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<AgentEvent>> + Send + '_>> {
         Box::pin(std::future::pending())
+    }
+}
+
+struct ChannelSubscriber {
+    rx: tokio::sync::broadcast::Receiver<AgentEvent>,
+}
+
+impl crate::application::ports::agent_gateway::EventSubscriber for ChannelSubscriber {
+    fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<AgentEvent>> + Send + '_>> {
+        Box::pin(async move { self.rx.recv().await.ok() })
+    }
+}
+
+#[derive(Clone)]
+struct RacingBroadcastGateway {
+    broadcast: tokio::sync::broadcast::Sender<AgentEvent>,
+    ready: Arc<Notify>,
+}
+
+impl AgentGateway for RacingBroadcastGateway {
+    fn send(
+        &self,
+        _cmd: AgentCommand,
+    ) -> Pin<Box<dyn Future<Output = Result<AgentEvent, ApiError>> + Send + '_>> {
+        let tx = self.broadcast.clone();
+        let ready = self.ready.clone();
+        Box::pin(async move {
+            let event = AgentEvent::Response {
+                id: Some("req".into()),
+                command: "get_message".into(),
+                success: true,
+                data: Some(serde_json::json!({"ok": true})),
+                error: None,
+            };
+            tx.send(event.clone()).unwrap();
+            ready.notified().await;
+            Ok(event)
+        })
+    }
+
+    fn enqueue(
+        &self,
+        cmd: AgentCommand,
+    ) -> Pin<Box<dyn Future<Output = Result<AgentEvent, ApiError>> + Send + '_>> {
+        self.send(cmd)
+    }
+
+    fn subscribe(
+        &self,
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = Result<
+                        Box<dyn crate::application::ports::agent_gateway::EventSubscriber>,
+                        ApiError,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
+        let rx = self.broadcast.subscribe();
+        Box::pin(async move { Ok(Box::new(ChannelSubscriber { rx }) as _) })
+    }
+
+    fn is_connected(&self) -> bool {
+        true
     }
 }
 
@@ -216,6 +283,50 @@ async fn websocket_sync_rejects_invalid_shape_without_gateway_send() {
     assert_eq!(response["command"], "sync");
     assert_eq!(response["success"], false);
     assert!(gateway.commands.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn websocket_suppresses_racing_correlated_broadcast_duplicate() {
+    let (broadcast, _) = tokio::sync::broadcast::channel(8);
+    let ready = Arc::new(Notify::new());
+    let app = build_router(RacingBroadcastGateway {
+        broadcast,
+        ready: ready.clone(),
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
+        .await
+        .unwrap();
+
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        serde_json::json!({"type":"get_message","id":"client-id","messageId":"m1"})
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    ready.notify_one();
+
+    let msg = tokio::time::timeout(std::time::Duration::from_secs(2), ws.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let tokio_tungstenite::tungstenite::Message::Text(text) = msg else {
+        panic!("expected text response, got {msg:?}");
+    };
+    let response: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(response["id"], "client-id");
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), ws.next())
+            .await
+            .is_err(),
+        "correlated broadcast should be suppressed after the direct response"
+    );
 }
 
 #[tokio::test]
