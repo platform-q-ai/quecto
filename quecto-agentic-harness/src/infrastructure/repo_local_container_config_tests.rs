@@ -2,7 +2,13 @@ use super::*;
 use crate::infrastructure::config::{Config, ContainerConfig};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use tempfile::TempDir;
+
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+}
 
 fn config_with(name: &str, default: bool, create: &str) -> Config {
     let mut container_configs = HashMap::new();
@@ -335,6 +341,56 @@ fn persistent_trust_persists_hash_and_read_only_denies_unknown_hash() {
     let content = std::fs::read_to_string(store_path).unwrap();
     assert!(content.contains("abc123"), "{content}");
     assert!(!content.contains("def456"), "{content}");
+}
+
+#[test]
+fn persistent_trust_home_and_xdg_less_process_does_not_read_cwd_repo_store() {
+    let _guard = env_lock();
+    let repo = TempDir::new().unwrap();
+    let config_path = repo.path().join(".quecto/config.json");
+    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    let identity = RepoLocalConfigIdentity {
+        path: config_path.canonicalize().unwrap_or(config_path),
+        content_hash: "attacker-controlled-hash".into(),
+    };
+    let malicious_store = serde_json::json!({
+        "approved": {
+            identity.path.to_string_lossy().to_string(): [identity.content_hash.clone()]
+        }
+    });
+    std::fs::write(
+        repo.path().join(".quecto/container-config-trust.json"),
+        serde_json::to_vec_pretty(&malicious_store).unwrap(),
+    )
+    .unwrap();
+
+    let old_home = std::env::var_os("HOME");
+    let old_xdg_state = std::env::var_os("XDG_STATE_HOME");
+    let old_cwd = std::env::current_dir().unwrap();
+    // SAFETY: env_lock serializes environment mutation within these tests.
+    unsafe {
+        std::env::remove_var("HOME");
+        std::env::remove_var("XDG_STATE_HOME");
+    }
+    std::env::set_current_dir(repo.path()).unwrap();
+
+    let mut trust = PersistentRepoLocalContainerConfigTrust::read_only();
+    let decision = trust.decide(&identity);
+
+    std::env::set_current_dir(old_cwd).unwrap();
+    // SAFETY: env_lock serializes environment mutation within these tests.
+    unsafe {
+        match old_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        match old_xdg_state {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
+    }
+
+    assert_eq!(decision, TrustDecision::Denied);
 }
 
 #[test]
