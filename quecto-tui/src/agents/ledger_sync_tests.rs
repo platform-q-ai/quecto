@@ -215,6 +215,24 @@ fn ledger_1196_transcript_retention_is_bounded_but_can_recover_from_sync() {
 }
 
 #[test]
+fn ordinary_tail_sync_appends_after_retained_full_ledger() {
+    let mut t = LedgerTranscript::default();
+    let initial: Vec<_> = (0..LEDGER_RETAINED_MESSAGE_CAP)
+        .map(|i| json!({"id": format!("m-{i}"), "role":"user", "content": format!("msg-{i}")}))
+        .collect();
+    t.apply_sync_delta(&delta(initial, false));
+
+    let entries = t.apply_sync_delta(&delta(
+        vec![json!({"id": format!("m-{LEDGER_RETAINED_MESSAGE_CAP}"), "role":"user", "content":"new tail"})],
+        false,
+    ));
+
+    assert!(matches!(entries.first(), Some(LedgerEntry::User { text }) if text == "msg-1"));
+    assert!(matches!(entries.last(), Some(LedgerEntry::User { text }) if text == "new tail"));
+    assert!(t.retained_message_count() <= LEDGER_RETAINED_MESSAGE_CAP);
+}
+
+#[test]
 fn non_resync_recovered_older_messages_prepend_before_retained_newer_tail() {
     let mut t = LedgerTranscript::default();
     let newer: Vec<_> = (100..(100 + LEDGER_RETAINED_MESSAGE_CAP))
