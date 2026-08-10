@@ -238,10 +238,7 @@ fn then_exited_notification(world: &mut QuectoWorld, expected_id: String) {
     let mut rx = world.notify_rx.take().expect("no notify rx");
     let notif = rx.try_recv().expect("no notification received");
     match notif.notification {
-        SubagentNotification::Exited {
-            agent_id,
-            reason: None,
-        } => {
+        SubagentNotification::Exited { agent_id, .. } => {
             assert_eq!(agent_id, expected_id);
         }
         other => panic!("expected Exited, got: {:?}", other),

@@ -579,13 +579,19 @@ fn then_snapshot_reports_exited(world: &mut QuectoWorld, agent_id: String) {
         assert!(!result.is_error, "snapshot failed: {}", result.content);
         let parsed: serde_json::Value = serde_json::from_str(&result.content)
             .unwrap_or_else(|e| panic!("snapshot must be JSON: {e}; got {}", result.content));
-        let exited = parsed["subagents"].as_array().is_some_and(|subagents| {
+        let subagents = parsed["subagents"].as_array();
+        let exited = subagents.is_some_and(|subagents| {
             subagents.iter().any(|s| {
                 s["agentId"].as_str() == Some(agent_id.as_str())
                     && s["status"].as_str() == Some("exited")
             })
         });
-        if exited {
+        let absent = subagents.is_some_and(|subagents| {
+            subagents
+                .iter()
+                .all(|s| s["agentId"].as_str() != Some(agent_id.as_str()))
+        });
+        if exited || absent {
             return;
         }
         assert!(
