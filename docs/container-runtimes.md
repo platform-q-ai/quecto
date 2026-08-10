@@ -115,6 +115,22 @@ retained with the environment: later joins, kills, and inspects use the
 retained `exec`/`kill`/`inspect` argv even if the labeled default changes
 afterwards.
 
+Repo-local container config overlays may be declared in
+`<checkout>/.quecto/config.json` using the same `container_configs` shape.
+Because that file is repository-controlled, Quecto gates it centrally before
+any argv from it can be selected or executed. Trust is keyed by the
+canonicalized (or absolute fallback) file path plus the raw file SHA-256, and
+approval records are stored outside the repository under the user's Quecto
+state/home data. A changed file hash requires a fresh approval. Until trusted,
+repo-local entries are ignored visibly and global container configs remain
+usable; once trusted, repo-local entries extend the global set, same-name
+entries shadow global ones, and a repo-local default becomes the effective
+default. The spawn tool roster is a session-start snapshot: if a repo-local
+file appears or is approved later, spawn-time config loading still checks the
+current trust/config state, but the already-rendered roster text is not live
+reloaded. Container repository and auth semantics remain self-contained in the
+selected config argv; the parent's cwd or checkout never supplies them.
+
 ## Endpoints and liveness (direct vs proxy)
 
 A `create`/`exec` result must carry **exactly one** endpoint:

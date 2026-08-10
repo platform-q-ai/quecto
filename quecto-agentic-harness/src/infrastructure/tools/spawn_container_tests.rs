@@ -162,7 +162,7 @@ fn container_config_selection_uses_the_default_label_and_enumerates_on_errors() 
 #[test]
 fn local_selection_has_no_container_config_requirement() {
     let config = base_config(ContainerSelection::Local);
-    assert!(load_container_config(&config, None).is_err());
+    assert!(load_container_config(&config, None, Path::new("/tmp")).is_err());
 }
 
 #[test]
@@ -172,7 +172,7 @@ fn relative_config_path_is_rejected_for_container_config() {
         name: None,
     });
     config.config_path = Some(PathBuf::from("relative.toml"));
-    assert!(load_container_config(&config, None).is_err());
+    assert!(load_container_config(&config, None, Path::new("/tmp")).is_err());
 }
 
 fn write_container_configs(dir: &std::path::Path, default: &str) -> PathBuf {
@@ -194,7 +194,7 @@ fn parent_config_path_is_the_fallback_when_spawn_config_is_omitted() {
         container_config: None,
         name: None,
     });
-    let loaded = load_container_config(&config, Some(&parent)).unwrap();
+    let loaded = load_container_config(&config, Some(&parent), Path::new("/tmp")).unwrap();
     assert_eq!(container_config_name(&None, &loaded).unwrap(), "parentset");
 }
 
@@ -208,7 +208,7 @@ fn explicit_spawn_config_wins_over_the_parent_config_path() {
         name: None,
     });
     config.config_path = Some(explicit);
-    let loaded = load_container_config(&config, Some(&parent)).unwrap();
+    let loaded = load_container_config(&config, Some(&parent), Path::new("/tmp")).unwrap();
     assert_eq!(
         container_config_name(&None, &loaded).unwrap(),
         "explicitset"
@@ -221,7 +221,8 @@ fn relative_parent_config_path_is_rejected_for_container_config() {
         container_config: None,
         name: None,
     });
-    let err = load_container_config(&config, Some(Path::new("relative.toml"))).unwrap_err();
+    let err = load_container_config(&config, Some(Path::new("relative.toml")), Path::new("/tmp"))
+        .unwrap_err();
     assert!(err.to_string().contains("absolute"), "{err}");
 }
 
@@ -661,7 +662,7 @@ fn explicit_selection_also_fails_at_load_when_no_default_is_labeled() {
         name: None,
     });
     config.config_path = Some(cfg_path);
-    let err = load_container_config(&config, None)
+    let err = load_container_config(&config, None, Path::new("/tmp"))
         .unwrap_err()
         .to_string();
     assert!(err.contains("no container config is labeled"), "{err}");

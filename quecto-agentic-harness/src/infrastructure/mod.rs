@@ -8,6 +8,7 @@ pub mod model_registry;
 pub mod persistence;
 pub mod providers;
 pub mod reload;
+pub mod repo_local_container_config;
 pub mod security;
 pub mod time;
 pub mod tools;
