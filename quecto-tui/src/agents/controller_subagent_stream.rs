@@ -440,9 +440,9 @@ impl App {
         let Some(session) = self.subagents.sessions.get(agent_id) else {
             return;
         };
-        let assistant_text = session
-            .chat
-            .entries()
+        let target_end = session.chat.entry_count();
+        let target_start = session.active_turn_start.min(target_end);
+        let assistant_text = session.chat.entries()[target_start..target_end]
             .iter()
             .rev()
             .find_map(|e| match e {
@@ -480,12 +480,11 @@ impl App {
             "child-recovery-{agent_id}-{}",
             super::app_events::uuid_like()
         );
-        let target_end = session.chat.entry_count();
         self.message_recovery_batches.insert(
             batch_id.clone(),
             MessageRecoveryBatch::new(
                 refs.to_vec(),
-                session.active_turn_start.min(target_end),
+                target_start,
                 target_end,
                 Some(agent_id.to_string()),
             ),

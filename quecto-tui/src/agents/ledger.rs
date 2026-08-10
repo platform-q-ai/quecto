@@ -33,6 +33,7 @@ impl LedgerTranscript {
         if delta.resync {
             self.messages.clear();
             self.order.clear();
+            self.rev = 0;
         }
         let mut new_ids = Vec::new();
         for message in &delta.messages {

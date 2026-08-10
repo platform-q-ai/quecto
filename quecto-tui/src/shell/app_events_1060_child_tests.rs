@@ -183,6 +183,56 @@ async fn child_streamed_turn_after_prior_tools_does_not_refetch() {
     );
 }
 
+/// Child recovery must judge only the active turn range; a previous assistant
+/// in the same child session must not suppress recovery for a lost/empty turn.
+#[tokio::test]
+async fn child_empty_turn_recovery_ignores_previous_assistant() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent(
+        "worker",
+        "running",
+        Some(("active", 1, 3)),
+    )]));
+
+    h.route("worker", Event::AgentStart);
+    h.route(
+        "worker",
+        Event::Token {
+            token: "prior complete".into(),
+        },
+    );
+    h.route(
+        "worker",
+        Event::TurnEnd {
+            message: serde_json::json!({
+                "role":"assistant", "content":"prior complete", "messageRefs":["prior-ref"]
+            }),
+        },
+    );
+    let _ = h.drain_commands().await;
+
+    let ref_id = "lost-child-turn-ref";
+    h.route("worker", Event::AgentStart);
+    h.route(
+        "worker",
+        Event::TurnEnd {
+            message: serde_json::json!({
+                "role":"assistant", "content":"", "messageRefs":[ref_id], "contentLength": 9
+            }),
+        },
+    );
+
+    let cmds = h.drain_commands().await;
+    assert!(
+        cmds.iter().filter(|l| is_get_message_cmd(l)).any(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).unwrap();
+            v["agent_id"].as_str() == Some("worker") && v["messageId"].as_str() == Some(ref_id)
+        }),
+        "empty child turn must recover despite previous assistant: {cmds:?}"
+    );
+}
+
 /// #1060: a tool message recovered with `isError` must reconstruct as an errored
 /// tool box, not a clean one.
 #[test]

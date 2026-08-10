@@ -283,6 +283,32 @@ fn nonnumeric_uuid_older_recovery_prepends_before_retained_tail() {
 }
 
 #[test]
+fn resync_replaces_high_revision_so_later_tail_deltas_append() {
+    let mut t = LedgerTranscript::default();
+    let full: Vec<_> = (0..LEDGER_RETAINED_MESSAGE_CAP)
+        .map(|i| json!({"id": format!("old-high-{i}"), "role":"user", "content": format!("old-high-{i}")}))
+        .collect();
+    t.apply_sync_delta(&delta_with_rev(full, false, 500));
+
+    let resync: Vec<_> = (0..LEDGER_RETAINED_MESSAGE_CAP)
+        .map(
+            |i| json!({"id": format!("fresh-{i}"), "role":"user", "content": format!("fresh-{i}")}),
+        )
+        .collect();
+    t.apply_sync_delta(&delta_with_rev(resync, true, 100));
+
+    let entries = t.apply_sync_delta(&delta_with_rev(
+        vec![json!({"id":"fresh-tail","role":"user","content":"fresh tail"})],
+        false,
+        150,
+    ));
+
+    assert!(matches!(entries.first(), Some(LedgerEntry::User { text }) if text == "fresh-1"));
+    assert!(matches!(entries.last(), Some(LedgerEntry::User { text }) if text == "fresh tail"));
+    assert!(t.retained_message_count() <= LEDGER_RETAINED_MESSAGE_CAP);
+}
+
+#[test]
 fn overlapping_anchor_older_page_prepends_new_prefix_messages() {
     let mut t = LedgerTranscript::default();
     let newer: Vec<_> = (100..(100 + LEDGER_RETAINED_MESSAGE_CAP))
