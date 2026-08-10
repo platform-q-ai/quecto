@@ -142,6 +142,79 @@ async fn foreign_rewind_refresh_does_not_replace_other_client_transcript() {
 }
 
 #[tokio::test]
+async fn foreign_rewind_open_does_not_replace_or_open_selector() {
+    let mut b = harness().await;
+    seed_client_b_transcript(b.app_mut());
+    b.app_mut().rewind.pending_open_id = Some("rewind-open-local".into());
+    let before_frame = b_frame(b.app_mut());
+
+    respond(
+        b.app_mut(),
+        Some("rewind-open-foreign-1"),
+        "get_messages",
+        true,
+        legacy_messages("foreign rewind open", "foreign assistant"),
+    );
+
+    let frame = b_frame(b.app_mut());
+    assert_eq!(
+        frame, before_frame,
+        "foreign rewind-open must not mutate chat"
+    );
+    assert!(b.app_mut().rewind.selector.is_none());
+    assert_eq!(
+        b.app_mut().rewind.pending_open_id.as_deref(),
+        Some("rewind-open-local"),
+        "foreign rewind-open must not clear local pending open"
+    );
+}
+
+#[tokio::test]
+async fn foreign_rewind_load_and_apply_are_ignored_without_pending_mutation() {
+    let mut b = harness().await;
+    b.app_mut().editor.set_text("local draft");
+    b.app_mut().rewind.pending_load_id = Some("rewind-load-local".into());
+    b.app_mut().rewind.pending_apply_message_id = Some("local-message".into());
+    b.app_mut().rewind.pending_apply_id = Some("rewind-to-local".into());
+    b.app_mut().rewind.pending_apply_editor_baseline = Some("local draft".into());
+    b.app_mut().rewind.pending_apply_text = Some("local original".into());
+    let notifications_before = b.app_mut().notifications.messages().len();
+
+    b.app_mut().handle_response(
+        Some("rewind-load-foreign-1".into()),
+        "get_message".into(),
+        true,
+        Some(serde_json::json!({"role":"user","content":"foreign loaded","id":"foreign"})),
+        None,
+    );
+    b.app_mut().handle_response(
+        Some("rewind-to-foreign-1".into()),
+        "rewind_to".into(),
+        true,
+        None,
+        None,
+    );
+
+    assert_eq!(
+        b.app_mut().rewind.pending_load_id.as_deref(),
+        Some("rewind-load-local")
+    );
+    assert_eq!(
+        b.app_mut().rewind.pending_apply_message_id.as_deref(),
+        Some("local-message")
+    );
+    assert_eq!(
+        b.app_mut().rewind.pending_apply_id.as_deref(),
+        Some("rewind-to-local")
+    );
+    assert_eq!(b.app_mut().editor.text(), "local draft");
+    assert_eq!(
+        b.app_mut().notifications.messages().len(),
+        notifications_before
+    );
+}
+
+#[tokio::test]
 async fn own_resume_still_replaces_and_shows_status() {
     let mut a = harness().await;
     a.app_mut().handle_event(Event::Token {
@@ -284,4 +357,31 @@ async fn own_rewind_refresh_still_replaces_with_kind_status() {
     assert!(frame.contains("post rewind turn"), "{frame}");
     assert!(!frame.contains("PRE_REWIND"), "{frame}");
     assert!(!frame.contains("Session resumed"), "{frame}");
+}
+
+#[tokio::test]
+async fn rewind_request_ids_use_fresh_production_tokens_per_request() {
+    let mut h = harness().await;
+
+    for kind in ["open", "load", "to"] {
+        let first_id = h.app_mut().next_rewind_request_id(kind);
+        let second_id = h.app_mut().next_rewind_request_id(kind);
+        let prefix = format!("rewind-{kind}-");
+        let first_token = first_id
+            .strip_prefix(&prefix)
+            .and_then(|rest| rest.rsplit_once('-'))
+            .map(|(token, _seq)| token)
+            .expect("rewind id includes token and sequence");
+        let second_token = second_id
+            .strip_prefix(&prefix)
+            .and_then(|rest| rest.rsplit_once('-'))
+            .map(|(token, _seq)| token)
+            .expect("rewind id includes token and sequence");
+        assert_ne!(
+            first_token, second_token,
+            "rewind {kind} ids must include fresh production uniqueness tokens"
+        );
+        assert!(first_id.starts_with(&prefix), "{first_id}");
+        assert!(second_id.starts_with(&prefix), "{second_id}");
+    }
 }
