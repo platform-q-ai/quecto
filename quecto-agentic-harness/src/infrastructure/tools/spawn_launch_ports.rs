@@ -333,6 +333,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     .as_ref()
                     .map(|_| self.tool.environment_registry.clone()),
                 environment_ref: prepared.environment_ref.clone(),
+                process_owner: prepared.process_owner,
             });
             register_and_broadcast(
                 &self.tool.registry,

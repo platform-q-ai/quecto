@@ -6,6 +6,7 @@ use std::time::Instant;
 use crate::domain::ids::AgentUuid;
 use crate::domain::subagent::{DisplayNameResolutionEntry, resolve_live_display_name};
 
+use super::process_tree::ProcessOwner;
 #[cfg(test)]
 use super::subagent_lifecycle::SubagentLifecycleEvent;
 use super::subagent_lifecycle::SubagentLifecycleState;
@@ -23,6 +24,8 @@ pub struct SubagentEntry {
     pub socket_path: PathBuf,
     /// Child process PID (0 in stub mode).
     pub pid: u32,
+    /// Owned OS process topology used by infrastructure cleanup paths.
+    pub process_owner: ProcessOwner,
     /// Explicit internal lifecycle state. Parent-facing status is projected from
     /// this richer state so lifecycle races can be tested without changing the
     /// existing UDS status vocabulary.
@@ -135,6 +138,7 @@ impl SubagentEntry {
             display_name,
             socket_path,
             pid,
+            process_owner: ProcessOwner::DirectPid,
             lifecycle: SubagentLifecycleState::Launched,
             status: SubagentStatus::Starting,
             last_tool: None,
