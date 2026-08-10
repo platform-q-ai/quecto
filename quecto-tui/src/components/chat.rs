@@ -152,6 +152,11 @@ impl Chat {
         self.render_cache.push(None);
     }
 
+    pub fn add_entry_follow_tail(&mut self, entry: ChatEntry) {
+        self.add_entry(entry);
+        self.scroll_offset = 0;
+    }
+
     /// Append streaming token to the last assistant message, or create one.
     pub fn append_token(&mut self, token: &str) {
         if let Some(ChatEntry::Assistant { text, streaming }) = self.entries.last_mut() {
@@ -292,8 +297,6 @@ impl Chat {
         self.viewport_height = Some(height);
     }
 
-    /// Current scrollback offset (0 == pinned to the latest output). Exposed so
-    /// tests can assert that scroll keys actually moved the viewport.
     pub fn scroll_offset(&self) -> usize {
         self.scroll_offset
     }
