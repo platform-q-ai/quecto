@@ -2,10 +2,45 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+
+struct AbortOnDrop<T> {
+    handle: Option<tokio::task::JoinHandle<T>>,
+}
+
+impl<T> AbortOnDrop<T> {
+    fn new(handle: tokio::task::JoinHandle<T>) -> Self {
+        Self {
+            handle: Some(handle),
+        }
+    }
+}
+
+impl<T> Future for AbortOnDrop<T> {
+    type Output = Result<T, tokio::task::JoinError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let handle = self
+            .handle
+            .as_mut()
+            .expect("AbortOnDrop polled after completion");
+        Pin::new(handle).poll(cx)
+    }
+}
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        if let Some(handle) = &self.handle {
+            if !handle.is_finished() {
+                handle.abort();
+            }
+        }
+    }
+}
 
 /// OpenAI-compatible LLM provider.
 #[derive(Debug, Clone)]
@@ -246,7 +281,7 @@ impl OpenAiProvider {
         }
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
-        let pump = tokio::spawn(openai_sse::pump_sse_response(response, tx));
+        let pump = AbortOnDrop::new(tokio::spawn(openai_sse::pump_sse_response(response, tx)));
         while let Some(event) = rx.recv().await {
             match event {
                 StreamEvent::Done(response) => {

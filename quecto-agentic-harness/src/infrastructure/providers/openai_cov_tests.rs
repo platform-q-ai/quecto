@@ -533,3 +533,31 @@ async fn chat_stream_http_error_includes_retry_after() {
     assert!(text.contains("HTTP 429 from OpenAI: slow down"), "{text}");
     assert!(text.contains("retry-after: 7"), "{text}");
 }
+
+#[tokio::test]
+async fn abort_on_drop_cancels_pump_task_when_chat_stream_is_dropped() {
+    use tokio::sync::oneshot;
+    use tokio::time::{Duration, timeout};
+
+    struct NotifyOnDrop(Option<oneshot::Sender<()>>);
+    impl Drop for NotifyOnDrop {
+        fn drop(&mut self) {
+            if let Some(tx) = self.0.take() {
+                let _ = tx.send(());
+            }
+        }
+    }
+
+    let (tx, rx) = oneshot::channel();
+    let guard = super::AbortOnDrop::new(tokio::spawn(async move {
+        let _notify = NotifyOnDrop(Some(tx));
+        std::future::pending::<()>().await;
+    }));
+    tokio::task::yield_now().await;
+
+    drop(guard);
+    timeout(Duration::from_secs(1), rx)
+        .await
+        .expect("dropping chat_stream's pump guard should abort the pump task")
+        .expect("pump task should drop its owned response/resources when aborted");
+}
