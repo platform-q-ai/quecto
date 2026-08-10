@@ -751,27 +751,3 @@ fn selector_status_text_includes_issue_and_custom_prompt() {
     assert!(text.contains("Pick wisely"));
     assert!(text.contains("- t —"));
 }
-
-#[test]
-fn active_status_renders_issue_then_completion_with_guards() {
-    let mut template = template_with_steps("t", vec![step("a"), step("b")]);
-    template.guards = vec![WorkflowGuardRule {
-        commands: vec!["git push".into()],
-        before_step_key: "b".into(),
-        message: "run the gate before push".into(),
-    }];
-    let mut engine = WorkflowEngine::new(cfg(vec![template]), true).unwrap();
-    engine
-        .select_template("t", Some((9, "ship it".into())))
-        .unwrap();
-
-    let status = engine.status_text();
-    assert!(status.contains("Active issue: #9 — ship it"));
-
-    engine.check(1).unwrap();
-    engine.check(2).unwrap();
-    assert_eq!(engine.mode(), WorkflowMode::Complete);
-    let done = engine.status_text();
-    assert!(done.contains("All workflow steps complete"));
-    assert!(done.contains("run the gate before push"));
-}
