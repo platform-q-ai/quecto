@@ -96,7 +96,56 @@ fn is_environment_row(row: &str, env_ref: &str) -> bool {
             .is_none_or(|c| c == ' ')
 }
 
-// --- When ---
+fn test_entry() -> quecto::infrastructure::tools::subagent_registry::SubagentEntry {
+    let mut entry = quecto::infrastructure::tools::subagent_registry::SubagentEntry::new(
+        std::path::PathBuf::new(),
+        0,
+    );
+    entry.status = quecto::infrastructure::tools::subagent_registry::SubagentStatus::Running;
+    entry
+}
+
+// --- Given / When ---
+
+#[given(
+    expr = "a harness broadcast for killed canonical subtree {string} -> {string} -> {string} with sibling {string}"
+)]
+fn given_killed_subtree_harness_broadcast(
+    world: &mut QuectoWorld,
+    parent: String,
+    child: String,
+    grandchild: String,
+    sibling: String,
+) {
+    let registry = quecto::infrastructure::tools::subagent_registry::new_registry();
+    {
+        let mut guard = registry.lock().unwrap();
+        guard.insert(parent.clone(), test_entry());
+        let mut child_entry = test_entry();
+        child_entry.parent_id = Some(parent.clone());
+        guard.insert(child.clone(), child_entry);
+        let mut grandchild_entry = test_entry();
+        grandchild_entry.parent_id = Some(child.clone());
+        guard.insert(grandchild, grandchild_entry);
+        guard.insert(sibling, test_entry());
+    }
+
+    let outcome = quecto::infrastructure::tools::subagent_cascade::cascade_remove_and_state_changed(
+        &registry, &child,
+    );
+    let line = outcome.event.expect("killed subtree broadcast");
+    world.cascade_broadcast = Some(Some(serde_json::from_str(&line).unwrap()));
+}
+
+#[when("the TUI renders that killed-subtree harness broadcast")]
+fn when_tui_renders_killed_subtree_broadcast(world: &mut QuectoWorld) {
+    let event = world
+        .cascade_broadcast
+        .as_ref()
+        .and_then(|v| v.as_ref())
+        .expect("killed subtree broadcast");
+    render_state_line(world, &event.to_string());
+}
 
 #[when("the TUI renders the session's live subagent state")]
 fn when_tui_renders_session(world: &mut QuectoWorld) {
@@ -174,6 +223,26 @@ fn then_tui_solo_nested_row(world: &mut QuectoWorld, id: String, env_ref: String
     assert!(
         !after_stalk(&rows[idx]).contains(&env_ref),
         "solo member {id} must not carry an inline {env_ref} badge on its own row:\n{panel}"
+    );
+}
+
+#[then(expr = "the TUI should hide killed subtree members {string} and {string}")]
+fn then_tui_hides_killed_subtree(world: &mut QuectoWorld, child: String, grandchild: String) {
+    let raw = drive(world, |h| h.full_frame_raw());
+    for id in [child, grandchild] {
+        assert!(
+            !raw.lines().any(|l| l.contains(&id)),
+            "killed subtree member {id} must be absent from TUI roster:\n{raw}"
+        );
+    }
+}
+
+#[then(expr = "the TUI should still render sibling subagent {string}")]
+fn then_tui_renders_sibling(world: &mut QuectoWorld, sibling: String) {
+    let raw = drive(world, |h| h.full_frame_raw());
+    assert!(
+        raw.lines().any(|l| l.contains(&sibling)),
+        "surviving sibling {sibling} must remain visible in TUI roster:\n{raw}"
     );
 }
 

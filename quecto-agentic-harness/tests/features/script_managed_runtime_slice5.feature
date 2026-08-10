@@ -109,6 +109,13 @@ Feature: Canonical container-runtime scripts and multi-PR orchestration
     And the TUI renders subagent "canon-death-slice5" as exited
 
   @done @container-runtime
+  Scenario: A multi-level killed subtree is pruned across the harness to TUI boundary
+    Given a harness broadcast for killed canonical subtree "canon-parent-slice5" -> "canon-child-slice5" -> "canon-grandchild-slice5" with sibling "canon-sibling-slice5"
+    When the TUI renders that killed-subtree harness broadcast
+    Then the TUI should hide killed subtree members "canon-child-slice5" and "canon-grandchild-slice5"
+    And the TUI should still render sibling subagent "canon-sibling-slice5"
+
+  @done @container-runtime
   Scenario: The container listing shows two PR environments plus a reviewer in one session
     Given repository fixtures "repo-a" and "repo-b" exist
     And the canonical container-runtime script set is configured
