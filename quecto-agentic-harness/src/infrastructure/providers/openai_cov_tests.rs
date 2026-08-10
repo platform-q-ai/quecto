@@ -417,6 +417,37 @@ async fn chat_stream_wiremock_success_assembles_sse_body() {
 }
 
 #[tokio::test]
+async fn chat_stream_drains_more_than_channel_capacity_without_deadlock() {
+    use crate::domain::provider::LlmProvider;
+    use tokio::time::{Duration, timeout};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let mut body = String::new();
+    for _ in 0..100 {
+        body.push_str("data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n");
+    }
+    body.push_str("data: [DONE]\n\n");
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(body))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAiProvider::new("sk-test".into(), Some(server.uri()));
+    let messages = vec![Message::user("hi")];
+    let response = timeout(
+        Duration::from_secs(2),
+        provider.chat_stream(req(&messages, &[], "gpt-test")),
+    )
+    .await
+    .expect("chat_stream should not hang after the 64-event channel fills")
+    .unwrap();
+    assert_eq!(response.content.as_deref(), Some("x".repeat(100).as_str()));
+}
+
+#[tokio::test]
 async fn chat_stream_rejects_over_limit_sse_body_without_buffering_full_response() {
     use crate::domain::provider::LlmProvider;
     use wiremock::matchers::{method, path};

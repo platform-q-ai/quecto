@@ -115,6 +115,19 @@ pub(crate) async fn pump_sse_bytes(
     pump_sse(response, tx, &mut handler).await;
 }
 
+/// Consume an owned OpenAI SSE byte stream, emitting `StreamEvent`s per delta.
+///
+/// This is used by non-incremental `chat_stream`, which drains the event
+/// receiver while this pump runs in a task. Keeping the pump concurrent with the
+/// drain avoids deadlocking when a response has more deltas than the bounded
+/// channel capacity.
+pub(crate) async fn pump_sse_response(
+    mut response: reqwest::Response,
+    tx: tokio::sync::mpsc::Sender<StreamEvent>,
+) {
+    pump_sse_bytes(&mut response, &tx).await;
+}
+
 #[cfg(test)]
 #[path = "openai_sse_tests.rs"]
 mod tests;

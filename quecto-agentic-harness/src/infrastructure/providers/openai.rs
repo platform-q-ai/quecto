@@ -228,7 +228,7 @@ impl OpenAiProvider {
             .json(&body);
         let request_builder = self.apply_auth_headers(request_builder);
 
-        let mut response = request_builder.send().await.map_err(|e| {
+        let response = request_builder.send().await.map_err(|e| {
             DomainError::Provider(format!(
                 "HTTP error: {}",
                 super::sse_common::format_send_error(&e)
@@ -246,12 +246,17 @@ impl OpenAiProvider {
         }
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
-        openai_sse::pump_sse_bytes(&mut response, &tx).await;
-        drop(tx);
+        let pump = tokio::spawn(openai_sse::pump_sse_response(response, tx));
         while let Some(event) = rx.recv().await {
             match event {
-                StreamEvent::Done(response) => return Ok(response),
-                StreamEvent::Error(error) => return Err(DomainError::Provider(error)),
+                StreamEvent::Done(response) => {
+                    let _ = pump.await;
+                    return Ok(response);
+                }
+                StreamEvent::Error(error) => {
+                    let _ = pump.await;
+                    return Err(DomainError::Provider(error));
+                }
                 StreamEvent::TextDelta(_)
                 | StreamEvent::ThinkingDelta(_)
                 | StreamEvent::ToolCallStart { .. }
@@ -259,6 +264,7 @@ impl OpenAiProvider {
                 | StreamEvent::ToolCallEnd { .. } => {}
             }
         }
+        let _ = pump.await;
         Err(DomainError::Provider(
             "OpenAI SSE stream ended without completion".to_string(),
         ))
