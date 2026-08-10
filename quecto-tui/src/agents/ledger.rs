@@ -2,6 +2,8 @@ use crate::conversation::turn_recovery::ordered_by_refs;
 use crate::protocol::agent_ledger_payloads::{LedgerMessage, SyncDelta};
 use std::collections::HashMap;
 
+pub(crate) const LEDGER_RETAINED_MESSAGE_CAP: usize = 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum LedgerEntry {
     User {
@@ -40,7 +42,24 @@ impl LedgerTranscript {
                 self.messages.insert(id, message.clone());
             }
         }
+        self.enforce_retention();
         self.entries()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retained_message_count(&self) -> usize {
+        self.messages.len()
+    }
+
+    fn enforce_retention(&mut self) {
+        let overflow = self.order.len().saturating_sub(LEDGER_RETAINED_MESSAGE_CAP);
+        if overflow == 0 {
+            return;
+        }
+        let dropped: Vec<_> = self.order.drain(0..overflow).collect();
+        for id in dropped {
+            self.messages.remove(&id);
+        }
     }
 
     /// Current committed projection (order × messages), without mutating state.

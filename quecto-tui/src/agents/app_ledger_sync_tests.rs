@@ -260,3 +260,66 @@ async fn accepted_sync_still_records_pending_rev() {
     assert!(rx.try_recv().is_ok(), "sync sent on open channel");
     assert_eq!(app.subagents.feeds["a1"].pending_rev, Some(9));
 }
+
+#[tokio::test]
+async fn app_1196_child_sync_caps_feed_and_session_chat() {
+    let mut h = super::tui_harness::TuiHarness::new().await;
+    let app = h.app_mut();
+    let (mut feed, _rx) = feed_with_rx();
+    feed.supports_sync = true;
+    app.subagents.feeds.insert("a1".into(), feed);
+    app.ensure_session("a1");
+    let messages: Vec<_> = (0..(crate::components::chat::CHAT_RETAINED_ENTRY_CAP + 40))
+        .map(|i| json!({"id": format!("m-{i}"), "role":"user", "content": format!("msg-{i}")}))
+        .collect();
+
+    app.route_sync_response("a1", &json!({"epoch":1,"rev":1,"messages":messages,"nextRev":null,"caughtUp":true,"resync":false}));
+
+    assert!(
+        app.subagents.feeds["a1"]
+            .transcript
+            .retained_message_count()
+            <= crate::agents::ledger::LEDGER_RETAINED_MESSAGE_CAP
+    );
+    assert!(
+        app.subagents.sessions["a1"].chat.entry_count()
+            <= crate::components::chat::CHAT_RETAINED_ENTRY_CAP
+    );
+    assert!(
+        app.subagents.sessions["a1"]
+            .chat
+            .entries()
+            .iter()
+            .any(|e| matches!(e, ChatEntry::User { text } if text == "msg-1063"))
+    );
+}
+
+#[tokio::test]
+async fn app_1196_multi_session_overflow_is_isolated() {
+    let mut h = super::tui_harness::TuiHarness::new().await;
+    let app = h.app_mut();
+    let (mut feed_a, _rx_a) = feed_with_rx();
+    let (mut feed_b, _rx_b) = feed_with_rx();
+    feed_a.supports_sync = true;
+    feed_b.supports_sync = true;
+    app.subagents.feeds.insert("a".into(), feed_a);
+    app.subagents.feeds.insert("b".into(), feed_b);
+    app.ensure_session("a");
+    app.ensure_session("b");
+    app.subagents.active_agent_id = Some("b".into());
+    app.route_sync_response("b", &json!({"epoch":1,"rev":1,"messages":[{"id":"b1","role":"user","content":"keep-b"}],"nextRev":null,"caughtUp":true,"resync":false}));
+    let messages: Vec<_> = (0..(crate::components::chat::CHAT_RETAINED_ENTRY_CAP + 10))
+        .map(|i| json!({"id": format!("a-{i}"), "role":"user", "content": format!("a-msg-{i}")}))
+        .collect();
+
+    app.route_sync_response("a", &json!({"epoch":1,"rev":1,"messages":messages,"nextRev":null,"caughtUp":true,"resync":false}));
+
+    assert_eq!(app.subagents.active_agent_id.as_deref(), Some("b"));
+    assert!(
+        matches!(app.subagents.sessions["b"].chat.entries(), [ChatEntry::User { text }] if text == "keep-b")
+    );
+    assert!(
+        app.subagents.sessions["a"].chat.entry_count()
+            <= crate::components::chat::CHAT_RETAINED_ENTRY_CAP
+    );
+}

@@ -102,6 +102,7 @@ impl App {
                     focused && !supersede_live,
                     supersede_live,
                 );
+                session.reconcile_chat_retention_trim();
             }
         }
     }

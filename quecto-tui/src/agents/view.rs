@@ -271,7 +271,9 @@ impl SessionView {
             self.chat
                 .add_entry(crate::agents::view::ledger_entry_to_chat_entry(entry));
         }
+        let committed_entry_count = self.chat.entry_count();
         if attach_live {
+            self.active_turn_start = committed_entry_count;
             // Skip live tool cards already present in the committed ledger so a
             // mid-turn tool checkpoint does not double-render (#1259 review).
             let ledger_tool_ids: std::collections::HashSet<String> = self
@@ -301,6 +303,16 @@ impl SessionView {
 
     /// Drop oldest live-inflight entries past [`LIVE_INFLIGHT_ENTRY_CAP`],
     /// leaving a single truncation status so overflow is visible (#1259).
+    pub(crate) fn reconcile_chat_retention_trim(&mut self) {
+        let (trimmed, inserted) = self.chat.take_retention_front_delta();
+        if trimmed > 0 || inserted > 0 {
+            self.active_turn_start = self
+                .active_turn_start
+                .saturating_sub(trimmed)
+                .saturating_add(inserted);
+        }
+    }
+
     pub(crate) fn cap_live_inflight(&mut self) {
         let n = self.live_inflight.entry_count();
         if n <= LIVE_INFLIGHT_ENTRY_CAP {

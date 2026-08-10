@@ -26,7 +26,10 @@ impl App {
                 self.master_session.footer.set_pwd_path(&root);
                 self.apply_git_branch(app_git::read_git_branch_from(&root));
             }
-            Event::Token { token } => self.master_session.chat.append_token(&token),
+            Event::Token { token } => {
+                self.master_session.chat.append_token(&token);
+                self.reconcile_master_retention_trim();
+            }
             Event::TurnStart => {}
             Event::TurnEnd { message } => self.handle_turn_end(message),
             Event::ToolExecutionStart {
@@ -137,6 +140,7 @@ impl App {
         self.agent_state.start();
         self.tools_this_turn = 0;
         self.open_tool_calls = 0;
+        let _ = self.master_session.chat.take_retention_front_delta();
         self.active_turn_start = self.master_session.chat.entry_count();
         // Mirror the abort-aware run state onto the master session's `running`
         // flag so the unified working indicator is driven by one per-session
@@ -144,6 +148,16 @@ impl App {
         self.master_session.running = true;
         self.master_session.footer.set_streaming(true);
         self.spinner = Some(Spinner::new("Working... (Esc to interrupt)"));
+    }
+
+    pub(super) fn reconcile_master_retention_trim(&mut self) {
+        let (trimmed, inserted) = self.master_session.chat.take_retention_front_delta();
+        if trimmed > 0 || inserted > 0 {
+            self.active_turn_start = self
+                .active_turn_start
+                .saturating_sub(trimmed)
+                .saturating_add(inserted);
+        }
     }
 
     fn handle_agent_end(&mut self) {
@@ -216,6 +230,7 @@ impl App {
             self.master_session
                 .chat
                 .start_tool(tool_call_id, tool_name, args_str);
+            self.reconcile_master_retention_trim();
         }
         if is_spawn {
             self.track_starting_subagent(&args);

@@ -239,6 +239,7 @@ impl App {
         match &ev {
             Event::AgentStart | Event::TurnStart => {
                 if !session.running {
+                    let _ = session.chat.take_retention_front_delta();
                     session.active_turn_start = session.chat.entry_count();
                     // New turn: reset the per-turn tool count that drives
                     // end-of-turn ref-cardinality recovery (#1060 review, F2).
@@ -346,6 +347,7 @@ impl App {
             return early;
         }
         Self::apply_subagent_chat_event(session, ev);
+        session.reconcile_chat_retention_trim();
         early
     }
 
@@ -634,6 +636,7 @@ impl App {
                 session.chat.replace_history_prefix(len, history)
             }
         }
+        session.reconcile_chat_retention_trim();
     }
 
     /// Render a passive sub-agent completion note, or DEFER it while the owning

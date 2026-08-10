@@ -273,7 +273,9 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `components/autocomplete.rs` | `components` (relocated, #1257 Phase 1) |
 | `components/chat.rs` | `components` (relocated, #1257 Phase 1/6) |
 | `components/chat_render.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/chat_retention.rs` | `components` chat retained-window policy (#1196) |
 | `components/chat_stub.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/chat_view.rs` | `components` chat viewport/render-cache implementation split for line-count baseline (#1196) |
 | `components/component.rs` | `components` (relocated, #1257 Phase 1/6) |
 | `components/editor.rs` | `components` compat re-export of text-input Editor (#1277) |
 | `components/text_input/editor.rs` | `components` text-input system core (#1277) |

@@ -192,3 +192,24 @@ fn explicit_null_tool_arguments_render_as_null_not_empty_object() {
         "a missing arguments field still defaults to an empty object: {entries:?}"
     );
 }
+
+#[test]
+fn ledger_1196_transcript_retention_is_bounded_but_can_recover_from_sync() {
+    let mut t = LedgerTranscript::default();
+    let many = (0..(LEDGER_RETAINED_MESSAGE_CAP + 50))
+        .map(|i| json!({"id": format!("m-{i}"), "role":"user", "content": format!("msg-{i}")}))
+        .collect();
+    t.apply_sync_delta(&delta(many, false));
+    assert!(t.retained_message_count() <= LEDGER_RETAINED_MESSAGE_CAP);
+
+    let entries = t.apply_sync_delta(&delta(
+        vec![json!({"id":"older-0","role":"user","content":"older recovered"})],
+        true,
+    ));
+    assert!(t.retained_message_count() <= LEDGER_RETAINED_MESSAGE_CAP);
+    assert!(
+        entries
+            .iter()
+            .any(|e| matches!(e, LedgerEntry::User { text } if text == "older recovered"))
+    );
+}

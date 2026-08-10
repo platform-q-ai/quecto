@@ -205,12 +205,14 @@ impl App {
                     batch.target_end,
                     entries,
                 );
+                self.reconcile_master_retention_trim();
             }
             Some(child) => {
                 if let Some(session) = self.subagents.sessions.get_mut(child) {
                     session
                         .chat
                         .replace_range(batch.target_start, batch.target_end, entries);
+                    session.reconcile_chat_retention_trim();
                 }
             }
         }
