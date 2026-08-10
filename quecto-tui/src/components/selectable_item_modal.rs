@@ -693,7 +693,10 @@ impl Component for SelectableItemModal {
                 self.query.pop();
                 self.update_filter(true);
             }
-            Key::Char(' ') if self.query.is_empty() || self.toggle_space_while_filtering => {
+            Key::Char(' ')
+                if self.query.is_empty()
+                    || (self.toggle_space_while_filtering && self.visible_indices.len() == 1) =>
+            {
                 self.toggle_selected();
             }
             Key::Char(c) => {
