@@ -382,6 +382,17 @@ fn prompt_approval_non_interactive_denies_untrusted_identity() {
 }
 
 #[test]
+fn absolutize_covers_absolute_and_relative_paths() {
+    let cwd = std::env::current_dir().unwrap();
+    assert_eq!(
+        absolutize(Path::new("relative/config.json")),
+        cwd.join("relative/config.json")
+    );
+    let absolute = cwd.join("absolute/config.json");
+    assert_eq!(absolutize(&absolute), absolute);
+}
+
+#[test]
 fn default_trust_record_approved_is_noop_and_derived_surfaces_are_used() {
     struct DenyOnly;
     impl RepoLocalContainerConfigTrust for DenyOnly {
