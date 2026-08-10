@@ -8,6 +8,7 @@ use crate::domain::provider::StreamEvent;
 use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome, pump_sse};
 
 use super::OpenAiProvider;
+use super::openai_sse_parser::{MAX_OPENAI_SSE_CONTENT_BYTES, append_with_limit};
 
 /// SSE line handler for OpenAI chat completions.
 pub(crate) struct OpenAiSseHandler {
@@ -74,15 +75,26 @@ impl SseHandler for OpenAiSseHandler {
                 for choice in choices {
                     let delta = choice.get("delta").unwrap_or(&serde_json::Value::Null);
                     if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
-                        self.content.push_str(text);
+                        if let Err(err) = append_with_limit(
+                            &mut self.content,
+                            text,
+                            MAX_OPENAI_SSE_CONTENT_BYTES,
+                            "assistant content",
+                        ) {
+                            let _ = tx.send(StreamEvent::Error(err.to_string())).await;
+                            return SseLineOutcome::Done;
+                        }
                         let _ = tx.send(StreamEvent::TextDelta(text.to_string())).await;
                     }
                     self.delta_scratch.clear();
-                    OpenAiProvider::apply_delta(
+                    if let Err(err) = OpenAiProvider::apply_delta(
                         delta,
                         &mut self.delta_scratch,
                         &mut self.tool_calls,
-                    );
+                    ) {
+                        let _ = tx.send(StreamEvent::Error(err.to_string())).await;
+                        return SseLineOutcome::Done;
+                    }
                 }
             }
         }
@@ -101,6 +113,19 @@ pub(crate) async fn pump_sse_bytes(
 ) {
     let mut handler = OpenAiSseHandler::new();
     pump_sse(response, tx, &mut handler).await;
+}
+
+/// Consume an owned OpenAI SSE byte stream, emitting `StreamEvent`s per delta.
+///
+/// This is used by non-incremental `chat_stream`, which drains the event
+/// receiver while this pump runs in a task. Keeping the pump concurrent with the
+/// drain avoids deadlocking when a response has more deltas than the bounded
+/// channel capacity.
+pub(crate) async fn pump_sse_response(
+    mut response: reqwest::Response,
+    tx: tokio::sync::mpsc::Sender<StreamEvent>,
+) {
+    pump_sse_bytes(&mut response, &tx).await;
 }
 
 #[cfg(test)]
