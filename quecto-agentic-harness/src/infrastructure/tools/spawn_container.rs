@@ -105,7 +105,7 @@ pub(super) async fn spawn_prepared_child(
             spawn_script_managed_child(
                 config,
                 child,
-                &load_container_config(config, parent_config_path)?,
+                &load_container_config(config, parent_config_path, child.base_dir)?,
                 container_config,
                 environments,
             )
@@ -273,9 +273,39 @@ fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, DomainEr
 /// path is used (#1369 follow-up), so `container: true` works without the
 /// caller hunting for the config location. Whichever path is chosen must be
 /// absolute — the trusted-path requirement is not relaxed by the fallback.
-fn load_container_config(
+fn container_config_load_error(e: crate::infrastructure::config::ConfigError) -> DomainError {
+    match e {
+        // ContainerConfigs errors already name the section — wrapping them
+        // again would stutter ("invalid container_configs configuration:
+        // invalid container_configs: ...").
+        e @ crate::infrastructure::config::ConfigError::ContainerConfigs(_) => {
+            DomainError::Tool(e.to_string())
+        }
+        e => DomainError::Tool(format!("invalid container_configs configuration: {e}")),
+    }
+}
+
+pub(super) fn load_container_config(
     config: &SubagentConfig,
     parent_config_path: Option<&Path>,
+    checkout: &Path,
+) -> Result<Config, DomainError> {
+    load_container_config_with_trust(config, parent_config_path, checkout, true)
+}
+
+pub(super) fn load_container_config_for_roster(
+    config: &SubagentConfig,
+    parent_config_path: Option<&Path>,
+    checkout: &Path,
+) -> Result<Config, DomainError> {
+    load_container_config_with_trust(config, parent_config_path, checkout, false)
+}
+
+fn load_container_config_with_trust(
+    config: &SubagentConfig,
+    parent_config_path: Option<&Path>,
+    checkout: &Path,
+    prompt_on_miss: bool,
 ) -> Result<Config, DomainError> {
     let cfg_path = config
         .config_path
@@ -291,15 +321,20 @@ fn load_container_config(
             "container spawn requires an absolute trusted config path".into(),
         ));
     }
-    Config::load(&cfg_path.to_string_lossy()).map_err(|e| match e {
-        // ContainerConfigs errors already name the section — wrapping them
-        // again would stutter ("invalid container_configs configuration:
-        // invalid container_configs: ...").
-        e @ crate::infrastructure::config::ConfigError::ContainerConfigs(_) => {
-            DomainError::Tool(e.to_string())
-        }
-        e => DomainError::Tool(format!("invalid container_configs configuration: {e}")),
-    })
+    let global = Config::load(&cfg_path.to_string_lossy()).map_err(container_config_load_error)?;
+    let mut trust = if prompt_on_miss {
+        crate::infrastructure::repo_local_container_config::PersistentRepoLocalContainerConfigTrust::new()
+    } else {
+        crate::infrastructure::repo_local_container_config::PersistentRepoLocalContainerConfigTrust::read_only()
+    };
+    let effective = crate::infrastructure::repo_local_container_config::effective_container_configs_for_checkout(
+        global, checkout, &mut trust,
+    )
+    .map_err(container_config_load_error)?;
+    if !effective.diagnostics.is_empty() {
+        eprintln!("{}", effective.diagnostics.join("\n"));
+    }
+    Ok(effective.config)
 }
 
 async fn spawn_script_managed_child(

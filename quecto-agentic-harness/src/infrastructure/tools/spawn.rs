@@ -37,15 +37,34 @@ const EMPTY_ROSTER: &str = "none configured";
 /// from `definition()`. Deliberately uses the same loader (`Config::load`) as
 /// the spawn-time `load_container_config`, so the roster and spawn selection
 /// cannot diverge on loader behavior.
-fn container_config_roster(parent_config_path: Option<&Path>) -> String {
+fn container_config_roster(parent_config_path: Option<&Path>, checkout: &Path) -> String {
     let Some(path) = parent_config_path else {
         return EMPTY_ROSTER.to_string();
     };
-    let Ok(cfg) = crate::infrastructure::config::Config::load(&path.to_string_lossy()) else {
+    let config = SubagentConfig {
+        task: None,
+        container: crate::domain::subagent::ContainerSelection::Local,
+        agent_id: None,
+        restrict_to_workspace: true,
+        system: None,
+        config_path: Some(path.to_path_buf()),
+        workflow: false,
+        workflow_guards: false,
+        workflow_spec: None,
+        model: None,
+        effort: None,
+        disable_tools: Vec::new(),
+        read_only: false,
+    };
+    let Ok(cfg) = super::spawn_container::load_container_config_for_roster(&config, None, checkout)
+    else {
         return "unavailable (config failed to load)".to_string();
     };
     let names = super::spawn_container::container_config_names(&cfg);
     if names.is_empty() {
+        if checkout.join(".quecto").join("config.json").is_file() {
+            return "none configured (repo-local .quecto/config.json present; approve if untrusted before use)".to_string();
+        }
         return EMPTY_ROSTER.to_string();
     }
     names
@@ -182,7 +201,8 @@ impl SpawnTool {
     /// (#1369 follow-up). `None` leaves only the inherited runtime config
     /// (`QUECTO_RUNTIME_CONFIG_PATH`) as a fallback source.
     pub fn with_parent_config_path(mut self, parent_config_path: Option<PathBuf>) -> Self {
-        self.container_config_roster = container_config_roster(parent_config_path.as_deref());
+        self.container_config_roster =
+            container_config_roster(parent_config_path.as_deref(), &self.base_dir);
         self.parent_config_path = parent_config_path;
         self
     }
