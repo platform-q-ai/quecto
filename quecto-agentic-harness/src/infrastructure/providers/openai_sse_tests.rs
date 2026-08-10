@@ -78,3 +78,49 @@ async fn handler_captures_usage_chunk_into_response() {
         other => panic!("unexpected event: {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn handler_rejects_over_limit_content_without_done() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    let mut handler = OpenAiSseHandler::new();
+    let exact = "a".repeat(MAX_OPENAI_SSE_CONTENT_BYTES);
+    handler
+        .process_line(
+            &format!(
+                "data: {{\"choices\":[{{\"delta\":{{\"content\":{}}}}}]}}",
+                serde_json::to_string(&exact).unwrap()
+            ),
+            &tx,
+        )
+        .await;
+    assert!(matches!(
+        rx.recv().await.unwrap(),
+        StreamEvent::TextDelta(_)
+    ));
+
+    let outcome = handler
+        .process_line(r#"data: {"choices":[{"delta":{"content":"b"}}]}"#, &tx)
+        .await;
+    assert!(matches!(outcome, SseLineOutcome::Done));
+    match rx.recv().await.unwrap() {
+        StreamEvent::Error(err) => assert!(err.contains("assistant content exceeds")),
+        other => panic!("unexpected event: {other:?}"),
+    }
+    assert!(rx.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn handler_rejects_over_limit_tool_arguments_without_done() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+    let mut handler = OpenAiSseHandler::new();
+    let exact = "a".repeat(super::super::openai_sse_parser::MAX_OPENAI_SSE_TOOL_ARGUMENT_BYTES);
+    handler.process_line(&format!("data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{{\"index\":0,\"id\":\"c\",\"function\":{{\"name\":\"bash\",\"arguments\":{}}}}}]}}}}]}}", serde_json::to_string(&exact).unwrap()), &tx).await;
+    assert!(rx.try_recv().is_err());
+
+    let outcome = handler.process_line(r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"b"}}]}}]}"#, &tx).await;
+    assert!(matches!(outcome, SseLineOutcome::Done));
+    match rx.recv().await.unwrap() {
+        StreamEvent::Error(err) => assert!(err.contains("tool-call arguments exceeds")),
+        other => panic!("unexpected event: {other:?}"),
+    }
+}
