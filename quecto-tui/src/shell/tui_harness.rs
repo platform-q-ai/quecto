@@ -39,6 +39,45 @@ pub use events::*;
 const DEFAULT_WIDTH: usize = 120;
 const DEFAULT_HEIGHT: usize = 40;
 
+/// Replace every wall-clock timer (`m:ss` or `h:mm:ss`, e.g. the Master
+/// row's `idle 0:02` uptime, #820) in a captured frame with `#:##`, so
+/// frame-parity assertions (#1462) compare layout and content without
+/// flaking when real elapsed time crosses a second boundary between the two
+/// captures (CI schedulers routinely add >1 s on the real-socket path).
+pub fn mask_clocks(frame: &str) -> String {
+    let cs: Vec<char> = frame.chars().collect();
+    let mut out = String::with_capacity(frame.len());
+    let mut i = 0;
+    while i < cs.len() {
+        if cs[i].is_ascii_digit() {
+            // Consume the leading digit run, then any `:dd` groups.
+            let mut j = i;
+            while j < cs.len() && cs[j].is_ascii_digit() {
+                j += 1;
+            }
+            let mut end = j;
+            while end + 2 < cs.len()
+                && cs[end] == ':'
+                && cs[end + 1].is_ascii_digit()
+                && cs[end + 2].is_ascii_digit()
+            {
+                end += 3;
+            }
+            if end > j {
+                out.push_str("#:##");
+                i = end;
+            } else {
+                out.extend(&cs[i..j]);
+                i = j;
+            }
+        } else {
+            out.push(cs[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Build an App with a fixed terminal size and a real socket "agent" endpoint

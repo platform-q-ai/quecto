@@ -7,6 +7,7 @@
 //! FULL production flow: real socket → client reader → connection feed task
 //! → shared fan-in → `route_sourced`.
 
+use super::super::app_event_loop::SourcedRender;
 use super::TuiHarness;
 use crate::protocol::client::Event;
 use crate::shell::connection::{Source, TabId};
@@ -41,10 +42,17 @@ impl TuiHarness {
 
     /// Deliver the master connection's explicit `Source::Closed` sentinel
     /// (#1462) — the fan-in replacement for `None`-from-recv — and capture.
+    /// When a child-exit watch is attached, the production routing defers
+    /// the #1047 diagnosis off-loop; the harness synchronously completes it
+    /// (as the event loop's diagnosis arm would) before capturing.
     pub async fn deliver_closed_sentinel(&mut self) -> &mut Self {
-        self.app
+        let render = self
+            .app
             .route_sourced(Source::Closed(TabId::MASTER), None)
             .await;
+        if render == SourcedRender::Skip {
+            self.pump_disconnect_diagnosis().await;
+        }
         self.capture();
         self
     }
@@ -95,12 +103,29 @@ impl TuiHarness {
 
     /// Drain ONE item from the app's shared fan-in channel — the exact
     /// receiver the event loop's select arm drains — and route it through
-    /// the production `route_sourced`.
+    /// the production `route_sourced`. A `Source::Closed` item whose #1047
+    /// diagnosis was deferred off-loop is completed synchronously here, the
+    /// way the event loop's diagnosis arm completes it.
     pub async fn pump_sourced(&mut self) {
         let (source, ev) = tokio::time::timeout(PUMP_TIMEOUT, self.app.subagents.event_rx.recv())
             .await
             .expect("an item must arrive on the shared fan-in (#1462)")
             .expect("the shared fan-in channel must stay open");
-        self.app.route_sourced(source, ev).await;
+        let closed = matches!(source, Source::Closed(_));
+        let render = self.app.route_sourced(source, ev).await;
+        if closed && render == SourcedRender::Skip {
+            self.pump_disconnect_diagnosis().await;
+        }
+    }
+
+    /// Await the off-loop disconnect diagnosis (#1462 scope 3) and finish
+    /// the stream-closed disconnect with it — the harness stand-in for the
+    /// event loop's disconnect-diagnosis select arm.
+    pub async fn pump_disconnect_diagnosis(&mut self) {
+        let detail = tokio::time::timeout(PUMP_TIMEOUT, self.app.disconnect_diag_rx.recv())
+            .await
+            .expect("the off-loop disconnect diagnosis must complete (#1462)")
+            .expect("the disconnect diagnosis channel must stay open");
+        self.app.finish_agent_stream_closed(detail);
     }
 }

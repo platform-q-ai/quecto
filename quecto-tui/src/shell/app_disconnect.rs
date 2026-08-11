@@ -71,29 +71,64 @@ impl App {
         self.notify(&message, NotifyLevel::Error);
     }
 
-    /// The event stream closed: diagnose the owned child's exit (if any) and
-    /// run the disconnect handling with that detail (#1047).
-    pub(super) async fn handle_agent_stream_closed(&mut self) {
-        let detail = self.wait_child_exit_detail().await;
-        // The exit diagnosis lands the moment the child is reaped, which can
-        // be BEFORE the independent stderr-drain task consumes the buffered
-        // panic message — give the drain the same bounded window so the
-        // stderr snapshot below is complete, not racy (#1051 final review).
-        if let Some(watch) = &self.child_exit_watch {
+    /// The event stream closed (`Source::Closed` sentinel, #1462): dispatch
+    /// the child-exit diagnosis OFF the select loop. When the TUI owns the
+    /// agent child, the bounded diagnosis waits (#1047) run on a spawned task
+    /// so a dying child can never stall event processing; the task reports
+    /// the detail on the disconnect-diagnosis channel and the event loop
+    /// completes the disconnect via [`Self::finish_agent_stream_closed`].
+    ///
+    /// Returns whether the diagnosis was deferred to that task. `false`
+    /// means there was no owned child to diagnose and the disconnect
+    /// handling already ran synchronously (with no detail).
+    pub(super) fn begin_agent_stream_closed(&mut self) -> bool {
+        let Some(watch) = self.child_exit_watch.clone() else {
+            self.finish_agent_stream_closed(None);
+            return false;
+        };
+        let tx = self.disconnect_diag_tx.clone();
+        tokio::spawn(async move {
+            // Best-effort read of the owned agent child's exit diagnosis. The
+            // stream usually closes a beat before the watcher reaps the
+            // child, so give the diagnosis a short window to land.
+            // Event-driven via the watcher's watch channel (#1051 review —
+            // no 20 ms poll loop): the common case resolves the moment the
+            // reap is recorded; only a child that closed its socket but
+            // stays alive costs the full (bounded, one-time) window.
+            let detail = watch.wait_exit_detail(CHILD_EXIT_DETAIL_WINDOW).await;
+            // The exit diagnosis lands the moment the child is reaped, which
+            // can be BEFORE the independent stderr-drain task consumes the
+            // buffered panic message — give the drain the same bounded
+            // window so the stderr snapshot taken at completion is complete,
+            // not racy (#1051 final review).
             watch.wait_stderr_drained(CHILD_EXIT_DETAIL_WINDOW).await;
-        }
+            let _ = tx.send(detail).await;
+        });
+        true
+    }
+
+    /// Complete the stream-closed disconnect (#1047): surface any oversized
+    /// event drops recorded up to the close, then run the disconnect
+    /// handling with the (possibly deferred) exit diagnosis.
+    pub(super) fn finish_agent_stream_closed(&mut self, detail: Option<String>) {
+        self.surface_dropped_oversized_events();
         self.handle_agent_disconnected(detail);
     }
 
-    /// Best-effort read of the owned agent child's exit diagnosis. The stream
-    /// usually closes a beat before the watcher reaps the child, so give the
-    /// diagnosis a short window to land. Event-driven via the watcher's watch
-    /// channel (#1051 review — no 20 ms poll loop): the common case resolves
-    /// the moment the reap is recorded; only a child that closed its socket
-    /// but stays alive costs the full (bounded, one-time) window.
-    async fn wait_child_exit_detail(&self) -> Option<String> {
-        let watch = self.child_exit_watch.as_ref()?;
-        watch.wait_exit_detail(CHILD_EXIT_DETAIL_WINDOW).await
+    /// Test/harness driver for the full stream-closed path: begin the
+    /// (possibly off-loop) diagnosis and, when deferred, synchronously await
+    /// its completion — pinning the #1047 contract that the disconnect
+    /// notification carries the diagnosis once it renders.
+    #[cfg(any(test, feature = "test-harness"))]
+    pub(super) async fn handle_agent_stream_closed(&mut self) {
+        if self.begin_agent_stream_closed() {
+            let detail = self
+                .disconnect_diag_rx
+                .recv()
+                .await
+                .expect("disconnect diagnosis channel closed");
+            self.finish_agent_stream_closed(detail);
+        }
     }
 
     /// Surface newly-recorded oversized-event drops as a warning notification

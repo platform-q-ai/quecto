@@ -125,6 +125,13 @@ pub struct App {
     active_turn_start: usize,
     command_send_failure_tx: mpsc::Sender<CommandSendFailure>,
     command_send_failure_rx: mpsc::Receiver<CommandSendFailure>,
+    /// Completion channel for the OFF-LOOP disconnect diagnosis (#1462 scope
+    /// 3): the `Source::Closed` sentinel spawns the bounded child-exit /
+    /// stderr-drain waits (#1047) onto a task carrying this sender, so a
+    /// dying child can never stall the select loop; the loop finishes the
+    /// disconnect when the diagnosis lands here.
+    disconnect_diag_tx: mpsc::Sender<Option<String>>,
+    disconnect_diag_rx: mpsc::Receiver<Option<String>>,
     /// When the TUI session started — drives the Master row's uptime timer (#820).
     started_at: tokio::time::Instant,
 }
@@ -149,6 +156,7 @@ impl App {
         let git_branch = git_repo.as_deref().and_then(app_git::read_git_branch_from);
         footer.set_git_branch(git_branch.clone());
         let (command_send_failure_tx, command_send_failure_rx) = mpsc::channel(16);
+        let (disconnect_diag_tx, disconnect_diag_rx) = mpsc::channel(4);
 
         // The shared fan-in lives on the sub-agent UI state; the master
         // connection's feed task forwards into the same channel keyed by
@@ -207,6 +215,8 @@ impl App {
             active_turn_start: 0,
             command_send_failure_tx,
             command_send_failure_rx,
+            disconnect_diag_tx,
+            disconnect_diag_rx,
             started_at: tokio::time::Instant::now(),
         }
     }

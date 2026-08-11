@@ -67,7 +67,10 @@ pub(super) enum SourcedRender {
     Immediate,
     /// Stream render: token events coalesce, everything else paints now.
     Stream { is_token: bool },
-    /// Nothing routed (a payload-less non-sentinel item) — no paint.
+    /// No paint from this item: either nothing was routed (a payload-less
+    /// non-sentinel item), or a `Source::Closed` sentinel deferred its
+    /// disconnect diagnosis off-loop — the paint happens when the diagnosis
+    /// lands on the disconnect channel's own select arm.
     Skip,
 }
 
@@ -77,13 +80,11 @@ impl App {
     /// events (`Source::Subagent`) through sub-agent routing, and the
     /// `Source::Closed` sentinel runs the #1047 disconnect diagnosis path.
     ///
-    /// The `Source::Closed` arm still awaits the (bounded, 500 ms) child-exit
-    /// diagnosis here: the sentinel is by construction the LAST item of its
-    /// connection (its feed task has already exited), so at N=1 nothing can
-    /// queue behind it and the stall profile is identical to the pre-seam
-    /// recv arm. The #1047 contract — diagnosis complete when the disconnect
-    /// notification renders — is pinned synchronously by tests; deferring the
-    /// await off-loop becomes observable (and lands) only with N>1 tabs.
+    /// The `Source::Closed` arm never awaits the child-exit diagnosis here
+    /// (#1462 scope 3): when the TUI owns the agent child, the bounded
+    /// #1047 waits run on a spawned task and complete through the
+    /// disconnect-diagnosis select arm — a dying child cannot stall event
+    /// processing while other connections' events are queued.
     pub(super) async fn route_sourced(
         &mut self,
         source: crate::shell::connection::Source,
@@ -106,11 +107,16 @@ impl App {
                 SourcedRender::Stream { is_token }
             }
             (Source::Closed(_), _) => {
-                // Master stream closed — report any dropped events and the
-                // child's exit diagnosis so the failure is visible (#1047).
-                self.surface_dropped_oversized_events();
-                self.handle_agent_stream_closed().await;
-                SourcedRender::Immediate
+                // Master stream closed — dispatch the child-exit diagnosis
+                // off-loop (#1047 via #1462 scope 3). Without an owned child
+                // the disconnect (incl. dropped-event surfacing) completes
+                // synchronously and paints now; with one, the paint happens
+                // when the diagnosis lands on its select arm.
+                if self.begin_agent_stream_closed() {
+                    SourcedRender::Skip
+                } else {
+                    SourcedRender::Immediate
+                }
             }
             (Source::Tab(_) | Source::Subagent(..), None) => SourcedRender::Skip,
         }
@@ -274,6 +280,13 @@ impl App {
                     if self.apply_git_branch(branch) {
                         self.render_and_note(&mut stream_render_coalescer);
                     }
+                }
+                // Off-loop disconnect diagnosis completion (#1462 scope 3):
+                // the bounded #1047 waits ran on a spawned task; finish the
+                // disconnect with the diagnosis it reported.
+                Some(detail) = self.disconnect_diag_rx.recv() => {
+                    self.finish_agent_stream_closed(detail);
+                    self.render_and_note(&mut stream_render_coalescer);
                 }
                 Some(failure) = self.command_send_failure_rx.recv() => {
                     self.handle_command_send_failure(failure);

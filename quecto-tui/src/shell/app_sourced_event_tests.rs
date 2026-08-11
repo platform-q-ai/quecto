@@ -6,7 +6,7 @@
 //! behaves exactly like the pre-seam direct paths (N=1 behaviour unchanged,
 //! #1047 disconnect diagnosis included).
 
-use super::tui_harness::{self, TuiHarness};
+use super::tui_harness::{self, TuiHarness, mask_clocks};
 use crate::components::component::Component;
 use crate::protocol::client::Event;
 
@@ -35,9 +35,13 @@ async fn sourced_master_event_renders_like_direct_handling() {
         got.contains("seam-parity-token"),
         "a Source::Tab(MASTER) event must reach the master session's chat (#1462)"
     );
+    // Masked to `#:##` clocks: the Master row embeds a wall-clock uptime
+    // timer, and a second boundary can pass between the two captures on a
+    // loaded CI runner (#1462 flake fix).
     assert_eq!(
-        got, expected,
-        "N=1 frames must be byte-identical between the direct path and the fan-in path (#1462)"
+        mask_clocks(&got),
+        mask_clocks(&expected),
+        "N=1 frames must be byte-identical (up to wall-clock timers) between the direct path and the fan-in path (#1462)"
     );
 }
 
@@ -65,8 +69,9 @@ async fn wire_master_event_flows_through_feed_task_and_fan_in() {
         "an event written on the real socket must reach the master session via the feed task (#1462)"
     );
     assert_eq!(
-        got, expected,
-        "N=1 frames must be byte-identical between direct handling and the full wire path (#1462)"
+        mask_clocks(&got),
+        mask_clocks(&expected),
+        "N=1 frames must be byte-identical (up to wall-clock timers) between direct handling and the full wire path (#1462)"
     );
 }
 
@@ -131,8 +136,9 @@ async fn sourced_subagent_event_routes_to_subagent_session() {
         "a Source::Subagent event must route into that sub-agent's session (#1462)"
     );
     assert_eq!(
-        got, expected,
-        "sub-agent frames must be identical between direct routing and the fan-in path (#1462)"
+        mask_clocks(&got),
+        mask_clocks(&expected),
+        "sub-agent frames must be identical (up to wall-clock timers) between direct routing and the fan-in path (#1462)"
     );
 }
 
@@ -185,6 +191,22 @@ async fn closed_sentinel_reports_real_child_exit_detail() {
     assert!(
         rendered.contains("signal 6 (SIGABRT)"),
         "the Closed sentinel path must diagnose the real child's abort (#1047 via #1462): {rendered}"
+    );
+}
+
+/// The clock mask must normalise exactly the wall-clock timer tokens
+/// (`m:ss`, `h:mm:ss`) and nothing else — a mask that swallowed real
+/// content would hollow out every parity assertion above.
+#[test]
+fn mask_clocks_masks_only_clock_tokens() {
+    assert_eq!(
+        mask_clocks("Master · idle 0:02 | ran 1:23:45 | v0.76 x1:2 seam-parity-token"),
+        "Master · idle #:## | ran #:## | v0.76 x1:2 seam-parity-token"
+    );
+    assert_eq!(
+        mask_clocks("idle 0:00"),
+        mask_clocks("idle 12:59"),
+        "two frames differing only in a timer must mask to the same bytes"
     );
 }
 

@@ -10,7 +10,7 @@
 
 use super::*;
 use quecto_tui::protocol::client::Event;
-use quecto_tui::shell::app::tui_harness::TuiHarness;
+use quecto_tui::shell::app::tui_harness::{TuiHarness, mask_clocks};
 
 /// The token rendered in both the direct-path baseline and the feed frame.
 const SEAM_TOKEN: &str = "seam-parity-token";
@@ -74,9 +74,15 @@ fn frame_identical_to_baseline(world: &mut TuiWorld) {
         got.contains(SEAM_TOKEN),
         "a master event delivered via the connection feed must reach the master session's chat (#1462), got:\n{got}"
     );
+    // Clock-masked comparison: the frames embed the Master row's wall-clock
+    // uptime (`idle m:ss`, #820), and real seconds elapse between the two
+    // captures (two harnesses plus a real-socket round trip) — on CI that
+    // crosses second boundaries. Masking only the timers keeps the parity
+    // pin byte-exact for everything the seam could change.
     assert_eq!(
-        got, expected,
-        "N=1 frames must be byte-identical between the direct path and the connection feed path (#1462)"
+        mask_clocks(&got),
+        mask_clocks(&expected),
+        "N=1 frames must be byte-identical (up to wall-clock timers) between the direct path and the connection feed path (#1462)"
     );
 }
 
