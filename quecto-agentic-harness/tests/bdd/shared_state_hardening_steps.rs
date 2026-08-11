@@ -129,6 +129,9 @@ fn then_dead_socket_removed(world: &mut QuectoWorld) {
 
 // ─── credentials.json locking ───────────────────────────────────────────────
 
+// std file locks stabilized in 1.89 (real toolchain floor; clippy.toml
+// MSRV bump is pending).
+#[expect(clippy::incompatible_msrv)]
 #[given("a credential store whose credentials lock is held by another process")]
 fn given_credentials_lock_held(world: &mut QuectoWorld) {
     let dir = TempDir::new().expect("tempdir");
@@ -208,6 +211,9 @@ fn given_credential_write_blocked(world: &mut QuectoWorld, provider: String) {
     then_credential_write_blocked(world);
 }
 
+// std file locks stabilized in 1.89 (real toolchain floor; clippy.toml
+// MSRV bump is pending).
+#[expect(clippy::incompatible_msrv)]
 #[when("the credentials lock is released")]
 fn when_credentials_lock_released(world: &mut QuectoWorld) {
     let lock_file = world.hardening.cred_lock.take().expect("held lock");
@@ -275,6 +281,9 @@ fn given_session_owned_by_live_process(world: &mut QuectoWorld, key: String) {
 
 /// Lock the ownership stamp for `key` via an independent file description and
 /// stamp it with `owner_pid`, simulating a claim held by another live process.
+// std file locks stabilized in 1.89 (real toolchain floor; clippy.toml
+// MSRV bump is pending).
+#[expect(clippy::incompatible_msrv)]
 fn hold_stamp_as(sessions_dir: &std::path::Path, key: &str, owner_pid: u32) -> std::fs::File {
     use std::io::Write;
     let file = open_stamp_file(sessions_dir, key).expect("open ownership stamp");
