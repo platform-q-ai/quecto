@@ -673,23 +673,19 @@ impl App {
         // reordered — or look incomplete to an observer draining mid-batch
         // (#1060 review).
         if let Err(e) = self.client.clone_sender().try_send(&cmd) {
+            // Roll back synchronously: the diagnostic side channel below is
+            // best-effort, and if its receiver is gone we must not leave
+            // pending history/resume/stub state stranded.
+            self.rollback_failed_history_command(MASTER_CONNECTION_ID, &cmd);
             // Report without blocking the loop (a dropped notice is acceptable).
             let _ = self.command_send_failure_tx.try_send(CommandSendFailure {
                 command: cmd,
                 error: e.to_string(),
+                connection: MASTER_CONNECTION_ID.to_string(),
             });
             return false;
         }
         true
-    }
-
-    pub(super) fn handle_command_send_failure(&mut self, failure: CommandSendFailure) {
-        let command_kind = failure.command.kind();
-        self.rollback_failed_history_command(&failure.command);
-        self.notify(
-            &format!("Failed to send {} command: {}", command_kind, failure.error),
-            NotifyLevel::Error,
-        );
     }
 
     // ── Mouse text selection (#528) ───────────────────────────────────

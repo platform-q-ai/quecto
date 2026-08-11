@@ -361,6 +361,7 @@ async fn new_session_uses_fresh_key_and_clears_old_messages() {
     let mut fx = Fixture::new();
     fx.messages.push(Message::user("old turn"));
     let old_key = fx.session_key.clone();
+    fx.store.claim(&old_key).unwrap();
     {
         let mut ctx = fx.ctx();
         assert!(!handle_new_session(&mut ctx, None, "new_session").await);
@@ -369,6 +370,9 @@ async fn new_session_uses_fresh_key_and_clears_old_messages() {
     assert!(fx.messages.is_empty());
     assert_ne!(fx.session_key, old_key);
     assert!(fx.session_key.starts_with("chat-"));
+    FileSessionStore::new(fx._tmp.path())
+        .claim(&old_key)
+        .expect("/new_session must release the old session ownership lock");
 }
 
 #[tokio::test]
@@ -418,6 +422,20 @@ async fn resume_session_not_found() {
     let mut fx = Fixture::new();
     let mut ctx = fx.ctx();
     assert!(!handle_resume_session(&mut ctx, None, "resume_session", "missing".into()).await);
+}
+
+#[tokio::test]
+async fn failed_resume_releases_target_claim() {
+    let mut fx = Fixture::new();
+    {
+        let mut ctx = fx.ctx();
+        assert!(!handle_resume_session(&mut ctx, None, "resume_session", "missing".into()).await);
+    }
+
+    let competing_store = FileSessionStore::new(fx._tmp.path());
+    competing_store
+        .claim(&Session::build_key("cli", "missing"))
+        .expect("failed resume must not retain ownership of the missing target");
 }
 
 #[tokio::test]

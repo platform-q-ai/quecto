@@ -1,5 +1,3 @@
-// File-based SessionStore: persists sessions as JSON files in a directory.
-
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -9,11 +7,11 @@ use crate::domain::message::{Message, Role, StopReason, ThinkingBlock, ToolCall}
 use crate::domain::session::{Session, SessionStore, SessionSummary};
 use crate::domain::workflow::WorkflowRunPersisted;
 
-/// File-based session store. Each session is stored as a JSON file
-/// in `<base_dir>/sessions/`, with the filename derived from the session key.
 #[derive(Debug)]
 pub struct FileSessionStore {
     sessions_dir: PathBuf,
+    /// Cross-process single-writer ownership of session keys (#1460).
+    ownership: super::session_ownership::SessionOwnershipRegistry,
 }
 
 #[path = "session_store_records.rs"]
@@ -26,7 +24,12 @@ impl FileSessionStore {
     pub fn new(base_dir: impl AsRef<Path>) -> Self {
         Self {
             sessions_dir: base_dir.as_ref().join("sessions"),
+            ownership: super::session_ownership::SessionOwnershipRegistry::default(),
         }
+    }
+
+    fn claim_key(&self, key: &str) -> Result<(), DomainError> {
+        self.ownership.claim(&self.sessions_dir, key)
     }
 
     /// Convert a session key to a safe filename with `.json` extension.
@@ -48,6 +51,7 @@ impl FileSessionStore {
         previously_persisted: usize,
         workflow_run: Option<WorkflowRunPersisted>,
     ) -> Result<(), DomainError> {
+        self.claim_key(key)?;
         if messages.is_empty() && workflow_run.is_none() {
             return self.delete_session_file_if_present(key).await;
         }
@@ -91,6 +95,14 @@ impl FileSessionStore {
 }
 
 impl SessionStore for FileSessionStore {
+    fn claim(&self, key: &str) -> Result<(), DomainError> {
+        self.claim_key(key)
+    }
+
+    fn release(&self, key: &str) {
+        self.ownership.release(key);
+    }
+
     fn load(
         &self,
         key: &str,
@@ -116,6 +128,7 @@ impl SessionStore for FileSessionStore {
         let path = self.session_path(&session.key);
         let session = session.clone();
         Box::pin(async move {
+            self.claim_key(&session.key)?;
             if session.messages.is_empty() && session.workflow_run.is_none() {
                 return self.delete_session_file_if_present(&session.key).await;
             }
@@ -133,6 +146,7 @@ impl SessionStore for FileSessionStore {
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         let path = self.session_path(key);
         Box::pin(async move {
+            self.claim_key(key)?;
             if messages.is_empty() && workflow_run.is_none() {
                 return self.delete_session_file_if_present(key).await;
             }
@@ -156,6 +170,7 @@ impl SessionStore for FileSessionStore {
         workflow_run: Option<WorkflowRunPersisted>,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         Box::pin(async move {
+            self.claim_key(key)?;
             if messages.is_empty() && workflow_run.is_none() {
                 return self.delete_session_file_if_present(key).await;
             }

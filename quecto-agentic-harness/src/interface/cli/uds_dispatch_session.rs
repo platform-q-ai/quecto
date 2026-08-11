@@ -100,6 +100,7 @@ pub(super) async fn handle_new_session(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
+    let old_key = ctx.session_key.to_string();
     clear_conversation(ctx.messages);
     sync_message_count(ctx);
     ctx.last_persisted_message_index = 0;
@@ -108,6 +109,9 @@ pub(super) async fn handle_new_session(
     let key = crate::interface::shared::generate_chat_key();
     ctx.session_key.clear();
     ctx.session_key.push_str(&key);
+    if old_key != key {
+        ctx.session_store.release(&old_key);
+    }
     ctx.session.set_session_key(key.clone());
     ctx.agent.set_session_key(key.clone());
     // Replace history and its spill namespace in one snapshot write so busy
@@ -183,20 +187,32 @@ pub(super) async fn handle_resume_session(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
+    // Refuse at open (#1460): resuming a key owned by another live process
+    // must fail before any turn runs against it.
+    if let Err(err) = ctx.session_store.claim(&new_key) {
+        let ev = AgentEvent::err(id, type_name, err.to_string());
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
     let loaded = match ctx.session_store.load(&new_key).await {
         Ok(Some(session)) => session,
         Ok(None) => {
+            ctx.session_store.release(&new_key);
             let ev = AgentEvent::err(id, type_name, format!("session not found: {name}"));
             emit_event_to_broadcast_or_writer(ctx, &ev).await;
             return false;
         }
         Err(err) => {
+            ctx.session_store.release(&new_key);
             let ev = AgentEvent::err(id, type_name, format!("failed to load session: {err}"));
             emit_event_to_broadcast_or_writer(ctx, &ev).await;
             return false;
         }
     };
-    *ctx.session_key = new_key.clone();
+    let old_key = std::mem::replace(ctx.session_key, new_key.clone());
+    if old_key != new_key {
+        ctx.session_store.release(&old_key);
+    }
     ctx.session.set_session_key(new_key.clone());
     ctx.agent.set_session_key(new_key.clone());
     // Session-scoped effort must not follow the client into the resumed

@@ -1,31 +1,6 @@
 use super::*;
 
-fn usable_socket_path(path: Option<&str>) -> bool {
-    path.is_some_and(|p| {
-        let p = p.trim();
-        let path = std::path::Path::new(p);
-        if p.is_empty()
-            || !path.is_absolute()
-            || path
-                .components()
-                .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
-            return false;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::FileTypeExt;
-            let Ok(metadata) = std::fs::symlink_metadata(path) else {
-                return false;
-            };
-            metadata.file_type().is_socket() && !metadata.file_type().is_symlink()
-        }
-        #[cfg(not(unix))]
-        {
-            true
-        }
-    })
-}
+use crate::shell::socket_path::usable_socket_path;
 
 impl App {
     pub(super) fn ensure_synced_subagent_feed(&mut self, id: &str) {

@@ -350,6 +350,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/process.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
 | `shell/render.rs` | `shell` terminal/render runtime adapter (relocated, #1257 Phase 1) |
 | `shell/signals.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
+| `shell/socket_path.rs` | `shell` shared socket-path validation policy for every connect (#1460) |
 | `shell/stdin_buffer.rs` | `shell` stdin adapter/policy (relocated, #1257 Phase 6) |
 | `shell/terminal.rs` | `shell` terminal adapter (relocated, #1257 Phase 1) |
 | `shell/tool_policy.rs` | `shell` live tool/profile policy modal controller (#1334 PR 4) |

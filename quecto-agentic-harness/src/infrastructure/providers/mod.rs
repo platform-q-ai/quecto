@@ -16,6 +16,10 @@ mod sse_wire_cov_tests;
 #[path = "providers_cov2_tests.rs"]
 mod providers_cov2_tests;
 
+#[cfg(test)]
+#[path = "openai_endpoint_router_tests.rs"]
+mod openai_endpoint_router_tests;
+
 use std::sync::Arc;
 
 use crate::domain::provider::LlmProvider;

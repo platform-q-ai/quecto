@@ -87,6 +87,15 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
             &file_store
         }
     };
+    // Refuse at open, not at first save (#1460): a key owned by another
+    // live process must fail before any turn runs against it.
+    if !ephemeral
+        && !session_key.is_empty()
+        && let Err(err) = session_store.claim(&session_key)
+    {
+        eprintln!("{err}");
+        return 1;
+    }
     let loaded_session = match load_session(session_store, &session_key, ephemeral).await {
         Ok(m) => m,
         Err(err) => {

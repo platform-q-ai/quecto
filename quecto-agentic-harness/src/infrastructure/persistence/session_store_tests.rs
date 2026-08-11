@@ -1,4 +1,5 @@
 use super::*;
+use std::os::unix::fs::symlink;
 use tempfile::TempDir;
 
 fn make_message(role: Role, content: &str) -> Message {
@@ -89,6 +90,85 @@ async fn appending_a_completed_turn_preserves_previously_saved_bytes() {
     assert_eq!(loaded.messages.len(), 4);
     assert_eq!(loaded.messages[0].content, "first");
     assert_eq!(loaded.messages[3].content, "second response");
+}
+
+#[tokio::test]
+async fn appending_refuses_symlinked_session_file() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+
+    let mut session = Session::new("test:symlink");
+    session.messages.push(make_message(Role::User, "first"));
+    store.save(&session).await.unwrap();
+    let path = tmp.path().join("sessions/test_symlink.json");
+    let target = tmp.path().join("target.json");
+    tokio::fs::rename(&path, &target).await.unwrap();
+    symlink(&target, &path).unwrap();
+
+    session
+        .messages
+        .push(make_message(Role::Assistant, "second"));
+    let err = store.save(&session).await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("refusing to append to symlinked session file"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn append_reports_directory_open_failure() {
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("session-dir");
+    tokio::fs::create_dir(&path).await.unwrap();
+
+    let record = SessionRecordRef::Append {
+        start_index: Some(0),
+        messages: vec![],
+        workflow_run: None,
+        workflow_run_cleared: true,
+    };
+    let err = append_record(&path, &record).await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("failed to open session for append"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn compact_write_reports_missing_parent_directory() {
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("missing-parent/session.json");
+    let mut session = Session::new("test:compact-write-error");
+    session.messages.push(make_message(Role::User, "first"));
+
+    let err = write_compacted(&path, &session).await.unwrap_err();
+    assert!(err.to_string().contains("failed to write session"), "{err}");
+}
+
+#[tokio::test]
+async fn append_reports_missing_file_when_path_disappears_after_compaction_decision() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+
+    let mut session = Session::new("test:missing-append");
+    session.messages.push(make_message(Role::User, "first"));
+    store.save(&session).await.unwrap();
+    let path = tmp.path().join("sessions/test_missing-append.json");
+    tokio::fs::remove_file(&path).await.unwrap();
+
+    let record = SessionRecordRef::Append {
+        start_index: Some(1),
+        messages: vec![],
+        workflow_run: None,
+        workflow_run_cleared: true,
+    };
+    let err = append_record(&path, &record).await.unwrap_err();
+    assert!(
+        err.to_string().contains("failed to inspect session"),
+        "{err}"
+    );
 }
 
 #[tokio::test]
@@ -310,6 +390,10 @@ async fn list_skips_malformed_and_non_json_files() {
         .push(make_message(Role::User, "visible title"));
     store.save(&good).await.unwrap();
 
+    let mut other = Session::new("other:list");
+    other.messages.push(make_message(Role::User, "other title"));
+    store.save(&other).await.unwrap();
+
     let dir = tmp.path().join("sessions");
     tokio::fs::write(dir.join("bad.json"), b"not-json")
         .await
@@ -318,10 +402,14 @@ async fn list_skips_malformed_and_non_json_files() {
         .await
         .unwrap();
 
-    let summaries = store.list(None).await.unwrap();
+    let summaries = store.list(Some("ok:")).await.unwrap();
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].key, "ok:list");
     assert_eq!(summaries[0].title, "visible title");
+
+    let summaries = store.list(None).await.unwrap();
+    assert_eq!(summaries.len(), 2);
+    assert!(summaries.iter().any(|summary| summary.key == "other:list"));
 }
 
 #[tokio::test]
@@ -381,4 +469,112 @@ async fn save_clean_delta_with_zero_watermark_compacts() {
         .await
         .unwrap();
     assert!(raw.starts_with(r#"{"type":"snapshot""#), "raw={raw}");
+}
+
+// ─── #1460: session-key single-writer ownership on the write path ───────────
+
+/// Writing through the real store to a key whose lock is held by another
+/// live process must be refused with an error naming the key and owner —
+/// the guard exists to protect this path, not only `acquire` in isolation.
+#[tokio::test]
+async fn save_to_key_owned_by_another_live_process_is_refused() {
+    use std::io::Write;
+
+    fn hold_foreign_owner(tmp: &TempDir, key: &str) -> (std::fs::File, u32) {
+        let sessions_dir = tmp.path().join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        // Simulated other live process: an independently opened file description
+        // holding the exclusive lock, stamped with the parent's (test runner's)
+        // pid so the refusal message names a pid that is not this process.
+        let owner_pid = std::os::unix::process::parent_id();
+        let lock_file = crate::infrastructure::persistence::session_ownership::open_stamp_file(
+            &sessions_dir,
+            key,
+        )
+        .unwrap();
+        lock_file.try_lock().unwrap();
+        (&lock_file)
+            .write_all(owner_pid.to_string().as_bytes())
+            .unwrap();
+        (lock_file, owner_pid)
+    }
+
+    async fn assert_refused(result: Result<(), DomainError>, key: &str, owner_pid: u32) {
+        let err = result
+            .expect_err("write/delete owned by another process must be refused")
+            .to_string();
+        assert!(err.contains(key), "must name the key: {err}");
+        assert!(
+            err.contains(&owner_pid.to_string()),
+            "must name the owning pid: {err}"
+        );
+    }
+
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+
+    let (_lock, owner_pid) = hold_foreign_owner(&tmp, "owned:save");
+    assert_refused(
+        <FileSessionStore as SessionStore>::save(
+            &store,
+            &Session {
+                key: "owned:save".to_string(),
+                messages: Vec::new(),
+                workflow_run: None,
+            },
+        )
+        .await,
+        "owned:save",
+        owner_pid,
+    )
+    .await;
+
+    let (_lock, owner_pid) = hold_foreign_owner(&tmp, "owned:delta");
+    assert_refused(
+        <FileSessionStore as SessionStore>::save_delta(&store, "owned:delta", &[], 0, None).await,
+        "owned:delta",
+        owner_pid,
+    )
+    .await;
+
+    let (_lock, owner_pid) = hold_foreign_owner(&tmp, "owned:clean-delta");
+    assert_refused(
+        <FileSessionStore as SessionStore>::save_clean_delta(
+            &store,
+            "owned:clean-delta",
+            &[],
+            0,
+            None,
+        )
+        .await,
+        "owned:clean-delta",
+        owner_pid,
+    )
+    .await;
+}
+
+/// A key stamped by a dead process is reclaimed transparently: the write
+/// succeeds and the stamp now records this process.
+#[tokio::test]
+async fn save_to_key_stamped_by_dead_process_reclaims_and_succeeds() {
+    let tmp = TempDir::new().unwrap();
+    let sessions_dir = tmp.path().join("sessions");
+    std::fs::create_dir_all(&sessions_dir).unwrap();
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let dead = child.id();
+    child.wait().unwrap();
+    let stamp = crate::infrastructure::persistence::session_ownership::ownership_stamp_path(
+        &sessions_dir,
+        "owned:dead",
+    );
+    std::fs::write(&stamp, dead.to_string()).unwrap();
+
+    let store = FileSessionStore::new(tmp.path());
+    let messages = vec![make_message(Role::User, "reclaimed")];
+    store
+        .save_clean_delta("owned:dead", &messages, 0, None)
+        .await
+        .expect("a key stamped by a dead process must be reclaimable");
+    let contents = std::fs::read_to_string(&stamp).unwrap();
+    assert!(contents.contains(&std::process::id().to_string()));
 }

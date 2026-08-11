@@ -272,6 +272,8 @@ impl std::ops::DerefMut for DebugEditor {
 
 #[derive(Debug, Default, World)]
 pub struct QuectoWorld {
+    /// #1460 shared-state hardening scenario state (sockets, cred lock, ownership).
+    pub hardening: shared_state_hardening_steps::HardeningState,
     /// Exit code from the last CLI invocation
     pub exit_code: i32,
     /// Captured stdout from the last CLI invocation
@@ -1351,6 +1353,7 @@ mod repo_docs_steps;
 mod sandbox_steps;
 mod security_steps;
 mod session_steps;
+mod shared_state_hardening_steps;
 mod spawn_env_steps;
 mod spawn_liveness_steps;
 mod spawn_runtime_slice5_steps;
