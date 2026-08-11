@@ -203,7 +203,10 @@ pub(super) async fn handle_resume_session(
             return false;
         }
     };
-    *ctx.session_key = new_key.clone();
+    let old_key = std::mem::replace(ctx.session_key, new_key.clone());
+    if old_key != new_key {
+        ctx.session_store.release(&old_key);
+    }
     ctx.session.set_session_key(new_key.clone());
     ctx.agent.set_session_key(new_key.clone());
     // Session-scoped effort must not follow the client into the resumed

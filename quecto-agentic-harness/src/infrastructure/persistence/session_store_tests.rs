@@ -410,11 +410,15 @@ async fn save_to_key_owned_by_another_live_process_is_refused() {
         .unwrap();
 
     let store = FileSessionStore::new(tmp.path());
-    let messages = vec![make_message(Role::User, "stolen turn")];
-    let err = store
-        .save_clean_delta("owned:elsewhere", &messages, 0, None)
-        .await
-        .expect_err("writing a key owned by another live process must be refused");
+    let err = <FileSessionStore as SessionStore>::save_clean_delta(
+        &store,
+        "owned:elsewhere",
+        &[],
+        0,
+        None,
+    )
+    .await
+    .expect_err("empty clean-delta delete owned by another process must be refused");
     let err = err.to_string();
     assert!(err.contains("owned:elsewhere"), "must name the key: {err}");
     assert!(

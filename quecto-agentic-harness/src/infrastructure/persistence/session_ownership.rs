@@ -144,6 +144,11 @@ impl SessionOwnershipRegistry {
         owned.insert(key.to_string(), guard);
         Ok(())
     }
+
+    pub fn release(&self, key: &str) {
+        let mut owned = self.owned.lock().expect("session ownership mutex");
+        owned.remove(key);
+    }
 }
 
 #[cfg(test)]

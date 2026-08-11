@@ -32,7 +32,7 @@ impl SessionView {
 }
 
 impl App {
-    pub(super) fn rollback_failed_history_command(&mut self, command: &Command) {
+    pub(super) fn rollback_failed_history_command(&mut self, _connection: &str, command: &Command) {
         match command {
             Command::GetMessages { id: Some(id), .. } => {
                 self.master_session.history.rollback_pending_page(id);

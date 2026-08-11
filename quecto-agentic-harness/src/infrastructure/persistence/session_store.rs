@@ -1,5 +1,3 @@
-// File-based SessionStore: persists sessions as JSON files in a directory.
-
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -9,8 +7,6 @@ use crate::domain::message::{Message, Role, StopReason, ThinkingBlock, ToolCall}
 use crate::domain::session::{Session, SessionStore, SessionSummary};
 use crate::domain::workflow::WorkflowRunPersisted;
 
-/// File-based session store. Each session is stored as a JSON file
-/// in `<base_dir>/sessions/`, with the filename derived from the session key.
 #[derive(Debug)]
 pub struct FileSessionStore {
     sessions_dir: PathBuf,
@@ -32,7 +28,6 @@ impl FileSessionStore {
         }
     }
 
-    /// Every write path claims cross-process ownership of `key` first (#1460).
     fn claim_key(&self, key: &str) -> Result<(), DomainError> {
         self.ownership.claim(&self.sessions_dir, key)
     }
@@ -100,10 +95,12 @@ impl FileSessionStore {
 }
 
 impl SessionStore for FileSessionStore {
-    /// Open-time ownership (#1460, ADR-0023 refuse-at-open): idempotent,
-    /// shared with the write paths via the registry.
     fn claim(&self, key: &str) -> Result<(), DomainError> {
         self.claim_key(key)
+    }
+
+    fn release(&self, key: &str) {
+        self.ownership.release(key);
     }
 
     fn load(
@@ -173,6 +170,7 @@ impl SessionStore for FileSessionStore {
         workflow_run: Option<WorkflowRunPersisted>,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         Box::pin(async move {
+            self.claim_key(key)?;
             if messages.is_empty() && workflow_run.is_none() {
                 return self.delete_session_file_if_present(key).await;
             }

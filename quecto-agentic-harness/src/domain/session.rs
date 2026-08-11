@@ -76,6 +76,10 @@ pub trait SessionStore: Send + Sync {
         Ok(())
     }
 
+    /// Release this process's ownership claim when a live session switches
+    /// away from a key. Stores without explicit ownership can ignore this.
+    fn release(&self, _key: &str) {}
+
     /// Load a session by key. Returns None if no session exists.
     fn load(
         &self,

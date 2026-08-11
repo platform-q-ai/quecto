@@ -533,6 +533,9 @@ fn load_session_messages_with_rt(
     if ephemeral {
         return Vec::new();
     }
+    if store.claim(key).is_err() {
+        return Vec::new();
+    }
     match rt.block_on(store.load(key)) {
         Ok(Some(session)) => session.messages,
         _ => Vec::new(),
