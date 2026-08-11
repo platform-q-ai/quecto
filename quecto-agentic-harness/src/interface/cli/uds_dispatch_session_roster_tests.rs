@@ -68,21 +68,48 @@ fn verify_persisted_live_subagent_rejects_empty_uuid_or_socket() {
     )));
 }
 
-#[test]
-fn verify_persisted_live_subagent_distinguishes_reachable_socket() {
+#[tokio::test]
+async fn verify_persisted_live_subagent_requires_matching_session_stats_identity() {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("child.sock");
-    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
-    listener.set_nonblocking(true).unwrap();
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let (reader, mut writer) = tokio::io::split(stream);
+        let mut reader = tokio::io::BufReader::new(reader);
+        let request =
+            quecto_line_io::read_frame(&mut reader, quecto_line_io::PROTOCOL_FRAME_CAP_BYTES)
+                .await
+                .unwrap()
+                .unwrap();
+        let request_id = serde_json::from_slice::<serde_json::Value>(&request).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let response = serde_json::json!({
+            "type": "response",
+            "id": request_id,
+            "command": "get_session_stats",
+            "success": true,
+            "data": { "sessionKey": "cli:other", "userMessages": 0, "assistantMessages": 0, "toolCalls": 0, "toolResults": 0, "totalMessages": 0, "tokens": {}, "contextTokens": 0, "maxContextTokens": 0 }
+        });
+        quecto_line_io::write_frame(
+            &mut writer,
+            response.to_string().as_bytes(),
+            quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
+        )
+        .await
+        .unwrap();
+    });
 
-    assert!(verify_persisted_live_subagent(&roster_entry(
-        "child",
-        socket.clone()
-    )));
-    drop(listener);
-    assert!(!verify_persisted_live_subagent(&roster_entry(
-        "child", socket
-    )));
+    let mut entry = roster_entry("child", socket);
+    entry.session_key = "cli:child".into();
+    assert!(
+        !tokio::task::spawn_blocking(move || verify_persisted_live_subagent(&entry))
+            .await
+            .unwrap()
+    );
+    server.await.unwrap();
 }
 
 #[test]
@@ -91,7 +118,32 @@ fn restore_persisted_roster_live_reachable_and_unreachable_liveness() {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("live.sock");
     let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
-    listener.set_nonblocking(true).unwrap();
+    let server = std::thread::spawn(move || {
+        use std::io::{Read, Write};
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut prefix = [0u8; 4];
+        stream.read_exact(&mut prefix).unwrap();
+        let len = u32::from_be_bytes(prefix) as usize;
+        let mut request = vec![0u8; len];
+        stream.read_exact(&mut request).unwrap();
+        let request_id = serde_json::from_slice::<serde_json::Value>(&request).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let response = serde_json::json!({
+            "type": "response",
+            "id": request_id,
+            "command": "get_session_stats",
+            "success": true,
+            "data": { "sessionKey": "live", "userMessages": 0, "assistantMessages": 0, "toolCalls": 0, "toolResults": 0, "totalMessages": 0, "tokens": {}, "contextTokens": 0, "maxContextTokens": 0 }
+        })
+        .to_string();
+        stream
+            .write_all(&(response.len() as u32).to_be_bytes())
+            .unwrap();
+        stream.write_all(response.as_bytes()).unwrap();
+        stream.flush().unwrap();
+    });
 
     let mut live = roster_entry("live", socket);
     live.display_name = "Live worker".into();
@@ -119,6 +171,7 @@ fn restore_persisted_roster_live_reachable_and_unreachable_liveness() {
         entries.get("dead").unwrap().persisted_liveness,
         SubagentLiveness::Dead
     );
+    server.join().unwrap();
 }
 
 #[test]

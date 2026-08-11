@@ -58,13 +58,58 @@ pub(crate) fn snapshot_subagent_roster(
 }
 
 pub(crate) fn verify_persisted_live_subagent(entry: &PersistedSubagentRosterEntry) -> bool {
-    if entry.socket_path.as_os_str().is_empty() || entry.agent_uuid.is_empty() {
+    use std::io::{Read, Write};
+    use std::time::Duration;
+
+    if entry.socket_path.as_os_str().is_empty()
+        || entry.agent_uuid.is_empty()
+        || entry.session_key.is_empty()
+    {
         return false;
     }
-    match std::os::unix::net::UnixStream::connect(&entry.socket_path) {
-        Ok(stream) => stream.peer_addr().is_ok(),
-        Err(_) => false,
+    let Ok(mut stream) = std::os::unix::net::UnixStream::connect(&entry.socket_path) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+    let request_id = format!("restore-verify-{}", entry.agent_uuid);
+    let request = serde_json::json!({
+        "type": "get_session_stats",
+        "id": request_id,
+    })
+    .to_string();
+    let Ok(len) = u32::try_from(request.len()) else {
+        return false;
+    };
+    if stream.write_all(&len.to_be_bytes()).is_err()
+        || stream.write_all(request.as_bytes()).is_err()
+        || stream.flush().is_err()
+    {
+        return false;
     }
+    let mut prefix = [0u8; 4];
+    if stream.read_exact(&mut prefix).is_err() {
+        return false;
+    }
+    let response_len = u32::from_be_bytes(prefix) as usize;
+    if response_len > quecto_line_io::PROTOCOL_FRAME_CAP_BYTES {
+        return false;
+    }
+    let mut payload = vec![0u8; response_len];
+    if stream.read_exact(&mut payload).is_err() {
+        return false;
+    }
+    let Ok(response) = serde_json::from_slice::<serde_json::Value>(&payload) else {
+        return false;
+    };
+    response.get("type").and_then(|v| v.as_str()) == Some("response")
+        && response.get("id").and_then(|v| v.as_str()) == Some(request_id.as_str())
+        && response.get("success").and_then(|v| v.as_bool()) == Some(true)
+        && response
+            .get("data")
+            .and_then(|data| data.get("sessionKey"))
+            .and_then(|v| v.as_str())
+            == Some(entry.session_key.as_str())
 }
 
 pub(crate) fn restore_persisted_subagent_roster(
