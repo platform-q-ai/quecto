@@ -128,7 +128,7 @@ pub(super) async fn persist_current_session(
         .as_ref()
         .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run()));
     let roster = snapshot_subagent_roster(&ctx.subagent_registry);
-    let result = if ctx.durable_prefix_dirty || !roster.is_empty() {
+    let result = if ctx.durable_prefix_dirty || ctx.subagent_registry.is_some() {
         ctx.session_store
             .save(&Session {
                 key: ctx.session_key.to_string(),

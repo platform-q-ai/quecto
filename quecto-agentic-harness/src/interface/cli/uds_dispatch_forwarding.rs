@@ -223,6 +223,16 @@ pub(super) async fn forward_subagent_get_messages(
                 Ok(Some(session_key)) => {
                     return match ctx.session_store.load(&session_key).await {
                         Ok(Some(session)) => {
+                            if let Some(before) = before.as_ref()
+                                && uds_session::position_by_message_id(&session.messages, before)
+                                    .is_none()
+                            {
+                                return AgentEvent::err(
+                                    id_ref,
+                                    tn,
+                                    format!("history cursor not found: {}", before.as_str()),
+                                );
+                            }
                             let data = uds_session::messages_page_json_for_id(
                                 &session.messages,
                                 count.unwrap_or(session.messages.len()),

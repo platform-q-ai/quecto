@@ -26,7 +26,7 @@ pub(super) struct Fx {
     pub(super) messages: Vec<Message>,
     session: AgentSession,
     session_key: String,
-    store: FileSessionStore,
+    pub(super) store: FileSessionStore,
     _tmp: tempfile::TempDir,
     writer: tokio::io::Sink,
 }

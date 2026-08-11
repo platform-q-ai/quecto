@@ -663,3 +663,46 @@ async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest()
         );
     }
 }
+
+#[tokio::test]
+async fn persist_current_session_clears_previously_persisted_roster_when_registry_empty() {
+    use crate::domain::session::{
+        PersistedSubagentRosterEntry, Session, SessionStore, SubagentLiveness,
+    };
+
+    let mut fx = Fixture::new();
+    fx.store
+        .save(&Session {
+            key: "cli:test".into(),
+            messages: vec![Message::user("old")],
+            workflow_run: None,
+            subagent_roster: vec![PersistedSubagentRosterEntry {
+                agent_uuid: "stale-child".into(),
+                display_name: "stale child".into(),
+                session_key: "stale-child".into(),
+                socket_path: "/tmp/stale.sock".into(),
+                pid: 0,
+                liveness: SubagentLiveness::Dead,
+                parent_id: None,
+                read_only: false,
+                status: None,
+            }],
+        })
+        .await
+        .unwrap();
+    fx.messages = vec![Message::user("old"), Message::assistant("new", Vec::new())];
+    fx.last_persisted_message_index = 1;
+    {
+        let mut ctx = fx.ctx();
+        ctx.subagent_registry =
+            Some(crate::infrastructure::tools::subagent_registry::new_registry());
+        persist_current_session(&mut ctx).await.unwrap();
+    }
+
+    let loaded = fx.store.load("cli:test").await.unwrap().unwrap();
+    assert!(
+        loaded.subagent_roster.is_empty(),
+        "stale roster was not cleared: {:?}",
+        loaded.subagent_roster
+    );
+}
