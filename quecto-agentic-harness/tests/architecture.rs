@@ -1215,7 +1215,12 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// the environment-detail chrome reads the shared `SubagentEnvironmentInfo`
 /// metadata carried on tracked entries — necessary wire use for environment
 /// grouping, not unrelated growth.
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 116;
+/// #1462 moves the master `Client` behind the `shell/connection.rs` feed
+/// task: the connection IS a transport seam (it owns the wire client and
+/// forwards `Event`s), so its `Client`/`Command`/`Event` references plus the
+/// harness fan-in drivers in `shell/tui_harness_sourced.rs` are documented
+/// seam usage, not feature/view growth (116 → 124).
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 124;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///
