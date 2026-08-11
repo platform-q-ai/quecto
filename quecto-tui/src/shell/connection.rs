@@ -66,15 +66,27 @@ impl Connection {
     /// sentinel. The negotiation outcome (`speaks_frames`) is read from the
     /// client itself — per-connection state, not a caller-supplied flag.
     ///
-    /// Outside a tokio runtime (sync unit tests building an `App` around a
-    /// disconnected stub client) no task can be spawned; the client is
-    /// dropped and the connection only carries the command sender, which is
-    /// exactly the pre-seam behaviour those tests exercised.
+    /// In TEST builds only, outside a tokio runtime (sync unit tests
+    /// building an `App` around a disconnected stub client) no task can be
+    /// spawned; the client is dropped and the connection only carries the
+    /// command sender — exactly the pre-seam behaviour those tests
+    /// exercised. Production builds always spawn, and panic loudly if no
+    /// runtime is present.
     pub(crate) fn spawn(client: Client, tab: TabId, event_tx: mpsc::Sender<SourcedEvent>) -> Self {
         let sender = client.clone_sender();
         let speaks_frames = client.speaks_frames();
         let dropped_oversized = client.dropped_oversized_handle();
-        if tokio::runtime::Handle::try_current().is_ok() {
+        // The no-runtime fallback exists ONLY for test builds: sync unit
+        // tests build an `App` around a disconnected stub client with no
+        // tokio runtime. In production builds we spawn unconditionally, so a
+        // future caller outside a runtime fails loudly (`tokio::spawn`
+        // panics) instead of silently dropping the client and freezing the
+        // tab with no `Source::Closed` sentinel (#1047 class, PR review).
+        #[cfg(any(test, feature = "test-harness"))]
+        let spawn_feed = tokio::runtime::Handle::try_current().is_ok();
+        #[cfg(not(any(test, feature = "test-harness")))]
+        let spawn_feed = true;
+        if spawn_feed {
             let mut client = client;
             tokio::spawn(async move {
                 loop {

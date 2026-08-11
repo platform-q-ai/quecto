@@ -187,3 +187,144 @@ async fn closed_sentinel_reports_real_child_exit_detail() {
         "the Closed sentinel path must diagnose the real child's abort (#1047 via #1462): {rendered}"
     );
 }
+
+// ── SourcedRender mapping (#1462 review: falsifiability) ──────────────
+// The event loop's paint decision is the RETURN VALUE of `route_sourced`;
+// the harness drivers capture unconditionally, so without these direct
+// assertions the mapping could regress (e.g. every arm returning `Skip`
+// freezes streamed paints; token arms returning `Immediate` reintroduces
+// per-token flicker) with the whole suite still green.
+
+use super::app_event_loop::SourcedRender;
+use crate::shell::connection::{Source, TabId};
+
+#[tokio::test]
+async fn route_sourced_master_token_coalesces_as_stream_token() {
+    let mut h = TuiHarness::new().await;
+    let got = h
+        .app_mut()
+        .route_sourced(
+            Source::Tab(TabId::MASTER),
+            Some(Event::Token { token: "t".into() }),
+        )
+        .await;
+    assert_eq!(
+        got,
+        SourcedRender::Stream { is_token: true },
+        "a master token must take the coalesced stream paint path (#1462)"
+    );
+}
+
+#[tokio::test]
+async fn route_sourced_master_non_token_paints_stream_immediately() {
+    let mut h = TuiHarness::new().await;
+    let got = h
+        .app_mut()
+        .route_sourced(Source::Tab(TabId::MASTER), Some(Event::TurnStart))
+        .await;
+    assert_eq!(
+        got,
+        SourcedRender::Stream { is_token: false },
+        "a non-token master event must stream-paint without coalescing (#1462)"
+    );
+}
+
+#[tokio::test]
+async fn route_sourced_master_event_with_surfaced_drops_paints_immediately() {
+    let mut h = TuiHarness::new().await;
+    h.app_mut().connection.record_dropped_oversized_for_tests(1);
+    let got = h
+        .app_mut()
+        .route_sourced(
+            Source::Tab(TabId::MASTER),
+            Some(Event::Token { token: "t".into() }),
+        )
+        .await;
+    assert_eq!(
+        got,
+        SourcedRender::Immediate,
+        "surfacing an oversized-line drop must force an immediate paint (#1047)"
+    );
+}
+
+#[tokio::test]
+async fn route_sourced_subagent_token_coalesces_as_stream_token() {
+    let mut h = TuiHarness::new().await;
+    let got = h
+        .app_mut()
+        .route_sourced(
+            Source::Subagent(TabId::MASTER, "a1".into()),
+            Some(Event::Token { token: "t".into() }),
+        )
+        .await;
+    assert_eq!(
+        got,
+        SourcedRender::Stream { is_token: true },
+        "a sub-agent token must take the coalesced stream paint path (#1462)"
+    );
+}
+
+#[tokio::test]
+async fn route_sourced_closed_sentinel_paints_immediately() {
+    let mut h = TuiHarness::new().await;
+    let got = h
+        .app_mut()
+        .route_sourced(Source::Closed(TabId::MASTER), None)
+        .await;
+    assert_eq!(
+        got,
+        SourcedRender::Immediate,
+        "the disconnect sentinel must paint immediately, not coalesce (#1462)"
+    );
+}
+
+#[tokio::test]
+async fn route_sourced_payloadless_non_sentinel_skips_paint() {
+    let mut h = TuiHarness::new().await;
+    let got = h
+        .app_mut()
+        .route_sourced(Source::Tab(TabId::MASTER), None)
+        .await;
+    assert_eq!(
+        got,
+        SourcedRender::Skip,
+        "a payload-less non-sentinel item must not trigger a paint (#1462)"
+    );
+}
+
+// ── run() drains the shared fan-in (#1462 review: falsifiability) ─────
+// Every other test pumps the fan-in through harness helpers, so the select
+// arm in `run()` itself had no coverage: deleting it — or re-gating it the
+// way the removed `client.recv()` arm was gated on `agent_connected` —
+// would pass the whole suite while the production TUI stopped processing
+// events. This drives the REAL event loop and lets IT deliver the item.
+
+#[tokio::test]
+async fn run_select_loop_drains_shared_fan_in_even_when_disconnected() {
+    let mut h = TuiHarness::new().await;
+    // Pre-flip the flag the deleted arm used to be gated on: the fan-in arm
+    // must be unconditional, or the Closed sentinel itself could never be
+    // drained after a disconnect.
+    h.app_mut().agent_connected = false;
+    h.app_mut()
+        .subagents
+        .event_tx
+        .send((
+            Source::Tab(TabId::MASTER),
+            Some(Event::Token {
+                token: "fan-in-run-token".into(),
+            }),
+        ))
+        .await
+        .expect("queue a fan-in item before run()");
+
+    // run() never exits on its own here; give the loop a moment to select
+    // the queued item, then drop the future.
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(500), h.app_mut().run()).await;
+
+    h.capture();
+    assert!(
+        h.full_frame().contains("fan-in-run-token"),
+        "run()'s select loop must drain the shared fan-in unconditionally (#1462)"
+    );
+}
