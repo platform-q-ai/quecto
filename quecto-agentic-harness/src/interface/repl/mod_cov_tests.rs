@@ -340,6 +340,24 @@ fn run_dispatches_agent_and_spawn_prefix_commands() {
 }
 
 #[test]
+fn repl_open_refuses_live_foreign_owner_but_ephemeral_skips_claim() {
+    let rt = build_repl_runtime().unwrap();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let owner = FileSessionStore::new(tmp.path());
+    owner.claim("test:owned").unwrap();
+
+    let contender = FileSessionStore::new(tmp.path());
+    let err = load_session_messages_with_rt(&rt, &contender, "test:owned", false).unwrap_err();
+    assert!(
+        err.to_string().contains("refusing a second writer"),
+        "{err}"
+    );
+
+    let messages = load_session_messages_with_rt(&rt, &contender, "test:owned", true).unwrap();
+    assert!(messages.is_empty());
+}
+
+#[test]
 fn bufreader_tty_run_prints_banner_help_clear_and_uses_system_prompt() {
     let tmp = tempfile::TempDir::new().unwrap();
     let input = b"/help\n/clear\nhello\n/exit\n";
