@@ -673,6 +673,10 @@ impl App {
         // reordered — or look incomplete to an observer draining mid-batch
         // (#1060 review).
         if let Err(e) = self.client.clone_sender().try_send(&cmd) {
+            // Roll back synchronously: the diagnostic side channel below is
+            // best-effort, and if its receiver is gone we must not leave
+            // pending history/resume/stub state stranded.
+            self.rollback_failed_history_command(MASTER_CONNECTION_ID, &cmd);
             // Report without blocking the loop (a dropped notice is acceptable).
             let _ = self.command_send_failure_tx.try_send(CommandSendFailure {
                 command: cmd,

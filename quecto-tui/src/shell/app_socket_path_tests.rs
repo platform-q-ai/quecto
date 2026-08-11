@@ -130,3 +130,47 @@ async fn command_send_failure_defaults_to_the_master_connection() {
          connection id, got: {messages:?}"
     );
 }
+
+#[tokio::test]
+async fn failed_resume_messages_enqueue_clears_pending_resume_id() {
+    let mut h = harness().await;
+    h.disconnect_master_commands();
+    let a = h.app_mut();
+
+    a.handle_response(
+        Some("resume".into()),
+        "resume_session".into(),
+        true,
+        Some(serde_json::json!({"session": "chat-1"})),
+        None,
+    );
+
+    assert_eq!(
+        a.test_pending_resume_messages_id(),
+        None,
+        "failed enqueue of the solicited resume load must not leave an owned pending id"
+    );
+}
+
+#[tokio::test]
+async fn rollback_from_non_master_connection_does_not_clear_master_resume_pending() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.test_arm_resume_messages("resume-messages-owned");
+
+    a.handle_command_send_failure(CommandSendFailure {
+        command: Command::GetMessages {
+            agent_id: None,
+            id: Some("resume-messages-owned".into()),
+            before: None,
+        },
+        error: "tab channel full".into(),
+        connection: "tab-2".into(),
+    });
+
+    assert_eq!(
+        a.test_pending_resume_messages_id(),
+        Some("resume-messages-owned"),
+        "a non-master connection failure must not roll back master-owned pending resume state"
+    );
+}
