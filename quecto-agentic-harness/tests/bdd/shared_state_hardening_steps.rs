@@ -150,7 +150,11 @@ fn given_credentials_lock_held(world: &mut QuectoWorld) {
         .write(true)
         .open(store.lock_path())
         .expect("open lock file");
-    lock_file.lock().expect("lock credentials lock file");
+    // flock(2) directly rather than `File::lock` (stable 1.89) to hold the
+    // workspace MSRV (1.85); std's implementation is flock on Linux.
+    // SAFETY: flock on a valid open fd, no other side effects.
+    let rc = unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&lock_file), libc::LOCK_EX) };
+    assert_eq!(rc, 0, "lock credentials lock file");
     world.hardening.cred_lock = Some(lock_file);
     world.hardening.cred_dir = Some(dir);
 }
@@ -208,7 +212,9 @@ fn given_credential_write_blocked(world: &mut QuectoWorld, provider: String) {
 #[when("the credentials lock is released")]
 fn when_credentials_lock_released(world: &mut QuectoWorld) {
     let lock_file = world.hardening.cred_lock.take().expect("held lock");
-    lock_file.unlock().expect("unlock credentials lock file");
+    // SAFETY: flock on a valid open fd, no other side effects.
+    let rc = unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&lock_file), libc::LOCK_UN) };
+    assert_eq!(rc, 0, "unlock credentials lock file");
     drop(lock_file);
 }
 
