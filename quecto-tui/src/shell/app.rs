@@ -599,6 +599,9 @@ mod app_rewind_response_tests;
 #[path = "app_selection_tests.rs"]
 mod app_selection_tests;
 #[cfg(test)]
+#[path = "app_socket_path_tests.rs"]
+mod app_socket_path_tests;
+#[cfg(test)]
 #[path = "app_streaming_stability_tests.rs"]
 mod app_streaming_stability_tests;
 #[cfg(test)]

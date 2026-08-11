@@ -699,3 +699,40 @@ fn session_summary_to_json_projects_stable_wire_fields() {
     assert_eq!(v["updatedUnixSecs"], 1700000000);
     assert_eq!(v["updatedAt"], v["updatedUnixSecs"]);
 }
+
+// ─── #1460: reaping is decided by liveness, not mtime ───────────────────────
+
+/// A socket that accepts connections must never be unlinked, no matter how
+/// old the reaper considers it (socket mtime is fixed at bind time, so any
+/// long-lived agent looks "stale" to an age heuristic).
+#[test]
+fn test_reap_preserves_live_socket_regardless_of_age() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let live = dir.path().join("quecto-agent-live.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&live).expect("bind live socket");
+
+    // Zero max-age: an age heuristic would treat the live socket as stale.
+    reap_stale_sockets(dir.path(), std::time::Duration::ZERO);
+
+    assert!(
+        live.exists(),
+        "a socket that accepts connections must never be reaped"
+    );
+}
+
+/// A socket file whose listener is gone is dead and must be removed even if
+/// its mtime is fresh (a crashed agent leaves a fresh-looking file behind).
+#[test]
+fn test_reap_removes_dead_socket_despite_fresh_mtime() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let dead = dir.path().join("quecto-agent-dead.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&dead).expect("bind dead socket");
+    drop(listener); // the file remains, but nothing accepts
+
+    reap_stale_sockets(dir.path(), std::time::Duration::from_secs(86_400));
+
+    assert!(
+        !dead.exists(),
+        "a socket file that no longer accepts connections must be reaped"
+    );
+}

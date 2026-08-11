@@ -122,6 +122,14 @@ impl CredentialStore {
         &self.path
     }
 
+    /// Path of the cross-process lock file guarding load-mutate-store cycles
+    /// (#1460). Lives alongside `credentials.json` as `credentials.json.lock`.
+    pub fn lock_path(&self) -> std::path::PathBuf {
+        let mut os = self.path.as_os_str().to_os_string();
+        os.push(".lock");
+        std::path::PathBuf::from(os)
+    }
+
     /// Save all credentials to disk with restricted file permissions (0600).
     ///
     /// On Unix, writes the same-directory replacement file with mode 0o600 before

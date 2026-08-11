@@ -291,3 +291,117 @@ fn test_credentials_permissions_enforced_on_every_write() {
         mode
     );
 }
+
+// ─── #1460: cross-process file lock around load-mutate-store ────────────────
+
+/// A store() must take the credentials lock file for the duration of its
+/// read-modify-write cycle, leaving the lock file on disk.
+#[test]
+fn test_store_creates_and_uses_lock_file() {
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+
+    store
+        .store(make_credential("openai", "sk-test", AuthMethod::Token))
+        .unwrap();
+
+    assert!(
+        store.lock_path().exists(),
+        "store() must guard its load-mutate-store cycle via the lock file {}",
+        store.lock_path().display()
+    );
+}
+
+/// While another process (simulated: another file description in this
+/// process) holds an exclusive lock on the credentials lock file, a store()
+/// must block instead of racing the read-modify-write.
+#[test]
+fn test_store_blocks_while_credentials_lock_is_held() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    // Seed so a real file exists to mutate.
+    store
+        .store(make_credential("seed", "sk-seed", AuthMethod::Token))
+        .unwrap();
+
+    // Simulated other process: hold an exclusive lock on the lock file.
+    let lock_file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(store.lock_path())
+        .unwrap();
+    lock_file.lock().unwrap();
+
+    let done = Arc::new(AtomicBool::new(false));
+    let done_writer = Arc::clone(&done);
+    let dir = tmp.path().to_path_buf();
+    let writer = std::thread::spawn(move || {
+        let store = CredentialStore::new(&dir);
+        store
+            .store(make_credential("alpha", "sk-alpha", AuthMethod::Token))
+            .unwrap();
+        done_writer.store(true, Ordering::SeqCst);
+    });
+
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(
+        !done.load(Ordering::SeqCst),
+        "store() must wait for the credentials lock held by another locker"
+    );
+
+    lock_file.unlock().unwrap();
+    drop(lock_file);
+    writer.join().unwrap();
+    assert!(done.load(Ordering::SeqCst));
+    assert_eq!(
+        store.get("alpha").unwrap().expect("alpha stored").token,
+        "sk-alpha"
+    );
+    assert_eq!(
+        store.get("seed").unwrap().expect("seed survives").token,
+        "sk-seed",
+        "a blocked writer must not clobber existing credentials"
+    );
+}
+
+/// N concurrent load-mutate-store cycles over one file must lose no tokens.
+#[test]
+fn test_concurrent_stores_lose_no_tokens() {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path().to_path_buf();
+
+    let threads: Vec<_> = (0..8)
+        .map(|i| {
+            let dir = dir.clone();
+            std::thread::spawn(move || {
+                let store = CredentialStore::new(&dir);
+                for round in 0..25 {
+                    store
+                        .store(make_credential(
+                            &format!("provider-{i}"),
+                            &format!("sk-{i}-{round}"),
+                            AuthMethod::Token,
+                        ))
+                        .unwrap();
+                }
+            })
+        })
+        .collect();
+    for t in threads {
+        t.join().unwrap();
+    }
+
+    let store = CredentialStore::new(&dir);
+    let all = store.load_snapshot().unwrap();
+    for i in 0..8 {
+        assert!(
+            all.contains_key(&format!("provider-{i}")),
+            "provider-{i} token lost by a concurrent read-modify-write; kept: {:?}",
+            all.keys().collect::<Vec<_>>()
+        );
+    }
+}

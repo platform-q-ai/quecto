@@ -1,7 +1,7 @@
 //! UDS socket utilities: stale socket cleanup, secure binding, socket guard.
 
 /// Remove stale quecto-agent-*.sock files older than `max_age`.
-pub(crate) fn reap_stale_sockets(dir: &std::path::Path, max_age: std::time::Duration) {
+pub fn reap_stale_sockets(dir: &std::path::Path, max_age: std::time::Duration) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
