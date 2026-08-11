@@ -94,6 +94,58 @@ impl TuiHarness {
         self
     }
 
+    // ── Fan-in seam driving (#1462, epic #1467) ───────────────────────
+    // Drive events through the sourced fan-in path the event loop drains
+    // once the master connection lives behind a feed task. At N=1,
+    // `event()` keeps meaning "the (only) tab's master" — these drivers pin
+    // that the fan-in path renders identically.
+
+    /// Deliver a master-connection event through the sourced fan-in routing
+    /// (`Source::Tab(MASTER)`) and capture the resulting frame.
+    pub async fn sourced_master_event(&mut self, ev: Event) -> &mut Self {
+        use crate::shell::connection::{Source, TabId};
+        self.app
+            .route_sourced(Source::Tab(TabId::MASTER), Some(ev))
+            .await;
+        self.capture();
+        self
+    }
+
+    /// Deliver a sub-agent event through the sourced fan-in routing
+    /// (`Source::Subagent(MASTER, agent_id)`) and capture.
+    pub async fn sourced_subagent_event(&mut self, agent_id: &str, ev: Event) -> &mut Self {
+        use crate::shell::connection::{Source, TabId};
+        self.app
+            .route_sourced(
+                Source::Subagent(TabId::MASTER, agent_id.to_string()),
+                Some(ev),
+            )
+            .await;
+        self.capture();
+        self
+    }
+
+    /// Deliver the master connection's explicit `Source::Closed` sentinel
+    /// (#1462) — the fan-in replacement for `None`-from-recv — and capture.
+    pub async fn deliver_closed_sentinel(&mut self) -> &mut Self {
+        use crate::shell::connection::{Source, TabId};
+        self.app
+            .route_sourced(Source::Closed(TabId::MASTER), None)
+            .await;
+        self.capture();
+        self
+    }
+
+    /// Attach a real child-exit watcher, then deliver the `Source::Closed`
+    /// sentinel — the diagnosis (#1047) must survive the seam unchanged.
+    pub async fn deliver_closed_sentinel_with_child_watch(
+        &mut self,
+        watch: crate::shell::child_watch::ChildWatch,
+    ) -> &mut Self {
+        self.app.set_child_exit_watch(watch);
+        self.deliver_closed_sentinel().await
+    }
+
     /// Feed a raw wire JSON line through the REAL `Event` deserializer (the path
     /// `event()` skips). Panics if the line fails to parse — the connected
     /// client would otherwise drop it (and historically printed it over the

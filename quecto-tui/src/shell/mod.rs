@@ -7,6 +7,7 @@
 pub mod app;
 pub mod child_watch;
 pub mod cli;
+pub(crate) mod connection;
 pub mod keys;
 pub mod process;
 pub mod render;

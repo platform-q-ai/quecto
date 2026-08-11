@@ -610,6 +610,9 @@ mod app_selection_tests;
 #[path = "app_socket_path_tests.rs"]
 mod app_socket_path_tests;
 #[cfg(test)]
+#[path = "app_sourced_event_tests.rs"]
+mod app_sourced_event_tests;
+#[cfg(test)]
 #[path = "app_streaming_stability_tests.rs"]
 mod app_streaming_stability_tests;
 #[cfg(test)]

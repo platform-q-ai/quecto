@@ -60,6 +60,22 @@ impl StreamRenderCoalescer {
 }
 
 impl App {
+    /// Route one item drained from the shared fan-in channel (#1462): master
+    /// events (`Source::Tab`) go through the master event handler, sub-agent
+    /// events (`Source::Subagent`) through sub-agent routing, and the
+    /// `Source::Closed` sentinel runs the disconnect diagnosis path — WITHOUT
+    /// stalling the select loop on a dying child (`wait_child_exit_detail`
+    /// stays off the loop; #1047 behaviour unchanged).
+    ///
+    /// RED stub (#1462): drops the item.
+    pub(super) async fn route_sourced(
+        &mut self,
+        source: crate::shell::connection::Source,
+        ev: Option<Event>,
+    ) {
+        let _ = (source, ev);
+    }
+
     /// Render immediately and note it on the coalescer so a pending deferred
     /// token paint is consumed by this render (it paints all accumulated
     /// state, including any deferred tokens).
