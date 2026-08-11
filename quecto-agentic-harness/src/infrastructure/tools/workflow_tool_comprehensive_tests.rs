@@ -309,7 +309,14 @@ async fn check_enforces_ordering_and_skip_bypasses_it() {
     assert!(skip.content.contains("Step 7 skipped."));
 
     let status = tool.execute(r#"{"action":"status"}"#).await.unwrap();
-    assert!(status.content.contains("[✓] 7. Implement the scoped phase"));
+    assert!(
+        !status.content.contains("[✓] 7. Implement the scoped phase"),
+        "status must not expose future skipped steps: {}",
+        status.content
+    );
+    let engine = tool.engine();
+    let all_steps = engine.lock().unwrap().all_step_statuses();
+    assert!(all_steps[6].done);
 }
 
 #[tokio::test]

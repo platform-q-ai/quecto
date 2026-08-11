@@ -36,7 +36,7 @@ pub(super) fn make_completed_feature_workflow() -> WorkflowStateHandle {
     let workflow = make_selected_feature_workflow();
     {
         let mut engine = workflow.lock().unwrap();
-        let steps = engine.snapshot(true).steps.len() as u32;
+        let steps = engine.progress().total;
         for step in 1..=steps {
             engine.check(step).unwrap();
         }

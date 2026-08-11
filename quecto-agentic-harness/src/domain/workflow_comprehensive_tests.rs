@@ -41,7 +41,7 @@ fn snapshot_in_selector_mode_lists_templates() {
 }
 
 #[test]
-fn snapshot_in_active_mode_has_steps_and_current_step() {
+fn snapshot_in_active_mode_has_visible_steps_and_current_step() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), true).unwrap();
     engine
         .select_template("feature", Some((9, "feat".into())))
@@ -50,7 +50,8 @@ fn snapshot_in_active_mode_has_steps_and_current_step() {
     assert_eq!(snap.mode, WorkflowMode::Active);
     assert_eq!(snap.progress.total, 20);
     assert_eq!(snap.current_step.unwrap().key, "hooks");
-    assert_eq!(snap.steps.len(), 20);
+    assert_eq!(snap.steps.len(), 1);
+    assert_eq!(snap.steps[0].key, "hooks");
     assert!(snap.guards_enabled);
 }
 
@@ -69,7 +70,8 @@ fn active_status_mentions_guidance() {
     engine.check(1).unwrap();
     let status = engine.status_text();
     assert!(status.contains("CURRENT STEP"));
-    assert!(status.contains("acceptance criteria"));
+    assert!(status.contains("Read the issue body, comments, and canonical plan comment"));
+    assert!(!status.contains("acceptance criteria"));
 }
 
 #[test]
@@ -398,17 +400,96 @@ fn step_handoff_text_carries_progress_and_active_issue() {
 }
 
 #[test]
-fn status_text_shows_guidance_for_incomplete_non_current_steps() {
-    // Regression: the status view used to render guidance only for the CURRENT
-    // step, so an agent reading the workflow ahead of time saw later steps as
-    // bare labels (e.g. the reviewers step). Now every INCOMPLETE step shows its
-    // guidance, while completed steps stay compact.
+fn status_text_shows_only_contiguous_completed_steps_and_current_step() {
+    // Workflow status is an agent-control surface: it should orient the agent
+    // with already-completed context plus the current step, without leaking
+    // future incomplete step labels or guidance that could encourage read-ahead.
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.select_template("feature", None).unwrap();
-    // Current step is step 1 (hooks); reviewers is a later, non-current step.
+    engine.check(1).unwrap();
+    engine.skip(4).unwrap();
+
     let status = engine.status_text();
+    let current = engine.current_step().unwrap();
+    let all_steps = engine.all_step_statuses();
+    let completed = &all_steps[0];
+    assert!(status.contains("Progress: 1/20"));
+    assert!(!status.contains("Progress: 2/19"));
+    assert!(status.contains(&format!("[✓] {}. {}", completed.index, completed.label)));
     assert!(status.contains("CURRENT STEP"));
-    // An upcoming, non-current step's guidance is visible:
-    assert!(status.contains("one submitted non-pending review"));
-    assert!(status.contains("non-pending review"));
+    assert!(status.contains(&format!("{}. {}", current.index, current.label)));
+    assert!(status.contains(current.guidance.as_deref().unwrap()));
+
+    let current_index = current.index;
+    let future_steps: Vec<_> = all_steps
+        .iter()
+        .filter(|step| step.index > current_index)
+        .collect();
+    assert!(!future_steps.is_empty());
+    for step in future_steps {
+        for hidden in [
+            format!("[ ] {}.", step.index),
+            format!("{}. {}", step.index, step.label),
+            step.label.clone(),
+        ] {
+            assert!(
+                !status.contains(&hidden),
+                "status should hide future step identifier '{hidden}': {status}"
+            );
+        }
+        if let Some(guidance) = &step.guidance {
+            assert!(
+                !status.contains(guidance),
+                "status should hide future step guidance '{guidance}': {status}"
+            );
+        }
+    }
+
+    let visible_snapshot = engine.snapshot(true);
+    assert_eq!(visible_snapshot.progress.done, 1);
+    assert_eq!(visible_snapshot.progress.total, 20);
+    assert_eq!(visible_snapshot.steps.len(), current_index as usize);
+    assert!(
+        visible_snapshot
+            .steps
+            .iter()
+            .all(|step| step.index <= current_index)
+    );
+}
+#[test]
+fn active_status_renders_issue_then_completion_with_guards() {
+    let mut template = probe_template("t", "T");
+    template.steps.push(WorkflowTemplateStep {
+        key: "b".into(),
+        label: "B".into(),
+        phase: "green".into(),
+        guidance: None,
+    });
+    template.guards = vec![WorkflowGuardRule {
+        commands: vec!["git push".into()],
+        before_step_key: "b".into(),
+        message: "run the gate before push".into(),
+    }];
+    let mut engine = WorkflowEngine::new(nudge_probe_config(vec![template]), true).unwrap();
+    engine
+        .select_template("t", Some((9, "ship it".into())))
+        .unwrap();
+
+    let status = engine.status_text();
+    assert!(status.contains("Active issue: #9 — ship it"));
+
+    assert!(!status.contains("Guards:"));
+    assert!(!status.contains("run the gate before push"));
+
+    // Complete every step, then the status reflects completion + guards.
+    engine.check(1).unwrap();
+    let mid = engine.status_text();
+    assert!(mid.contains("CURRENT STEP → 2."));
+    assert!(mid.contains("Guards:"));
+    assert!(mid.contains("run the gate before push"));
+    engine.check(2).unwrap();
+    assert_eq!(engine.mode(), WorkflowMode::Complete);
+    let done = engine.status_text();
+    assert!(done.contains("All workflow steps complete"));
+    assert!(done.contains("run the gate before push"));
 }

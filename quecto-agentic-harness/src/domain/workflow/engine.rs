@@ -50,6 +50,7 @@ impl WorkflowEngine {
         {
             let template = &self.templates[template_index];
             let mut done = persisted.done;
+            done.truncate(template.steps.len());
             done.resize(template.steps.len(), false);
             let mut seen_gap = false;
             for flag in &mut done {
@@ -215,8 +216,22 @@ impl WorkflowEngine {
     }
 
     pub fn progress(&self) -> WorkflowProgress {
+        self.progress_for_done(self.run.done.iter().filter(|d| **d).count() as u32)
+    }
+
+    fn visible_progress(&self) -> WorkflowProgress {
+        let visible_done = self
+            .run
+            .done
+            .iter()
+            .take(self.visible_step_count())
+            .filter(|done| **done)
+            .count() as u32;
+        self.progress_for_done(visible_done)
+    }
+
+    fn progress_for_done(&self, done: u32) -> WorkflowProgress {
         let total = self.run.done.len() as u32;
-        let done = self.run.done.iter().filter(|d| **d).count() as u32;
         WorkflowProgress {
             done,
             total,
@@ -245,7 +260,7 @@ impl WorkflowEngine {
             Some(step) => format!("\n{}", step_focus_text(&step, heading)),
             None => "\nAll workflow steps complete.".to_string(),
         };
-        let progress = self.progress();
+        let progress = self.visible_progress();
         out.push_str(&format!(
             "\nProgress: {}/{} steps complete.",
             progress.done, progress.total
@@ -434,15 +449,15 @@ impl WorkflowEngine {
 
     pub fn snapshot(&self, enabled: bool) -> WorkflowSnapshot {
         let active_template = self.active_template().map(summary_for_template);
+        let visible_count = self.visible_step_count();
         let steps = self
             .active_template()
             .map(|t| {
                 t.steps
                     .iter()
                     .enumerate()
-                    .map(|(idx, _)| {
-                        status_for_step(t, idx, *self.run.done.get(idx).unwrap_or(&false))
-                    })
+                    .filter(|(idx, _)| *idx < visible_count)
+                    .map(|(idx, _)| status_for_step(t, idx, self.is_step_done_index(idx)))
                     .collect()
             })
             .unwrap_or_default();
@@ -452,7 +467,7 @@ impl WorkflowEngine {
             mode: self.mode(),
             active_template,
             active_issue: self.run.active_issue.clone(),
-            progress: self.progress(),
+            progress: self.visible_progress(),
             current_step: self.current_step(),
             steps,
             available_templates: self.list_templates(),
@@ -486,13 +501,9 @@ impl WorkflowEngine {
             Some(t) => t,
             None => return self.selector_status_text(),
         };
-        let progress = self.progress();
+        let progress = self.visible_progress();
         let mode = self.mode();
-        let current_idx = if mode == WorkflowMode::Complete {
-            None
-        } else {
-            self.current_step().map(|step| step.index as usize)
-        };
+        let visible_count = self.visible_step_count();
         let mut out = format!(
             "## Active Workflow\nTemplate: {} ({})\nProgress: {}/{}\n",
             template.label, template.id, progress.done, progress.total
@@ -503,23 +514,21 @@ impl WorkflowEngine {
             out.push_str("Active issue: (not set)\n");
         }
         for (idx, step) in template.steps.iter().enumerate() {
-            let done = *self.run.done.get(idx).unwrap_or(&false);
-            // Completed steps stay compact; every INCOMPLETE step (current and
-            // upcoming) shows its full guidance, so an agent reading the status
-            // ahead of time sees the instructions for steps it hasn't reached
-            // yet (not just the bare label).
+            let done = self.is_step_done_index(idx);
+            // Status is an agent-control surface, not a full lookahead plan:
+            // show contiguous completed history plus the current step only.
+            // Future steps (even if skipped/done out of order) and their
+            // guidance stay hidden until they become part of visible progress,
+            // so agents cannot act on later-step instructions prematurely.
+            if idx >= visible_count {
+                continue;
+            }
             if done {
                 out.push_str(&format!("  [✓] {}. {}\n", idx + 1, step.label));
                 continue;
             }
-            let marker = if current_idx == Some(idx + 1) {
-                "CURRENT STEP → "
-            } else {
-                "  [ ] "
-            };
             out.push_str(&format!(
-                "{}{}. {} [{}]\n",
-                marker,
+                "CURRENT STEP → {}. {} [{}]\n",
                 idx + 1,
                 step.label,
                 phase_display_name(&step.phase)
@@ -532,15 +541,65 @@ impl WorkflowEngine {
             out.push_str("\n✓ All workflow steps complete.\n");
         }
         if self.guards_enabled && !template.guards.is_empty() {
-            out.push_str("\nGuards:\n");
-            for g in &template.guards {
-                out.push_str(&format!(
-                    "- {} (before step key '{}')\n",
-                    g.message, g.before_step_key
-                ));
+            let visible_guards: Vec<_> = template
+                .guards
+                .iter()
+                .filter(|g| {
+                    self.step_key_index(&g.before_step_key)
+                        .is_some_and(|idx| idx < visible_count)
+                })
+                .collect();
+            if !visible_guards.is_empty() {
+                out.push_str("\nGuards:\n");
+                for g in visible_guards {
+                    out.push_str(&format!(
+                        "- {} (before step key '{}')\n",
+                        g.message, g.before_step_key
+                    ));
+                }
             }
         }
         out
+    }
+
+    fn is_step_done_index(&self, idx: usize) -> bool {
+        *self.run.done.get(idx).unwrap_or(&false)
+    }
+
+    fn visible_step_count(&self) -> usize {
+        let Some(template) = self.active_template() else {
+            return 0;
+        };
+        match self.mode() {
+            WorkflowMode::SelectingTemplate => 0,
+            WorkflowMode::Complete => template.steps.len(),
+            WorkflowMode::Active => self
+                .run
+                .done
+                .iter()
+                .take(template.steps.len())
+                .position(|done| !*done)
+                .map(|idx| idx + 1)
+                .unwrap_or(template.steps.len()),
+        }
+    }
+
+    fn step_key_index(&self, key: &str) -> Option<usize> {
+        self.active_template()
+            .and_then(|template| template.steps.iter().position(|step| step.key == key))
+    }
+
+    pub(crate) fn all_step_statuses(&self) -> Vec<WorkflowStepStatus> {
+        self.active_template()
+            .map(|template| {
+                template
+                    .steps
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, _)| status_for_step(template, idx, self.is_step_done_index(idx)))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn require_active_template(&self) -> Result<&WorkflowTemplate, WorkflowError> {
