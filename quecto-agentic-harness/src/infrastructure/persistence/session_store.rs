@@ -100,10 +100,8 @@ impl FileSessionStore {
 }
 
 impl SessionStore for FileSessionStore {
-    /// Open-time ownership: resuming/opening a key owned by another live
-    /// process is refused before any turn runs (#1460), matching ADR-0023's
-    /// refuse-at-open invariant. The claim is idempotent and shared with the
-    /// write paths via the registry.
+    /// Open-time ownership (#1460, ADR-0023 refuse-at-open): idempotent,
+    /// shared with the write paths via the registry.
     fn claim(&self, key: &str) -> Result<(), DomainError> {
         self.claim_key(key)
     }
