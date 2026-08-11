@@ -97,6 +97,7 @@ fn given_session_with_distinct_conversation_content(world: &mut QuectoWorld, key
             Message::assistant("second durable response", vec![]),
         ],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     world.expected_session_content = session
         .messages

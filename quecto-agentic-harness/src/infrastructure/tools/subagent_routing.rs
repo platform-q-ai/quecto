@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+use crate::domain::session::SubagentLiveness;
+
 use super::subagent_registry::{SubagentRegistry, resolve_registry_key};
 
 pub const MAX_INSPECTION_ROUTE_DEPTH: usize = 32;
@@ -71,6 +73,16 @@ pub fn resolve_inspection_route(
     let target = entries
         .get(&target_key)
         .ok_or_else(|| format!("subagent '{}' not found in registry", target_ref))?;
+    if target.persisted_liveness != SubagentLiveness::Live {
+        return Err(format!(
+            "subagent '{target_ref}' is {} and has no live inspection route",
+            match target.persisted_liveness {
+                SubagentLiveness::Live => "live",
+                SubagentLiveness::Detached => "detached",
+                SubagentLiveness::Dead => "dead",
+            }
+        ));
+    }
     if !target.socket_path.as_os_str().is_empty() {
         return Ok(InspectionRoute::Direct {
             socket_path: target.socket_path.clone(),

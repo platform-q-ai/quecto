@@ -19,7 +19,7 @@ use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::message::Message;
 #[cfg(test)]
 use crate::domain::message::Role;
-use crate::domain::session::SessionStore;
+use crate::domain::session::{Session, SessionStore};
 use crate::domain::workflow::WorkflowRunPersisted;
 type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
@@ -265,7 +265,7 @@ mod uds_dispatch_query;
 #[path = "uds_dispatch_runtime.rs"]
 mod uds_dispatch_runtime;
 #[path = "uds_dispatch_session.rs"]
-mod uds_dispatch_session;
+pub(crate) mod uds_dispatch_session;
 #[path = "uds_dispatch_sync_forward.rs"]
 mod uds_dispatch_sync_forward;
 #[path = "uds_forward_response.rs"]
@@ -300,15 +300,28 @@ async fn persist_user_prompt_before_run(
     remove_injected_system_prompt(&mut persisted_messages, ctx.system_prompt);
     persisted_messages.push(message.clone());
     let persisted_len = persisted_messages.len();
-    let result = ctx
-        .session_store
-        .save_delta(
-            ctx.session_key,
-            &persisted_messages,
-            ctx.last_persisted_message_index,
-            persisted_workflow_run(ctx),
-        )
-        .await;
+    let workflow_run = persisted_workflow_run(ctx);
+    let result = if ctx.subagent_registry.is_some() {
+        ctx.session_store
+            .save(&Session {
+                key: ctx.session_key.to_string(),
+                messages: persisted_messages,
+                workflow_run,
+                subagent_roster: uds_dispatch_session::snapshot_subagent_roster(
+                    &ctx.subagent_registry,
+                ),
+            })
+            .await
+    } else {
+        ctx.session_store
+            .save_delta(
+                ctx.session_key,
+                &persisted_messages,
+                ctx.last_persisted_message_index,
+                workflow_run,
+            )
+            .await
+    };
     if result.is_ok() {
         ctx.last_persisted_message_index = persisted_len;
     }
@@ -594,6 +607,9 @@ mod abort_steer_tests;
 #[cfg(test)]
 #[path = "uds_bounded_read_tests.rs"]
 mod bounded_read_tests;
+#[cfg(test)]
+#[path = "uds_dispatch_session_roster_tests.rs"]
+mod dispatch_session_roster_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_test_env.rs"]
 mod dispatch_test_env;

@@ -529,6 +529,7 @@ pub(crate) fn run_agent_session(
                     key: session_key,
                     messages: std::mem::take(&mut messages),
                     workflow_run: None,
+                    subagent_roster: Vec::new(),
                 };
                 if let Err(e) = rt.block_on(session_store.save(&session)) {
                     out.stderr

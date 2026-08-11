@@ -9,12 +9,10 @@ fn make_message(role: Role, content: &str) -> Message {
         Role::Tool => Message::tool("call", content),
     }
 }
-
 #[tokio::test]
 async fn test_save_and_load_session() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-
     let session = Session {
         key: "telegram:12345".to_string(),
         messages: vec![
@@ -22,8 +20,8 @@ async fn test_save_and_load_session() {
             make_message(Role::Assistant, "Hi there!"),
         ],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
-
     store.save(&session).await.unwrap();
     let loaded = store.load("telegram:12345").await.unwrap();
     assert!(loaded.is_some());
@@ -35,30 +33,23 @@ async fn test_save_and_load_session() {
     assert_eq!(loaded.messages[1].content, "Hi there!");
     assert_eq!(loaded.messages[1].role, Role::Assistant);
 }
-
 #[tokio::test]
 async fn test_load_nonexistent_session() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-
     let loaded = store.load("nonexistent").await.unwrap();
     assert!(loaded.is_none());
 }
-
 #[tokio::test]
 async fn test_exists() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-
     assert!(!store.exists("telegram:12345").await.unwrap());
-
     let mut session = Session::new("telegram:12345");
     session.messages.push(make_message(Role::User, "hello"));
     store.save(&session).await.unwrap();
-
     assert!(store.exists("telegram:12345").await.unwrap());
 }
-
 #[tokio::test]
 async fn test_key_to_filename() {
     assert_eq!(
@@ -70,7 +61,6 @@ async fn test_key_to_filename() {
         "cli_default.json"
     );
 }
-
 #[test]
 fn test_key_to_filename_sanitizes_path_traversal_chars() {
     let filename = FileSessionStore::key_to_filename("../../tmp/escape");
@@ -79,19 +69,16 @@ fn test_key_to_filename_sanitizes_path_traversal_chars() {
     assert!(!filename.contains('\\'));
     assert!(filename.ends_with(".json"));
 }
-
 #[test]
 fn test_key_to_filename_avoids_collision_for_unsafe_keys() {
     let a = FileSessionStore::key_to_filename("a/b");
     let b = FileSessionStore::key_to_filename("a?b");
     assert_ne!(a, b);
 }
-
 #[tokio::test]
 async fn test_session_with_tool_calls() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-
     let session = Session {
         key: "test:tools".to_string(),
         messages: vec![
@@ -107,8 +94,8 @@ async fn test_session_with_tool_calls() {
             Message::tool("call_1", "file1.txt\nfile2.txt"),
         ],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
-
     store.save(&session).await.unwrap();
     let loaded = store.load("test:tools").await.unwrap().unwrap();
     assert_eq!(loaded.messages.len(), 3);
@@ -116,7 +103,6 @@ async fn test_session_with_tool_calls() {
     assert_eq!(loaded.messages[1].tool_calls[0].name, "bash");
     assert_eq!(loaded.messages[2].tool_call_id.as_deref(), Some("call_1"));
 }
-
 #[test]
 fn test_session_build_key() {
     assert_eq!(Session::build_key("telegram", "12345"), "telegram:12345");
@@ -133,6 +119,7 @@ async fn test_persistence_across_store_instances() {
         key: "telegram:persist".to_string(),
         messages: vec![make_message(Role::User, "persisted message")],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     store1.save(&session).await.unwrap();
 
@@ -157,6 +144,7 @@ async fn test_turn_field_survives_round_trip() {
         key: "test:turn".to_string(),
         messages: vec![tool_msg],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     store.save(&session).await.unwrap();
     let loaded = store.load("test:turn").await.unwrap().unwrap();
@@ -179,6 +167,7 @@ async fn test_is_collapsed_survives_round_trip() {
         key: "test:collapsed".to_string(),
         messages: vec![tool_msg],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     store.save(&session).await.unwrap();
     let loaded = store.load("test:collapsed").await.unwrap().unwrap();
@@ -201,6 +190,7 @@ async fn test_is_manifest_survives_round_trip() {
         key: "test:manifest".to_string(),
         messages: vec![manifest],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     store.save(&session).await.unwrap();
     let loaded = store.load("test:manifest").await.unwrap().unwrap();
@@ -222,6 +212,7 @@ async fn test_is_pinned_survives_round_trip() {
         key: "test:pinned".to_string(),
         messages: vec![user_msg],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     store.save(&session).await.unwrap();
     let loaded = store.load("test:pinned").await.unwrap().unwrap();
@@ -243,6 +234,7 @@ async fn test_tool_name_survives_round_trip() {
         key: "test:toolname".to_string(),
         messages: vec![tool_msg],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     store.save(&session).await.unwrap();
     let loaded = store.load("test:toolname").await.unwrap().unwrap();
@@ -265,6 +257,7 @@ async fn test_input_preview_survives_round_trip() {
         key: "test:preview".to_string(),
         messages: vec![tool_msg],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     store.save(&session).await.unwrap();
     let loaded = store.load("test:preview").await.unwrap().unwrap();
@@ -287,6 +280,7 @@ async fn test_spill_id_survives_round_trip() {
         key: "test:spillid".to_string(),
         messages: vec![tool_msg],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     store.save(&session).await.unwrap();
     let loaded = store.load("test:spillid").await.unwrap().unwrap();
@@ -314,6 +308,7 @@ async fn test_workflow_run_survives_round_trip() {
         key: "test:wf_persist".to_string(),
         messages: vec![make_message(Role::User, "hello")],
         workflow_run: Some(persisted_workflow_run()),
+        subagent_roster: Vec::new(),
     };
     store.save(&session).await.unwrap();
     let loaded = store.load("test:wf_persist").await.unwrap().unwrap();
@@ -335,6 +330,7 @@ async fn workflow_only_session_survives_round_trip() {
             key: "test:wf_only".to_string(),
             messages: Vec::new(),
             workflow_run: Some(persisted_workflow_run()),
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();
@@ -408,6 +404,7 @@ async fn test_workflow_run_none_survives_round_trip() {
         key: "test:wf_none".to_string(),
         messages: vec![make_message(Role::User, "hello")],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     store.save(&session).await.unwrap();
     let loaded = store.load("test:wf_none").await.unwrap().unwrap();
@@ -427,6 +424,7 @@ async fn appended_delta_can_clear_previous_workflow_run() {
             done: vec![true, false],
             active_issue: Some((987, "session persistence".to_string())),
         }),
+        subagent_roster: Vec::new(),
     };
     store.save(&session).await.unwrap();
 
@@ -458,6 +456,7 @@ async fn test_workflow_run_unknown_template_persists_raw_fields() {
             done: vec![true, false],
             active_issue: None,
         }),
+        subagent_roster: Vec::new(),
     };
     store.save(&session).await.unwrap();
 
@@ -477,6 +476,7 @@ async fn test_list_sessions_returns_cli_names_and_message_counts() {
             key: "chat-default".to_string(),
             messages: vec![make_message(Role::User, "hello")],
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();
@@ -488,6 +488,7 @@ async fn test_list_sessions_returns_cli_names_and_message_counts() {
                 make_message(Role::Assistant, "answer"),
             ],
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();
@@ -513,6 +514,7 @@ async fn test_list_sessions_skips_corrupt_json_files() {
             key: "chat-good".to_string(),
             messages: vec![make_message(Role::User, "hello")],
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();
@@ -536,6 +538,7 @@ async fn test_system_is_pinned_default_survives_round_trip() {
         key: "test:sys_pinned".to_string(),
         messages: vec![Message::system("system prompt")],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     store.save(&session).await.unwrap();
     let loaded = store.load("test:sys_pinned").await.unwrap().unwrap();
@@ -587,6 +590,7 @@ async fn roundtrip_preserves_roles_toolcalls_stop_reason_and_thinking() {
             Message::tool("c1", "tool result"),
         ],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     store.save(&session).await.unwrap();
     let loaded = store.load("cli:roundtrip").await.unwrap().unwrap();
@@ -700,6 +704,7 @@ fn test_session_header_stays_in_sync_with_full_record() {
             message_to_record(&make_message(Role::Assistant, "assistant reply")),
         ],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     let json = serde_json::to_string(&file).unwrap();
 

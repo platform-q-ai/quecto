@@ -1,4 +1,6 @@
-use super::subagent_registry::{SubagentEntry, new_registry};
+use crate::domain::session::SubagentLiveness;
+
+use super::subagent_registry::{SubagentEntry, lookup_subagent_socket, new_registry};
 use super::subagent_routing::{
     InspectionRoute, RoutableInspectionCommand, resolve_inspection_route,
 };
@@ -106,4 +108,107 @@ fn agent_cmd_allowlist_is_closed() {
         Some(RoutableInspectionCommand::GetState)
     );
     assert_eq!(RoutableInspectionCommand::from_agent_cmd("prompt"), None);
+}
+
+#[test]
+fn non_live_exact_uuid_references_report_liveness_for_command_and_inspection_routes() {
+    let reg = new_registry();
+    let mut detached = entry("/tmp/detached.sock", None);
+    detached.display_name = "detached".into();
+    detached.persisted_liveness = SubagentLiveness::Detached;
+    let mut dead = entry("/tmp/dead.sock", None);
+    dead.display_name = "dead".into();
+    dead.persisted_liveness = SubagentLiveness::Dead;
+    let mut guard = reg.lock().unwrap();
+    guard.insert("detached".into(), detached);
+    guard.insert("dead".into(), dead);
+    drop(guard);
+
+    assert!(
+        lookup_subagent_socket(&reg, "detached")
+            .unwrap_err()
+            .contains("detached")
+    );
+    assert!(
+        lookup_subagent_socket(&reg, "dead")
+            .unwrap_err()
+            .contains("dead")
+    );
+    assert!(
+        resolve_inspection_route(&reg, "detached")
+            .unwrap_err()
+            .contains("detached")
+    );
+    assert!(
+        resolve_inspection_route(&reg, "dead")
+            .unwrap_err()
+            .contains("dead")
+    );
+}
+
+#[test]
+fn display_aliases_route_only_when_live() {
+    let reg = new_registry();
+    let mut live = SubagentEntry::with_identity(
+        crate::domain::ids::AgentUuid::from("live-uuid".to_string()),
+        "friendly".to_string(),
+        PathBuf::from("/tmp/live-display.sock"),
+        1,
+    );
+    live.persisted_liveness = SubagentLiveness::Live;
+    let mut detached = entry("/tmp/resume-detached.sock", None);
+    detached.display_name = "detached-friendly".into();
+    detached.persisted_liveness = SubagentLiveness::Detached;
+    let mut guard = reg.lock().unwrap();
+    guard.insert("live-uuid".into(), live);
+    guard.insert("detached-uuid".into(), detached);
+    drop(guard);
+
+    assert_eq!(
+        lookup_subagent_socket(&reg, "friendly").unwrap(),
+        PathBuf::from("/tmp/live-display.sock")
+    );
+    assert_eq!(
+        resolve_inspection_route(&reg, "friendly").unwrap(),
+        InspectionRoute::Direct {
+            socket_path: PathBuf::from("/tmp/live-display.sock")
+        }
+    );
+
+    let command_error = lookup_subagent_socket(&reg, "detached-friendly").unwrap_err();
+    assert!(
+        command_error.contains("no live subagent named 'detached-friendly'"),
+        "unexpected error: {command_error}"
+    );
+    let inspection_error = resolve_inspection_route(&reg, "detached-friendly").unwrap_err();
+    assert!(
+        inspection_error.contains("no live subagent named 'detached-friendly'"),
+        "unexpected error: {inspection_error}"
+    );
+}
+
+#[test]
+fn routable_command_mapping_covers_uds_allowlist_and_rejects_mutating_commands() {
+    assert_eq!(
+        RoutableInspectionCommand::from_uds_type("get_messages"),
+        Some(RoutableInspectionCommand::GetMessages)
+    );
+    assert_eq!(
+        RoutableInspectionCommand::from_uds_type("get_messages_tail"),
+        Some(RoutableInspectionCommand::GetMessagesTail)
+    );
+    assert_eq!(
+        RoutableInspectionCommand::from_uds_type("get_message"),
+        Some(RoutableInspectionCommand::GetMessage)
+    );
+    assert_eq!(
+        RoutableInspectionCommand::from_uds_type("sync"),
+        Some(RoutableInspectionCommand::Sync)
+    );
+    assert_eq!(
+        RoutableInspectionCommand::from_uds_type("get_state"),
+        Some(RoutableInspectionCommand::GetState)
+    );
+    assert_eq!(RoutableInspectionCommand::from_uds_type("prompt"), None);
+    assert_eq!(RoutableInspectionCommand::from_uds_type("abort"), None);
 }

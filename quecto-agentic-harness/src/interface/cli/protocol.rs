@@ -203,6 +203,9 @@ pub struct SubagentInfo {
     pub display_name: Option<String>,
     /// Live status: "starting", "idle", "running", "error", "exited".
     pub status: String,
+    /// Cross-process liveness: "live", "detached", or "dead" (#1461).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liveness: Option<String>,
     /// Name of the last tool being executed, or `None`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_tool: Option<String>,
@@ -320,6 +323,13 @@ pub fn build_subagent_info_list(
                     agent_uuid: Some(entry.agent_uuid.to_string()),
                     display_name: Some(display_name),
                     status: entry.status.to_wire_str().to_string(),
+                    liveness: Some(match entry.persisted_liveness {
+                        crate::domain::session::SubagentLiveness::Live => "live".to_string(),
+                        crate::domain::session::SubagentLiveness::Detached => {
+                            "detached".to_string()
+                        }
+                        crate::domain::session::SubagentLiveness::Dead => "dead".to_string(),
+                    }),
                     last_tool: entry.last_tool.clone(),
                     last_error: entry.last_error.clone(),
                     pid: entry.pid,

@@ -54,3 +54,7 @@ pub mod truncate;
 pub mod web_fetch;
 pub mod web_search;
 pub mod workflow_tool;
+
+#[cfg(test)]
+#[path = "subagent_status_tests.rs"]
+mod subagent_status_tests;

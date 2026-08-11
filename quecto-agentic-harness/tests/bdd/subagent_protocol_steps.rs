@@ -317,6 +317,7 @@ fn given_subagent_info(
         display_name: None,
         agent_id,
         status,
+        liveness: None,
         last_tool: if last_tool.is_empty() {
             None
         } else {
@@ -419,6 +420,7 @@ fn given_state_changed_event(world: &mut QuectoWorld, count: usize) {
             display_name: None,
             agent_id: format!("agent-{i}"),
             status: "idle".to_string(),
+            liveness: None,
             last_tool: None,
             last_error: None,
             pid: i as u32,
@@ -446,6 +448,7 @@ fn given_state_changed_one(
             display_name: None,
             agent_id,
             status,
+            liveness: None,
             last_tool: None,
             last_error: None,
             pid: 1,
@@ -474,6 +477,7 @@ fn given_state_changed_observer_and_readwrite(
                 display_name: None,
                 agent_id: observer,
                 status: "running".to_string(),
+                liveness: None,
                 last_tool: None,
                 last_error: None,
                 pid: 1,
@@ -489,6 +493,7 @@ fn given_state_changed_observer_and_readwrite(
                 display_name: None,
                 agent_id: readwrite,
                 status: "idle".to_string(),
+                liveness: None,
                 last_tool: None,
                 last_error: None,
                 pid: 2,

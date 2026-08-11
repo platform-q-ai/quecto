@@ -19,8 +19,6 @@ mod session_store_records;
 use session_store_records::*;
 
 impl FileSessionStore {
-    /// Create a new file-based session store rooted at the given directory.
-    /// The `sessions/` subdirectory will be created if needed.
     pub fn new(base_dir: impl AsRef<Path>) -> Self {
         Self {
             sessions_dir: base_dir.as_ref().join("sessions"),
@@ -57,10 +55,6 @@ impl FileSessionStore {
         }
         self.ensure_dir().await?;
         let path = self.session_path(key);
-        // Trust-the-caller gate: unlike `append_known_delta` this deliberately
-        // never reads/parses durable history (`persisted_prefix_changed`) —
-        // the caller vouches for a clean prefix via the dirty latch. Only the
-        // structural preconditions for appending are checked here.
         let must_compact = previously_persisted == 0
             || previously_persisted > messages.len()
             || !path.exists()
@@ -129,7 +123,10 @@ impl SessionStore for FileSessionStore {
         let session = session.clone();
         Box::pin(async move {
             self.claim_key(&session.key)?;
-            if session.messages.is_empty() && session.workflow_run.is_none() {
+            if session.messages.is_empty()
+                && session.workflow_run.is_none()
+                && session.subagent_roster.is_empty()
+            {
                 return self.delete_session_file_if_present(&session.key).await;
             }
             self.ensure_dir().await?;
@@ -197,9 +194,6 @@ impl SessionStore for FileSessionStore {
         &self,
         key_prefix: Option<&str>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<SessionSummary>, DomainError>> + Send + '_>> {
-        // The caller owns the namespace policy. Pre-compute the sanitized
-        // filename prefix so non-matching files can be skipped WITHOUT being
-        // read or parsed (files on disk are named "<sanitized key>.json").
         let key_prefix = key_prefix.map(|p| p.to_string());
         let file_prefix = key_prefix
             .as_deref()
@@ -352,6 +346,7 @@ fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
                 messages,
                 workflow_run,
                 workflow_run_cleared,
+                subagent_roster,
             } => {
                 if let Some(session) = &mut session {
                     if let Some(start_index) = start_index {
@@ -372,6 +367,9 @@ fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
                     } else if workflow_run.is_some() {
                         session.workflow_run = workflow_run;
                     }
+                    if let Some(roster) = subagent_roster {
+                        session.subagent_roster = roster;
+                    }
                 }
             }
         }
@@ -384,6 +382,7 @@ fn session_from_file(file: SessionFile) -> Session {
         key: file.key,
         messages: file.messages.into_iter().map(record_to_message).collect(),
         workflow_run: file.workflow_run,
+        subagent_roster: file.subagent_roster,
     }
 }
 
@@ -416,9 +415,6 @@ async fn persisted_prefix_changed(
     let persisted = parse_session_data(&data)
         .map_err(|e| DomainError::Session(format!("failed to parse session: {e}")))?;
     if persisted.messages.len() < previously_persisted {
-        // Another writer replaced the durable session after this caller cached
-        // its watermark. Preserve that newer history; the out-of-order append
-        // record will be ignored by the loader.
         return Ok(false);
     }
     Ok(persisted.messages[..previously_persisted]
@@ -434,10 +430,6 @@ async fn append_known_delta(
     previously_persisted: usize,
     workflow_run: Option<&WorkflowRunPersisted>,
 ) -> Result<(), DomainError> {
-    // Verified gate: reads and parses durable history to detect a changed
-    // persisted prefix (masked pruning). `save_clean_delta` shares the same
-    // compact-or-append tail below but replaces this verification with the
-    // caller-vouched dirty latch.
     let must_compact = previously_persisted == 0
         || !path.exists()
         || !is_jsonl_session_file(path).await?
@@ -453,10 +445,6 @@ async fn append_known_delta(
     .await
 }
 
-/// Shared tail of the two delta writers (#1073 review): compact-rewrite the
-/// whole session, or append `messages[previously_persisted..]` as one Append
-/// record. Keeping this in ONE place means a future fix to the record shape
-/// or the compaction write cannot land in only one of the two paths.
 async fn compact_or_append_delta(
     path: &Path,
     key: &str,
@@ -466,10 +454,17 @@ async fn compact_or_append_delta(
     must_compact: bool,
 ) -> Result<(), DomainError> {
     if must_compact {
+        let subagent_roster = tokio::fs::read_to_string(path)
+            .await
+            .ok()
+            .and_then(|data| parse_session_data(&data).ok())
+            .map(|s| s.subagent_roster)
+            .unwrap_or_default();
         let session = Session {
             key: key.to_string(),
             messages: messages.to_vec(),
             workflow_run: workflow_run.cloned(),
+            subagent_roster,
         };
         return write_compacted(path, &session).await;
     }
@@ -481,6 +476,7 @@ async fn compact_or_append_delta(
             .collect(),
         workflow_run,
         workflow_run_cleared: workflow_run.is_none(),
+        subagent_roster: None,
     };
     append_record(path, &record).await
 }
@@ -507,7 +503,8 @@ async fn append_or_compact(path: &Path, session: &Session) -> Result<(), DomainE
     }
 
     let added = &session.messages[previous.messages.len()..];
-    if added.is_empty() && session.workflow_run == previous.workflow_run {
+    let roster_changed = session.subagent_roster != previous.subagent_roster;
+    if added.is_empty() && session.workflow_run == previous.workflow_run && !roster_changed {
         return Ok(());
     }
 
@@ -516,6 +513,7 @@ async fn append_or_compact(path: &Path, session: &Session) -> Result<(), DomainE
         messages: added.iter().map(message_to_record_ref).collect(),
         workflow_run: session.workflow_run.as_ref(),
         workflow_run_cleared: session.workflow_run.is_none(),
+        subagent_roster: roster_changed.then_some(session.subagent_roster.as_slice()),
     };
     append_record(path, &record).await
 }
@@ -525,6 +523,7 @@ async fn write_compacted(path: &Path, session: &Session) -> Result<(), DomainErr
         key: &session.key,
         messages: session.messages.iter().map(message_to_record_ref).collect(),
         workflow_run: session.workflow_run.as_ref(),
+        subagent_roster: &session.subagent_roster,
     });
     let mut line = serde_json::to_string(&record)
         .map_err(|e| DomainError::Session(format!("failed to serialize session: {e}")))?;
@@ -732,17 +731,17 @@ fn record_to_message(rec: MessageRecord) -> Message {
 }
 
 #[cfg(test)]
-#[path = "session_store_tests.rs"]
-mod tests;
-
-#[cfg(test)]
-#[path = "session_store_metadata_tests.rs"]
-mod metadata_tests;
-
-#[cfg(test)]
 #[path = "session_store_chat_tests.rs"]
 mod chat_tests;
-
 #[cfg(test)]
 #[path = "session_store_cov_tests.rs"]
 mod cov_tests;
+#[cfg(test)]
+#[path = "session_store_metadata_tests.rs"]
+mod metadata_tests;
+#[cfg(test)]
+#[path = "session_store_subagent_roster_tests.rs"]
+mod subagent_roster_tests;
+#[cfg(test)]
+#[path = "session_store_tests.rs"]
+mod tests;

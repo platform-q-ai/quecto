@@ -74,6 +74,7 @@ async fn resume_session_clears_previous_session_ref() {
             key,
             messages: vec![Message::user("restored")],
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();

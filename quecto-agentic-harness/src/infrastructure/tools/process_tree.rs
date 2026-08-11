@@ -73,3 +73,7 @@ fn process_group_alive(pgid: i32) -> bool {
     // SAFETY: signal 0 probes existence of the owned process group.
     unsafe { libc::kill(-pgid, 0) == 0 }
 }
+
+#[cfg(test)]
+#[path = "process_tree_tests.rs"]
+mod tests;

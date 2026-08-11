@@ -113,6 +113,7 @@ async fn append_record_rejects_symlinked_session_file() {
         messages: vec![message_to_record_ref(&blocked)],
         workflow_run: None,
         workflow_run_cleared: true,
+        subagent_roster: None,
     };
     let err = append_record(&path, &record).await.unwrap_err();
     assert!(
@@ -208,6 +209,7 @@ async fn io_error_mapping_closures_report_real_session_failures() {
         messages: vec![message_to_record_ref(&msg)],
         workflow_run: None,
         workflow_run_cleared: true,
+        subagent_roster: None,
     };
     let err = append_record(&missing, &append).await.unwrap_err();
     assert!(
