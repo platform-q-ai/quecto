@@ -7,20 +7,22 @@ Feature: Master connection behind a feed task (N=1)
   are identical — while the event loop becomes independent of connection count
 
   @issue-1462
-  Scenario: Master events delivered through the fan-in render identically
-    Given a headless TUI harness showing a master token via direct handling
-    When the same master token is delivered through the fan-in tagged with the master tab source
-    Then the fan-in frame should be identical to the directly handled frame
+  Scenario: Master events delivered through the connection feed render identically
+    Given a baseline frame from a master token handled directly
+    And a fresh headless TUI harness
+    When the same master token arrives through the master connection feed
+    Then the frame should be identical to the direct-handling baseline
 
   @issue-1462
-  Scenario: Stream close arrives as an explicit Closed sentinel
+  Scenario: Stream close surfaces as a disconnect
     Given the TUI is connected to an agent with the left panel visible
-    When the master connection delivers its Closed sentinel
+    When the master connection's event stream closes
     Then the left panel should remain visible
     And the TUI should show a disconnect notification
 
   @issue-1462
-  Scenario: The Closed sentinel keeps the child exit diagnosis
+  Scenario: A closed connection keeps the child exit diagnosis
     Given the TUI spawned its own agent child process
-    When the agent child process aborts and the Closed sentinel is delivered
+    When the agent child process aborts
+    And the master connection's event stream closes
     Then the disconnect notification should include the child's exit detail

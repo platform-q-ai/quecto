@@ -131,7 +131,7 @@ async fn oversized_event_drop_is_surfaced_as_notification() {
         "no drops recorded — nothing to surface"
     );
 
-    app.client.record_dropped_oversized_for_tests(1);
+    app.connection.record_dropped_oversized_for_tests(1);
     assert!(
         app.surface_dropped_oversized_events(),
         "a recorded drop must raise a notification"

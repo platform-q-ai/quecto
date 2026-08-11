@@ -49,10 +49,11 @@ impl App {
                         agent_id: None,
                     })
                     .await;
+                use crate::shell::connection::{Source, TabId};
                 loop {
                     tokio::select! {
                         ev = client.recv() => match ev {
-                            Some(ev) => if tx.send((agent_id_for_task.clone(), ev)).await.is_err() { break; },
+                            Some(ev) => if tx.send((Source::Subagent(TabId::MASTER, agent_id_for_task.clone()), Some(ev))).await.is_err() { break; },
                             None => break,
                         },
                         cmd = cmd_rx.recv() => match cmd {
@@ -64,7 +65,7 @@ impl App {
             };
             tokio::spawn(task.with_subscriber(connect_dispatch))
         } else {
-            let root_sender = self.client.clone_sender();
+            let root_sender = self.connection.clone_sender();
             let task = async move {
                 let _ = root_sender.try_send(
                     &Command::GetState {

@@ -41,6 +41,56 @@ async fn sourced_master_event_renders_like_direct_handling() {
     );
 }
 
+/// #1462 review (falsifiability): the SAME parity, but end-to-end through
+/// the production plumbing — event bytes written on the agent side of the
+/// REAL master socket flow through the client reader, the connection feed
+/// task, and the shared fan-in the event loop drains. A regression that
+/// keeps a direct `client.recv()` path (or never spawns/drains the feed)
+/// fails here, not just in the routing-level tests.
+#[tokio::test]
+async fn wire_master_event_flows_through_feed_task_and_fan_in() {
+    let mut direct = TuiHarness::new().await;
+    direct.event(Event::Token {
+        token: "seam-wire-token".into(),
+    });
+    let expected = direct.full_frame();
+
+    let mut wired = TuiHarness::new().await;
+    wired
+        .wire_master_event_line(r#"{"type":"token","token":"seam-wire-token"}"#)
+        .await;
+    let got = wired.full_frame();
+    assert!(
+        got.contains("seam-wire-token"),
+        "an event written on the real socket must reach the master session via the feed task (#1462)"
+    );
+    assert_eq!(
+        got, expected,
+        "N=1 frames must be byte-identical between direct handling and the full wire path (#1462)"
+    );
+}
+
+/// #1462 review (falsifiability): closing the agent side of the REAL socket
+/// (EOF) must surface as the feed task's Closed sentinel on the shared
+/// fan-in and run the production disconnect handling.
+#[tokio::test]
+async fn wire_close_runs_disconnect_handling_via_closed_sentinel() {
+    let mut h = TuiHarness::new().await;
+    assert!(h.agent_connected(), "precondition: connected");
+
+    h.wire_close_master_connection().await;
+
+    assert!(
+        !h.app_mut().agent_connected,
+        "a real EOF must mark the agent as not connected via the Closed sentinel (#1462)"
+    );
+    let messages = h.notification_messages().join("\n");
+    assert!(
+        messages.contains("Agent disconnected"),
+        "a real EOF must raise the disconnect notification, got: {messages}"
+    );
+}
+
 /// #1462 AC: a sub-agent event delivered via `Source::Subagent(MASTER, id)`
 /// routes into that sub-agent's session like `route_subagent_event` does.
 #[tokio::test]

@@ -49,7 +49,10 @@ use app_message_recovery::{MessageRecoveryBatch, PendingMessageRecovery};
 pub struct App {
     terminal: Terminal,
     renderer: DiffRenderer<std::io::Stdout>,
-    client: Client,
+    /// The master agent connection behind its feed task (#1462): the feed
+    /// task owns the [`Client`] and forwards events into the shared fan-in
+    /// (`subagents.event_tx`); the app holds only this command/state handle.
+    connection: crate::shell::connection::Connection,
     editor: Editor,
     /// The master agent's own session, modeled as just another [`SessionView`]
     /// (#828) so render/input share ONE active-session path with sub-agents
@@ -147,10 +150,20 @@ impl App {
         footer.set_git_branch(git_branch.clone());
         let (command_send_failure_tx, command_send_failure_rx) = mpsc::channel(16);
 
+        // The shared fan-in lives on the sub-agent UI state; the master
+        // connection's feed task forwards into the same channel keyed by
+        // `Source::Tab` (#1462).
+        let subagents = SubagentUi::new();
+        let connection = crate::shell::connection::Connection::spawn(
+            client,
+            crate::shell::connection::TabId::MASTER,
+            subagents.event_tx.clone(),
+        );
+
         Self {
             terminal,
             renderer: DiffRenderer::new(std::io::stdout()),
-            client,
+            connection,
             editor: Editor::new(),
             master_session: SessionView::with_footer(footer),
             spinner: None,
@@ -170,7 +183,7 @@ impl App {
             sessions: SessionsFlow::default(),
             workflow: WorkflowFlow::default(),
             rewind: RewindFlow::default(),
-            subagents: SubagentUi::new(),
+            subagents,
             render_log_path: std::env::var("QUECTO_TUI_RENDER_LOG").ok(),
             #[cfg(any(test, feature = "test-harness"))]
             rendered_frames: 0,

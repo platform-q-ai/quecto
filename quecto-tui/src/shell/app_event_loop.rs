@@ -59,21 +59,61 @@ impl StreamRenderCoalescer {
     }
 }
 
+/// How the event loop should paint after routing one fan-in item (#1462):
+/// the exact render decision each replaced select arm made before the seam.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SourcedRender {
+    /// Paint now and re-base the coalescer (disconnects, surfaced drops).
+    Immediate,
+    /// Stream render: token events coalesce, everything else paints now.
+    Stream { is_token: bool },
+    /// Nothing routed (a payload-less non-sentinel item) — no paint.
+    Skip,
+}
+
 impl App {
     /// Route one item drained from the shared fan-in channel (#1462): master
     /// events (`Source::Tab`) go through the master event handler, sub-agent
     /// events (`Source::Subagent`) through sub-agent routing, and the
-    /// `Source::Closed` sentinel runs the disconnect diagnosis path — WITHOUT
-    /// stalling the select loop on a dying child (`wait_child_exit_detail`
-    /// stays off the loop; #1047 behaviour unchanged).
+    /// `Source::Closed` sentinel runs the #1047 disconnect diagnosis path.
     ///
-    /// RED stub (#1462): drops the item.
+    /// The `Source::Closed` arm still awaits the (bounded, 500 ms) child-exit
+    /// diagnosis here: the sentinel is by construction the LAST item of its
+    /// connection (its feed task has already exited), so at N=1 nothing can
+    /// queue behind it and the stall profile is identical to the pre-seam
+    /// recv arm. The #1047 contract — diagnosis complete when the disconnect
+    /// notification renders — is pinned synchronously by tests; deferring the
+    /// await off-loop becomes observable (and lands) only with N>1 tabs.
     pub(super) async fn route_sourced(
         &mut self,
         source: crate::shell::connection::Source,
         ev: Option<Event>,
-    ) {
-        let _ = (source, ev);
+    ) -> SourcedRender {
+        use crate::shell::connection::Source;
+        match (source, ev) {
+            (Source::Tab(_), Some(ev)) => {
+                let is_token = Self::is_token_event(&ev);
+                self.handle_event(ev);
+                if self.surface_dropped_oversized_events() {
+                    SourcedRender::Immediate
+                } else {
+                    SourcedRender::Stream { is_token }
+                }
+            }
+            (Source::Subagent(_, agent_id), Some(ev)) => {
+                let is_token = Self::is_token_event(&ev);
+                self.route_subagent_event(&agent_id, ev);
+                SourcedRender::Stream { is_token }
+            }
+            (Source::Closed(_), _) => {
+                // Master stream closed — report any dropped events and the
+                // child's exit diagnosis so the failure is visible (#1047).
+                self.surface_dropped_oversized_events();
+                self.handle_agent_stream_closed().await;
+                SourcedRender::Immediate
+            }
+            (Source::Tab(_) | Source::Subagent(..), None) => SourcedRender::Skip,
+        }
     }
 
     /// Render immediately and note it on the coalescer so a pending deferred
@@ -204,28 +244,6 @@ impl App {
                     }
                     self.render_and_note(&mut stream_render_coalescer);
                 }
-                // Agent events.
-                event = self.client.recv(), if self.agent_connected => {
-                    match event {
-                        Some(ev) => {
-                            let is_token = Self::is_token_event(&ev);
-                            self.handle_event(ev);
-                            if self.surface_dropped_oversized_events() {
-                                self.render_and_note(&mut stream_render_coalescer);
-                            } else {
-                                self.render_stream_event(&mut stream_render_coalescer, is_token);
-                            }
-                        }
-                        None => {
-                            // Agent disconnected — stop polling. Report any
-                            // dropped events and the child's exit diagnosis
-                            // so the failure is visible (#1047).
-                            self.surface_dropped_oversized_events();
-                            self.handle_agent_stream_closed().await;
-                            self.render_and_note(&mut stream_render_coalescer);
-                        }
-                    }
-                }
                 // Terminal resize.
                 Some(()) = resize_rx.recv() => {
                     self.terminal.refresh_size();
@@ -261,11 +279,20 @@ impl App {
                     self.handle_command_send_failure(failure);
                     self.render_and_note(&mut stream_render_coalescer);
                 }
-                // Events fanned in from per-subagent ledger-sync feeds.
-                Some((agent_id, ev)) = self.subagents.event_rx.recv() => {
-                    let is_token = Self::is_token_event(&ev);
-                    self.route_subagent_event(&agent_id, ev);
-                    self.render_stream_event(&mut stream_render_coalescer, is_token);
+                // ONE shared fan-in for every connection (#1462): the master
+                // connection's feed task (`Source::Tab` / `Source::Closed`)
+                // and the per-subagent feeds (`Source::Subagent`). The select
+                // arm count stays constant as connections come and go.
+                Some((source, ev)) = self.subagents.event_rx.recv() => {
+                    match self.route_sourced(source, ev).await {
+                        SourcedRender::Immediate => {
+                            self.render_and_note(&mut stream_render_coalescer);
+                        }
+                        SourcedRender::Stream { is_token } => {
+                            self.render_stream_event(&mut stream_render_coalescer, is_token);
+                        }
+                        SourcedRender::Skip => {}
+                    }
                 }
                 Some((root, files)) = files_autocomplete_rx.recv() => {
                     files_autocomplete_load_in_flight = false;

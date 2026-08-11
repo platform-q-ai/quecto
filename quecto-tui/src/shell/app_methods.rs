@@ -672,7 +672,7 @@ impl App {
         // race to enqueue, so recovery/reset bursts could reach the agent
         // reordered — or look incomplete to an observer draining mid-batch
         // (#1060 review).
-        if let Err(e) = self.client.clone_sender().try_send(&cmd) {
+        if let Err(e) = self.connection.try_send(&cmd) {
             // Roll back synchronously: the diagnostic side channel below is
             // best-effort, and if its receiver is gone we must not leave
             // pending history/resume/stub state stranded.

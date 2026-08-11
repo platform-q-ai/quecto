@@ -11,7 +11,7 @@ use crate::components::chat::Chat;
 use crate::components::footer::Footer;
 use crate::components::list_navigator::ListNavigator;
 use crate::components::workflow_bar;
-use crate::protocol::client::{Command, Event, SubagentInfoEvent, SubagentWorkflow};
+use crate::protocol::client::{Command, SubagentInfoEvent, SubagentWorkflow};
 use std::collections::{BTreeMap, VecDeque};
 use tokio::sync::mpsc;
 
@@ -146,9 +146,12 @@ pub(crate) struct SubagentUi {
     /// viewport coordinate; live roster updates can reorder rows, so focused
     /// navigation preserves/commits by this key when possible.
     pub(crate) panel_nav_key: Option<String>,
-    /// Fan-in for events from direct/routed sub-agent feeds (#800/#1442).
-    pub(crate) event_tx: mpsc::Sender<(String, Event)>,
-    pub(crate) event_rx: mpsc::Receiver<(String, Event)>,
+    /// Shared fan-in for the tab's master connection AND its direct/routed
+    /// sub-agent feeds (#800/#1442/#1462), keyed by
+    /// [`crate::shell::connection::Source`] so the event loop drains ONE
+    /// channel regardless of connection count.
+    pub(crate) event_tx: mpsc::Sender<crate::shell::connection::SourcedEvent>,
+    pub(crate) event_rx: mpsc::Receiver<crate::shell::connection::SourcedEvent>,
     /// Per-subagent synced feed state keyed by agent id.
     pub(crate) feeds: BTreeMap<String, FeedState>,
     /// Which pane has keyboard focus: the editor or the side panel (#802).

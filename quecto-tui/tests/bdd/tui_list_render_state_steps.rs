@@ -298,9 +298,15 @@ fn rewind_open_emitted(world: &mut TuiWorld) {
         let harness = &mut world.tui_parity.as_mut().expect("harness").0;
         handle.block_on(harness.drain_commands())
     };
+    // The id is `rewind-open-<uuid_like>-<request_seq>` (#1314): match the
+    // prefix and the seq-1 suffix, not the process-unique middle — the old
+    // `contains("rewind-open-1")` only matched when the embedded hex PID
+    // happened to start with a 1.
     assert!(
-        cmds.iter().any(|c| c.contains("rewind-open-1")),
-        "the real double-Escape path must issue rewind-open-1: {cmds:?}"
+        cmds.iter().any(|c| c.contains(r#""id":"rewind-open-"#)
+            && c.contains(r#""type":"get_messages""#)
+            && c.contains(r#"-1""#)),
+        "the real double-Escape path must issue a seq-1 rewind-open get_messages: {cmds:?}"
     );
 }
 

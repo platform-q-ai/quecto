@@ -1,5 +1,17 @@
 use super::*;
 use tokio::io::AsyncWriteExt;
+/// A `Client` over bare test channels (no socket, framed defaults).
+fn channel_client(
+    cmd_tx: tokio::sync::mpsc::Sender<String>,
+    event_rx: tokio::sync::mpsc::Receiver<Event>,
+) -> Client {
+    Client {
+        cmd_tx,
+        event_rx,
+        dropped_oversized: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        speaks_frames: true,
+    }
+}
 #[test]
 fn command_serializes_to_json_lines() {
     let cmd = Command::Prompt {
@@ -513,11 +525,7 @@ fn client_error_from_json() {
 async fn client_send_serializes_command_line() {
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(1);
     let (_event_tx, event_rx) = tokio::sync::mpsc::channel(1);
-    let mut client = Client {
-        cmd_tx,
-        event_rx,
-        dropped_oversized: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
-    };
+    let mut client = channel_client(cmd_tx, event_rx);
 
     client
         .send(&Command::GetState {
@@ -537,11 +545,7 @@ async fn client_send_serializes_command_line() {
 async fn command_sender_send_serializes_command_line() {
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(1);
     let (_event_tx, event_rx) = tokio::sync::mpsc::channel(1);
-    let client = Client {
-        cmd_tx,
-        event_rx,
-        dropped_oversized: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
-    };
+    let client = channel_client(cmd_tx, event_rx);
     let mut sender = client.clone_sender();
 
     sender
@@ -561,11 +565,7 @@ async fn command_sender_send_serializes_command_line() {
 async fn client_recv_and_try_recv_return_events() {
     let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::channel(1);
     let (event_tx, event_rx) = tokio::sync::mpsc::channel(2);
-    let mut client = Client {
-        cmd_tx,
-        event_rx,
-        dropped_oversized: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
-    };
+    let mut client = channel_client(cmd_tx, event_rx);
 
     event_tx
         .send(Event::Token { token: "hi".into() })
@@ -597,11 +597,7 @@ async fn client_send_reports_disconnected_when_command_channel_closed() {
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel(1);
     drop(cmd_rx);
     let (_event_tx, event_rx) = tokio::sync::mpsc::channel(1);
-    let mut client = Client {
-        cmd_tx,
-        event_rx,
-        dropped_oversized: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
-    };
+    let mut client = channel_client(cmd_tx, event_rx);
 
     let err = client
         .send(&Command::GetSubagents { id: None })

@@ -11,9 +11,9 @@ impl TuiHarness {
         self.app.reset_session("New session started");
     }
 
-    /// Replace the master agent client with a disconnected command channel.
+    /// Replace the master connection with a disconnected command channel.
     pub fn disconnect_master_commands(&mut self) {
-        self.app.client = crate::protocol::client::Client::disconnected_for_tests();
+        self.app.connection = crate::shell::connection::Connection::disconnected_for_tests();
     }
 
     /// Drain one command-send failure through the production handler.

@@ -3,24 +3,25 @@
 //! Phase 1 of the multi-session TUI (epic #1467): the master connection moves
 //! behind a feed task and its events arrive through the shared fan-in channel
 //! keyed by `Source`. At N=1 nothing may change: these steps pin frame parity
-//! between the direct path and the fan-in path, and that stream close — now an
-//! explicit `Source::Closed` sentinel — keeps the #1047 disconnect diagnosis.
+//! between the direct path and the feed path, and that a real stream close —
+//! delivered as the feed task's `Source::Closed` sentinel — keeps the #1047
+//! disconnect diagnosis. The When steps drive the REAL socket: event bytes
+//! (or EOF) travel client reader → feed task → shared fan-in → routing.
 
 use super::*;
 use quecto_tui::protocol::client::Event;
 use quecto_tui::shell::app::tui_harness::TuiHarness;
 
-/// The token rendered in both the direct-path baseline and the fan-in frame.
+/// The token rendered in both the direct-path baseline and the feed frame.
 const SEAM_TOKEN: &str = "seam-parity-token";
 
 fn harness(world: &mut TuiWorld) -> &mut TuiHarness {
     &mut world.tui_parity.as_mut().expect("TUI harness").0
 }
 
-#[given("a headless TUI harness showing a master token via direct handling")]
-fn direct_handling_baseline(world: &mut TuiWorld) {
+#[given("a baseline frame from a master token handled directly")]
+fn baseline_frame_from_direct_handling(world: &mut TuiWorld) {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-    // Baseline: the pre-seam direct path renders the token.
     let mut baseline = rt.block_on(TuiHarness::new());
     baseline.event(Event::Token {
         token: SEAM_TOKEN.into(),
@@ -31,14 +32,21 @@ fn direct_handling_baseline(world: &mut TuiWorld) {
         "precondition: direct handling renders the token"
     );
     world.tui_seam_baseline_frame = Some(frame);
-    // Fresh harness for the fan-in delivery under test.
-    let fan_in = rt.block_on(TuiHarness::new());
     world.tui_parity_rt = Some(rt);
-    world.tui_parity = Some(TuiParityHarness(fan_in));
 }
 
-#[when("the same master token is delivered through the fan-in tagged with the master tab source")]
-fn deliver_token_via_fan_in(world: &mut TuiWorld) {
+#[given("a fresh headless TUI harness")]
+fn fresh_headless_harness(world: &mut TuiWorld) {
+    if world.tui_parity_rt.is_none() {
+        world.tui_parity_rt = Some(tokio::runtime::Runtime::new().expect("tokio runtime"));
+    }
+    let rt = world.tui_parity_rt.as_ref().expect("runtime");
+    let h = rt.block_on(TuiHarness::new());
+    world.tui_parity = Some(TuiParityHarness(h));
+}
+
+#[when("the same master token arrives through the master connection feed")]
+fn token_arrives_through_connection_feed(world: &mut TuiWorld) {
     let handle = world
         .tui_parity_rt
         .as_ref()
@@ -47,15 +55,16 @@ fn deliver_token_via_fan_in(world: &mut TuiWorld) {
         .clone();
     let h = harness(world);
     handle.block_on(async {
-        h.sourced_master_event(Event::Token {
-            token: SEAM_TOKEN.into(),
-        })
-        .await;
+        // Written on the agent side of the REAL socket, so the token flows
+        // through the whole production path: client reader → connection feed
+        // task → shared fan-in → sourced routing.
+        h.wire_master_event_line(&format!(r#"{{"type":"token","token":"{SEAM_TOKEN}"}}"#))
+            .await;
     });
 }
 
-#[then("the fan-in frame should be identical to the directly handled frame")]
-fn fan_in_frame_identical(world: &mut TuiWorld) {
+#[then("the frame should be identical to the direct-handling baseline")]
+fn frame_identical_to_baseline(world: &mut TuiWorld) {
     let expected = world
         .tui_seam_baseline_frame
         .take()
@@ -63,16 +72,16 @@ fn fan_in_frame_identical(world: &mut TuiWorld) {
     let got = harness(world).full_frame();
     assert!(
         got.contains(SEAM_TOKEN),
-        "a Source::Tab(MASTER) event must reach the master session's chat (#1462), got:\n{got}"
+        "a master event delivered via the connection feed must reach the master session's chat (#1462), got:\n{got}"
     );
     assert_eq!(
         got, expected,
-        "N=1 frames must be byte-identical between the direct path and the fan-in path (#1462)"
+        "N=1 frames must be byte-identical between the direct path and the connection feed path (#1462)"
     );
 }
 
-#[when("the master connection delivers its Closed sentinel")]
-fn master_connection_delivers_closed_sentinel(world: &mut TuiWorld) {
+#[when("the master connection's event stream closes")]
+fn master_event_stream_closes(world: &mut TuiWorld) {
     let handle = world
         .tui_parity_rt
         .as_ref()
@@ -81,12 +90,14 @@ fn master_connection_delivers_closed_sentinel(world: &mut TuiWorld) {
         .clone();
     let h = harness(world);
     handle.block_on(async {
-        h.deliver_closed_sentinel().await;
+        // Real EOF on the agent side; the feed task turns it into the
+        // Source::Closed sentinel the routing drains.
+        h.wire_close_master_connection().await;
     });
 }
 
-#[when("the agent child process aborts and the Closed sentinel is delivered")]
-fn child_aborts_then_closed_sentinel(world: &mut TuiWorld) {
+#[when("the agent child process aborts")]
+fn agent_child_process_aborts(world: &mut TuiWorld) {
     let watch = world
         .tui_disconnect_child
         .take()
@@ -96,16 +107,7 @@ fn child_aborts_then_closed_sentinel(world: &mut TuiWorld) {
     // SAFETY: pid comes from a child we just spawned.
     let rc = unsafe { libc::kill(watch.pid as i32, libc::SIGABRT) };
     assert_eq!(rc, 0, "SIGABRT must be delivered to the spawned child");
-
-    let handle = world
-        .tui_parity_rt
-        .as_ref()
-        .expect("runtime")
-        .handle()
-        .clone();
-    let h = &mut world.tui_parity.as_mut().expect("TUI harness").0;
-    handle.block_on(async {
-        h.deliver_closed_sentinel_with_child_watch(watch.watch)
-            .await;
-    });
+    // Attach the production exit watcher so the subsequent stream close can
+    // diagnose WHY the agent went away (#1047).
+    harness(world).app_mut().set_child_exit_watch(watch.watch);
 }

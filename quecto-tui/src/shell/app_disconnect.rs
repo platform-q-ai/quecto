@@ -27,7 +27,8 @@ impl App {
         self.agent_ever_connected = false;
     }
 
-    /// Handle the agent event stream closing (`client.recv()` → `None`).
+    /// Handle the agent event stream closing (the connection feed task's
+    /// `Source::Closed` sentinel, #1462).
     ///
     /// `exit_detail` carries the spawned agent child's exit diagnosis when the
     /// TUI owns the child process (e.g. "signal 6 (SIGABRT)" after a
@@ -99,7 +100,7 @@ impl App {
     /// so the loss is visible instead of the session silently appearing
     /// frozen (#1047). Returns whether a notification was raised.
     pub(super) fn surface_dropped_oversized_events(&mut self) -> bool {
-        let dropped = self.client.dropped_oversized_events();
+        let dropped = self.connection.dropped_oversized_events();
         if dropped <= self.surfaced_oversized_drops {
             return false;
         }

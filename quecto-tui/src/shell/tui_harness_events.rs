@@ -220,12 +220,42 @@ pub(super) fn spawn_command_reader(
     listener: tokio::net::UnixListener,
     cmd_tx: tokio::sync::mpsc::Sender<String>,
 ) {
+    spawn_agent_endpoint(listener, cmd_tx, None);
+}
+
+/// Like [`spawn_command_reader`], but the first accepted connection can also
+/// WRITE agent event lines received on `event_rx` back to the client — the
+/// harness's real-socket driving surface for the master connection feed task
+/// (#1462). When the sender side of `event_rx` is dropped, the write half is
+/// shut down, delivering a real EOF (stream close) to the client.
+pub(super) fn spawn_agent_endpoint(
+    listener: tokio::net::UnixListener,
+    cmd_tx: tokio::sync::mpsc::Sender<String>,
+    event_rx: Option<mpsc::Receiver<String>>,
+) {
     use quecto_line_io::{Incoming, PROTOCOL_FRAME_CAP_BYTES, read_frame_or_legacy_line};
     tokio::spawn(async move {
+        let mut event_rx = event_rx;
         while let Ok((stream, _)) = listener.accept().await {
             let cmd_tx = cmd_tx.clone();
+            let (read_half, mut write_half) = tokio::io::split(stream);
+            if let Some(mut rx) = event_rx.take() {
+                tokio::spawn(async move {
+                    use tokio::io::AsyncWriteExt;
+                    while let Some(line) = rx.recv().await {
+                        if write_half.write_all(line.as_bytes()).await.is_err() {
+                            return;
+                        }
+                        let _ = write_half.flush().await;
+                    }
+                    // Injector dropped: close the agent side for real so the
+                    // client observes EOF and the feed task emits its Closed
+                    // sentinel (#1462).
+                    let _ = write_half.shutdown().await;
+                });
+            }
             tokio::spawn(async move {
-                let mut reader = BufReader::new(stream);
+                let mut reader = BufReader::new(read_half);
                 while let Ok(Some(incoming)) =
                     read_frame_or_legacy_line(&mut reader, PROTOCOL_FRAME_CAP_BYTES).await
                 {

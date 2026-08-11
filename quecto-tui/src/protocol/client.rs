@@ -508,6 +508,10 @@ pub struct Client {
     /// [`MAX_LINE_BYTES`], so the UI can surface the loss instead of the
     /// session silently appearing frozen (#1047).
     dropped_oversized: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// ADR-0008 negotiation outcome this connection was built with: `true`
+    /// for length-prefixed frames (protocol v2), `false` for legacy NDJSON.
+    /// Per-connection state, not a `run_tui` local (#1462).
+    speaks_frames: bool,
 }
 impl Client {
     /// Connect to a quecto agent at the given socket path, speaking
@@ -648,7 +652,19 @@ impl Client {
             cmd_tx,
             event_rx: rx,
             dropped_oversized,
+            speaks_frames: mode == WireMode::Framed,
         })
+    }
+    /// Whether this connection negotiated length-prefixed frames (ADR-0008
+    /// protocol v2) rather than legacy NDJSON. Recorded at connect time so
+    /// the framing outcome is per-connection state (#1462).
+    pub fn speaks_frames(&self) -> bool {
+        self.speaks_frames
+    }
+    /// Shared handle to the reader's oversized-drop counter (#1047), kept
+    /// observable after the `Client` moves behind a feed task (#1462).
+    pub fn dropped_oversized_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicU64> {
+        std::sync::Arc::clone(&self.dropped_oversized)
     }
     /// How many event lines the reader has dropped for exceeding
     /// [`MAX_LINE_BYTES`] (#1047). The UI polls this to surface the drop.
@@ -696,6 +712,7 @@ impl Client {
             cmd_tx,
             event_rx,
             dropped_oversized: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            speaks_frames: true,
         }
     }
 }
