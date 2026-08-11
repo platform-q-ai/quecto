@@ -225,7 +225,7 @@ pub(super) async fn forward_subagent_get_messages(
                         Ok(Some(session)) => {
                             let data = uds_session::messages_page_json_for_id(
                                 &session.messages,
-                                count.unwrap_or(uds_session::HISTORY_PAGE_SIZE),
+                                count.unwrap_or(session.messages.len()),
                                 before.as_ref(),
                             );
                             AgentEvent::ok(id_ref, tn, Some(data))

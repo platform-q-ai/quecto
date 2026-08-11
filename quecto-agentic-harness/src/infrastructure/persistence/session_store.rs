@@ -55,10 +55,6 @@ impl FileSessionStore {
         }
         self.ensure_dir().await?;
         let path = self.session_path(key);
-        // Trust-the-caller gate: unlike `append_known_delta` this deliberately
-        // never reads/parses durable history (`persisted_prefix_changed`) —
-        // the caller vouches for a clean prefix via the dirty latch. Only the
-        // structural preconditions for appending are checked here.
         let must_compact = previously_persisted == 0
             || previously_persisted > messages.len()
             || !path.exists()
@@ -458,11 +454,17 @@ async fn compact_or_append_delta(
     must_compact: bool,
 ) -> Result<(), DomainError> {
     if must_compact {
+        let subagent_roster = tokio::fs::read_to_string(path)
+            .await
+            .ok()
+            .and_then(|data| parse_session_data(&data).ok())
+            .map(|s| s.subagent_roster)
+            .unwrap_or_default();
         let session = Session {
             key: key.to_string(),
             messages: messages.to_vec(),
             workflow_run: workflow_run.cloned(),
-            subagent_roster: Vec::new(),
+            subagent_roster,
         };
         return write_compacted(path, &session).await;
     }
@@ -729,21 +731,17 @@ fn record_to_message(rec: MessageRecord) -> Message {
 }
 
 #[cfg(test)]
-#[path = "session_store_tests.rs"]
-mod tests;
-
-#[cfg(test)]
-#[path = "session_store_metadata_tests.rs"]
-mod metadata_tests;
-
-#[cfg(test)]
-#[path = "session_store_subagent_roster_tests.rs"]
-mod subagent_roster_tests;
-
-#[cfg(test)]
 #[path = "session_store_chat_tests.rs"]
 mod chat_tests;
-
 #[cfg(test)]
 #[path = "session_store_cov_tests.rs"]
 mod cov_tests;
+#[cfg(test)]
+#[path = "session_store_metadata_tests.rs"]
+mod metadata_tests;
+#[cfg(test)]
+#[path = "session_store_subagent_roster_tests.rs"]
+mod subagent_roster_tests;
+#[cfg(test)]
+#[path = "session_store_tests.rs"]
+mod tests;

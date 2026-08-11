@@ -1,5 +1,4 @@
 use super::*;
-use crate::domain::session::{PersistedSubagentRosterEntry, SubagentLiveness};
 use tempfile::TempDir;
 
 fn make_message(role: Role, content: &str) -> Message {
@@ -11,8 +10,11 @@ fn make_message(role: Role, content: &str) -> Message {
     }
 }
 
-fn roster_entry(id: &str, liveness: SubagentLiveness) -> PersistedSubagentRosterEntry {
-    PersistedSubagentRosterEntry {
+fn roster_entry(
+    id: &str,
+    liveness: crate::domain::session::SubagentLiveness,
+) -> crate::domain::session::PersistedSubagentRosterEntry {
+    crate::domain::session::PersistedSubagentRosterEntry {
         agent_uuid: id.to_string(),
         display_name: format!("worker-{id}"),
         session_key: format!("cli:{id}"),
@@ -23,9 +25,9 @@ fn roster_entry(id: &str, liveness: SubagentLiveness) -> PersistedSubagentRoster
         read_only: id == "dead",
         status: Some(
             match liveness {
-                SubagentLiveness::Live => "idle",
-                SubagentLiveness::Detached => "exited",
-                SubagentLiveness::Dead => "exited",
+                crate::domain::session::SubagentLiveness::Live => "idle",
+                crate::domain::session::SubagentLiveness::Detached => "exited",
+                crate::domain::session::SubagentLiveness::Dead => "exited",
             }
             .to_string(),
         ),
@@ -41,9 +43,12 @@ async fn subagent_roster_roundtrips_and_legacy_files_load_empty_roster() {
         messages: vec![make_message(Role::User, "hello")],
         workflow_run: None,
         subagent_roster: vec![
-            roster_entry("live", SubagentLiveness::Live),
-            roster_entry("detached", SubagentLiveness::Detached),
-            roster_entry("dead", SubagentLiveness::Dead),
+            roster_entry("live", crate::domain::session::SubagentLiveness::Live),
+            roster_entry(
+                "detached",
+                crate::domain::session::SubagentLiveness::Detached,
+            ),
+            roster_entry("dead", crate::domain::session::SubagentLiveness::Dead),
         ],
     };
 
@@ -73,7 +78,10 @@ async fn roster_only_session_persists_and_empty_roster_session_stays_absent() {
             key: "cli:roster-only".to_string(),
             messages: vec![],
             workflow_run: None,
-            subagent_roster: vec![roster_entry("dead", SubagentLiveness::Dead)],
+            subagent_roster: vec![roster_entry(
+                "dead",
+                crate::domain::session::SubagentLiveness::Dead,
+            )],
         })
         .await
         .unwrap();
@@ -109,15 +117,21 @@ async fn roster_only_updates_replay_as_full_replacements() {
         key: "cli:roster-delta".to_string(),
         messages: vec![make_message(Role::User, "hello")],
         workflow_run: None,
-        subagent_roster: vec![roster_entry("a", SubagentLiveness::Live)],
+        subagent_roster: vec![roster_entry(
+            "a",
+            crate::domain::session::SubagentLiveness::Live,
+        )],
     };
     store.save(&session).await.unwrap();
 
-    session.subagent_roster = vec![roster_entry("a", SubagentLiveness::Dead)];
+    session.subagent_roster = vec![roster_entry(
+        "a",
+        crate::domain::session::SubagentLiveness::Dead,
+    )];
     store.save(&session).await.unwrap();
     session.subagent_roster = vec![
-        roster_entry("a", SubagentLiveness::Dead),
-        roster_entry("b", SubagentLiveness::Detached),
+        roster_entry("a", crate::domain::session::SubagentLiveness::Dead),
+        roster_entry("b", crate::domain::session::SubagentLiveness::Detached),
     ];
     store.save(&session).await.unwrap();
 
@@ -134,14 +148,54 @@ async fn compaction_retains_current_subagent_roster() {
         key: "cli:roster-compact".to_string(),
         messages: vec![make_message(Role::User, "first")],
         workflow_run: None,
-        subagent_roster: vec![roster_entry("a", SubagentLiveness::Live)],
+        subagent_roster: vec![roster_entry(
+            "a",
+            crate::domain::session::SubagentLiveness::Live,
+        )],
     };
     store.save(&session).await.unwrap();
     session.messages = vec![make_message(Role::User, "replacement")];
-    session.subagent_roster = vec![roster_entry("a", SubagentLiveness::Dead)];
+    session.subagent_roster = vec![roster_entry(
+        "a",
+        crate::domain::session::SubagentLiveness::Dead,
+    )];
     store.save(&session).await.unwrap();
 
     let loaded = store.load("cli:roster-compact").await.unwrap().unwrap();
+    assert_eq!(loaded.messages[0].content, "replacement");
+    assert_eq!(loaded.subagent_roster, session.subagent_roster);
+}
+
+#[tokio::test]
+async fn save_delta_compaction_preserves_persisted_subagent_roster() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+    let session = Session {
+        key: "cli:roster-delta-compact".to_string(),
+        messages: vec![make_message(Role::User, "first")],
+        workflow_run: None,
+        subagent_roster: vec![roster_entry(
+            "a",
+            crate::domain::session::SubagentLiveness::Detached,
+        )],
+    };
+    store.save(&session).await.unwrap();
+
+    store
+        .save_delta(
+            "cli:roster-delta-compact",
+            &[make_message(Role::User, "replacement")],
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let loaded = store
+        .load("cli:roster-delta-compact")
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(loaded.messages[0].content, "replacement");
     assert_eq!(loaded.subagent_roster, session.subagent_roster);
 }
