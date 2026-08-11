@@ -160,6 +160,7 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
 pub fn mark_exited(entry: &mut SubagentEntry) {
     entry.status =
         apply_lifecycle_event(&mut entry.lifecycle, SubagentLifecycleEvent::ProcessExited);
+    entry.persisted_liveness = crate::domain::session::SubagentLiveness::Dead;
     // #1082 review round 3: exit supersedes a retained stall — the child is
     // gone, so an obsolete Stalled alert must not be claimable by the
     // capacity backstop or the event-driven retry after this point.

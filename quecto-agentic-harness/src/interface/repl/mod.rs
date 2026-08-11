@@ -171,6 +171,7 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
                 key: self.session.session_key.clone(),
                 messages: Vec::new(),
                 workflow_run: None,
+                subagent_roster: Vec::new(),
             };
             if let Err(e) = rt.block_on(self.session.session_store.save(&session)) {
                 let _ = writeln!(self.writer, "Warning: failed to clear session: {e}");
@@ -249,6 +250,7 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
                 key: self.session.session_key.clone(),
                 messages: self.session.messages.clone(),
                 workflow_run: None,
+                subagent_roster: Vec::new(),
             };
             if let Err(e) = rt.block_on(self.session.session_store.save(&session)) {
                 let _ = writeln!(self.writer, "Warning: failed to save session: {e}");

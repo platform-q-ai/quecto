@@ -5,6 +5,7 @@ use crate::domain::ids::{AgentId, CommandId, MessageId, ToolCallId};
 use crate::infrastructure::tools::subagent_routing::{
     InspectionRoute, RoutableInspectionCommand, UDS_INSPECTION_ALLOWLIST, resolve_inspection_route,
 };
+use crate::interface::cli::uds_session;
 
 /// Pre-router for commands addressed to a spawned sub-agent.
 ///
@@ -194,7 +195,56 @@ pub(super) async fn forward_subagent_get_messages(
     };
     let route = match resolve_inspection_route(registry, agent_id.as_str()) {
         Ok(route) => route,
-        Err(e) => return AgentEvent::err(id_ref, tn, e),
+        Err(e) => {
+            let historical_session_key = {
+                let entries = registry
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if let Some(entry) = entries.get(agent_id.as_str()) {
+                    Ok(Some(entry.agent_uuid.as_str().to_string()))
+                } else {
+                    let mut matches = entries
+                        .iter()
+                        .filter(|(key, entry)| {
+                            entry.effective_display_name(key) == agent_id.as_str()
+                        })
+                        .map(|(_, entry)| entry.agent_uuid.as_str().to_string());
+                    match (matches.next(), matches.next()) {
+                        (Some(first), None) => Ok(Some(first)),
+                        (Some(_), Some(_)) => Err(format!(
+                            "duplicate historical subagent display label '{}'",
+                            agent_id.as_str()
+                        )),
+                        (None, _) => Ok(None),
+                    }
+                }
+            };
+            match historical_session_key {
+                Ok(Some(session_key)) => {
+                    return match ctx.session_store.load(&session_key).await {
+                        Ok(Some(session)) => {
+                            let data = uds_session::messages_page_json_for_id(
+                                &session.messages,
+                                count.unwrap_or(uds_session::HISTORY_PAGE_SIZE),
+                                before.as_ref(),
+                            );
+                            AgentEvent::ok(id_ref, tn, Some(data))
+                        }
+                        Ok(None) => AgentEvent::err(
+                            id_ref,
+                            tn,
+                            format!(
+                                "no persisted transcript for subagent '{}'",
+                                agent_id.as_str()
+                            ),
+                        ),
+                        Err(err) => AgentEvent::err(id_ref, tn, err.to_string()),
+                    };
+                }
+                Err(err) => return AgentEvent::err(id_ref, tn, err),
+                Ok(None) => return AgentEvent::err(id_ref, tn, e),
+            }
+        }
     };
     // Omit `count` entirely when None so the child returns its FULL history; a
     // present count requests just the tail (#843).

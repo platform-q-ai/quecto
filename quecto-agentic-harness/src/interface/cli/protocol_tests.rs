@@ -276,6 +276,7 @@ fn base_subagent_info(agent_id: &str, status: &str) -> SubagentInfo {
         display_name: None,
         agent_id: agent_id.to_string(),
         status: status.to_string(),
+        liveness: None,
         last_tool: None,
         last_error: None,
         pid: 0,

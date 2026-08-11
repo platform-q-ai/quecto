@@ -447,6 +447,7 @@ async fn resume_session_success_loads_messages() {
         key: key.clone(),
         messages: vec![Message::user("restored")],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     fx.store.save(&saved).await.unwrap();
     {
@@ -472,6 +473,7 @@ async fn resume_updates_session_aware_tools() {
             key: key.clone(),
             messages: vec![Message::user("restored")],
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();
@@ -495,6 +497,7 @@ async fn resume_loads_chat_session_by_full_key() {
         key: key.clone(),
         messages: vec![Message::user("restored chat")],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     fx.store.save(&saved).await.unwrap();
     {

@@ -11,6 +11,7 @@ use crate::domain::message::Message;
 use crate::domain::session::{Session, SessionStore};
 
 use super::protocol::AgentEvent;
+use super::uds::uds_dispatch_session;
 use super::uds::{
     DispatchCtx, LineResult, MAX_FRAME_PAYLOAD_BYTES, dispatch_command,
     emit_event_to_broadcast_or_writer, inject_system_prompt, is_cancel_command, parse_line,
@@ -282,7 +283,7 @@ pub(super) async fn multi_client_loop(
         _ext_registry: ext_registry,
         client_tool_registry: client_tool_registry.clone(),
         current_client_id: 0,
-        subagent_registry,
+        subagent_registry: subagent_registry.clone(),
         notification_rx,
         workflow_state: wf_state.clone(),
         workflow_config: wf_config,
@@ -309,6 +310,7 @@ pub(super) async fn multi_client_loop(
             workflow_run: wf_state
                 .as_ref()
                 .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run())),
+            subagent_roster: uds_dispatch_session::snapshot_subagent_roster(&subagent_registry),
         };
         let _ = session_store.save(&session).await;
     }

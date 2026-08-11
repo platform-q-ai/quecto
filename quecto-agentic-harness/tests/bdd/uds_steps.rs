@@ -1570,6 +1570,7 @@ fn given_session_already_contains_messages(
             key: uds_session_key(&session_name),
             messages: vec![Message::user(user), Message::assistant(assistant, vec![])],
             workflow_run: None,
+            subagent_roster: Vec::new(),
         },
     );
 }
@@ -1591,6 +1592,7 @@ fn given_session_has_workflow_progress(
                 done: (0..7).map(|i| i < completed).collect(),
                 active_issue: None,
             }),
+            subagent_roster: Vec::new(),
         },
     );
     world._workflow_enabled = true;

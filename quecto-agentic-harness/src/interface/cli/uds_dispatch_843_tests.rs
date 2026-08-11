@@ -607,3 +607,85 @@ async fn forward_get_message_unknown_agent_is_error_event() {
         "unknown agent must report not-found: {json}"
     );
 }
+
+#[tokio::test]
+async fn forward_get_messages_reads_dead_historical_transcript_by_uuid() {
+    use crate::domain::session::{Session, SessionStore, SubagentLiveness};
+
+    let registry = new_registry();
+    {
+        let mut entry = SubagentEntry::with_identity(
+            crate::domain::ids::AgentUuid::from("dead-child".to_string()),
+            "dead worker".to_string(),
+            "/tmp/dead-child.sock".into(),
+            0,
+        );
+        entry.persisted_liveness = SubagentLiveness::Dead;
+        registry.lock().unwrap().insert("dead-child".into(), entry);
+    }
+    let mut fx = Fx::new();
+    fx.store
+        .save(&Session {
+            key: "dead-child".into(),
+            messages: vec![Message::user("historical transcript")],
+            workflow_run: None,
+            subagent_roster: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let mut ctx = fx.ctx();
+    ctx.subagent_registry = Some(registry);
+
+    let ev = forward_subagent_get_messages(
+        &ctx,
+        Some(crate::domain::ids::CommandId::from("hist")),
+        "get_messages",
+        crate::domain::ids::AgentId::from("dead-child"),
+        Some(10),
+        None,
+    )
+    .await;
+    let json = serde_json::to_value(ev).unwrap();
+
+    assert_eq!(json["success"], true);
+    assert!(json.to_string().contains("historical transcript"));
+}
+
+#[tokio::test]
+async fn forward_get_messages_rejects_duplicate_historical_display_names() {
+    use crate::domain::session::SubagentLiveness;
+
+    let registry = new_registry();
+    for uuid in ["dead-a", "dead-b"] {
+        let mut entry = SubagentEntry::with_identity(
+            crate::domain::ids::AgentUuid::from(uuid.to_string()),
+            "same-name".to_string(),
+            format!("/tmp/{uuid}.sock").into(),
+            0,
+        );
+        entry.persisted_liveness = SubagentLiveness::Dead;
+        registry.lock().unwrap().insert(uuid.into(), entry);
+    }
+    let mut fx = Fx::new();
+    let mut ctx = fx.ctx();
+    ctx.subagent_registry = Some(registry);
+
+    let ev = forward_subagent_get_messages(
+        &ctx,
+        Some(crate::domain::ids::CommandId::from("dup")),
+        "get_messages",
+        crate::domain::ids::AgentId::from("same-name"),
+        None,
+        None,
+    )
+    .await;
+    let json = serde_json::to_value(ev).unwrap();
+
+    assert_eq!(json["success"], false);
+    assert!(
+        json["error"]
+            .as_str()
+            .unwrap()
+            .contains("duplicate historical")
+    );
+}

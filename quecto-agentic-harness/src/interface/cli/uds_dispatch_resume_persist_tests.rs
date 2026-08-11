@@ -58,6 +58,7 @@ async fn prompt_persists_user_message_before_assistant_reply() {
             key: Session::build_key("cli", "saved-one"),
             messages: loaded.messages.clone(),
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();
@@ -180,6 +181,7 @@ async fn multi_turn_persist_resume_restores_full_history_with_system_prompt() {
                     key: Session::build_key("cli", resume_name),
                     messages: loaded.messages.clone(),
                     workflow_run: None,
+                    subagent_roster: Vec::new(),
                 })
                 .await
                 .unwrap();
@@ -626,6 +628,7 @@ async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest()
             key: Session::build_key("cli", "saved-jsonl-chain"),
             messages: loaded.messages.clone(),
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();

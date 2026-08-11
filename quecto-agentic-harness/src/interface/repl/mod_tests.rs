@@ -74,6 +74,7 @@ fn test_load_session_messages_existing_session() {
         key: "test:key".to_string(),
         messages: vec![Message::user("hello")],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     rt.block_on(store.save(&session)).unwrap();
     let messages = load_session_messages_with_rt(&rt, &store, "test:key", false).unwrap();

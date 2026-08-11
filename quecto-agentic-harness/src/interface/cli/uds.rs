@@ -265,7 +265,7 @@ mod uds_dispatch_query;
 #[path = "uds_dispatch_runtime.rs"]
 mod uds_dispatch_runtime;
 #[path = "uds_dispatch_session.rs"]
-mod uds_dispatch_session;
+pub(crate) mod uds_dispatch_session;
 #[path = "uds_dispatch_sync_forward.rs"]
 mod uds_dispatch_sync_forward;
 #[path = "uds_forward_response.rs"]
@@ -594,6 +594,9 @@ mod abort_steer_tests;
 #[cfg(test)]
 #[path = "uds_bounded_read_tests.rs"]
 mod bounded_read_tests;
+#[cfg(test)]
+#[path = "uds_dispatch_session_roster_tests.rs"]
+mod dispatch_session_roster_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_test_env.rs"]
 mod dispatch_test_env;

@@ -82,3 +82,7 @@ impl LlmProvider for OpenAiEndpointRouter {
         self.select(&request).chat_stream_incremental(request)
     }
 }
+
+#[cfg(test)]
+#[path = "openai_endpoint_router_tests.rs"]
+mod tests;

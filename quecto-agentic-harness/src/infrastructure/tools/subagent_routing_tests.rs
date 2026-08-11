@@ -1,4 +1,6 @@
-use super::subagent_registry::{SubagentEntry, new_registry};
+use crate::domain::session::SubagentLiveness;
+
+use super::subagent_registry::{SubagentEntry, lookup_subagent_socket, new_registry};
 use super::subagent_routing::{
     InspectionRoute, RoutableInspectionCommand, resolve_inspection_route,
 };
@@ -106,4 +108,66 @@ fn agent_cmd_allowlist_is_closed() {
         Some(RoutableInspectionCommand::GetState)
     );
     assert_eq!(RoutableInspectionCommand::from_agent_cmd("prompt"), None);
+}
+
+#[test]
+fn rejects_non_live_liveness_for_command_and_inspection_routes() {
+    let reg = new_registry();
+    let mut detached = entry("/tmp/detached.sock", None);
+    detached.display_name = "detached".into();
+    detached.persisted_liveness = SubagentLiveness::Detached;
+    let mut dead = entry("/tmp/dead.sock", None);
+    dead.display_name = "dead".into();
+    dead.persisted_liveness = SubagentLiveness::Dead;
+    let mut guard = reg.lock().unwrap();
+    guard.insert("detached".into(), detached);
+    guard.insert("dead".into(), dead);
+    drop(guard);
+
+    assert!(
+        lookup_subagent_socket(&reg, "detached")
+            .unwrap_err()
+            .contains("detached")
+    );
+    assert!(
+        lookup_subagent_socket(&reg, "dead")
+            .unwrap_err()
+            .contains("dead")
+    );
+    assert!(
+        resolve_inspection_route(&reg, "detached")
+            .unwrap_err()
+            .contains("detached")
+    );
+    assert!(
+        resolve_inspection_route(&reg, "dead")
+            .unwrap_err()
+            .contains("dead")
+    );
+}
+
+#[test]
+fn routable_command_mapping_covers_uds_allowlist_and_rejects_mutating_commands() {
+    assert_eq!(
+        RoutableInspectionCommand::from_uds_type("get_messages"),
+        Some(RoutableInspectionCommand::GetMessages)
+    );
+    assert_eq!(
+        RoutableInspectionCommand::from_uds_type("get_messages_tail"),
+        Some(RoutableInspectionCommand::GetMessagesTail)
+    );
+    assert_eq!(
+        RoutableInspectionCommand::from_uds_type("get_message"),
+        Some(RoutableInspectionCommand::GetMessage)
+    );
+    assert_eq!(
+        RoutableInspectionCommand::from_uds_type("sync"),
+        Some(RoutableInspectionCommand::Sync)
+    );
+    assert_eq!(
+        RoutableInspectionCommand::from_uds_type("get_state"),
+        Some(RoutableInspectionCommand::GetState)
+    );
+    assert_eq!(RoutableInspectionCommand::from_uds_type("prompt"), None);
+    assert_eq!(RoutableInspectionCommand::from_uds_type("abort"), None);
 }

@@ -127,6 +127,7 @@ async fn append_reports_directory_open_failure() {
         messages: vec![],
         workflow_run: None,
         workflow_run_cleared: true,
+        subagent_roster: None,
     };
     let err = append_record(&path, &record).await.unwrap_err();
     assert!(
@@ -163,6 +164,7 @@ async fn append_reports_missing_file_when_path_disappears_after_compaction_decis
         messages: vec![],
         workflow_run: None,
         workflow_run_cleared: true,
+        subagent_roster: None,
     };
     let err = append_record(&path, &record).await.unwrap_err();
     assert!(
@@ -521,6 +523,7 @@ async fn save_to_key_owned_by_another_live_process_is_refused() {
                 key: "owned:save".to_string(),
                 messages: Vec::new(),
                 workflow_run: None,
+                subagent_roster: Vec::new(),
             },
         )
         .await,

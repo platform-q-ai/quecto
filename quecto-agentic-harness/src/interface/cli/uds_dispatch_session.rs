@@ -6,7 +6,7 @@ use super::{
     DispatchCtx, emit_event_to_broadcast_or_writer, emit_ledger_advanced, inject_system_prompt,
     remove_injected_system_prompt,
 };
-use crate::domain::session::Session;
+use crate::domain::session::{PersistedSubagentRosterEntry, Session};
 
 fn sync_message_count(ctx: &DispatchCtx<'_>) {
     if let Ok(mut state) = ctx.execution_state.lock() {
@@ -32,6 +32,79 @@ pub(super) fn set_workflow_run(
     }
 }
 
+pub(crate) fn snapshot_subagent_roster(
+    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+) -> Vec<PersistedSubagentRosterEntry> {
+    let Some(registry) = registry else {
+        return Vec::new();
+    };
+    let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let mut roster: Vec<_> = entries
+        .iter()
+        .map(|(key, entry)| PersistedSubagentRosterEntry {
+            agent_uuid: entry.agent_uuid.as_str().to_string(),
+            display_name: entry.effective_display_name(key).to_string(),
+            session_key: entry.agent_uuid.as_str().to_string(),
+            socket_path: entry.socket_path.clone(),
+            pid: entry.pid,
+            liveness: entry.persisted_liveness,
+            parent_id: entry.parent_id.clone(),
+            read_only: entry.read_only,
+            status: Some(entry.status.to_wire_str().to_string()),
+        })
+        .collect();
+    roster.sort_by(|a, b| a.agent_uuid.cmp(&b.agent_uuid));
+    roster
+}
+
+pub(crate) fn verify_persisted_live_subagent(entry: &PersistedSubagentRosterEntry) -> bool {
+    if entry.socket_path.as_os_str().is_empty() || entry.agent_uuid.is_empty() {
+        return false;
+    }
+    match std::os::unix::net::UnixStream::connect(&entry.socket_path) {
+        Ok(stream) => stream.peer_addr().is_ok(),
+        Err(_) => false,
+    }
+}
+
+pub(crate) fn restore_persisted_subagent_roster(
+    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    roster: Vec<PersistedSubagentRosterEntry>,
+) {
+    let Some(registry) = registry else { return };
+    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    entries.clear();
+    for persisted in roster {
+        let mut entry =
+            crate::infrastructure::tools::subagent_registry::SubagentEntry::with_identity(
+                crate::domain::ids::AgentUuid::from(persisted.agent_uuid.clone()),
+                persisted.display_name.clone(),
+                persisted.socket_path.clone(),
+                persisted.pid,
+            );
+        let verified_live = persisted.liveness == crate::domain::session::SubagentLiveness::Live
+            && verify_persisted_live_subagent(&persisted);
+        entry.status = if verified_live {
+            crate::infrastructure::tools::subagent_registry::SubagentStatus::Idle
+        } else {
+            crate::infrastructure::tools::subagent_registry::SubagentStatus::Exited
+        };
+        entry.persisted_liveness = if verified_live {
+            crate::domain::session::SubagentLiveness::Live
+        } else {
+            match persisted.liveness {
+                crate::domain::session::SubagentLiveness::Live => {
+                    crate::domain::session::SubagentLiveness::Detached
+                }
+                other => other,
+            }
+        };
+        entry.parent_id = persisted.parent_id;
+        entry.read_only = persisted.read_only;
+        entries.insert(persisted.agent_uuid, entry);
+    }
+}
+
 pub(super) async fn persist_current_session(
     ctx: &mut DispatchCtx<'_>,
 ) -> Result<(), crate::domain::error::DomainError> {
@@ -54,9 +127,15 @@ pub(super) async fn persist_current_session(
         .workflow_state
         .as_ref()
         .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run()));
-    let result = if ctx.durable_prefix_dirty {
+    let roster = snapshot_subagent_roster(&ctx.subagent_registry);
+    let result = if ctx.durable_prefix_dirty || !roster.is_empty() {
         ctx.session_store
-            .save_delta(ctx.session_key, ctx.messages, 0, workflow_run)
+            .save(&Session {
+                key: ctx.session_key.to_string(),
+                messages: ctx.messages.to_vec(),
+                workflow_run,
+                subagent_roster: roster,
+            })
             .await
     } else {
         ctx.session_store
@@ -106,6 +185,9 @@ pub(super) async fn handle_new_session(
     ctx.last_persisted_message_index = 0;
     ctx.session.clear_usage();
     ctx.session.drain_pending();
+    if let Some(registry) = &ctx.subagent_registry {
+        registry.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
     let key = crate::interface::shared::generate_chat_key();
     ctx.session_key.clear();
     ctx.session_key.push_str(&key);
@@ -221,6 +303,7 @@ pub(super) async fn handle_resume_session(
     ctx.session.clear_usage();
     ctx.session.drain_pending();
     let workflow_run = loaded.workflow_run;
+    restore_persisted_subagent_roster(&ctx.subagent_registry, loaded.subagent_roster);
     *ctx.messages = loaded.messages;
     ctx.last_persisted_message_index = ctx.messages.len();
     set_workflow_run(ctx, workflow_run);

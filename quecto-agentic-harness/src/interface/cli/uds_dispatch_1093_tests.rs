@@ -41,7 +41,6 @@ impl MemSpillStore {
     pub(super) fn recall_count(&self) -> usize {
         self.recalls.lock().unwrap().len()
     }
-
     pub(super) fn recalled(&self) -> Vec<(String, String)> {
         self.recalls.lock().unwrap().clone()
     }
@@ -687,6 +686,7 @@ async fn resume_session_atomically_switches_the_snapshot_spill_namespace() {
             key: "cli:saved".into(),
             messages: vec![collapsed],
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();

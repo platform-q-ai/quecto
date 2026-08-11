@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::domain::ids::AgentUuid;
+use crate::domain::session::SubagentLiveness;
 use crate::domain::subagent::{DisplayNameResolutionEntry, resolve_live_display_name};
 
 use super::process_tree::ProcessOwner;
@@ -88,6 +89,8 @@ pub struct SubagentEntry {
     /// for race-focused tests; parent-facing behavior continues to use `status`.
     #[cfg(test)]
     pub last_lifecycle_event: Option<SubagentLifecycleEvent>,
+    /// Persisted cross-process liveness for historical/resumed entries (#1461).
+    pub persisted_liveness: SubagentLiveness,
 }
 
 pub(super) fn seed_bound_workflow(
@@ -164,6 +167,7 @@ impl SubagentEntry {
             forwarded_environment: None,
             #[cfg(test)]
             last_lifecycle_event: None,
+            persisted_liveness: SubagentLiveness::Live,
         }
     }
 }
@@ -193,7 +197,8 @@ fn display_resolution_entries(
         .map(|(key, entry)| DisplayNameResolutionEntry {
             agent_uuid: entry.agent_uuid.clone(),
             display_name: entry.effective_display_name(key).to_string(),
-            live: entry.status != SubagentStatus::Exited,
+            live: entry.persisted_liveness == SubagentLiveness::Live
+                && entry.status != SubagentStatus::Exited,
         })
         .collect()
 }
@@ -242,6 +247,16 @@ pub fn lookup_subagent_socket(
     let entry = entries
         .get(&key)
         .ok_or_else(|| format!("subagent '{}' not found in registry", agent_id))?;
+    if entry.persisted_liveness != SubagentLiveness::Live {
+        return Err(format!(
+            "subagent '{agent_id}' is {} and not command-targetable",
+            match entry.persisted_liveness {
+                SubagentLiveness::Live => "live",
+                SubagentLiveness::Detached => "detached",
+                SubagentLiveness::Dead => "dead",
+            }
+        ));
+    }
     if entry.socket_path.as_os_str().is_empty() {
         return Err(super::subagent_routing::non_connectable_error(agent_id));
     }
@@ -625,6 +640,9 @@ pub struct WorkflowSnapshot {
     pub steps_total: u32,
 }
 
+#[cfg(test)]
+#[path = "subagent_registry_more_tests.rs"]
+mod more_tests;
 #[path = "subagent_snapshot.rs"]
 mod subagent_snapshot;
 #[cfg(test)]
