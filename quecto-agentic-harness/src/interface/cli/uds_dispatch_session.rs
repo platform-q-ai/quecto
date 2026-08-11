@@ -100,6 +100,7 @@ pub(super) async fn handle_new_session(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
+    let old_key = ctx.session_key.to_string();
     clear_conversation(ctx.messages);
     sync_message_count(ctx);
     ctx.last_persisted_message_index = 0;
@@ -108,6 +109,9 @@ pub(super) async fn handle_new_session(
     let key = crate::interface::shared::generate_chat_key();
     ctx.session_key.clear();
     ctx.session_key.push_str(&key);
+    if old_key != key {
+        ctx.session_store.release(&old_key);
+    }
     ctx.session.set_session_key(key.clone());
     ctx.agent.set_session_key(key.clone());
     // Replace history and its spill namespace in one snapshot write so busy
