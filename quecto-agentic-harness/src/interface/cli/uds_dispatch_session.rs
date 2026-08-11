@@ -197,11 +197,13 @@ pub(super) async fn handle_resume_session(
     let loaded = match ctx.session_store.load(&new_key).await {
         Ok(Some(session)) => session,
         Ok(None) => {
+            ctx.session_store.release(&new_key);
             let ev = AgentEvent::err(id, type_name, format!("session not found: {name}"));
             emit_event_to_broadcast_or_writer(ctx, &ev).await;
             return false;
         }
         Err(err) => {
+            ctx.session_store.release(&new_key);
             let ev = AgentEvent::err(id, type_name, format!("failed to load session: {err}"));
             emit_event_to_broadcast_or_writer(ctx, &ev).await;
             return false;

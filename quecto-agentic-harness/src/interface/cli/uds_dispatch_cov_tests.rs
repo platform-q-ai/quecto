@@ -425,6 +425,20 @@ async fn resume_session_not_found() {
 }
 
 #[tokio::test]
+async fn failed_resume_releases_target_claim() {
+    let mut fx = Fixture::new();
+    {
+        let mut ctx = fx.ctx();
+        assert!(!handle_resume_session(&mut ctx, None, "resume_session", "missing".into()).await);
+    }
+
+    let competing_store = FileSessionStore::new(fx._tmp.path());
+    competing_store
+        .claim(&Session::build_key("cli", "missing"))
+        .expect("failed resume must not retain ownership of the missing target");
+}
+
+#[tokio::test]
 async fn resume_session_success_loads_messages() {
     let mut fx = Fixture::new();
     // Pre-save a target session into the store.
