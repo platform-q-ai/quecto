@@ -361,6 +361,7 @@ async fn new_session_uses_fresh_key_and_clears_old_messages() {
     let mut fx = Fixture::new();
     fx.messages.push(Message::user("old turn"));
     let old_key = fx.session_key.clone();
+    fx.store.claim(&old_key).unwrap();
     {
         let mut ctx = fx.ctx();
         assert!(!handle_new_session(&mut ctx, None, "new_session").await);
@@ -369,6 +370,9 @@ async fn new_session_uses_fresh_key_and_clears_old_messages() {
     assert!(fx.messages.is_empty());
     assert_ne!(fx.session_key, old_key);
     assert!(fx.session_key.starts_with("chat-"));
+    FileSessionStore::new(fx._tmp.path())
+        .claim(&old_key)
+        .expect("/new_session must release the old session ownership lock");
 }
 
 #[tokio::test]

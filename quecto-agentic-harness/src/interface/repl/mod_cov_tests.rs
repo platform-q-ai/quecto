@@ -346,6 +346,9 @@ fn repl_open_refuses_live_foreign_owner_but_ephemeral_skips_claim() {
     let owner = FileSessionStore::new(tmp.path());
     owner.claim("test:owned").unwrap();
 
+    let repl_owner = FileSessionStore::new(tmp.path());
+    repl_owner.claim("repl:owned").unwrap();
+
     let contender = FileSessionStore::new(tmp.path());
     let err = load_session_messages_with_rt(&rt, &contender, "test:owned", false).unwrap_err();
     assert!(
@@ -355,6 +358,27 @@ fn repl_open_refuses_live_foreign_owner_but_ephemeral_skips_claim() {
 
     let messages = load_session_messages_with_rt(&rt, &contender, "test:owned", true).unwrap();
     assert!(messages.is_empty());
+
+    let config: Config = serde_json::from_str("{}").unwrap();
+    let flags = ReplFlags {
+        session_name: Some("owned".to_string()),
+        system_prompt: None,
+        model_override: None,
+        no_sandbox: false,
+    };
+    let ctx = ReplContext {
+        base_dir: tmp.path(),
+        config_path: tmp.path(),
+        provider: make_stub_provider(),
+        config: &config,
+        flags: &flags,
+        progress_callback: None,
+    };
+    let mut output = Vec::new();
+    let code = run_repl(b"/exit\n".as_slice(), &mut output, false, &ctx);
+    let output = String::from_utf8(output).unwrap();
+    assert_eq!(code, 1, "{output}");
+    assert!(output.contains("refusing a second writer"), "{output}");
 }
 
 #[test]

@@ -117,6 +117,42 @@ fn dropping_the_guard_releases_ownership() {
 }
 
 #[test]
+fn acquire_reports_stamp_open_failure() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let blocked_dir = dir.path().join("blocked-dir");
+    std::fs::create_dir(&blocked_dir).expect("create blocked dir");
+    let blocker = ownership_stamp_path(&blocked_dir, "blocked-key");
+    std::fs::create_dir(&blocker).expect("directory at stamp path makes stamp open fail");
+    let err = SessionOwnershipGuard::acquire(&blocked_dir, "blocked-key")
+        .expect_err("a directory at the stamp path must be reported");
+    assert!(
+        err.to_string()
+            .contains("failed to open ownership stamp for 'blocked-key'"),
+        "{err}"
+    );
+}
+
+#[test]
+fn registry_claim_is_idempotent_and_release_relinquishes_key() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let registry = SessionOwnershipRegistry::default();
+    registry
+        .claim(dir.path(), "registry-key")
+        .expect("first registry claim must acquire the key");
+    registry
+        .claim(dir.path(), "registry-key")
+        .expect("repeat claim by the same registry must be idempotent");
+
+    let blocked = SessionOwnershipGuard::acquire(dir.path(), "registry-key")
+        .expect_err("registry must hold the OS lock until explicit release");
+    assert!(blocked.to_string().contains("registry-key"), "{blocked}");
+
+    registry.release("registry-key");
+    SessionOwnershipGuard::acquire(dir.path(), "registry-key")
+        .expect("release must relinquish the OS lock for the key");
+}
+
+#[test]
 fn concurrent_acquires_yield_exactly_one_owner() {
     // The atomic try_lock means two simultaneous claimants can never both
     // win — the race the old read-remove-recreate reclaim allowed.
