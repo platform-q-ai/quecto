@@ -118,3 +118,39 @@ fn effective_display_name_uses_display_only_for_uuid_keyed_entries() {
     entry.display_name.clear();
     assert_eq!(entry.effective_display_name("uuid"), "uuid");
 }
+
+#[test]
+fn registry_lookup_and_request_id_helpers_cover_success_and_fallbacks() {
+    let mut entries = std::collections::HashMap::new();
+    let mut entry = SubagentEntry::with_identity(
+        AgentUuid::from("uuid-live".to_string()),
+        "friendly".to_string(),
+        "/tmp/friendly.sock".into(),
+        42,
+    );
+    entry.status = SubagentStatus::Idle;
+    entries.insert("uuid-live".to_string(), entry);
+    assert_eq!(
+        resolve_registry_key(&entries, "friendly").unwrap(),
+        "uuid-live"
+    );
+    assert_eq!(
+        resolve_registry_key(&entries, "uuid-live").unwrap(),
+        "uuid-live"
+    );
+
+    let (rewritten, id) = stamp_request_id(r#"{"type":"get_state","id":"old"}"#);
+    let id = id.expect("object requests get a correlation id");
+    let value: serde_json::Value = serde_json::from_str(&rewritten).unwrap();
+    assert_eq!(value["type"], "get_state");
+    assert_eq!(value["id"], id);
+    assert_ne!(id, "old");
+
+    let (unchanged_array, array_id) = stamp_request_id(r#"["not","an","object"]"#);
+    assert_eq!(unchanged_array, r#"["not","an","object"]"#);
+    assert!(array_id.is_none());
+
+    let (unchanged_invalid, invalid_id) = stamp_request_id("not json");
+    assert_eq!(unchanged_invalid, "not json");
+    assert!(invalid_id.is_none());
+}
