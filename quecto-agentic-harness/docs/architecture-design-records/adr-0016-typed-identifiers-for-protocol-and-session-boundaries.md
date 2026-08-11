@@ -79,3 +79,14 @@ Adoption should be incremental. Start where multiple id kinds coexist:
   domain-specific newtypes are easier to read and document.
 - **Add strict validation for every id immediately.** Rejected: validation rules
   may differ by source and protocol generation. Type safety can land first.
+
+## Delta — connection-scoped correlation ids (#1460 / epic #1467)
+
+The multi-session TUI (ADR-0023) is a concrete adopter of this decision:
+with one replicant agent connection per tab, command/response correlation
+ids are only unique **per connection**, so routing a response, rollback or
+failure notice requires the pair (connection id, command id). Phase 0 tagged
+`CommandSendFailure` with the connection it occurred on (defaulted to the
+single master connection); epic phase 2 (#1463) introduces connection-scoped
+correlation ids as typed identifiers (`ConnectionId` alongside `CommandId`)
+rather than string pairs.

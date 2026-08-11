@@ -114,3 +114,22 @@ impl App {
         true
     }
 }
+
+impl App {
+    /// Surface a failed command send, attributed to the connection it
+    /// happened on (#1460) so that with N per-tab connections the
+    /// rollback/notice cannot be misrouted cross-tab.
+    pub(super) fn handle_command_send_failure(&mut self, failure: CommandSendFailure) {
+        self.rollback_failed_history_command(&failure.command);
+        let CommandSendFailure {
+            command,
+            error,
+            connection,
+        } = failure;
+        let msg = format!(
+            "Failed to send {} command on connection {connection}: {error}",
+            command.kind()
+        );
+        self.notify(&msg, NotifyLevel::Error);
+    }
+}

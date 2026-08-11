@@ -37,11 +37,16 @@ fn acquire_writes_owner_stamp_with_pid() {
 #[test]
 fn second_acquire_of_live_owned_key_is_refused_with_clear_error() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let live_pid = std::process::id();
-    let _guard = SessionOwnershipGuard::acquire_as(dir.path(), "shared-key", live_pid)
+    // Owner and claimant must be DIFFERENT live pids, or an error that echoes
+    // the claimant instead of reading the stamp would pass. The parent (test
+    // runner) is a live process that is never this one.
+    let owner_pid = std::os::unix::process::parent_id();
+    let claimant_pid = std::process::id();
+    assert_ne!(owner_pid, claimant_pid);
+    let _guard = SessionOwnershipGuard::acquire_as(dir.path(), "shared-key", owner_pid)
         .expect("first acquire must succeed");
 
-    let second = SessionOwnershipGuard::acquire_as(dir.path(), "shared-key", live_pid);
+    let second = SessionOwnershipGuard::acquire_as(dir.path(), "shared-key", claimant_pid);
     let err = match second {
         Err(e) => e.to_string(),
         Ok(_) => panic!("second acquire of a key owned by a live process must be refused"),
@@ -51,8 +56,8 @@ fn second_acquire_of_live_owned_key_is_refused_with_clear_error() {
         "refusal must name the session key, got: {err}"
     );
     assert!(
-        err.contains(&live_pid.to_string()),
-        "refusal must name the owning pid, got: {err}"
+        err.contains(&owner_pid.to_string()),
+        "refusal must name the owning pid (not the claimant), got: {err}"
     );
 }
 
@@ -65,6 +70,24 @@ fn stamp_left_by_dead_process_is_reclaimed() {
     let claimant_pid = std::process::id();
     let guard = SessionOwnershipGuard::acquire_as(dir.path(), "stale-key", claimant_pid)
         .expect("a stamp left by a dead process must be reclaimable");
+    let contents = std::fs::read_to_string(guard.stamp_path()).expect("read stamp");
+    assert!(
+        contents.contains(&claimant_pid.to_string()),
+        "reclaiming must rewrite the stamp with the new owner pid, got: {contents:?}"
+    );
+}
+
+#[test]
+fn unparseable_stamp_is_reclaimed_not_permanently_stuck() {
+    // A corrupt stamp must never strand a key forever: with no readable owner
+    // pid there is no live owner to protect, so the claim reclaims it.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let stamp = ownership_stamp_path(dir.path(), "corrupt-key");
+    std::fs::write(&stamp, "not-a-pid").expect("write corrupt stamp");
+
+    let claimant_pid = std::process::id();
+    let guard = SessionOwnershipGuard::acquire_as(dir.path(), "corrupt-key", claimant_pid)
+        .expect("an unreadable stamp must be reclaimable");
     let contents = std::fs::read_to_string(guard.stamp_path()).expect("read stamp");
     assert!(
         contents.contains(&claimant_pid.to_string()),

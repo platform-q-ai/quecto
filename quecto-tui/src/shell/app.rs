@@ -126,9 +126,17 @@ pub struct App {
     started_at: tokio::time::Instant,
 }
 
+/// Id of the TUI's single (master) agent connection. With one replicant
+/// agent per tab (#1463, epic #1467) each connection carries its own id.
+pub(crate) const MASTER_CONNECTION_ID: &str = "master";
+
 struct CommandSendFailure {
     command: Command,
     error: String,
+    /// Connection the send failed on — `MASTER_CONNECTION_ID` for today's
+    /// single connection — so the rollback/notice cannot be misrouted
+    /// cross-tab once there are N per-tab connections (#1460).
+    connection: String,
 }
 
 impl App {

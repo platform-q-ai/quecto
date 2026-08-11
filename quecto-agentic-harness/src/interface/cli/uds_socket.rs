@@ -1,6 +1,42 @@
 //! UDS socket utilities: stale socket cleanup, secure binding, socket guard.
 
-/// Remove stale quecto-agent-*.sock files older than `max_age`.
+/// Result of probing a socket file for a live listener.
+enum SocketLiveness {
+    /// A listener accepted the probe connection.
+    Live,
+    /// The path exists but nothing accepts (dead agent or plain file).
+    Dead,
+    /// The probe was inconclusive (e.g. permission denied).
+    Unknown,
+}
+
+/// Probe whether anything still accepts connections on `path`.
+///
+/// A connect that succeeds proves a live listener; `ECONNREFUSED` proves the
+/// listener is gone (Linux also refuses connects to non-socket files, so a
+/// stray plain file counts as dead). Anything else is inconclusive.
+fn probe_socket_liveness(path: &std::path::Path) -> SocketLiveness {
+    match std::os::unix::net::UnixStream::connect(path) {
+        Ok(_) => SocketLiveness::Live,
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound
+            ) =>
+        {
+            SocketLiveness::Dead
+        }
+        Err(_) => SocketLiveness::Unknown,
+    }
+}
+
+/// Remove dead `quecto-agent-*.sock` files from `dir`.
+///
+/// Liveness is decided by a connect probe, never by mtime: a socket file's
+/// mtime is fixed at bind time, so any agent older than an age threshold
+/// would look "stale" while still serving (#1460). A socket that accepts is
+/// always kept; one that refuses is removed regardless of age. Only when the
+/// probe is inconclusive does `max_age` apply as a conservative fallback.
 pub fn reap_stale_sockets(dir: &std::path::Path, max_age: std::time::Duration) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -14,13 +50,21 @@ pub fn reap_stale_sockets(dir: &std::path::Path, max_age: std::time::Duration) {
         if !s.starts_with("quecto-agent-") || !s.ends_with(".sock") {
             continue;
         }
-        let is_stale = entry
-            .metadata()
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .is_some_and(|t| t < cutoff);
-        if is_stale {
-            let _ = std::fs::remove_file(entry.path());
+        match probe_socket_liveness(&entry.path()) {
+            SocketLiveness::Live => {}
+            SocketLiveness::Dead => {
+                let _ = std::fs::remove_file(entry.path());
+            }
+            SocketLiveness::Unknown => {
+                let is_stale = entry
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .is_some_and(|t| t < cutoff);
+                if is_stale {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
         }
     }
 }

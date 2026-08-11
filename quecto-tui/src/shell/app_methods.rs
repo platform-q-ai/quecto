@@ -677,19 +677,11 @@ impl App {
             let _ = self.command_send_failure_tx.try_send(CommandSendFailure {
                 command: cmd,
                 error: e.to_string(),
+                connection: MASTER_CONNECTION_ID.to_string(),
             });
             return false;
         }
         true
-    }
-
-    pub(super) fn handle_command_send_failure(&mut self, failure: CommandSendFailure) {
-        let command_kind = failure.command.kind();
-        self.rollback_failed_history_command(&failure.command);
-        self.notify(
-            &format!("Failed to send {} command: {}", command_kind, failure.error),
-            NotifyLevel::Error,
-        );
     }
 
     // ── Mouse text selection (#528) ───────────────────────────────────

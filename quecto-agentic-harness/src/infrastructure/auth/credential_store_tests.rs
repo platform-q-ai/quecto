@@ -231,13 +231,18 @@ fn test_atomic_replacement_preserves_existing_credentials_until_rename() {
         "new-token",
         "the second store() call must be visible after atomic_write's rename"
     );
-    let entries: Vec<_> = std::fs::read_dir(tmp.path())
+    let mut entries: Vec<_> = std::fs::read_dir(tmp.path())
         .unwrap()
         .map(|e| e.unwrap().file_name())
         .collect();
+    entries.sort();
     assert_eq!(
         entries,
-        vec![std::ffi::OsString::from("credentials.json")],
+        vec![
+            std::ffi::OsString::from("credentials.json"),
+            // The cross-process lock sidecar (#1460) legitimately remains.
+            std::ffi::OsString::from("credentials.json.lock"),
+        ],
         "atomic_write must not leave its temp file behind after a successful rename"
     );
 }
@@ -294,10 +299,12 @@ fn test_credentials_permissions_enforced_on_every_write() {
 
 // ─── #1460: cross-process file lock around load-mutate-store ────────────────
 
-/// A store() must take the credentials lock file for the duration of its
-/// read-modify-write cycle, leaving the lock file on disk.
+/// A store() creates the lock file beside credentials.json and releases the
+/// lock when done: after store() returns, an exclusive non-blocking lock on
+/// the same file must succeed. Paired with the blocking test below, this
+/// pins acquire-and-release.
 #[test]
-fn test_store_creates_and_uses_lock_file() {
+fn test_store_creates_and_releases_lock_file() {
     let tmp = TempDir::new().unwrap();
     let store = CredentialStore::new(tmp.path());
 
@@ -310,6 +317,13 @@ fn test_store_creates_and_uses_lock_file() {
         "store() must guard its load-mutate-store cycle via the lock file {}",
         store.lock_path().display()
     );
+    let lock_file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(store.lock_path())
+        .unwrap();
+    lock_file
+        .try_lock()
+        .expect("store() must release the credentials lock when its write completes");
 }
 
 /// While another process (simulated: another file description in this

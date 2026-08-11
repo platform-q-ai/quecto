@@ -382,3 +382,61 @@ async fn save_clean_delta_with_zero_watermark_compacts() {
         .unwrap();
     assert!(raw.starts_with(r#"{"type":"snapshot""#), "raw={raw}");
 }
+
+// ─── #1460: session-key single-writer ownership on the write path ───────────
+
+/// Writing through the real store to a key whose stamped owner is another
+/// live process must be refused with an error naming the key and owner —
+/// the guard exists to protect this path, not only `acquire_as` in isolation.
+#[tokio::test]
+async fn save_to_key_owned_by_another_live_process_is_refused() {
+    let tmp = TempDir::new().unwrap();
+    let sessions_dir = tmp.path().join("sessions");
+    std::fs::create_dir_all(&sessions_dir).unwrap();
+    // Another live process (the test runner, our parent) owns the key.
+    let owner_pid = std::os::unix::process::parent_id();
+    let stamp = crate::infrastructure::persistence::session_ownership::ownership_stamp_path(
+        &sessions_dir,
+        "owned:elsewhere",
+    );
+    std::fs::write(&stamp, owner_pid.to_string()).unwrap();
+
+    let store = FileSessionStore::new(tmp.path());
+    let messages = vec![make_message(Role::User, "stolen turn")];
+    let err = store
+        .save_clean_delta("owned:elsewhere", &messages, 0, None)
+        .await
+        .expect_err("writing a key owned by another live process must be refused");
+    let err = err.to_string();
+    assert!(err.contains("owned:elsewhere"), "must name the key: {err}");
+    assert!(
+        err.contains(&owner_pid.to_string()),
+        "must name the owning pid: {err}"
+    );
+}
+
+/// A key stamped by a dead process is reclaimed transparently: the write
+/// succeeds and the stamp now records this process.
+#[tokio::test]
+async fn save_to_key_stamped_by_dead_process_reclaims_and_succeeds() {
+    let tmp = TempDir::new().unwrap();
+    let sessions_dir = tmp.path().join("sessions");
+    std::fs::create_dir_all(&sessions_dir).unwrap();
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let dead = child.id();
+    child.wait().unwrap();
+    let stamp = crate::infrastructure::persistence::session_ownership::ownership_stamp_path(
+        &sessions_dir,
+        "owned:dead",
+    );
+    std::fs::write(&stamp, dead.to_string()).unwrap();
+
+    let store = FileSessionStore::new(tmp.path());
+    let messages = vec![make_message(Role::User, "reclaimed")];
+    store
+        .save_clean_delta("owned:dead", &messages, 0, None)
+        .await
+        .expect("a key stamped by a dead process must be reclaimable");
+    let contents = std::fs::read_to_string(&stamp).unwrap();
+    assert!(contents.contains(&std::process::id().to_string()));
+}

@@ -633,15 +633,14 @@ fn test_bind_socket_mode_is_0600() {
 fn test_reap_stale_sockets_removes_old_files() {
     let dir = tempfile::tempdir().expect("tempdir");
 
-    // Create a file that looks like a stale quecto socket.
+    // A plain file at a quecto-agent path: nothing accepts, so it is dead.
     let stale = dir.path().join("quecto-agent-deadbeef.sock");
     std::fs::File::create(&stale).expect("create stale socket");
 
-    // Create a file that does NOT match the prefix — should be left alone.
+    // A file that does NOT match the prefix — should be left alone.
     let other = dir.path().join("other.sock");
     std::fs::File::create(&other).expect("create other");
 
-    // Reap with max_age = 0 so everything is "stale".
     reap_stale_sockets(dir.path(), std::time::Duration::ZERO);
 
     assert!(
@@ -649,18 +648,6 @@ fn test_reap_stale_sockets_removes_old_files() {
         "stale quecto socket should have been removed"
     );
     assert!(other.exists(), "non-quecto socket should be left alone");
-}
-
-#[test]
-fn test_reap_stale_sockets_leaves_fresh_files() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let fresh = dir.path().join("quecto-agent-fresh.sock");
-    std::fs::File::create(&fresh).expect("create fresh socket");
-
-    // Reap with max_age = 24h — a file just created is not stale.
-    reap_stale_sockets(dir.path(), std::time::Duration::from_secs(86_400));
-
-    assert!(fresh.exists(), "fresh socket should not be removed");
 }
 
 // ─── display_title presentation policy (moved out of persistence) ───────────

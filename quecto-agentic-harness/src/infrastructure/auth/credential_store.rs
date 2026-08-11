@@ -130,6 +130,38 @@ impl CredentialStore {
         std::path::PathBuf::from(os)
     }
 
+    /// Take the cross-process exclusive lock guarding load-mutate-store
+    /// cycles (#1460). Blocks until any other process's lock is released;
+    /// the lock is released when the returned handle is dropped.
+    fn lock_exclusive(&self) -> Result<std::fs::File, DomainError> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                DomainError::Config(format!("failed to create credentials dir: {}", e))
+            })?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(self.lock_path())
+            .map_err(|e| {
+                DomainError::Config(format!("failed to open credentials lock file: {}", e))
+            })?;
+        // flock(2) directly rather than `File::lock` (stable 1.89) to hold
+        // the workspace MSRV (1.85); std's implementation is flock on Linux,
+        // so the two interoperate.
+        // SAFETY: flock on a valid open fd, no other side effects.
+        let rc = unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&file), libc::LOCK_EX) };
+        if rc != 0 {
+            let e = std::io::Error::last_os_error();
+            return Err(DomainError::Config(format!(
+                "failed to lock credentials file: {}",
+                e
+            )));
+        }
+        Ok(file)
+    }
+
     /// Save all credentials to disk with restricted file permissions (0600).
     ///
     /// On Unix, writes the same-directory replacement file with mode 0o600 before
@@ -161,7 +193,12 @@ impl CredentialStore {
     }
 
     /// Store a credential for a provider.
+    ///
+    /// The whole load-mutate-store cycle runs under the cross-process
+    /// credentials lock (#1460): N agent processes refreshing tokens
+    /// concurrently serialize here instead of losing each other's writes.
     pub fn store(&self, credential: Credential) -> Result<(), DomainError> {
+        let _lock = self.lock_exclusive()?;
         let mut all = self.load_snapshot()?;
         all.insert(credential.provider.clone(), credential);
         self.save_all(&all)
@@ -182,6 +219,7 @@ impl CredentialStore {
     /// Remove a credential for a specific provider.
     /// Returns `true` if a credential was actually removed, `false` if none existed.
     pub fn remove(&self, provider: &str) -> Result<bool, DomainError> {
+        let _lock = self.lock_exclusive()?;
         let mut all = self.load_snapshot()?;
         let removed = all.remove(provider).is_some();
         self.save_all(&all)?;
@@ -190,6 +228,7 @@ impl CredentialStore {
 
     /// Remove all credentials.
     pub fn remove_all(&self) -> Result<(), DomainError> {
+        let _lock = self.lock_exclusive()?;
         self.save_all(&HashMap::new())
     }
 

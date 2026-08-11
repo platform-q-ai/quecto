@@ -643,8 +643,10 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     // Use --socket path if provided; otherwise auto-generate in $XDG_RUNTIME_DIR or temp.
     let socket_path = flags.socket_path.clone().unwrap_or_else(|| {
         let dir = crate::interface::shared::xdg_runtime_dir_or_temp();
-        // Best-effort: remove stale quecto-agent-*.sock files older than 24 h.
-        // Drop guards do not run on SIGKILL so stale sockets can accumulate.
+        // Best-effort: reap dead quecto-agent-*.sock files (connect-probed,
+        // #1460 — a live agent is never severed regardless of age; the 24 h
+        // threshold only gates files whose probe is inconclusive). Drop
+        // guards do not run on SIGKILL so dead sockets can accumulate.
         crate::interface::cli::uds::reap_stale_sockets(
             &dir,
             std::time::Duration::from_secs(86_400),

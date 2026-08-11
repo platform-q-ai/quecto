@@ -408,6 +408,7 @@ async fn failed_page_enqueue_rolls_back_the_pending_request() {
             before: Some("m3".into()),
         },
         error: "channel full".into(),
+        connection: MASTER_CONNECTION_ID.to_string(),
     });
 
     prime_active_viewport(h.app_mut());
@@ -445,6 +446,7 @@ async fn rollback_of_an_unrelated_page_id_is_a_no_op() {
             before: Some("m3".into()),
         },
         error: "channel full".into(),
+        connection: MASTER_CONNECTION_ID.to_string(),
     });
 
     prime_active_viewport(h.app_mut());

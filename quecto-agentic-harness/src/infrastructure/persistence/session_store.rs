@@ -14,6 +14,8 @@ use crate::domain::workflow::WorkflowRunPersisted;
 #[derive(Debug)]
 pub struct FileSessionStore {
     sessions_dir: PathBuf,
+    /// Cross-process single-writer ownership of session keys (#1460).
+    ownership: super::session_ownership::SessionOwnershipRegistry,
 }
 
 #[path = "session_store_records.rs"]
@@ -26,7 +28,13 @@ impl FileSessionStore {
     pub fn new(base_dir: impl AsRef<Path>) -> Self {
         Self {
             sessions_dir: base_dir.as_ref().join("sessions"),
+            ownership: super::session_ownership::SessionOwnershipRegistry::default(),
         }
+    }
+
+    /// Every write path claims cross-process ownership of `key` first (#1460).
+    fn claim_key(&self, key: &str) -> Result<(), DomainError> {
+        self.ownership.claim(&self.sessions_dir, key)
     }
 
     /// Convert a session key to a safe filename with `.json` extension.
@@ -48,6 +56,7 @@ impl FileSessionStore {
         previously_persisted: usize,
         workflow_run: Option<WorkflowRunPersisted>,
     ) -> Result<(), DomainError> {
+        self.claim_key(key)?;
         if messages.is_empty() && workflow_run.is_none() {
             return self.delete_session_file_if_present(key).await;
         }
@@ -116,6 +125,7 @@ impl SessionStore for FileSessionStore {
         let path = self.session_path(&session.key);
         let session = session.clone();
         Box::pin(async move {
+            self.claim_key(&session.key)?;
             if session.messages.is_empty() && session.workflow_run.is_none() {
                 return self.delete_session_file_if_present(&session.key).await;
             }
@@ -133,6 +143,7 @@ impl SessionStore for FileSessionStore {
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         let path = self.session_path(key);
         Box::pin(async move {
+            self.claim_key(key)?;
             if messages.is_empty() && workflow_run.is_none() {
                 return self.delete_session_file_if_present(key).await;
             }
