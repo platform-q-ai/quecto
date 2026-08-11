@@ -419,3 +419,106 @@ fn test_concurrent_stores_lose_no_tokens() {
         );
     }
 }
+
+// ─── #1460 review: rotation-aware refresh persistence ───────────────────────
+
+fn oauth_credential(provider: &str, token: &str, refresh: &str, expires_at: i64) -> Credential {
+    Credential {
+        provider: provider.to_string(),
+        token: token.to_string(),
+        method: AuthMethod::OAuth,
+        expires_at: Some(expires_at),
+        refresh_token: Some(refresh.to_string()),
+        account_id: None,
+    }
+}
+
+fn far_future() -> i64 {
+    crate::infrastructure::time::unix_timestamp_secs() + 3_600
+}
+
+/// The refresh path's normal case: the on-disk refresh token is still the one
+/// this refresh consumed, so the rotated credential is persisted.
+#[test]
+fn test_store_refreshed_persists_when_no_concurrent_rotation() {
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    store
+        .store(oauth_credential("anthropic", "at-old", "rt-1", 0))
+        .unwrap();
+
+    let refreshed = oauth_credential("anthropic", "at-new", "rt-2", far_future());
+    let authoritative = store.store_refreshed(refreshed, "rt-1").unwrap();
+
+    assert_eq!(authoritative.token, "at-new");
+    let on_disk = store.get("anthropic").unwrap().unwrap();
+    assert_eq!(on_disk.token, "at-new");
+    assert_eq!(on_disk.refresh_token.as_deref(), Some("rt-2"));
+}
+
+/// Lost-update guard: another process already rotated the token family (the
+/// on-disk refresh token no longer matches the one this refresh consumed and
+/// the on-disk credential is valid). The concurrent winner's credential must
+/// be kept — overwriting it would persist a competing/stale token family.
+#[test]
+fn test_store_refreshed_keeps_concurrently_rotated_credential() {
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    // Another agent's refresh landed first: rt-1 -> rt-other.
+    store
+        .store(oauth_credential(
+            "anthropic",
+            "at-other",
+            "rt-other",
+            far_future(),
+        ))
+        .unwrap();
+
+    // This agent also refreshed from rt-1, but lost the race.
+    let loser = oauth_credential("anthropic", "at-loser", "rt-loser", far_future());
+    let authoritative = store.store_refreshed(loser, "rt-1").unwrap();
+
+    assert_eq!(
+        authoritative.token, "at-other",
+        "the concurrent winner's credential is authoritative"
+    );
+    let on_disk = store.get("anthropic").unwrap().unwrap();
+    assert_eq!(on_disk.token, "at-other");
+    assert_eq!(on_disk.refresh_token.as_deref(), Some("rt-other"));
+}
+
+/// An expired on-disk credential never blocks a refresh persist, even when
+/// its refresh token differs (e.g. corrupt or ancient state).
+#[test]
+fn test_store_refreshed_overwrites_expired_mismatched_credential() {
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    store
+        .store(oauth_credential("anthropic", "at-stale", "rt-stale", 0))
+        .unwrap();
+
+    let refreshed = oauth_credential("anthropic", "at-new", "rt-new", far_future());
+    let authoritative = store.store_refreshed(refreshed, "rt-1").unwrap();
+
+    assert_eq!(authoritative.token, "at-new");
+    assert_eq!(store.get("anthropic").unwrap().unwrap().token, "at-new");
+}
+
+/// The credentials lock file itself must be owner-only: a world-readable
+/// lock file would let any co-resident user take the exclusive lock and
+/// wedge every credential write.
+#[test]
+fn test_lock_file_is_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    store
+        .store(make_credential("openai", "sk-test", AuthMethod::Token))
+        .unwrap();
+    let mode = std::fs::metadata(store.lock_path())
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600, "lock file must be 0600, got {mode:04o}");
+}

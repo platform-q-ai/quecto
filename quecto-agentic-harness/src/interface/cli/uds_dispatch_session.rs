@@ -183,6 +183,13 @@ pub(super) async fn handle_resume_session(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
+    // Refuse at open (#1460): resuming a key owned by another live process
+    // must fail before any turn runs against it.
+    if let Err(err) = ctx.session_store.claim(&new_key) {
+        let ev = AgentEvent::err(id, type_name, err.to_string());
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
     let loaded = match ctx.session_store.load(&new_key).await {
         Ok(Some(session)) => session,
         Ok(None) => {

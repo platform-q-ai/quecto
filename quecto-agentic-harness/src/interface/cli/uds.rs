@@ -26,6 +26,9 @@ type ExtRegistry = std::sync::Arc<
 >;
 pub use super::uds_lifecycle::{UdsLoopArgs, run_uds_loop};
 pub(crate) use super::uds_lifecycle::{inject_system_prompt, remove_injected_system_prompt};
+// `pub` (not `pub(crate)`) solely so the out-of-crate BDD suite can drive the
+// real reaper; hidden because it is not a supported library API.
+#[doc(hidden)]
 pub use super::uds_socket::reap_stale_sockets;
 pub(super) const MAX_FRAME_PAYLOAD_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 pub(super) fn is_cancel_command(trimmed: &str) -> bool {

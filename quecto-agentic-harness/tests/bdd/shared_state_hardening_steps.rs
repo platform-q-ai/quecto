@@ -1,7 +1,7 @@
 use super::*;
 
 use quecto::infrastructure::persistence::session_ownership::{
-    SessionOwnershipGuard, ownership_stamp_path,
+    SessionOwnershipGuard, open_stamp_file, ownership_stamp_path,
 };
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::interface::cli::uds::reap_stale_sockets;
@@ -29,13 +29,16 @@ pub struct HardeningState {
     pub cred_writer: Option<std::thread::JoinHandle<()>>,
     /// Session-ownership scenario state.
     pub own_dir: Option<TempDir>,
-    pub own_first_guard: Option<SessionOwnershipGuard>,
+    /// Simulated foreign owner: an independent file description holding the
+    /// exclusive lock, exactly as another live process would.
+    pub own_foreign_lock: Option<std::fs::File>,
     pub own_claim: Option<Result<SessionOwnershipGuard, DomainError>>,
     pub own_claimant_pid: Option<u32>,
     pub own_owner_pid: Option<u32>,
     pub own_key: Option<String>,
     /// Session-store write-path ownership scenario state.
     pub store_dir: Option<TempDir>,
+    pub store_lock: Option<std::fs::File>,
     pub store_save_result: Option<Result<(), DomainError>>,
 }
 
@@ -150,11 +153,7 @@ fn given_credentials_lock_held(world: &mut QuectoWorld) {
         .write(true)
         .open(store.lock_path())
         .expect("open lock file");
-    // flock(2) directly rather than `File::lock` (stable 1.89) to hold the
-    // workspace MSRV (1.85); std's implementation is flock on Linux.
-    // SAFETY: flock on a valid open fd, no other side effects.
-    let rc = unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&lock_file), libc::LOCK_EX) };
-    assert_eq!(rc, 0, "lock credentials lock file");
+    lock_file.lock().expect("lock credentials lock file");
     world.hardening.cred_lock = Some(lock_file);
     world.hardening.cred_dir = Some(dir);
 }
@@ -212,9 +211,7 @@ fn given_credential_write_blocked(world: &mut QuectoWorld, provider: String) {
 #[when("the credentials lock is released")]
 fn when_credentials_lock_released(world: &mut QuectoWorld) {
     let lock_file = world.hardening.cred_lock.take().expect("held lock");
-    // SAFETY: flock on a valid open fd, no other side effects.
-    let rc = unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&lock_file), libc::LOCK_UN) };
-    assert_eq!(rc, 0, "unlock credentials lock file");
+    lock_file.unlock().expect("unlock credentials lock file");
     drop(lock_file);
 }
 
@@ -265,12 +262,28 @@ fn own_dir(world: &mut QuectoWorld) -> PathBuf {
 #[given(expr = "session key {string} is owned by another live process")]
 fn given_session_owned_by_live_process(world: &mut QuectoWorld, key: String) {
     let dir = own_dir(world);
+    // Simulated other live process: an independently opened file description
+    // holding the exclusive lock (flock semantics are per open description,
+    // exactly as another process would hold it), stamped with the parent's
+    // (test runner's) pid so refusals name a pid that is not the claimant.
     let owner_pid = other_live_pid();
-    let guard = SessionOwnershipGuard::acquire_as(&dir, &key, owner_pid)
-        .expect("first ownership claim must succeed");
-    world.hardening.own_first_guard = Some(guard);
+    let file = hold_stamp_as(&dir, &key, owner_pid);
+    world.hardening.own_foreign_lock = Some(file);
     world.hardening.own_owner_pid = Some(owner_pid);
     world.hardening.own_key = Some(key);
+}
+
+/// Lock the ownership stamp for `key` via an independent file description and
+/// stamp it with `owner_pid`, simulating a claim held by another live process.
+fn hold_stamp_as(sessions_dir: &std::path::Path, key: &str, owner_pid: u32) -> std::fs::File {
+    use std::io::Write;
+    let file = open_stamp_file(sessions_dir, key).expect("open ownership stamp");
+    file.try_lock().expect("foreign owner lock must succeed");
+    file.set_len(0).expect("truncate stamp");
+    (&file)
+        .write_all(owner_pid.to_string().as_bytes())
+        .expect("write foreign owner pid");
+    file
 }
 
 #[given(expr = "session key {string} is stamped as owned by a dead process")]
@@ -284,9 +297,8 @@ fn given_session_stamped_by_dead_process(world: &mut QuectoWorld, key: String) {
 #[when(expr = "a second process claims ownership of session key {string}")]
 fn when_second_process_claims_key(world: &mut QuectoWorld, key: String) {
     let dir = own_dir(world);
-    let claimant_pid = std::process::id();
-    world.hardening.own_claimant_pid = Some(claimant_pid);
-    world.hardening.own_claim = Some(SessionOwnershipGuard::acquire_as(&dir, &key, claimant_pid));
+    world.hardening.own_claimant_pid = Some(std::process::id());
+    world.hardening.own_claim = Some(SessionOwnershipGuard::acquire(&dir, &key));
 }
 
 #[then("the ownership claim is refused with an error naming the key and owning process")]
@@ -336,8 +348,7 @@ fn given_store_key_owned_elsewhere(world: &mut QuectoWorld, key: String) {
     let sessions_dir = dir.path().join("sessions");
     std::fs::create_dir_all(&sessions_dir).expect("create sessions dir");
     let owner_pid = other_live_pid();
-    let stamp = ownership_stamp_path(&sessions_dir, &key);
-    std::fs::write(&stamp, owner_pid.to_string()).expect("write ownership stamp");
+    world.hardening.store_lock = Some(hold_stamp_as(&sessions_dir, &key, owner_pid));
     world.hardening.own_owner_pid = Some(owner_pid);
     world.hardening.own_key = Some(key);
     world.hardening.store_dir = Some(dir);

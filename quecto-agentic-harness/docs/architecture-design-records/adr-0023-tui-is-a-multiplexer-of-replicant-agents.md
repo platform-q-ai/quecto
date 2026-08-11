@@ -51,16 +51,22 @@ exit). The agent detaches from the TUI's lifetime:
 **Cross-process shared-state invariants** (implemented by #1460, phase 0):
 
 - **Session single-writer ownership.** A session key has exactly one writing
-  process, claimed via a pid-stamp sidecar next to the session file. A second
-  process opening/resuming an owned key is refused with an explicit error
-  naming the key and owning pid; a stamp left by a dead process is reclaimed.
+  process, claimed via an exclusive OS lock (`flock(2)`) held on a stamp
+  sidecar next to the session file for the owner's lifetime. A second process
+  opening/resuming an owned key is refused at open time with an explicit
+  error naming the key and stamped owner pid; the kernel releases the lock on
+  process death, so a crash (even SIGKILL) can never strand a key and pid
+  recycling can never fake a live owner.
 - **Credentials locking.** Every `credentials.json` load-mutate-store cycle
   runs under a cross-process lock file (`credentials.json.lock`), so N agents
   refreshing a rotating token serialize instead of losing each other's writes.
-- **Liveness-probed reaping.** Stale-socket cleanup probes each
-  `quecto-agent-*.sock` with a connect before unlinking; a socket that accepts
-  is never reaped regardless of mtime (which is fixed at bind time), and a
-  socket that refuses is dead regardless of freshness.
+- **Liveness-probed reaping.** Stale-socket cleanup checks each
+  `quecto-agent-*.sock` against the kernel's unix-socket table before
+  unlinking; a path with a live bound endpoint is never reaped regardless of
+  mtime (which is fixed at bind time), and one without is dead regardless of
+  freshness. Probing by connecting is deliberately avoided: a probe connect
+  is indistinguishable from a client attach and would trip the
+  last-client-gone shutdown of a live non-persist agent.
 
 ## Consequences
 

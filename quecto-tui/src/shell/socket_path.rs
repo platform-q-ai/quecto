@@ -43,9 +43,7 @@ pub(crate) fn validate_socket_path(path: &Path) -> Result<(), String> {
             parent.display()
         )
     })?;
-    let allowed_roots = canonical_allowed_socket_roots();
-
-    if allowed_roots
+    if cached_socket_roots()
         .iter()
         .any(|prefix| canonical_parent.starts_with(prefix))
     {
@@ -66,6 +64,16 @@ pub(crate) fn usable_socket_path(path: Option<&str>) -> bool {
         let p = p.trim();
         !p.is_empty() && validate_socket_path(Path::new(p)).is_ok()
     })
+}
+
+/// Allowed roots, computed once per process. The roots depend only on the
+/// process environment, which the TUI never mutates, and canonicalizing them
+/// costs several syscalls (potentially slow on a networked `$HOME`);
+/// `usable_socket_path` runs per subagent per roster event on the event
+/// loop, so the list must not be recomputed per call (#1468 review).
+fn cached_socket_roots() -> &'static [PathBuf] {
+    static ROOTS: std::sync::OnceLock<Vec<PathBuf>> = std::sync::OnceLock::new();
+    ROOTS.get_or_init(canonical_allowed_socket_roots)
 }
 
 pub(crate) fn canonical_allowed_socket_roots() -> Vec<PathBuf> {

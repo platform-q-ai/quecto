@@ -67,6 +67,15 @@ impl Session {
 
 /// Port: persistent storage for conversation sessions.
 pub trait SessionStore: Send + Sync {
+    /// Claim single-writer ownership of `key` before opening or resuming it
+    /// for writing (#1460): a key owned by another live process must be
+    /// refused HERE, at open time, not only when the first turn is saved —
+    /// otherwise a whole paid turn can run before the conflict surfaces.
+    /// Default is a no-op for stores without cross-process shared state.
+    fn claim(&self, _key: &str) -> Result<(), DomainError> {
+        Ok(())
+    }
+
     /// Load a session by key. Returns None if no session exists.
     fn load(
         &self,

@@ -328,10 +328,16 @@ fn persist_refreshed_token(
                 refresh_token: Some(effective_refresh),
                 account_id,
             };
-            if let Err(e) = store.store(new_cred) {
-                tracing::warn!("failed to persist refreshed token for {}: {}", provider, e);
+            // Rotation-aware persist: if another agent process refreshed
+            // concurrently (its rotated refresh token is already on disk),
+            // keep its credential instead of overwriting it (#1460 review).
+            match store.store_refreshed(new_cred, previous_refresh_token) {
+                Ok(authoritative) => Some(authoritative.token),
+                Err(e) => {
+                    tracing::warn!("failed to persist refreshed token for {}: {}", provider, e);
+                    Some(token_resp.access_token)
+                }
             }
-            Some(token_resp.access_token)
         }
         Err(e) => {
             tracing::warn!("failed to refresh OAuth token for {}: {}", provider, e);

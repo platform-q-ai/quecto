@@ -385,21 +385,29 @@ async fn save_clean_delta_with_zero_watermark_compacts() {
 
 // ─── #1460: session-key single-writer ownership on the write path ───────────
 
-/// Writing through the real store to a key whose stamped owner is another
+/// Writing through the real store to a key whose lock is held by another
 /// live process must be refused with an error naming the key and owner —
-/// the guard exists to protect this path, not only `acquire_as` in isolation.
+/// the guard exists to protect this path, not only `acquire` in isolation.
 #[tokio::test]
 async fn save_to_key_owned_by_another_live_process_is_refused() {
+    use std::io::Write;
+
     let tmp = TempDir::new().unwrap();
     let sessions_dir = tmp.path().join("sessions");
     std::fs::create_dir_all(&sessions_dir).unwrap();
-    // Another live process (the test runner, our parent) owns the key.
+    // Simulated other live process: an independently opened file description
+    // holding the exclusive lock, stamped with the parent's (test runner's)
+    // pid so the refusal message names a pid that is not this process.
     let owner_pid = std::os::unix::process::parent_id();
-    let stamp = crate::infrastructure::persistence::session_ownership::ownership_stamp_path(
+    let lock_file = crate::infrastructure::persistence::session_ownership::open_stamp_file(
         &sessions_dir,
         "owned:elsewhere",
-    );
-    std::fs::write(&stamp, owner_pid.to_string()).unwrap();
+    )
+    .unwrap();
+    lock_file.try_lock().unwrap();
+    (&lock_file)
+        .write_all(owner_pid.to_string().as_bytes())
+        .unwrap();
 
     let store = FileSessionStore::new(tmp.path());
     let messages = vec![make_message(Role::User, "stolen turn")];
