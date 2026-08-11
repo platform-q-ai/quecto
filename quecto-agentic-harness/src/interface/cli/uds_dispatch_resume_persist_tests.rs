@@ -9,10 +9,12 @@ use super::{dispatch_command, handle_resume_session, persist_current_session};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::context_pruning::build_manifest_text;
 use crate::domain::error::DomainError;
+use crate::domain::ids::AgentUuid;
 use crate::domain::message::{LlmResponse, Message, Role, ToolCall};
 use crate::domain::provider::{ChatRequest, LlmProvider};
-use crate::domain::session::{Session, SessionStore};
+use crate::domain::session::{Session, SessionStore, SubagentLiveness};
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::{inject_system_prompt, remove_injected_system_prompt};
 use crate::interface::cli::uds_session::{HISTORY_PAGE_SIZE, messages_page_json};
@@ -31,6 +33,41 @@ fn durable_contents(messages: &[Message]) -> Vec<&str> {
         .filter(|m| m.role != Role::System)
         .map(|m| m.content.as_str())
         .collect()
+}
+
+#[tokio::test]
+async fn prompt_persists_current_subagent_roster_before_assistant_reply() {
+    let mut fx = Fixture::new();
+    let registry = new_registry();
+    {
+        let mut entries = registry.lock().unwrap();
+        let mut entry = SubagentEntry::with_identity(
+            AgentUuid::from("child-a".to_string()),
+            "child-a".to_string(),
+            "/tmp/child-a.sock".into(),
+            123,
+        );
+        entry.persisted_liveness = SubagentLiveness::Detached;
+        entries.insert("child-a".to_string(), entry);
+    }
+    {
+        let mut ctx = fx.ctx();
+        ctx.subagent_registry = Some(registry);
+        let prompt = crate::domain::message::Message::user("run after spawn");
+        super::persist_user_prompt_before_run(&mut ctx, &prompt)
+            .await
+            .unwrap();
+    }
+
+    let loaded = fx.store.load("cli:test").await.unwrap().unwrap();
+    assert_eq!(loaded.messages.len(), 1);
+    assert_eq!(loaded.messages[0].content, "run after spawn");
+    assert_eq!(loaded.subagent_roster.len(), 1);
+    assert_eq!(loaded.subagent_roster[0].agent_uuid, "child-a");
+    assert_eq!(
+        loaded.subagent_roster[0].liveness,
+        SubagentLiveness::Detached
+    );
 }
 
 #[tokio::test]
