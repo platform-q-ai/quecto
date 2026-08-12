@@ -1220,7 +1220,12 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// forwards `Event`s), so its `Client`/`Command`/`Event` references plus the
 /// harness fan-in drivers in `shell/tui_harness_sourced.rs` are documented
 /// seam usage, not feature/view growth (116 → 124).
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 124;
+/// PR #1470 review round 1 folds the fan-in payload into `SourcedEvent`
+/// variants (impossible states unrepresentable) and adds the dedicated tab
+/// fan-in arm: the same seam files mention `Event` at each variant/match
+/// site instead of one `Option<Event>` alias — seam usage, not feature/view
+/// growth (124 → 134).
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 134;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///
