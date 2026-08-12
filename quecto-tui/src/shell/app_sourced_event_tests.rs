@@ -298,23 +298,20 @@ async fn route_sourced_closed_sentinel_paints_immediately() {
 // events. This drives the REAL event loop and lets IT deliver the item.
 
 #[tokio::test]
-async fn run_select_loop_drains_shared_fan_in_even_when_disconnected() {
+async fn run_select_loop_drains_tab_fan_in_even_when_disconnected() {
     let mut h = TuiHarness::new().await;
-    // Pre-flip the flag the deleted arm used to be gated on: the fan-in arm
-    // must be unconditional, or the Closed sentinel itself could never be
-    // drained after a disconnect.
+    // Pre-flip the flag the deleted `client.recv()` arm used to be gated on,
+    // then drive the item through the REAL master wire so it travels client
+    // reader → feed task → `tab_event_tx` → the dedicated tab select arm —
+    // the actual replacement for that gated arm (#1470 review). Injecting a
+    // hand-built `SourcedEvent` on the sub-agent channel would instead drain
+    // through the always-unconditional sub-agent arm and never exercise the
+    // tab arm, so re-gating the tab arm on `agent_connected` (which would
+    // starve the master feed and the `Closed` sentinel after a disconnect)
+    // would ship uncaught. Driving the tab arm here makes that regression fail.
     h.app_mut().agent_connected = false;
-    h.app_mut()
-        .subagents
-        .event_tx
-        .send(SourcedEvent::Tab(
-            TabId::MASTER,
-            Event::Token {
-                token: "fan-in-run-token".into(),
-            },
-        ))
-        .await
-        .expect("queue a fan-in item before run()");
+    h.send_agent_event_line("{\"type\":\"token\",\"token\":\"tab-arm-disconnected-token\"}")
+        .await;
 
     // run() never exits on its own here; give the loop a moment to select
     // the queued item, then drop the future.
@@ -322,8 +319,9 @@ async fn run_select_loop_drains_shared_fan_in_even_when_disconnected() {
 
     h.capture();
     assert!(
-        h.full_frame().contains("fan-in-run-token"),
-        "run()'s select loop must drain the shared fan-in unconditionally (#1462)"
+        h.full_frame().contains("tab-arm-disconnected-token"),
+        "run()'s select loop must drain the dedicated tab fan-in unconditionally, \
+         even while disconnected (#1470)"
     );
 }
 

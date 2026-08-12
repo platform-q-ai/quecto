@@ -50,8 +50,9 @@ pub struct App {
     terminal: Terminal,
     renderer: DiffRenderer<std::io::Stdout>,
     /// The master agent connection behind its feed task (#1462): the feed
-    /// task owns the [`Client`] and forwards events into the shared fan-in
-    /// (`subagents.event_tx`); the app holds only this command/state handle.
+    /// task owns the [`Client`] and forwards events into the dedicated master
+    /// fan-in (`tab_event_tx`, drained by the `tab_event_rx` select arm); the
+    /// app holds only this command/state handle.
     connection: crate::shell::connection::Connection,
     editor: Editor,
     /// The master agent's own session, modeled as just another [`SessionView`]
@@ -369,6 +370,8 @@ mod app_subagent_panel;
 mod app_subagent_panel_rows;
 #[path = "app_submit.rs"]
 mod app_submit;
+#[path = "app_time.rs"]
+mod app_time;
 use crate::agents::roster::{
     gc_exited_subagents, next_exited_subagent_gc_deadline, subagent_status_is_active,
 };

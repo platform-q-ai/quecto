@@ -10,56 +10,14 @@ use crate::components::select_overlay::{
 use crate::components::theme;
 use crate::protocol::session_payloads;
 
-/// Format a Unix timestamp as `YYYY-MM-DD HH:MM` in **local** time, falling
-/// back to UTC if the platform's local-time conversion is unavailable.
-fn format_unix_minutes(secs: u64) -> String {
-    format_local_minutes(secs).unwrap_or_else(|| format_utc_minutes(secs))
-}
-
-/// Local time via `libc::localtime_r`. Returns `None` if the conversion fails.
-fn format_local_minutes(secs: u64) -> Option<String> {
-    let t = secs.try_into().ok()?;
-    // SAFETY: `libc::tm` is plain-old-data; an all-zero value is a valid initial state for libc to fill.
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    // SAFETY: `&t`/`&mut tm` point to live locals; localtime_r fills `tm` and returns null on failure (checked next).
-    if unsafe { libc::localtime_r(&t, &mut tm) }.is_null() {
-        return None;
-    }
-    Some(format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}",
-        tm.tm_year + 1900,
-        tm.tm_mon + 1,
-        tm.tm_mday,
-        tm.tm_hour,
-        tm.tm_min
-    ))
-}
-
-/// UTC fallback (pure arithmetic) when local-time conversion is unavailable.
-pub(super) fn format_utc_minutes(secs: u64) -> String {
-    let secs = secs as i64;
-    let days = secs.div_euclid(86_400);
-    let mut rem = secs.rem_euclid(86_400);
-    let hour = rem / 3_600;
-    rem %= 3_600;
-    let minute = rem / 60;
-    let (year, month, day) = civil_from_days(days);
-    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
-}
-
-pub(super) fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = mp + if mp < 10 { 3 } else { -9 };
-    let year = y + if m <= 2 { 1 } else { 0 };
-    (year, m as u32, d as u32)
-}
+// Wall-clock formatting helpers live in `app_time` (this module is at the
+// source line cap); re-exported so `app_methods::format_utc_minutes` and the
+// internal `format_unix_minutes` call sites stay put.
+use super::app_time::format_unix_minutes;
+// Only the unit tests reference these through `app_methods::…`; production reads
+// go straight to `app_time` (via `format_unix_minutes`), so gate the re-export.
+#[cfg(test)]
+pub(super) use super::app_time::{civil_from_days, format_utc_minutes};
 
 impl App {
     // ── Slash command handlers ─────────────────────────────────────────
@@ -640,23 +598,29 @@ impl App {
 
     /// Reset the conversation — clears agent history, chat UI, and context display.
     pub(super) fn reset_session(&mut self, message: &str) {
-        self.send_new_session();
+        // A dead connection would clear the transcript and flash a false "new
+        // session" success while NewSession vanished into the writer that
+        // outlives the closed stream — refuse and surface the disconnect (#1470).
+        if !self.send_new_session() {
+            self.notify("Agent disconnected — session not reset", NotifyLevel::Error);
+            return;
+        }
         self.master_session.chat.clear();
         // Invalidate in-flight ref recovery so a late get_message from the OLD
         // transcript can't splice into the cleared /clear-or-/new session (#1060 r4).
         self.clear_message_recovery();
         self.master_session.footer.set_context(None, 0);
         self.sessions.context_stats_requested = false;
-        // The agent resets session-scoped state (e.g. the effort override,
-        // #1067) on new_session; re-fetch so the footer tracks it. Commands
-        // are dispatched in order, so this get_state observes the fresh
-        // session.
+        // The agent resets session-scoped state (e.g. the effort override, #1067)
+        // on new_session; re-fetch so the footer tracks it (commands dispatch in
+        // order, so this get_state observes the fresh session).
         self.send_state_resync();
         self.notify(message, NotifyLevel::Success);
     }
 
-    pub(super) fn send_new_session(&mut self) {
-        self.send_command(Command::NewSession { id: None });
+    /// Request a fresh agent session; false when the connection is dead (#1470).
+    pub(super) fn send_new_session(&mut self) -> bool {
+        self.send_command(Command::NewSession { id: None })
     }
 
     #[cfg(test)]
@@ -667,11 +631,16 @@ impl App {
     // ── Command sending ───────────────────────────────────────────────
 
     pub(super) fn send_command(&mut self, cmd: Command) -> bool {
-        // Enqueue synchronously, in call order, onto the client's FIFO writer
-        // channel. A previous `tokio::spawn` per command let detached tasks
-        // race to enqueue, so recovery/reset bursts could reach the agent
-        // reordered — or look incomplete to an observer draining mid-batch
-        // (#1060 review).
+        // Refuse a known-dead connection: the writer channel outlives the closed
+        // event stream, so `try_send` would return `Ok` and the command vanish
+        // into a dead socket. Bail silently and return false — callers that show
+        // user feedback (e.g. `reset_session`) act on that (#1470 review).
+        if !self.agent_connected {
+            return false;
+        }
+        // Enqueue synchronously in call order onto the client's FIFO writer; a
+        // prior per-command `tokio::spawn` let bursts reach the agent reordered
+        // or look incomplete to an observer draining mid-batch (#1060 review).
         if let Err(e) = self.connection.try_send(&cmd) {
             // Roll back synchronously: the diagnostic side channel below is
             // best-effort, and if its receiver is gone we must not leave

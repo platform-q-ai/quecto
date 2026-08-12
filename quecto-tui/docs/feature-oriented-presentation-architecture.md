@@ -343,6 +343,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_selection.rs` | `shell` focus/selection routing (relocated, #1257 Phase 6) |
 | `shell/app_stdin.rs` | `shell` stdin coordination (relocated, #1257 Phase 6) |
 | `shell/app_submit.rs` | `shell` submit/prompt coordination (relocated, #1257 Phase 6) |
+| `shell/app_time.rs` | `shell` wall-clock formatting helpers (line-count split from `app_methods.rs`, #1470 review) |
 | `shell/child_watch.rs` | `shell` runtime supervision (relocated, #1257 Phase 1) |
 | `shell/cli.rs` | `shell` CLI entry (relocated, #1257 Phase 1) |
 | `shell/connection.rs` | `shell` master-connection feed task and `Source`-keyed fan-in seam (#1462) |

@@ -4,7 +4,9 @@
 //! carries the child's exit diagnosis.
 
 use super::tui_harness::TuiHarness;
+use crate::components::chat::ChatEntry;
 use crate::components::component::Component;
+use crate::protocol::client::Command;
 
 /// #1047 AC2: once connected, the persistent left panel must survive an agent
 /// disconnect (shown in a "disconnected" state) rather than vanishing, so the
@@ -143,5 +145,50 @@ async fn oversized_event_drop_is_surfaced_as_notification() {
     assert!(
         !app.surface_dropped_oversized_events(),
         "the same drop must not be surfaced twice"
+    );
+}
+
+/// #1470 review: once the master stream closes, `/new` and `/clear` must not
+/// clear the transcript or flash a misleading "session started" success — the
+/// NewSession command would vanish into the writer channel that outlives the
+/// closed event stream. The reset must refuse and surface the disconnect.
+#[tokio::test]
+async fn reset_session_refuses_and_warns_when_disconnected() {
+    let mut h = TuiHarness::new().await;
+    let a = h.app_mut();
+    a.master_session.chat.add_entry(ChatEntry::User {
+        text: "keep me".into(),
+    });
+    a.agent_connected = false;
+
+    a.reset_session("New session started");
+
+    assert!(
+        a.master_session.chat.entry_count() > 0,
+        "a disconnected reset must not clear the transcript"
+    );
+    let msgs = a.notifications.messages();
+    assert!(
+        msgs.iter().any(|m| m.contains("disconnected")),
+        "a disconnected reset must warn, got {msgs:?}"
+    );
+    assert!(
+        !msgs.iter().any(|m| m.contains("New session started")),
+        "a disconnected reset must not claim success, got {msgs:?}"
+    );
+}
+
+/// #1470 review: the writer channel outlives the closed event stream, so a raw
+/// `try_send` returns `Ok` against a dead socket. `send_command` must refuse up
+/// front so post-disconnect commands (/session, /resume, /model, toggles)
+/// cannot silently vanish into the dead connection.
+#[tokio::test]
+async fn send_command_refuses_when_disconnected() {
+    let mut h = TuiHarness::new().await;
+    let a = h.app_mut();
+    a.agent_connected = false;
+    assert!(
+        !a.send_command(Command::NewSession { id: None }),
+        "a known-dead connection must refuse the enqueue"
     );
 }
