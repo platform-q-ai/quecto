@@ -666,8 +666,7 @@ impl Client {
     pub fn dropped_oversized_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicU64> {
         std::sync::Arc::clone(&self.dropped_oversized)
     }
-    /// Reader's oversized-line drop count (#1047). Tests only — production
-    /// reads go through [`Self::dropped_oversized_handle`] (#1470 review).
+    /// Test-only drop count; production uses [`Self::dropped_oversized_handle`].
     #[cfg(any(test, feature = "test-harness"))]
     pub fn dropped_oversized_events(&self) -> u64 {
         self.dropped_oversized
