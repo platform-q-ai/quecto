@@ -1,31 +1,6 @@
 use super::*;
 
-pub(crate) fn usable_socket_path(path: Option<&str>) -> bool {
-    path.is_some_and(|p| {
-        let p = p.trim();
-        let path = std::path::Path::new(p);
-        if p.is_empty()
-            || !path.is_absolute()
-            || path
-                .components()
-                .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
-            return false;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::FileTypeExt;
-            let Ok(metadata) = std::fs::symlink_metadata(path) else {
-                return false;
-            };
-            metadata.file_type().is_socket() && !metadata.file_type().is_symlink()
-        }
-        #[cfg(not(unix))]
-        {
-            true
-        }
-    })
-}
+use crate::shell::socket_path::usable_socket_path;
 
 /// Grace window during which an unconfirmed optimistic subagent entry (created
 /// from the spawn ToolStart, before the kernel registers the child) survives a
@@ -43,11 +18,13 @@ impl App {
         self.subagents.tracked.clear();
         self.subagents.sessions.clear();
         self.subagents.session_order.clear();
-        self.subagents.feeds.clear();
+        for (_, feed) in std::mem::take(&mut self.subagents.feeds) {
+            feed.handle.abort();
+        }
         self.subagents.active_agent_id = None;
-        self.subagents.awaited_agent_id = None;
         self.subagents.selected_environment = None;
         self.subagents.panel_nav = crate::components::list_navigator::ListNavigator::new();
+        self.subagents.panel_nav_key = Some("master".to_string());
         self.notify("Deleting all subagents", NotifyLevel::Info);
     }
 
@@ -97,11 +74,23 @@ impl App {
             }
         });
 
+        for pending in self.pending_message_recovery.values_mut() {
+            if pending.agent_id.as_deref() == Some(from) {
+                pending.agent_id = Some(to.to_string());
+            }
+        }
+        for batch in self.message_recovery_batches.values_mut() {
+            if batch.agent_id.as_deref() == Some(from) {
+                batch.agent_id = Some(to.to_string());
+            }
+        }
+
         if self.subagents.active_agent_id.as_deref() == Some(from) {
             self.subagents.active_agent_id = Some(to.to_string());
         }
-        if self.subagents.awaited_agent_id.as_deref() == Some(from) {
-            self.subagents.awaited_agent_id = Some(to.to_string());
+        let from_key = format!("agent:{from}");
+        if self.subagents.panel_nav_key.as_deref() == Some(from_key.as_str()) {
+            self.subagents.panel_nav_key = Some(format!("agent:{to}"));
         }
 
         self.sync_panel_selection_to_active();

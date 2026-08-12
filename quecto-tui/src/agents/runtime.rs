@@ -12,4 +12,5 @@ use tokio::sync::mpsc;
 pub(crate) struct FeedRuntime {
     pub(crate) cmd_tx: mpsc::Sender<Command>,
     pub(crate) handle: tokio::task::JoinHandle<()>,
+    pub(crate) inspection_only: bool,
 }

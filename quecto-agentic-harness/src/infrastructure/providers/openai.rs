@@ -2,10 +2,45 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+
+struct AbortOnDrop<T> {
+    handle: Option<tokio::task::JoinHandle<T>>,
+}
+
+impl<T> AbortOnDrop<T> {
+    fn new(handle: tokio::task::JoinHandle<T>) -> Self {
+        Self {
+            handle: Some(handle),
+        }
+    }
+}
+
+impl<T> Future for AbortOnDrop<T> {
+    type Output = Result<T, tokio::task::JoinError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let handle = self
+            .handle
+            .as_mut()
+            .expect("AbortOnDrop polled after completion");
+        Pin::new(handle).poll(cx)
+    }
+}
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        if let Some(handle) = &self.handle {
+            if !handle.is_finished() {
+                handle.abort();
+            }
+        }
+    }
+}
 
 /// OpenAI-compatible LLM provider.
 #[derive(Debug, Clone)]
@@ -245,14 +280,32 @@ impl OpenAiProvider {
             )));
         }
 
-        let full = response
-            .text()
-            .await
-            .map_err(|e| DomainError::Provider(format!("failed to read stream: {}", e)))?;
-
-        Self::parse_sse_response(&full)
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let pump = AbortOnDrop::new(tokio::spawn(openai_sse::pump_sse_response(response, tx)));
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::Done(response) => {
+                    let _ = pump.await;
+                    return Ok(response);
+                }
+                StreamEvent::Error(error) => {
+                    let _ = pump.await;
+                    return Err(DomainError::Provider(error));
+                }
+                StreamEvent::TextDelta(_)
+                | StreamEvent::ThinkingDelta(_)
+                | StreamEvent::ToolCallStart { .. }
+                | StreamEvent::ToolCallDelta(_)
+                | StreamEvent::ToolCallEnd { .. } => {}
+            }
+        }
+        let _ = pump.await;
+        Err(DomainError::Provider(
+            "OpenAI SSE stream ended without completion".to_string(),
+        ))
     }
 
+    #[cfg(test)]
     fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> {
         openai_sse_parser::parse_sse_response(raw)
     }
@@ -301,7 +354,7 @@ impl OpenAiProvider {
         delta: &serde_json::Value,
         content: &mut String,
         tool_calls: &mut Vec<ToolCall>,
-    ) {
+    ) -> Result<(), DomainError> {
         openai_sse_parser::apply_delta(delta, content, tool_calls)
     }
 }

@@ -1,3 +1,4 @@
+use crate::domain::session::PersistedSubagentRosterEntry;
 use crate::domain::workflow::WorkflowRunPersisted;
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -6,6 +7,8 @@ pub(super) struct SessionFile {
     pub(super) messages: Vec<MessageRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) workflow_run: Option<WorkflowRunPersisted>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) subagent_roster: Vec<PersistedSubagentRosterEntry>,
 }
 
 #[derive(serde::Serialize)]
@@ -14,6 +17,8 @@ pub(super) struct SessionFileRef<'a> {
     pub(super) messages: Vec<MessageRecordRef<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) workflow_run: Option<&'a WorkflowRunPersisted>,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    pub(super) subagent_roster: &'a [PersistedSubagentRosterEntry],
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -30,6 +35,8 @@ pub(super) enum SessionRecord {
         workflow_run: Option<WorkflowRunPersisted>,
         #[serde(default, skip_serializing_if = "skip_if_false")]
         workflow_run_cleared: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subagent_roster: Option<Vec<PersistedSubagentRosterEntry>>,
     },
 }
 
@@ -47,6 +54,8 @@ pub(super) enum SessionRecordRef<'a> {
         workflow_run: Option<&'a WorkflowRunPersisted>,
         #[serde(skip_serializing_if = "skip_if_false")]
         workflow_run_cleared: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        subagent_roster: Option<&'a [PersistedSubagentRosterEntry]>,
     },
 }
 

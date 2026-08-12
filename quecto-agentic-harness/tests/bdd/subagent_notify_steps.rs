@@ -76,7 +76,10 @@ fn given_errored_notification(world: &mut QuectoWorld, agent_id: String, error: 
 
 #[given(expr = "an Exited notification for agent {string}")]
 fn given_exited_notification(world: &mut QuectoWorld, agent_id: String) {
-    let notif = SubagentNotification::Exited { agent_id };
+    let notif = SubagentNotification::Exited {
+        agent_id,
+        reason: None,
+    };
     world.notify_message = Some(notif.to_message());
 }
 
@@ -95,6 +98,7 @@ fn given_channel_with_pending(world: &mut QuectoWorld, count: i32) {
             i as u64,
             SubagentNotification::Exited {
                 agent_id: format!("bot-{}", i),
+                reason: None,
             },
         ));
     }
@@ -195,6 +199,7 @@ fn then_channel_bounded(world: &mut QuectoWorld) {
         65,
         SubagentNotification::Exited {
             agent_id: "overflow".into(),
+            reason: None,
         },
     ));
     assert!(result.is_err(), "expected channel full, but send succeeded");
@@ -233,7 +238,7 @@ fn then_exited_notification(world: &mut QuectoWorld, expected_id: String) {
     let mut rx = world.notify_rx.take().expect("no notify rx");
     let notif = rx.try_recv().expect("no notification received");
     match notif.notification {
-        SubagentNotification::Exited { agent_id } => {
+        SubagentNotification::Exited { agent_id, .. } => {
             assert_eq!(agent_id, expected_id);
         }
         other => panic!("expected Exited, got: {:?}", other),
@@ -251,7 +256,7 @@ fn then_no_notification(world: &mut QuectoWorld) {
 }
 
 // ===========================================================================
-// #816: auto-await — completion notes surface at the parent's idle boundary
+// #816: passive completion notes surface at the parent's idle boundary
 // ===========================================================================
 
 /// Next monotonic completion sequence for `agent_id` — kept here, out of the

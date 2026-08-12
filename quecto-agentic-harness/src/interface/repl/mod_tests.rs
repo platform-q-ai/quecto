@@ -51,7 +51,7 @@ fn test_load_session_messages_ephemeral_returns_empty() {
     let rt = build_repl_runtime().unwrap();
     let tmp = tempfile::TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-    let messages = load_session_messages_with_rt(&rt, &store, "any_key", true);
+    let messages = load_session_messages_with_rt(&rt, &store, "any_key", true).unwrap();
     assert!(messages.is_empty());
 }
 
@@ -60,7 +60,7 @@ fn test_load_session_messages_no_session_returns_empty() {
     let rt = build_repl_runtime().unwrap();
     let tmp = tempfile::TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-    let messages = load_session_messages_with_rt(&rt, &store, "nonexistent", false);
+    let messages = load_session_messages_with_rt(&rt, &store, "nonexistent", false).unwrap();
     assert!(messages.is_empty());
 }
 
@@ -74,9 +74,10 @@ fn test_load_session_messages_existing_session() {
         key: "test:key".to_string(),
         messages: vec![Message::user("hello")],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     rt.block_on(store.save(&session)).unwrap();
-    let messages = load_session_messages_with_rt(&rt, &store, "test:key", false);
+    let messages = load_session_messages_with_rt(&rt, &store, "test:key", false).unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].content, "hello");
 }

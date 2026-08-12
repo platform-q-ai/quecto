@@ -9,6 +9,7 @@ pub mod set_effort;
 pub mod set_model;
 pub mod set_tool_policy;
 pub mod steer;
+pub mod sync_ledger;
 pub mod tools;
 
 #[cfg(test)]

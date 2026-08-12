@@ -11,7 +11,11 @@ pub(super) fn rewind_preview(content: &str) -> String {
 impl App {
     pub(super) fn next_rewind_request_id(&mut self, kind: &str) -> String {
         self.rewind.request_seq = self.rewind.request_seq.wrapping_add(1);
-        format!("rewind-{kind}-{}", self.rewind.request_seq)
+        format!(
+            "rewind-{kind}-{}-{}",
+            super::app_events::uuid_like(),
+            self.rewind.request_seq
+        )
     }
 
     pub(super) fn handle_idle_escape_for_rewind(&mut self) {
@@ -25,6 +29,7 @@ impl App {
             let id = self.next_rewind_request_id("open");
             self.rewind.pending_open_id = Some(id.clone());
             self.send_command(Command::GetMessages {
+                agent_id: None,
                 id: Some(id),
                 before: None,
             });

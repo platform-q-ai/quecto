@@ -22,6 +22,7 @@ fn given_bar_with_agents(world: &mut QuectoWorld, step: &cucumber::gherkin::Step
             display_name: None,
             agent_id: row[0].clone(),
             status: row[1].clone(),
+            liveness: None,
             last_tool: if row[2].is_empty() {
                 None
             } else {

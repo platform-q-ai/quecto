@@ -14,6 +14,7 @@ impl App {
             if feed
                 .cmd_tx
                 .try_send(Command::Sync {
+                    agent_id: None,
                     id: Some("subagent-sync".into()),
                     epoch,
                     since_rev,
@@ -61,6 +62,7 @@ impl App {
                 feed.pending_rev = None;
             } else if let Some(next_rev) = delta.next_rev {
                 let _ = feed.cmd_tx.try_send(Command::Sync {
+                    agent_id: None,
                     id: Some("subagent-sync".into()),
                     epoch: delta.epoch,
                     since_rev: next_rev,
@@ -100,6 +102,7 @@ impl App {
                     focused && !supersede_live,
                     supersede_live,
                 );
+                session.reconcile_chat_retention_trim();
             }
         }
     }

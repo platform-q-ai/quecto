@@ -8,8 +8,8 @@ pub use super::registration::ToolRegistration;
 use crate::domain::error::DomainError;
 use crate::domain::tool::{
     Tool, ToolDefinition, ToolGuard, ToolPolicyApplyMode, ToolPolicyMutation,
-    ToolPolicyMutationResult, ToolPolicyMutationStatus, ToolPolicyReconciliation,
-    ToolProfileContext, ToolResult,
+    ToolPolicyMutationResult, ToolPolicyMutationStatus, ToolPolicyOperation,
+    ToolPolicyReconciliation, ToolPolicyRequest, ToolProfileContext, ToolResult,
 };
 use crate::domain::tool_descriptor::{
     ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolDescriptor,
@@ -394,9 +394,10 @@ impl ToolRegistryImpl {
     }
 
     fn catalogue_entry(&self, name: &str) -> Option<ToolCatalogueEntry> {
-        self.catalogue_entries()
-            .into_iter()
-            .find(|entry| entry.name.as_ref() == name || entry.stable_id.as_ref() == name)
+        let stable_id = name.starts_with("tool.v1:");
+        self.catalogue_entries().into_iter().find(|entry| {
+            entry.stable_id.as_ref() == name || (!stable_id && entry.name.as_ref() == name)
+        })
     }
 
     pub(super) fn effective_scope(metadata: &ToolRegistration) -> ProfileAvailabilityScope {
@@ -451,14 +452,43 @@ impl ToolRegistryImpl {
             .intersection(restriction)
     }
 
-    /// Apply live runtime policy mutations and return before/after snapshots.
     pub fn apply_tool_policy_mutations(
         &mut self,
         mutations: &[ToolPolicyMutation],
         mode: ToolPolicyApplyMode,
     ) -> ToolPolicyReconciliation {
-        let mut results = Vec::with_capacity(mutations.len());
-        for mutation in mutations {
+        self.apply_tool_policy_request(&ToolPolicyRequest::patch(mutations.to_vec()), mode)
+    }
+
+    pub fn apply_tool_policy_request(
+        &mut self,
+        request: &ToolPolicyRequest,
+        mode: ToolPolicyApplyMode,
+    ) -> ToolPolicyReconciliation {
+        let mut requested = request.mutations.clone();
+        if request.operation == ToolPolicyOperation::Replace {
+            let unlisted_scope = request
+                .unlisted_scope
+                .unwrap_or(ProfileAvailabilityScope::None);
+            let mut listed = std::collections::HashSet::new();
+            for mutation in &requested {
+                let resolved = self
+                    .resolve_tool_policy_id(&mutation.name)
+                    .unwrap_or_else(|_| mutation.name.clone());
+                listed.insert(resolved);
+            }
+            for name in self.tools.keys() {
+                if !listed.contains(name) {
+                    requested.push(ToolPolicyMutation::set_scope(
+                        name.clone(),
+                        unlisted_scope,
+                        "set_tool_policy replace unlisted",
+                    ));
+                }
+            }
+        }
+        let mut results = Vec::with_capacity(requested.len());
+        for mutation in &requested {
             let resolved_name = self
                 .resolve_tool_policy_id(&mutation.name)
                 .unwrap_or_else(|_| mutation.name.clone());
@@ -482,8 +512,12 @@ impl ToolRegistryImpl {
                 }
             };
             let after = self.catalogue_entry(&resolved_name);
+            let requested_identifier = (mutation.name != resolved_name
+                || status == ToolPolicyMutationStatus::UnknownTool)
+                .then(|| mutation.name.clone());
             results.push(ToolPolicyMutationResult {
-                name: mutation.name.clone(),
+                name: resolved_name.clone(),
+                requested_identifier,
                 requested_availability: mutation.availability,
                 requested_scope: mutation.scope,
                 status,
@@ -493,29 +527,29 @@ impl ToolRegistryImpl {
             });
         }
         self.refresh_spawn_inherited_child_policy_snapshot();
-        ToolPolicyReconciliation { mode, results }
+        ToolPolicyReconciliation {
+            mode,
+            results,
+            correlation_id: request.correlation_id.clone(),
+        }
     }
 
-    /// Runtime-disable a registered tool without removing its descriptor.
     pub fn disable_tool(&mut self, name: &str) -> bool {
         self.set_availability(name, ToolAvailability::Disabled)
     }
 
-    /// Mark a registered tool disabled by entrypoint defaults.
     pub fn disable_tool_by_entrypoint_default(&mut self, name: &str) -> bool {
         self.set_registration_metadata(name, |metadata| {
             *metadata = metadata.clone().with_entrypoint_default_enabled(false);
         })
     }
 
-    /// Mark a registered tool disabled by inherited spawn policy.
     pub fn disable_tool_by_spawn_restriction(&mut self, name: &str) -> bool {
         self.set_registration_metadata(name, |metadata| {
             *metadata = metadata.clone().with_spawn_restriction();
         })
     }
 
-    /// Runtime-enable a registered tool without restart.
     pub fn enable_tool(&mut self, name: &str) -> bool {
         self.set_registration_metadata(name, |metadata| {
             metadata.profile_scope = Some(ProfileAvailabilityScope::Both);
@@ -699,10 +733,6 @@ impl ToolRegistryImpl {
 mod trait_impls;
 
 #[cfg(test)]
-#[path = "registry_tests.rs"]
-mod tests;
-
-#[cfg(test)]
 #[path = "registry_catalogue_tests.rs"]
 mod catalogue_tests;
 #[cfg(test)]
@@ -714,3 +744,6 @@ mod policy_tests;
 #[cfg(test)]
 #[path = "registry_stable_id_tests.rs"]
 mod stable_id_tests;
+#[cfg(test)]
+#[path = "registry_tests.rs"]
+mod tests;

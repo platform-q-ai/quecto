@@ -1,7 +1,6 @@
 use crate::{
     application::{
-        ManagedRuntime, ManagerConfig, ManagerError, RuntimeRegistry, ensure_capacity,
-        ensure_request_envelope,
+        ManagedRuntime, ManagerConfig, ManagerError, RuntimeRegistry, ensure_request_envelope,
     },
     domain::{EnsureRuntimeRequest, StopRuntimeResponse},
 };
@@ -20,12 +19,20 @@ use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde_json::{Value, json};
 use std::{
+    collections::HashSet,
     net::SocketAddr,
     path::{Path as FsPath, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
 use tokio::{net::TcpListener, process::Command, sync::Mutex, time::sleep};
+
+#[path = "infrastructure_lifecycle.rs"]
+mod infrastructure_lifecycle;
+#[cfg(test)]
+pub(super) use infrastructure_lifecycle::BoxFutureResult;
+use infrastructure_lifecycle::PendingStartGuard;
+pub use infrastructure_lifecycle::{ProductionRuntimeLifecycle, RuntimeLifecycle};
 use tokio_tungstenite::{connect_async, tungstenite};
 use tracing::{info, warn};
 
@@ -35,6 +42,8 @@ pub struct AppState {
     pub registry: Arc<Mutex<RuntimeRegistry>>,
     pub token: Option<String>,
     pub http: Client,
+    pub lifecycle: Arc<dyn RuntimeLifecycle>,
+    pub pending_starts: Arc<Mutex<HashSet<String>>>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -57,6 +66,91 @@ pub async fn serve(state: AppState, addr: SocketAddr) -> Result<(), std::io::Err
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
     let runtimes = state.registry.lock().await.active_count();
     Json(json!({ "healthy": true, "runtimes": runtimes }))
+}
+
+enum EnsureStartClaim {
+    Existing,
+    Claimed(PendingStartGuard),
+}
+
+async fn claim_ensure_start(
+    state: &AppState,
+    runtime_ref: &str,
+) -> Result<EnsureStartClaim, Response> {
+    loop {
+        {
+            let mut registry = state.registry.lock().await;
+            if let Some(runtime) = registry.get_mut(runtime_ref) {
+                runtime.touch();
+                return Ok(EnsureStartClaim::Existing);
+            }
+        }
+
+        let should_start = {
+            let registry = state.registry.lock().await;
+            let mut pending = state.pending_starts.lock().await;
+            let active_count = registry.active_count();
+            if !pending.contains(runtime_ref)
+                && active_count == 0
+                && pending.len() >= state.config.max_runtimes
+            {
+                return Err(json_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ManagerError::RuntimeLimitReached.to_string(),
+                ));
+            }
+            pending.insert(runtime_ref.to_string())
+        };
+        if should_start {
+            return Ok(EnsureStartClaim::Claimed(PendingStartGuard::new(
+                state.pending_starts.clone(),
+                runtime_ref.to_string(),
+            )));
+        }
+
+        sleep(Duration::from_millis(25)).await;
+    }
+}
+
+async fn reap_for_pending_capacity(
+    state: &AppState,
+    pending_guard: &PendingStartGuard,
+) -> Result<Option<String>, Response> {
+    let mut registry = state.registry.lock().await;
+    let pending_count = state.pending_starts.lock().await.len();
+    if registry.active_count() + pending_count <= state.config.max_runtimes {
+        return Ok(None);
+    }
+
+    let reaped_pod_name = registry.reap_one_oldest_pod();
+    if reaped_pod_name.is_none()
+        && registry.active_count() + pending_count > state.config.max_runtimes
+    {
+        pending_guard.release().await;
+        return Err(json_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            ManagerError::RuntimeLimitReached.to_string(),
+        ));
+    }
+    Ok(reaped_pod_name.flatten())
+}
+
+async fn allocate_runtime_port(
+    state: &AppState,
+    runtime_ref: &str,
+    pending_guard: &PendingStartGuard,
+) -> Result<u16, Response> {
+    let mut registry = state.registry.lock().await;
+    match registry.allocate_port(&state.config, runtime_ref) {
+        Ok(port) => Ok(port),
+        Err(error) => {
+            pending_guard.release().await;
+            Err(json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                error.to_string(),
+            ))
+        }
+    }
 }
 
 async fn ensure_runtime(
@@ -91,33 +185,57 @@ async fn ensure_runtime(
         );
     }
 
-    {
-        let mut registry = state.registry.lock().await;
-        if let Some(runtime) = registry.get_mut(&runtime_ref) {
-            runtime.touch();
-            return (StatusCode::OK, Json(envelope)).into_response();
-        }
-        if let Err(error) = ensure_capacity(&mut registry, &state.config, &runtime_ref) {
-            return json_error(StatusCode::SERVICE_UNAVAILABLE, error.to_string());
+    let pending_guard = match claim_ensure_start(&state, &runtime_ref).await {
+        Ok(EnsureStartClaim::Existing) => return (StatusCode::OK, Json(envelope)).into_response(),
+        Ok(EnsureStartClaim::Claimed(guard)) => guard,
+        Err(response) => return response,
+    };
+
+    let reaped_pod_name = match reap_for_pending_capacity(&state, &pending_guard).await {
+        Ok(pod_name) => pod_name,
+        Err(response) => return response,
+    };
+
+    if let Some(pod_name) = reaped_pod_name {
+        if let Err(error) = state
+            .lifecycle
+            .delete_runtime_pod(state.clone(), pod_name.clone())
+            .await
+        {
+            warn!(%error, %pod_name, "failed to delete reaped runtime pod");
         }
     }
 
-    let port = {
-        let mut registry = state.registry.lock().await;
-        match registry.allocate_port(&state.config, &runtime_ref) {
-            Ok(port) => port,
-            Err(error) => return json_error(StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
-        }
+    let port = match allocate_runtime_port(&state, &runtime_ref, &pending_guard).await {
+        Ok(port) => port,
+        Err(response) => return response,
     };
 
-    match start_runtime(&state, &body, &runtime_ref, port).await {
+    match state
+        .lifecycle
+        .start_runtime(state.clone(), body, runtime_ref.clone(), port)
+        .await
+    {
         Ok(runtime) => {
+            if runtime.runtime_ref != runtime_ref {
+                state.registry.lock().await.release_port(port);
+                pending_guard.release().await;
+                return json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!(
+                        "runtime lifecycle returned mismatched ref '{}'",
+                        runtime.runtime_ref
+                    ),
+                );
+            }
             state.registry.lock().await.insert(runtime);
+            pending_guard.release().await;
             info!(%runtime_ref, "runtime started");
             (StatusCode::CREATED, Json(envelope)).into_response()
         }
         Err(error) => {
             state.registry.lock().await.release_port(port);
+            pending_guard.release().await;
             json_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
         }
     }
@@ -154,7 +272,11 @@ async fn sync_credentials(
         );
     }
 
-    match patch_credentials_secret(&state, credentials_json).await {
+    match state
+        .lifecycle
+        .sync_credentials(state.clone(), credentials_json.to_string())
+        .await
+    {
         Ok(()) => {
             info!("synced refreshed credentials into secret");
             (StatusCode::NO_CONTENT, ()).into_response()
@@ -217,7 +339,11 @@ async fn stop_runtime(
 
     if stopped {
         if let Some(pod_name) = pod_name {
-            if let Err(error) = delete_runtime_pod(&state, &pod_name).await {
+            if let Err(error) = state
+                .lifecycle
+                .delete_runtime_pod(state.clone(), pod_name.clone())
+                .await
+            {
                 warn!(%error, %pod_name, "failed to delete runtime pod");
             }
         }
@@ -246,7 +372,11 @@ async fn runtime_status(
         return json_error(StatusCode::NOT_FOUND, "runtime_not_found");
     };
 
-    match runtime_pod_status(&state, &pod_name).await {
+    match state
+        .lifecycle
+        .runtime_pod_status(state.clone(), pod_name)
+        .await
+    {
         Ok(status) => (StatusCode::OK, Json(status)).into_response(),
         Err(error) => json_error(StatusCode::BAD_GATEWAY, error),
     }

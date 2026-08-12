@@ -1,5 +1,6 @@
 use super::app_events_test_support::test_app;
 use super::*;
+use crate::components::chat::ChatEntry;
 
 #[tokio::test]
 async fn track_starting_subagent_without_agent_id_is_noop() {
@@ -192,6 +193,7 @@ async fn tool_end_uuid_rekey_migrates_sessions_feeds_and_session_order() {
         crate::agents::view::FeedState {
             cmd_tx,
             handle: tokio::spawn(async {}),
+            inspection_only: false,
             epoch: 0,
             rev: 0,
             last_fresh_at: None,
@@ -267,6 +269,69 @@ async fn tool_end_uuid_rekey_migrates_sessions_feeds_and_session_order() {
     );
 }
 
+/// Recovery batches created while a child still has its optimistic display key
+/// must follow the session when ToolEnd supplies the durable UUID; otherwise the
+/// get_message response targets the stale key and silently drops recovered text.
+#[tokio::test]
+async fn tool_end_uuid_rekey_migrates_child_recovery_state() {
+    let mut app = test_app().await;
+    app.handle_event(Event::ToolExecutionStart {
+        tool_call_id: "spawn-1".into(),
+        tool_name: "spawn".into(),
+        args: serde_json::json!({"agent_id": "worker-1"}),
+    });
+    app.select_agent(Some("worker-1"));
+    let session = app.subagents.sessions.get_mut("worker-1").unwrap();
+    session.active_turn_start = 0;
+    session.chat.append_token("…truncated");
+
+    let batch_id = "child-recovery-worker-1-batch".to_string();
+    let req_id = "msg-recovery-worker-1".to_string();
+    let ref_id = "recover-ref".to_string();
+    app.message_recovery_batches.insert(
+        batch_id.clone(),
+        MessageRecoveryBatch::new(vec![ref_id.clone()], 0, 1, Some("worker-1".into())),
+    );
+    app.pending_message_recovery.insert(
+        req_id.clone(),
+        PendingMessageRecovery {
+            message_id: ref_id.clone(),
+            batch_id,
+            agent_id: Some("worker-1".into()),
+            content: String::new(),
+            offset: 0,
+            content_len: None,
+        },
+    );
+
+    let uuid = "66666666-6666-4666-8666-666666666666";
+    app.handle_event(Event::ToolExecutionEnd {
+        tool_call_id: "spawn-1".into(),
+        tool_name: "spawn".into(),
+        result: serde_json::json!({
+            "content": [{"type": "text", "text": format!("Subagent 'worker-1' is running (uuid={uuid})")}]
+        }),
+        is_error: false,
+    });
+
+    app.handle_get_message_recovery(
+        Some(&req_id),
+        true,
+        Some(serde_json::json!({
+            "id": ref_id,
+            "role": "assistant",
+            "content": "RECOVERED_UUID_CHILD_BODY"
+        })),
+    );
+
+    assert!(
+        app.subagents.sessions[uuid].chat.entries().iter().any(|entry| {
+            matches!(entry, ChatEntry::Assistant { text, .. } if text.contains("RECOVERED_UUID_CHILD_BODY"))
+        }),
+        "completed recovery after rekey must update the UUID-keyed child session"
+    );
+}
+
 /// #1378: snapshot optimistic migrate must also move sessions/feeds/order.
 #[tokio::test]
 async fn snapshot_uuid_migrate_moves_sessions_feeds_and_session_order() {
@@ -289,6 +354,7 @@ async fn snapshot_uuid_migrate_moves_sessions_feeds_and_session_order() {
         crate::agents::view::FeedState {
             cmd_tx,
             handle: tokio::spawn(async {}),
+            inspection_only: false,
             epoch: 0,
             rev: 0,
             last_fresh_at: None,

@@ -1,5 +1,6 @@
 use crate::application::ports::agent_gateway::{
     AgentCommand, AgentGateway, ToolPolicyApplyModePayload, ToolPolicyMutationPayload,
+    ToolPolicyOperationPayload, ToolPolicyScopePayload,
 };
 use crate::domain::error::ApiError;
 use crate::domain::event::AgentEvent;
@@ -9,13 +10,20 @@ pub async fn execute(
     gateway: &dyn AgentGateway,
     mutations: Vec<ToolPolicyMutationPayload>,
     mode: ToolPolicyApplyModePayload,
+    operation: ToolPolicyOperationPayload,
+    unlisted_scope: Option<ToolPolicyScopePayload>,
 ) -> Result<AgentEvent, ApiError> {
     if !gateway.is_connected() {
         return Err(ApiError::AgentNotConnected);
     }
-    if mutations.is_empty() {
+    if mutations.is_empty() && operation != ToolPolicyOperationPayload::Replace {
         return Err(ApiError::InvalidRequest(
             "at least one tool policy mutation is required".into(),
+        ));
+    }
+    if operation == ToolPolicyOperationPayload::Replace && unlisted_scope.is_none() {
+        return Err(ApiError::InvalidRequest(
+            "replace tool policy requires unlistedScope".into(),
         ));
     }
     if mutations
@@ -27,7 +35,12 @@ pub async fn execute(
         ));
     }
     gateway
-        .send(AgentCommand::SetToolPolicy { mutations, mode })
+        .send(AgentCommand::SetToolPolicy {
+            mutations,
+            mode,
+            operation,
+            unlisted_scope,
+        })
         .await
 }
 

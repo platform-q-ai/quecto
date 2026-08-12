@@ -122,6 +122,55 @@ impl CredentialStore {
         &self.path
     }
 
+    /// Path of the cross-process lock file guarding load-mutate-store cycles
+    /// (#1460). Lives alongside `credentials.json` as `credentials.json.lock`.
+    pub fn lock_path(&self) -> std::path::PathBuf {
+        let mut os = self.path.as_os_str().to_os_string();
+        os.push(".lock");
+        std::path::PathBuf::from(os)
+    }
+
+    /// Take the cross-process exclusive lock guarding load-mutate-store
+    /// cycles (#1460). Blocks until any other process's lock is released;
+    /// the lock is released when the returned handle is dropped.
+    //
+    // `File::lock` stabilized in 1.89; the crate's tests already call it, so
+    // 1.89 is the real toolchain floor — clippy.toml's declared 1.85 predates
+    // the #1460 locking work and awaits a coordinated MSRV bump.
+    #[expect(clippy::incompatible_msrv)]
+    fn lock_exclusive(&self) -> Result<std::fs::File, DomainError> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                DomainError::Config(format!("failed to create credentials dir: {}", e))
+            })?;
+        }
+        // Mode 0600 like credentials.json itself: a world-readable lock file
+        // would let any co-resident user take the exclusive lock and wedge
+        // every credential write indefinitely.
+        #[cfg(unix)]
+        let file = {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .mode(0o600)
+                .open(self.lock_path())
+        };
+        #[cfg(not(unix))]
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(self.lock_path());
+        let file = file.map_err(|e| {
+            DomainError::Config(format!("failed to open credentials lock file: {}", e))
+        })?;
+        file.lock()
+            .map_err(|e| DomainError::Config(format!("failed to lock credentials file: {}", e)))?;
+        Ok(file)
+    }
+
     /// Save all credentials to disk with restricted file permissions (0600).
     ///
     /// On Unix, writes the same-directory replacement file with mode 0o600 before
@@ -153,10 +202,43 @@ impl CredentialStore {
     }
 
     /// Store a credential for a provider.
+    ///
+    /// The whole load-mutate-store cycle runs under the cross-process
+    /// credentials lock (#1460): N agent processes refreshing tokens
+    /// concurrently serialize here instead of losing each other's writes.
     pub fn store(&self, credential: Credential) -> Result<(), DomainError> {
+        let _lock = self.lock_exclusive()?;
         let mut all = self.load_snapshot()?;
         all.insert(credential.provider.clone(), credential);
         self.save_all(&all)
+    }
+
+    /// Persist a refreshed OAuth credential unless another process already
+    /// rotated it (#1460 review). `refreshed_from` is the refresh token this
+    /// refresh consumed; if the on-disk credential's refresh token no longer
+    /// matches it and that credential is still valid, another agent refreshed
+    /// concurrently and its (newer) token family must not be overwritten —
+    /// last-writer-wins here would persist a competing/stale token and, with
+    /// strict-rotation providers, strand every agent on a revoked family.
+    ///
+    /// Returns the credential that is authoritative after the call: the one
+    /// written, or the fresher on-disk one that was kept.
+    pub fn store_refreshed(
+        &self,
+        credential: Credential,
+        refreshed_from: &str,
+    ) -> Result<Credential, DomainError> {
+        let _lock = self.lock_exclusive()?;
+        let mut all = self.load_snapshot()?;
+        if let Some(existing) = all.get(&credential.provider)
+            && existing.refresh_token.as_deref() != Some(refreshed_from)
+            && !existing.is_expired()
+        {
+            return Ok(existing.clone());
+        }
+        all.insert(credential.provider.clone(), credential.clone());
+        self.save_all(&all)?;
+        Ok(credential)
     }
 
     /// Get a credential for a provider. Returns None if not found.
@@ -174,6 +256,7 @@ impl CredentialStore {
     /// Remove a credential for a specific provider.
     /// Returns `true` if a credential was actually removed, `false` if none existed.
     pub fn remove(&self, provider: &str) -> Result<bool, DomainError> {
+        let _lock = self.lock_exclusive()?;
         let mut all = self.load_snapshot()?;
         let removed = all.remove(provider).is_some();
         self.save_all(&all)?;
@@ -182,6 +265,7 @@ impl CredentialStore {
 
     /// Remove all credentials.
     pub fn remove_all(&self) -> Result<(), DomainError> {
+        let _lock = self.lock_exclusive()?;
         self.save_all(&HashMap::new())
     }
 

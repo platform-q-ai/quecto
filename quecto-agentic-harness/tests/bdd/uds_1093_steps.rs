@@ -241,6 +241,7 @@ fn seed_collapsed_session(world: &mut QuectoWorld, include_spill: bool) {
         key: session_key.clone(),
         messages,
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     rt.block_on(async {
         store.save(&session).await.expect("save seeded session");

@@ -86,7 +86,7 @@ Feature: Workflow tool behavior
   Scenario: Unchecking a step returns the rewound current step and its guidance in the tool result
     Given a workflow tool for a three-step guarded template
     And the workflow template "wave" is selected
-    And workflow step 1 is checked through the tool
+    And workflow step 1 is complete
     When the model unchecks workflow step 1
     Then the workflow tool result should not be an error
     And the workflow tool result should carry the current step's label and guidance
@@ -113,12 +113,15 @@ Feature: Workflow tool behavior
   # leans on), not proof of new #1113 work — falsifiable #1113 coverage lives
   # in the select_template/check/skip/uncheck handoff scenarios.
   @cache-safe-prompt
-  Scenario: Requesting the status returns the current step and its guidance in the tool result
+  Scenario: Requesting the status returns only completed steps and the current step
     Given a workflow tool for a three-step guarded template
     And the workflow template "wave" is selected
+    And workflow step 1 is complete
     When the model requests the workflow status
     Then the workflow tool result should not be an error
     And the workflow tool result should carry the current step's label and guidance
+    And the workflow tool result should show completed previous steps
+    And the workflow tool result should hide future incomplete steps
 
   @cache-safe-prompt
   Scenario: The workflow tool description advertises template selection
@@ -129,8 +132,8 @@ Feature: Workflow tool behavior
   Scenario: Matching workflow guards allow commands after prerequisite steps are complete
     Given a workflow tool for a three-step guarded template
     And the workflow template "wave" is selected
-    And workflow step 1 is checked through the tool
-    And workflow step 2 is checked through the tool
+    And workflow step 1 is complete
+    And workflow step 2 is complete
     When I run workflow action '{"action":"check_guards","command":"cargo test -p quecto-agentic-harness"}'
     Then the workflow tool result should not be an error
     And the workflow tool result should contain "All workflow guards for command are satisfied"

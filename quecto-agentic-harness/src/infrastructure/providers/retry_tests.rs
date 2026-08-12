@@ -356,6 +356,30 @@ async fn test_stream_initiation_failure_is_not_retried() {
 }
 
 #[tokio::test]
+async fn test_incremental_stream_initiation_failure_is_not_retried() {
+    let count = Arc::new(AtomicU32::new(0));
+    let inner = Arc::new(CountingMockProvider::new(
+        count.clone(),
+        u32::MAX,
+        "provider error (503): service unavailable",
+    ));
+    let retrying = RetryingProvider::new(inner, RetryConfig::no_delay(4));
+
+    let mut rx = retrying.chat_stream_incremental(test_request()).await;
+    match rx.recv().await.expect("default incremental error event") {
+        crate::domain::provider::StreamEvent::Error(err) => {
+            assert!(err.contains("service unavailable"), "{err}");
+        }
+        other => panic!("unexpected stream event: {other:?}"),
+    }
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        1,
+        "incremental streaming must not be retried by the retry decorator"
+    );
+}
+
+#[tokio::test]
 async fn counting_mock_provider_trait_surface_defaults_are_exercised() {
     let count = Arc::new(AtomicU32::new(0));
     let provider = CountingMockProvider::new(count, 0, "provider error (500): unused");

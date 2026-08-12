@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 #[path = "client_policy_types.rs"]
 mod client_policy_types;
 pub use client_policy_types::{
-    ToolCatalogueEntry, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyResult, ToolScope,
+    ToolCatalogueEntry, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyOperation,
+    ToolPolicyResult, ToolScope,
 };
 use std::path::Path;
 use tokio::io::BufReader;
@@ -62,12 +63,16 @@ pub enum Command {
     GetState {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+        #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
     },
     GetMessages {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         before: Option<String>,
+        #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
     },
     GetMessagesTail {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -107,6 +112,9 @@ pub enum Command {
         id: Option<String>,
         mutations: Vec<ToolPolicyMutation>,
         mode: ToolPolicyApplyMode,
+        operation: ToolPolicyOperation,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unlisted_scope: Option<ToolScope>,
     },
     ListModels {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -176,6 +184,8 @@ pub enum Command {
         epoch: u64,
         #[serde(rename = "sinceRev")]
         since_rev: u64,
+        #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
     },
 }
 /// An event received from the agent.
@@ -307,6 +317,8 @@ pub enum Event {
         results: Vec<ToolPolicyResult>,
         apply_mode: String,
         reason: String,
+        #[serde(rename = "correlationId", default)]
+        correlation_id: Option<String>,
     },
     /// Catch-all for unknown/future event types (forward-compatible).
     #[serde(other)]
@@ -379,7 +391,10 @@ pub struct CommandSender {
     tx: mpsc::Sender<String>,
 }
 impl Command {
-    /// Non-sensitive command kind for user-facing diagnostics.
+    pub fn with_inspection_agent_id(&self, agent_id: &str) -> Option<Self> {
+        super::inspection_routing::with_inspection_agent_id(self, agent_id)
+    }
+
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Prompt { .. } => "prompt",
@@ -701,6 +716,9 @@ mod client_defence_tests;
 #[cfg(test)]
 #[path = "client_legacy_tests.rs"]
 mod client_legacy_tests;
+#[cfg(test)]
+#[path = "client_line_cap_tests.rs"]
+mod client_line_cap_tests;
 #[cfg(test)]
 #[path = "client_policy_tests.rs"]
 mod client_policy_tests;

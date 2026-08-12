@@ -132,8 +132,12 @@ fn get_message_command_is_available_for_on_demand_lookup() {
     // Keep this inventory in lockstep with Command variants used for recovery.
     // Adding GetMessage is the GREEN for this pin.
     let recoverable: Vec<Command> = vec![
-        Command::GetState { id: None },
+        Command::GetState {
+            id: None,
+            agent_id: None,
+        },
         Command::GetMessages {
+            agent_id: None,
             id: None,
             before: None,
         },

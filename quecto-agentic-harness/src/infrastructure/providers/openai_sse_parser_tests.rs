@@ -47,3 +47,45 @@ fn parse_sse_response_extracts_usage_chunk() {
     assert_eq!(usage.prompt_tokens, 10);
     assert_eq!(usage.completion_tokens, 5);
 }
+
+fn content_sse(fragment: &str) -> String {
+    format!(
+        "data: {{\"choices\":[{{\"delta\":{{\"content\":{}}}}}]}}\n",
+        serde_json::to_string(fragment).unwrap()
+    )
+}
+
+#[test]
+fn parse_sse_content_accepts_exact_limit_and_rejects_over_limit() {
+    let exact = "a".repeat(MAX_OPENAI_SSE_CONTENT_BYTES);
+    let result = parse_sse_response(&content_sse(&exact)).unwrap();
+    assert_eq!(
+        result.content.as_ref().unwrap().len(),
+        MAX_OPENAI_SSE_CONTENT_BYTES
+    );
+
+    let over = format!("{}{}", content_sse(&exact), content_sse("b"));
+    let err = parse_sse_response(&over).unwrap_err().to_string();
+    assert!(err.contains("assistant content exceeds"));
+}
+
+fn tool_args_sse(fragment: &str) -> String {
+    format!(
+        "data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{{\"index\":0,\"id\":\"c\",\"function\":{{\"name\":\"bash\",\"arguments\":{}}}}}]}}}}]}}\n",
+        serde_json::to_string(fragment).unwrap()
+    )
+}
+
+#[test]
+fn parse_sse_tool_arguments_accept_exact_limit_and_reject_over_limit() {
+    let exact = "a".repeat(MAX_OPENAI_SSE_TOOL_ARGUMENT_BYTES);
+    let result = parse_sse_response(&tool_args_sse(&exact)).unwrap();
+    assert_eq!(
+        result.tool_calls[0].arguments.len(),
+        MAX_OPENAI_SSE_TOOL_ARGUMENT_BYTES
+    );
+
+    let over = format!("{}{}", tool_args_sse(&exact), tool_args_sse("b"));
+    let err = parse_sse_response(&over).unwrap_err().to_string();
+    assert!(err.contains("tool-call arguments exceeds"));
+}

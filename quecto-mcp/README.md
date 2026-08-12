@@ -38,18 +38,18 @@ Required:
 
 - `--socket` or `QUECTO_SOCKET`
 - `--mcp-url` or `PERME8_MCP_URL`
-- `--mcp-token`, `--mcp-token-file`, `--mcp-token-command`, or `PERME8_MCP_TOKEN`
+- `--mcp-token`, `--mcp-token-file`, `--mcp-token-command`, or `PERME8_MCP_TOKEN`. Explicit file and command sources are fatal if they cannot produce a non-empty token; command sources must exit successfully within 10 seconds. Later CLI token source options override earlier token sources.
 
 Optional:
 
 - `--mcp-server-name`, default `perme8-mcp`
 - `--tool-prefix`, repeatable; defaults to `community.` when no allowlist is configured
-- `--tool-allowlist`, comma-separated MCP tool names
-- `--tool-denylist`, comma-separated MCP tool names
-- `--name-prefix`, prefix for registered Quecto tool names
+- `--tool-allowlist`, comma-separated MCP tool names. When present without `--tool-prefix`, it disables the default `community.` prefix filter.
+- `--tool-denylist`, comma-separated MCP tool names; denylist wins over allowlist and prefix matches.
+- `--name-prefix`, prefix for registered Quecto tool names; the final registered names must still be Quecto-safe
 - `--timeout`, MCP HTTP timeout in seconds
 - `--register-timeout`, Quecto `register_tools` timeout in seconds
-- `--refresh-interval`, parsed for deployment compatibility; currently tool registration happens at startup
+- `--refresh-interval` is reserved for deployment compatibility but is not implemented. `quecto-mcp` rejects this option; restart `quecto-mcp` to refresh tool registrations.
 
 ## Tool name mapping
 
@@ -61,7 +61,13 @@ community.channels.send_message -> community_channels_send_message
 community.chat.send_dm          -> community_chat_send_dm
 ```
 
-Collisions fail closed.
+Collisions, duplicate MCP names, invalid MCP names, and invalid final names after `--name-prefix` fail closed.
+
+## Protocol notes
+
+`quecto-mcp` uses JSON-RPC over HTTP for MCP requests. It sends an `Accept: application/json, text/event-stream` compatibility header, but this bridge currently expects JSON response bodies and does not implement SSE stream parsing.
+
+Quecto UDS messages are newline-delimited JSON. For `execute_tool`, `arguments` is expected to be a JSON string containing the MCP argument object. Malformed JSON or non-string `arguments` values produce a deterministic `tool_result` with `isError: true` when the tool call id and tool name can be read.
 
 ## Security model
 

@@ -144,9 +144,16 @@ impl App {
             theme::bold(&sanitize_panel_label(&env.environment_ref)),
             status_colored_name(&status, &sanitize_panel_label(&status)),
         );
+        // Sandbox environments report no repository — render `-` like every
+        // other absent field instead of a blank (#1410 review).
+        let repo_label = if env.repository.is_empty() {
+            "-"
+        } else {
+            &env.repository
+        };
         let repo = format!(
             "repo: {} {dot} branch: {}",
-            sanitize_panel_label(&env.repository),
+            sanitize_panel_label(repo_label),
             sanitize_panel_label(env.branch.as_deref().unwrap_or("-")),
         );
         let runtime = format!(

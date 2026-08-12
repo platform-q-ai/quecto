@@ -441,7 +441,7 @@ impl ToolGuard for WorkflowGuard {
         if rules.is_empty() {
             return Ok(());
         }
-        let done = engine.snapshot(true).steps;
+        let done = engine.all_step_statuses();
         for rule in rules.iter() {
             if !command_matches_parsed(&command, &rule.parsed_commands) {
                 continue;

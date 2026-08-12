@@ -31,6 +31,7 @@ fn feed_with_rx() -> (FeedState, mpsc::Receiver<Command>) {
         FeedState {
             cmd_tx,
             handle,
+            inspection_only: false,
             epoch: 0,
             rev: 0,
             last_fresh_at: None,

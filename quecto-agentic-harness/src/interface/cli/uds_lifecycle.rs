@@ -1,3 +1,4 @@
+use super::uds::uds_dispatch_session;
 use super::uds::{DispatchCtx, run_command_loop};
 use super::uds_cancel::{CancelSlot, TurnControl};
 use super::uds_multi::MultiClientArgs;
@@ -87,6 +88,15 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
             &file_store
         }
     };
+    // Refuse at open, not at first save (#1460): a key owned by another
+    // live process must fail before any turn runs against it.
+    if !ephemeral
+        && !session_key.is_empty()
+        && let Err(err) = session_store.claim(&session_key)
+    {
+        eprintln!("{err}");
+        return 1;
+    }
     let loaded_session = match load_session(session_store, &session_key, ephemeral).await {
         Ok(m) => m,
         Err(err) => {
@@ -115,6 +125,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 ephemeral,
                 system_prompt,
                 ext_registry,
+                subagent_registry,
                 workflow_state,
                 provider_reload,
                 provider_reload_inputs,
@@ -173,6 +184,7 @@ struct SingleClientArgs<'a> {
     ephemeral: bool,
     system_prompt: String,
     ext_registry: Option<ExtRegistry>,
+    subagent_registry: Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
     provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
     provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
@@ -194,6 +206,7 @@ async fn single_client_loop(
         ephemeral,
         system_prompt,
         ext_registry,
+        subagent_registry,
         workflow_state,
         provider_reload,
         provider_reload_inputs,
@@ -254,7 +267,7 @@ async fn single_client_loop(
             _ext_registry: ext_registry,
             client_tool_registry: super::uds_ext_protocol::new_client_tool_registry(),
             current_client_id: 0,
-            subagent_registry: None,
+            subagent_registry: subagent_registry.clone(),
             notification_rx: None,
             workflow_state: workflow_state.clone(),
             workflow_config: None,
@@ -274,6 +287,7 @@ async fn single_client_loop(
             workflow_run: workflow_state
                 .as_ref()
                 .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run())),
+            subagent_roster: uds_dispatch_session::snapshot_subagent_roster(&subagent_registry),
         };
         let _ = session_store.save(&session).await;
     }

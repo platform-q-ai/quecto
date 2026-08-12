@@ -11,6 +11,7 @@ use crate::domain::message::Message;
 use crate::domain::session::{Session, SessionStore};
 
 use super::protocol::AgentEvent;
+use super::uds::uds_dispatch_session;
 use super::uds::{
     DispatchCtx, LineResult, MAX_FRAME_PAYLOAD_BYTES, dispatch_command,
     emit_event_to_broadcast_or_writer, inject_system_prompt, is_cancel_command, parse_line,
@@ -282,7 +283,7 @@ pub(super) async fn multi_client_loop(
         _ext_registry: ext_registry,
         client_tool_registry: client_tool_registry.clone(),
         current_client_id: 0,
-        subagent_registry,
+        subagent_registry: subagent_registry.clone(),
         notification_rx,
         workflow_state: wf_state.clone(),
         workflow_config: wf_config,
@@ -309,6 +310,7 @@ pub(super) async fn multi_client_loop(
             workflow_run: wf_state
                 .as_ref()
                 .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run())),
+            subagent_roster: uds_dispatch_session::snapshot_subagent_roster(&subagent_registry),
         };
         let _ = session_store.save(&session).await;
     }
@@ -345,25 +347,11 @@ async fn run_dispatch_loop(
             }
             DispatchMsg::Notification(notif) => {
                 let (agent_id, sequence) = notif.dedupe_key();
-                let (dedupe_ref, _) = notif.await_dedupe_key();
                 tracing::info!(%agent_id, sequence, "recording subagent completion note");
-                // Auto-await dedupe: if a manual `await` already reported this
-                // terminal completion (flag set on the registry entry), CONSUME
-                // the flag and SKIP both the passive note enqueue and the
-                // SubagentNotification emit — the parent already has the result.
-                // The SubagentStateChanged panel update below still fires. This is
-                // race-free because the dispatch loop is single-threaded: the
-                // await tool call set the flag before this queued notification is
-                // processed.
-                let suppress =
-                    crate::infrastructure::tools::subagent_registry::consume_await_dedupe(
-                        &ctx.subagent_registry,
-                        &dedupe_ref,
-                    );
                 let mut should_deliver = false;
-                if !suppress {
-                    // Auto-await (#816): enqueue the one-line note for delivery at
-                    // the parent's NEXT idle boundary.
+                {
+                    // Enqueue the one-line note for delivery at the parent's NEXT
+                    // idle boundary.
                     // `enqueue_subagent_notification` records the dedupe sequence
                     // internally and returns whether this completion is new — so we
                     // don't also call `record_subagent_notification` (that would
@@ -670,9 +658,7 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
 
 // ─── Broadcast prompt execution ───────────────────────────────────────────────
 
-// Re-exported for the auto-await dedupe unit tests (uds_subagent_notify_tests).
-#[cfg(test)]
-pub(in crate::interface::cli) use super::uds_cancel::forward_notification_broadcast;
+// Test modules for multi-client dispatch and passive-note delivery.
 #[cfg(test)]
 #[path = "uds_multi_accept_loop_tests.rs"]
 mod accept_loop_tests;

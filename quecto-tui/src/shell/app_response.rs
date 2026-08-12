@@ -1,5 +1,22 @@
 use super::*;
-use crate::protocol::client::ToolCatalogueEntry;
+
+fn routed_subagent_id<'a>(id: &'a str, prefix: &str) -> Option<&'a str> {
+    let rest = id.strip_prefix(prefix)?;
+    let (len, rest) = rest.split_once(':')?;
+    let len = len.parse::<usize>().ok()?;
+    let agent_id = rest.get(..len)?;
+    rest.as_bytes()
+        .get(len)
+        .is_some_and(|b| *b == b':')
+        .then_some(agent_id)
+}
+
+fn routed_subagent_prefix<'a>(id: &'a str, prefixes: &[&str]) -> Option<&'a str> {
+    prefixes
+        .iter()
+        .find_map(|prefix| routed_subagent_id(id, prefix))
+}
+use crate::protocol::client::{Event, ToolCatalogueEntry};
 
 /// Family prefix for the master attach-time history backfill (#1050 / #1237).
 /// Minted ids are `attach-backfill-{uuid_like}-{seq}`; bare legacy literals are
@@ -18,6 +35,7 @@ pub(super) const ATTACH_BACKFILL_ID: &str = "attach-backfill";
 /// exact pending id (#1237). Readable prefixes are diagnostics only.
 const RESUME_MESSAGES_ID_PREFIX: &str = "resume-messages";
 const REWIND_REFRESH_ID_PREFIX: &str = "rewind-refresh";
+const REWIND_OPEN_ID_PREFIX: &str = "rewind-open";
 
 /// Kind of a matched own-client solicited transcript response (#1237).
 /// Status text is derived from kind, never from literal id equality.
@@ -126,6 +144,7 @@ impl App {
         }
         matches_family(id, RESUME_MESSAGES_ID_PREFIX)
             || matches_family(id, REWIND_REFRESH_ID_PREFIX)
+            || matches_family(id, REWIND_OPEN_ID_PREFIX)
             || matches_family(id, ATTACH_BACKFILL_ID_PREFIX)
     }
 
@@ -135,6 +154,7 @@ impl App {
     pub(crate) fn request_master_attach_backfill(&mut self) {
         let id = self.mint_pending_solicited_get_messages(SolicitedGetMessagesKind::Attach);
         self.send_command(Command::GetMessages {
+            agent_id: None,
             id: Some(id),
             before: None,
         });
@@ -148,6 +168,30 @@ impl App {
         data: Option<serde_json::Value>,
         error: Option<String>,
     ) {
+        if let Some(agent_id) = id.as_deref().and_then(|id| {
+            routed_subagent_prefix(
+                id,
+                &[
+                    "subagent-state:",
+                    "subagent-sync:",
+                    "subagent-tail:",
+                    "subagent-message:",
+                    "subagent-messages:",
+                ],
+            )
+        }) {
+            self.route_subagent_event(
+                agent_id,
+                Event::Response {
+                    id: id.clone(),
+                    command: command.clone(),
+                    success,
+                    data: data.clone(),
+                    error: error.clone(),
+                },
+            );
+            return;
+        }
         match command.as_str() {
             "get_message" => self.handle_get_message_response(id, success, data, error),
             "get_state" if success => self.handle_get_state(data),
@@ -240,6 +284,7 @@ impl App {
                 self.send_command(Command::GetMessages {
                     id: Some(refresh_id),
                     before: None,
+                    agent_id: None,
                 });
             }
             "rewind_to" if id.is_some() && id == self.rewind.pending_apply_id => {
@@ -326,11 +371,13 @@ impl App {
                     });
                 }
             }
+            self.reconcile_master_retention_trim();
             return;
         }
         if own_page {
             // This client's own older page extends the loaded prefix.
             Self::reconcile_master_backfill_history(&mut self.master_session, &data, true);
+            self.reconcile_master_retention_trim();
             return;
         }
         if id.is_some_and(|id| id.starts_with("history-page-")) {
@@ -348,10 +395,11 @@ impl App {
                 self.pending_attach_backfill_id = None;
             }
             Self::reconcile_master_backfill_history(&mut self.master_session, &data, false);
+            self.reconcile_master_retention_trim();
             return;
         }
         if id.is_some_and(Self::is_foreign_solicited_get_messages_family) {
-            // Foreign (or stale bare-literal) resume/rewind/attach family id:
+            // Foreign (or stale bare-literal) resume/rewind-open/rewind-refresh/attach family id:
             // drop. Must not fall through to legacy replace — that is the
             // multi-client clobber (#1237).
             return;
@@ -474,6 +522,7 @@ impl App {
         // AFTER that clear so the new pending survives (#1237).
         let id = self.mint_pending_solicited_get_messages(SolicitedGetMessagesKind::Resume);
         self.send_command(Command::GetMessages {
+            agent_id: None,
             id: Some(id),
             before: None,
         });

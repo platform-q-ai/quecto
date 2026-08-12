@@ -299,7 +299,7 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
   #   ACCEPTANCE ack within the inspector timeout (never the 300s turn deadline),
   #   so the parent's turn is not frozen for the child's turn duration.
   # - id-correlation (#835) is preserved: the acceptance ack echoes the request id.
-  # - Completion still surfaces later via the auto-await note / await (unchanged).
+  # - Completion still surfaces later via the passive completion note (unchanged).
   # The mock child acks acceptance but NEVER sends a turn-completion response and
   # holds the connection open, so a blocking-on-completion regression would hang
   # to the 300s deadline rather than fail fast — completion proves acceptance.

@@ -272,6 +272,8 @@ impl std::ops::DerefMut for DebugEditor {
 
 #[derive(Debug, Default, World)]
 pub struct QuectoWorld {
+    /// #1460 shared-state hardening scenario state (sockets, cred lock, ownership).
+    pub hardening: shared_state_hardening_steps::HardeningState,
     /// Exit code from the last CLI invocation
     pub exit_code: i32,
     /// Captured stdout from the last CLI invocation
@@ -785,7 +787,7 @@ pub struct QuectoWorld {
     pub notify_rx: Option<quecto::infrastructure::tools::subagent_registry::NotificationRx>,
     /// Count from drain operation
     pub notify_drain_count: Option<usize>,
-    /// Parent session under test for #816 auto-await idle delivery
+    /// Parent session under test for #816 passive completion-note idle delivery
     pub notify_parent_session: Option<quecto::interface::cli::uds_session::AgentSession>,
     /// Per-agent completion sequence counter (kept out of the Gherkin, #816)
     pub notify_seq: std::collections::HashMap<String, u64>,
@@ -951,17 +953,6 @@ pub struct QuectoWorld {
     pub audit_content_preview: Option<String>,
     /// Audit events captured from a real agent-loop run (#937 emission path)
     pub audit_loop_events: Vec<quecto::domain::audit::AuditEvent>,
-    // --- agent_cmd await (#612) ---
-    /// Parsed await result for BDD assertions
-    pub await_result: Option<serde_json::Value>,
-    /// Mock await registry for BDD scenarios
-    pub await_registry: Option<quecto::infrastructure::tools::agent_cmd::SubagentRegistry>,
-    /// Active awaits tracker for BDD scenarios
-    pub await_active_awaits: Option<quecto::infrastructure::tools::agent_cmd::ActiveAwaits>,
-    /// Temp dir for await mock sockets (kept alive)
-    pub _await_mock_tmp: Option<TempDir>,
-    /// Mock listener for await scenarios (kept alive)
-    pub _await_mock_listener: Option<std::os::unix::net::UnixListener>,
     /// RuntimeReload BDD: temp dir holding the watched source file(s)
     pub _reload_tmp: Option<TempDir>,
     /// RuntimeReload BDD: path → file label map (for multi-source scenarios)
@@ -1328,7 +1319,6 @@ fn table_to_json(table: &gherkin::Table) -> String {
     obj.to_string()
 }
 
-mod agent_cmd_await_steps;
 mod agent_cmd_tool_steps;
 mod agent_loop_steps;
 mod agent_tools_steps;
@@ -1363,6 +1353,7 @@ mod repo_docs_steps;
 mod sandbox_steps;
 mod security_steps;
 mod session_steps;
+mod shared_state_hardening_steps;
 mod spawn_env_steps;
 mod spawn_liveness_steps;
 mod spawn_runtime_slice5_steps;

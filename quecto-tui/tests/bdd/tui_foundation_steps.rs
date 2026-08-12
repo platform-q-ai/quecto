@@ -63,6 +63,7 @@ fn when_send_command(world: &mut TuiWorld) {
     let notification = rt.block_on(async {
         let mut h = TuiHarness::new().await;
         h.send_command_expecting_failure(Command::GetState {
+            agent_id: None,
             id: Some("bdd".to_string()),
         })
         .await

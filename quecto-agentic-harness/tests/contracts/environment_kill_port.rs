@@ -70,7 +70,7 @@ async fn script_kill_port_terminates_members_and_runs_retained_kill_once() {
 
     let port = ScriptEnvironmentKill::new(subagents.clone(), None);
     let rec = record(
-        vec![script.to_string_lossy().to_string()],
+        vec!["bash".into(), script.to_string_lossy().to_string()],
         vec!["member-uuid".to_string()],
     );
     port.kill_environment(&rec).await.unwrap();
@@ -90,7 +90,10 @@ async fn script_kill_port_reports_kill_failure_truthfully() {
 
     let subagents: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let port = ScriptEnvironmentKill::new(subagents, None);
-    let rec = record(vec![script.to_string_lossy().to_string()], vec![]);
+    let rec = record(
+        vec!["bash".into(), script.to_string_lossy().to_string()],
+        vec![],
+    );
     let err = port.kill_environment(&rec).await.unwrap_err();
     assert!(err.contains("retained kill"), "{err}");
     // The kill was still attempted (evidence in the log) before failing.

@@ -74,6 +74,15 @@ fn merge_descendants(
         );
     }
     let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+    // A child launched inside a script-managed environment sees its own local
+    // descendants' sockets, but an ancestor outside that environment does not.
+    // The descendants correctly report `executionBackend: local` relative to
+    // their immediate parent, so reachability must also account for the
+    // forwarding parent's environment boundary.
+    let forwarding_child_crosses_environment =
+        guard.get(forwarding_child_id).is_some_and(|entry| {
+            entry.environment_ref.is_some() || entry.forwarded_environment.is_some()
+        });
     let mut pushed_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     for d in descendants.iter().take(MAX_FORWARDED_SUBAGENTS) {
         // Prefer additive agentUuid for durable registry keys; wire agentId is
@@ -105,11 +114,18 @@ fn merge_descendants(
             display_label.to_string()
         };
         pushed_ids.insert(registry_key.clone());
-        let socket_path = d
-            .get("socketPath")
-            .and_then(|v| v.as_str())
-            .map(std::path::PathBuf::from)
-            .unwrap_or_default();
+        let socket_path = if forwarded_script_descendant_socket_is_ancestor_local(d)
+            || (forwarding_child_crosses_environment
+                && d.get("executionBackend").and_then(|v| v.as_str())
+                    == Some(super::subagent_environment_wire::BACKEND_LOCAL))
+        {
+            std::path::PathBuf::new()
+        } else {
+            d.get("socketPath")
+                .and_then(|v| v.as_str())
+                .map(std::path::PathBuf::from)
+                .unwrap_or_default()
+        };
         let pid = d.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
         let agent_uuid = crate::domain::ids::AgentUuid::new(registry_key.clone());
         let entry = guard.entry(registry_key.clone()).or_insert_with(|| {
@@ -135,9 +151,7 @@ fn merge_descendants(
             .and_then(|v| v.as_str())
             .map(str::to_string);
         entry.pid = pid;
-        if !socket_path.as_os_str().is_empty() {
-            entry.socket_path = socket_path;
-        }
+        entry.socket_path = socket_path;
         entry.parent_id = d
             .get("parentId")
             .and_then(|v| v.as_str())
@@ -171,6 +185,15 @@ fn merge_descendants(
     for id in stale {
         guard.remove(&id);
     }
+}
+
+fn forwarded_script_descendant_socket_is_ancestor_local(d: &serde_json::Value) -> bool {
+    d.get("executionBackend").and_then(|v| v.as_str())
+        == Some(super::subagent_environment_wire::BACKEND_SCRIPT)
+        && d.get("environment").is_some()
+        && d.pointer("/environment/socketMode")
+            .and_then(|v| v.as_str())
+            != Some("proxy")
 }
 
 /// Collect the ids of every transitive descendant of `root` (by `parent_id`) in

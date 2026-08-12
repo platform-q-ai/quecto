@@ -1,6 +1,6 @@
 [package]
 name = "quecto-agentic-harness"
-version = "0.104.1"
+version = "0.105.9"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
 license = "LicenseRef-Proprietary"
@@ -18,7 +18,7 @@ path = "src/main.rs"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "fs", "process", "io-std", "sync"] }
 
 # Shared bounded protocol reader (#1003)
-quecto-line-io = { version = "0.2.0", path = "../quecto-line-io" }
+quecto-line-io = { version = "0.2.1", path = "../quecto-line-io" }
 
 # HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
@@ -71,7 +71,7 @@ filetime = "0.2"
 serial_test = "3"
 # `test-harness` exposes quecto-tui's headless render harness so the `bdd`
 # target can drive the real TUI render/key path without a TTY (#805).
-quecto-tui = { version = "0.76.0", path = "../quecto-tui", features = ["test-harness"] }
+quecto-tui = { version = "0.76.1", path = "../quecto-tui", features = ["test-harness"] }
 
 [[test]]
 name = "bdd"

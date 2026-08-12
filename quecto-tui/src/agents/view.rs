@@ -63,6 +63,7 @@ impl RosterInfo for SubagentInfoEvent {
 pub(crate) struct FeedState {
     pub(crate) cmd_tx: mpsc::Sender<Command>,
     pub(crate) handle: tokio::task::JoinHandle<()>,
+    pub(crate) inspection_only: bool,
     pub(crate) epoch: u64,
     pub(crate) rev: u64,
     pub(crate) last_fresh_at: Option<std::time::Instant>,
@@ -106,6 +107,7 @@ impl FeedState {
         Self {
             cmd_tx: runtime.cmd_tx,
             handle: runtime.handle,
+            inspection_only: runtime.inspection_only,
             epoch: sync.epoch,
             rev: sync.rev,
             last_fresh_at: sync.last_fresh_at,
@@ -126,10 +128,6 @@ pub(crate) struct SubagentUi {
     pub(crate) tracked: BTreeMap<String, TrackedSubagent<SubagentInfoEvent>>,
     /// Animation frame for the subagent spinner, advanced on each spinner tick.
     pub(crate) frame: usize,
-    /// The sub-agent the parent is currently blocked on via `agent_cmd await`,
-    /// if any. Rendered as a per-row "awaiting" indicator instead of a shared
-    /// spinner line.
-    pub(crate) awaited_agent_id: Option<String>,
     /// Per-sub-agent session views, keyed by agent id (#800). The master is not
     /// in this map — it is top-level App state and `active_agent_id == None`.
     pub(crate) sessions: BTreeMap<String, SessionView>,
@@ -144,7 +142,11 @@ pub(crate) struct SubagentUi {
     pub(crate) selected_environment: Option<String>,
     /// Left-panel selection cursor over the flattened (master + tree) rows.
     pub(crate) panel_nav: ListNavigator,
-    /// Fan-in for events from direct sub-agent connections (#800).
+    /// Durable identity for the focused panel cursor. The row index is only a
+    /// viewport coordinate; live roster updates can reorder rows, so focused
+    /// navigation preserves/commits by this key when possible.
+    pub(crate) panel_nav_key: Option<String>,
+    /// Fan-in for events from direct/routed sub-agent feeds (#800/#1442).
     pub(crate) event_tx: mpsc::Sender<(String, Event)>,
     pub(crate) event_rx: mpsc::Receiver<(String, Event)>,
     /// Per-subagent synced feed state keyed by agent id.
@@ -172,12 +174,12 @@ impl SubagentUi {
         Self {
             tracked: BTreeMap::new(),
             frame: 0,
-            awaited_agent_id: None,
             sessions: BTreeMap::new(),
             session_order: Vec::new(),
             active_agent_id: None,
             selected_environment: None,
             panel_nav: ListNavigator::new(),
+            panel_nav_key: None,
             event_tx,
             event_rx,
             feeds: BTreeMap::new(),
@@ -260,12 +262,22 @@ impl SessionView {
         if clear_live {
             self.live_inflight.clear();
         }
+        let preserved_scroll_offset = self.chat.scroll_offset();
         self.chat.clear();
+        if preserved_scroll_offset > 0 {
+            self.chat.scroll_up(preserved_scroll_offset);
+        }
         for entry in ledger {
             self.chat
                 .add_entry(crate::agents::view::ledger_entry_to_chat_entry(entry));
         }
+        // Projection rebuilds are authoritative snapshots. Discard trim deltas
+        // accumulated while rebuilding the committed prefix so callers only
+        // reconcile retention that happens after the live boundary is reset.
+        let _ = self.chat.take_retention_front_delta();
+        let committed_entry_count = self.chat.entry_count();
         if attach_live {
+            self.active_turn_start = committed_entry_count;
             // Skip live tool cards already present in the committed ledger so a
             // mid-turn tool checkpoint does not double-render (#1259 review).
             let ledger_tool_ids: std::collections::HashSet<String> = self
@@ -295,6 +307,16 @@ impl SessionView {
 
     /// Drop oldest live-inflight entries past [`LIVE_INFLIGHT_ENTRY_CAP`],
     /// leaving a single truncation status so overflow is visible (#1259).
+    pub(crate) fn reconcile_chat_retention_trim(&mut self) {
+        let (trimmed, inserted) = self.chat.take_retention_front_delta();
+        if trimmed > 0 || inserted > 0 {
+            self.active_turn_start = self
+                .active_turn_start
+                .saturating_sub(trimmed)
+                .saturating_add(inserted);
+        }
+    }
+
     pub(crate) fn cap_live_inflight(&mut self) {
         let n = self.live_inflight.entry_count();
         if n <= LIVE_INFLIGHT_ENTRY_CAP {

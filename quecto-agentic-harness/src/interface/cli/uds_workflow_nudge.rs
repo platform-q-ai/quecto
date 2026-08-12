@@ -64,7 +64,8 @@ pub(super) fn workflow_nudge_message(ctx: &DispatchCtx<'_>) -> Option<WorkflowNu
 pub(super) fn workflow_progress_fingerprint(ctx: &DispatchCtx<'_>) -> Option<String> {
     let ws = ctx.workflow_state.as_ref()?;
     let engine = ws.lock().ok()?;
-    let snapshot = engine.snapshot(true);
+    let mut snapshot = engine.snapshot(true);
+    snapshot.steps = engine.all_step_statuses();
     serde_json::to_string(&snapshot).ok()
 }
 

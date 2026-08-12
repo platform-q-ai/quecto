@@ -1498,7 +1498,7 @@ dependencies = [
 
 [[package]]
 name = "quecto-agentic-harness"
-version = "0.104.1"
+version = "0.105.9"
 dependencies = [
  "base64",
  "cucumber",
@@ -1530,7 +1530,7 @@ dependencies = [
 
 [[package]]
 name = "quecto-api"
-version = "0.5.0"
+version = "0.5.3"
 dependencies = [
  "axum 0.8.8",
  "cucumber",
@@ -1551,14 +1551,14 @@ dependencies = [
 
 [[package]]
 name = "quecto-line-io"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "tokio",
 ]
 
 [[package]]
 name = "quecto-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cucumber",
  "futures-util",
@@ -1577,7 +1577,7 @@ dependencies = [
 
 [[package]]
 name = "quecto-runtime-manager"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum 0.7.9",
  "base64",
@@ -1597,7 +1597,7 @@ dependencies = [
 
 [[package]]
 name = "quecto-tui"
-version = "0.76.0"
+version = "0.76.7"
 dependencies = [
  "cucumber",
  "futures",

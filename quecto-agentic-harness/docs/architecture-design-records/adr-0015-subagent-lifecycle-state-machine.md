@@ -7,7 +7,7 @@
 ## Context
 
 Subagents are a defining capability of the harness. A parent agent can spawn a
-child harness process, send it prompts, steer or follow up, await completion,
+child harness process, send it prompts, steer or follow up, observe passive completion,
 query state, retrieve messages, receive passive completion notes, and forward
 selected UDS commands to the child.
 
@@ -51,8 +51,6 @@ enum SubagentLifecycleEvent {
     TurnStarted,
     TurnEnded,
     CompletionNoted,
-    AwaitStarted,
-    AwaitTimedOut,
     Exited,
     Killed,
     Failed,
@@ -63,7 +61,7 @@ The state machine should distinguish:
 
 - process lifecycle from agent-run lifecycle;
 - parent registry metadata from child-reported state;
-- passive completion notes from explicit `await` results;
+- passive completion notes from transcript inspection results;
 - local parent history from child history resolved over forwarded commands.
 
 This decision does not require changing the public subagent tool schema or UDS
@@ -71,7 +69,7 @@ wire events immediately. Public shape changes require separate protocol work.
 
 ## Consequences
 
-- Race-sensitive behaviour such as completion notes, `await`, kill, abort, and
+- Race-sensitive behaviour such as completion notes, kill, abort, and
   child message retrieval becomes easier to specify.
 - Tests can assert legal transitions and idempotency/coalescing rules.
 - Parent-facing status can be derived from lifecycle state rather than scattered
@@ -91,3 +89,23 @@ wire events immediately. Public shape changes require separate protocol work.
 - **Push subagent orchestration into an external tool.** Rejected for this scope:
   ADR-0006 keeps larger taskgraph orchestration external, but the kernel owns
   the composable unit contract and child-agent lifecycle semantics.
+
+## Delta — cross-process liveness dimension (#1460 / epic #1467)
+
+ADR-0023 makes the TUI a multiplexer of replicant agent *processes* that
+outlive it (`--persist` detach). That adds a liveness dimension **orthogonal**
+to the in-process lifecycle states above:
+
+```text
+live      — the process answers a connect probe on its socket
+detached  — the process is presumed running but no client is attached
+dead      — the socket refuses (or the stamped pid is gone); safe to reap
+```
+
+`SubagentState` describes what an agent is doing; the liveness dimension
+describes whether anyone can still reach it. A `Busy` agent can be `detached`
+(TUI closed), and an `Exited` one leaves a `dead` socket behind.
+
+The roster of known agents (pid + socket registry sidecar) is persisted in
+the session store so a restarted TUI can re-derive `live | detached | dead`
+by probing, rather than trusting stale files. Tracked by #1461.

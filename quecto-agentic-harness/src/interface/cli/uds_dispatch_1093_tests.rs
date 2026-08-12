@@ -41,7 +41,6 @@ impl MemSpillStore {
     pub(super) fn recall_count(&self) -> usize {
         self.recalls.lock().unwrap().len()
     }
-
     pub(super) fn recalled(&self) -> Vec<(String, String)> {
         self.recalls.lock().unwrap().clone()
     }
@@ -470,7 +469,8 @@ async fn get_message_metadata_too_large_returns_error_and_keeps_connection_usabl
     assert!(
         !dispatch_command(
             AgentCommand::GetState {
-                id: Some("after-error".into())
+                id: Some("after-error".into()),
+                agent_id: None,
             },
             &mut fx.ctx(Some(tx))
         )
@@ -686,6 +686,7 @@ async fn resume_session_atomically_switches_the_snapshot_spill_namespace() {
             key: "cli:saved".into(),
             messages: vec![collapsed],
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();

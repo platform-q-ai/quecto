@@ -231,13 +231,18 @@ fn test_atomic_replacement_preserves_existing_credentials_until_rename() {
         "new-token",
         "the second store() call must be visible after atomic_write's rename"
     );
-    let entries: Vec<_> = std::fs::read_dir(tmp.path())
+    let mut entries: Vec<_> = std::fs::read_dir(tmp.path())
         .unwrap()
         .map(|e| e.unwrap().file_name())
         .collect();
+    entries.sort();
     assert_eq!(
         entries,
-        vec![std::ffi::OsString::from("credentials.json")],
+        vec![
+            std::ffi::OsString::from("credentials.json"),
+            // The cross-process lock sidecar (#1460) legitimately remains.
+            std::ffi::OsString::from("credentials.json.lock"),
+        ],
         "atomic_write must not leave its temp file behind after a successful rename"
     );
 }
@@ -290,4 +295,230 @@ fn test_credentials_permissions_enforced_on_every_write() {
         "expected permissions 0600 after re-write, got {:04o}",
         mode
     );
+}
+
+// ─── #1460: cross-process file lock around load-mutate-store ────────────────
+
+/// A store() creates the lock file beside credentials.json and releases the
+/// lock when done: after store() returns, an exclusive non-blocking lock on
+/// the same file must succeed. Paired with the blocking test below, this
+/// pins acquire-and-release.
+#[test]
+fn test_store_creates_and_releases_lock_file() {
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+
+    store
+        .store(make_credential("openai", "sk-test", AuthMethod::Token))
+        .unwrap();
+
+    assert!(
+        store.lock_path().exists(),
+        "store() must guard its load-mutate-store cycle via the lock file {}",
+        store.lock_path().display()
+    );
+    let lock_file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(store.lock_path())
+        .unwrap();
+    lock_file
+        .try_lock()
+        .expect("store() must release the credentials lock when its write completes");
+}
+
+/// While another process (simulated: another file description in this
+/// process) holds an exclusive lock on the credentials lock file, a store()
+/// must block instead of racing the read-modify-write.
+#[test]
+fn test_store_blocks_while_credentials_lock_is_held() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    // Seed so a real file exists to mutate.
+    store
+        .store(make_credential("seed", "sk-seed", AuthMethod::Token))
+        .unwrap();
+
+    // Simulated other process: hold an exclusive lock on the lock file.
+    let lock_file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(store.lock_path())
+        .unwrap();
+    lock_file.lock().unwrap();
+
+    let done = Arc::new(AtomicBool::new(false));
+    let done_writer = Arc::clone(&done);
+    let dir = tmp.path().to_path_buf();
+    let writer = std::thread::spawn(move || {
+        let store = CredentialStore::new(&dir);
+        store
+            .store(make_credential("alpha", "sk-alpha", AuthMethod::Token))
+            .unwrap();
+        done_writer.store(true, Ordering::SeqCst);
+    });
+
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(
+        !done.load(Ordering::SeqCst),
+        "store() must wait for the credentials lock held by another locker"
+    );
+
+    lock_file.unlock().unwrap();
+    drop(lock_file);
+    writer.join().unwrap();
+    assert!(done.load(Ordering::SeqCst));
+    assert_eq!(
+        store.get("alpha").unwrap().expect("alpha stored").token,
+        "sk-alpha"
+    );
+    assert_eq!(
+        store.get("seed").unwrap().expect("seed survives").token,
+        "sk-seed",
+        "a blocked writer must not clobber existing credentials"
+    );
+}
+
+/// N concurrent load-mutate-store cycles over one file must lose no tokens.
+#[test]
+fn test_concurrent_stores_lose_no_tokens() {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path().to_path_buf();
+
+    let threads: Vec<_> = (0..8)
+        .map(|i| {
+            let dir = dir.clone();
+            std::thread::spawn(move || {
+                let store = CredentialStore::new(&dir);
+                for round in 0..25 {
+                    store
+                        .store(make_credential(
+                            &format!("provider-{i}"),
+                            &format!("sk-{i}-{round}"),
+                            AuthMethod::Token,
+                        ))
+                        .unwrap();
+                }
+            })
+        })
+        .collect();
+    for t in threads {
+        t.join().unwrap();
+    }
+
+    let store = CredentialStore::new(&dir);
+    let all = store.load_snapshot().unwrap();
+    for i in 0..8 {
+        assert!(
+            all.contains_key(&format!("provider-{i}")),
+            "provider-{i} token lost by a concurrent read-modify-write; kept: {:?}",
+            all.keys().collect::<Vec<_>>()
+        );
+    }
+}
+
+// ─── #1460 review: rotation-aware refresh persistence ───────────────────────
+
+fn oauth_credential(provider: &str, token: &str, refresh: &str, expires_at: i64) -> Credential {
+    Credential {
+        provider: provider.to_string(),
+        token: token.to_string(),
+        method: AuthMethod::OAuth,
+        expires_at: Some(expires_at),
+        refresh_token: Some(refresh.to_string()),
+        account_id: None,
+    }
+}
+
+fn far_future() -> i64 {
+    crate::infrastructure::time::unix_timestamp_secs() + 3_600
+}
+
+/// The refresh path's normal case: the on-disk refresh token is still the one
+/// this refresh consumed, so the rotated credential is persisted.
+#[test]
+fn test_store_refreshed_persists_when_no_concurrent_rotation() {
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    store
+        .store(oauth_credential("anthropic", "at-old", "rt-1", 0))
+        .unwrap();
+
+    let refreshed = oauth_credential("anthropic", "at-new", "rt-2", far_future());
+    let authoritative = store.store_refreshed(refreshed, "rt-1").unwrap();
+
+    assert_eq!(authoritative.token, "at-new");
+    let on_disk = store.get("anthropic").unwrap().unwrap();
+    assert_eq!(on_disk.token, "at-new");
+    assert_eq!(on_disk.refresh_token.as_deref(), Some("rt-2"));
+}
+
+/// Lost-update guard: another process already rotated the token family (the
+/// on-disk refresh token no longer matches the one this refresh consumed and
+/// the on-disk credential is valid). The concurrent winner's credential must
+/// be kept — overwriting it would persist a competing/stale token family.
+#[test]
+fn test_store_refreshed_keeps_concurrently_rotated_credential() {
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    // Another agent's refresh landed first: rt-1 -> rt-other.
+    store
+        .store(oauth_credential(
+            "anthropic",
+            "at-other",
+            "rt-other",
+            far_future(),
+        ))
+        .unwrap();
+
+    // This agent also refreshed from rt-1, but lost the race.
+    let loser = oauth_credential("anthropic", "at-loser", "rt-loser", far_future());
+    let authoritative = store.store_refreshed(loser, "rt-1").unwrap();
+
+    assert_eq!(
+        authoritative.token, "at-other",
+        "the concurrent winner's credential is authoritative"
+    );
+    let on_disk = store.get("anthropic").unwrap().unwrap();
+    assert_eq!(on_disk.token, "at-other");
+    assert_eq!(on_disk.refresh_token.as_deref(), Some("rt-other"));
+}
+
+/// An expired on-disk credential never blocks a refresh persist, even when
+/// its refresh token differs (e.g. corrupt or ancient state).
+#[test]
+fn test_store_refreshed_overwrites_expired_mismatched_credential() {
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    store
+        .store(oauth_credential("anthropic", "at-stale", "rt-stale", 0))
+        .unwrap();
+
+    let refreshed = oauth_credential("anthropic", "at-new", "rt-new", far_future());
+    let authoritative = store.store_refreshed(refreshed, "rt-1").unwrap();
+
+    assert_eq!(authoritative.token, "at-new");
+    assert_eq!(store.get("anthropic").unwrap().unwrap().token, "at-new");
+}
+
+/// The credentials lock file itself must be owner-only: a world-readable
+/// lock file would let any co-resident user take the exclusive lock and
+/// wedge every credential write.
+#[test]
+fn test_lock_file_is_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    store
+        .store(make_credential("openai", "sk-test", AuthMethod::Token))
+        .unwrap();
+    let mode = std::fs::metadata(store.lock_path())
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600, "lock file must be 0600, got {mode:04o}");
 }

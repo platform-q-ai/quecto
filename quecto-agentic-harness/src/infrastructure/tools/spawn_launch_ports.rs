@@ -333,6 +333,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     .as_ref()
                     .map(|_| self.tool.environment_registry.clone()),
                 environment_ref: prepared.environment_ref.clone(),
+                process_owner: prepared.process_owner,
             });
             register_and_broadcast(
                 &self.tool.registry,
@@ -443,7 +444,19 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     .tool
                     .environment_registry
                     .get(r)
-                    .map(|record| format!(" workspace={}", record.workspace_path.display()))
+                    .map(|record| {
+                        // A sandbox config made no checkout — say so in the
+                        // spawn result instead of leaving an ordinary-looking
+                        // workspace path (#1410).
+                        let sandbox = if record.metadata.get("source").and_then(|v| v.as_str())
+                            == Some("none")
+                        {
+                            " (sandbox: empty workspace)"
+                        } else {
+                            ""
+                        };
+                        format!(" workspace={}{sandbox}", record.workspace_path.display())
+                    })
                     .unwrap_or_default();
                 format!(" environment_ref={r}{workspace}")
             })

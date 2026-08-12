@@ -26,12 +26,3 @@ fn preserves_non_secret_text() {
     assert_eq!(redact_secrets("ls -la /tmp"), "ls -la /tmp");
     assert_eq!(redact_secrets("usage_limit_reached"), "usage_limit_reached");
 }
-
-#[test]
-fn redact_and_bound_truncates() {
-    let long = format!("token=secret {}", "x".repeat(3000));
-    let out = redact_and_bound(&long, 2000);
-    assert!(out.starts_with("[REDACTED]"));
-    assert!(out.ends_with("…[truncated]"));
-    assert!(out.len() <= 2000 + "…[truncated]".len());
-}

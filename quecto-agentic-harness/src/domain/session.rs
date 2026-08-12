@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -38,6 +39,33 @@ pub struct SessionSummary {
     pub updated_unix_secs: Option<u64>,
 }
 
+/// Cross-process liveness of a persisted sub-agent roster entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubagentLiveness {
+    Live,
+    Detached,
+    Dead,
+}
+
+/// Durable, read-only summary of a sub-agent spawned by this session.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedSubagentRosterEntry {
+    pub agent_uuid: String,
+    pub display_name: String,
+    pub session_key: String,
+    pub socket_path: PathBuf,
+    pub pid: u32,
+    pub liveness: SubagentLiveness,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub read_only: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
 /// A conversation session identified by a unique key.
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -47,6 +75,8 @@ pub struct Session {
     pub messages: Vec<Message>,
     /// Optional persisted workflow run for UDS-native workflow sessions.
     pub workflow_run: Option<super::workflow::WorkflowRunPersisted>,
+    /// Persisted sub-agent roster for resumed masters (#1461).
+    pub subagent_roster: Vec<PersistedSubagentRosterEntry>,
 }
 
 impl Session {
@@ -56,6 +86,7 @@ impl Session {
             key: key.into(),
             messages: vec![],
             workflow_run: None,
+            subagent_roster: Vec::new(),
         }
     }
 
@@ -67,6 +98,19 @@ impl Session {
 
 /// Port: persistent storage for conversation sessions.
 pub trait SessionStore: Send + Sync {
+    /// Claim single-writer ownership of `key` before opening or resuming it
+    /// for writing (#1460): a key owned by another live process must be
+    /// refused HERE, at open time, not only when the first turn is saved —
+    /// otherwise a whole paid turn can run before the conflict surfaces.
+    /// Default is a no-op for stores without cross-process shared state.
+    fn claim(&self, _key: &str) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    /// Release this process's ownership claim when a live session switches
+    /// away from a key. Stores without explicit ownership can ignore this.
+    fn release(&self, _key: &str) {}
+
     /// Load a session by key. Returns None if no session exists.
     fn load(
         &self,
@@ -91,6 +135,7 @@ pub trait SessionStore: Send + Sync {
             key: key.to_string(),
             messages: messages.to_vec(),
             workflow_run,
+            subagent_roster: Vec::new(),
         };
         Box::pin(async move { self.save(&session).await })
     }

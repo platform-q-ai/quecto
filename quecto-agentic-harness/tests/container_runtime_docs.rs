@@ -56,13 +56,17 @@ fn canonical_doc_covers_the_documented_contract_surface() {
     // Distinctive needles only (backticked tokens, JSON field spellings,
     // literal env-var names) so incidental prose cannot satisfy them.
     for required in [
-        // config/selection
-        "`container_scripts`",
-        "container_scripts.default",
+        // config/selection (#1410: named container configs, default label)
+        "`container_configs`",
+        "\"default\": true",
         // operations and identity split
         "QUECTO_CONTAINER_ENVIRONMENT_REF",
         "QUECTO_CONTAINER_ENVIRONMENT_ID",
-        "QUECTO_CONTAINER_REPO",
+        "QUECTO_CONTAINER_CONFIG",
+        // #1410: configs are self-contained — the repository is baked into
+        // the config's own argv and sandbox configs are first-class.
+        "--repo",
+        "sandbox",
         // required JSON contract (field spellings as they appear in JSON)
         "\"environment_id\"",
         "\"workspace_path\"",

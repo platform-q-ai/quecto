@@ -403,10 +403,12 @@ async fn failed_page_enqueue_rolls_back_the_pending_request() {
     // so the notify + rollback pairing stays pinned.
     h.app_mut().handle_command_send_failure(CommandSendFailure {
         command: Command::GetMessages {
+            agent_id: None,
             id: Some(request_id),
             before: Some("m3".into()),
         },
         error: "channel full".into(),
+        connection: MASTER_CONNECTION_ID.to_string(),
     });
 
     prime_active_viewport(h.app_mut());
@@ -439,10 +441,12 @@ async fn rollback_of_an_unrelated_page_id_is_a_no_op() {
 
     h.app_mut().handle_command_send_failure(CommandSendFailure {
         command: Command::GetMessages {
+            agent_id: None,
             id: Some("history-page-someone-else-1".into()),
             before: Some("m3".into()),
         },
         error: "channel full".into(),
+        connection: MASTER_CONNECTION_ID.to_string(),
     });
 
     prime_active_viewport(h.app_mut());

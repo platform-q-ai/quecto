@@ -232,6 +232,7 @@ async fn register_and_broadcast_sends_state_changed_event() {
         cleanup_argv: Vec::new(),
         environment_registry: None,
         environment_ref: None,
+        process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
     });
 
     register_and_broadcast(&registry, Some(&tx), "child", entry).unwrap();
@@ -437,6 +438,7 @@ async fn register_and_broadcast_closed_receiver_still_inserts_entry() {
         cleanup_argv: Vec::new(),
         environment_registry: None,
         environment_ref: None,
+        process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
     });
 
     register_and_broadcast(&registry, Some(&tx), "closed", entry).unwrap();
@@ -474,6 +476,7 @@ async fn spawn_registry_poison_recovery_paths_do_not_drop_entries() {
             cleanup_argv: Vec::new(),
             environment_registry: None,
             environment_ref: None,
+            process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
         }),
     )
     .unwrap();
@@ -700,4 +703,30 @@ time.sleep(0.2)
     );
 
     super::shutdown_all(tool.registry());
+}
+
+#[test]
+fn spawn_tool_environment_registry_and_inherited_policy_builders_are_observed() {
+    use crate::domain::environment_registry::EnvironmentRegistry;
+    use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+    use std::collections::BTreeMap;
+
+    let registry = EnvironmentRegistry::new();
+    let first = registry.mint_ref();
+    let tool = SpawnTool::new(vec![], true).with_environment_registry(registry.clone());
+    let second = tool.environment_registry().mint_ref();
+    assert_ne!(first, second);
+    assert_eq!(registry.mint_ref(), "C3");
+
+    let mut tools = BTreeMap::new();
+    tools.insert("bash".to_string(), ProfileAvailabilityScope::Both);
+    let snapshot =
+        crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot::new(
+            tools.clone(),
+        );
+    let tool = tool.with_inherited_tool_policy(snapshot);
+    assert_eq!(
+        crate::infrastructure::tools::spawn_inherited_policy::tools(&tool.inherited_tool_policy),
+        Some(tools)
+    );
 }

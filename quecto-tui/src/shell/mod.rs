@@ -11,6 +11,7 @@ pub mod keys;
 pub mod process;
 pub mod render;
 pub mod signals;
+pub(crate) mod socket_path;
 pub mod stdin_buffer;
 pub mod terminal;
 /// Shared test-only `tracing` warn-capture apparatus (#1112 review): used by

@@ -1,8 +1,13 @@
 //! #843 child-targeted `agent_cmd` dispatch/forwarding characterization.
 use super::super::uds_dispatch_sync_forward::forward_subagent_sync;
-use super::{AgentCommand, ForwardGetMessage, dispatch_command, forward_subagent_get_message};
+use super::{
+    AgentCommand, ForwardGetMessage, dispatch_command, forward_subagent_get_message,
+    forward_subagent_get_messages,
+};
 use crate::domain::message::Message;
-use crate::infrastructure::tools::subagent_registry::new_registry;
+use crate::infrastructure::tools::subagent_registry::{
+    SubagentEntry, SubagentStatus, new_registry,
+};
 
 use super::tests_843::{
     Fx, register_child, spawn_recording_child, spawn_recording_get_message_child,
@@ -267,4 +272,48 @@ async fn forward_get_message_rejects_malformed_child_response() {
             .is_some_and(|error| !error.is_empty()),
         "malformed child JSON must be surfaced as an error: {json}"
     );
+}
+
+#[tokio::test]
+async fn forward_get_messages_rejects_stale_historical_before_cursor() {
+    use crate::domain::session::{Session, SessionStore, SubagentLiveness};
+
+    let registry = new_registry();
+    {
+        let mut entry = SubagentEntry::with_identity(
+            crate::domain::ids::AgentUuid::from("dead-child"),
+            "dead-label".into(),
+            "/tmp/dead.sock".into(),
+            9,
+        );
+        entry.status = SubagentStatus::Exited;
+        entry.persisted_liveness = SubagentLiveness::Dead;
+        registry.lock().unwrap().insert("dead-child".into(), entry);
+    }
+    let mut fx = Fx::new();
+    fx.store
+        .save(&Session {
+            key: "dead-child".into(),
+            messages: vec![Message::user("historical transcript")],
+            workflow_run: None,
+            subagent_roster: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let mut ctx = fx.ctx();
+    ctx.subagent_registry = Some(registry);
+
+    let ev = forward_subagent_get_messages(
+        &ctx,
+        Some(crate::domain::ids::CommandId::from("stale-before")),
+        "get_messages",
+        crate::domain::ids::AgentId::from("dead-child"),
+        None,
+        Some(crate::domain::ids::MessageId::from("missing-cursor")),
+    )
+    .await;
+    let json = serde_json::to_value(ev).unwrap();
+
+    assert_eq!(json["success"], false);
+    assert_eq!(json["error"], "history cursor not found: missing-cursor");
 }

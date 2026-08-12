@@ -18,6 +18,7 @@ async fn persist_replays_full_history_when_prefix_flagged_dirty() {
             key: fx.session_key.clone(),
             messages: fx.messages.clone(),
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();
@@ -214,6 +215,7 @@ async fn persist_baseline(fx: &mut Fixture) {
             key: fx.session_key.clone(),
             messages: fx.messages.clone(),
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();

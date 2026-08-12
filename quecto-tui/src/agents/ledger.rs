@@ -2,6 +2,8 @@ use crate::conversation::turn_recovery::ordered_by_refs;
 use crate::protocol::agent_ledger_payloads::{LedgerMessage, SyncDelta};
 use std::collections::HashMap;
 
+pub(crate) const LEDGER_RETAINED_MESSAGE_CAP: usize = 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum LedgerEntry {
     User {
@@ -23,6 +25,7 @@ pub(crate) enum LedgerEntry {
 pub(crate) struct LedgerTranscript {
     messages: HashMap<String, LedgerMessage>,
     order: Vec<String>,
+    rev: u64,
 }
 
 impl LedgerTranscript {
@@ -30,17 +33,59 @@ impl LedgerTranscript {
         if delta.resync {
             self.messages.clear();
             self.order.clear();
+            self.rev = 0;
         }
+        let mut new_ids = Vec::new();
         for message in &delta.messages {
             if let Some(id) = message.id().filter(|s| !s.is_empty()) {
                 let id = id.to_string();
                 if !self.messages.contains_key(&id) {
-                    self.order.push(id.clone());
+                    new_ids.push(id.clone());
                 }
                 self.messages.insert(id, message.clone());
             }
         }
+        self.insert_new_ids(delta, new_ids);
+        self.enforce_retention();
+        self.rev = self.rev.max(delta.rev);
         self.entries()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retained_message_count(&self) -> usize {
+        self.messages.len()
+    }
+
+    fn insert_new_ids(&mut self, delta: &SyncDelta, new_ids: Vec<String>) {
+        if new_ids.is_empty() {
+            return;
+        }
+        let recovered_older = !delta.resync
+            && self.order.len() >= LEDGER_RETAINED_MESSAGE_CAP
+            && delta.rev < self.rev;
+        if recovered_older {
+            self.order.splice(0..0, new_ids);
+            let overflow = self.order.len().saturating_sub(LEDGER_RETAINED_MESSAGE_CAP);
+            for id in self
+                .order
+                .split_off(self.order.len().saturating_sub(overflow))
+            {
+                self.messages.remove(&id);
+            }
+        } else {
+            self.order.extend(new_ids);
+        }
+    }
+
+    fn enforce_retention(&mut self) {
+        let overflow = self.order.len().saturating_sub(LEDGER_RETAINED_MESSAGE_CAP);
+        if overflow == 0 {
+            return;
+        }
+        let dropped: Vec<_> = self.order.drain(0..overflow).collect();
+        for id in dropped {
+            self.messages.remove(&id);
+        }
     }
 
     /// Current committed projection (order × messages), without mutating state.

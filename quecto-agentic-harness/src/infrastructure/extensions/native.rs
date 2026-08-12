@@ -191,7 +191,6 @@ pub struct AgentControlToolBuild {
 pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentControlToolBuild {
     let registry = crate::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
     let (notification_tx, notification_rx) = tokio::sync::mpsc::channel(64);
-    let active_awaits = crate::infrastructure::tools::agent_cmd::new_active_awaits();
     let environment_registry = crate::domain::environment_registry::EnvironmentRegistry::new();
 
     let mut spawn = crate::infrastructure::tools::spawn::SpawnTool::with_base_dir(
@@ -220,12 +219,9 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
             ),
         ),
     );
-    let agent_cmd = crate::infrastructure::tools::agent_cmd::AgentCmdTool::with_active_awaits(
-        registry.clone(),
-        active_awaits,
-    )
-    .with_broadcast(deps.broadcast_tx)
-    .with_environment_control(environment_control);
+    let agent_cmd = crate::infrastructure::tools::agent_cmd::AgentCmdTool::new(registry.clone())
+        .with_broadcast(deps.broadcast_tx)
+        .with_environment_control(environment_control);
 
     AgentControlToolBuild {
         extensions: vec![Arc::new(NativeExtension::with_tools(

@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::agent::AgentLoop;
+use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role};
 use crate::domain::provider::LlmProvider;
 use crate::domain::session::{Session, SessionStore};
@@ -170,6 +171,7 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
                 key: self.session.session_key.clone(),
                 messages: Vec::new(),
                 workflow_run: None,
+                subagent_roster: Vec::new(),
             };
             if let Err(e) = rt.block_on(self.session.session_store.save(&session)) {
                 let _ = writeln!(self.writer, "Warning: failed to clear session: {e}");
@@ -248,6 +250,7 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
                 key: self.session.session_key.clone(),
                 messages: self.session.messages.clone(),
                 workflow_run: None,
+                subagent_roster: Vec::new(),
             };
             if let Err(e) = rt.block_on(self.session.session_store.save(&session)) {
                 let _ = writeln!(self.writer, "Warning: failed to save session: {e}");
@@ -411,7 +414,18 @@ pub fn run_repl<R: BufRead, W: Write>(
         }
     };
 
-    let mut messages = load_session_messages_with_rt(&rt, &session_store, &session_key, ephemeral);
+    let mut messages =
+        match load_session_messages_with_rt(&rt, &session_store, &session_key, ephemeral) {
+            Ok(messages) => messages,
+            Err(e) => {
+                let _ = writeln!(writer, "Error: {e}");
+                if let Some(handle) = spinner_handle {
+                    handle.stop();
+                }
+                crate::interface::shared::scrub_ephemeral_spill(ctx.base_dir, ephemeral);
+                return 1;
+            }
+        };
     if !ephemeral && !messages.is_empty() {
         rt.block_on(agent.prune_resumed_context(&mut messages));
     }
@@ -529,13 +543,14 @@ fn load_session_messages_with_rt(
     store: &FileSessionStore,
     key: &str,
     ephemeral: bool,
-) -> Vec<Message> {
+) -> Result<Vec<Message>, DomainError> {
     if ephemeral {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    match rt.block_on(store.load(key)) {
-        Ok(Some(session)) => session.messages,
-        _ => Vec::new(),
+    store.claim(key)?;
+    match rt.block_on(store.load(key))? {
+        Some(session) => Ok(session.messages),
+        None => Ok(Vec::new()),
     }
 }
 

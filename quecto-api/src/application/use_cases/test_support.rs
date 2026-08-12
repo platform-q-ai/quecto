@@ -102,6 +102,7 @@ fn command_name(cmd: &AgentCommand) -> &'static str {
         AgentCommand::GetState => "get_state",
         AgentCommand::GetMessages { .. } => "get_messages",
         AgentCommand::GetMessagesTail { .. } => "get_messages_tail",
+        AgentCommand::Sync { .. } => "sync",
         AgentCommand::GetMessage { .. } => "get_message",
         AgentCommand::GetSessionStats => "get_session_stats",
         AgentCommand::SetModel { .. } => "set_model",

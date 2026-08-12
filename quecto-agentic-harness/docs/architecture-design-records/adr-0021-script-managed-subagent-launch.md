@@ -24,3 +24,18 @@ Architecture tests enforce that domain/application do not perform runtime I/O or
 Register-failure rollback is currently enforced only by the application-level contract suite: registration has no production failure mode in this slice, so no scenario fabricates one. It gains a genuine production seam when registration becomes fallible (Slice 2 environment membership).
 
 Slice 2 note: the final-member kill claim is minted inside infrastructure's `remove_member_and_finalize` rather than the application use case, because the claim must be granted atomically with the domain registry's membership removal; explicit `kill_container` remains an application use case and interface adapters stay decode/delegate/encode.
+
+## Revision: self-contained container configs (#1410)
+
+Issue #1410 revises the slice-1 repository contract: `container_scripts`
+becomes `container_configs` (named, self-contained container configs with a
+`"default": true` entry label validated at config load), the spawn `repo`
+field and `QUECTO_CONTAINER_REPO` are removed, and Quecto no longer
+discovers or passes any source information — each config bakes its
+repository (and auth) into its own argv, sandbox configs (no repository)
+are first-class, and the parent's location is irrelevant to container
+semantics. Listings/TUI learn the repository from the create result's
+`metadata.repository`, reported by the script that owns it. This
+supersedes the slice-1 acceptance bullets "omitted repo uses the parent
+repository URL" and "explicit repo is passed literally". Local spawning is
+untouched.

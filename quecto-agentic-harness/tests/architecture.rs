@@ -1165,11 +1165,11 @@ fn multi_client_agent_announces_protocol_version_via_shared_helper() {
 /// Seed: production raw `serde_json` parsing sites still resident in TUI
 /// feature/view modules. Lower this as call sites migrate
 /// behind mappers. Never raise it.
-const TUI_FEATURE_VIEW_RAW_JSON_SITE_SEED: usize = 0;
+const TUI_FEATURE_VIEW_RAW_JSON_SITE_SEED: usize = 5;
 /// Measured after #1257 Phase 5 relocation plus genuine get_state/workflow/
 /// set_effort mapper conversions; future relocations must not burn down sites
 /// by moving scan roots alone.
-const TUI_PHASE_6_FEATURE_VIEW_RAW_JSON_TOTAL: usize = 0;
+const TUI_PHASE_6_FEATURE_VIEW_RAW_JSON_TOTAL: usize = 5;
 
 /// #1257: feature/view ratchet scan roots follow the code as modules relocate,
 /// so a move alone can never lower a measured count (Phase 5: four new feature
@@ -1191,13 +1191,13 @@ const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] = &[
 /// this as they migrate behind typed mappers. Never raise it.
 /// (#1257 Phase 5: raised only by genuine new mapper sites absorbed from
 /// feature/view — net feature-view burn-down is required when raising.)
-const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 126;
-/// Measured with key, indexed-value, and accessor-chain parsing all counted.
-const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 126;
-/// Historical combined feature/view + protocol ceiling. This prevents moving
+const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 137;
+/// Measured with direct deserialization, key, indexed-value, and accessor-chain parsing all counted.
+const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 137;
+/// Current combined feature/view + protocol ceiling. This prevents moving
 /// sites between buckets (and adjusting their individual seeds) from hiding
-/// growth in the total raw-JSON inventory.
-const TUI_RAW_JSON_COMBINED_CEILING: usize = 178;
+/// growth in the total raw-JSON inventory; keep it exact when re-baselining.
+const TUI_RAW_JSON_COMBINED_CEILING: usize = 142;
 
 /// Seed: production feature/view *usages* of `protocol::client` wire DTOs.
 /// Lower this as call sites migrate behind mappers. Never raise it.
@@ -1215,7 +1215,7 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// the environment-detail chrome reads the shared `SubagentEnvironmentInfo`
 /// metadata carried on tracked entries — necessary wire use for environment
 /// grouping, not unrelated growth.
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 117;
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 116;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///
@@ -1289,12 +1289,15 @@ fn is_test_module(content: &str) -> bool {
     })
 }
 
-/// Raw JSON parsing = reaching into a `serde_json::Value` by field or shape.
+/// Raw JSON parsing = directly deserializing or reaching into a
+/// `serde_json::Value` by field or shape.
 ///
 /// Accessors like `as_str()` exist on plain `String` too, so a bare accessor is
-/// only counted when the line also shows a key lookup (`.get("…")`/`.pointer("…")`)
-/// or an `and_then` chain, which is how `serde_json` access actually reads. This
-/// keeps `args[i].as_str()` and `m.id.as_str()` out of the inventory.
+/// only counted when the line also shows a JSON key lookup (`.get("…")` /
+/// `.pointer("…")`), an indexed JSON value, or a precise JSON-ish dynamic-key
+/// helper (`value.get(key).and_then(Value::as_*)` / `data.get(key)…`). This
+/// keeps ordinary collections (`map.get(id)`) and `m.id.as_str()` out of the
+/// inventory while counting direct `serde_json::from_str` / `from_value` sites.
 fn raw_json_site_count(content: &str) -> usize {
     content
         .lines()
@@ -1303,17 +1306,63 @@ fn raw_json_site_count(content: &str) -> usize {
             if t.starts_with("//") || t.starts_with("///") {
                 return false;
             }
-            let keys = t.contains(".get(\"") || t.contains(".pointer(\"");
-            let accessor = t.contains("as_array()")
+            let direct_deserialize =
+                t.contains("serde_json::from_str") || t.contains("serde_json::from_value");
+            let literal_keys = t.contains(".get(\"") || t.contains(".pointer(\"");
+            let accessor_call = t.contains("as_array()")
                 || t.contains("as_object()")
                 || t.contains("as_str()")
                 || t.contains("as_u64()")
                 || t.contains("as_i64()")
                 || t.contains("as_bool()");
-            let indexed_value = t.contains("[\"") && accessor;
-            keys || indexed_value || (accessor && t.contains("and_then"))
+            let accessor_ref = t.contains("Value::as_array")
+                || t.contains("Value::as_object")
+                || t.contains("Value::as_str")
+                || t.contains("Value::as_u64")
+                || t.contains("Value::as_i64")
+                || t.contains("Value::as_bool");
+            let indexed_value = t.contains("[\"") && accessor_call;
+            let dynamic_json_key = (t.contains("value.get(") || t.contains("data.get("))
+                && t.contains("and_then")
+                && (accessor_call || accessor_ref);
+            direct_deserialize
+                || literal_keys
+                || indexed_value
+                || (accessor_call && t.contains("and_then"))
+                || dynamic_json_key
         })
         .count()
+}
+
+#[test]
+fn raw_json_site_count_covers_deserialize_and_json_key_shapes() {
+    assert_eq!(
+        raw_json_site_count(
+            r#"
+            let parsed = serde_json::from_str::<serde_json::Value>(line)?;
+            let typed = serde_json::from_value::<Payload>(value)?;
+            let kind = value.get("type").and_then(|v| v.as_str());
+            let id = value.get(key).and_then(Value::as_str);
+            let count = data.get(key).and_then(Value::as_u64);
+            "#
+        ),
+        5
+    );
+}
+
+#[test]
+fn raw_json_site_count_ignores_ordinary_collections_and_string_accessors() {
+    assert_eq!(
+        raw_json_site_count(
+            r#"
+            let item = map.get(id);
+            let item = items.get(i);
+            let tracked = tracked.get(id).and_then(|entry| entry.panel.as_ref());
+            let id = m.id.as_str();
+            "#
+        ),
+        0
+    );
 }
 
 /// Uses of wire DTOs, not merely `use` lines: `use super::*` re-exports and
@@ -1364,7 +1413,7 @@ fn tui_ratchet_inventory(
 }
 
 #[test]
-fn tui_feature_view_raw_json_parsing_sites_are_eliminated() {
+fn tui_feature_view_raw_json_parsing_sites_do_not_grow() {
     let (total, per_file) = tui_ratchet_inventory(
         TUI_FEATURE_VIEW_RATCHET_ROOTS,
         TUI_FEATURE_VIEW_RAW_JSON_ALLOWLIST,
@@ -1373,7 +1422,7 @@ fn tui_feature_view_raw_json_parsing_sites_are_eliminated() {
     assert_eq!(
         total, TUI_PHASE_6_FEATURE_VIEW_RAW_JSON_TOTAL,
         "#1257 Phase 6 relocation must preserve moved feature/view raw serde_json \
-         sites except genuine protocol-mapper conversions: found {total}, seed \
+         sites surfaced by the truthful #1250 counter except genuine protocol-mapper conversions: found {total}, seed \
          {TUI_FEATURE_VIEW_RAW_JSON_SITE_SEED}. Move payload interpretation into a \
          protocol-layer mapper (see quecto-tui/src/protocol/model_payloads.rs, \
          #1220). Inventory (burn-down order): {per_file:?}"
@@ -1419,6 +1468,23 @@ fn tui_combined_raw_json_inventory_does_not_grow() {
         total <= TUI_RAW_JSON_COMBINED_CEILING,
         "combined TUI raw serde_json inventory must not grow when sites move between feature/view and protocol buckets: found {total} ({feature_total} feature/view + {protocol_total} protocol), historical ceiling {TUI_RAW_JSON_COMBINED_CEILING}. Feature inventory: {feature_files:?}; protocol inventory: {protocol_files:?}"
     );
+}
+
+#[test]
+fn wire_dto_usage_count_covers_import_gated_unqualified_uses() {
+    let client_wire = r#"
+        use crate::protocol::client::{Command, Event};
+        let tx: mpsc::Sender<Command> = command_tx;
+        let rx: mpsc::Receiver<Event> = event_rx;
+    "#;
+    assert!(wire_dto_usage_count(client_wire) > 0);
+
+    let non_client = r#"
+        use std::process::Command;
+        use pulldown_cmark::Event;
+        let slash: SlashCommand = parsed;
+    "#;
+    assert_eq!(wire_dto_usage_count(non_client), 0);
 }
 
 #[test]

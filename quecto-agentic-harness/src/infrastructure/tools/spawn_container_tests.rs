@@ -6,7 +6,8 @@ use tempfile::TempDir;
 #[test]
 fn validate_script_rejects_missing_or_unsafe_argv() {
     assert!(
-        validate_script(&ContainerScriptConfig {
+        validate_container_config(&ContainerConfig {
+            default: false,
             create: vec![],
             cleanup: vec![],
             exec: vec![],
@@ -16,7 +17,8 @@ fn validate_script_rejects_missing_or_unsafe_argv() {
         .is_err()
     );
     assert!(
-        validate_script(&ContainerScriptConfig {
+        validate_container_config(&ContainerConfig {
+            default: false,
             create: vec!["".into()],
             cleanup: vec![],
             exec: vec![],
@@ -26,7 +28,8 @@ fn validate_script_rejects_missing_or_unsafe_argv() {
         .is_err()
     );
     assert!(
-        validate_script(&ContainerScriptConfig {
+        validate_container_config(&ContainerConfig {
+            default: false,
             create: vec!["ok".into()],
             cleanup: vec!["bad\0".into()],
             exec: vec![],
@@ -36,7 +39,8 @@ fn validate_script_rejects_missing_or_unsafe_argv() {
         .is_err()
     );
     assert!(
-        validate_script(&ContainerScriptConfig {
+        validate_container_config(&ContainerConfig {
+            default: false,
             create: vec!["ok".into()],
             cleanup: vec![],
             exec: vec![],
@@ -46,7 +50,8 @@ fn validate_script_rejects_missing_or_unsafe_argv() {
         .is_err()
     );
     assert!(
-        validate_script(&ContainerScriptConfig {
+        validate_container_config(&ContainerConfig {
+            default: false,
             create: vec!["ok".into()],
             cleanup: vec!["cleanup".into()],
             exec: vec![],
@@ -57,11 +62,12 @@ fn validate_script_rejects_missing_or_unsafe_argv() {
     );
 }
 
-fn configured_scripts() -> Config {
-    let mut scripts = HashMap::new();
-    scripts.insert(
+fn configured_container_configs() -> Config {
+    let mut container_configs = HashMap::new();
+    container_configs.insert(
         "default".to_string(),
-        ContainerScriptConfig {
+        ContainerConfig {
+            default: true,
             create: vec!["echo".into()],
             cleanup: vec!["echo".into()],
             exec: vec![],
@@ -70,10 +76,7 @@ fn configured_scripts() -> Config {
         },
     );
     Config {
-        container_scripts: crate::infrastructure::config::ContainerScriptsConfig {
-            default: "default".into(),
-            scripts,
-        },
+        container_configs,
         ..Default::default()
     }
 }
@@ -117,52 +120,66 @@ fn base_config(container: ContainerSelection) -> SubagentConfig {
 }
 
 #[test]
-fn script_selection_and_repo_defaults_are_resolved() {
-    let cfg = configured_scripts();
-    assert_eq!(script_name(&None, &cfg).unwrap(), "default");
-    assert!(script_config(&cfg, "default").is_ok());
-    assert!(script_config(&cfg, "missing").is_err());
-    assert!(script_name(&Some("".into()), &cfg).is_err());
+fn container_config_selection_uses_the_default_label_and_enumerates_on_errors() {
+    let cfg = configured_container_configs();
+    // Omitted selection resolves to the entry labeled `"default": true`.
+    assert_eq!(container_config_name(&None, &cfg).unwrap(), "default");
+    assert!(container_config(&cfg, "default").is_ok());
 
-    let config = base_config(ContainerSelection::New {
-        repo: Some("explicit".into()),
-        container_script: None,
-        name: None,
-    });
+    // Unknown names enumerate the configured menu so agents can offer it.
+    let err = container_config(&cfg, "missing").unwrap_err().to_string();
+    assert!(err.contains("unknown container config 'missing'"), "{err}");
+    assert!(
+        err.contains("available container configs: default"),
+        "{err}"
+    );
+
+    // Defensive-arm only: in production Config::load rejects a non-empty map
+    // with no default before this code runs; the arm still enumerates so a
+    // future bypass cannot fail silently.
+    let mut unlabeled = configured_container_configs();
+    unlabeled
+        .container_configs
+        .get_mut("default")
+        .unwrap()
+        .default = false;
+    let err = container_config_name(&None, &unlabeled)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("no container config is labeled"), "{err}");
+    assert!(
+        err.contains("available container configs: default"),
+        "{err}"
+    );
+
+    // An explicitly selected name wins regardless of labels.
     assert_eq!(
-        selected_repo(&config, Path::new("/tmp"))
-            .unwrap()
-            .as_deref(),
-        Some("explicit")
+        container_config_name(&Some("other".into()), &cfg).unwrap(),
+        "other"
     );
 }
 
 #[test]
-fn local_selection_has_no_repo_or_container_config_requirement() {
+fn local_selection_has_no_container_config_requirement() {
     let config = base_config(ContainerSelection::Local);
-    assert!(selected_repo(&config, Path::new("/tmp")).unwrap().is_none());
-    assert!(load_container_config(&config, None).is_err());
+    assert!(load_container_config(&config, None, Path::new("/tmp")).is_err());
 }
 
 #[test]
 fn relative_config_path_is_rejected_for_container_config() {
     let mut config = base_config(ContainerSelection::New {
-        repo: None,
-        container_script: None,
+        container_config: None,
         name: None,
     });
     config.config_path = Some(PathBuf::from("relative.toml"));
-    assert!(load_container_config(&config, None).is_err());
+    assert!(load_container_config(&config, None, Path::new("/tmp")).is_err());
 }
 
-fn write_scripts_config(dir: &std::path::Path, default: &str) -> PathBuf {
+fn write_container_configs(dir: &std::path::Path, default: &str) -> PathBuf {
     let path = dir.join(format!("config-{default}.json"));
     let config = serde_json::json!({
-        "container_scripts": {
-            "default": default,
-            "scripts": {
-                default: {"create": ["/bin/true"], "cleanup": ["/bin/true"]}
-            }
+        "container_configs": {
+            default: {"default": true, "create": ["/bin/true"], "cleanup": ["/bin/true"]}
         }
     });
     std::fs::write(&path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
@@ -172,39 +189,62 @@ fn write_scripts_config(dir: &std::path::Path, default: &str) -> PathBuf {
 #[test]
 fn parent_config_path_is_the_fallback_when_spawn_config_is_omitted() {
     let dir = TempDir::new().unwrap();
-    let parent = write_scripts_config(dir.path(), "parentset");
+    let parent = write_container_configs(dir.path(), "parentset");
     let config = base_config(ContainerSelection::New {
-        repo: None,
-        container_script: None,
+        container_config: None,
         name: None,
     });
-    let loaded = load_container_config(&config, Some(&parent)).unwrap();
-    assert_eq!(loaded.container_scripts.default, "parentset");
+    let loaded = load_container_config(&config, Some(&parent), Path::new("/tmp")).unwrap();
+    assert_eq!(container_config_name(&None, &loaded).unwrap(), "parentset");
 }
 
 #[test]
 fn explicit_spawn_config_wins_over_the_parent_config_path() {
     let dir = TempDir::new().unwrap();
-    let parent = write_scripts_config(dir.path(), "parentset");
-    let explicit = write_scripts_config(dir.path(), "explicitset");
+    let parent = write_container_configs(dir.path(), "parentset");
+    let explicit = write_container_configs(dir.path(), "explicitset");
     let mut config = base_config(ContainerSelection::New {
-        repo: None,
-        container_script: None,
+        container_config: None,
         name: None,
     });
     config.config_path = Some(explicit);
-    let loaded = load_container_config(&config, Some(&parent)).unwrap();
-    assert_eq!(loaded.container_scripts.default, "explicitset");
+    let loaded = load_container_config(&config, Some(&parent), Path::new("/tmp")).unwrap();
+    assert_eq!(
+        container_config_name(&None, &loaded).unwrap(),
+        "explicitset"
+    );
+}
+
+#[test]
+fn roster_config_loader_uses_read_only_trust_and_ignores_unapproved_repo_local_config() {
+    let dir = TempDir::new().unwrap();
+    let parent = write_container_configs(dir.path(), "parentset");
+    let checkout = dir.path().join("checkout");
+    std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
+    std::fs::write(
+        checkout.join(".quecto/config.json"),
+        r#"{"container_configs":{"localset":{"default":true,"create":["/bin/false"],"cleanup":["/bin/true"]}}}"#,
+    )
+    .unwrap();
+    let config = base_config(ContainerSelection::New {
+        container_config: None,
+        name: None,
+    });
+
+    let loaded = load_container_config_for_roster(&config, Some(&parent), &checkout).unwrap();
+
+    assert_eq!(container_config_name(&None, &loaded).unwrap(), "parentset");
+    assert!(!loaded.container_configs.contains_key("localset"));
 }
 
 #[test]
 fn relative_parent_config_path_is_rejected_for_container_config() {
     let config = base_config(ContainerSelection::New {
-        repo: None,
-        container_script: None,
+        container_config: None,
         name: None,
     });
-    let err = load_container_config(&config, Some(Path::new("relative.toml"))).unwrap_err();
+    let err = load_container_config(&config, Some(Path::new("relative.toml")), Path::new("/tmp"))
+        .unwrap_err();
     assert!(err.to_string().contains("absolute"), "{err}");
 }
 
@@ -236,6 +276,7 @@ async fn cleanup_plan_clones_environment_and_argv() {
         environment_ref: Some("C-test".into()),
         endpoint: None,
         proxy_bridge: None,
+        process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
         cleanup_environment_id: Some("env-test".into()),
         cleanup_argv: vec!["echo".into(), "ok".into()],
         environments: None,
@@ -264,8 +305,7 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
     );
 
     let mut without_config = base_config(ContainerSelection::New {
-        repo: None,
-        container_script: None,
+        container_config: None,
         name: None,
     });
     assert!(
@@ -306,18 +346,16 @@ async fn script_managed_spawn_error_uses_config_and_selected_script() {
     let cfg_path = dir.path().join("config.toml");
     std::fs::write(
         &cfg_path,
-        r#"
-[container_scripts]
-default = "default"
-[container_scripts.scripts.default]
-create = ["/definitely/not/script"]
-cleanup = ["echo"]
+        r#"{
+  "container_configs": {
+    "default": {"default": true, "create": ["/definitely/not/script"], "cleanup": ["echo"]}
+  }
+}
 "#,
     )
     .unwrap();
     let mut config = base_config(ContainerSelection::New {
-        repo: None,
-        container_script: Some("default".into()),
+        container_config: Some("default".into()),
         name: None,
     });
     config.config_path = Some(cfg_path);
@@ -339,7 +377,8 @@ cleanup = ["echo"]
 
 #[test]
 fn create_command_and_common_env_are_constructed_without_shell() {
-    let script = ContainerScriptConfig {
+    let script = ContainerConfig {
+        default: false,
         create: vec!["echo".into(), "prefix".into()],
         cleanup: vec![],
         exec: vec![],
@@ -379,17 +418,15 @@ async fn script_env_includes_optional_selection_values() {
     std::fs::write(
         &cfg_path,
         r#"{
-  "container_scripts": {
-    "default": "alt",
-    "scripts": {"alt": {"create": ["/bin/sh", "-c", "printf '{\"environment_id\":\"env-env\",\"workspace_path\":\"/tmp/ws\",\"socket_path\":\"/tmp/s.sock\",\"metadata\":{\"repo\":\"'\"$QUECTO_CONTAINER_REPO\"'\",\"script\":\"'\"$QUECTO_CONTAINER_SCRIPT\"'\",\"ref\":\"'\"$QUECTO_CONTAINER_ENVIRONMENT_REF\"'\"}}'"], "cleanup": ["true"]}}
+  "container_configs": {
+    "alt": {"default": true, "create": ["/bin/sh", "-c", "printf '{\"environment_id\":\"env-env\",\"workspace_path\":\"/tmp/ws\",\"socket_path\":\"/tmp/s.sock\",\"metadata\":{\"config\":\"'\"$QUECTO_CONTAINER_CONFIG\"'\",\"ref\":\"'\"$QUECTO_CONTAINER_ENVIRONMENT_REF\"'\",\"repository\":\"https://example.invalid/baked.git\"}}'"], "cleanup": ["true"]}
   }
 }
 "#,
     )
     .unwrap();
     let mut config = base_config(ContainerSelection::New {
-        repo: Some("https://example.invalid/explicit.git".into()),
-        container_script: Some("alt".into()),
+        container_config: Some("alt".into()),
         name: None,
     });
     config.config_path = Some(cfg_path);
@@ -410,11 +447,13 @@ async fn script_env_includes_optional_selection_values() {
     assert_eq!(
         committed.metadata,
         serde_json::json!({
-            "repo": "https://example.invalid/explicit.git",
-            "script": "alt",
+            "config": "alt",
             "ref": "C1",
+            "repository": "https://example.invalid/baked.git",
         })
     );
+    // The listing/TUI repository comes from the script's own report (#1410).
+    assert_eq!(committed.repository, "https://example.invalid/baked.git");
     assert_eq!(committed.retained_cleanup_argv, vec!["true"]);
 }
 
@@ -468,6 +507,7 @@ async fn rollback_kills_child_and_consumes_cleanup_once() {
         environment_ref: Some("C-test".into()),
         endpoint: None,
         proxy_bridge: None,
+        process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
         cleanup_environment_id: Some("env-test".into()),
         cleanup_argv: vec!["true".into()],
         environments: Some(registry.clone()),
@@ -484,17 +524,15 @@ async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
     std::fs::write(
         &cfg_path,
         r#"{
-  "container_scripts": {
-    "default": "default",
-    "scripts": {"default": {"create": ["printf", "{\"environment_id\":\"env-1\",\"workspace_path\":\"/tmp/ws\",\"metadata\":{},\"socket_path\":\"/tmp/child.sock\"}"], "cleanup": ["true"]}}
+  "container_configs": {
+    "default": {"default": true, "create": ["printf", "{\"environment_id\":\"env-1\",\"workspace_path\":\"/tmp/ws\",\"metadata\":{},\"socket_path\":\"/tmp/child.sock\"}"], "cleanup": ["true"]}
   }
 }
 "#,
     )
     .unwrap();
     let mut config = base_config(ContainerSelection::New {
-        repo: Some("explicit".into()),
-        container_script: None,
+        container_config: None,
         name: None,
     });
     config.config_path = Some(cfg_path);
@@ -516,47 +554,12 @@ async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
     assert_eq!(committed.environment_id, "env-1");
     assert_eq!(committed.workspace_path, PathBuf::from("/tmp/ws"));
     assert_eq!(committed.script_name, "default");
+    // No repository in the script's metadata -> sandbox listing (#1410).
+    assert_eq!(committed.repository, "");
     let (env_ref, argv) = prepared.cleanup_plan();
     assert!(env_ref.as_deref().unwrap() == "env-1");
     assert_eq!(argv, vec!["true"]);
     assert!(prepared.child.is_none());
-}
-
-#[test]
-fn selected_repo_discovers_parent_checkout_remote_when_repo_omitted() {
-    let dir = TempDir::new().unwrap();
-    std::process::Command::new("git")
-        .arg("init")
-        .arg(dir.path())
-        .status()
-        .unwrap();
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir.path())
-        .args(["remote", "add", "origin", "https://github.com/org/repo.git"])
-        .status()
-        .unwrap();
-    let config = base_config(ContainerSelection::New {
-        repo: None,
-        container_script: None,
-        name: None,
-    });
-    assert_eq!(
-        selected_repo(&config, dir.path()).unwrap().as_deref(),
-        Some("https://github.com/org/repo.git")
-    );
-}
-
-#[test]
-fn selected_repo_fails_before_create_when_parent_remote_missing() {
-    let dir = TempDir::new().unwrap();
-    let config = base_config(ContainerSelection::New {
-        repo: None,
-        container_script: None,
-        name: None,
-    });
-    let err = selected_repo(&config, dir.path()).unwrap_err();
-    assert!(err.to_string().contains("remote.origin.url"), "{err}");
 }
 
 #[test]
@@ -626,8 +629,7 @@ fn exec_result_contract_rejects_invalid_shapes_and_proxy() {
 #[test]
 fn environment_name_is_taken_from_new_mode_only() {
     let named = base_config(ContainerSelection::New {
-        repo: None,
-        container_script: None,
+        container_config: None,
         name: Some("review-env".into()),
     });
     assert_eq!(environment_name(&named).as_deref(), Some("review-env"));
@@ -662,4 +664,29 @@ async fn join_fails_for_unknown_target_and_missing_retained_exec() {
     .await
     .unwrap_err();
     assert!(err.to_string().contains("retained exec"), "{err}");
+}
+
+#[test]
+fn explicit_selection_also_fails_at_load_when_no_default_is_labeled() {
+    // #1410 accepted trade-off: exactly-one-default is a LOAD invariant, so a
+    // config file with entries but no `"default": true` label blocks ALL
+    // container spawns — including explicitly named selection, which needs no
+    // default. Explicit selection is only reachable through a valid config.
+    let dir = TempDir::new().unwrap();
+    let cfg_path = dir.path().join("config.json");
+    std::fs::write(
+        &cfg_path,
+        r#"{"container_configs":{"a":{"create":["c"],"cleanup":["k"]}}}"#,
+    )
+    .unwrap();
+    let mut config = base_config(ContainerSelection::New {
+        container_config: Some("a".into()),
+        name: None,
+    });
+    config.config_path = Some(cfg_path);
+    let err = load_container_config(&config, None, Path::new("/tmp"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("no container config is labeled"), "{err}");
+    assert!(err.contains("a"), "error must enumerate names: {err}");
 }
