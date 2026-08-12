@@ -22,22 +22,19 @@ impl TabId {
     pub(crate) const MASTER: TabId = TabId(0);
 }
 
-/// Fan-in key for events drained by the app event loop. Widens the previous
-/// `String` (sub-agent id) key so master-connection events and sub-agent
-/// events share ONE channel, and stream close is an explicit sentinel.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Source {
-    /// The tab's master connection itself.
-    Tab(TabId),
-    /// A sub-agent feed belonging to the tab.
-    Subagent(TabId, String),
+/// One item on a fan-in channel drained by the app event loop. The payload
+/// lives inside the variant, so an event-less `Tab`/`Subagent` item or a
+/// payload-carrying `Closed` sentinel is unrepresentable — consumers need no
+/// dead arms for states no producer constructs (#1470 review).
+#[derive(Debug, Clone)]
+pub(crate) enum SourcedEvent {
+    /// An event from the tab's master connection.
+    Tab(TabId, Event),
+    /// An event from a sub-agent feed belonging to the tab.
+    Subagent(TabId, String, Event),
     /// The tab's master connection stream closed (replaces `None`-from-recv).
     Closed(TabId),
 }
-
-/// One item on the shared fan-in channel. `Source::Closed` is the only
-/// source delivered without an event payload.
-pub(crate) type SourcedEvent = (Source, Option<Event>);
 
 /// A master connection behind a feed task: the feed task owns the [`Client`]
 /// (and with it the socket's event stream), forwards events into the shared
@@ -58,6 +55,14 @@ pub(crate) struct Connection {
     /// Shared handle to the reader's oversized-drop counter (#1047), kept
     /// observable after the client moves into the feed task.
     dropped_oversized: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// The feed task owning the client, when one was spawned. Held so the
+    /// harness can abort it when it swaps this connection out — otherwise
+    /// the orphaned task keeps the real socket and injects a spurious
+    /// `Closed` sentinel into the fan-in later (#1470 review).
+    // Read only by the harness's `abort_feed`; in production the task runs
+    // for the connection's whole life and exits with the process.
+    #[cfg_attr(not(any(test, feature = "test-harness")), allow(dead_code))]
+    feed_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Connection {
@@ -86,30 +91,44 @@ impl Connection {
         let spawn_feed = tokio::runtime::Handle::try_current().is_ok();
         #[cfg(not(any(test, feature = "test-harness")))]
         let spawn_feed = true;
-        if spawn_feed {
+        let feed_task = if spawn_feed {
             let mut client = client;
-            tokio::spawn(async move {
+            Some(tokio::spawn(async move {
                 loop {
                     match client.recv().await {
                         Some(ev) => {
-                            if event_tx.send((Source::Tab(tab), Some(ev))).await.is_err() {
+                            if event_tx.send(SourcedEvent::Tab(tab, ev)).await.is_err() {
                                 return; // App gone — nothing left to feed.
                             }
                         }
                         None => {
                             // Stream closed: the explicit sentinel replaces
                             // `None`-from-recv on a dedicated select arm.
-                            let _ = event_tx.send((Source::Closed(tab), None)).await;
+                            let _ = event_tx.send(SourcedEvent::Closed(tab)).await;
                             return;
                         }
                     }
                 }
-            });
-        }
+            }))
+        } else {
+            None
+        };
         Self {
             sender,
             speaks_frames,
             dropped_oversized,
+            feed_task,
+        }
+    }
+
+    /// Test-only: abort the feed task owning the client. Harness paths that
+    /// swap this connection out for a disconnected stub MUST call this on
+    /// the replaced connection, or the orphaned task later injects a
+    /// spurious `Closed` sentinel the swap semantics never implied.
+    #[cfg(any(test, feature = "test-harness"))]
+    pub(crate) fn abort_feed(&self) {
+        if let Some(task) = &self.feed_task {
+            task.abort();
         }
     }
 
@@ -152,6 +171,7 @@ impl Connection {
             sender: client.clone_sender(),
             speaks_frames: client.speaks_frames(),
             dropped_oversized: client.dropped_oversized_handle(),
+            feed_task: None,
         }
     }
 

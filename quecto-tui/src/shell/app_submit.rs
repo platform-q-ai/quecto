@@ -123,7 +123,14 @@ impl App {
             return;
         }
 
-        // Master session: add user message to chat and send to the primary agent.
+        // Master session: refuse outright when the connection is known dead
+        // (#1470 review) — the writer channel can outlive the stream, so an
+        // enqueue could "succeed" and the message silently vanish.
+        if !self.agent_connected {
+            self.notify("Agent disconnected — message not sent", NotifyLevel::Error);
+            return;
+        }
+        // Add user message to chat and send to the primary agent.
         self.master_session
             .chat
             .add_entry_follow_tail(ChatEntry::User {

@@ -34,12 +34,30 @@ impl App {
     /// TUI owns the child process (e.g. "signal 6 (SIGABRT)" after a
     /// panic-abort near a full context window, #1047), so the disconnect
     /// notification can say WHY instead of a bare "Agent disconnected".
+    /// Harness/test driver: the full disconnect (state flip + notice) in one
+    /// step. Production paths go through `begin_/finish_agent_stream_closed`.
+    #[cfg(any(test, feature = "test-harness"))]
     pub(super) fn handle_agent_disconnected(&mut self, exit_detail: Option<String>) {
+        self.mark_agent_disconnected();
+        self.emit_agent_disconnected_notice(exit_detail);
+    }
+
+    /// Immediately mark the session disconnected: connection flag, run
+    /// state, spinner, and streaming tail. Runs SYNCHRONOUSLY when the
+    /// stream closes — the UI must never show a live session (nor accept
+    /// prompts as deliverable) while the disconnect diagnosis is still
+    /// resolving off-loop (#1470 review).
+    fn mark_agent_disconnected(&mut self) {
         self.agent_connected = false;
         self.agent_state.reset();
         self.master_session.running = false;
         self.spinner = None;
         self.master_session.chat.finalize_assistant();
+    }
+
+    /// Emit the disconnect notification (and stderr-tail transcript entries,
+    /// #1047) once the exit diagnosis — possibly deferred — is known.
+    fn emit_agent_disconnected_notice(&mut self, exit_detail: Option<String>) {
         let mut message = match exit_detail {
             Some(detail) => format!("Agent disconnected — {detail}"),
             None => "Agent disconnected".to_string(),
@@ -78,14 +96,24 @@ impl App {
     /// the detail on the disconnect-diagnosis channel and the event loop
     /// completes the disconnect via [`Self::finish_agent_stream_closed`].
     ///
-    /// Returns whether the diagnosis was deferred to that task. `false`
-    /// means there was no owned child to diagnose and the disconnect
-    /// handling already ran synchronously (with no detail).
+    /// The session state flip and dropped-event surfacing happen HERE,
+    /// synchronously — only the diagnosis *text* (and its notification) is
+    /// deferred, so the UI can never show a live session, and the oversized
+    /// -drop warning can never be lost to an exit race, while the bounded
+    /// child-exit waits run (#1470 review).
+    ///
+    /// Returns whether the diagnosis was deferred to that task (also
+    /// latched on `disconnect_diag_pending` for the harness). `false` means
+    /// there was no owned child to diagnose and the disconnect completed
+    /// synchronously (with no detail).
     pub(super) fn begin_agent_stream_closed(&mut self) -> bool {
+        self.surface_dropped_oversized_events();
+        self.mark_agent_disconnected();
         let Some(watch) = self.child_exit_watch.clone() else {
-            self.finish_agent_stream_closed(None);
+            self.emit_agent_disconnected_notice(None);
             return false;
         };
+        self.disconnect_diag_pending = true;
         let tx = self.disconnect_diag_tx.clone();
         tokio::spawn(async move {
             // Best-effort read of the owned agent child's exit diagnosis. The
@@ -107,28 +135,13 @@ impl App {
         true
     }
 
-    /// Complete the stream-closed disconnect (#1047): surface any oversized
-    /// event drops recorded up to the close, then run the disconnect
-    /// handling with the (possibly deferred) exit diagnosis.
+    /// Complete the stream-closed disconnect: the session state was already
+    /// flipped and drops surfaced synchronously in
+    /// [`Self::begin_agent_stream_closed`]; this emits the notification with
+    /// the (possibly deferred) exit diagnosis.
     pub(super) fn finish_agent_stream_closed(&mut self, detail: Option<String>) {
-        self.surface_dropped_oversized_events();
-        self.handle_agent_disconnected(detail);
-    }
-
-    /// Test/harness driver for the full stream-closed path: begin the
-    /// (possibly off-loop) diagnosis and, when deferred, synchronously await
-    /// its completion — pinning the #1047 contract that the disconnect
-    /// notification carries the diagnosis once it renders.
-    #[cfg(any(test, feature = "test-harness"))]
-    pub(super) async fn handle_agent_stream_closed(&mut self) {
-        if self.begin_agent_stream_closed() {
-            let detail = self
-                .disconnect_diag_rx
-                .recv()
-                .await
-                .expect("disconnect diagnosis channel closed");
-            self.finish_agent_stream_closed(detail);
-        }
+        self.disconnect_diag_pending = false;
+        self.emit_agent_disconnected_notice(detail);
     }
 
     /// Surface newly-recorded oversized-event drops as a warning notification

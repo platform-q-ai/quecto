@@ -49,11 +49,11 @@ impl App {
                         agent_id: None,
                     })
                     .await;
-                use crate::shell::connection::{Source, TabId};
+                use crate::shell::connection::{SourcedEvent, TabId};
                 loop {
                     tokio::select! {
                         ev = client.recv() => match ev {
-                            Some(ev) => if tx.send((Source::Subagent(TabId::MASTER, agent_id_for_task.clone()), Some(ev))).await.is_err() { break; },
+                            Some(ev) => if tx.send(SourcedEvent::Subagent(TabId::MASTER, agent_id_for_task.clone(), ev)).await.is_err() { break; },
                             None => break,
                         },
                         cmd = cmd_rx.recv() => match cmd {

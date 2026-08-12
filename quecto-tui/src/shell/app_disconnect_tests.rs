@@ -63,14 +63,14 @@ async fn stream_closed_path_reports_real_child_exit_detail() {
         .stderr(std::process::Stdio::null())
         .spawn()
         .expect("spawn aborting child");
-    app.set_child_exit_watch(crate::shell::child_watch::watch_child(
+    let watch = crate::shell::child_watch::watch_child(
         child,
         crate::shell::child_watch::StderrTail::default(),
-    ));
+    );
+    let _ = app;
+    h.agent_stream_closed_with_child_watch(watch).await;
 
-    app.handle_agent_stream_closed().await;
-
-    let rendered = app.notifications.render(200).join("\n");
+    let rendered = h.app_mut().notifications.render(200).join("\n");
     assert!(
         rendered.contains("signal 6 (SIGABRT)"),
         "the stream-closed path must diagnose the real child's abort (#1047): {rendered}"
@@ -104,11 +104,9 @@ async fn disconnect_diagnostics_include_drained_stderr_tail() {
     // must synchronize on drain completion, or the panic message is
     // nondeterministically missing from the diagnostics (#1051 final review).
 
-    let app = h.app_mut();
-    app.set_child_exit_watch(watch);
-    app.handle_agent_stream_closed().await;
+    h.agent_stream_closed_with_child_watch(watch).await;
 
-    let rendered = app.notifications.render(200).join("\n");
+    let rendered = h.app_mut().notifications.render(200).join("\n");
     assert!(
         rendered.contains("boom-panic"),
         "disconnect notification must carry the last stderr line (#1047): {rendered}"

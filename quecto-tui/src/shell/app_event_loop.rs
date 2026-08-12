@@ -67,11 +67,6 @@ pub(super) enum SourcedRender {
     Immediate,
     /// Stream render: token events coalesce, everything else paints now.
     Stream { is_token: bool },
-    /// No paint from this item: either nothing was routed (a payload-less
-    /// non-sentinel item), or a `Source::Closed` sentinel deferred its
-    /// disconnect diagnosis off-loop — the paint happens when the diagnosis
-    /// lands on the disconnect channel's own select arm.
-    Skip,
 }
 
 impl App {
@@ -85,14 +80,20 @@ impl App {
     /// #1047 waits run on a spawned task and complete through the
     /// disconnect-diagnosis select arm — a dying child cannot stall event
     /// processing while other connections' events are queued.
-    pub(super) async fn route_sourced(
+    /// Sync by design (#1462 scope 3): the "never blocks the select loop"
+    /// contract is checkable by signature — nothing here can await.
+    pub(super) fn route_sourced(
         &mut self,
-        source: crate::shell::connection::Source,
-        ev: Option<Event>,
+        item: crate::shell::connection::SourcedEvent,
     ) -> SourcedRender {
-        use crate::shell::connection::Source;
-        match (source, ev) {
-            (Source::Tab(_), Some(ev)) => {
+        use crate::shell::connection::{SourcedEvent, TabId};
+        match item {
+            SourcedEvent::Tab(tab, ev) => {
+                debug_assert_eq!(
+                    tab,
+                    TabId::MASTER,
+                    "N=1: only the master tab exists (#1462)"
+                );
                 let is_token = Self::is_token_event(&ev);
                 self.handle_event(ev);
                 if self.surface_dropped_oversized_events() {
@@ -101,24 +102,45 @@ impl App {
                     SourcedRender::Stream { is_token }
                 }
             }
-            (Source::Subagent(_, agent_id), Some(ev)) => {
+            SourcedEvent::Subagent(tab, agent_id, ev) => {
+                debug_assert_eq!(
+                    tab,
+                    TabId::MASTER,
+                    "N=1: only the master tab exists (#1462)"
+                );
                 let is_token = Self::is_token_event(&ev);
                 self.route_subagent_event(&agent_id, ev);
                 SourcedRender::Stream { is_token }
             }
-            (Source::Closed(_), _) => {
-                // Master stream closed — dispatch the child-exit diagnosis
-                // off-loop (#1047 via #1462 scope 3). Without an owned child
-                // the disconnect (incl. dropped-event surfacing) completes
-                // synchronously and paints now; with one, the paint happens
-                // when the diagnosis lands on its select arm.
-                if self.begin_agent_stream_closed() {
-                    SourcedRender::Skip
-                } else {
-                    SourcedRender::Immediate
-                }
+            SourcedEvent::Closed(tab) => {
+                debug_assert_eq!(
+                    tab,
+                    TabId::MASTER,
+                    "N=1: only the master tab exists (#1462)"
+                );
+                // Master stream closed — the session is marked disconnected
+                // and dropped events surfaced SYNCHRONOUSLY here; only the
+                // child-exit diagnosis text is dispatched off-loop (#1047
+                // via #1462 scope 3). Paint now either way so the UI never
+                // shows a live session after the stream closed; with an
+                // owned child the notification follows when the diagnosis
+                // lands on its select arm.
+                self.begin_agent_stream_closed();
+                SourcedRender::Immediate
             }
-            (Source::Tab(_) | Source::Subagent(..), None) => SourcedRender::Skip,
+        }
+    }
+
+    /// Apply one routed fan-in item's render decision (shared by both fan-in
+    /// select arms so the paint policy cannot drift between them).
+    pub(super) fn apply_sourced_render(
+        &mut self,
+        render: SourcedRender,
+        coalescer: &mut StreamRenderCoalescer,
+    ) {
+        match render {
+            SourcedRender::Immediate => self.render_and_note(coalescer),
+            SourcedRender::Stream { is_token } => self.render_stream_event(coalescer, is_token),
         }
     }
 
@@ -292,20 +314,20 @@ impl App {
                     self.handle_command_send_failure(failure);
                     self.render_and_note(&mut stream_render_coalescer);
                 }
-                // ONE shared fan-in for every connection (#1462): the master
-                // connection's feed task (`Source::Tab` / `Source::Closed`)
-                // and the per-subagent feeds (`Source::Subagent`). The select
-                // arm count stays constant as connections come and go.
-                Some((source, ev)) = self.subagents.event_rx.recv() => {
-                    match self.route_sourced(source, ev).await {
-                        SourcedRender::Immediate => {
-                            self.render_and_note(&mut stream_render_coalescer);
-                        }
-                        SourcedRender::Stream { is_token } => {
-                            self.render_stream_event(&mut stream_render_coalescer, is_token);
-                        }
-                        SourcedRender::Skip => {}
-                    }
+                // Master-connection fan-in (`SourcedEvent::Tab` / `Closed`):
+                // its own channel so master events interleave fairly with
+                // sub-agent bursts instead of queueing FIFO behind them
+                // (#1470 review). All tabs share this arm — the select arm
+                // count stays constant as connections come and go (#1462).
+                Some(item) = self.tab_event_rx.recv() => {
+                    let render = self.route_sourced(item);
+                    self.apply_sourced_render(render, &mut stream_render_coalescer);
+                }
+                // Sub-agent fan-in (`SourcedEvent::Subagent`), fed by the
+                // per-subagent feed tasks.
+                Some(item) = self.subagents.event_rx.recv() => {
+                    let render = self.route_sourced(item);
+                    self.apply_sourced_render(render, &mut stream_render_coalescer);
                 }
                 Some((root, files)) = files_autocomplete_rx.recv() => {
                     files_autocomplete_load_in_flight = false;

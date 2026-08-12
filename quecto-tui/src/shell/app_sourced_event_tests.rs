@@ -218,18 +218,15 @@ fn mask_clocks_masks_only_clock_tokens() {
 // per-token flicker) with the whole suite still green.
 
 use super::app_event_loop::SourcedRender;
-use crate::shell::connection::{Source, TabId};
+use crate::shell::connection::{SourcedEvent, TabId};
 
 #[tokio::test]
 async fn route_sourced_master_token_coalesces_as_stream_token() {
     let mut h = TuiHarness::new().await;
-    let got = h
-        .app_mut()
-        .route_sourced(
-            Source::Tab(TabId::MASTER),
-            Some(Event::Token { token: "t".into() }),
-        )
-        .await;
+    let got = h.app_mut().route_sourced(SourcedEvent::Tab(
+        TabId::MASTER,
+        Event::Token { token: "t".into() },
+    ));
     assert_eq!(
         got,
         SourcedRender::Stream { is_token: true },
@@ -242,8 +239,7 @@ async fn route_sourced_master_non_token_paints_stream_immediately() {
     let mut h = TuiHarness::new().await;
     let got = h
         .app_mut()
-        .route_sourced(Source::Tab(TabId::MASTER), Some(Event::TurnStart))
-        .await;
+        .route_sourced(SourcedEvent::Tab(TabId::MASTER, Event::TurnStart));
     assert_eq!(
         got,
         SourcedRender::Stream { is_token: false },
@@ -255,13 +251,10 @@ async fn route_sourced_master_non_token_paints_stream_immediately() {
 async fn route_sourced_master_event_with_surfaced_drops_paints_immediately() {
     let mut h = TuiHarness::new().await;
     h.app_mut().connection.record_dropped_oversized_for_tests(1);
-    let got = h
-        .app_mut()
-        .route_sourced(
-            Source::Tab(TabId::MASTER),
-            Some(Event::Token { token: "t".into() }),
-        )
-        .await;
+    let got = h.app_mut().route_sourced(SourcedEvent::Tab(
+        TabId::MASTER,
+        Event::Token { token: "t".into() },
+    ));
     assert_eq!(
         got,
         SourcedRender::Immediate,
@@ -272,13 +265,11 @@ async fn route_sourced_master_event_with_surfaced_drops_paints_immediately() {
 #[tokio::test]
 async fn route_sourced_subagent_token_coalesces_as_stream_token() {
     let mut h = TuiHarness::new().await;
-    let got = h
-        .app_mut()
-        .route_sourced(
-            Source::Subagent(TabId::MASTER, "a1".into()),
-            Some(Event::Token { token: "t".into() }),
-        )
-        .await;
+    let got = h.app_mut().route_sourced(SourcedEvent::Subagent(
+        TabId::MASTER,
+        "a1".into(),
+        Event::Token { token: "t".into() },
+    ));
     assert_eq!(
         got,
         SourcedRender::Stream { is_token: true },
@@ -291,26 +282,11 @@ async fn route_sourced_closed_sentinel_paints_immediately() {
     let mut h = TuiHarness::new().await;
     let got = h
         .app_mut()
-        .route_sourced(Source::Closed(TabId::MASTER), None)
-        .await;
+        .route_sourced(SourcedEvent::Closed(TabId::MASTER));
     assert_eq!(
         got,
         SourcedRender::Immediate,
         "the disconnect sentinel must paint immediately, not coalesce (#1462)"
-    );
-}
-
-#[tokio::test]
-async fn route_sourced_payloadless_non_sentinel_skips_paint() {
-    let mut h = TuiHarness::new().await;
-    let got = h
-        .app_mut()
-        .route_sourced(Source::Tab(TabId::MASTER), None)
-        .await;
-    assert_eq!(
-        got,
-        SourcedRender::Skip,
-        "a payload-less non-sentinel item must not trigger a paint (#1462)"
     );
 }
 
@@ -331,11 +307,11 @@ async fn run_select_loop_drains_shared_fan_in_even_when_disconnected() {
     h.app_mut()
         .subagents
         .event_tx
-        .send((
-            Source::Tab(TabId::MASTER),
-            Some(Event::Token {
+        .send(SourcedEvent::Tab(
+            TabId::MASTER,
+            Event::Token {
                 token: "fan-in-run-token".into(),
-            }),
+            },
         ))
         .await
         .expect("queue a fan-in item before run()");
@@ -348,5 +324,23 @@ async fn run_select_loop_drains_shared_fan_in_even_when_disconnected() {
     assert!(
         h.full_frame().contains("fan-in-run-token"),
         "run()'s select loop must drain the shared fan-in unconditionally (#1462)"
+    );
+}
+
+/// The dedicated master/tab fan-in arm (#1470 review) must equally be
+/// drained by run() itself: an event written on the REAL master socket
+/// travels client reader → feed task → tab channel → run()'s select arm.
+#[tokio::test]
+async fn run_select_loop_drains_tab_fan_in_from_the_wire() {
+    let mut h = TuiHarness::new().await;
+    h.send_agent_event_line("{\"type\":\"token\",\"token\":\"tab-arm-run-token\"}")
+        .await;
+
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(500), h.app_mut().run()).await;
+
+    h.capture();
+    assert!(
+        h.full_frame().contains("tab-arm-run-token"),
+        "run()'s select loop must drain the dedicated tab fan-in (#1470)"
     );
 }

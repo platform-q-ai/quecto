@@ -12,8 +12,15 @@ impl TuiHarness {
     }
 
     /// Replace the master connection with a disconnected command channel.
+    /// The replaced connection's feed task is aborted so the orphaned task
+    /// cannot later inject a spurious `Closed` sentinel into the fan-in
+    /// when the real socket drops (#1470 review).
     pub fn disconnect_master_commands(&mut self) {
-        self.app.connection = crate::shell::connection::Connection::disconnected_for_tests();
+        let old = std::mem::replace(
+            &mut self.app.connection,
+            crate::shell::connection::Connection::disconnected_for_tests(),
+        );
+        old.abort_feed();
     }
 
     /// Drain one command-send failure through the production handler.
@@ -64,13 +71,13 @@ impl TuiHarness {
     }
 
     /// #1047: attach a real child-exit watcher, then drive the production
-    /// stream-closed path (which reads the exit diagnosis from it).
+    /// stream-closed path (which reads the exit diagnosis from it). Routes
+    /// through the same `Closed`-sentinel completion protocol as every
+    /// other sourced driver (#1470 review — no separate copy).
     pub async fn agent_stream_closed_with_child_watch(
         &mut self,
         watch: crate::shell::child_watch::ChildWatch,
     ) {
-        self.app.set_child_exit_watch(watch);
-        self.app.handle_agent_stream_closed().await;
-        self.capture();
+        self.deliver_closed_sentinel_with_child_watch(watch).await;
     }
 }

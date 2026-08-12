@@ -132,6 +132,18 @@ pub struct App {
     /// disconnect when the diagnosis lands here.
     disconnect_diag_tx: mpsc::Sender<Option<String>>,
     disconnect_diag_rx: mpsc::Receiver<Option<String>>,
+    /// Dedicated fan-in for master-connection events (`SourcedEvent::Tab` /
+    /// `Closed`). A separate channel from the sub-agent fan-in restores the
+    /// deleted dedicated select arm's fair interleave: master events and the
+    /// close sentinel can no longer queue FIFO behind a chatty sub-agent
+    /// burst (#1470 review). All tabs share this one channel, so the select
+    /// arm count stays independent of N.
+    pub(super) tab_event_rx: mpsc::Receiver<crate::shell::connection::SourcedEvent>,
+    /// Whether a stream-closed disconnect diagnosis is resolving off-loop
+    /// (#1462 scope 3): set by `begin_agent_stream_closed` when it spawns
+    /// the bounded #1047 waits, cleared by `finish_agent_stream_closed`.
+    /// The harness keys its diagnosis pumping off this latch.
+    pub(super) disconnect_diag_pending: bool,
     /// When the TUI session started — drives the Master row's uptime timer (#820).
     started_at: tokio::time::Instant,
 }
@@ -158,14 +170,15 @@ impl App {
         let (command_send_failure_tx, command_send_failure_rx) = mpsc::channel(16);
         let (disconnect_diag_tx, disconnect_diag_rx) = mpsc::channel(4);
 
-        // The shared fan-in lives on the sub-agent UI state; the master
-        // connection's feed task forwards into the same channel keyed by
-        // `Source::Tab` (#1462).
+        // Sub-agent feeds fan into the channel on the sub-agent UI state;
+        // master-connection events ride their own dedicated fan-in so they
+        // interleave fairly with sub-agent bursts (#1462 / #1470 review).
         let subagents = SubagentUi::new();
+        let (tab_event_tx, tab_event_rx) = mpsc::channel(256);
         let connection = crate::shell::connection::Connection::spawn(
             client,
             crate::shell::connection::TabId::MASTER,
-            subagents.event_tx.clone(),
+            tab_event_tx,
         );
 
         Self {
@@ -217,6 +230,8 @@ impl App {
             command_send_failure_rx,
             disconnect_diag_tx,
             disconnect_diag_rx,
+            tab_event_rx,
+            disconnect_diag_pending: false,
             started_at: tokio::time::Instant::now(),
         }
     }

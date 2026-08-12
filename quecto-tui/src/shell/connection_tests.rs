@@ -8,7 +8,7 @@
 //! negotiation outcome per connection — derived from the client's real
 //! connect-time framing, not a caller-supplied flag.
 
-use super::{Connection, Source, SourcedEvent, TabId};
+use super::{Connection, SourcedEvent, TabId};
 use crate::protocol::client::{Client, Command, Event};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
@@ -80,18 +80,12 @@ async fn connection_forwards_master_events_into_fan_in_as_tab_source() {
     let item = recv_sourced(&mut rx)
         .await
         .expect("the feed task must forward the master event into the fan-in (#1462)");
-    assert_eq!(
-        item.0,
-        Source::Tab(TabId::MASTER),
-        "master events must be keyed Source::Tab(MASTER), got {:?}",
-        item.0
-    );
-    match item.1 {
-        Some(Event::Token { ref token }) => assert_eq!(
+    match item {
+        SourcedEvent::Tab(TabId::MASTER, Event::Token { ref token }) => assert_eq!(
             token, "fan-in-hello",
             "the forwarded event must be the one written on the wire"
         ),
-        other => panic!("expected Some(Token) payload, got {other:?}"),
+        other => panic!("expected SourcedEvent::Tab(MASTER, Token), got {other:?}"),
     }
 }
 
@@ -108,15 +102,9 @@ async fn connection_emits_closed_sentinel_when_stream_closes() {
     let item = recv_sourced(&mut rx)
         .await
         .expect("the feed task must emit a Closed sentinel when the stream closes (#1462)");
-    assert_eq!(
-        item.0,
-        Source::Closed(TabId::MASTER),
-        "stream close must arrive as Source::Closed(MASTER), got {:?}",
-        item.0
-    );
     assert!(
-        item.1.is_none(),
-        "the Closed sentinel carries no event payload"
+        matches!(item, SourcedEvent::Closed(TabId::MASTER)),
+        "stream close must arrive as SourcedEvent::Closed(MASTER), got {item:?}"
     );
 }
 
@@ -141,20 +129,19 @@ async fn events_written_before_close_arrive_before_closed_sentinel() {
     let first = recv_sourced(&mut rx)
         .await
         .expect("the in-flight event must still be delivered (#1462)");
-    assert_eq!(
-        first.0,
-        Source::Tab(TabId::MASTER),
-        "the buffered event must arrive BEFORE the Closed sentinel, got {:?}",
-        first.0
-    );
-    match first.1 {
-        Some(Event::Token { ref token }) => assert_eq!(token, "final-token"),
-        other => panic!("expected the buffered Token, got {other:?}"),
+    match first {
+        SourcedEvent::Tab(TabId::MASTER, Event::Token { ref token }) => {
+            assert_eq!(token, "final-token")
+        }
+        other => panic!("expected the buffered Token before the sentinel, got {other:?}"),
     }
     let second = recv_sourced(&mut rx)
         .await
         .expect("the Closed sentinel must follow the buffered event (#1462)");
-    assert_eq!(second.0, Source::Closed(TabId::MASTER));
+    assert!(
+        matches!(second, SourcedEvent::Closed(TabId::MASTER)),
+        "the Closed sentinel must follow the buffered event, got {second:?}"
+    );
 }
 
 /// #1462 scope 1: commands enqueued on the connection reach the wire through

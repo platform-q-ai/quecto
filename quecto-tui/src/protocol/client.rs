@@ -667,7 +667,10 @@ impl Client {
         std::sync::Arc::clone(&self.dropped_oversized)
     }
     /// How many event lines the reader has dropped for exceeding
-    /// [`MAX_LINE_BYTES`] (#1047). The UI polls this to surface the drop.
+    /// [`MAX_LINE_BYTES`] (#1047). Production reads go through
+    /// [`Self::dropped_oversized_handle`] via the connection seam; this
+    /// direct accessor remains for tests only (#1470 review).
+    #[cfg(any(test, feature = "test-harness"))]
     pub fn dropped_oversized_events(&self) -> u64 {
         self.dropped_oversized
             .load(std::sync::atomic::Ordering::Relaxed)

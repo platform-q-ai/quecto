@@ -5,60 +5,65 @@
 //! keeps meaning "the (only) tab's master" — these drivers pin that the
 //! fan-in path renders identically, and the `wire_*` drivers exercise the
 //! FULL production flow: real socket → client reader → connection feed task
-//! → shared fan-in → `route_sourced`.
+//! → dedicated tab fan-in → `route_sourced`.
 
-use super::super::app_event_loop::SourcedRender;
 use super::TuiHarness;
 use crate::protocol::client::Event;
-use crate::shell::connection::{Source, TabId};
+use crate::shell::connection::{SourcedEvent, TabId};
 
 /// Bounded wait for fan-in delivery so a broken feed task fails a test
 /// quickly instead of hanging it.
 const PUMP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl TuiHarness {
+    /// Route one fan-in item through the production `route_sourced` and,
+    /// when a `Closed` sentinel deferred its #1047 diagnosis off-loop,
+    /// synchronously complete it the way the event loop's diagnosis arm
+    /// would. The SINGLE completion protocol every sourced driver shares
+    /// (#1470 review — previously triplicated).
+    async fn route_sourced_item(&mut self, item: SourcedEvent) {
+        self.app.route_sourced(item);
+        if self.app.disconnect_diag_pending {
+            self.pump_disconnect_diagnosis().await;
+        }
+    }
+
     /// Deliver a master-connection event through the sourced fan-in routing
-    /// (`Source::Tab(MASTER)`) and capture the resulting frame.
+    /// (`SourcedEvent::Tab(MASTER, ..)`) and capture the resulting frame.
     pub async fn sourced_master_event(&mut self, ev: Event) -> &mut Self {
-        self.app
-            .route_sourced(Source::Tab(TabId::MASTER), Some(ev))
+        self.route_sourced_item(SourcedEvent::Tab(TabId::MASTER, ev))
             .await;
         self.capture();
         self
     }
 
     /// Deliver a sub-agent event through the sourced fan-in routing
-    /// (`Source::Subagent(MASTER, agent_id)`) and capture.
+    /// (`SourcedEvent::Subagent(MASTER, agent_id, ..)`) and capture.
     pub async fn sourced_subagent_event(&mut self, agent_id: &str, ev: Event) -> &mut Self {
-        self.app
-            .route_sourced(
-                Source::Subagent(TabId::MASTER, agent_id.to_string()),
-                Some(ev),
-            )
-            .await;
+        self.route_sourced_item(SourcedEvent::Subagent(
+            TabId::MASTER,
+            agent_id.to_string(),
+            ev,
+        ))
+        .await;
         self.capture();
         self
     }
 
-    /// Deliver the master connection's explicit `Source::Closed` sentinel
-    /// (#1462) — the fan-in replacement for `None`-from-recv — and capture.
-    /// When a child-exit watch is attached, the production routing defers
-    /// the #1047 diagnosis off-loop; the harness synchronously completes it
-    /// (as the event loop's diagnosis arm would) before capturing.
+    /// Deliver the master connection's explicit `Closed` sentinel (#1462) —
+    /// the fan-in replacement for `None`-from-recv — and capture. When a
+    /// child-exit watch is attached, the production routing defers the
+    /// #1047 diagnosis off-loop; the shared completion in
+    /// [`Self::route_sourced_item`] resolves it before capturing.
     pub async fn deliver_closed_sentinel(&mut self) -> &mut Self {
-        let render = self
-            .app
-            .route_sourced(Source::Closed(TabId::MASTER), None)
+        self.route_sourced_item(SourcedEvent::Closed(TabId::MASTER))
             .await;
-        if render == SourcedRender::Skip {
-            self.pump_disconnect_diagnosis().await;
-        }
         self.capture();
         self
     }
 
-    /// Attach a real child-exit watcher, then deliver the `Source::Closed`
-    /// sentinel — the diagnosis (#1047) must survive the seam unchanged.
+    /// Attach a real child-exit watcher, then deliver the `Closed` sentinel
+    /// — the diagnosis (#1047) must survive the seam unchanged.
     pub async fn deliver_closed_sentinel_with_child_watch(
         &mut self,
         watch: crate::shell::child_watch::ChildWatch,
@@ -73,7 +78,7 @@ impl TuiHarness {
     // the fan-in undrained or the feed task unspawned fails these tests.
 
     /// Write a raw event line on the agent side of the REAL master socket,
-    /// then pump ONE item from the app's shared fan-in through the
+    /// then pump ONE item from the app's fan-in channels through the
     /// production routing, and capture the frame.
     pub async fn wire_master_event_line(&mut self, json: &str) -> &mut Self {
         self.agent_event_tx
@@ -87,9 +92,20 @@ impl TuiHarness {
         self
     }
 
+    /// Write a raw event line on the agent side WITHOUT pumping — for tests
+    /// that let `run()`'s own select arms drain the fan-in (#1470).
+    pub async fn send_agent_event_line(&mut self, json: &str) {
+        self.agent_event_tx
+            .as_ref()
+            .expect("agent side already closed")
+            .send(format!("{json}\n"))
+            .await
+            .expect("write event line on the agent side");
+    }
+
     /// Close the agent side of the REAL master socket (EOF to the client),
-    /// then pump the resulting fan-in item — the feed task's
-    /// `Source::Closed` sentinel — through the production routing.
+    /// then pump the resulting fan-in item — the feed task's `Closed`
+    /// sentinel — through the production routing.
     pub async fn wire_close_master_connection(&mut self) -> &mut Self {
         drop(
             self.agent_event_tx
@@ -101,21 +117,21 @@ impl TuiHarness {
         self
     }
 
-    /// Drain ONE item from the app's shared fan-in channel — the exact
-    /// receiver the event loop's select arm drains — and route it through
-    /// the production `route_sourced`. A `Source::Closed` item whose #1047
-    /// diagnosis was deferred off-loop is completed synchronously here, the
-    /// way the event loop's diagnosis arm completes it.
+    /// Drain ONE item from the app's fan-in channels — the exact receivers
+    /// the event loop's select arms drain (master/tab channel first, then
+    /// the sub-agent channel, matching the loop's dedicated-arm fairness) —
+    /// and route it through the shared completion protocol.
     pub async fn pump_sourced(&mut self) {
-        let (source, ev) = tokio::time::timeout(PUMP_TIMEOUT, self.app.subagents.event_rx.recv())
-            .await
-            .expect("an item must arrive on the shared fan-in (#1462)")
-            .expect("the shared fan-in channel must stay open");
-        let closed = matches!(source, Source::Closed(_));
-        let render = self.app.route_sourced(source, ev).await;
-        if closed && render == SourcedRender::Skip {
-            self.pump_disconnect_diagnosis().await;
-        }
+        let item = tokio::time::timeout(PUMP_TIMEOUT, async {
+            tokio::select! {
+                biased;
+                Some(item) = self.app.tab_event_rx.recv() => item,
+                Some(item) = self.app.subagents.event_rx.recv() => item,
+            }
+        })
+        .await
+        .expect("an item must arrive on a fan-in channel (#1462)");
+        self.route_sourced_item(item).await;
     }
 
     /// Await the off-loop disconnect diagnosis (#1462 scope 3) and finish

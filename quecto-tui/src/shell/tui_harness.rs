@@ -337,7 +337,13 @@ impl TuiHarness {
         &mut self,
         cmd: crate::protocol::client::Command,
     ) -> String {
-        self.app.connection = crate::shell::connection::Connection::disconnected_for_tests();
+        // Abort the replaced connection's feed task so it cannot later
+        // inject a spurious `Closed` sentinel into the fan-in (#1470 review).
+        let old = std::mem::replace(
+            &mut self.app.connection,
+            crate::shell::connection::Connection::disconnected_for_tests(),
+        );
+        old.abort_feed();
         let _ = self.app.send_command(cmd);
         let failure = self
             .app
