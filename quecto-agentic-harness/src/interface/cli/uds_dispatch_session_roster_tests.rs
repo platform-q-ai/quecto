@@ -223,6 +223,86 @@ fn restore_persisted_roster_keeps_only_verifiably_live_agents() {
     detached_server.join().unwrap();
 }
 
+/// #1474 N1: verify probes must not hold the shared registry mutex. Resume can
+/// stall concurrent get_subagents/spawn registration if lock spans socket IO.
+#[test]
+fn restore_persisted_roster_does_not_hold_registry_lock_during_verify() {
+    use std::io::{Read, Write};
+    use std::time::Duration;
+
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("slow.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+
+    let (connected_tx, connected_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        // Restore has entered verify and is blocked on the response.
+        connected_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+        let mut prefix = [0u8; 4];
+        stream.read_exact(&mut prefix).unwrap();
+        let len = u32::from_be_bytes(prefix) as usize;
+        let mut request = vec![0u8; len];
+        stream.read_exact(&mut request).unwrap();
+        let request_id = serde_json::from_slice::<serde_json::Value>(&request).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let response = serde_json::json!({
+            "type": "response",
+            "id": request_id,
+            "command": "get_session_stats",
+            "success": true,
+            "data": {
+                "sessionKey": "slow",
+                "userMessages": 0,
+                "assistantMessages": 0,
+                "toolCalls": 0,
+                "toolResults": 0,
+                "totalMessages": 0,
+                "tokens": {},
+                "contextTokens": 0,
+                "maxContextTokens": 0
+            }
+        })
+        .to_string();
+        stream
+            .write_all(&(response.len() as u32).to_be_bytes())
+            .unwrap();
+        stream.write_all(response.as_bytes()).unwrap();
+        stream.flush().unwrap();
+    });
+
+    let restore_registry = registry.clone();
+    let restore = std::thread::spawn(move || {
+        restore_persisted_subagent_roster(
+            &Some(restore_registry),
+            vec![roster_entry("slow", socket)],
+        );
+    });
+
+    connected_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("verify should connect to the slow socket");
+    // While verify is blocked mid-probe, concurrent registry users must not stall.
+    let lock_acquired_during_verify = registry.try_lock().is_ok();
+    release_tx.send(()).unwrap();
+    restore.join().unwrap();
+    server.join().unwrap();
+
+    assert!(
+        lock_acquired_during_verify,
+        "restore must not hold the registry mutex across verify socket IO"
+    );
+    assert!(
+        registry.lock().unwrap().contains_key("slow"),
+        "verified agent must still be restored after lock is released during probe"
+    );
+}
+
 #[test]
 fn restore_persisted_roster_no_registry_is_noop() {
     restore_persisted_subagent_roster(&None, vec![roster_entry("ignored", "".into())]);
