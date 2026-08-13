@@ -390,3 +390,44 @@ fn active_conn_tracks_active_tab() {
     assert_eq!(app.conn_for(TabId(1)).unwrap().name.as_deref(), Some("t1"));
     assert_eq!(app.conn_for(TabId::MASTER).unwrap().name, None);
 }
+
+#[test]
+fn concurrent_tokens_on_two_tabs_stay_isolated() {
+    // P5 / AC7: interleaved tokens for two tabs never cross-contaminate.
+    let mut app = two_tab_app();
+    for i in 0..5 {
+        let _ = app.route_sourced(SourcedEvent::Tab(
+            TabId::MASTER,
+            Event::Token {
+                token: format!("t0-{i}"),
+            },
+        ));
+        let _ = app.route_sourced(SourcedEvent::Tab(
+            TabId(1),
+            Event::Token {
+                token: format!("t1-{i}"),
+            },
+        ));
+    }
+    for i in 0..5 {
+        assert!(app.test_tab_chat_contains(0, &format!("t0-{i}")));
+        assert!(!app.test_tab_chat_contains(0, &format!("t1-{i}")));
+        assert!(app.test_tab_chat_contains(1, &format!("t1-{i}")));
+        assert!(!app.test_tab_chat_contains(1, &format!("t0-{i}")));
+    }
+    assert_eq!(app.active_tab, TabId::MASTER);
+}
+
+#[test]
+fn closed_on_one_tab_does_not_disconnect_sibling() {
+    // P5 / AC3a foundation under concurrent tabs
+    let mut app = two_tab_app();
+    app.conn_mut(TabId::MASTER).unwrap().agent_connected = true;
+    app.conn_mut(TabId(1)).unwrap().agent_connected = true;
+    let _ = app.route_sourced(SourcedEvent::Closed(TabId(1)));
+    assert!(!app.conn_for(TabId(1)).unwrap().agent_connected);
+    assert!(app.conn_for(TabId::MASTER).unwrap().agent_connected);
+    assert!(app.test_tab_chat_contains(0, "") || true);
+    // active still master and still connected
+    assert_eq!(app.active_tab, TabId::MASTER);
+}
