@@ -210,7 +210,7 @@ impl Connection {
 
     /// Test-only: a connection with a live writer channel. The returned
     /// receiver must be held open for `try_send` to succeed (#1465 AC8).
-    #[cfg(any(test, feature = "test-harness"))]
+    #[cfg(test)]
     pub(crate) fn live_for_tests() -> (Self, tokio::sync::mpsc::Receiver<String>) {
         let (tx, rx) = tokio::sync::mpsc::channel::<String>(16);
         let sender = crate::protocol::client::CommandSender { tx };
@@ -227,7 +227,7 @@ impl Connection {
     }
 
     /// Test-only: force the ADR-0008 negotiation flag for isolation checks.
-    #[cfg(any(test, feature = "test-harness"))]
+    #[cfg(test)]
     pub(crate) fn set_speaks_frames_for_tests(&mut self, speaks: bool) {
         self.speaks_frames = speaks;
     }
