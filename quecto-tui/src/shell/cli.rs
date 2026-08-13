@@ -166,8 +166,7 @@ fn apply_workflow_defaults(flags: &mut CliFlags) {
 }
 
 /// Flags for a secondary tab agent spawn (persistent by default, #1465).
-pub(crate) fn tab_spawn_flags(resume_session: Option<String>) -> CliFlags {
-    let _ = resume_session; // reserved: agent --resume is applied post-connect via protocol
+pub(crate) fn tab_spawn_flags(_resume_session: Option<String>) -> CliFlags {
     CliFlags {
         socket_path: None,
         no_sandbox: false,
@@ -286,26 +285,16 @@ async fn run_tui(flags: CliFlags) -> i32 {
     // Run the TUI.
     let terminal = crate::shell::terminal::Terminal::new();
     let mut app = crate::shell::app::App::new(terminal, client);
-    app.ac_mut().socket_path = Some(socket.clone());
-    // Record live socket/pid on master for registry durability (AC4).
-    // `path` is the UDS we connected to whether spawned or --socket attach.
-    // The local `path` binding is in scope from both branches above.
-    // (spawn path assigns `path`; attach path also assigns `path`.)
-    // Best-effort: if the binding name differs, compile will tell us.
+    app.ac_mut().socket_path = Some(socket.clone()); // AC4 durability
     if let Some(watch) = &child_watch {
-        if let Some(pid) = watch.pid() {
-            app.ac_mut().child_pid = Some(pid);
-        }
+        app.ac_mut().child_pid = watch.pid();
         app.set_child_exit_watch(watch.clone());
     }
     let exit_code = app.run().await;
 
-    // Detach-on-exit by default (#1465 / ADR-0023): leave `--persist` agents
-    // running so tabs can be reattached. `--kill-on-exit` terminates every
-    // per-tab owned child (not only the startup master watch).
+    // Detach-on-exit by default (ADR-0023); `--kill-on-exit` terminates every tab child.
     if flags.kill_on_exit {
         let mut watches = app.take_all_child_exit_watches();
-        // Startup path may still hold a local handle if attach didn't store it.
         if let Some(watch) = child_watch {
             watches.push(watch);
         }
