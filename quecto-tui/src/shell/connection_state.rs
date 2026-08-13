@@ -213,9 +213,7 @@ impl App {
         tab: crate::shell::connection::TabId,
         f: impl FnOnce(&mut Self) -> R,
     ) -> Option<R> {
-        if self.conn_for(tab).is_none() {
-            return None;
-        }
+        self.conn_for(tab)?;
         let prev = self.routing_tab_override;
         self.routing_tab_override = Some(tab);
         let out = f(self);
