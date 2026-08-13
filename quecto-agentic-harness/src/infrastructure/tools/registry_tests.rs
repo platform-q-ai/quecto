@@ -38,7 +38,7 @@ fn test_registry_get_returns_tool() {
 fn test_registry_definitions() {
     let (reg, _tmp) = test_registry();
     let defs = reg.definitions();
-    assert_eq!(defs.len(), 8); // bash, read, write, edit, ls, grep, find, docs
+    assert_eq!(defs.len(), 9); // bash, read, write, edit, ls, grep, find, docs
 }
 
 #[tokio::test]
@@ -149,7 +149,7 @@ fn test_definitions_returns_borrowed_slice() {
     // definitions() should return &[ToolDefinition], not Vec<ToolDefinition>.
     // This test verifies it compiles as a slice reference.
     let defs: &[ToolDefinition] = reg.definitions();
-    assert_eq!(defs.len(), 8);
+    assert_eq!(defs.len(), 9);
 }
 
 #[test]
@@ -166,7 +166,7 @@ fn test_trait_definitions_returns_borrowed_slice() {
 fn test_tool_count_returns_correct_count() {
     let (reg, _tmp) = test_registry();
     let trait_reg: &dyn ToolRegistry = &reg;
-    assert_eq!(trait_reg.tool_count(), 8);
+    assert_eq!(trait_reg.tool_count(), 9);
 }
 
 #[test]

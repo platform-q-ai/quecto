@@ -192,6 +192,71 @@ impl std::fmt::Debug for OpenAiCompatibleEndpoint {
 pub struct ToolsConfig {
     #[serde(default)]
     pub web: WebToolConfig,
+    #[serde(default)]
+    pub python_lab: PythonLabToolConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PythonLabToolConfig {
+    #[serde(default = "default_python_lab_timeout_seconds")]
+    pub default_timeout_seconds: u64,
+    #[serde(default = "default_python_lab_max_foreground_seconds")]
+    pub max_foreground_seconds: u64,
+    #[serde(default = "default_python_lab_max_background_seconds")]
+    pub max_background_seconds: u64,
+    #[serde(default = "default_python_lab_output_bytes")]
+    pub default_max_output_bytes: usize,
+    #[serde(default = "default_python_lab_max_output_bytes")]
+    pub max_output_bytes: usize,
+    #[serde(default)]
+    pub max_memory_bytes: Option<u64>,
+    #[serde(default)]
+    pub max_cpu_seconds: Option<u64>,
+    #[serde(default = "default_python_lab_max_processes")]
+    pub max_processes: Option<u32>,
+    #[serde(default = "default_python_lab_concurrent_jobs")]
+    pub max_concurrent_jobs: usize,
+    #[serde(default)]
+    pub inherit_environment: bool,
+}
+
+impl Default for PythonLabToolConfig {
+    fn default() -> Self {
+        Self {
+            default_timeout_seconds: default_python_lab_timeout_seconds(),
+            max_foreground_seconds: default_python_lab_max_foreground_seconds(),
+            max_background_seconds: default_python_lab_max_background_seconds(),
+            default_max_output_bytes: default_python_lab_output_bytes(),
+            max_output_bytes: default_python_lab_max_output_bytes(),
+            max_memory_bytes: None,
+            max_cpu_seconds: None,
+            max_processes: default_python_lab_max_processes(),
+            max_concurrent_jobs: default_python_lab_concurrent_jobs(),
+            inherit_environment: false,
+        }
+    }
+}
+
+fn default_python_lab_timeout_seconds() -> u64 {
+    60
+}
+fn default_python_lab_max_foreground_seconds() -> u64 {
+    300
+}
+fn default_python_lab_max_background_seconds() -> u64 {
+    1800
+}
+fn default_python_lab_output_bytes() -> usize {
+    200_000
+}
+fn default_python_lab_max_output_bytes() -> usize {
+    1_000_000
+}
+fn default_python_lab_max_processes() -> Option<u32> {
+    Some(1)
+}
+fn default_python_lab_concurrent_jobs() -> usize {
+    2
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
