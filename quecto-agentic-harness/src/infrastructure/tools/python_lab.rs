@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 use crate::domain::error::DomainError;
@@ -196,31 +196,50 @@ impl Tool for PythonLabTool {
             if code.is_some() == path.is_some() {
                 return tool_err("exactly one of 'code' or 'path' is required".to_string());
             }
-            let args: Vec<String> = v
-                .get("args")
-                .and_then(|a| a.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|x| x.as_str().map(ToString::to_string))
-                        .collect()
-                })
-                .unwrap_or_default();
+            let args: Vec<String> = match v.get("args") {
+                None => Vec::new(),
+                Some(value) => match value.as_array() {
+                    Some(items) => {
+                        let mut parsed = Vec::with_capacity(items.len());
+                        for item in items {
+                            let Some(arg) = item.as_str() else {
+                                return tool_err("args must be an array of strings".to_string());
+                            };
+                            parsed.push(arg.to_string());
+                        }
+                        parsed
+                    }
+                    None => return tool_err("args must be an array of strings".to_string()),
+                },
+            };
             let stdin = v
                 .get("stdin")
                 .and_then(|x| x.as_str())
                 .map(ToString::to_string);
-            let timeout_secs = v
-                .get("timeout_seconds")
-                .and_then(|x| x.as_u64())
-                .unwrap_or(cfg.default_timeout_seconds)
-                .min(cfg.max_foreground_seconds);
-            let max_out = v
-                .get("max_output_bytes")
-                .and_then(|x| x.as_u64())
-                .map(|n| n as usize)
-                .unwrap_or(cfg.default_max_output_bytes)
-                .min(cfg.max_output_bytes);
-            let exec_id = format!("py_{}_{:x}", std::process::id(), now_ms());
+            let timeout_secs = match bounded_u64(
+                &v,
+                "timeout_seconds",
+                cfg.default_timeout_seconds,
+                cfg.max_foreground_seconds,
+            ) {
+                Ok(n) => n,
+                Err(msg) => return tool_err(msg),
+            };
+            let max_out = match bounded_u64(
+                &v,
+                "max_output_bytes",
+                cfg.default_max_output_bytes as u64,
+                cfg.max_output_bytes as u64,
+            ) {
+                Ok(n) => n as usize,
+                Err(msg) => return tool_err(msg),
+            };
+            let exec_id = format!(
+                "py_{}_{:x}_{}",
+                std::process::id(),
+                now_ms(),
+                EXEC_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            );
             let start_ms = now_ms();
             let before = snapshot_files(&workspace);
 
@@ -252,8 +271,18 @@ impl Tool for PythonLabTool {
             if stdin.is_some() {
                 cmd.stdin(std::process::Stdio::piped());
             }
-            cmd.stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
+            let artifact_dir = workspace.join(".quecto/python_lab").join(&exec_id);
+            tokio::fs::create_dir_all(&artifact_dir)
+                .await
+                .map_err(|e| DomainError::Other(e.to_string()))?;
+            let stdout_path = artifact_dir.join("stdout.txt");
+            let stderr_path = artifact_dir.join("stderr.txt");
+            let stdout_file = std::fs::File::create(&stdout_path)
+                .map_err(|e| DomainError::Other(e.to_string()))?;
+            let stderr_file = std::fs::File::create(&stderr_path)
+                .map_err(|e| DomainError::Other(e.to_string()))?;
+            cmd.stdout(std::process::Stdio::from(stdout_file))
+                .stderr(std::process::Stdio::from(stderr_file));
             let mut child = cmd
                 .spawn()
                 .map_err(|e| DomainError::Other(format!("failed to start python3: {e}")))?;
@@ -264,25 +293,42 @@ impl Tool for PythonLabTool {
                     });
                 }
             }
-            let timed =
-                tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output())
-                    .await;
-            let (status, exit_code, stdout, stderr) = match timed {
-                Ok(Ok(out)) => ("completed", out.status.code(), out.stdout, out.stderr),
+            let timed = tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait()).await;
+            let (status, exit_code) = match timed {
+                Ok(Ok(status)) => ("completed", status.code()),
                 Ok(Err(e)) => {
                     return Err(DomainError::Other(format!("python3 execution failed: {e}")));
                 }
-                Err(_) => ("timed_out", None, Vec::new(), Vec::new()),
+                Err(_) => {
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    ("timed_out", None)
+                }
             };
             let end_ms = now_ms();
-            let stdout_s = String::from_utf8_lossy(&stdout).to_string();
-            let stderr_s = String::from_utf8_lossy(&stderr).to_string();
-            let (stdout_preview, stdout_trunc) = truncate(&stdout_s, max_out);
-            let (stderr_preview, stderr_trunc) = truncate(&stderr_s, max_out);
+            let (stdout_preview, stdout_trunc) = read_preview(&stdout_path, max_out).await?;
+            let (stderr_preview, stderr_trunc) = read_preview(&stderr_path, max_out).await?;
             let mut artifact_paths = Vec::new();
-            if stdout_trunc || stderr_trunc {
-                artifact_paths =
-                    write_artifacts(&workspace, &exec_id, &stdout_s, &stderr_s).await?;
+            if stdout_trunc {
+                artifact_paths.push(
+                    stdout_path
+                        .strip_prefix(&*workspace)
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string(),
+                );
+            }
+            if stderr_trunc {
+                artifact_paths.push(
+                    stderr_path
+                        .strip_prefix(&*workspace)
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string(),
+                );
+            }
+            if artifact_paths.is_empty() {
+                let _ = tokio::fs::remove_dir_all(&artifact_dir).await;
             }
             let changed = changed_files(&workspace, before);
             let result = json!({
@@ -312,18 +358,13 @@ fn ok_json(v: serde_json::Value, is_error: bool) -> Result<ToolResult, DomainErr
         image_blocks: vec![],
     })
 }
+static EXEC_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
-}
-fn truncate(s: &str, max: usize) -> (String, bool) {
-    if s.len() <= max {
-        (s.to_string(), false)
-    } else {
-        (s.chars().take(max).collect(), true)
-    }
 }
 fn snapshot_files(root: &std::path::Path) -> std::collections::BTreeMap<String, SystemTime> {
     let mut m = std::collections::BTreeMap::new();
@@ -361,30 +402,34 @@ fn changed_files(
         .map(|(p, _)| p)
         .collect()
 }
-async fn write_artifacts(
-    root: &std::path::Path,
-    id: &str,
-    out: &str,
-    err: &str,
-) -> Result<Vec<String>, DomainError> {
-    let dir = root.join(".quecto/python_lab").join(id);
-    tokio::fs::create_dir_all(&dir)
+async fn read_preview(path: &std::path::Path, max: usize) -> Result<(String, bool), DomainError> {
+    let metadata = tokio::fs::metadata(path)
         .await
         .map_err(|e| DomainError::Other(e.to_string()))?;
-    let mut paths = Vec::new();
-    if !out.is_empty() {
-        let p = dir.join("stdout.txt");
-        tokio::fs::write(&p, out)
-            .await
-            .map_err(|e| DomainError::Other(e.to_string()))?;
-        paths.push(p.strip_prefix(root).unwrap().to_string_lossy().to_string());
+    let truncated = metadata.len() as usize > max;
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|e| DomainError::Other(e.to_string()))?;
+    let mut buf = vec![0; max];
+    let n = file
+        .read(&mut buf)
+        .await
+        .map_err(|e| DomainError::Other(e.to_string()))?;
+    buf.truncate(n);
+    Ok((String::from_utf8_lossy(&buf).to_string(), truncated))
+}
+
+fn bounded_u64(
+    value: &serde_json::Value,
+    key: &str,
+    default: u64,
+    maximum: u64,
+) -> Result<u64, String> {
+    match value.get(key) {
+        None => Ok(default.min(maximum)),
+        Some(v) => v
+            .as_u64()
+            .map(|n| n.min(maximum))
+            .ok_or_else(|| format!("{key} must be a non-negative integer")),
     }
-    if !err.is_empty() {
-        let p = dir.join("stderr.txt");
-        tokio::fs::write(&p, err)
-            .await
-            .map_err(|e| DomainError::Other(e.to_string()))?;
-        paths.push(p.strip_prefix(root).unwrap().to_string_lossy().to_string());
-    }
-    Ok(paths)
 }
