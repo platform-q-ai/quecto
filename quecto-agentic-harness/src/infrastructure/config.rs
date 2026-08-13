@@ -192,6 +192,14 @@ impl std::fmt::Debug for OpenAiCompatibleEndpoint {
 pub struct ToolsConfig {
     #[serde(default)]
     pub web: WebToolConfig,
+    #[serde(default)]
+    pub rust_ast_graph: RustAstGraphConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RustAstGraphConfig {
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -132,8 +132,14 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
                 sandbox.clone(),
             )),
             Arc::new(crate::infrastructure::tools::find::FindTool::new(
-                workspace, sandbox,
+                workspace.clone(),
+                sandbox.clone(),
             )),
+            Arc::new(
+                crate::infrastructure::tools::rust_ast_graph::RustAstGraphTool::new(
+                    workspace, sandbox,
+                ),
+            ),
             // Quecto operating manual, embedded in the binary. Runtime profile
             // policy owns availability; the docs tool only receives explicit
             // content policy for parent-only quick-start filtering (#1319/#1334).

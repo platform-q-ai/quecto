@@ -39,6 +39,7 @@ async fn execute_without_name_lists_toc_with_titles() {
     assert!(result.content.contains("workflow — "));
     assert!(result.content.contains("extensions — "));
     assert!(result.content.contains("models — "));
+    assert!(result.content.contains("rust-ast-graph — "));
     assert!(!result.content.contains("contributor-cookbooks"));
     assert!(!result.content.contains("uds-protocol"));
 }
@@ -72,6 +73,17 @@ async fn execute_accepts_md_suffix_and_docs_prefix() {
         .unwrap();
     assert!(!result.is_error);
     assert!(result.content.contains("Parent versus subagent"));
+}
+
+#[tokio::test]
+async fn rust_ast_graph_manual_page_documents_agent_usage_examples() {
+    let tool = DocsTool::new();
+    let result = tool.execute(r#"{"name":"rust-ast-graph"}"#).await.unwrap();
+    assert!(!result.is_error);
+    assert!(result.content.contains("rust_ast_graph"));
+    assert!(result.content.contains("find_symbol"));
+    assert!(result.content.contains("references"));
+    assert!(result.content.contains("syntax-derived"));
 }
 
 #[tokio::test]
