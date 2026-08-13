@@ -283,12 +283,15 @@ impl App {
         let mut bottom = Vec::new();
 
         // Sub-agent/workflow bars moved out of the bottom stack.
-        if self.conn.roster.active_agent_id.is_none() && self.conn.spinner.is_some() {
+        let active_is_master = self.active_conn().roster.active_agent_id.is_none();
+        let active_spinner_visible = self.active_conn().spinner.is_some();
+        let active_roster_empty = self.active_conn().roster.tracked.is_empty();
+        if active_is_master && active_spinner_visible {
             // Master is active and mid-turn: show its richer tool spinner (tool
             // name + elapsed), the only master-local render telemetry layered on
             // top of the shared per-session `running` flag (#828).
-            if let Some(spinner) = &mut self.conn.spinner {
-                if self.conn.roster.tracked.is_empty() {
+            if let Some(spinner) = &mut self.active_conn_mut().spinner {
+                if active_roster_empty {
                     bottom.push(String::new());
                 }
                 bottom.extend(spinner.render(width));
@@ -298,13 +301,14 @@ impl App {
             // follow-up work, or the master before its spinner exists); show the
             // working indicator so it never looks dead.
             bottom.push(String::new());
-            bottom.push(subagent_activity_line(1, self.conn.roster.frame));
-        } else if !self.conn.roster.tracked.is_empty() {
-            let active = self.conn.roster.tracked_active_count();
+            bottom.push(subagent_activity_line(1, self.active_conn().roster.frame));
+        } else if !self.active_conn().roster.tracked.is_empty() {
+            let roster = &self.active_conn().roster;
+            let active = roster.tracked_active_count();
             if active > 0 {
-                bottom.push(subagent_activity_line(active, self.conn.roster.frame));
+                bottom.push(subagent_activity_line(active, roster.frame));
             } else {
-                bottom.push(subagent_idle_line(self.conn.roster.tracked.len()));
+                bottom.push(subagent_idle_line(roster.tracked.len()));
             }
         }
 
@@ -452,12 +456,12 @@ impl App {
         // Composite the active centered overlay (only one is ever active at a
         // time). All three splice through the same ANSI-aware helper so the
         // centering and escape-safe splice rule lives in one place.
-        if let Some(selector) = &mut self.conn.sessions.resume_selector {
+        if let Some(selector) = &mut self.active_conn_mut().sessions.resume_selector {
             let (selector_lines, overlay_width) =
                 build_resume_selector_overlay(selector, width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
-        if let Some(selector) = &mut self.conn.rewind.selector {
+        if let Some(selector) = &mut self.active_conn_mut().rewind.selector {
             let (selector_lines, overlay_width) =
                 build_rewind_selector_overlay(selector, width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);

@@ -328,11 +328,15 @@ impl App {
         state: &workflow_bar::WorkflowBarState,
         now: tokio::time::Instant,
     ) -> String {
-        let (name, status) = match self.conn.roster.active_agent_id.as_deref() {
-            None => ("Master".to_string(), self.master_status().to_string()),
+        let conn = self.active_conn();
+        let (name, status) = match conn.roster.active_agent_id.as_deref() {
+            None => (
+                conn.display_name().to_string(),
+                Self::master_status_for(conn).to_string(),
+            ),
             Some(id) => {
                 // Selection is UUID-keyed; paint the human display label (#1378).
-                let tracked = self.conn.roster.tracked.get(id);
+                let tracked = conn.roster.tracked.get(id);
                 let label = tracked
                     .map(|t| {
                         t.info
@@ -347,7 +351,7 @@ impl App {
                 (label, status)
             }
         };
-        let elapsed = self.panel_row_elapsed(self.conn.roster.active_agent_id.as_deref(), now);
+        let elapsed = self.panel_row_elapsed(conn.roster.active_agent_id.as_deref(), now);
         let mut title = format!(
             "{} {} {} {}",
             theme::bold(&sanitize_panel_label(&name)),

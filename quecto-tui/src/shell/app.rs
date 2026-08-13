@@ -625,6 +625,9 @@ mod app_subagent_workflow_sticky_tests;
 #[path = "../agents/app_subagents_tests.rs"]
 mod app_subagents_tests;
 #[cfg(test)]
+#[path = "../agents/app_tab_render_tests.rs"]
+mod app_tab_render_tests;
+#[cfg(test)]
 #[path = "app_text_input_1277_tests.rs"]
 mod app_text_input_1277_tests;
 #[cfg(test)]
