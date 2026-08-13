@@ -28,7 +28,7 @@ impl App {
     }
 
     /// Handle the agent event stream closing (the connection feed task's
-    /// `Source::Closed` sentinel, #1462).
+    /// `SourcedEvent::Closed` sentinel, #1462).
     ///
     /// `exit_detail` carries the spawned agent child's exit diagnosis when the
     /// TUI owns the child process (e.g. "signal 6 (SIGABRT)" after a
@@ -89,7 +89,7 @@ impl App {
         self.notify(&message, NotifyLevel::Error);
     }
 
-    /// The event stream closed (`Source::Closed` sentinel, #1462): dispatch
+    /// The event stream closed (`SourcedEvent::Closed` sentinel, #1462): dispatch
     /// the child-exit diagnosis OFF the select loop. When the TUI owns the
     /// agent child, the bounded diagnosis waits (#1047) run on a spawned task
     /// so a dying child can never stall event processing; the task reports
@@ -102,16 +102,21 @@ impl App {
     /// -drop warning can never be lost to an exit race, while the bounded
     /// child-exit waits run (#1470 review).
     ///
-    /// Returns whether the diagnosis was deferred to that task (also
-    /// latched on `disconnect_diag_pending` for the harness). `false` means
-    /// there was no owned child to diagnose and the disconnect completed
-    /// synchronously (with no detail).
-    pub(super) fn begin_agent_stream_closed(&mut self) -> bool {
+    /// Deferral is signalled solely via `disconnect_diag_pending` — the
+    /// event loop's diagnosis arm and the harness both key off it, so there
+    /// is exactly ONE deferral signal (#1470 r3, no drift-prone bool
+    /// return). A `Closed` sentinel arriving while a diagnosis is already
+    /// pending is a no-op: state is already flipped and a second diag task
+    /// would duplicate the notification.
+    pub(super) fn begin_agent_stream_closed(&mut self, tab: crate::shell::connection::TabId) {
+        if self.disconnect_diag_pending {
+            return;
+        }
         self.surface_dropped_oversized_events();
         self.mark_agent_disconnected();
         let Some(watch) = self.child_exit_watch.clone() else {
             self.emit_agent_disconnected_notice(None);
-            return false;
+            return;
         };
         self.disconnect_diag_pending = true;
         let tx = self.disconnect_diag_tx.clone();
@@ -130,16 +135,30 @@ impl App {
             // window so the stderr snapshot taken at completion is complete,
             // not racy (#1051 final review).
             watch.wait_stderr_drained(CHILD_EXIT_DETAIL_WINDOW).await;
-            let _ = tx.send(detail).await;
+            let _ = tx.send((tab, detail)).await;
         });
-        true
     }
 
     /// Complete the stream-closed disconnect: the session state was already
     /// flipped and drops surfaced synchronously in
     /// [`Self::begin_agent_stream_closed`]; this emits the notification with
     /// the (possibly deferred) exit diagnosis.
-    pub(super) fn finish_agent_stream_closed(&mut self, detail: Option<String>) {
+    /// Gated on the pending latch (#1470 r3): a session reset during the
+    /// diagnosis window clears the latch, so the stale completion is
+    /// dropped instead of dumping stderr into the fresh transcript.
+    pub(super) fn finish_agent_stream_closed(
+        &mut self,
+        tab: crate::shell::connection::TabId,
+        detail: Option<String>,
+    ) {
+        debug_assert_eq!(
+            tab,
+            crate::shell::connection::TabId::MASTER,
+            "N=1: only the master tab exists (#1462)"
+        );
+        if !self.disconnect_diag_pending {
+            return;
+        }
         self.disconnect_diag_pending = false;
         self.emit_agent_disconnected_notice(detail);
     }

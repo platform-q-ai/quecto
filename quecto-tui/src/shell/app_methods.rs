@@ -598,13 +598,15 @@ impl App {
 
     /// Reset the conversation — clears agent history, chat UI, and context display.
     pub(super) fn reset_session(&mut self, message: &str) {
-        // A dead connection would clear the transcript and flash a false "new
-        // session" success while NewSession vanished into the writer that
-        // outlives the closed stream — refuse and surface the disconnect (#1470).
-        if !self.send_new_session() {
-            self.notify("Agent disconnected — session not reset", NotifyLevel::Error);
-            return;
-        }
+        // Reset invalidates a pending off-loop disconnect diagnosis (#1470
+        // r2/r3): the gated `finish_agent_stream_closed` then drops the stale
+        // completion instead of dumping stderr into the fresh transcript.
+        self.disconnect_diag_pending = false;
+        // On a dead connection NewSession cannot reach the agent (the writer
+        // outlives the closed stream) — still clear the LOCAL transcript so
+        // /clear works on a dead session, but say what actually happened
+        // instead of flashing a false "new session" success (#1470 r3).
+        let agent_reset = self.send_new_session();
         self.master_session.chat.clear();
         // Invalidate in-flight ref recovery so a late get_message from the OLD
         // transcript can't splice into the cleared /clear-or-/new session (#1060 r4).
@@ -615,7 +617,14 @@ impl App {
         // on new_session; re-fetch so the footer tracks it (commands dispatch in
         // order, so this get_state observes the fresh session).
         self.send_state_resync();
-        self.notify(message, NotifyLevel::Success);
+        if agent_reset {
+            self.notify(message, NotifyLevel::Success);
+        } else {
+            self.notify(
+                "Cleared locally — agent disconnected, no new session started",
+                NotifyLevel::Warning,
+            );
+        }
     }
 
     /// Request a fresh agent session; false when the connection is dead (#1470).
@@ -636,6 +645,16 @@ impl App {
         // into a dead socket. Bail silently and return false — callers that show
         // user feedback (e.g. `reset_session`) act on that (#1470 review).
         if !self.agent_connected {
+            // Same cleanup + surfacing as a failed enqueue (#1470 r3): roll
+            // back any pending state minted for this command and report via
+            // the failure channel, so a post-disconnect action is a visible
+            // error, never a silent no-op that wedges paging/recovery.
+            self.rollback_failed_history_command(MASTER_CONNECTION_ID, &cmd);
+            let _ = self.command_send_failure_tx.try_send(CommandSendFailure {
+                command: cmd,
+                error: "agent disconnected".to_string(),
+                connection: MASTER_CONNECTION_ID.to_string(),
+            });
             return false;
         }
         // Enqueue synchronously in call order onto the client's FIFO writer; a

@@ -148,7 +148,7 @@ pub(crate) struct SubagentUi {
     pub(crate) panel_nav_key: Option<String>,
     /// Shared fan-in for the tab's master connection AND its direct/routed
     /// sub-agent feeds (#800/#1442/#1462), keyed by
-    /// [`crate::shell::connection::Source`] so the event loop drains ONE
+    /// [`crate::shell::connection::SourcedEvent`] so the event loop drains ONE
     /// channel regardless of connection count.
     pub(crate) event_tx: mpsc::Sender<crate::shell::connection::SourcedEvent>,
     pub(crate) event_rx: mpsc::Receiver<crate::shell::connection::SourcedEvent>,

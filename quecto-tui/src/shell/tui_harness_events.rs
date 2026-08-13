@@ -306,7 +306,14 @@ pub fn mask_clocks(frame: &str) -> String {
     let mut out = String::with_capacity(frame.len());
     let mut i = 0;
     while i < cs.len() {
-        if cs[i].is_ascii_digit() {
+        // Only mask digit runs anchored like clock cells — after the
+        // "idle " / "ran " labels or right-aligned behind 2+ spaces (the
+        // panel's Master uptime, #820). An unconditional digit-run+`:dd`
+        // mask would also normalize real content differences shaped like
+        // `N:dd`, silently narrowing the parity assertions (#1470 r3).
+        let after_clock_label =
+            out.ends_with("idle ") || out.ends_with("ran ") || out.ends_with("  ");
+        if cs[i].is_ascii_digit() && after_clock_label {
             // Consume the leading digit run, then any `:dd` groups.
             let mut j = i;
             while j < cs.len() && cs[j].is_ascii_digit() {

@@ -5,9 +5,9 @@
 //! (`agents/controller_subagent_feed.rs`): a tokio task owns the socket's
 //! event stream, commands ride the client's existing FIFO writer mpsc
 //! (whose task owns the socket's write half), and events are forwarded into
-//! the shared fan-in channel keyed by [`Source`]. The event loop's select
+//! the shared fan-in channel keyed by [`SourcedEvent`]. The event loop's select
 //! arm count becomes independent of connection count, and stream close is an
-//! explicit [`Source::Closed`] sentinel instead of `None`-from-recv.
+//! explicit [`SourcedEvent::Closed`] sentinel instead of `None`-from-recv.
 
 use crate::protocol::client::{Client, ClientError, Command, CommandSender, Event};
 use tokio::sync::mpsc;
@@ -38,7 +38,7 @@ pub(crate) enum SourcedEvent {
 
 /// A master connection behind a feed task: the feed task owns the [`Client`]
 /// (and with it the socket's event stream), forwards events into the shared
-/// fan-in tagged `Source::Tab(tab)`, and emits `Source::Closed(tab)` when
+/// fan-in tagged `SourcedEvent::Tab(tab, ..)`, and emits `SourcedEvent::Closed(tab)` when
 /// the stream closes. Callers hold only this handle.
 ///
 /// Commands ride the client's existing ordered writer mpsc — the "small
@@ -67,7 +67,7 @@ pub(crate) struct Connection {
 
 impl Connection {
     /// Move `client` behind the feed task, forwarding its events into
-    /// `event_tx` keyed by `tab` and closing with a `Source::Closed(tab)`
+    /// `event_tx` keyed by `tab` and closing with a `SourcedEvent::Closed(tab)`
     /// sentinel. The negotiation outcome (`speaks_frames`) is read from the
     /// client itself — per-connection state, not a caller-supplied flag.
     ///
@@ -86,7 +86,7 @@ impl Connection {
         // tokio runtime. In production builds we spawn unconditionally, so a
         // future caller outside a runtime fails loudly (`tokio::spawn`
         // panics) instead of silently dropping the client and freezing the
-        // tab with no `Source::Closed` sentinel (#1047 class, PR review).
+        // tab with no `SourcedEvent::Closed` sentinel (#1047 class, PR review).
         #[cfg(any(test, feature = "test-harness"))]
         let spawn_feed = tokio::runtime::Handle::try_current().is_ok();
         #[cfg(not(any(test, feature = "test-harness")))]

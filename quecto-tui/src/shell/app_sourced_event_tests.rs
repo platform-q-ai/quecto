@@ -10,7 +10,7 @@ use super::tui_harness::{self, TuiHarness, mask_clocks};
 use crate::components::component::Component;
 use crate::protocol::client::Event;
 
-/// #1462 AC: a master event delivered via `Source::Tab(MASTER)` renders in
+/// #1462 AC: a master event delivered via `SourcedEvent::Tab(MASTER)` renders in
 /// the master session exactly as a directly handled event would.
 #[tokio::test]
 async fn sourced_master_event_renders_like_direct_handling() {
@@ -33,7 +33,7 @@ async fn sourced_master_event_renders_like_direct_handling() {
     let got = sourced.full_frame();
     assert!(
         got.contains("seam-parity-token"),
-        "a Source::Tab(MASTER) event must reach the master session's chat (#1462)"
+        "a SourcedEvent::Tab(MASTER) event must reach the master session's chat (#1462)"
     );
     // Masked to `#:##` clocks: the Master row embeds a wall-clock uptime
     // timer, and a second boundary can pass between the two captures on a
@@ -96,7 +96,7 @@ async fn wire_close_runs_disconnect_handling_via_closed_sentinel() {
     );
 }
 
-/// #1462 AC: a sub-agent event delivered via `Source::Subagent(MASTER, id)`
+/// #1462 AC: a sub-agent event delivered via `SourcedEvent::Subagent(MASTER, id)`
 /// routes into that sub-agent's session like `route_subagent_event` does.
 #[tokio::test]
 async fn sourced_subagent_event_routes_to_subagent_session() {
@@ -133,7 +133,7 @@ async fn sourced_subagent_event_routes_to_subagent_session() {
     let got = sourced.full_frame();
     assert!(
         got.contains("seam-subagent-token"),
-        "a Source::Subagent event must route into that sub-agent's session (#1462)"
+        "a SourcedEvent::Subagent event must route into that sub-agent's session (#1462)"
     );
     assert_eq!(
         mask_clocks(&got),
@@ -142,7 +142,7 @@ async fn sourced_subagent_event_routes_to_subagent_session() {
     );
 }
 
-/// #1462 scope 3: the `Source::Closed(MASTER)` sentinel runs the production
+/// #1462 scope 3: the `SourcedEvent::Closed(MASTER)` sentinel runs the production
 /// disconnect handling — agent marked disconnected, panel pinned (#1047),
 /// disconnect notification shown.
 #[tokio::test]

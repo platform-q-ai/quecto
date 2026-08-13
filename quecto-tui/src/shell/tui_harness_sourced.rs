@@ -118,13 +118,14 @@ impl TuiHarness {
     }
 
     /// Drain ONE item from the app's fan-in channels — the exact receivers
-    /// the event loop's select arms drain (master/tab channel first, then
-    /// the sub-agent channel, matching the loop's dedicated-arm fairness) —
+    /// the event loop's select arms drain, with the same unbiased select —
     /// and route it through the shared completion protocol.
     pub async fn pump_sourced(&mut self) {
         let item = tokio::time::timeout(PUMP_TIMEOUT, async {
+            // Unbiased, matching run()'s select arms — the harness must not
+            // assert an inter-channel ordering production does not guarantee
+            // (#1470 r3).
             tokio::select! {
-                biased;
                 Some(item) = self.app.tab_event_rx.recv() => item,
                 Some(item) = self.app.subagents.event_rx.recv() => item,
             }
@@ -138,10 +139,10 @@ impl TuiHarness {
     /// the stream-closed disconnect with it — the harness stand-in for the
     /// event loop's disconnect-diagnosis select arm.
     pub async fn pump_disconnect_diagnosis(&mut self) {
-        let detail = tokio::time::timeout(PUMP_TIMEOUT, self.app.disconnect_diag_rx.recv())
+        let (tab, detail) = tokio::time::timeout(PUMP_TIMEOUT, self.app.disconnect_diag_rx.recv())
             .await
             .expect("the off-loop disconnect diagnosis must complete (#1462)")
             .expect("the disconnect diagnosis channel must stay open");
-        self.app.finish_agent_stream_closed(detail);
+        self.app.finish_agent_stream_closed(tab, detail);
     }
 }

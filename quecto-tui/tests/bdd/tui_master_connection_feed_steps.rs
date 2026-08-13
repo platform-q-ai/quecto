@@ -4,7 +4,7 @@
 //! behind a feed task and its events arrive through the shared fan-in channel
 //! keyed by `Source`. At N=1 nothing may change: these steps pin frame parity
 //! between the direct path and the feed path, and that a real stream close —
-//! delivered as the feed task's `Source::Closed` sentinel — keeps the #1047
+//! delivered as the feed task's `SourcedEvent::Closed` sentinel — keeps the #1047
 //! disconnect diagnosis. The When steps drive the REAL socket: event bytes
 //! (or EOF) travel client reader → feed task → shared fan-in → routing.
 
@@ -97,7 +97,7 @@ fn master_event_stream_closes(world: &mut TuiWorld) {
     let h = harness(world);
     handle.block_on(async {
         // Real EOF on the agent side; the feed task turns it into the
-        // Source::Closed sentinel the routing drains.
+        // SourcedEvent::Closed sentinel the routing drains.
         h.wire_close_master_connection().await;
     });
 }

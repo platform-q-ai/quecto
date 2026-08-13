@@ -127,12 +127,14 @@ pub struct App {
     command_send_failure_tx: mpsc::Sender<CommandSendFailure>,
     command_send_failure_rx: mpsc::Receiver<CommandSendFailure>,
     /// Completion channel for the OFF-LOOP disconnect diagnosis (#1462 scope
-    /// 3): the `Source::Closed` sentinel spawns the bounded child-exit /
+    /// 3): the `SourcedEvent::Closed` sentinel spawns the bounded child-exit /
     /// stderr-drain waits (#1047) onto a task carrying this sender, so a
     /// dying child can never stall the select loop; the loop finishes the
     /// disconnect when the diagnosis lands here.
-    disconnect_diag_tx: mpsc::Sender<Option<String>>,
-    disconnect_diag_rx: mpsc::Receiver<Option<String>>,
+    /// Keyed by the closing tab (#1470 r3) so N>1 tabs can never
+    /// misattribute an exit detail.
+    disconnect_diag_tx: mpsc::Sender<(crate::shell::connection::TabId, Option<String>)>,
+    disconnect_diag_rx: mpsc::Receiver<(crate::shell::connection::TabId, Option<String>)>,
     /// Dedicated fan-in for master-connection events (`SourcedEvent::Tab` /
     /// `Closed`). A separate channel from the sub-agent fan-in restores the
     /// deleted dedicated select arm's fair interleave: master events and the

@@ -71,11 +71,11 @@ pub(super) enum SourcedRender {
 
 impl App {
     /// Route one item drained from the shared fan-in channel (#1462): master
-    /// events (`Source::Tab`) go through the master event handler, sub-agent
-    /// events (`Source::Subagent`) through sub-agent routing, and the
-    /// `Source::Closed` sentinel runs the #1047 disconnect diagnosis path.
+    /// events (`SourcedEvent::Tab`) go through the master event handler, sub-agent
+    /// events (`SourcedEvent::Subagent`) through sub-agent routing, and the
+    /// `SourcedEvent::Closed` sentinel runs the #1047 disconnect diagnosis path.
     ///
-    /// The `Source::Closed` arm never awaits the child-exit diagnosis here
+    /// The `SourcedEvent::Closed` arm never awaits the child-exit diagnosis here
     /// (#1462 scope 3): when the TUI owns the agent child, the bounded
     /// #1047 waits run on a spawned task and complete through the
     /// disconnect-diagnosis select arm — a dying child cannot stall event
@@ -125,7 +125,7 @@ impl App {
                 // shows a live session after the stream closed; with an
                 // owned child the notification follows when the diagnosis
                 // lands on its select arm.
-                self.begin_agent_stream_closed();
+                self.begin_agent_stream_closed(tab);
                 SourcedRender::Immediate
             }
         }
@@ -306,8 +306,8 @@ impl App {
                 // Off-loop disconnect diagnosis completion (#1462 scope 3):
                 // the bounded #1047 waits ran on a spawned task; finish the
                 // disconnect with the diagnosis it reported.
-                Some(detail) = self.disconnect_diag_rx.recv() => {
-                    self.finish_agent_stream_closed(detail);
+                Some((tab, detail)) = self.disconnect_diag_rx.recv() => {
+                    self.finish_agent_stream_closed(tab, detail);
                     self.render_and_note(&mut stream_render_coalescer);
                 }
                 Some(failure) = self.command_send_failure_rx.recv() => {

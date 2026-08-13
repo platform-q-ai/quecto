@@ -57,7 +57,6 @@ async fn disconnect_notification_includes_agent_exit_detail() {
 #[tokio::test]
 async fn stream_closed_path_reports_real_child_exit_detail() {
     let mut h = TuiHarness::new().await;
-    let app = h.app_mut();
 
     let child = tokio::process::Command::new("sh")
         .args(["-c", "kill -ABRT $$"])
@@ -69,7 +68,6 @@ async fn stream_closed_path_reports_real_child_exit_detail() {
         child,
         crate::shell::child_watch::StderrTail::default(),
     );
-    let _ = app;
     h.agent_stream_closed_with_child_watch(watch).await;
 
     let rendered = h.app_mut().notifications.render(200).join("\n");
@@ -148,24 +146,26 @@ async fn oversized_event_drop_is_surfaced_as_notification() {
     );
 }
 
-/// #1470 review: once the master stream closes, `/new` and `/clear` must not
-/// clear the transcript or flash a misleading "session started" success — the
-/// NewSession command would vanish into the writer channel that outlives the
-/// closed event stream. The reset must refuse and surface the disconnect.
+/// #1470 review (r3): once the master stream closes, `/new` and `/clear`
+/// still clear the LOCAL transcript — a dead session must stay tidyable —
+/// but must not flash a misleading "session started" success: the NewSession
+/// command would vanish into the writer channel that outlives the closed
+/// event stream, so the reset warns about what actually happened.
 #[tokio::test]
-async fn reset_session_refuses_and_warns_when_disconnected() {
+async fn reset_session_clears_locally_and_warns_when_disconnected() {
     let mut h = TuiHarness::new().await;
     let a = h.app_mut();
     a.master_session.chat.add_entry(ChatEntry::User {
-        text: "keep me".into(),
+        text: "clear me".into(),
     });
     a.agent_connected = false;
 
     a.reset_session("New session started");
 
-    assert!(
-        a.master_session.chat.entry_count() > 0,
-        "a disconnected reset must not clear the transcript"
+    assert_eq!(
+        a.master_session.chat.entry_count(),
+        0,
+        "a disconnected reset must still clear the local transcript (#1470 r3)"
     );
     let msgs = a.notifications.messages();
     assert!(

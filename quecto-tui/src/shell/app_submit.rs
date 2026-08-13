@@ -123,10 +123,17 @@ impl App {
             return;
         }
 
-        // Master session: refuse outright when the connection is known dead
-        // (#1470 review) — the writer channel can outlive the stream, so an
-        // enqueue could "succeed" and the message silently vanish.
+        // Master session: refuse when the connection is known dead (#1470) —
+        // the writer channel can outlive the stream, so an enqueue could
+        // "succeed" and the message silently vanish. The composed text is
+        // preserved as a visible chat entry (the editor was already emptied
+        // by take_submit), matching the pre-seam failure behaviour.
         if !self.agent_connected {
+            self.master_session
+                .chat
+                .add_entry_follow_tail(ChatEntry::User {
+                    text: text.to_string(),
+                });
             self.notify("Agent disconnected — message not sent", NotifyLevel::Error);
             return;
         }
