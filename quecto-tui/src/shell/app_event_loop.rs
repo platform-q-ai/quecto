@@ -180,10 +180,10 @@ impl App {
     pub(super) fn send_startup_requests(&mut self) {
         self.send_command(Command::GetState {
             agent_id: None,
-            id: Some("init".into()),
+            id: Some(self.conn.namespaced_id("init")),
         });
         self.send_command(Command::GetSubagents {
-            id: Some("init-subagents".into()),
+            id: Some(self.conn.namespaced_id("init-subagents")),
         });
         self.request_master_attach_backfill();
     }

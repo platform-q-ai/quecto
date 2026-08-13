@@ -16,6 +16,26 @@ fn routed_subagent_prefix<'a>(id: &'a str, prefixes: &[&str]) -> Option<&'a str>
         .iter()
         .find_map(|prefix| routed_subagent_id(id, prefix))
 }
+
+/// Strip a `tab{N}:` connection namespace (#1463) from a correlation id —
+/// ANY tab's, not just this one's. Family/prefix CLASSIFICATION treats
+/// another tab's solicited traffic exactly like another client's (routed
+/// responses stay agent-keyed; solicited get_messages families drop), while
+/// exact pending latches always compare the full namespaced id, so a foreign
+/// tab's response can never resolve this tab's pendings.
+fn strip_tab_namespace(id: &str) -> &str {
+    let Some(rest) = id.strip_prefix("tab") else {
+        return id;
+    };
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return id;
+    }
+    match rest[digits..].strip_prefix(':') {
+        Some(stripped) => stripped,
+        None => id,
+    }
+}
 use crate::protocol::client::{Event, ToolCatalogueEntry};
 
 /// Family prefix for the master attach-time history backfill (#1050 / #1237).
@@ -70,22 +90,23 @@ impl App {
     /// exact pending correlation token for `kind` (#1237). Overwrites any prior
     /// same-kind pending so a stale late response can no longer match.
     fn mint_pending_solicited_get_messages(&mut self, kind: SolicitedGetMessagesKind) -> String {
-        self.solicited_get_messages_seq = self.solicited_get_messages_seq.wrapping_add(1);
+        self.conn.solicited_get_messages_seq = self.conn.solicited_get_messages_seq.wrapping_add(1);
         let id = format!(
-            "{}-{}-{}",
+            "{}{}-{}-{}",
+            self.conn.id_namespace(),
             kind.id_prefix(),
             super::app_events::uuid_like(),
-            self.solicited_get_messages_seq
+            self.conn.solicited_get_messages_seq
         );
         match kind {
             SolicitedGetMessagesKind::Resume => {
-                self.pending_resume_messages_id = Some(id.clone());
+                self.conn.pending_resume_messages_id = Some(id.clone());
             }
             SolicitedGetMessagesKind::RewindRefresh => {
-                self.pending_rewind_refresh_id = Some(id.clone());
+                self.conn.pending_rewind_refresh_id = Some(id.clone());
             }
             SolicitedGetMessagesKind::Attach => {
-                self.pending_attach_backfill_id = Some(id.clone());
+                self.conn.pending_attach_backfill_id = Some(id.clone());
             }
         }
         id
@@ -93,22 +114,22 @@ impl App {
 
     /// Drop all solicited resume/rewind/attach pending ids (lifecycle boundary).
     pub(super) fn clear_pending_solicited_get_messages(&mut self) {
-        self.pending_resume_messages_id = None;
-        self.pending_rewind_refresh_id = None;
-        self.pending_attach_backfill_id = None;
+        self.conn.pending_resume_messages_id = None;
+        self.conn.pending_rewind_refresh_id = None;
+        self.conn.pending_attach_backfill_id = None;
     }
 
     /// Roll back a failed enqueue of a solicited get_messages when the id still
     /// matches the pending slot for that family.
     pub(super) fn rollback_pending_solicited_get_messages(&mut self, id: &str) {
-        if self.pending_resume_messages_id.as_deref() == Some(id) {
-            self.pending_resume_messages_id = None;
+        if self.conn.pending_resume_messages_id.as_deref() == Some(id) {
+            self.conn.pending_resume_messages_id = None;
         }
-        if self.pending_rewind_refresh_id.as_deref() == Some(id) {
-            self.pending_rewind_refresh_id = None;
+        if self.conn.pending_rewind_refresh_id.as_deref() == Some(id) {
+            self.conn.pending_rewind_refresh_id = None;
         }
-        if self.pending_attach_backfill_id.as_deref() == Some(id) {
-            self.pending_attach_backfill_id = None;
+        if self.conn.pending_attach_backfill_id.as_deref() == Some(id) {
+            self.conn.pending_attach_backfill_id = None;
         }
     }
 
@@ -117,12 +138,12 @@ impl App {
         id: Option<&str>,
     ) -> Option<SolicitedGetMessagesKind> {
         let id = id?;
-        if self.pending_resume_messages_id.as_deref() == Some(id) {
-            self.pending_resume_messages_id = None;
+        if self.conn.pending_resume_messages_id.as_deref() == Some(id) {
+            self.conn.pending_resume_messages_id = None;
             return Some(SolicitedGetMessagesKind::Resume);
         }
-        if self.pending_rewind_refresh_id.as_deref() == Some(id) {
-            self.pending_rewind_refresh_id = None;
+        if self.conn.pending_rewind_refresh_id.as_deref() == Some(id) {
+            self.conn.pending_rewind_refresh_id = None;
             return Some(SolicitedGetMessagesKind::RewindRefresh);
         }
         None
@@ -130,7 +151,7 @@ impl App {
 
     fn is_pending_attach_backfill(&self, id: Option<&str>) -> bool {
         matches!(
-            (id, self.pending_attach_backfill_id.as_deref()),
+            (id, self.conn.pending_attach_backfill_id.as_deref()),
             (Some(got), Some(pending)) if got == pending
         )
     }
@@ -170,7 +191,7 @@ impl App {
     ) {
         if let Some(agent_id) = id.as_deref().and_then(|id| {
             routed_subagent_prefix(
-                id,
+                strip_tab_namespace(id),
                 &[
                     "subagent-state:",
                     "subagent-sync:",
@@ -211,7 +232,7 @@ impl App {
                 if let Some(data) = data {
                     // A quiet footer refresh (id "stats-footer") updates the
                     // cost/context indicators without adding a chat Status line.
-                    if id.as_deref() == Some("stats-footer") {
+                    if id.as_deref().map(strip_tab_namespace) == Some("stats-footer") {
                         self.update_footer_stats(&data);
                     } else {
                         self.show_session_stats(&data);
@@ -256,7 +277,7 @@ impl App {
             }
             "get_messages" if self.take_pending_resume_or_rewind(id.as_deref()).is_some() => {}
             "get_messages" if self.is_pending_attach_backfill(id.as_deref()) => {
-                self.pending_attach_backfill_id = None;
+                self.conn.pending_attach_backfill_id = None;
             }
             "rewind_to" if id.is_some() && id == self.rewind.pending_apply_id && success => {
                 self.rewind.pending_apply_id = None;
@@ -346,7 +367,7 @@ impl App {
                 // Exact pending matched but no payload — still clear pending
                 // so a later foreign id of the same family cannot apply.
             } else if self.is_pending_attach_backfill(id) {
-                self.pending_attach_backfill_id = None;
+                self.conn.pending_attach_backfill_id = None;
             }
             return;
         };
@@ -380,7 +401,7 @@ impl App {
             self.reconcile_master_retention_trim();
             return;
         }
-        if id.is_some_and(|id| id.starts_with("history-page-")) {
+        if id.is_some_and(|id| strip_tab_namespace(id).starts_with("history-page-")) {
             // Another client's older page (get_messages responses are broadcast
             // to every client) or one orphaned by a resume: it is paged from a
             // DIFFERENT depth, so prepending it would create an interior gap.
@@ -392,13 +413,15 @@ impl App {
             // id-less snapshot — a trimmed snapshot must leave the later full
             // attach able to restore omitted history (#1050 / #1237).
             if self.is_pending_attach_backfill(id) {
-                self.pending_attach_backfill_id = None;
+                self.conn.pending_attach_backfill_id = None;
             }
             Self::reconcile_master_backfill_history(&mut self.master_session, &data, false);
             self.reconcile_master_retention_trim();
             return;
         }
-        if id.is_some_and(Self::is_foreign_solicited_get_messages_family) {
+        if id.is_some_and(|id| {
+            Self::is_foreign_solicited_get_messages_family(strip_tab_namespace(id))
+        }) {
             // Foreign (or stale bare-literal) resume/rewind-open/rewind-refresh/attach family id:
             // drop. Must not fall through to legacy replace — that is the
             // multi-client clobber (#1237).
@@ -671,32 +694,32 @@ impl App {
 impl App {
     /// Arm exact-pending attach correlation for a synthetic response delivery.
     pub fn test_arm_attach_backfill(&mut self, id: &str) {
-        self.pending_attach_backfill_id = Some(id.to_string());
+        self.conn.pending_attach_backfill_id = Some(id.to_string());
     }
 
     /// Arm exact-pending resume correlation for a synthetic response delivery.
     pub fn test_arm_resume_messages(&mut self, id: &str) {
-        self.pending_resume_messages_id = Some(id.to_string());
+        self.conn.pending_resume_messages_id = Some(id.to_string());
     }
 
     /// Arm exact-pending rewind-refresh correlation for a synthetic response delivery.
     pub fn test_arm_rewind_refresh(&mut self, id: &str) {
-        self.pending_rewind_refresh_id = Some(id.to_string());
+        self.conn.pending_rewind_refresh_id = Some(id.to_string());
     }
 
     /// Pending attach id (test inspection / capture after real mint).
     pub fn test_pending_attach_backfill_id(&self) -> Option<&str> {
-        self.pending_attach_backfill_id.as_deref()
+        self.conn.pending_attach_backfill_id.as_deref()
     }
 
     /// Pending resume id (test inspection / capture after real mint).
     pub fn test_pending_resume_messages_id(&self) -> Option<&str> {
-        self.pending_resume_messages_id.as_deref()
+        self.conn.pending_resume_messages_id.as_deref()
     }
 
     /// Pending rewind-refresh id (test inspection / capture after real mint).
     pub fn test_pending_rewind_refresh_id(&self) -> Option<&str> {
-        self.pending_rewind_refresh_id.as_deref()
+        self.conn.pending_rewind_refresh_id.as_deref()
     }
 
     /// Re-key the master connection to another tab id, so tests can pin that

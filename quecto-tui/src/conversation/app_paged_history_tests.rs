@@ -108,7 +108,7 @@ async fn attach_backfill_requests_next_older_page_when_scrolled_to_top() {
                 && cmd
                     .get("id")
                     .and_then(|v| v.as_str())
-                    .is_some_and(|id| id.starts_with("history-page-"))
+                    .is_some_and(|id| id.starts_with("tab0:history-page-"))
         }),
         "scroll-back must request the next older history page with the advertised cursor; commands={commands:?}"
     );

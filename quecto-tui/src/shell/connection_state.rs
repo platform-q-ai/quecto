@@ -45,6 +45,24 @@ pub(crate) struct ConnectionState {
     /// When this tab's session started — drives the Master row's uptime
     /// timer (#820).
     pub(crate) started_at: tokio::time::Instant,
+    /// In-flight #1060 fetch-on-miss recoveries keyed by minted request id.
+    pub(crate) pending_message_recovery: HashMap<String, PendingMessageRecovery>,
+    /// Recovery batches (client-local id → turn chat range) guarding late
+    /// overwrites.
+    pub(crate) message_recovery_batches: HashMap<String, MessageRecoveryBatch>,
+    pub(crate) pending_stub_recall: HashMap<String, app_paged_history::StubRecall>,
+    pub(crate) failed_stub_recalls: HashSet<(Option<String>, String)>,
+    /// Exact correlation id for this tab's in-flight resume transcript fetch
+    /// (#1237). `get_messages` responses are broadcast; fixed literals would
+    /// clobber peers.
+    pub(crate) pending_resume_messages_id: Option<String>,
+    /// Exact correlation id for this tab's post-rewind transcript refresh (#1237).
+    pub(crate) pending_rewind_refresh_id: Option<String>,
+    /// Exact correlation id for this tab's solicited attach backfill (#1237).
+    /// Id-less busy-connect snapshots must not clear this pending.
+    pub(crate) pending_attach_backfill_id: Option<String>,
+    /// Local sequence suffix for minted solicited `get_messages` ids (#1237).
+    pub(crate) solicited_get_messages_seq: u64,
 }
 
 impl ConnectionState {
@@ -62,7 +80,27 @@ impl ConnectionState {
             disconnect_diag_pending: false,
             disconnect_refusal_notified: false,
             started_at: tokio::time::Instant::now(),
+            pending_message_recovery: HashMap::new(),
+            message_recovery_batches: HashMap::new(),
+            pending_stub_recall: HashMap::new(),
+            failed_stub_recalls: HashSet::new(),
+            pending_resume_messages_id: None,
+            pending_rewind_refresh_id: None,
+            pending_attach_backfill_id: None,
+            solicited_get_messages_seq: 0,
         }
+    }
+
+    /// The correlation-id namespace prefix for this connection's tab
+    /// (#1463): `tab{N}:`. Every id the tab mints carries it, so broadcast
+    /// responses can never match another tab's pending latches.
+    pub(crate) fn id_namespace(&self) -> String {
+        format!("tab{}:", self.transport.tab().0)
+    }
+
+    /// Mint `suffix` under this connection's namespace (#1463).
+    pub(crate) fn namespaced_id(&self, suffix: &str) -> String {
+        format!("{}{suffix}", self.id_namespace())
     }
 }
 

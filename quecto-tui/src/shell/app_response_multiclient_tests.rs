@@ -366,7 +366,7 @@ async fn rewind_request_ids_use_fresh_production_tokens_per_request() {
     for kind in ["open", "load", "to"] {
         let first_id = h.app_mut().next_rewind_request_id(kind);
         let second_id = h.app_mut().next_rewind_request_id(kind);
-        let prefix = format!("rewind-{kind}-");
+        let prefix = format!("tab0:rewind-{kind}-");
         let first_token = first_id
             .strip_prefix(&prefix)
             .and_then(|rest| rest.rsplit_once('-'))
@@ -449,17 +449,17 @@ async fn message_recovery_ids_carry_connection_namespace() {
     let _ = h.drain_commands().await;
     let app = h.app_mut();
     assert!(
-        !app.pending_message_recovery.is_empty(),
+        !app.conn.pending_message_recovery.is_empty(),
         "precondition: content-less refs mint recovery requests"
     );
-    for id in app.pending_message_recovery.keys() {
+    for id in app.conn.pending_message_recovery.keys() {
         assert_namespaced(id, "message-recovery request id");
     }
     assert!(
-        !app.message_recovery_batches.is_empty(),
+        !app.conn.message_recovery_batches.is_empty(),
         "precondition: recovery mints a batch id"
     );
-    for id in app.message_recovery_batches.keys() {
+    for id in app.conn.message_recovery_batches.keys() {
         assert_namespaced(id, "message-recovery batch id");
     }
 }
@@ -534,10 +534,10 @@ async fn stub_recall_ids_carry_connection_namespace() {
     let _ = h.drain_commands().await;
     let app = h.app_mut();
     assert!(
-        !app.pending_stub_recall.is_empty(),
+        !app.conn.pending_stub_recall.is_empty(),
         "precondition: a visible stub mints a recall request"
     );
-    for id in app.pending_stub_recall.keys() {
+    for id in app.conn.pending_stub_recall.keys() {
         assert_namespaced(id, "stub-recall request id");
     }
 }

@@ -82,7 +82,7 @@ impl App {
     /// switch visibly keeps the previous level.
     pub(super) fn send_set_effort(&mut self, effort: &str) {
         let cmd = Command::SetEffort {
-            id: Some("se".into()),
+            id: Some(self.conn.namespaced_id("se")),
             effort: effort.to_string(),
         };
         if self.subagents.active_agent_id.is_some() {
@@ -125,7 +125,7 @@ impl App {
     pub(super) fn send_state_resync(&mut self) {
         self.send_command(Command::GetState {
             agent_id: None,
-            id: Some("resync".into()),
+            id: Some(self.conn.namespaced_id("resync")),
         });
     }
 }

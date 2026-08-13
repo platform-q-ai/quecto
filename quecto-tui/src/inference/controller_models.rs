@@ -27,7 +27,7 @@ impl App {
     /// previously active model visible.
     pub(super) fn send_set_model(&mut self, model: &str) {
         let cmd = Command::SetModel {
-            id: Some("sm".into()),
+            id: Some(self.conn.namespaced_id("sm")),
             model: Some(model.to_string()),
             provider: None,
             model_id: None,
@@ -62,7 +62,7 @@ impl App {
         if !self.inference.model_registry.open_pending {
             self.inference.model_registry.open_pending = true;
             self.send_command(Command::ListModels {
-                id: Some("model-selector".into()),
+                id: Some(self.conn.namespaced_id("model-selector")),
             });
         }
     }

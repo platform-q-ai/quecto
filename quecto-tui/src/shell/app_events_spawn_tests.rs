@@ -288,11 +288,11 @@ async fn tool_end_uuid_rekey_migrates_child_recovery_state() {
     let batch_id = "child-recovery-worker-1-batch".to_string();
     let req_id = "msg-recovery-worker-1".to_string();
     let ref_id = "recover-ref".to_string();
-    app.message_recovery_batches.insert(
+    app.conn.message_recovery_batches.insert(
         batch_id.clone(),
         MessageRecoveryBatch::new(vec![ref_id.clone()], 0, 1, Some("worker-1".into())),
     );
-    app.pending_message_recovery.insert(
+    app.conn.pending_message_recovery.insert(
         req_id.clone(),
         PendingMessageRecovery {
             message_id: ref_id.clone(),

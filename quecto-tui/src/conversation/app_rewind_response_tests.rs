@@ -715,12 +715,14 @@ async fn rewind_success_clears_failed_stub_recall_state() {
     // (#1061 review — clear_message_recovery must reset stub-recall state).
     let mut h = harness().await;
     let a = h.app_mut();
-    a.failed_stub_recalls.insert((None, "stub-1".to_string()));
+    a.conn
+        .failed_stub_recalls
+        .insert((None, "stub-1".to_string()));
     a.rewind.pending_apply_id = Some("rw".into());
     respond(a, Some("rw"), "rewind_to", true, None, None);
     assert!(
-        a.failed_stub_recalls.is_empty(),
+        a.conn.failed_stub_recalls.is_empty(),
         "rewind must reset failed stub-recall markers"
     );
-    assert!(a.pending_stub_recall.is_empty());
+    assert!(a.conn.pending_stub_recall.is_empty());
 }

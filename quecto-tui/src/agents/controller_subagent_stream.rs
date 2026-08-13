@@ -132,7 +132,7 @@ impl App {
                     // Re-sync on the child's own connection so effort vocabulary
                     // tracks the new model (agent resets effort to low on switch).
                     let _ = self.send_to_active_subagent(Command::GetState {
-                        id: Some("resync".into()),
+                        id: Some(self.conn.namespaced_id("resync")),
                         agent_id: None,
                     });
                 }
@@ -470,7 +470,7 @@ impl App {
         // fill; creating a second batch here would issue zero fresh requests and
         // linger unfillable (F4 — mirrors the master guard).
         if refs.iter().any(|message_id| {
-            self.pending_message_recovery.values().any(|pending| {
+            self.conn.pending_message_recovery.values().any(|pending| {
                 pending.agent_id.as_deref() == Some(agent_id) && pending.message_id == *message_id
             })
         }) {
@@ -480,7 +480,7 @@ impl App {
             "child-recovery-{agent_id}-{}",
             super::app_events::uuid_like()
         );
-        self.message_recovery_batches.insert(
+        self.conn.message_recovery_batches.insert(
             batch_id.clone(),
             MessageRecoveryBatch::new(
                 refs.to_vec(),
@@ -490,8 +490,12 @@ impl App {
             ),
         );
         for message_id in refs {
-            let req_id = format!("msg-recovery-{}", super::app_events::uuid_like());
-            self.pending_message_recovery.insert(
+            let req_id = format!(
+                "{}msg-recovery-{}",
+                self.conn.id_namespace(),
+                super::app_events::uuid_like()
+            );
+            self.conn.pending_message_recovery.insert(
                 req_id.clone(),
                 PendingMessageRecovery {
                     message_id: message_id.clone(),

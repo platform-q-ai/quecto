@@ -11,7 +11,7 @@ const OPTIMISTIC_SUBAGENT_GRACE: Duration = Duration::from_secs(30);
 impl App {
     pub(super) fn delete_all_subagents(&mut self) {
         if !self.send_command(Command::DeleteAllSubagents {
-            id: Some("delete-all-subagents".into()),
+            id: Some(self.conn.namespaced_id("delete-all-subagents")),
         }) {
             return;
         }
@@ -74,12 +74,12 @@ impl App {
             }
         });
 
-        for pending in self.pending_message_recovery.values_mut() {
+        for pending in self.conn.pending_message_recovery.values_mut() {
             if pending.agent_id.as_deref() == Some(from) {
                 pending.agent_id = Some(to.to_string());
             }
         }
-        for batch in self.message_recovery_batches.values_mut() {
+        for batch in self.conn.message_recovery_batches.values_mut() {
             if batch.agent_id.as_deref() == Some(from) {
                 batch.agent_id = Some(to.to_string());
             }

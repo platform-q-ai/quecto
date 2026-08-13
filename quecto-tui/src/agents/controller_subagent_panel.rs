@@ -272,7 +272,7 @@ impl App {
             if let Some(feed) = self.subagents.feeds.get_mut(id) {
                 let _ = feed.cmd_tx.try_send(Command::Sync {
                     agent_id: None,
-                    id: Some("subagent-sync".into()),
+                    id: Some(self.conn.namespaced_id("subagent-sync")),
                     epoch: feed.epoch,
                     since_rev: feed.rev,
                 });

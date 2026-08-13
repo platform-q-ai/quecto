@@ -110,7 +110,7 @@ impl App {
                     })
                     .collect::<Vec<_>>();
                 self.send_command(Command::SetToolPolicy {
-                    id: Some("tool-policy-apply".into()),
+                    id: Some(self.conn.namespaced_id("tool-policy-apply")),
                     mutations,
                     mode: ToolPolicyApplyMode::ImmediateIfIdle,
                     operation: ToolPolicyOperation::Replace,

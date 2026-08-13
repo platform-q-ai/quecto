@@ -442,7 +442,7 @@ async fn successful_resume_requests_full_messages_before_stats() {
         .and_then(|v| v.get("id")?.as_str().map(str::to_string))
         .expect("resume get_messages id");
     assert!(
-        resume_id.starts_with("resume-messages-") && resume_id != "resume-messages",
+        resume_id.starts_with("tab0:resume-messages-") && resume_id != "tab0:resume-messages",
         "resume id must be uniquely minted, got {resume_id}"
     );
     assert_eq!(
@@ -454,7 +454,7 @@ async fn successful_resume_requests_full_messages_before_stats() {
         "resume should refresh stats after requesting messages: {cmds:?}"
     );
     assert!(
-        cmds[2].contains("\"type\":\"get_state\"") && cmds[2].contains("\"id\":\"resync\""),
+        cmds[2].contains("\"type\":\"get_state\"") && cmds[2].contains("\"id\":\"tab0:resync\""),
         "resume should resync session-scoped state after stats: {cmds:?}"
     );
 }

@@ -100,7 +100,7 @@ impl App {
     pub(super) fn toggle_workflow_auto_continue(&mut self) {
         let next = !self.workflow.auto_continue;
         self.send_command(Command::SetWorkflowAutomation {
-            id: Some("workflow-auto".into()),
+            id: Some(self.conn.namespaced_id("workflow-auto")),
             auto_continue: Some(next),
             completion_nudge: None,
         });
@@ -109,7 +109,7 @@ impl App {
     pub(super) fn toggle_workflow_completion_nudge(&mut self) {
         let next = !self.workflow.completion_nudge;
         self.send_command(Command::SetWorkflowAutomation {
-            id: Some("workflow-nudge".into()),
+            id: Some(self.conn.namespaced_id("workflow-nudge")),
             auto_continue: None,
             completion_nudge: Some(next),
         });
@@ -117,7 +117,7 @@ impl App {
 
     pub(super) fn send_session_stats(&mut self) {
         self.send_command(Command::GetSessionStats {
-            id: Some("stats".into()),
+            id: Some(self.conn.namespaced_id("stats")),
         });
     }
 
@@ -125,7 +125,7 @@ impl App {
     /// line). Routed by the "stats-footer" id in the response handler.
     pub(super) fn send_session_stats_footer(&mut self) {
         self.send_command(Command::GetSessionStats {
-            id: Some("stats-footer".into()),
+            id: Some(self.conn.namespaced_id("stats-footer")),
         });
     }
 
@@ -142,7 +142,7 @@ impl App {
 
     pub(super) fn send_list_sessions(&mut self) {
         self.send_command(Command::ListSessions {
-            id: Some("resume-list".into()),
+            id: Some(self.conn.namespaced_id("resume-list")),
         });
     }
 
@@ -152,7 +152,7 @@ impl App {
             return;
         }
         self.send_command(Command::ResumeSession {
-            id: Some("resume".into()),
+            id: Some(self.conn.namespaced_id("resume")),
             session: session.trim().to_string(),
         });
     }

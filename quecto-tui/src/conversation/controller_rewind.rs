@@ -12,7 +12,8 @@ impl App {
     pub(super) fn next_rewind_request_id(&mut self, kind: &str) -> String {
         self.rewind.request_seq = self.rewind.request_seq.wrapping_add(1);
         format!(
-            "rewind-{kind}-{}-{}",
+            "{}rewind-{kind}-{}-{}",
+            self.conn.id_namespace(),
             super::app_events::uuid_like(),
             self.rewind.request_seq
         )

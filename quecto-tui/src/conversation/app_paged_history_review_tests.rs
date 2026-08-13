@@ -376,6 +376,7 @@ async fn stub_recall_rejects_first_page_content_length_that_differs_from_stub_me
     );
     assert!(
         h.app_mut()
+            .conn
             .failed_stub_recalls
             .contains(&(None, "length-pinned-stub".to_string())),
         "mismatched first page must mark the stub recall failed"
