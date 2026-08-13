@@ -385,3 +385,81 @@ async fn rewind_request_ids_use_fresh_production_tokens_per_request() {
         assert!(second_id.starts_with(&prefix), "{second_id}");
     }
 }
+
+// --- #1463: minted correlation ids carry a connection namespace -------------
+//
+// Phase 2 of the multi-session TUI (epic #1467): every correlation id this
+// client mints is scoped to its connection, so a broadcast response can never
+// match a pending latch on another tab. The master tab is `TabId(0)`; its
+// namespace prefix is `tab0:`.
+
+/// Namespace prefix every master-tab minted correlation id must carry (#1463).
+const MASTER_NAMESPACE: &str = "tab0:";
+
+#[track_caller]
+fn assert_namespaced(id: &str, what: &str) {
+    assert!(
+        id.starts_with(MASTER_NAMESPACE),
+        "{what} must be namespaced to its connection (#1463): \
+         expected prefix {MASTER_NAMESPACE:?}, got {id:?}"
+    );
+}
+
+#[tokio::test]
+async fn minted_resume_id_carries_connection_namespace() {
+    let mut h = harness().await;
+    let id = mint_resume_id(&mut h).await;
+    assert_namespaced(&id, "solicited resume get_messages id");
+}
+
+#[tokio::test]
+async fn minted_rewind_refresh_id_carries_connection_namespace() {
+    let mut h = harness().await;
+    let id = mint_rewind_refresh_id(&mut h).await;
+    assert_namespaced(&id, "post-rewind refresh get_messages id");
+}
+
+#[tokio::test]
+async fn minted_attach_backfill_id_carries_connection_namespace() {
+    let mut h = harness().await;
+    let id = mint_attach_id(&mut h).await;
+    assert_namespaced(&id, "attach backfill get_messages id");
+}
+
+#[tokio::test]
+async fn rewind_flow_request_ids_carry_connection_namespace() {
+    let mut h = harness().await;
+    for kind in ["open", "load", "to"] {
+        let id = h.app_mut().next_rewind_request_id(kind);
+        assert_namespaced(&id, "rewind flow request id");
+    }
+}
+
+#[tokio::test]
+async fn message_recovery_ids_carry_connection_namespace() {
+    let mut h = harness().await;
+    // A finished run whose refs delivered no assistant content forces the
+    // #1060 fetch-on-miss recovery, minting one request id per ref plus a
+    // batch id.
+    h.app_mut().handle_event(Event::AgentStart);
+    h.app_mut().handle_event(Event::AgentEnd {
+        messages: vec![],
+        message_refs: vec!["m-1463".into()],
+    });
+    let _ = h.drain_commands().await;
+    let app = h.app_mut();
+    assert!(
+        !app.pending_message_recovery.is_empty(),
+        "precondition: content-less refs mint recovery requests"
+    );
+    for id in app.pending_message_recovery.keys() {
+        assert_namespaced(id, "message-recovery request id");
+    }
+    assert!(
+        !app.message_recovery_batches.is_empty(),
+        "precondition: recovery mints a batch id"
+    );
+    for id in app.message_recovery_batches.keys() {
+        assert_namespaced(id, "message-recovery batch id");
+    }
+}
