@@ -259,3 +259,47 @@ async fn inherit_environment_can_be_enabled() {
     let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
     assert_eq!(v["stdout"], "True\n");
 }
+
+#[test]
+fn inherited_child_policy_snapshot_trait_defaults_are_covered() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lab = tool(tmp.path());
+    lab.set_inherited_child_policy_snapshot_for_spawn(std::collections::BTreeMap::new());
+    assert!(lab.inherited_child_policy_snapshot_for_spawn().is_none());
+}
+
+#[test]
+fn python_lab_config_deserializes_partial_and_full_json_shapes() {
+    let partial: super::python_lab::PythonLabToolConfig =
+        serde_json::from_value(serde_json::json!({
+            "max_output_bytes": 1234,
+            "inherit_environment": true
+        }))
+        .unwrap();
+    assert_eq!(partial.default_timeout_seconds, 60);
+    assert_eq!(partial.max_output_bytes, 1234);
+    assert!(partial.inherit_environment);
+
+    let full: super::python_lab::PythonLabToolConfig = serde_json::from_value(serde_json::json!({
+        "default_timeout_seconds": 5,
+        "max_foreground_seconds": 6,
+        "max_background_seconds": 7,
+        "default_max_output_bytes": 8,
+        "max_output_bytes": 9,
+        "max_memory_bytes": 10,
+        "max_cpu_seconds": 11,
+        "max_processes": null,
+        "max_concurrent_jobs": 12,
+        "inherit_environment": false
+    }))
+    .unwrap();
+    assert_eq!(full.default_timeout_seconds, 5);
+    assert_eq!(full.max_foreground_seconds, 6);
+    assert_eq!(full.max_background_seconds, 7);
+    assert_eq!(full.default_max_output_bytes, 8);
+    assert_eq!(full.max_output_bytes, 9);
+    assert_eq!(full.max_memory_bytes, Some(10));
+    assert_eq!(full.max_cpu_seconds, Some(11));
+    assert_eq!(full.max_processes, None);
+    assert_eq!(full.max_concurrent_jobs, 12);
+}
