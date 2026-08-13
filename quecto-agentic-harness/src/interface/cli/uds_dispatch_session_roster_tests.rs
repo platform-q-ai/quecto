@@ -112,13 +112,14 @@ async fn verify_persisted_live_subagent_requires_matching_session_stats_identity
     server.await.unwrap();
 }
 
-#[test]
-fn restore_persisted_roster_live_reachable_and_unreachable_liveness() {
-    let registry = new_registry();
-    let dir = tempfile::tempdir().unwrap();
-    let socket = dir.path().join("live.sock");
-    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
-    let server = std::thread::spawn(move || {
+/// #1474: resume must not rehydrate dead / unverifiable roster rows as grey
+/// "ghost" panel agents. Only currently verifiable live agents re-enter the
+/// registry; dead and failed-verify live/detached entries are pruned.
+fn serve_matching_session_stats(
+    listener: std::os::unix::net::UnixListener,
+    session_key: &'static str,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
         use std::io::{Read, Write};
         let (mut stream, _) = listener.accept().unwrap();
         let mut prefix = [0u8; 4];
@@ -135,7 +136,137 @@ fn restore_persisted_roster_live_reachable_and_unreachable_liveness() {
             "id": request_id,
             "command": "get_session_stats",
             "success": true,
-            "data": { "sessionKey": "live", "userMessages": 0, "assistantMessages": 0, "toolCalls": 0, "toolResults": 0, "totalMessages": 0, "tokens": {}, "contextTokens": 0, "maxContextTokens": 0 }
+            "data": {
+                "sessionKey": session_key,
+                "userMessages": 0,
+                "assistantMessages": 0,
+                "toolCalls": 0,
+                "toolResults": 0,
+                "totalMessages": 0,
+                "tokens": {},
+                "contextTokens": 0,
+                "maxContextTokens": 0
+            }
+        })
+        .to_string();
+        stream
+            .write_all(&(response.len() as u32).to_be_bytes())
+            .unwrap();
+        stream.write_all(response.as_bytes()).unwrap();
+        stream.flush().unwrap();
+    })
+}
+
+#[test]
+fn restore_persisted_roster_keeps_only_verifiably_live_agents() {
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let live_socket = dir.path().join("live.sock");
+    let detached_live_socket = dir.path().join("detached-live.sock");
+    let live_listener = std::os::unix::net::UnixListener::bind(&live_socket).unwrap();
+    let detached_listener = std::os::unix::net::UnixListener::bind(&detached_live_socket).unwrap();
+    let live_server = serve_matching_session_stats(live_listener, "live");
+    let detached_server = serve_matching_session_stats(detached_listener, "still-up");
+
+    let mut live = roster_entry("live", live_socket);
+    live.display_name = "Live worker".into();
+    live.read_only = false;
+    let mut unreachable = roster_entry("gone", dir.path().join("gone.sock"));
+    unreachable.display_name = "Gone worker".into();
+    let mut dead = roster_entry("dead", dir.path().join("dead.sock"));
+    dead.liveness = SubagentLiveness::Dead;
+    let mut detached_unreachable = roster_entry("old-container", dir.path().join("old.sock"));
+    detached_unreachable.liveness = SubagentLiveness::Detached;
+    detached_unreachable.display_name = "Old container ghost".into();
+    let mut detached_live = roster_entry("still-up", detached_live_socket);
+    detached_live.liveness = SubagentLiveness::Detached;
+    detached_live.display_name = "Detached but reachable".into();
+
+    restore_persisted_subagent_roster(
+        &Some(registry.clone()),
+        vec![live, unreachable, dead, detached_unreachable, detached_live],
+    );
+
+    let entries = registry.lock().unwrap();
+    assert_eq!(
+        entries.len(),
+        2,
+        "dead and unverifiable live/detached entries must not reappear as ghosts: {:?}",
+        entries.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        !entries.contains_key("gone"),
+        "unreachable live entry must be pruned on restore"
+    );
+    assert!(
+        !entries.contains_key("dead"),
+        "dead entry must be pruned on restore"
+    );
+    assert!(
+        !entries.contains_key("old-container"),
+        "detached unreachable entry must be pruned on restore"
+    );
+
+    let live_entry = entries.get("live").expect("verified live agent restored");
+    assert_eq!(live_entry.persisted_liveness, SubagentLiveness::Live);
+    assert_eq!(live_entry.status.to_wire_str(), "idle");
+    assert_eq!(live_entry.display_name, "Live worker");
+
+    let detached_entry = entries
+        .get("still-up")
+        .expect("verified detached-but-reachable agent restored as live");
+    assert_eq!(detached_entry.persisted_liveness, SubagentLiveness::Live);
+    assert_eq!(detached_entry.status.to_wire_str(), "idle");
+    assert_eq!(detached_entry.display_name, "Detached but reachable");
+
+    live_server.join().unwrap();
+    detached_server.join().unwrap();
+}
+
+/// #1474 N1: verify probes must not hold the shared registry mutex. Resume can
+/// stall concurrent get_subagents/spawn registration if lock spans socket IO.
+#[test]
+fn restore_persisted_roster_does_not_hold_registry_lock_during_verify() {
+    use std::io::{Read, Write};
+    use std::time::Duration;
+
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("slow.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+
+    let (connected_tx, connected_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        // Restore has entered verify and is blocked on the response.
+        connected_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+        let mut prefix = [0u8; 4];
+        stream.read_exact(&mut prefix).unwrap();
+        let len = u32::from_be_bytes(prefix) as usize;
+        let mut request = vec![0u8; len];
+        stream.read_exact(&mut request).unwrap();
+        let request_id = serde_json::from_slice::<serde_json::Value>(&request).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let response = serde_json::json!({
+            "type": "response",
+            "id": request_id,
+            "command": "get_session_stats",
+            "success": true,
+            "data": {
+                "sessionKey": "slow",
+                "userMessages": 0,
+                "assistantMessages": 0,
+                "toolCalls": 0,
+                "toolResults": 0,
+                "totalMessages": 0,
+                "tokens": {},
+                "contextTokens": 0,
+                "maxContextTokens": 0
+            }
         })
         .to_string();
         stream
@@ -145,33 +276,31 @@ fn restore_persisted_roster_live_reachable_and_unreachable_liveness() {
         stream.flush().unwrap();
     });
 
-    let mut live = roster_entry("live", socket);
-    live.display_name = "Live worker".into();
-    live.read_only = false;
-    let mut unreachable = roster_entry("gone", dir.path().join("gone.sock"));
-    unreachable.display_name = "Gone worker".into();
-    let mut dead = roster_entry("dead", dir.path().join("dead.sock"));
-    dead.liveness = SubagentLiveness::Dead;
+    let restore_registry = registry.clone();
+    let restore = std::thread::spawn(move || {
+        restore_persisted_subagent_roster(
+            &Some(restore_registry),
+            vec![roster_entry("slow", socket)],
+        );
+    });
 
-    restore_persisted_subagent_roster(&Some(registry.clone()), vec![live, unreachable, dead]);
-
-    let entries = registry.lock().unwrap();
-    assert_eq!(entries.len(), 3);
-    assert_eq!(
-        entries.get("live").unwrap().persisted_liveness,
-        SubagentLiveness::Live
-    );
-    assert_eq!(entries.get("live").unwrap().status.to_wire_str(), "idle");
-    assert_eq!(
-        entries.get("gone").unwrap().persisted_liveness,
-        SubagentLiveness::Detached
-    );
-    assert_eq!(entries.get("gone").unwrap().status.to_wire_str(), "exited");
-    assert_eq!(
-        entries.get("dead").unwrap().persisted_liveness,
-        SubagentLiveness::Dead
-    );
+    connected_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("verify should connect to the slow socket");
+    // While verify is blocked mid-probe, concurrent registry users must not stall.
+    let lock_acquired_during_verify = registry.try_lock().is_ok();
+    release_tx.send(()).unwrap();
+    restore.join().unwrap();
     server.join().unwrap();
+
+    assert!(
+        lock_acquired_during_verify,
+        "restore must not hold the registry mutex across verify socket IO"
+    );
+    assert!(
+        registry.lock().unwrap().contains_key("slow"),
+        "verified agent must still be restored after lock is released during probe"
+    );
 }
 
 #[test]

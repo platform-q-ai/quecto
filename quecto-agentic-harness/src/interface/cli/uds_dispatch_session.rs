@@ -117,9 +117,23 @@ pub(crate) fn restore_persisted_subagent_roster(
     roster: Vec<PersistedSubagentRosterEntry>,
 ) {
     let Some(registry) = registry else { return };
-    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    entries.clear();
+    // #1474: only rehydrate agents that are currently verifiably live. Dead and
+    // unreachable (or previously detached-but-gone) entries become grey panel
+    // "ghosts" outside the active container context if we keep them as
+    // Detached/Exited historical rows. Kill already cascade-removes from the
+    // live registry; resume must apply the same current-set policy.
+    //
+    // Probe sockets BEFORE taking the registry mutex (N1): verify does blocking
+    // UDS IO with up to 500ms timeouts, and holding the lock across that stalls
+    // concurrent get_subagents / spawn registration during resume.
+    let mut live_entries = Vec::new();
     for persisted in roster {
+        if persisted.liveness == crate::domain::session::SubagentLiveness::Dead {
+            continue;
+        }
+        if !verify_persisted_live_subagent(&persisted) {
+            continue;
+        }
         let mut entry =
             crate::infrastructure::tools::subagent_registry::SubagentEntry::with_identity(
                 crate::domain::ids::AgentUuid::from(persisted.agent_uuid.clone()),
@@ -127,26 +141,16 @@ pub(crate) fn restore_persisted_subagent_roster(
                 persisted.socket_path.clone(),
                 persisted.pid,
             );
-        let verified_live = persisted.liveness == crate::domain::session::SubagentLiveness::Live
-            && verify_persisted_live_subagent(&persisted);
-        entry.status = if verified_live {
-            crate::infrastructure::tools::subagent_registry::SubagentStatus::Idle
-        } else {
-            crate::infrastructure::tools::subagent_registry::SubagentStatus::Exited
-        };
-        entry.persisted_liveness = if verified_live {
-            crate::domain::session::SubagentLiveness::Live
-        } else {
-            match persisted.liveness {
-                crate::domain::session::SubagentLiveness::Live => {
-                    crate::domain::session::SubagentLiveness::Detached
-                }
-                other => other,
-            }
-        };
+        entry.status = crate::infrastructure::tools::subagent_registry::SubagentStatus::Idle;
+        entry.persisted_liveness = crate::domain::session::SubagentLiveness::Live;
         entry.parent_id = persisted.parent_id;
         entry.read_only = persisted.read_only;
-        entries.insert(persisted.agent_uuid, entry);
+        live_entries.push((persisted.agent_uuid, entry));
+    }
+    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    entries.clear();
+    for (agent_uuid, entry) in live_entries {
+        entries.insert(agent_uuid, entry);
     }
 }
 
