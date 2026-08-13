@@ -23,6 +23,12 @@ struct CliFlags {
     /// Tool names to forward to the spawned coordinator as `--disable-tool <name>`
     /// (repeatable). Empty means none are disabled (#957 TUI forward fix).
     disable_tools: Vec<String>,
+    /// Spawn tab agents with `--persist` (ADR-0023 / #1465). Default true when
+    /// the TUI owns the child; ignored for `--socket` attach.
+    persist: bool,
+    /// When true, terminate owned child agents on TUI exit. Default false
+    /// (detach-on-exit). `--kill-on-exit` restores legacy teardown.
+    kill_on_exit: bool,
 }
 
 pub fn run(args: Vec<String>) -> i32 {
@@ -51,6 +57,8 @@ fn parse_flags(args: &[String]) -> CliFlags {
         config_path: None,
         system_prompt: None,
         disable_tools: Vec::new(),
+        persist: true,
+        kill_on_exit: false,
     };
     // An explicit `--system` literal takes precedence over `--system-file`
     // regardless of order; track it so a later/earlier `--system-file` can't
@@ -90,6 +98,22 @@ fn parse_flags(args: &[String]) -> CliFlags {
             }
             "--no-sandbox" => {
                 flags.no_sandbox = true;
+                i += 1;
+            }
+            "--persist" => {
+                flags.persist = true;
+                i += 1;
+            }
+            "--no-persist" => {
+                flags.persist = false;
+                i += 1;
+            }
+            "--kill-on-exit" => {
+                flags.kill_on_exit = true;
+                i += 1;
+            }
+            "--detach-on-exit" => {
+                flags.kill_on_exit = false;
                 i += 1;
             }
             "--workflow" => {
@@ -235,11 +259,13 @@ async fn run_tui(flags: CliFlags) -> i32 {
     }
     let exit_code = app.run().await;
 
-    // Kill the child agent process group on TUI exit (catches subagents too),
-    // via the watcher so an already-reaped (possibly recycled) PID is never
-    // signalled (#1051 review).
-    if let Some(watch) = &child_watch {
-        watch.terminate().await;
+    // Detach-on-exit by default (#1465 / ADR-0023): leave `--persist` agents
+    // running so tabs can be reattached. `--kill-on-exit` restores legacy
+    // teardown via the watcher (never a raw recycled PID — #1051).
+    if flags.kill_on_exit {
+        if let Some(watch) = &child_watch {
+            watch.terminate().await;
+        }
     }
 
     exit_code
@@ -250,6 +276,9 @@ fn build_agent_args(flags: &CliFlags) -> Vec<String> {
     let mut args = vec!["agent".to_string(), "--mode".to_string(), "uds".to_string()];
     if flags.no_sandbox {
         args.push("--no-sandbox".to_string());
+    }
+    if flags.persist {
+        args.push("--persist".to_string());
     }
     if flags.workflow {
         args.push("--workflow".to_string());

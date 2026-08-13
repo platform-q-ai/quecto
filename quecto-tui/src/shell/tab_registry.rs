@@ -71,8 +71,9 @@ impl TabAgentRegistry {
             return Self::default();
         };
         match serde_json::from_slice::<TabAgentRegistry>(&bytes) {
-            Ok(mut reg) if reg.version == REGISTRY_SCHEMA_VERSION => {
-                reg.agents.retain(|a| !a.socket_path.as_os_str().is_empty());
+            Ok(reg) if reg.version == REGISTRY_SCHEMA_VERSION => {
+                // Keep placeholder rows (empty socket) so connecting tabs remain
+                // durable; GC/liveness probes drop them when still unreachable.
                 reg
             }
             _ => Self::default(),

@@ -357,6 +357,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/render.rs` | `shell` terminal/render runtime adapter (relocated, #1257 Phase 1) |
 | `shell/signals.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
 | `shell/socket_path.rs` | `shell` shared socket-path validation policy for every connect (#1460) |
+| `shell/tab_lifecycle.rs` | `shell` multi-tab open/switch/close + durability snapshot (#1465 P3) |
 | `shell/tab_registry.rs` | `shell` tab-agent registry sidecar (#1465 AC4) |
 | `shell/workspace_manifest.rs` | `shell` workspace tab-set manifest (#1465 AC4) |
 | `shell/stdin_buffer.rs` | `shell` stdin adapter/policy (relocated, #1257 Phase 6) |

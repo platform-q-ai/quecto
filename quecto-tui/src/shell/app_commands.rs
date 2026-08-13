@@ -33,6 +33,22 @@ static BUILTIN_COMMANDS: LazyLock<Vec<SlashCommand>> = LazyLock::new(|| {
             description: "Start a new session".into(),
         },
         SlashCommand {
+            name: "tab-new".into(),
+            description: "Open a new connecting tab".into(),
+        },
+        SlashCommand {
+            name: "tab-close".into(),
+            description: "Close the active tab (detach agent)".into(),
+        },
+        SlashCommand {
+            name: "tab-next".into(),
+            description: "Switch to the next tab".into(),
+        },
+        SlashCommand {
+            name: "tab-prev".into(),
+            description: "Switch to the previous tab".into(),
+        },
+        SlashCommand {
             name: "session".into(),
             description: "Show session info".into(),
         },

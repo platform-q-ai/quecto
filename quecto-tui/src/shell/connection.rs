@@ -193,6 +193,20 @@ impl Connection {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Connecting/placeholder tab: no live writer and no feed task.
+    /// Used while a new tab's agent is spawning (#1465 AC1).
+    pub(crate) fn placeholder(tab: TabId) -> Self {
+        let (tx, rx) = tokio::sync::mpsc::channel::<String>(1);
+        drop(rx);
+        Self {
+            tab,
+            sender: CommandSender { tx },
+            speaks_frames: true,
+            dropped_oversized: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            feed_task: None,
+        }
+    }
+
     /// Test-only: a connection whose writer channel is already closed, so
     /// `try_send` deterministically fails with `Disconnected` — the seam
     /// replacement for swapping in `Client::disconnected_for_tests()`.

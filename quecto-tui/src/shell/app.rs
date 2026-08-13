@@ -329,6 +329,8 @@ mod app_subagent_panel_rows;
 mod app_submit;
 #[path = "app_time.rs"]
 mod app_time;
+#[path = "tab_lifecycle.rs"]
+mod tab_lifecycle;
 use crate::agents::roster::{
     gc_exited_subagents, next_exited_subagent_gc_deadline, subagent_status_is_active,
 };

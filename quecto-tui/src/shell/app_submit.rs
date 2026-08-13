@@ -33,6 +33,43 @@ impl App {
                     self.reset_session("New session started");
                     return;
                 }
+                "/tab-new" => {
+                    let tab = self.open_placeholder_tab(None);
+                    self.notify(
+                        &format!("Opened tab {}", tab.0),
+                        crate::components::notification::NotifyLevel::Info,
+                    );
+                    return;
+                }
+                "/tab-close" => {
+                    let tab = self.active_tab;
+                    match self.close_tab(tab, false) {
+                        Ok(_) => self.notify(
+                            &format!("Closed tab {} (agent detached)", tab.0),
+                            crate::components::notification::NotifyLevel::Info,
+                        ),
+                        Err(msg) => {
+                            self.notify(msg, crate::components::notification::NotifyLevel::Warning)
+                        }
+                    }
+                    return;
+                }
+                "/tab-next" => {
+                    let tab = self.switch_tab_next();
+                    self.notify(
+                        &format!("Active tab {}", tab.0),
+                        crate::components::notification::NotifyLevel::Info,
+                    );
+                    return;
+                }
+                "/tab-prev" => {
+                    let tab = self.switch_tab_prev();
+                    self.notify(
+                        &format!("Active tab {}", tab.0),
+                        crate::components::notification::NotifyLevel::Info,
+                    );
+                    return;
+                }
                 "/help" | "/hotkeys" => {
                     self.show_help();
                     return;
