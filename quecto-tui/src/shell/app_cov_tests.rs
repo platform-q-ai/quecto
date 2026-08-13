@@ -221,13 +221,16 @@ async fn update_footer_stats_ignores_positive_cost_without_context() {
 }
 
 // ── app_methods: resume selector ─────────────────────────────────────
+fn empty_manifest_path() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("q-empty-man-{}.json", std::process::id()))
+}
 
 #[tokio::test]
 async fn open_resume_selector_empty_shows_status_no_selector() {
     let mut h = harness().await;
     let data = serde_json::json!({"sessions": []});
     let a = h.app_mut();
-    a.open_resume_selector(&data);
+    a.open_resume_selector_at(&data, &empty_manifest_path());
     assert!(a.ac().sessions.resume_selector.is_none());
     assert!(chat_text(a).contains("No persisted sessions"));
 }
@@ -242,7 +245,7 @@ async fn open_resume_selector_with_names_builds_list() {
         ]
     });
     let a = h.app_mut();
-    a.open_resume_selector(&data);
+    a.open_resume_selector_at(&data, &empty_manifest_path());
     assert_eq!(
         a.ac()
             .sessions
@@ -259,7 +262,7 @@ async fn open_resume_selector_without_names_shows_status() {
     let mut h = harness().await;
     let data = serde_json::json!({"sessions": [{"messageCount": 1}]});
     let a = h.app_mut();
-    a.open_resume_selector(&data);
+    a.open_resume_selector_at(&data, &empty_manifest_path());
     assert!(a.ac().sessions.resume_selector.is_none());
     assert!(chat_text(a).contains("No resumable"));
 }
@@ -269,7 +272,7 @@ async fn handle_resume_selector_key_enter_selects_and_closes() {
     let mut h = harness().await;
     let data = serde_json::json!({"sessions": [{"name": "alpha", "messageCount": 3}]});
     let a = h.app_mut();
-    a.open_resume_selector(&data);
+    a.open_resume_selector_at(&data, &empty_manifest_path());
     a.handle_resume_selector_key(&Key::Enter);
     assert!(a.ac().sessions.resume_selector.is_none());
     let cmds = h.drain_commands().await;
@@ -287,7 +290,7 @@ async fn handle_resume_selector_key_escape_cancels() {
     let mut h = harness().await;
     let data = serde_json::json!({"sessions": [{"name": "alpha"}]});
     let a = h.app_mut();
-    a.open_resume_selector(&data);
+    a.open_resume_selector_at(&data, &empty_manifest_path());
     a.handle_resume_selector_key(&Key::Escape);
     assert!(a.ac().sessions.resume_selector.is_none());
 }
@@ -297,7 +300,7 @@ async fn handle_resume_selector_key_pending_keeps_selector() {
     let mut h = harness().await;
     let data = serde_json::json!({"sessions": [{"name": "a"}, {"name": "b"}]});
     let a = h.app_mut();
-    a.open_resume_selector(&data);
+    a.open_resume_selector_at(&data, &empty_manifest_path());
     a.handle_resume_selector_key(&Key::Down);
     assert!(a.ac().sessions.resume_selector.is_some());
 }
@@ -633,7 +636,8 @@ async fn selection_extraction_works_after_drag_render() {
 async fn compose_frame_with_resume_overlay() {
     let mut h = harness().await;
     let data = serde_json::json!({"sessions": [{"name": "alpha", "messageCount": 1}]});
-    h.app_mut().open_resume_selector(&data);
+    h.app_mut()
+        .open_resume_selector_at(&data, &empty_manifest_path());
     let frame = h.app_mut().compose_frame().join("\n");
     assert!(frame.contains("Resume session"));
     assert!(frame.contains("alpha"));

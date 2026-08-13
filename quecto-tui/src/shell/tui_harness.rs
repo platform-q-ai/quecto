@@ -574,10 +574,23 @@ impl TuiHarness {
         false
     }
 
-    /// Open help through the production handler and return the rendered frame.
+    /// Open help through the production handler and return the full help body.
+    ///
+    /// Uses the Status entry text (not the scrolled viewport): slash-command
+    /// growth can push early rows off-frame while the chat still holds them.
     pub fn show_help_frame(&mut self) -> String {
         self.app.show_help();
-        self.full_frame()
+        let body = self
+            .app
+            .ac()
+            .master_session
+            .chat
+            .last_status_text()
+            .unwrap_or_default()
+            .to_string();
+        // Still paint so callers that read `full_frame` / capture see help too.
+        let _ = self.full_frame();
+        body
     }
 
     /// Abort through the real abort path (targets the active session).
