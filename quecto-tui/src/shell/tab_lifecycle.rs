@@ -223,12 +223,21 @@ impl super::App {
         manifest_path: &Path,
     ) {
         // Load prior sidecar, overlay current tabs, refresh liveness, GC dead (AC4).
+        // Current in-memory tabs are always retained (including connecting
+        // placeholders with empty sockets); probe only prunes stale sidecar rows.
         let mut reg = crate::shell::tab_registry::TabAgentRegistry::load(registry_path);
-        for record in self.registry_snapshot(Some(workspace_id)).agents {
+        let current = self.registry_snapshot(Some(workspace_id));
+        let current_ids: std::collections::HashSet<u32> =
+            current.agents.iter().map(|a| a.tab_id).collect();
+        for record in current.agents {
             reg.upsert(record);
         }
-        reg.refresh_status(crate::shell::tab_registry::default_liveness_probe);
-        reg.gc_dead(crate::shell::tab_registry::default_liveness_probe);
+        reg.refresh_status(|r| {
+            current_ids.contains(&r.tab_id) || crate::shell::tab_registry::default_liveness_probe(r)
+        });
+        reg.gc_dead(|r| {
+            current_ids.contains(&r.tab_id) || crate::shell::tab_registry::default_liveness_probe(r)
+        });
         if let Err(e) = reg.store(registry_path) {
             self.notify(
                 &format!("failed to write tab registry: {e}"),
