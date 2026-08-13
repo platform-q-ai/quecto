@@ -8,6 +8,32 @@ use crate::components::chat::ChatEntry;
 use crate::components::component::Component;
 use crate::protocol::client::Command;
 
+#[tokio::test]
+async fn disconnected_chat_submit_does_not_stack_duplicate_refusal_toasts() {
+    let mut h = TuiHarness::new().await;
+    let app = h.app_mut();
+    app.conn.agent_connected = false;
+
+    app.handle_submit("first drafted message");
+    app.handle_submit("second drafted message");
+
+    let messages = h.notification_messages();
+    let refusal_count = messages
+        .iter()
+        .filter(|message| message.as_str() == "Agent disconnected — commands are not being sent")
+        .count();
+    assert_eq!(
+        refusal_count, 1,
+        "disconnected chat submits must reuse the deduped refusal toast path; got {messages:?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message.as_str() == "Agent disconnected — message not sent"),
+        "per-submit disconnected errors must not stack outside the deduped refusal path; got {messages:?}"
+    );
+}
+
 /// #1047 AC2: once connected, the persistent left panel must survive an agent
 /// disconnect (shown in a "disconnected" state) rather than vanishing, so the
 /// user keeps the session/sub-agent context needed to diagnose the failure.
