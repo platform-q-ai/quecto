@@ -15,7 +15,7 @@ impl App {
                 .cmd_tx
                 .try_send(Command::Sync {
                     agent_id: None,
-                    id: Some(crate::shell::connection::feed_id(&ns, "subagent-sync")),
+                    id: Some(crate::shell::connection::feed_id(ns, "subagent-sync")),
                     epoch,
                     since_rev,
                 })
