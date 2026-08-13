@@ -20,7 +20,7 @@ impl App {
     /// also survives an agent disconnect (#1047): the user keeps the session
     /// tree context needed to diagnose why the agent went away.
     pub(super) fn subagent_panel_visible(&self) -> bool {
-        self.conn.agent_ever_connected
+        self.active_conn().agent_ever_connected
     }
 
     /// The agent whose session is currently shown in the body. `None` = master.
@@ -117,9 +117,9 @@ impl App {
         }
         // No stream state observed yet: the child feed may have joined MID-TURN
         // and missed `agent_start`, so `session.running` reads a false
-        // negative. Fall back to the master's tracked status (`subagent_local`)
+        // negative. Fall back to the active tab's tracked status (`subagent_local`)
         // so Esc still cancels a busy sub-agent instead of navigating to master.
-        let ui = &self.conn.roster;
+        let ui = &self.active_conn().roster;
         match &ui.active_agent_id {
             Some(id) => ui
                 .tracked
@@ -167,6 +167,7 @@ impl App {
             self.conn.roster.selected_environment = None;
         }
         let new_active = agent_id.map(str::to_string);
+        self.close_tab_switch_overlays();
         if new_active == self.conn.roster.active_agent_id {
             return;
         }
@@ -495,8 +496,8 @@ impl App {
     /// Flattened panel rows: the master pinned at the top, then the sub-agent
     /// tree depth-ordered by `parent_id` (grandchildren under their parent).
     /// Master's live status: `running` while processing, else `idle` (#820).
-    pub(super) fn master_status(&self) -> &'static str {
-        if self.conn.agent_state.is_running() {
+    pub(super) fn master_status_for(conn: &connection_state::ConnectionState) -> &'static str {
+        if conn.agent_state.is_running() {
             "running"
         } else {
             "idle"

@@ -8,16 +8,17 @@ impl App {
     /// Flattened panel rows: the master pinned at the top, then the sub-agent
     /// tree depth-ordered by `parent_id` (grandchildren under their parent).
     pub(super) fn panel_rows(&self) -> Vec<PanelRow> {
+        let conn = self.active_conn();
         let master_wf = {
-            let wf = &self.conn.master_session.workflow_bar;
+            let wf = &conn.master_session.workflow_bar;
             (wf.total > 0).then_some((wf.done, wf.total))
         };
         let mut rows = vec![PanelRow {
             id: None,
             env_key: None,
             prefix: String::new(),
-            label: "Master Agent".to_string(),
-            status: self.master_status().to_string(),
+            label: conn.master_panel_label().to_string(),
+            status: Self::master_status_for(conn).to_string(),
             workflow: master_wf,
         }];
         let groups = self.environment_groups();

@@ -16,6 +16,10 @@ pub(crate) struct ConnectionState {
     /// (#1462). The feed task owns the [`Client`]; this is the command/state
     /// handle.
     pub(crate) transport: crate::shell::connection::Connection,
+    /// Optional human label for this tab. N=1 leaves it unset so rendered
+    /// frames stay byte-identical; N>1 tab creation can set it and the render
+    /// path will paint it wherever the active tab's master is named (#1464).
+    pub(crate) name: Option<String>,
     /// The tab's master agent session, modeled as just another
     /// [`SessionView`] (#828) so render/input share ONE active-session path
     /// with sub-agents (`active_agent_id == None` selects this). Only
@@ -91,6 +95,7 @@ impl ConnectionState {
     ) -> Self {
         Self {
             transport,
+            name: None,
             master_session,
             agent_state: AgentRunState::new(),
             spinner: None,
@@ -131,6 +136,23 @@ impl ConnectionState {
     pub(crate) fn namespaced_id(&self, suffix: &str) -> String {
         format!("{}{suffix}", self.id_namespace())
     }
+
+    /// The label to render for this tab's main-pane title.
+    pub(crate) fn display_name(&self) -> &str {
+        self.name
+            .as_deref()
+            .filter(|name| !name.is_empty())
+            .unwrap_or("Master")
+    }
+
+    /// The label to render for this tab's pinned master panel row. N=1 keeps
+    /// the legacy row text byte-identical; named tabs paint the tab name.
+    pub(crate) fn master_panel_label(&self) -> &str {
+        self.name
+            .as_deref()
+            .filter(|name| !name.is_empty())
+            .unwrap_or("Master Agent")
+    }
 }
 
 impl App {
@@ -147,5 +169,19 @@ impl App {
     /// Mutable counterpart to [`Self::active_conn`].
     pub(crate) fn active_conn_mut(&mut self) -> &mut ConnectionState {
         &mut self.conn
+    }
+
+    /// Close global overlay surfaces when switching the active tab/session.
+    /// N=1 session switches use the same seam; this preserves compose-frame
+    /// idempotence by doing the state transition outside render composition.
+    pub(crate) fn close_tab_switch_overlays(&mut self) {
+        self.conn.sessions.resume_selector = None;
+        self.conn.rewind.selector = None;
+        self.autocomplete.dismiss();
+        self.workspace.files_autocomplete.dismiss();
+        self.tool_policy_modal = None;
+        self.tool_policy_modal_pending_catalogue_id = None;
+        self.inference.model_selector = None;
+        self.inference.effort_selector = None;
     }
 }

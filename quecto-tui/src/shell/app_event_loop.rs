@@ -413,14 +413,14 @@ impl App {
         }
 
         // If the resume selector is active, route input to it.
-        if self.conn.sessions.resume_selector.is_some() {
+        if self.active_conn().sessions.resume_selector.is_some() {
             self.conn.rewind.last_idle_escape = None;
             self.handle_resume_selector_key(&key);
             return;
         }
 
         // If the rewind selector is active, route input to it.
-        if self.conn.rewind.selector.is_some() {
+        if self.active_conn().rewind.selector.is_some() {
             self.conn.rewind.last_idle_escape = None;
             self.handle_rewind_selector_key(&key);
             return;

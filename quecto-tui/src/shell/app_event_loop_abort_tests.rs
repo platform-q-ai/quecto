@@ -118,3 +118,32 @@ async fn handle_key_routes_to_rewind_selector_when_active() {
     a.handle_key(Key::Escape);
     assert!(a.conn.rewind.selector.is_none());
 }
+
+#[tokio::test]
+async fn switching_active_session_closes_open_overlays() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.open_model_selector();
+    a.handle_list_models(Some(serde_json::json!({ "models": [] })));
+    let data = serde_json::json!({"sessions": [{"name": "alpha"}]});
+    a.open_resume_selector(&data);
+    assert!(a.inference.model_selector.is_some());
+    assert!(a.conn.sessions.resume_selector.is_some());
+    a.editor.set_text("/mod");
+    a.autocomplete.update(&a.editor.text());
+    assert!(a.autocomplete.is_active());
+
+    a.select_agent(Some("worker"));
+    a.handle_key(Key::Escape);
+
+    assert!(
+        a.inference.model_selector.is_none()
+            && a.conn.sessions.resume_selector.is_none()
+            && !a.autocomplete.is_active(),
+        "switching tabs/sessions closes active overlays rather than carrying them across"
+    );
+    assert!(
+        a.editor.text().contains("/mod"),
+        "Escape after switch should route to normal input, not stale overlay state"
+    );
+}
