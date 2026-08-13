@@ -463,3 +463,165 @@ async fn message_recovery_ids_carry_connection_namespace() {
         assert_namespaced(id, "message-recovery batch id");
     }
 }
+
+#[tokio::test]
+async fn minted_ids_derive_namespace_from_tab_id() {
+    // Guard against a hard-coded "tab0:" literal satisfying every assertion
+    // above (#1463 review): a connection re-keyed to tab 1 must mint tab1: ids.
+    let mut h = harness().await;
+    h.app_mut().test_set_master_tab(1);
+    let id = mint_resume_id(&mut h).await;
+    assert!(
+        id.starts_with("tab1:"),
+        "minted id namespaces must derive from the connection's tab id, \
+         not a constant prefix (#1463): got {id:?}"
+    );
+}
+
+#[tokio::test]
+async fn startup_request_ids_carry_connection_namespace() {
+    // The connect-time literals ("init", "init-subagents") and the attach
+    // backfill are minted ids too (#1463 scope).
+    let mut h = harness().await;
+    h.app_mut().send_startup_requests();
+    let commands = h.drain_commands().await;
+    let ids: Vec<String> = commands
+        .iter()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|cmd| cmd.get("id").and_then(|v| v.as_str()).map(str::to_owned))
+        .collect();
+    assert_eq!(
+        ids.len(),
+        3,
+        "startup sends get_state + get_subagents + attach backfill: {commands:?}"
+    );
+    for id in &ids {
+        assert_namespaced(id, "startup request id");
+    }
+    assert!(
+        ids.iter().any(|id| id.ends_with(":init")),
+        "get_state keeps its init suffix under the namespace: {ids:?}"
+    );
+    assert!(
+        ids.iter().any(|id| id.ends_with(":init-subagents")),
+        "get_subagents keeps its init-subagents suffix under the namespace: {ids:?}"
+    );
+}
+
+#[tokio::test]
+async fn stub_recall_ids_carry_connection_namespace() {
+    use super::app_paged_history_tests::prime_active_viewport;
+    let mut h = harness().await;
+    respond(
+        h.app_mut(),
+        Some("attach-backfill"),
+        "get_messages",
+        true,
+        serde_json::json!({
+            "messages": [{
+                "id": "stub-1463",
+                "role": "assistant",
+                "content": "[assistant stub — recall available]",
+                "collapsed": true,
+            }],
+            "hasMoreBefore": false,
+            "before": null,
+        }),
+    );
+    let _ = h.drain_commands().await;
+    prime_active_viewport(h.app_mut());
+    h.app_mut().handle_key(Key::PageUp);
+    let _ = h.drain_commands().await;
+    let app = h.app_mut();
+    assert!(
+        !app.pending_stub_recall.is_empty(),
+        "precondition: a visible stub mints a recall request"
+    );
+    for id in app.pending_stub_recall.keys() {
+        assert_namespaced(id, "stub-recall request id");
+    }
+}
+
+#[tokio::test]
+async fn routed_subagent_feed_ids_carry_connection_namespace() {
+    // The inspection-feed "initial" literals ride routed ids on the MASTER
+    // connection; broadcast responses to them must be tab-scoped too (#1463).
+    let mut h = harness().await;
+    h.app_mut()
+        .update_subagent_bar(vec![crate::protocol::client::SubagentInfoEvent {
+            agent_uuid: Some("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".into()),
+            display_name: Some("worker-ns".into()),
+            agent_id: "worker-ns".into(),
+            status: "running".into(),
+            last_tool: None,
+            last_error: None,
+            pid: 1,
+            socket_path: None,
+            parent_id: None,
+            workflow: None,
+            read_only: false,
+            execution_backend: None,
+            environment: None,
+        }]);
+    h.app_mut()
+        .ensure_synced_subagent_feed("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    let commands = h.drain_commands().await;
+    let ids: Vec<String> = commands
+        .iter()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|cmd| cmd.get("id").and_then(|v| v.as_str()).map(str::to_owned))
+        .filter(|id| id.contains("subagent-"))
+        .collect();
+    assert!(
+        !ids.is_empty(),
+        "precondition: an inspection-only feed sends routed requests: {commands:?}"
+    );
+    for id in &ids {
+        assert_namespaced(id, "routed sub-agent feed request id");
+    }
+}
+
+#[tokio::test]
+async fn foreign_namespace_response_does_not_resolve_pending_resume() {
+    // The other side of the namespace boundary (#1463 review): prefixing on
+    // mint is worthless if matching strips or ignores the prefix.
+    let mut h = harness().await;
+    let id = mint_resume_id(&mut h).await;
+    let foreign = format!("tab1:{}", id.strip_prefix(MASTER_NAMESPACE).unwrap_or(&id));
+    respond(
+        h.app_mut(),
+        Some(&foreign),
+        "get_messages",
+        true,
+        legacy_messages("foreign resumed user", "foreign resumed assistant"),
+    );
+    assert_eq!(
+        h.app_mut().test_pending_resume_messages_id(),
+        Some(id.as_str()),
+        "a response bearing another tab's namespace must leave this tab's \
+         pending resume fetch unresolved (#1463)"
+    );
+    let frame = b_frame(h.app_mut());
+    assert!(
+        !frame.contains("foreign resumed user"),
+        "a foreign-namespace transcript must not land in this tab:\n{frame}"
+    );
+}
+
+#[tokio::test]
+async fn disconnect_diag_completion_for_another_tab_leaves_this_latch_pending() {
+    // The disconnect-diagnosis pending latch is keyed per tab (#1463,
+    // accepted phase-2 debt from PR #1470): a completion attributed to some
+    // other tab must not clear (or emit through) this tab's latch.
+    let mut h = harness().await;
+    h.app_mut().disconnect_diag_pending = true;
+    h.app_mut().finish_agent_stream_closed(
+        crate::shell::connection::TabId(1),
+        Some("other tab's exit detail".into()),
+    );
+    assert!(
+        h.app_mut().disconnect_diag_pending,
+        "a diagnosis completion keyed to another tab must leave this tab's \
+         pending latch set (#1463)"
+    );
+}

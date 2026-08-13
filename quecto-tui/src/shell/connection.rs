@@ -59,6 +59,13 @@ impl SourcedEvent {
 /// `try_send`; the seam deliberately reuses the queue that already provides
 /// FIFO order and a non-blocking enqueue.
 pub(crate) struct Connection {
+    /// The tab this connection belongs to. Every correlation id the tab
+    /// mints is namespaced `tab{N}:` from this id (#1463), so broadcast
+    /// responses can never match another tab's pending latches.
+    // Production reads arrive with the cluster-2 id minting (#1463); until
+    // then only the test re-key hook touches it.
+    #[cfg_attr(not(any(test, feature = "test-harness")), allow(dead_code))]
+    tab: TabId,
     sender: CommandSender,
     /// Per-connection ADR-0008 negotiation outcome (#1462 scope 4), copied
     /// from the [`Client`]'s connect-time framing.
@@ -125,11 +132,20 @@ impl Connection {
             None
         };
         Self {
+            tab,
             sender,
             speaks_frames,
             dropped_oversized,
             feed_task,
         }
+    }
+
+    /// Test-only: re-key this connection to another tab, so unit tests can
+    /// pin that minted-id namespaces derive from the tab id rather than a
+    /// hard-coded `tab0:` literal (#1463 review).
+    #[cfg(any(test, feature = "test-harness"))]
+    pub(crate) fn set_tab_for_tests(&mut self, tab: TabId) {
+        self.tab = tab;
     }
 
     /// Test-only: abort the feed task owning the client. Harness paths that
@@ -179,6 +195,7 @@ impl Connection {
     pub(crate) fn disconnected_for_tests() -> Self {
         let client = Client::disconnected_for_tests();
         Self {
+            tab: TabId::MASTER,
             sender: client.clone_sender(),
             speaks_frames: client.speaks_frames(),
             dropped_oversized: client.dropped_oversized_handle(),

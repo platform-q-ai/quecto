@@ -698,4 +698,12 @@ impl App {
     pub fn test_pending_rewind_refresh_id(&self) -> Option<&str> {
         self.pending_rewind_refresh_id.as_deref()
     }
+
+    /// Re-key the master connection to another tab id, so tests can pin that
+    /// minted-id namespaces derive from the connection's tab rather than a
+    /// hard-coded `tab0:` literal (#1463 review).
+    pub fn test_set_master_tab(&mut self, tab: u32) {
+        self.connection
+            .set_tab_for_tests(crate::shell::connection::TabId(tab));
+    }
 }

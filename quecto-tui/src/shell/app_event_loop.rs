@@ -169,6 +169,25 @@ impl App {
         }
     }
 
+    /// Send the connect-time state requests for this tab's connection.
+    ///
+    /// Queries initial agent state and sub-agent roster (#525) through the
+    /// shared command path so startup send failures surface in the UI like
+    /// user-initiated sends, then backfills durable master history so
+    /// `--socket` attach (and any reconnect) shows prior session content
+    /// without waiting for new events. Empty payloads do not latch the
+    /// guard (#1050 / #828).
+    pub(super) fn send_startup_requests(&mut self) {
+        self.send_command(Command::GetState {
+            agent_id: None,
+            id: Some("init".into()),
+        });
+        self.send_command(Command::GetSubagents {
+            id: Some("init-subagents".into()),
+        });
+        self.request_master_attach_backfill();
+    }
+
     pub async fn run(&mut self) -> i32 {
         self.terminal.enter_raw_mode();
         self.terminal.hide_cursor();
@@ -176,20 +195,7 @@ impl App {
         // Query Kitty keyboard protocol support.
         self.kitty.query();
 
-        // Query initial state from agent through the shared command path so
-        // startup send failures surface in the UI like user-initiated sends.
-        self.send_command(Command::GetState {
-            agent_id: None,
-            id: Some("init".into()),
-        });
-        // Query initial subagent state (#525).
-        self.send_command(Command::GetSubagents {
-            id: Some("init-subagents".into()),
-        });
-        // Backfill durable master history on connect so `--socket` attach (and
-        // any reconnect) shows prior session content without waiting for new
-        // events. Empty payloads do not latch the guard (#1050 / #828).
-        self.request_master_attach_backfill();
+        self.send_startup_requests();
 
         // Set up SIGWINCH handler.
         let mut resize_rx = crate::shell::signals::sigwinch_stream().await;
