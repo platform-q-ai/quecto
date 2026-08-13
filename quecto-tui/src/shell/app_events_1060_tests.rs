@@ -13,7 +13,7 @@ use super::tui_harness::TuiHarness;
 use super::*;
 
 fn chat_text(app: &mut App) -> String {
-    let lines = app.conn.master_session.chat.render(120);
+    let lines = app.active_conn_mut().master_session.chat.render(120);
     lines
         .iter()
         .map(|l| super::app_render_helpers::strip_ansi(l))
@@ -99,7 +99,12 @@ async fn ref_based_turn_end_updates_footer_context_without_fetches() {
                 "maxContextTokens": 200_000
             }),
         });
-        let rendered = a.conn.master_session.footer.render(80).join("\n");
+        let rendered = a
+            .active_conn_mut()
+            .master_session
+            .footer
+            .render(80)
+            .join("\n");
         // Format matches existing footer tests (e.g. 12k/200k for 12_000/200_000).
         assert!(
             rendered.contains("40k/200k"),

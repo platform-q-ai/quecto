@@ -49,11 +49,19 @@ use app_message_recovery::{MessageRecoveryBatch, PendingMessageRecovery};
 pub struct App {
     terminal: Terminal,
     renderer: DiffRenderer<std::io::Stdout>,
-    /// The active tab's per-connection state (#1463): the transport handle
-    /// from phase 1 (#1462) plus everything scoped to that one connection.
-    /// Reached through `active_conn()` / `active_conn_mut()` — the seam where
-    /// tab dispatch lands with N>1 tabs (epic #1467).
-    conn: connection_state::ConnectionState,
+    /// Per-tab connection states (#1465 / epic #1467). Indexed by [`TabId`];
+    /// the active tab is selected by `active_tab`. Call sites reach the
+    /// active slot via `active_conn()` / `active_conn()`, and a specific
+    /// tab via `conn_for` / `conn_mut`.
+    tabs: std::collections::HashMap<
+        crate::shell::connection::TabId,
+        connection_state::ConnectionState,
+    >,
+    /// Which tab is focused for input, render, and active command send.
+    active_tab: crate::shell::connection::TabId,
+    /// When set, `active_conn(_mut)` temporarily targets this tab so inbound
+    /// `SourcedEvent` routing can mutate the owner without flipping focus.
+    routing_tab_override: Option<crate::shell::connection::TabId>,
     editor: Editor,
     autocomplete: Autocomplete,
     workspace: WorkspaceFlow,
@@ -138,10 +146,19 @@ impl App {
         Self {
             terminal,
             renderer: DiffRenderer::new(std::io::stdout()),
-            conn: connection_state::ConnectionState::new(
-                connection,
-                SessionView::with_footer(footer),
-            ),
+            tabs: {
+                let mut tabs = std::collections::HashMap::new();
+                tabs.insert(
+                    crate::shell::connection::TabId::MASTER,
+                    connection_state::ConnectionState::new(
+                        connection,
+                        SessionView::with_footer(footer),
+                    ),
+                );
+                tabs
+            },
+            active_tab: crate::shell::connection::TabId::MASTER,
+            routing_tab_override: None,
             editor: Editor::new(),
             autocomplete: Autocomplete::new(builtin_commands().to_vec(), 8),
             workspace: WorkspaceFlow::new(git_branch, git_repo),
@@ -174,7 +191,10 @@ impl App {
             return false;
         }
         self.workspace.git_branch = branch.clone();
-        self.conn.master_session.footer.set_git_branch(branch);
+        self.active_conn_mut()
+            .master_session
+            .footer
+            .set_git_branch(branch);
         true
     }
 
@@ -624,6 +644,9 @@ mod app_subagent_workflow_sticky_tests;
 #[cfg(test)]
 #[path = "../agents/app_subagents_tests.rs"]
 mod app_subagents_tests;
+#[cfg(test)]
+#[path = "app_tab_collection_tests.rs"]
+mod app_tab_collection_tests;
 #[cfg(test)]
 #[path = "../agents/app_tab_render_tests.rs"]
 mod app_tab_render_tests;

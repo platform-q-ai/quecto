@@ -15,7 +15,8 @@ impl App {
     /// Is `id` still rendered (live-tracked or retained post-exit)? The drop-stale
     /// invariant (#800): stale/untracked frames must never resurrect sessions.
     pub(super) fn is_retained_or_tracked_agent(&self, id: &str) -> bool {
-        self.conn.roster.sessions.contains_key(id) || self.conn.roster.tracked.contains_key(id)
+        self.active_conn().roster.sessions.contains_key(id)
+            || self.active_conn().roster.tracked.contains_key(id)
     }
 
     /// Route one event from a sub-agent's direct connection into that agent's
@@ -68,7 +69,7 @@ impl App {
             // Mirror onto the panel entry too so the LEFT side panel renders the
             // child's own live progress immediately (#869b).
             self.record_subagent_workflow(target, &bar);
-            if let Some(session) = self.conn.roster.sessions.get_mut(target) {
+            if let Some(session) = self.active_conn_mut().roster.sessions.get_mut(target) {
                 session.workflow_bar = bar;
             }
             return;
@@ -83,7 +84,7 @@ impl App {
         } = &ev
         {
             if command == "set_effort" {
-                if self.conn.roster.active_agent_id.as_deref() == Some(agent_id) {
+                if self.active_conn().roster.active_agent_id.as_deref() == Some(agent_id) {
                     let detail = error.as_deref().unwrap_or("unknown error");
                     self.notify(
                         &format!("Effort switch failed: {detail}"),
@@ -93,7 +94,7 @@ impl App {
                 return;
             }
             if command == "set_model" {
-                if self.conn.roster.active_agent_id.as_deref() == Some(agent_id) {
+                if self.active_conn().roster.active_agent_id.as_deref() == Some(agent_id) {
                     let detail = error.as_deref().unwrap_or("unknown error");
                     self.notify(
                         &format!("Model switch failed: {detail}"),
@@ -120,19 +121,20 @@ impl App {
                         &crate::components::ansi::sanitize_control,
                     )
                 }) {
-                    if let Some(session) = self.conn.roster.sessions.get_mut(agent_id) {
+                    if let Some(session) = self.active_conn_mut().roster.sessions.get_mut(agent_id)
+                    {
                         session.footer.set_model(&model);
                     }
-                    if self.conn.roster.active_agent_id.as_deref() == Some(agent_id) {
-                        self.conn.inference.current_model = Some(model);
+                    if self.active_conn().roster.active_agent_id.as_deref() == Some(agent_id) {
+                        self.active_conn_mut().inference.current_model = Some(model);
                     }
                 }
-                if self.conn.roster.active_agent_id.as_deref() == Some(agent_id) {
+                if self.active_conn().roster.active_agent_id.as_deref() == Some(agent_id) {
                     self.notify("Model switched", NotifyLevel::Success);
                     // Re-sync on the child's own connection so effort vocabulary
                     // tracks the new model (agent resets effort to low on switch).
                     let _ = self.send_to_active_subagent(Command::GetState {
-                        id: Some(self.conn.namespaced_id("resync")),
+                        id: Some(self.active_conn().namespaced_id("resync")),
                         agent_id: None,
                     });
                 }
@@ -159,7 +161,7 @@ impl App {
                     return;
                 }
                 self.ensure_session(agent_id);
-                if let Some(session) = self.conn.roster.sessions.get_mut(agent_id) {
+                if let Some(session) = self.active_conn_mut().roster.sessions.get_mut(agent_id) {
                     Self::reconcile_master_backfill_history(session, data, false);
                 }
                 return;
@@ -177,22 +179,23 @@ impl App {
                 if let Some(wf) = snap.workflow.as_ref() {
                     let bar = workflow_bar::parse_workflow_event(wf);
                     self.record_subagent_workflow(agent_id, &bar);
-                    if let Some(session) = self.conn.roster.sessions.get_mut(agent_id) {
+                    if let Some(session) = self.active_conn_mut().roster.sessions.get_mut(agent_id)
+                    {
                         session.workflow_bar = bar;
                     }
                 }
                 // Preserve the existing per-session footer mapping (model +
                 // context window) that the generic path applied for get_state.
-                if let Some(session) = self.conn.roster.sessions.get_mut(agent_id) {
+                if let Some(session) = self.active_conn_mut().roster.sessions.get_mut(agent_id) {
                     Self::update_session_footer(session, &ev);
                 }
-                if self.conn.roster.active_agent_id.as_deref() == Some(agent_id) {
+                if self.active_conn().roster.active_agent_id.as_deref() == Some(agent_id) {
                     if let Some(model) = snap.footer.model.clone() {
-                        self.conn.inference.current_model = Some(model);
+                        self.active_conn_mut().inference.current_model = Some(model);
                     }
-                    self.conn.inference.current_effort = snap.footer.effort.clone();
+                    self.active_conn_mut().inference.current_effort = snap.footer.effort.clone();
                     if !snap.effort_levels.is_empty() {
-                        self.conn.inference.effort_levels = snap.effort_levels;
+                        self.active_conn_mut().inference.effort_levels = snap.effort_levels;
                     }
                 }
                 return;
@@ -202,11 +205,12 @@ impl App {
                     data,
                     &crate::components::ansi::sanitize_control,
                 ) {
-                    if let Some(session) = self.conn.roster.sessions.get_mut(agent_id) {
+                    if let Some(session) = self.active_conn_mut().roster.sessions.get_mut(agent_id)
+                    {
                         session.footer.set_effort(Some(level.clone()));
                     }
-                    if self.conn.roster.active_agent_id.as_deref() == Some(agent_id) {
-                        self.conn.inference.current_effort = Some(level.clone());
+                    if self.active_conn().roster.active_agent_id.as_deref() == Some(agent_id) {
+                        self.active_conn_mut().inference.current_effort = Some(level.clone());
                         self.notify(&format!("Effort set to {level}"), NotifyLevel::Success);
                     }
                 }
@@ -221,7 +225,7 @@ impl App {
         }
         if let Event::SubagentStateChanged { subagents } = ev {
             // Retained history does not grant authority to publish topology.
-            if self.conn.roster.tracked.contains_key(agent_id) {
+            if self.active_conn().roster.tracked.contains_key(agent_id) {
                 self.update_subagent_bar_from_source(Some(agent_id), subagents);
             }
             return;
@@ -231,8 +235,8 @@ impl App {
         // Retain live buffer for warm-sync feeds before the first sync promotes
         // them to authoritative, so connect/focus races keep the prefix (#1259).
         let retain_live = self.retains_live_inflight_feed(agent_id);
-        let focused_live = self.conn.roster.active_agent_id.as_deref() == Some(agent_id);
-        let Some(session) = self.conn.roster.sessions.get_mut(agent_id) else {
+        let focused_live = self.active_conn().roster.active_agent_id.as_deref() == Some(agent_id);
+        let Some(session) = self.active_conn_mut().roster.sessions.get_mut(agent_id) else {
             return;
         };
         let was_running = session.running;
@@ -437,7 +441,7 @@ impl App {
         refs: &[String],
         expected_content_len: Option<u64>,
     ) {
-        let Some(session) = self.conn.roster.sessions.get(agent_id) else {
+        let Some(session) = self.active_conn().roster.sessions.get(agent_id) else {
             return;
         };
         let target_end = session.chat.entry_count();
@@ -470,9 +474,13 @@ impl App {
         // fill; creating a second batch here would issue zero fresh requests and
         // linger unfillable (F4 — mirrors the master guard).
         if refs.iter().any(|message_id| {
-            self.conn.pending_message_recovery.values().any(|pending| {
-                pending.agent_id.as_deref() == Some(agent_id) && pending.message_id == *message_id
-            })
+            self.active_conn()
+                .pending_message_recovery
+                .values()
+                .any(|pending| {
+                    pending.agent_id.as_deref() == Some(agent_id)
+                        && pending.message_id == *message_id
+                })
         }) {
             return;
         }
@@ -480,7 +488,7 @@ impl App {
             "child-recovery-{agent_id}-{}",
             super::app_events::uuid_like()
         );
-        self.conn.message_recovery_batches.insert(
+        self.active_conn_mut().message_recovery_batches.insert(
             batch_id.clone(),
             MessageRecoveryBatch::new(
                 refs.to_vec(),
@@ -492,10 +500,10 @@ impl App {
         for message_id in refs {
             let req_id = format!(
                 "{}msg-recovery-{}",
-                self.conn.id_namespace(),
+                self.active_conn().id_namespace(),
                 super::app_events::uuid_like()
             );
-            self.conn.pending_message_recovery.insert(
+            self.active_conn_mut().pending_message_recovery.insert(
                 req_id.clone(),
                 PendingMessageRecovery {
                     message_id: message_id.clone(),
@@ -530,7 +538,7 @@ impl App {
     /// — so a more-detailed live bar is never overwritten by the count-only
     /// snapshot.
     pub(super) fn seed_session_bar_from_snapshot(&mut self, id: &str) {
-        let Some(wf) = self.conn.roster.tracked_workflow(id) else {
+        let Some(wf) = self.active_conn().roster.tracked_workflow(id) else {
             return;
         };
         if wf.steps_total == 0 && wf.steps_completed == 0 {
@@ -541,7 +549,7 @@ impl App {
             wf.steps_completed,
             wf.steps_total,
         );
-        if let Some(session) = self.conn.roster.sessions.get_mut(id) {
+        if let Some(session) = self.active_conn_mut().roster.sessions.get_mut(id) {
             if !session.workflow_bar.is_visible() && session.workflow_bar.done == 0 {
                 session.workflow_bar = seeded;
             }
@@ -550,12 +558,12 @@ impl App {
 
     pub(super) fn subagent_workflow_visible(&self, agent_id: &str) -> bool {
         let panel_visible = self
-            .conn
+            .active_conn()
             .roster
             .tracked_workflow(agent_id)
             .is_some_and(|w| w.steps_total > 0);
         let bar_visible = self
-            .conn
+            .active_conn()
             .roster
             .sessions
             .get(agent_id)
@@ -568,7 +576,7 @@ impl App {
         agent_id: &str,
         bar: &workflow_bar::WorkflowBarState,
     ) {
-        if let Some(tracked) = self.conn.roster.tracked.get_mut(agent_id) {
+        if let Some(tracked) = self.active_conn_mut().roster.tracked.get_mut(agent_id) {
             tracked.info.workflow = Some(crate::protocol::client::SubagentWorkflow {
                 mode: bar.mode.clone().unwrap_or_else(|| "active".to_string()),
                 steps_completed: bar.done,

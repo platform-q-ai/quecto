@@ -86,7 +86,7 @@ async fn wire_close_runs_disconnect_handling_via_closed_sentinel() {
     h.wire_close_master_connection().await;
 
     assert!(
-        !h.app_mut().conn.agent_connected,
+        !h.app_mut().active_conn().agent_connected,
         "a real EOF must mark the agent as not connected via the Closed sentinel (#1462)"
     );
     let messages = h.notification_messages().join("\n");
@@ -153,7 +153,7 @@ async fn closed_sentinel_marks_agent_disconnected() {
     h.deliver_closed_sentinel().await;
 
     assert!(
-        !h.app_mut().conn.agent_connected,
+        !h.app_mut().active_conn().agent_connected,
         "the Closed sentinel must mark the agent as not connected (#1462)"
     );
     assert!(
@@ -275,7 +275,7 @@ async fn route_sourced_master_non_token_paints_stream_immediately() {
 async fn route_sourced_master_event_with_surfaced_drops_paints_immediately() {
     let mut h = TuiHarness::new().await;
     h.app_mut()
-        .conn
+        .active_conn()
         .transport
         .record_dropped_oversized_for_tests(1);
     let got = h.app_mut().route_sourced(SourcedEvent::Tab(
@@ -367,7 +367,7 @@ async fn run_select_loop_drains_tab_fan_in_even_when_disconnected() {
     // tab arm, so re-gating the tab arm on `agent_connected` (which would
     // starve the master feed and the `Closed` sentinel after a disconnect)
     // would ship uncaught. Driving the tab arm here makes that regression fail.
-    h.app_mut().conn.agent_connected = false;
+    h.app_mut().active_conn_mut().agent_connected = false;
     h.send_agent_event_line("{\"type\":\"token\",\"token\":\"tab-arm-disconnected-token\"}")
         .await;
 

@@ -106,7 +106,7 @@ async fn panel_renders_display_label_not_uuid_key() {
     });
     // Selection/identity is UUID-keyed.
     assert!(
-        h.app_mut().conn.roster.tracked.contains_key(uuid),
+        h.app_mut().active_conn().roster.tracked.contains_key(uuid),
         "roster must key by UUID"
     );
     h.app_mut().select_agent(Some(uuid));

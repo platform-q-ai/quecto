@@ -9,7 +9,7 @@ fn top_region(h: &mut TuiHarness) -> String {
 #[tokio::test]
 async fn named_active_tab_labels_master_surfaces() {
     let mut h = TuiHarness::new().await;
-    h.app_mut().conn.name = Some("Investigate auth".into());
+    h.app_mut().active_conn_mut().name = Some("Investigate auth".into());
     h.event(Event::AgentStart);
 
     let panel = strip_ansi(

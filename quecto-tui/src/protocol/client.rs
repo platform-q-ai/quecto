@@ -433,6 +433,12 @@ fn serialize_command(cmd: &Command) -> Result<String, ClientError> {
     Ok(json)
 }
 impl CommandSender {
+    /// Test-only: build a sender over an external channel (#1465 AC8).
+    #[cfg(any(test, feature = "test-harness"))]
+    pub(crate) fn from_tx_for_tests(tx: mpsc::Sender<String>) -> Self {
+        Self { tx }
+    }
+
     /// Send a command to the agent.
     pub async fn send(&mut self, cmd: &Command) -> Result<(), ClientError> {
         self.tx

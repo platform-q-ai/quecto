@@ -37,7 +37,7 @@ async fn ledger_hint_requests_sync_only_after_capability_is_known() {
     let mut h = super::tui_harness::TuiHarness::new().await;
     let app = h.app_mut();
     let (feed, mut rx) = feed_with_rx();
-    app.conn.roster.feeds.insert("a1".into(), feed);
+    app.active_conn_mut().roster.feeds.insert("a1".into(), feed);
 
     app.note_ledger_advanced("a1", 1, 9);
     assert!(rx.try_recv().is_err());
@@ -61,7 +61,7 @@ async fn sync_response_updates_cursor_and_uses_next_revision_for_follow_up() {
     let app = h.app_mut();
     let (mut feed, mut rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.conn.roster.feeds.insert("a1".into(), feed);
+    app.active_conn_mut().roster.feeds.insert("a1".into(), feed);
     app.ensure_session("a1");
 
     app.route_sync_response(
@@ -76,11 +76,11 @@ async fn sync_response_updates_cursor_and_uses_next_revision_for_follow_up() {
         }),
     );
 
-    let feed = app.conn.roster.feeds.get("a1").unwrap();
+    let feed = app.active_conn().roster.feeds.get("a1").unwrap();
     assert_eq!(feed.epoch, 3);
     assert_eq!(feed.rev, 8);
     assert!(feed.last_fresh_at.is_some());
-    let entries = app.conn.roster.sessions["a1"].chat.entries();
+    let entries = app.active_conn().roster.sessions["a1"].chat.entries();
     assert!(matches!(entries, [ChatEntry::User { text }] if text == "page"));
     let cmd = rx.try_recv().expect("continuation sync command");
     assert!(matches!(
@@ -99,12 +99,12 @@ async fn capability_alone_does_not_make_warm_feed_authoritative() {
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
     feed.authority = crate::agents::feed::FeedAuthority::WarmSync;
-    app.conn.roster.feeds.insert("a1".into(), feed);
+    app.active_conn_mut().roster.feeds.insert("a1".into(), feed);
 
     app.note_sync_capability("a1", &json!({"sync":1}));
 
     assert_eq!(
-        app.conn.roster.feeds["a1"].authority,
+        app.active_conn().roster.feeds["a1"].authority,
         crate::agents::feed::FeedAuthority::WarmSync,
         "a feed is authoritative only after a sync delta is applied"
     );
@@ -116,13 +116,13 @@ async fn sync_response_promotes_warm_feed_to_authoritative() {
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
     feed.authority = crate::agents::feed::FeedAuthority::WarmSync;
-    app.conn.roster.feeds.insert("a1".into(), feed);
+    app.active_conn_mut().roster.feeds.insert("a1".into(), feed);
     app.ensure_session("a1");
 
     app.route_sync_response("a1", &sync_delta(1, 1));
 
     assert_eq!(
-        app.conn.roster.feeds["a1"].authority,
+        app.active_conn().roster.feeds["a1"].authority,
         crate::agents::feed::FeedAuthority::SyncedAuthoritative
     );
 }
@@ -134,15 +134,18 @@ async fn sync_response_for_wrong_epoch_without_resync_is_ignored() {
     let (mut feed, _rx) = feed_with_rx();
     feed.epoch = 2;
     feed.rev = 5;
-    app.conn.roster.feeds.insert("a1".into(), feed);
+    app.active_conn_mut().roster.feeds.insert("a1".into(), feed);
     app.ensure_session("a1");
 
     app.route_sync_response("a1", &sync_delta(3, 9));
 
-    let feed = app.conn.roster.feeds.get("a1").unwrap();
+    let feed = app.active_conn().roster.feeds.get("a1").unwrap();
     assert_eq!(feed.epoch, 2);
     assert_eq!(feed.rev, 5);
-    assert_eq!(app.conn.roster.sessions["a1"].chat.entry_count(), 0);
+    assert_eq!(
+        app.active_conn().roster.sessions["a1"].chat.entry_count(),
+        0
+    );
 }
 
 #[tokio::test]
@@ -153,7 +156,7 @@ async fn epoch_mismatch_resync_replaces_stale_synced_transcript() {
     feed.epoch = 2;
     feed.rev = 5;
     feed.supports_sync = true;
-    app.conn.roster.feeds.insert("a1".into(), feed);
+    app.active_conn_mut().roster.feeds.insert("a1".into(), feed);
     app.ensure_session("a1");
     app.route_sync_response("a1", &sync_delta(2, 5));
 
@@ -169,10 +172,10 @@ async fn epoch_mismatch_resync_replaces_stale_synced_transcript() {
         }),
     );
 
-    let feed = app.conn.roster.feeds.get("a1").unwrap();
+    let feed = app.active_conn().roster.feeds.get("a1").unwrap();
     assert_eq!(feed.epoch, 3);
     assert_eq!(feed.rev, 1);
-    let entries = app.conn.roster.sessions["a1"].chat.entries();
+    let entries = app.active_conn().roster.sessions["a1"].chat.entries();
     assert!(matches!(entries, [ChatEntry::User { text }] if text == "fresh session"));
 }
 
@@ -210,12 +213,13 @@ async fn refused_sync_send_leaves_no_phantom_pending_rev() {
     let mut h = super::tui_harness::TuiHarness::new().await;
     let app = h.app_mut();
     let (feed, _rx) = full_channel_feed();
-    app.conn.roster.feeds.insert("a1".into(), feed);
+    app.active_conn_mut().roster.feeds.insert("a1".into(), feed);
 
     app.note_ledger_advanced("a1", 1, 9);
 
     assert_eq!(
-        app.conn.roster.feeds["a1"].pending_rev, None,
+        app.active_conn().roster.feeds["a1"].pending_rev,
+        None,
         "a refused Sync marked in-flight is a phantom sync that never resolves"
     );
 }
@@ -225,11 +229,11 @@ async fn next_ledger_hint_retries_after_a_refused_sync() {
     let mut h = super::tui_harness::TuiHarness::new().await;
     let app = h.app_mut();
     let (feed, mut rx) = full_channel_feed();
-    app.conn.roster.feeds.insert("a1".into(), feed);
+    app.active_conn_mut().roster.feeds.insert("a1".into(), feed);
 
     // First hint: channel full, refused, nothing recorded in-flight.
     app.note_ledger_advanced("a1", 1, 9);
-    assert_eq!(app.conn.roster.feeds["a1"].pending_rev, None);
+    assert_eq!(app.active_conn().roster.feeds["a1"].pending_rev, None);
 
     // Channel drains (the prefill pops), then the next hint must retry.
     let _ = rx.try_recv().expect("drain prefill");
@@ -244,7 +248,7 @@ async fn next_ledger_hint_retries_after_a_refused_sync() {
             ..
         }
     ));
-    assert_eq!(app.conn.roster.feeds["a1"].pending_rev, Some(10));
+    assert_eq!(app.active_conn().roster.feeds["a1"].pending_rev, Some(10));
 }
 
 #[tokio::test]
@@ -253,12 +257,12 @@ async fn accepted_sync_still_records_pending_rev() {
     let app = h.app_mut();
     let (mut feed, mut rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.conn.roster.feeds.insert("a1".into(), feed);
+    app.active_conn_mut().roster.feeds.insert("a1".into(), feed);
 
     app.note_ledger_advanced("a1", 1, 9);
 
     assert!(rx.try_recv().is_ok(), "sync sent on open channel");
-    assert_eq!(app.conn.roster.feeds["a1"].pending_rev, Some(9));
+    assert_eq!(app.active_conn().roster.feeds["a1"].pending_rev, Some(9));
 }
 
 #[tokio::test]
@@ -267,7 +271,7 @@ async fn app_1196_child_sync_caps_feed_and_session_chat() {
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.conn.roster.feeds.insert("a1".into(), feed);
+    app.active_conn_mut().roster.feeds.insert("a1".into(), feed);
     app.ensure_session("a1");
     let messages: Vec<_> = (0..(crate::components::chat::CHAT_RETAINED_ENTRY_CAP + 40))
         .map(|i| json!({"id": format!("m-{i}"), "role":"user", "content": format!("msg-{i}")}))
@@ -276,17 +280,17 @@ async fn app_1196_child_sync_caps_feed_and_session_chat() {
     app.route_sync_response("a1", &json!({"epoch":1,"rev":1,"messages":messages,"nextRev":null,"caughtUp":true,"resync":false}));
 
     assert!(
-        app.conn.roster.feeds["a1"]
+        app.active_conn().roster.feeds["a1"]
             .transcript
             .retained_message_count()
             <= crate::agents::ledger::LEDGER_RETAINED_MESSAGE_CAP
     );
     assert!(
-        app.conn.roster.sessions["a1"].chat.entry_count()
+        app.active_conn().roster.sessions["a1"].chat.entry_count()
             <= crate::components::chat::CHAT_RETAINED_ENTRY_CAP
     );
     assert!(
-        app.conn.roster.sessions["a1"]
+        app.active_conn().roster.sessions["a1"]
             .chat
             .entries()
             .iter()
@@ -302,11 +306,17 @@ async fn app_1196_multi_session_overflow_is_isolated() {
     let (mut feed_b, _rx_b) = feed_with_rx();
     feed_a.supports_sync = true;
     feed_b.supports_sync = true;
-    app.conn.roster.feeds.insert("a".into(), feed_a);
-    app.conn.roster.feeds.insert("b".into(), feed_b);
+    app.active_conn_mut()
+        .roster
+        .feeds
+        .insert("a".into(), feed_a);
+    app.active_conn_mut()
+        .roster
+        .feeds
+        .insert("b".into(), feed_b);
     app.ensure_session("a");
     app.ensure_session("b");
-    app.conn.roster.active_agent_id = Some("b".into());
+    app.active_conn_mut().roster.active_agent_id = Some("b".into());
     app.route_sync_response("b", &json!({"epoch":1,"rev":1,"messages":[{"id":"b1","role":"user","content":"keep-b"}],"nextRev":null,"caughtUp":true,"resync":false}));
     let messages: Vec<_> = (0..(crate::components::chat::CHAT_RETAINED_ENTRY_CAP + 10))
         .map(|i| json!({"id": format!("a-{i}"), "role":"user", "content": format!("a-msg-{i}")}))
@@ -314,12 +324,15 @@ async fn app_1196_multi_session_overflow_is_isolated() {
 
     app.route_sync_response("a", &json!({"epoch":1,"rev":1,"messages":messages,"nextRev":null,"caughtUp":true,"resync":false}));
 
-    assert_eq!(app.conn.roster.active_agent_id.as_deref(), Some("b"));
-    assert!(
-        matches!(app.conn.roster.sessions["b"].chat.entries(), [ChatEntry::User { text }] if text == "keep-b")
+    assert_eq!(
+        app.active_conn().roster.active_agent_id.as_deref(),
+        Some("b")
     );
     assert!(
-        app.conn.roster.sessions["a"].chat.entry_count()
+        matches!(app.active_conn().roster.sessions["b"].chat.entries(), [ChatEntry::User { text }] if text == "keep-b")
+    );
+    assert!(
+        app.active_conn().roster.sessions["a"].chat.entry_count()
             <= crate::components::chat::CHAT_RETAINED_ENTRY_CAP
     );
 }

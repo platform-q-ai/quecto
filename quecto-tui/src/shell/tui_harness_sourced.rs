@@ -23,7 +23,7 @@ impl TuiHarness {
     /// (#1470 review — previously triplicated).
     async fn route_sourced_item(&mut self, item: SourcedEvent) {
         self.app.route_sourced(item);
-        if self.app.conn.disconnect_diag_pending {
+        if self.app.active_conn().disconnect_diag_pending {
             self.pump_disconnect_diagnosis().await;
         }
     }

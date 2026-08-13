@@ -208,6 +208,30 @@ impl Connection {
         }
     }
 
+    /// Test-only: a connection with a live writer channel. The returned
+    /// receiver must be held open for `try_send` to succeed (#1465 AC8).
+    #[cfg(any(test, feature = "test-harness"))]
+    pub(crate) fn live_for_tests() -> (Self, tokio::sync::mpsc::Receiver<String>) {
+        let (tx, rx) = tokio::sync::mpsc::channel::<String>(16);
+        let sender = crate::protocol::client::CommandSender::from_tx_for_tests(tx);
+        (
+            Self {
+                tab: TabId::MASTER,
+                sender,
+                speaks_frames: true,
+                dropped_oversized: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                feed_task: None,
+            },
+            rx,
+        )
+    }
+
+    /// Test-only: force the ADR-0008 negotiation flag for isolation checks.
+    #[cfg(any(test, feature = "test-harness"))]
+    pub(crate) fn set_speaks_frames_for_tests(&mut self, speaks: bool) {
+        self.speaks_frames = speaks;
+    }
+
     /// Test-only: simulate the reader recording `n` oversized-line drops.
     #[cfg(test)]
     pub(crate) fn record_dropped_oversized_for_tests(&self, n: u64) {

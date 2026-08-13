@@ -156,27 +156,68 @@ impl ConnectionState {
 }
 
 impl App {
-    /// The active tab's connection state. N=1: always the master tab.
-    ///
-    /// Accessor for the (single, N=1) connection. NOTE (#1472 r2): most
-    /// sites still access `self.conn` directly — phase 3 (#1464) routes
-    /// rendering through here; this is NOT yet a sufficient dispatch seam
-    /// for N>1 on its own.
+    /// Resolve which tab `active_conn*` should address: routing override
+    /// (inbound event owner) if set, otherwise the focused `active_tab`.
+    fn effective_tab(&self) -> crate::shell::connection::TabId {
+        self.routing_tab_override.unwrap_or(self.active_tab)
+    }
+
+    /// The focused (or routing-override) tab's connection state.
     pub(crate) fn active_conn(&self) -> &ConnectionState {
-        &self.conn
+        let tab = self.effective_tab();
+        self.tabs
+            .get(&tab)
+            .unwrap_or_else(|| panic!("missing connection state for effective tab {tab:?}"))
     }
 
     /// Mutable counterpart to [`Self::active_conn`].
     pub(crate) fn active_conn_mut(&mut self) -> &mut ConnectionState {
-        &mut self.conn
+        let tab = self.effective_tab();
+        self.conn_mut(tab)
+            .unwrap_or_else(|| panic!("missing connection state for effective tab {tab:?}"))
+    }
+
+    /// Immutable lookup for a specific tab (None if unknown).
+    pub(crate) fn conn_for(
+        &self,
+        tab: crate::shell::connection::TabId,
+    ) -> Option<&ConnectionState> {
+        self.tabs.get(&tab)
+    }
+
+    /// Mutable lookup for a specific tab (None if unknown).
+    pub(crate) fn conn_mut(
+        &mut self,
+        tab: crate::shell::connection::TabId,
+    ) -> Option<&mut ConnectionState> {
+        self.tabs.get_mut(&tab)
+    }
+
+    /// Run `f` with `active_conn*` temporarily addressing `tab` so existing
+    /// handlers can mutate the event owner without changing focus (#1465).
+    /// Unknown tabs are a no-op (AC7: no ghost state, no active fallthrough).
+    pub(crate) fn with_routing_tab<R>(
+        &mut self,
+        tab: crate::shell::connection::TabId,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> Option<R> {
+        if self.conn_for(tab).is_none() {
+            return None;
+        }
+        let prev = self.routing_tab_override;
+        self.routing_tab_override = Some(tab);
+        let out = f(self);
+        self.routing_tab_override = prev;
+        Some(out)
     }
 
     /// Close global overlay surfaces when switching the active tab/session.
     /// N=1 session switches use the same seam; this preserves compose-frame
     /// idempotence by doing the state transition outside render composition.
     pub(crate) fn close_tab_switch_overlays(&mut self) {
-        self.conn.sessions.resume_selector = None;
-        self.conn.rewind.selector = None;
+        let conn = self.active_conn_mut();
+        conn.sessions.resume_selector = None;
+        conn.rewind.selector = None;
         self.autocomplete.dismiss();
         self.workspace.files_autocomplete.dismiss();
         self.tool_policy_modal = None;

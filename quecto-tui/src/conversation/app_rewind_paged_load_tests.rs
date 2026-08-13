@@ -29,8 +29,8 @@ fn respond(
 async fn response_get_message_for_rewind_rejects_mismatched_message_id() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.conn.rewind.pending_load_id = Some("load".into());
-    a.conn.rewind.pending_apply_message_id = Some("u1".into());
+    a.active_conn_mut().rewind.pending_load_id = Some("load".into());
+    a.active_conn_mut().rewind.pending_apply_message_id = Some("u1".into());
     let data = serde_json::json!({
         "id": "other",
         "role": "user",
@@ -40,10 +40,10 @@ async fn response_get_message_for_rewind_rejects_mismatched_message_id() {
         "offset": 0
     });
     respond(a, Some("load"), "get_message", true, Some(data), None);
-    assert!(a.conn.rewind.pending_load_id.is_none());
-    assert!(a.conn.rewind.pending_apply_message_id.is_none());
-    assert!(a.conn.rewind.pending_apply_id.is_none());
-    assert!(a.conn.rewind.pending_apply_text.is_none());
+    assert!(a.active_conn().rewind.pending_load_id.is_none());
+    assert!(a.active_conn().rewind.pending_apply_message_id.is_none());
+    assert!(a.active_conn().rewind.pending_apply_id.is_none());
+    assert!(a.active_conn().rewind.pending_apply_text.is_none());
     assert!(!a.notifications.is_empty());
 }
 
@@ -52,8 +52,8 @@ async fn response_get_message_for_rewind_pages_until_full_text_loaded() {
     let mut h = harness().await;
     {
         let a = h.app_mut();
-        a.conn.rewind.pending_load_id = Some("load-1".into());
-        a.conn.rewind.pending_apply_message_id = Some("u1".into());
+        a.active_conn_mut().rewind.pending_load_id = Some("load-1".into());
+        a.active_conn_mut().rewind.pending_apply_message_id = Some("u1".into());
         let data = serde_json::json!({
             "id": "u1",
             "role": "user",
@@ -64,16 +64,19 @@ async fn response_get_message_for_rewind_pages_until_full_text_loaded() {
             "offset": 0
         });
         respond(a, Some("load-1"), "get_message", true, Some(data), None);
-        assert!(a.conn.rewind.pending_load_id.is_some());
+        assert!(a.active_conn().rewind.pending_load_id.is_some());
         assert_eq!(
-            a.conn.rewind.pending_apply_message_id.as_deref(),
+            a.active_conn().rewind.pending_apply_message_id.as_deref(),
             Some("u1")
         );
-        assert!(a.conn.rewind.pending_apply_id.is_none());
-        assert_eq!(a.conn.rewind.pending_load_content, "part one ");
-        assert_eq!(a.conn.rewind.pending_load_offset, "part one ".len());
+        assert!(a.active_conn().rewind.pending_apply_id.is_none());
+        assert_eq!(a.active_conn().rewind.pending_load_content, "part one ");
         assert_eq!(
-            a.conn.rewind.pending_load_content_len,
+            a.active_conn().rewind.pending_load_offset,
+            "part one ".len()
+        );
+        assert_eq!(
+            a.active_conn().rewind.pending_load_content_len,
             Some("part one part two".len())
         );
     }
@@ -107,11 +110,11 @@ async fn response_get_message_for_rewind_pages_until_full_text_loaded() {
         "offset": "part one ".len()
     });
     respond(a, Some(&load_id), "get_message", true, Some(data), None);
-    assert!(a.conn.rewind.pending_load_id.is_none());
-    assert!(a.conn.rewind.pending_apply_message_id.is_none());
-    assert!(a.conn.rewind.pending_apply_id.is_some());
+    assert!(a.active_conn().rewind.pending_load_id.is_none());
+    assert!(a.active_conn().rewind.pending_apply_message_id.is_none());
+    assert!(a.active_conn().rewind.pending_apply_id.is_some());
     assert_eq!(
-        a.conn.rewind.pending_apply_text.as_deref(),
+        a.active_conn().rewind.pending_apply_text.as_deref(),
         Some("part one part two")
     );
 }
@@ -121,8 +124,8 @@ async fn response_get_message_for_rewind_rejects_changed_content_length_mid_load
     let mut h = harness().await;
     {
         let a = h.app_mut();
-        a.conn.rewind.pending_load_id = Some("load-1".into());
-        a.conn.rewind.pending_apply_message_id = Some("u1".into());
+        a.active_conn_mut().rewind.pending_load_id = Some("load-1".into());
+        a.active_conn_mut().rewind.pending_apply_message_id = Some("u1".into());
         let data = serde_json::json!({
             "id": "u1",
             "role": "user",
@@ -155,10 +158,10 @@ async fn response_get_message_for_rewind_rejects_changed_content_length_mid_load
         "offset": "part one ".len()
     });
     respond(a, Some(&load_id), "get_message", true, Some(data), None);
-    assert!(a.conn.rewind.pending_load_id.is_none());
-    assert!(a.conn.rewind.pending_apply_message_id.is_none());
-    assert!(a.conn.rewind.pending_apply_id.is_none());
-    assert!(a.conn.rewind.pending_apply_text.is_none());
-    assert!(a.conn.rewind.pending_load_content_len.is_none());
+    assert!(a.active_conn().rewind.pending_load_id.is_none());
+    assert!(a.active_conn().rewind.pending_apply_message_id.is_none());
+    assert!(a.active_conn().rewind.pending_apply_id.is_none());
+    assert!(a.active_conn().rewind.pending_apply_text.is_none());
+    assert!(a.active_conn().rewind.pending_load_content_len.is_none());
     assert!(!a.notifications.is_empty());
 }
