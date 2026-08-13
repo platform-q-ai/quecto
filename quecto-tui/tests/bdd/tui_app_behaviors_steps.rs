@@ -139,7 +139,7 @@ fn when_quiet_stats_arrives(world: &mut TuiWorld, cost_label: String, context_la
     let context_tokens = parse_k_tokens(&context_label);
     drive(world, |h| {
         h.event(Event::Response {
-            id: Some("stats-footer".into()),
+            id: Some("tab0:stats-footer".into()),
             command: "get_session_stats".into(),
             success: true,
             data: Some(serde_json::json!({
