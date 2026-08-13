@@ -33,7 +33,10 @@ impl From<ScopeSelection> for ToolScope {
 
 impl App {
     pub(super) fn open_tool_policy_modal(&mut self) {
-        let id = format!("tool-policy-catalogue-{}", super::app_events::uuid_like());
+        let id = self.conn.namespaced_id(&format!(
+            "tool-policy-catalogue-{}",
+            super::app_events::uuid_like()
+        ));
         self.tool_policy_modal_pending_catalogue_id = Some(id.clone());
         self.send_command(Command::GetToolCatalogue { id: Some(id) });
         self.notify("Requested tool catalogue", NotifyLevel::Info);

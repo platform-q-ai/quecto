@@ -35,6 +35,9 @@ impl App {
             let path = std::path::PathBuf::from(socket.expect("checked usable socket"));
             let tx = self.subagents.event_tx.clone();
             let agent_id_for_task = agent_id.clone();
+            // The forwarded-event tag must agree with the id namespace about
+            // which tab owns this feed (#1472 r1).
+            let feed_tab = self.conn.transport.tab();
             let task = async move {
                 let Ok(mut client) = Client::connect(&path).await else {
                     return;
@@ -53,11 +56,11 @@ impl App {
                         agent_id: None,
                     })
                     .await;
-                use crate::shell::connection::{SourcedEvent, TabId};
+                use crate::shell::connection::SourcedEvent;
                 loop {
                     tokio::select! {
                         ev = client.recv() => match ev {
-                            Some(ev) => if tx.send(SourcedEvent::Subagent(TabId::MASTER, agent_id_for_task.clone(), ev)).await.is_err() { break; },
+                            Some(ev) => if tx.send(SourcedEvent::Subagent(feed_tab, agent_id_for_task.clone(), ev)).await.is_err() { break; },
                             None => break,
                         },
                         cmd = cmd_rx.recv() => match cmd {
@@ -76,8 +79,7 @@ impl App {
                         id: Some("initial".into()),
                         agent_id: None,
                     }
-                    .with_inspection_agent_id(&agent_id)
-                    .map(|cmd| crate::protocol::inspection_routing::with_tab_namespace(cmd, &ns))
+                    .with_inspection_agent_id(&agent_id, &ns)
                     .expect("get_state is routable inspection"),
                 );
                 let _ = root_sender.try_send(
@@ -87,8 +89,7 @@ impl App {
                         since_rev: 0,
                         agent_id: None,
                     }
-                    .with_inspection_agent_id(&agent_id)
-                    .map(|cmd| crate::protocol::inspection_routing::with_tab_namespace(cmd, &ns))
+                    .with_inspection_agent_id(&agent_id, &ns)
                     .expect("sync is routable inspection"),
                 );
                 // A cold routed feed has no direct child stream to backfill from.
@@ -101,15 +102,12 @@ impl App {
                         count: 20,
                         agent_id: None,
                     }
-                    .with_inspection_agent_id(&agent_id)
-                    .map(|cmd| crate::protocol::inspection_routing::with_tab_namespace(cmd, &ns))
+                    .with_inspection_agent_id(&agent_id, &ns)
                     .expect("get_messages_tail is routable inspection"),
                 );
                 while let Some(cmd) = cmd_rx.recv().await {
-                    if let Some(routed) = cmd.with_inspection_agent_id(&agent_id) {
-                        let _ = root_sender.try_send(
-                            &crate::protocol::inspection_routing::with_tab_namespace(routed, &ns),
-                        );
+                    if let Some(routed) = cmd.with_inspection_agent_id(&agent_id, &ns) {
+                        let _ = root_sender.try_send(&routed);
                     }
                 }
             };

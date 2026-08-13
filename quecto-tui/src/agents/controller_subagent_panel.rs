@@ -149,7 +149,7 @@ impl App {
         let Some(feed) = self.conn.roster.feeds.get(&id) else {
             return false;
         };
-        if feed.inspection_only && cmd.with_inspection_agent_id(&id).is_none() {
+        if feed.inspection_only && cmd.with_inspection_agent_id(&id, "").is_none() {
             return false;
         }
         // Exact active-agent-id lookup is the command-routing guard: callers

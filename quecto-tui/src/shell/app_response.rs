@@ -232,7 +232,7 @@ impl App {
                 if let Some(data) = data {
                     // A quiet footer refresh (id "stats-footer") updates the
                     // cost/context indicators without adding a chat Status line.
-                    if id.as_deref().map(strip_tab_namespace) == Some("stats-footer") {
+                    if id.as_deref() == Some(self.conn.namespaced_id("stats-footer").as_str()) {
                         self.update_footer_stats(&data);
                     } else {
                         self.show_session_stats(&data);

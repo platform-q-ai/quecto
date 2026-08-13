@@ -107,6 +107,12 @@ impl App {
     /// pending is a no-op: state is already flipped and a second diag task
     /// would duplicate the notification.
     pub(super) fn begin_agent_stream_closed(&mut self, tab: crate::shell::connection::TabId) {
+        // Tab guard (#1472 r1, mirrors finish): a Closed sentinel for a tab
+        // this app does not hold must not tear down the active connection —
+        // the event-loop debug_assert is compiled out in release builds.
+        if tab != self.conn.transport.tab() {
+            return;
+        }
         // Duplicate gate: the first sentinel flips `agent_connected`; any
         // later duplicate (ownerless attach connections included, where no
         // diagnosis latch is ever set) is a no-op — the exact once-per-

@@ -39,7 +39,7 @@ async fn internal_state_polling_response_renders_no_box() {
         error: None,
     });
     a.handle_event(Event::Response {
-        id: Some("stats-footer".into()),
+        id: Some("tab0:stats-footer".into()),
         command: "get_session_stats".into(),
         success: true,
         data: Some(serde_json::json!({"cost": 0.0})),
