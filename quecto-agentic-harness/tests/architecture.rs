@@ -1225,7 +1225,10 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// fan-in arm: the same seam files mention `Event` at each variant/match
 /// site instead of one `Option<Event>` alias — seam usage, not feature/view
 /// growth (124 → 134).
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 134;
+/// PR #1470 round 4 adds the `SourcedEvent::tab()` accessor (one `Event`
+/// mention per variant in its match) in the same seam file — seam usage,
+/// not feature/view growth (134 → 138).
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 138;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///
