@@ -27,22 +27,38 @@ impl App {
         self.agent_ever_connected = false;
     }
 
-    /// Handle the agent event stream closing (`client.recv()` → `None`).
+    /// Handle the agent event stream closing (the connection feed task's
+    /// `SourcedEvent::Closed` sentinel, #1462).
     ///
     /// `exit_detail` carries the spawned agent child's exit diagnosis when the
     /// TUI owns the child process (e.g. "signal 6 (SIGABRT)" after a
     /// panic-abort near a full context window, #1047), so the disconnect
     /// notification can say WHY instead of a bare "Agent disconnected".
+    /// Harness/test driver: the full disconnect (state flip + notice) in one
+    /// step. Production paths go through `begin_/finish_agent_stream_closed`.
+    #[cfg(any(test, feature = "test-harness"))]
     pub(super) fn handle_agent_disconnected(&mut self, exit_detail: Option<String>) {
+        self.mark_agent_disconnected();
+        self.emit_agent_disconnected_notice(exit_detail);
+    }
+
+    /// Immediately mark the session disconnected: connection flag, run
+    /// state, spinner, and streaming tail. Runs SYNCHRONOUSLY when the
+    /// stream closes — the UI must never show a live session (nor accept
+    /// prompts as deliverable) while the disconnect diagnosis is still
+    /// resolving off-loop (#1470 review).
+    fn mark_agent_disconnected(&mut self) {
         self.agent_connected = false;
         self.agent_state.reset();
         self.master_session.running = false;
         self.spinner = None;
         self.master_session.chat.finalize_assistant();
-        let mut message = match exit_detail {
-            Some(detail) => format!("Agent disconnected — {detail}"),
-            None => "Agent disconnected".to_string(),
-        };
+    }
+
+    /// Emit the disconnect notification (and stderr-tail transcript entries,
+    /// #1047) once the exit diagnosis — possibly deferred — is known.
+    fn emit_agent_disconnected_notice(&mut self, exit_detail: Option<String>) {
+        let mut message = Self::disconnect_notice_text(exit_detail.as_deref());
         // Include the child's drained stderr tail (#1047): under the workspace
         // `panic = "abort"` the panic message lands on stderr right before the
         // process dies — without it every recurrence is undiagnosable. The
@@ -70,36 +86,94 @@ impl App {
         self.notify(&message, NotifyLevel::Error);
     }
 
-    /// The event stream closed: diagnose the owned child's exit (if any) and
-    /// run the disconnect handling with that detail (#1047).
-    pub(super) async fn handle_agent_stream_closed(&mut self) {
-        let detail = self.wait_child_exit_detail().await;
-        // The exit diagnosis lands the moment the child is reaped, which can
-        // be BEFORE the independent stderr-drain task consumes the buffered
-        // panic message — give the drain the same bounded window so the
-        // stderr snapshot below is complete, not racy (#1051 final review).
-        if let Some(watch) = &self.child_exit_watch {
-            watch.wait_stderr_drained(CHILD_EXIT_DETAIL_WINDOW).await;
+    /// The event stream closed (`SourcedEvent::Closed` sentinel, #1462): dispatch
+    /// the child-exit diagnosis OFF the select loop. When the TUI owns the
+    /// agent child, the bounded diagnosis waits (#1047) run on a spawned task
+    /// so a dying child can never stall event processing; the task reports
+    /// the detail on the disconnect-diagnosis channel and the event loop
+    /// completes the disconnect via [`Self::finish_agent_stream_closed`].
+    ///
+    /// The session state flip and dropped-event surfacing happen HERE,
+    /// synchronously — only the diagnosis *text* (and its notification) is
+    /// deferred, so the UI can never show a live session, and the oversized
+    /// -drop warning can never be lost to an exit race, while the bounded
+    /// child-exit waits run (#1470 review).
+    ///
+    /// Deferral is signalled solely via `disconnect_diag_pending` — the
+    /// event loop's diagnosis arm and the harness both key off it, so there
+    /// is exactly ONE deferral signal (#1470 r3, no drift-prone bool
+    /// return). A `Closed` sentinel arriving while a diagnosis is already
+    /// pending is a no-op: state is already flipped and a second diag task
+    /// would duplicate the notification.
+    pub(super) fn begin_agent_stream_closed(&mut self, tab: crate::shell::connection::TabId) {
+        // Duplicate gate: the first sentinel flips `agent_connected`; any
+        // later duplicate (ownerless attach connections included, where no
+        // diagnosis latch is ever set) is a no-op — the exact once-per-
+        // connection guarantee of the deleted gated select arm (#1470 r4).
+        if !self.agent_connected {
+            return;
         }
-        self.handle_agent_disconnected(detail);
+        self.disconnect_refusal_notified = false;
+        self.surface_dropped_oversized_events();
+        self.mark_agent_disconnected();
+        let Some(watch) = self.child_exit_watch.clone() else {
+            self.emit_agent_disconnected_notice(None);
+            return;
+        };
+        self.disconnect_diag_pending = true;
+        let tx = self.disconnect_diag_tx.clone();
+        tokio::spawn(async move {
+            // Best-effort read of the owned agent child's exit diagnosis. The
+            // stream usually closes a beat before the watcher reaps the
+            // child, so give the diagnosis a short window to land.
+            // Event-driven via the watcher's watch channel (#1051 review —
+            // no 20 ms poll loop): the common case resolves the moment the
+            // reap is recorded; only a child that closed its socket but
+            // stays alive costs the full (bounded, one-time) window.
+            let detail = watch.wait_exit_detail(CHILD_EXIT_DETAIL_WINDOW).await;
+            // The exit diagnosis lands the moment the child is reaped, which
+            // can be BEFORE the independent stderr-drain task consumes the
+            // buffered panic message — give the drain the same bounded
+            // window so the stderr snapshot taken at completion is complete,
+            // not racy (#1051 final review).
+            watch.wait_stderr_drained(CHILD_EXIT_DETAIL_WINDOW).await;
+            let _ = tx.send((tab, detail)).await;
+        });
     }
 
-    /// Best-effort read of the owned agent child's exit diagnosis. The stream
-    /// usually closes a beat before the watcher reaps the child, so give the
-    /// diagnosis a short window to land. Event-driven via the watcher's watch
-    /// channel (#1051 review — no 20 ms poll loop): the common case resolves
-    /// the moment the reap is recorded; only a child that closed its socket
-    /// but stays alive costs the full (bounded, one-time) window.
-    async fn wait_child_exit_detail(&self) -> Option<String> {
-        let watch = self.child_exit_watch.as_ref()?;
-        watch.wait_exit_detail(CHILD_EXIT_DETAIL_WINDOW).await
+    /// Complete the stream-closed disconnect: the session state was already
+    /// flipped and drops surfaced synchronously in
+    /// [`Self::begin_agent_stream_closed`]; this emits the notification with
+    /// the (possibly deferred) exit diagnosis.
+    /// Gated on the pending latch (#1470 r3): a session reset during the
+    /// diagnosis window clears the latch, so the stale completion is
+    /// dropped instead of dumping stderr into the fresh transcript.
+    pub(super) fn finish_agent_stream_closed(
+        &mut self,
+        tab: crate::shell::connection::TabId,
+        detail: Option<String>,
+    ) {
+        let _ = tab; // Keyed for phase 2 (#1463); N=1 uses one latch.
+        if !self.disconnect_diag_pending {
+            // A reset invalidated the pending completion: the transcript
+            // entries must not land in the fresh session, but the crash
+            // diagnosis itself (#1047) must still surface as a toast —
+            // pre-seam the diagnosis was always shown (#1470 r6).
+            if detail.is_some() {
+                let text = Self::disconnect_notice_text(detail.as_deref());
+                self.notify(&text, NotifyLevel::Error);
+            }
+            return;
+        }
+        self.disconnect_diag_pending = false;
+        self.emit_agent_disconnected_notice(detail);
     }
 
     /// Surface newly-recorded oversized-event drops as a warning notification
     /// so the loss is visible instead of the session silently appearing
     /// frozen (#1047). Returns whether a notification was raised.
     pub(super) fn surface_dropped_oversized_events(&mut self) -> bool {
-        let dropped = self.client.dropped_oversized_events();
+        let dropped = self.connection.dropped_oversized_events();
         if dropped <= self.surfaced_oversized_drops {
             return false;
         }
@@ -116,6 +190,43 @@ impl App {
 }
 
 impl App {
+    /// Single source for the disconnect-notification wording (#1470 r7).
+    fn disconnect_notice_text(detail: Option<&str>) -> String {
+        match detail {
+            Some(detail) => format!("Agent disconnected — {detail}"),
+            None => "Agent disconnected".to_string(),
+        }
+    }
+
+    /// Refuse a command on a known-dead connection (#1470 r3-r6): roll back
+    /// pending state (latching failed stub recalls) and surface the refusal
+    /// ONCE per disconnect episode — a toast plus a persistent transcript
+    /// Status line, so later refusals stay diagnosable after the toast
+    /// expires without per-command spam.
+    pub(super) fn refuse_disconnected_command(&mut self, cmd: &Command) {
+        self.rollback_failed_history_command(super::MASTER_CONNECTION_ID, cmd, true);
+        self.note_disconnected_refusal();
+    }
+
+    /// The once-per-episode refusal surfacing, shared by command refusals
+    /// and the disconnected chat-submit path (#1470 r7). The toast dedupes
+    /// against a still-visible copy: a re-armed latch (reset during an
+    /// episode) must not stack identical toasts.
+    pub(super) fn note_disconnected_refusal(&mut self) {
+        if self.disconnect_refusal_notified {
+            return;
+        }
+        self.disconnect_refusal_notified = true;
+        let toast = "Agent disconnected — commands are not being sent";
+        if !self.notifications.contains_visible(toast) {
+            self.notify(toast, NotifyLevel::Error);
+        }
+        self.master_session.chat.add_entry(ChatEntry::Status {
+            text: "Agent disconnected — commands are not being sent (restart the TUI to reconnect)"
+                .to_string(),
+        });
+    }
+
     /// Surface a failed command send, attributed to the connection it
     /// happened on (#1460) so that with N per-tab connections the
     /// rollback/notice cannot be misrouted cross-tab.
@@ -125,11 +236,17 @@ impl App {
             error,
             connection,
         } = failure;
-        self.rollback_failed_history_command(&connection, &command);
+        self.rollback_failed_history_command(&connection, &command, false);
         let msg = format!(
             "Failed to send {} command on connection {connection}: {error}",
             command.kind()
         );
-        self.notify(&msg, NotifyLevel::Error);
+        // A burst (scroll issuing N stub recalls against a full writer)
+        // would stack N identical toasts — show each distinct message once
+        // while it is still visible; expired entries do not suppress a
+        // legitimately repeated failure (#1470 r5/r6).
+        if !self.notifications.contains_visible(&msg) {
+            self.notify(&msg, NotifyLevel::Error);
+        }
     }
 }

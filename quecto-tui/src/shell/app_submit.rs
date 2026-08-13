@@ -123,12 +123,22 @@ impl App {
             return;
         }
 
-        // Master session: add user message to chat and send to the primary agent.
+        // The composed text always lands in the chat (the editor was
+        // already emptied by take_submit) — on a dead connection it is the
+        // only surviving copy (#1470 r3/r6, single add site).
         self.master_session
             .chat
             .add_entry_follow_tail(ChatEntry::User {
                 text: text.to_string(),
             });
+        // Refuse when the connection is known dead (#1470): the writer
+        // channel can outlive the stream, so an enqueue could "succeed" and
+        // the message silently vanish. The persistent refusal Status line
+        // keeps the undelivered message diagnosable after the toast expires.
+        if !self.agent_connected {
+            self.note_disconnected_refusal();
+            return;
+        }
         let cmd = if self.agent_state.is_running() {
             Command::FollowUp {
                 id: None,

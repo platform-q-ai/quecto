@@ -343,8 +343,10 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_selection.rs` | `shell` focus/selection routing (relocated, #1257 Phase 6) |
 | `shell/app_stdin.rs` | `shell` stdin coordination (relocated, #1257 Phase 6) |
 | `shell/app_submit.rs` | `shell` submit/prompt coordination (relocated, #1257 Phase 6) |
+| `shell/app_time.rs` | `shell` wall-clock formatting helpers (line-count split from `app_methods.rs`, #1470 review) |
 | `shell/child_watch.rs` | `shell` runtime supervision (relocated, #1257 Phase 1) |
 | `shell/cli.rs` | `shell` CLI entry (relocated, #1257 Phase 1) |
+| `shell/connection.rs` | `shell` master-connection feed task and `Source`-keyed fan-in seam (#1462) |
 | `shell/keys.rs` | `shell` input mapping primitive (relocated, #1257 Phase 1) |
 | `shell/mod.rs` | `shell` module root |
 | `shell/process.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
@@ -355,6 +357,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/terminal.rs` | `shell` terminal adapter (relocated, #1257 Phase 1) |
 | `shell/tool_policy.rs` | `shell` live tool/profile policy modal controller (#1334 PR 4) |
 | `shell/tui_harness.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
+| `shell/tui_harness_sourced.rs` | `shell` fan-in/feed-task harness drivers for the #1462 seam |
 | `shell/tui_harness_tool_policy.rs` | `shell` tool policy test-harness event helpers (#1334 PR 4) |
 | `shell/tui_harness_disconnect.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/tui_harness_events.rs` | `shell` test harness support (relocated, #1257 Phase 6) |

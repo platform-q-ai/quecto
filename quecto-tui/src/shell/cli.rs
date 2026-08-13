@@ -204,7 +204,10 @@ async fn run_tui(flags: CliFlags) -> i32 {
 
     // Connect to the agent, in the framing its announcement negotiated:
     // length-prefixed frames for protocol v2+, legacy NDJSON for agents that
-    // announced no version (deprecation window, ADR-0008 / #1059).
+    // announced no version (deprecation window, ADR-0008 / #1059). The
+    // outcome only picks the connect call here; it is recorded on the
+    // `Client` and carried as per-connection state by the master
+    // `Connection` (#1462), not kept as a `run_tui` local.
     let speaks_frames = should_speak_frames(announced_protocol);
     let connect = async {
         if speaks_frames {

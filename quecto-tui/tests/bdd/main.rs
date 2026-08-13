@@ -132,6 +132,9 @@ pub struct TuiWorld {
     /// TUI agent-disconnect diagnostics BDD (#1047): the real spawned child
     /// under the production exit watcher.
     pub tui_disconnect_child: Option<tui_agent_disconnect_steps::DisconnectChildWatch>,
+    /// TUI master-connection feed-task seam BDD (#1462): frame captured from
+    /// the direct-handling baseline, for fan-in byte-parity assertions.
+    pub tui_seam_baseline_frame: Option<String>,
     /// The sub-agent id currently being viewed (#828): captured on select so
     /// backfill/assertion steps route to the right session, not a literal id.
     pub tui_viewed_agent: Option<String>,
@@ -350,6 +353,7 @@ mod tui_file_mention_steps;
 mod tui_foundation_steps;
 mod tui_idle_efficiency_steps;
 mod tui_list_render_state_steps;
+mod tui_master_connection_feed_steps;
 mod tui_new_reset_context_steps;
 mod tui_paged_history_1094_steps;
 mod tui_paged_history_steps;

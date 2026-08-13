@@ -49,7 +49,11 @@ use app_message_recovery::{MessageRecoveryBatch, PendingMessageRecovery};
 pub struct App {
     terminal: Terminal,
     renderer: DiffRenderer<std::io::Stdout>,
-    client: Client,
+    /// The master agent connection behind its feed task (#1462): the feed
+    /// task owns the [`Client`] and forwards events into the dedicated master
+    /// fan-in (`tab_event_tx`, drained by the `tab_event_rx` select arm); the
+    /// app holds only this command/state handle.
+    connection: crate::shell::connection::Connection,
     editor: Editor,
     /// The master agent's own session, modeled as just another [`SessionView`]
     /// (#828) so render/input share ONE active-session path with sub-agents
@@ -122,6 +126,30 @@ pub struct App {
     active_turn_start: usize,
     command_send_failure_tx: mpsc::Sender<CommandSendFailure>,
     command_send_failure_rx: mpsc::Receiver<CommandSendFailure>,
+    /// Completion channel for the OFF-LOOP disconnect diagnosis (#1462 scope
+    /// 3): the `SourcedEvent::Closed` sentinel spawns the bounded child-exit /
+    /// stderr-drain waits (#1047) onto a task carrying this sender, so a
+    /// dying child can never stall the select loop; the loop finishes the
+    /// disconnect when the diagnosis lands here.
+    /// Keyed by the closing tab (#1470 r3) so N>1 tabs can never
+    /// misattribute an exit detail.
+    disconnect_diag_tx: mpsc::Sender<(crate::shell::connection::TabId, Option<String>)>,
+    disconnect_diag_rx: mpsc::Receiver<(crate::shell::connection::TabId, Option<String>)>,
+    /// Dedicated fan-in for master-connection events (`SourcedEvent::Tab` /
+    /// `Closed`). A separate channel from the sub-agent fan-in restores the
+    /// deleted dedicated select arm's fair interleave: master events and the
+    /// close sentinel can no longer queue FIFO behind a chatty sub-agent
+    /// burst (#1470 review). All tabs share this one channel, so the select
+    /// arm count stays independent of N.
+    pub(super) tab_event_rx: mpsc::Receiver<crate::shell::connection::SourcedEvent>,
+    /// Whether a stream-closed disconnect diagnosis is resolving off-loop
+    /// (#1462 scope 3): set by `begin_agent_stream_closed` when it spawns
+    /// the bounded #1047 waits, cleared by `finish_agent_stream_closed`.
+    /// The harness keys its diagnosis pumping off this latch.
+    pub(super) disconnect_diag_pending: bool,
+    /// One "commands are not being sent" notice per disconnect episode
+    /// (#1470 r4): reset when a disconnect begins, set on first refusal.
+    disconnect_refusal_notified: bool,
     /// When the TUI session started — drives the Master row's uptime timer (#820).
     started_at: tokio::time::Instant,
 }
@@ -146,11 +174,23 @@ impl App {
         let git_branch = git_repo.as_deref().and_then(app_git::read_git_branch_from);
         footer.set_git_branch(git_branch.clone());
         let (command_send_failure_tx, command_send_failure_rx) = mpsc::channel(16);
+        let (disconnect_diag_tx, disconnect_diag_rx) = mpsc::channel(4);
+
+        // Sub-agent feeds fan into the channel on the sub-agent UI state;
+        // master-connection events ride their own dedicated fan-in so they
+        // interleave fairly with sub-agent bursts (#1462 / #1470 review).
+        let subagents = SubagentUi::new();
+        let (tab_event_tx, tab_event_rx) = mpsc::channel(256);
+        let connection = crate::shell::connection::Connection::spawn(
+            client,
+            crate::shell::connection::TabId::MASTER,
+            tab_event_tx,
+        );
 
         Self {
             terminal,
             renderer: DiffRenderer::new(std::io::stdout()),
-            client,
+            connection,
             editor: Editor::new(),
             master_session: SessionView::with_footer(footer),
             spinner: None,
@@ -170,7 +210,7 @@ impl App {
             sessions: SessionsFlow::default(),
             workflow: WorkflowFlow::default(),
             rewind: RewindFlow::default(),
-            subagents: SubagentUi::new(),
+            subagents,
             render_log_path: std::env::var("QUECTO_TUI_RENDER_LOG").ok(),
             #[cfg(any(test, feature = "test-harness"))]
             rendered_frames: 0,
@@ -194,6 +234,11 @@ impl App {
             active_turn_start: 0,
             command_send_failure_tx,
             command_send_failure_rx,
+            disconnect_diag_tx,
+            disconnect_diag_rx,
+            tab_event_rx,
+            disconnect_diag_pending: false,
+            disconnect_refusal_notified: false,
             started_at: tokio::time::Instant::now(),
         }
     }
@@ -331,6 +376,8 @@ mod app_subagent_panel;
 mod app_subagent_panel_rows;
 #[path = "app_submit.rs"]
 mod app_submit;
+#[path = "app_time.rs"]
+mod app_time;
 use crate::agents::roster::{
     gc_exited_subagents, next_exited_subagent_gc_deadline, subagent_status_is_active,
 };
@@ -609,6 +656,9 @@ mod app_selection_tests;
 #[cfg(test)]
 #[path = "app_socket_path_tests.rs"]
 mod app_socket_path_tests;
+#[cfg(test)]
+#[path = "app_sourced_event_tests.rs"]
+mod app_sourced_event_tests;
 #[cfg(test)]
 #[path = "app_streaming_stability_tests.rs"]
 mod app_streaming_stability_tests;

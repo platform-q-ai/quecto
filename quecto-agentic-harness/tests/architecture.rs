@@ -1215,7 +1215,20 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// the environment-detail chrome reads the shared `SubagentEnvironmentInfo`
 /// metadata carried on tracked entries — necessary wire use for environment
 /// grouping, not unrelated growth.
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 116;
+/// #1462 moves the master `Client` behind the `shell/connection.rs` feed
+/// task: the connection IS a transport seam (it owns the wire client and
+/// forwards `Event`s), so its `Client`/`Command`/`Event` references plus the
+/// harness fan-in drivers in `shell/tui_harness_sourced.rs` are documented
+/// seam usage, not feature/view growth (116 → 124).
+/// PR #1470 review round 1 folds the fan-in payload into `SourcedEvent`
+/// variants (impossible states unrepresentable) and adds the dedicated tab
+/// fan-in arm: the same seam files mention `Event` at each variant/match
+/// site instead of one `Option<Event>` alias — seam usage, not feature/view
+/// growth (124 → 134).
+/// PR #1470 round 4 adds the `SourcedEvent::tab()` accessor (one `Event`
+/// mention per variant in its match) in the same seam file — seam usage,
+/// not feature/view growth (134 → 138).
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 138;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///

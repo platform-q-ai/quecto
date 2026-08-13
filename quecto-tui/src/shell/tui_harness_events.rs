@@ -220,12 +220,42 @@ pub(super) fn spawn_command_reader(
     listener: tokio::net::UnixListener,
     cmd_tx: tokio::sync::mpsc::Sender<String>,
 ) {
+    spawn_agent_endpoint(listener, cmd_tx, None);
+}
+
+/// Like [`spawn_command_reader`], but the first accepted connection can also
+/// WRITE agent event lines received on `event_rx` back to the client — the
+/// harness's real-socket driving surface for the master connection feed task
+/// (#1462). When the sender side of `event_rx` is dropped, the write half is
+/// shut down, delivering a real EOF (stream close) to the client.
+pub(super) fn spawn_agent_endpoint(
+    listener: tokio::net::UnixListener,
+    cmd_tx: tokio::sync::mpsc::Sender<String>,
+    event_rx: Option<mpsc::Receiver<String>>,
+) {
     use quecto_line_io::{Incoming, PROTOCOL_FRAME_CAP_BYTES, read_frame_or_legacy_line};
     tokio::spawn(async move {
+        let mut event_rx = event_rx;
         while let Ok((stream, _)) = listener.accept().await {
             let cmd_tx = cmd_tx.clone();
+            let (read_half, mut write_half) = tokio::io::split(stream);
+            if let Some(mut rx) = event_rx.take() {
+                tokio::spawn(async move {
+                    use tokio::io::AsyncWriteExt;
+                    while let Some(line) = rx.recv().await {
+                        if write_half.write_all(line.as_bytes()).await.is_err() {
+                            return;
+                        }
+                        let _ = write_half.flush().await;
+                    }
+                    // Injector dropped: close the agent side for real so the
+                    // client observes EOF and the feed task emits its Closed
+                    // sentinel (#1462).
+                    let _ = write_half.shutdown().await;
+                });
+            }
             tokio::spawn(async move {
-                let mut reader = BufReader::new(stream);
+                let mut reader = BufReader::new(read_half);
                 while let Ok(Some(incoming)) =
                     read_frame_or_legacy_line(&mut reader, PROTOCOL_FRAME_CAP_BYTES).await
                 {
@@ -261,6 +291,71 @@ pub fn transient_in(frames: &[Vec<String>]) -> Vec<(usize, String)> {
             if !in_prev && !in_next {
                 out.push((i, line.clone()));
             }
+        }
+    }
+    out
+}
+
+/// Replace every wall-clock timer (`m:ss` or `h:mm:ss`, e.g. the Master
+/// row's `idle 0:02` uptime, #820) in a captured frame with `#:##`, so
+/// frame-parity assertions (#1462) compare layout and content without
+/// flaking when real elapsed time crosses a second boundary between the two
+/// captures (CI schedulers routinely add >1 s on the real-socket path).
+pub fn mask_clocks(frame: &str) -> String {
+    let cs: Vec<char> = frame.chars().collect();
+    let mut out = String::with_capacity(frame.len());
+    let mut i = 0;
+    // Whether the current line has already passed a '│': the FIRST '│' of a
+    // row is the panel cell divider; later ones are chat-content gutters
+    // where the bare right-aligned rule must not apply (#1470 r6).
+    let mut past_panel_divider = false;
+    while i < cs.len() {
+        // Only mask digit runs anchored like clock cells — after the
+        // "idle " / "ran " labels or right-aligned behind 2+ spaces (the
+        // panel's Master uptime, #820). An unconditional digit-run+`:dd`
+        // mask would also normalize real content differences shaped like
+        // `N:dd`, silently narrowing the parity assertions (#1470 r3).
+        let after_clock_label = out.ends_with("idle ") || out.ends_with("ran ");
+        let right_aligned = out.ends_with("  ") && !past_panel_divider;
+        if cs[i].is_ascii_digit() && (after_clock_label || right_aligned) {
+            // Consume the leading digit run, then any `:dd` groups.
+            let mut j = i;
+            while j < cs.len() && cs[j].is_ascii_digit() {
+                j += 1;
+            }
+            let mut end = j;
+            while end + 2 < cs.len()
+                && cs[end] == ':'
+                && cs[end + 1].is_ascii_digit()
+                && cs[end + 2].is_ascii_digit()
+            {
+                end += 3;
+            }
+            // The bare right-aligned anchor additionally requires the clock
+            // to run to end-of-line (trailing spaces only), so indented
+            // content like "  1:23 elapsed" is never masked (#1470 r4).
+            // '│' (the panel cell divider) ends a segment like a newline:
+            // the panel's right-aligned Master/sub-agent uptime clocks sit
+            // mid-line before the divider (#1470 r5).
+            let to_segment_end = cs[end..]
+                .iter()
+                .take_while(|c| **c != '\n' && **c != '│')
+                .all(|c| *c == ' ');
+            if end > j && (after_clock_label || to_segment_end) {
+                out.push_str("#:##");
+                i = end;
+            } else {
+                out.extend(&cs[i..j]);
+                i = j;
+            }
+        } else {
+            match cs[i] {
+                '\n' => past_panel_divider = false,
+                '│' => past_panel_divider = true,
+                _ => {}
+            }
+            out.push(cs[i]);
+            i += 1;
         }
     }
     out

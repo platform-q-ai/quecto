@@ -59,7 +59,83 @@ impl StreamRenderCoalescer {
     }
 }
 
+/// How the event loop should paint after routing one fan-in item (#1462):
+/// the exact render decision each replaced select arm made before the seam.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SourcedRender {
+    /// Paint now and re-base the coalescer (disconnects, surfaced drops).
+    Immediate,
+    /// Stream render: token events coalesce, everything else paints now.
+    Stream { is_token: bool },
+}
+
 impl App {
+    /// Route one item drained from the shared fan-in channel (#1462): master
+    /// events (`SourcedEvent::Tab`) go through the master event handler, sub-agent
+    /// events (`SourcedEvent::Subagent`) through sub-agent routing, and the
+    /// `SourcedEvent::Closed` sentinel runs the #1047 disconnect diagnosis path.
+    ///
+    /// The `SourcedEvent::Closed` arm never awaits the child-exit diagnosis here
+    /// (#1462 scope 3): when the TUI owns the agent child, the bounded
+    /// #1047 waits run on a spawned task and complete through the
+    /// disconnect-diagnosis select arm — a dying child cannot stall event
+    /// processing while other connections' events are queued.
+    /// Sync by design (#1462 scope 3): the "never blocks the select loop"
+    /// contract is checkable by signature — nothing here can await.
+    pub(super) fn route_sourced(
+        &mut self,
+        item: crate::shell::connection::SourcedEvent,
+    ) -> SourcedRender {
+        use crate::shell::connection::{SourcedEvent, TabId};
+        // Single N=1 guard for every arm (#1470 r4) — phase 2 (#1463)
+        // replaces this one assert when tabs become plural.
+        debug_assert_eq!(
+            item.tab(),
+            TabId::MASTER,
+            "N=1: only the master tab exists (#1462)"
+        );
+        match item {
+            SourcedEvent::Tab(_, ev) => {
+                let is_token = Self::is_token_event(&ev);
+                self.handle_event(ev);
+                if self.surface_dropped_oversized_events() {
+                    SourcedRender::Immediate
+                } else {
+                    SourcedRender::Stream { is_token }
+                }
+            }
+            SourcedEvent::Subagent(_, agent_id, ev) => {
+                let is_token = Self::is_token_event(&ev);
+                self.route_subagent_event(&agent_id, ev);
+                SourcedRender::Stream { is_token }
+            }
+            SourcedEvent::Closed(tab) => {
+                // Master stream closed — the session is marked disconnected
+                // and dropped events surfaced SYNCHRONOUSLY here; only the
+                // child-exit diagnosis text is dispatched off-loop (#1047
+                // via #1462 scope 3). Paint now either way so the UI never
+                // shows a live session after the stream closed; with an
+                // owned child the notification follows when the diagnosis
+                // lands on its select arm.
+                self.begin_agent_stream_closed(tab);
+                SourcedRender::Immediate
+            }
+        }
+    }
+
+    /// Apply one routed fan-in item's render decision (shared by both fan-in
+    /// select arms so the paint policy cannot drift between them).
+    pub(super) fn apply_sourced_render(
+        &mut self,
+        render: SourcedRender,
+        coalescer: &mut StreamRenderCoalescer,
+    ) {
+        match render {
+            SourcedRender::Immediate => self.render_and_note(coalescer),
+            SourcedRender::Stream { is_token } => self.render_stream_event(coalescer, is_token),
+        }
+    }
+
     /// Render immediately and note it on the coalescer so a pending deferred
     /// token paint is consumed by this render (it paints all accumulated
     /// state, including any deferred tokens).
@@ -188,28 +264,6 @@ impl App {
                     }
                     self.render_and_note(&mut stream_render_coalescer);
                 }
-                // Agent events.
-                event = self.client.recv(), if self.agent_connected => {
-                    match event {
-                        Some(ev) => {
-                            let is_token = Self::is_token_event(&ev);
-                            self.handle_event(ev);
-                            if self.surface_dropped_oversized_events() {
-                                self.render_and_note(&mut stream_render_coalescer);
-                            } else {
-                                self.render_stream_event(&mut stream_render_coalescer, is_token);
-                            }
-                        }
-                        None => {
-                            // Agent disconnected — stop polling. Report any
-                            // dropped events and the child's exit diagnosis
-                            // so the failure is visible (#1047).
-                            self.surface_dropped_oversized_events();
-                            self.handle_agent_stream_closed().await;
-                            self.render_and_note(&mut stream_render_coalescer);
-                        }
-                    }
-                }
                 // Terminal resize.
                 Some(()) = resize_rx.recv() => {
                     self.terminal.refresh_size();
@@ -241,15 +295,31 @@ impl App {
                         self.render_and_note(&mut stream_render_coalescer);
                     }
                 }
+                // Off-loop disconnect diagnosis completion (#1462 scope 3):
+                // the bounded #1047 waits ran on a spawned task; finish the
+                // disconnect with the diagnosis it reported.
+                Some((tab, detail)) = self.disconnect_diag_rx.recv() => {
+                    self.finish_agent_stream_closed(tab, detail);
+                    self.render_and_note(&mut stream_render_coalescer);
+                }
                 Some(failure) = self.command_send_failure_rx.recv() => {
                     self.handle_command_send_failure(failure);
                     self.render_and_note(&mut stream_render_coalescer);
                 }
-                // Events fanned in from per-subagent ledger-sync feeds.
-                Some((agent_id, ev)) = self.subagents.event_rx.recv() => {
-                    let is_token = Self::is_token_event(&ev);
-                    self.route_subagent_event(&agent_id, ev);
-                    self.render_stream_event(&mut stream_render_coalescer, is_token);
+                // Master-connection fan-in (`SourcedEvent::Tab` / `Closed`):
+                // its own channel so master events interleave fairly with
+                // sub-agent bursts instead of queueing FIFO behind them
+                // (#1470 review). All tabs share this arm — the select arm
+                // count stays constant as connections come and go (#1462).
+                Some(item) = self.tab_event_rx.recv() => {
+                    let render = self.route_sourced(item);
+                    self.apply_sourced_render(render, &mut stream_render_coalescer);
+                }
+                // Sub-agent fan-in (`SourcedEvent::Subagent`), fed by the
+                // per-subagent feed tasks.
+                Some(item) = self.subagents.event_rx.recv() => {
+                    let render = self.route_sourced(item);
+                    self.apply_sourced_render(render, &mut stream_render_coalescer);
                 }
                 Some((root, files)) = files_autocomplete_rx.recv() => {
                     files_autocomplete_load_in_flight = false;

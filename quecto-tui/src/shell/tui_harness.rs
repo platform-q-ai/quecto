@@ -30,6 +30,8 @@ use tokio::sync::mpsc;
 mod disconnect;
 #[path = "tui_harness_events.rs"]
 mod events;
+#[path = "tui_harness_sourced.rs"]
+mod sourced;
 // Re-export the scenario event builders so callers keep using
 // `tui_harness::subagent(..)` etc. `normalize` stays module-internal.
 pub use events::*;
@@ -39,9 +41,13 @@ const DEFAULT_HEIGHT: usize = 40;
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
-/// Build an App with a fixed terminal size and a dummy (drained) socket client,
-/// so the render path runs headlessly and deterministically.
-async fn headless_app(width: usize, height: usize) -> (App, mpsc::Receiver<String>) {
+/// Build an App with a fixed terminal size and a real socket "agent" endpoint
+/// (commands drained, events injectable), so the render path runs headlessly
+/// and deterministically.
+async fn headless_app(
+    width: usize,
+    height: usize,
+) -> (App, mpsc::Receiver<String>, mpsc::Sender<String>) {
     let n = SEQ.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!("quecto-tui-harness-{}-{}", std::process::id(), n));
     let _ = std::fs::remove_dir_all(&dir);
@@ -49,11 +55,12 @@ async fn headless_app(width: usize, height: usize) -> (App, mpsc::Receiver<Strin
     let socket_path = dir.join("agent.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
     let (cmd_tx, cmd_rx) = mpsc::channel(64);
-    events::spawn_command_reader(listener, cmd_tx);
+    let (event_line_tx, event_line_rx) = mpsc::channel(64);
+    events::spawn_agent_endpoint(listener, cmd_tx, Some(event_line_rx));
     let client = Client::connect(&socket_path).await.unwrap();
     let mut term = Terminal::new();
     term.set_size_for_tests(width, height);
-    (App::new(term, client), cmd_rx)
+    (App::new(term, client), cmd_rx, event_line_tx)
 }
 
 /// Frame-capturing harness over the real render path.
@@ -66,6 +73,9 @@ pub struct TuiHarness {
     /// chat-area transients (e.g. a tool result that flashes in and out).
     fulls: Vec<Vec<String>>,
     cmd_rx: mpsc::Receiver<String>,
+    /// Agent-side event-line injector for the REAL master socket (#1462).
+    /// `None` once the agent side has been closed for real.
+    agent_event_tx: Option<mpsc::Sender<String>>,
     /// Stream render coalescer driven by the event-loop-path helpers (#972).
     stream_coalescer: super::app_event_loop::StreamRenderCoalescer,
 }
@@ -76,13 +86,14 @@ impl TuiHarness {
     }
 
     pub async fn sized(width: usize, height: usize) -> Self {
-        let (app, cmd_rx) = headless_app(width, height).await;
+        let (app, cmd_rx, agent_event_tx) = headless_app(width, height).await;
         Self {
             app,
             width,
             bottoms: Vec::new(),
             fulls: Vec::new(),
             cmd_rx,
+            agent_event_tx: Some(agent_event_tx),
             stream_coalescer: super::app_event_loop::StreamRenderCoalescer::default(),
         }
     }
@@ -318,15 +329,21 @@ impl TuiHarness {
         self.notification_text()
     }
 
-    /// Replace the agent client with a disconnected one and drive the real
-    /// `send_command` path; on the expected send failure, route it through the
-    /// production `handle_command_send_failure` handler and return the
-    /// resulting error-notification text.
+    /// Replace the master connection with a disconnected one and drive the
+    /// real `send_command` path; on the expected send failure, route it
+    /// through the production `handle_command_send_failure` handler and
+    /// return the resulting error-notification text.
     pub async fn send_command_expecting_failure(
         &mut self,
         cmd: crate::protocol::client::Command,
     ) -> String {
-        self.app.client = Client::disconnected_for_tests();
+        // Abort the replaced connection's feed task so it cannot later
+        // inject a spurious `Closed` sentinel into the fan-in (#1470 review).
+        let old = std::mem::replace(
+            &mut self.app.connection,
+            crate::shell::connection::Connection::disconnected_for_tests(),
+        );
+        old.abort_feed();
         let _ = self.app.send_command(cmd);
         let failure = self
             .app
