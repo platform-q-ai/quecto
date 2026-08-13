@@ -30,7 +30,11 @@ fn arm_own_solicited_get_messages(h: &mut TuiHarness, id: &str) {
         h.app_mut().test_arm_attach_backfill(id);
     } else if id == "resume-messages" || id.starts_with("resume-messages-") {
         h.app_mut().test_arm_resume_messages(id);
-    } else if id == "rewind-refresh" || id.starts_with("rewind-refresh-") {
+    } else if id.trim_start_matches("tab0:") == "rewind-refresh"
+        || id
+            .trim_start_matches("tab0:")
+            .starts_with("rewind-refresh-")
+    {
         h.app_mut().test_arm_rewind_refresh(id);
     }
 }
@@ -876,9 +880,12 @@ fn then_rewind_message_requested(world: &mut TuiWorld) {
 fn then_rewind_refresh_sent(world: &mut TuiWorld) {
     let refresh = world.tui_last_commands.iter().any(|line| {
         json_field(line, "type").as_deref() == Some("get_messages")
-            && json_field(line, "id")
-                .as_deref()
-                .is_some_and(|id| id == "rewind-refresh" || id.starts_with("rewind-refresh-"))
+            && json_field(line, "id").as_deref().is_some_and(|id| {
+                id.trim_start_matches("tab0:") == "rewind-refresh"
+                    || id
+                        .trim_start_matches("tab0:")
+                        .starts_with("rewind-refresh-")
+            })
     });
     assert!(
         refresh,
