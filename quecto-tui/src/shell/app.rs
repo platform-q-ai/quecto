@@ -331,6 +331,8 @@ mod app_submit;
 mod app_time;
 #[path = "tab_lifecycle.rs"]
 mod tab_lifecycle;
+#[path = "workspace_resume.rs"]
+mod workspace_resume;
 use crate::agents::roster::{
     gc_exited_subagents, next_exited_subagent_gc_deadline, subagent_status_is_active,
 };

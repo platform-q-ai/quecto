@@ -186,22 +186,29 @@ impl App {
     // ── Resume selector ─────────────────────────────────────────────
 
     pub(super) fn open_resume_selector(&mut self, data: &serde_json::Value) {
+        self.open_resume_selector_at(
+            data,
+            &crate::shell::workspace_manifest::default_manifest_path(),
+        );
+    }
+
+    /// Testable resume selector open with an explicit manifest path (#1465 AC5).
+    pub(super) fn open_resume_selector_at(
+        &mut self,
+        data: &serde_json::Value,
+        manifest_path: &std::path::Path,
+    ) {
         let sessions = session_payloads::parse_resume_sessions(data);
-        if sessions.is_empty() {
-            let text = if session_payloads::has_session_entries(data) {
-                "No resumable CLI sessions found."
+        let empty_hint = if sessions.is_empty() {
+            if session_payloads::has_session_entries(data) {
+                Some("No resumable CLI sessions found.")
             } else {
-                "No persisted sessions found."
-            };
-            self.ac_mut()
-                .master_session
-                .chat
-                .add_entry(ChatEntry::Status {
-                    text: text.to_string(),
-                });
-            return;
-        }
-        let items = sessions
+                Some("No persisted sessions found.")
+            }
+        } else {
+            None
+        };
+        let session_items = sessions
             .into_iter()
             .map(|session| {
                 let when = session
@@ -209,18 +216,19 @@ impl App {
                     .map(format_unix_minutes)
                     .unwrap_or_else(|| "unknown time".to_string());
                 SelectItem {
-                    value: session.key,
+                    value: format!("session:{}", session.key),
                     label: session.title,
                     description: Some(format!("{when}   ({} msgs)", session.message_count)),
                 }
             })
             .collect::<Vec<_>>();
-        self.ac_mut().sessions.resume_selector = Some(SelectList::new(items, 10));
+        // AC5: workspaces above bare sessions.
+        self.open_resume_selector_with_workspaces(session_items, manifest_path, empty_hint);
     }
 
     pub(super) fn handle_resume_selector_key(&mut self, key: &Key) {
-        if let Some(session) = route_overlay_key(&mut self.ac_mut().sessions.resume_selector, key) {
-            self.send_resume_session(&session);
+        if let Some(choice) = route_overlay_key(&mut self.ac_mut().sessions.resume_selector, key) {
+            self.apply_resume_selection(&choice);
         }
     }
 

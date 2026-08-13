@@ -360,6 +360,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/tab_lifecycle.rs` | `shell` multi-tab open/switch/close + durability snapshot (#1465 P3) |
 | `shell/tab_registry.rs` | `shell` tab-agent registry sidecar (#1465 AC4) |
 | `shell/workspace_manifest.rs` | `shell` workspace tab-set manifest (#1465 AC4) |
+| `shell/workspace_resume.rs` | `shell` workspace-aware /resume restore (#1465 P4) |
 | `shell/stdin_buffer.rs` | `shell` stdin adapter/policy (relocated, #1257 Phase 6) |
 | `shell/terminal.rs` | `shell` terminal adapter (relocated, #1257 Phase 1) |
 | `shell/tool_policy.rs` | `shell` live tool/profile policy modal controller (#1334 PR 4) |

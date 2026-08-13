@@ -152,7 +152,12 @@ impl super::App {
     }
 
     /// Best-effort default-path durability write after lifecycle mutations.
+    /// Skipped under `cfg(test)` so unit tests do not pollute the operator
+    /// XDG data dir (and each other).
     fn maybe_persist_default_durability(&mut self) {
+        if cfg!(test) {
+            return;
+        }
         let workspace_id = "default";
         let registry_path = crate::shell::tab_registry::default_registry_path();
         let manifest_path = crate::shell::workspace_manifest::default_manifest_path();

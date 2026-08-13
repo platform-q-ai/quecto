@@ -1,0 +1,218 @@
+//! Workspace-aware `/resume` (#1465 P4 / AC5–AC6).
+//!
+//! Workspaces are listed above bare sessions. Selecting a workspace restores
+//! its tab set (placeholders + per-tab session resume where keys exist).
+//! Bare session selection and `/resume <key>` keep current-tab behaviour.
+
+use crate::components::notification::NotifyLevel;
+use crate::components::select_list::{SelectItem, SelectList};
+use crate::shell::connection::TabId;
+use crate::shell::tab_registry::unix_now_s;
+#[cfg(any(test, feature = "test-harness"))]
+use crate::shell::workspace_manifest::WorkspaceTabEntry;
+use crate::shell::workspace_manifest::{
+    WorkspaceManifest, WorkspaceManifestStore, default_manifest_path,
+};
+
+/// Value prefix for workspace rows in the resume selector.
+pub(crate) const WORKSPACE_RESUME_PREFIX: &str = "workspace:";
+/// Value prefix for bare session rows (optional; bare keys still accepted).
+pub(crate) const SESSION_RESUME_PREFIX: &str = "session:";
+
+impl super::App {
+    /// Merge durable workspaces above agent-listed sessions into the selector.
+    pub(super) fn open_resume_selector_with_workspaces(
+        &mut self,
+        session_items: Vec<SelectItem>,
+        manifest_path: &std::path::Path,
+        empty_status: Option<&str>,
+    ) {
+        let store = WorkspaceManifestStore::load(manifest_path);
+        let mut items: Vec<SelectItem> = store
+            .workspaces
+            .iter()
+            .map(|ws| SelectItem {
+                value: format!("{WORKSPACE_RESUME_PREFIX}{}", ws.workspace_id),
+                label: format!("workspace · {}", ws.workspace_id),
+                description: Some(format!(
+                    "{} tabs · active #{}",
+                    ws.tabs.len(),
+                    ws.active_index.saturating_add(1)
+                )),
+            })
+            .collect();
+        items.extend(session_items);
+        if items.is_empty() {
+            self.ac_mut().master_session.chat.add_entry(
+                crate::components::chat::ChatEntry::Status {
+                    text: empty_status
+                        .unwrap_or("No persisted sessions found.")
+                        .to_string(),
+                },
+            );
+            return;
+        }
+        self.ac_mut().sessions.resume_selector = Some(SelectList::new(items, 12));
+    }
+
+    /// Dispatch a resume-selector choice: workspace restore or current-tab session.
+    pub(super) fn apply_resume_selection(&mut self, raw: &str) {
+        if let Some(ws) = raw.strip_prefix(WORKSPACE_RESUME_PREFIX) {
+            self.restore_workspace(ws.trim());
+            return;
+        }
+        let session = raw
+            .strip_prefix(SESSION_RESUME_PREFIX)
+            .unwrap_or(raw)
+            .trim();
+        self.send_resume_session(session);
+    }
+
+    /// Restore a workspace tab set from the durable manifest (AC5/AC6 foundation).
+    ///
+    /// - Ensures one tab slot per manifest entry (reuses MASTER for index 0).
+    /// - Sets names; queues session resume on tabs that have keys (rehydrate path).
+    /// - Per-tab failures notify without aborting the rest of the restore.
+    pub(crate) fn restore_workspace(&mut self, workspace_id: &str) {
+        self.restore_workspace_from_path(workspace_id, &default_manifest_path());
+    }
+
+    pub(crate) fn restore_workspace_from_path(
+        &mut self,
+        workspace_id: &str,
+        manifest_path: &std::path::Path,
+    ) {
+        let store = WorkspaceManifestStore::load(manifest_path);
+        let Some(manifest) = store.get(workspace_id).cloned() else {
+            self.notify(
+                &format!("Unknown workspace '{workspace_id}'"),
+                NotifyLevel::Warning,
+            );
+            return;
+        };
+        self.apply_workspace_manifest(&manifest);
+    }
+
+    /// Apply an already-loaded workspace manifest to the tab collection.
+    pub(crate) fn apply_workspace_manifest(&mut self, manifest: &WorkspaceManifest) {
+        if manifest.tabs.is_empty() {
+            self.notify("Workspace has no tabs", NotifyLevel::Warning);
+            return;
+        }
+
+        // Ensure tab slots exist matching manifest order.
+        for (idx, entry) in manifest.tabs.iter().enumerate() {
+            let tab = TabId(entry.tab_id);
+            if idx == 0 && !self.tabs.contains_key(&tab) {
+                // Fall back to MASTER if ids don't match stored id 0.
+                let master = TabId::MASTER;
+                if let Some(state) = self.tabs.get_mut(&master) {
+                    state.name = entry.name.clone();
+                }
+                continue;
+            }
+            if !self.tabs.contains_key(&tab) {
+                let opened = self.open_placeholder_tab(entry.name.clone());
+                // open_placeholder allocates next id; if it doesn't match desired,
+                // rename map entry when possible.
+                if opened != tab {
+                    if let Some(mut state) = self.tabs.remove(&opened) {
+                        // Keep transport tab id aligned with map key.
+                        #[cfg(any(test, feature = "test-harness"))]
+                        state.transport.set_tab_for_tests(tab);
+                        state.name = entry.name.clone();
+                        self.tabs.insert(tab, state);
+                        if self.active_tab == opened {
+                            self.active_tab = tab;
+                        }
+                    }
+                } else if let Some(state) = self.tabs.get_mut(&tab) {
+                    state.name = entry.name.clone();
+                }
+            } else if let Some(state) = self.tabs.get_mut(&tab) {
+                state.name = entry.name.clone();
+            }
+        }
+
+        // Focus stored active tab when present.
+        let active_tab_id = manifest
+            .tabs
+            .get(manifest.active_index)
+            .map(|t| TabId(t.tab_id))
+            .filter(|t| self.tabs.contains_key(t))
+            .unwrap_or(TabId::MASTER);
+        let _ = self.switch_tab(active_tab_id);
+
+        // Queue per-tab session resumes without aborting on individual failure.
+        let resume_plan: Vec<(TabId, Option<String>)> = manifest
+            .tabs
+            .iter()
+            .map(|e| (TabId(e.tab_id), e.session_key.clone()))
+            .collect();
+        let mut failures = 0usize;
+        let mut resumed = 0usize;
+        for (tab, key) in resume_plan {
+            if !self.tabs.contains_key(&tab) {
+                failures += 1;
+                self.notify(
+                    &format!("workspace restore: missing tab {}", tab.0),
+                    NotifyLevel::Warning,
+                );
+                continue;
+            }
+            let _ = self.switch_tab(tab);
+            match key {
+                Some(session) if !session.trim().is_empty() => {
+                    if self.ac().agent_connected {
+                        self.send_resume_session(&session);
+                        resumed += 1;
+                    } else {
+                        // Rehydrate deferred: placeholder not live yet.
+                        failures += 1;
+                        self.ac_mut().master_session.chat.add_entry(
+                            crate::components::chat::ChatEntry::Status {
+                                text: format!(
+                                    "Tab {}: deferred resume of '{session}' (agent not connected)",
+                                    tab.0
+                                ),
+                            },
+                        );
+                    }
+                }
+                _ => {
+                    // No session key: leave placeholder / live tab as-is.
+                }
+            }
+        }
+
+        // Restore focus to workspace active tab after per-tab switches.
+        let _ = self.switch_tab(active_tab_id);
+        self.notify(
+            &format!(
+                "Workspace '{}' restored ({} resumed, {} deferred/failed)",
+                manifest.workspace_id, resumed, failures
+            ),
+            NotifyLevel::Info,
+        );
+        let _ = unix_now_s();
+    }
+
+    /// Test/helper: build a minimal in-memory workspace manifest.
+    #[cfg(any(test, feature = "test-harness"))]
+    pub fn test_workspace_manifest(
+        workspace_id: &str,
+        tabs: Vec<WorkspaceTabEntry>,
+        active_index: usize,
+    ) -> WorkspaceManifest {
+        WorkspaceManifest {
+            workspace_id: workspace_id.into(),
+            active_index,
+            tabs,
+            updated_unix_s: unix_now_s(),
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "workspace_resume_tests.rs"]
+mod workspace_resume_tests;

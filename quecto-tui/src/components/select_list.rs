@@ -41,6 +41,11 @@ impl SelectList {
         std::mem::replace(&mut self.result, SelectResult::Pending)
     }
 
+    #[cfg(test)]
+    pub fn items_for_tests(&self) -> &[SelectItem] {
+        &self.items
+    }
+
     pub fn selected_item(&self) -> Option<&SelectItem> {
         self.items.get(self.navigator.selected())
     }
