@@ -156,6 +156,19 @@ impl ModelRegistry {
                 record.max_tokens_explicit = true;
                 record.reasoning = true;
                 record.cost = cost;
+            } else if id == "grok-4.6" {
+                // xAI published specs: 500K context, $2/M in, $6/M out,
+                // $0.50/M cached input (docs.x.ai/developers/models/grok-4.6).
+                record.input = vec!["text".to_string(), "image".to_string()];
+                record.context_window = 500_000;
+                record.context_window_explicit = true;
+                record.reasoning = true;
+                record.cost = ModelCost {
+                    input: 2.0,
+                    output: 6.0,
+                    cache_read: 0.5,
+                    cache_write: 0.0,
+                };
             } else if id == "grok-4.5" {
                 // xAI published specs: 500K context, $2/M in, $6/M out
                 // (docs.x.ai/developers/grok-4-5).
@@ -169,12 +182,6 @@ impl ModelRegistry {
                     cache_read: 0.0,
                     cache_write: 0.0,
                 };
-            } else if id == "grok-4.3" {
-                // Deliberate: xAI has not published authoritative limits or
-                // pricing for grok-4.3 on the subscription OAuth surface, so
-                // only capabilities we are confident of are set; context
-                // window and cost keep conservative registry defaults.
-                record.reasoning = true;
             }
             r.upsert(record);
         }
@@ -269,8 +276,8 @@ impl ModelRegistry {
             AuthMode::OAuth,
             Some("xai"),
             &[
+                ("grok-4.6", "Grok 4.6 (SuperGrok OAuth)"),
                 ("grok-4.5", "Grok 4.5 (SuperGrok OAuth)"),
-                ("grok-4.3", "Grok 4.3 (SuperGrok OAuth)"),
             ],
         );
         group(
