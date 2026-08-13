@@ -41,6 +41,70 @@ impl App {
         }
         true
     }
+    /// Render the tab bar (#1466 decision 4/5): one line listing every open
+    /// tab as `N:name`, with the activity spinner while that tab's turn is in
+    /// flight and the unread dot when output arrived since it was last viewed.
+    /// `None` with a single tab, so single-tab frames stay byte-identical.
+    ///
+    /// Overflow (#1466 decision 5): when the strip is wider than the terminal
+    /// it scrolls so the ACTIVE tab stays visible — leading cells are dropped
+    /// behind a `‹` marker and a trailing `›` marks clipped cells on the right.
+    pub(super) fn render_tab_bar(&self, width: usize) -> Option<String> {
+        use crate::components::theme::{self, SPINNER_FRAMES};
+        let ids = self.ordered_tab_ids();
+        if ids.len() < 2 || width == 0 {
+            return None;
+        }
+        let mut cells: Vec<(String, usize)> = Vec::with_capacity(ids.len());
+        let mut active_idx = 0;
+        for (i, tab) in ids.iter().enumerate() {
+            let conn = self.conn_for(*tab)?;
+            let indicator = if self.tab_spinner_active(*tab) {
+                let frame = conn
+                    .spinner
+                    .as_ref()
+                    .map(|s| s.frame_index())
+                    .unwrap_or_default();
+                format!(" {}", SPINNER_FRAMES[frame % SPINNER_FRAMES.len()])
+            } else if self.tab_unread(*tab) {
+                " ●".to_string()
+            } else {
+                String::new()
+            };
+            let text = format!(" {}:{}{} ", i + 1, conn.display_name(), indicator);
+            let cell_width = crate::components::utils::visible_width(&text);
+            let styled = if *tab == self.active_tab {
+                active_idx = i;
+                theme::accent(&text)
+            } else {
+                theme::dim(&text)
+            };
+            cells.push((styled, cell_width));
+        }
+        // Scroll: drop leading cells until the active tab fits in the window.
+        let mut start = 0;
+        while start < active_idx
+            && cells[start..=active_idx].iter().map(|c| c.1).sum::<usize>() + 1 > width
+        {
+            start += 1;
+        }
+        let mut line = String::new();
+        let mut used = 0;
+        if start > 0 {
+            line.push_str(&theme::dim("‹"));
+            used += 1;
+        }
+        for (styled, cell_width) in &cells[start..] {
+            if used + cell_width > width {
+                line.push_str(&theme::dim("›"));
+                break;
+            }
+            line.push_str(styled);
+            used += cell_width;
+        }
+        Some(line)
+    }
+
     /// Spinner semantics (#1466 decision 4): a tab shows the spinner while its
     /// master turn is in flight.
     pub(crate) fn tab_spinner_active(&self, tab: crate::shell::connection::TabId) -> bool {

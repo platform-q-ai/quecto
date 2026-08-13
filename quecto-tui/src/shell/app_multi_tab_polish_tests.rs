@@ -571,3 +571,108 @@ async fn kitty_ctrl_shift_tab_alias_cycles_to_previous_tab() {
         "kitty Ctrl+Shift+Tab must cycle to the previous tab (wraps)"
     );
 }
+
+// ── Decision 4/5: the tab bar is USER-VISIBLE — indicators render in the frame ──
+
+fn plain_tab_bar(app: &App, width: usize) -> Option<String> {
+    app.render_tab_bar(width)
+        .map(|line| super::app_render_helpers::strip_ansi(&line))
+}
+
+#[tokio::test]
+async fn single_tab_renders_no_tab_bar_and_frame_stays_unchanged() {
+    let mut app = headless_app();
+    assert!(
+        app.render_tab_bar(80).is_none(),
+        "a single tab must not render a tab bar"
+    );
+    let first = super::app_render_helpers::strip_ansi(&app.compose_frame()[0]);
+    assert!(
+        first.contains("quecto-tui v"),
+        "single-tab frames must stay byte-identical (header first): {first:?}"
+    );
+}
+
+#[tokio::test]
+async fn tab_bar_renders_as_first_frame_line_with_ordinals_and_names() {
+    let mut app = two_tab_app();
+    let first = super::app_render_helpers::strip_ansi(&app.compose_frame()[0]);
+    assert!(
+        first.contains("1:") && first.contains("2:"),
+        "with 2+ tabs the first frame line must be the tab bar: {first:?}"
+    );
+}
+
+#[tokio::test]
+async fn tab_bar_shows_spinner_for_running_background_turn() {
+    let mut app = two_tab_app();
+    let mut coalescer = super::app_event_loop::StreamRenderCoalescer::default();
+    route_and_render(&mut app, &mut coalescer, 1, Event::AgentStart);
+    let bar = plain_tab_bar(&app, 80).expect("two tabs render a bar");
+    assert!(
+        crate::components::theme::SPINNER_FRAMES
+            .iter()
+            .any(|f| bar.contains(f)),
+        "a tab with a turn in flight must show the spinner in the tab bar: {bar:?}"
+    );
+    assert!(
+        !bar.contains('●'),
+        "spinner and unread dot are mutually exclusive per tab: {bar:?}"
+    );
+}
+
+#[tokio::test]
+async fn tab_bar_shows_unread_dot_after_backgrounded_turn_ends() {
+    let mut app = two_tab_app();
+    let mut coalescer = super::app_event_loop::StreamRenderCoalescer::default();
+    route_and_render(&mut app, &mut coalescer, 1, Event::AgentStart);
+    route_and_render(&mut app, &mut coalescer, 1, agent_end());
+    let bar = plain_tab_bar(&app, 80).expect("two tabs render a bar");
+    assert!(
+        bar.contains('●'),
+        "an unread tab must show the dot in the tab bar: {bar:?}"
+    );
+    assert!(
+        !crate::components::theme::SPINNER_FRAMES
+            .iter()
+            .any(|f| bar.contains(f)),
+        "an ended turn must not leave a spinner in the tab bar: {bar:?}"
+    );
+    // Switching to the tab clears the dot from the rendered bar too.
+    assert!(app.switch_tab(TabId(1)));
+    let bar = plain_tab_bar(&app, 80).expect("two tabs render a bar");
+    assert!(
+        !bar.contains('●'),
+        "viewing the tab must clear its dot from the tab bar: {bar:?}"
+    );
+}
+
+#[tokio::test]
+async fn tab_bar_overflow_scrolls_to_keep_active_tab_visible() {
+    let mut app = headless_app();
+    for i in 1..=8 {
+        app.test_insert_disconnected_tab(i);
+    }
+    // Focus the LAST tab; on a narrow strip the bar must scroll to it.
+    assert!(app.switch_tab(TabId(8)));
+    let bar = plain_tab_bar(&app, 20).expect("bar renders");
+    assert!(
+        bar.contains("9:"),
+        "overflow must scroll so the active tab stays visible: {bar:?}"
+    );
+    assert!(
+        bar.starts_with('‹'),
+        "clipped leading tabs must be marked with ‹: {bar:?}"
+    );
+    // Focus the FIRST tab again: the head is visible, the tail is clipped.
+    assert!(app.switch_tab(TabId::MASTER));
+    let bar = plain_tab_bar(&app, 20).expect("bar renders");
+    assert!(
+        bar.contains("1:") && !bar.starts_with('‹'),
+        "with the first tab active the strip anchors left: {bar:?}"
+    );
+    assert!(
+        bar.ends_with('›'),
+        "clipped trailing tabs must be marked with ›: {bar:?}"
+    );
+}

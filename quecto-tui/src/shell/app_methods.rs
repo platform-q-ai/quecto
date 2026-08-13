@@ -414,6 +414,12 @@ impl App {
 
         let mut lines = Vec::new();
 
+        // Tab bar (#1466): only with 2+ tabs, so single-tab frames are
+        // byte-identical to the pre-tab layout.
+        if let Some(tab_bar) = self.render_tab_bar(width) {
+            lines.push(tab_bar);
+        }
+
         // ── Render bottom section first to know its height ──────────
         let bottom = self.compose_bottom(width);
         let bottom_height = bottom.len();
