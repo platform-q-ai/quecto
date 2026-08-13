@@ -13,22 +13,22 @@ use super::socket_path::{canonical_allowed_socket_roots, canonicalize_socket_roo
 
 /// Parsed CLI flags for quecto-tui.
 pub(crate) struct CliFlags {
-    socket_path: Option<PathBuf>,
-    no_sandbox: bool,
-    workflow: bool,
-    workflow_guards: bool,
-    workflow_disabled: bool,
-    config_path: Option<PathBuf>,
-    system_prompt: Option<String>,
+    pub(crate) socket_path: Option<PathBuf>,
+    pub(crate) no_sandbox: bool,
+    pub(crate) workflow: bool,
+    pub(crate) workflow_guards: bool,
+    pub(crate) workflow_disabled: bool,
+    pub(crate) config_path: Option<PathBuf>,
+    pub(crate) system_prompt: Option<String>,
     /// Tool names to forward to the spawned coordinator as `--disable-tool <name>`
     /// (repeatable). Empty means none are disabled (#957 TUI forward fix).
-    disable_tools: Vec<String>,
+    pub(crate) disable_tools: Vec<String>,
     /// Spawn tab agents with `--persist` (ADR-0023 / #1465). Default true when
     /// the TUI owns the child; ignored for `--socket` attach.
-    persist: bool,
+    pub(crate) persist: bool,
     /// When true, terminate owned child agents on TUI exit. Default false
     /// (detach-on-exit). `--kill-on-exit` restores legacy teardown.
-    kill_on_exit: bool,
+    pub(crate) kill_on_exit: bool,
 }
 
 pub fn run(args: Vec<String>) -> i32 {
@@ -165,21 +165,7 @@ fn apply_workflow_defaults(flags: &mut CliFlags) {
     }
 }
 
-/// Flags for a secondary tab agent spawn (persistent by default, #1465).
-pub(crate) fn tab_spawn_flags(_resume_session: Option<String>) -> CliFlags {
-    CliFlags {
-        socket_path: None,
-        no_sandbox: false,
-        workflow: false,
-        workflow_guards: false,
-        workflow_disabled: false,
-        config_path: None,
-        system_prompt: None,
-        disable_tools: Vec::new(),
-        persist: true,
-        kill_on_exit: false,
-    }
-}
+pub(crate) use super::tab_spawn_policy::{TabSpawnPolicy, tab_spawn_flags_from_policy};
 
 /// Spawn a secondary tab agent and return socket path + child + stderr tail.
 pub(crate) async fn spawn_agent_for_tab(
@@ -198,6 +184,8 @@ pub(crate) async fn spawn_agent_for_tab(
 
 /// Main async entry point.
 async fn run_tui(flags: CliFlags) -> i32 {
+    // Capture spawn policy before any partial moves out of `flags` (F8).
+    let tab_spawn_policy = TabSpawnPolicy::from_flags(&flags);
     // For a TUI-owned child, the #1047 exit watcher takes ownership of the
     // `Child` (so it can reap it and record an exit diagnosis for the
     // disconnect notification). Termination also goes through the watcher —
@@ -285,12 +273,18 @@ async fn run_tui(flags: CliFlags) -> i32 {
     // Run the TUI.
     let terminal = crate::shell::terminal::Terminal::new();
     let mut app = crate::shell::app::App::new(terminal, client);
+    app.tab_spawn_policy = Some(tab_spawn_policy);
     app.ac_mut().socket_path = Some(socket.clone()); // AC4 durability
     if let Some(watch) = &child_watch {
         app.ac_mut().child_pid = watch.pid();
         app.set_child_exit_watch(watch.clone());
     }
+    // Master ready: capture initial durability snapshot (F3).
+    app.persist_default_durability();
     let exit_code = app.run().await;
+
+    // Clean exit: flush registry/manifest before teardown (F3).
+    app.persist_default_durability();
 
     // Detach-on-exit by default (ADR-0023); `--kill-on-exit` terminates every tab child.
     if flags.kill_on_exit {

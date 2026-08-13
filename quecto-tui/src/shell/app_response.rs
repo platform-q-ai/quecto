@@ -500,13 +500,17 @@ impl App {
         }
         // Learn the connected agent's own id from its sessionKey ("cli:<name>").
         if let Some(key) = snap.session_key.as_deref() {
-            // Durable key for workspace/registry snapshots (AC4/AC5).
+            // Durable key for workspace/registry snapshots (AC4/AC5 / F3).
+            let changed = self.ac().session_key.as_deref() != Some(key);
             self.ac_mut().session_key = Some(key.to_string());
             let name = key.rsplit(':').next().unwrap_or("");
             self.ac_mut().connected_agent_id = match name {
                 "" | "default" => None,
                 other => Some(crate::components::ansi::sanitize_control(other)),
             };
+            if changed {
+                self.persist_default_durability();
+            }
         }
         if let Some(wf) = snap.workflow.as_ref() {
             self.ac_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(wf);

@@ -212,3 +212,135 @@ fn open_tab_records_spawn_intent_not_dead_placeholder_only() {
         "AC1/AC2: /tab-new must start a non-blocking live agent attach path, not only a dead placeholder"
     );
 }
+
+#[test]
+fn stale_attach_outcome_is_rejected_after_close() {
+    let mut a = app();
+    let tab = a.open_placeholder_tab(None);
+    a.mark_tab_pending_attach(tab);
+    let generation = a.bump_attach_generation(tab);
+    assert_ne!(generation, 0);
+    a.close_tab(tab, false).unwrap();
+    // Recycle the same numeric id with a fresh generation.
+    let tab2 = a.open_placeholder_tab(None);
+    assert_eq!(tab2, tab, "allocator reuses lowest free id");
+    a.mark_tab_pending_attach(tab2);
+    let generation2 = a.bump_attach_generation(tab2);
+    assert_ne!(generation2, generation);
+    // Stale outcome from the closed tab must not attach into the new occupant.
+    a.apply_tab_attach_outcome(super::TabAttachOutcome {
+        tab: tab2,
+        generation,
+        result: Err("stale".into()),
+        child_watch: None,
+    });
+    assert_eq!(a.conn_for(tab2).unwrap().attach_generation, generation2);
+    assert!(
+        a.conn_for(tab2).unwrap().pending_attach,
+        "F2: stale outcome must not clear the recycled tab's pending_attach"
+    );
+}
+
+#[test]
+fn attach_connection_does_not_steal_focus() {
+    let mut a = app();
+    let t1 = a.open_placeholder_tab(None);
+    a.switch_tab(TabId::MASTER);
+    assert_eq!(a.active_tab, TabId::MASTER);
+    let conn = crate::shell::connection::Connection::placeholder(t1);
+    a.attach_connection_to_tab(t1, conn, None);
+    assert_eq!(
+        a.active_tab,
+        TabId::MASTER,
+        "F9: background attach must not steal focus after user navigated away"
+    );
+    assert!(a.conn_for(t1).unwrap().agent_connected);
+}
+
+#[test]
+fn switch_tab_clears_open_pending_and_swaps_editor_draft() {
+    let mut a = app();
+    let t1 = a.open_placeholder_tab(None);
+    a.editor.set_text("draft-t1");
+    a.inference.model_registry.open_pending = true;
+    a.switch_tab(TabId::MASTER);
+    assert!(
+        !a.inference.model_registry.open_pending,
+        "F10: switch must clear global open_pending"
+    );
+    assert_eq!(a.editor.text(), "", "master starts empty");
+    a.editor.set_text("draft-master");
+    a.switch_tab(t1);
+    assert_eq!(
+        a.editor.text(),
+        "draft-t1",
+        "F11: per-tab editor draft restored"
+    );
+}
+
+#[test]
+fn pending_attach_queues_prompt_not_disconnect_refusal() {
+    let mut a = app();
+    let tab = a.open_placeholder_tab(None);
+    a.mark_tab_pending_attach(tab);
+    a.handle_submit("hello while connecting");
+    let status = a
+        .ac()
+        .master_session
+        .chat
+        .last_status_text()
+        .unwrap_or("")
+        .to_lowercase();
+    assert!(
+        !status.contains("restart"),
+        "F7: must not show disconnected/restart UX while connecting: {status}"
+    );
+    assert!(
+        status.contains("connecting"),
+        "F7: connecting UX expected: {status}"
+    );
+    assert_eq!(
+        a.ac().queued_prompts,
+        vec!["hello while connecting".to_string()]
+    );
+}
+
+#[test]
+fn tab_close_help_says_terminate_not_detach() {
+    let cmds = super::super::builtin_commands();
+    let close = cmds
+        .iter()
+        .find(|c| c.name == "tab-close")
+        .expect("tab-close");
+    assert!(
+        close.description.to_lowercase().contains("terminate"),
+        "F12: help must say terminate: {}",
+        close.description
+    );
+    assert!(
+        !close.description.to_lowercase().contains("detach"),
+        "F12: help must not say detach: {}",
+        close.description
+    );
+}
+
+#[test]
+fn single_resume_path_after_attach() {
+    let mut a = app();
+    let tab = a.open_placeholder_tab(None);
+    a.conn_mut(tab).unwrap().pending_session_resume = Some("sess-x".into());
+    let (live, mut rx) = crate::shell::connection::Connection::live_for_tests();
+    a.attach_connection_to_tab(tab, live, None);
+    // Drain any commands; resume must appear exactly once.
+    let mut resumes = 0;
+    while let Ok(line) = rx.try_recv() {
+        if line.contains("resume_session") {
+            resumes += 1;
+        }
+    }
+    assert_eq!(resumes, 1, "F6: exactly one resume_session after attach");
+    assert!(
+        a.conn_for(tab).unwrap().pending_session_resume.is_none(),
+        "pending latch cleared"
+    );
+}

@@ -359,6 +359,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/socket_path.rs` | `shell` shared socket-path validation policy for every connect (#1460) |
 | `shell/tab_lifecycle.rs` | `shell` multi-tab open/switch/close + durability snapshot (#1465 P3) |
 | `shell/tab_registry.rs` | `shell` tab-agent registry sidecar (#1465 AC4) |
+| `shell/tab_spawn_policy.rs` | `shell` parent CLI policy inherited by secondary tab spawns (#1465 F8) |
 | `shell/workspace_manifest.rs` | `shell` workspace tab-set manifest (#1465 AC4) |
 | `shell/workspace_resume.rs` | `shell` workspace-aware /resume restore (#1465 P4) |
 | `shell/stdin_buffer.rs` | `shell` stdin adapter/policy (relocated, #1257 Phase 6) |

@@ -169,6 +169,30 @@ impl App {
             return;
         }
 
+        // Pending attach: queue the prompt with connecting UX — not a dead
+        // disconnect refusal that tells the user to restart (F7 / AC2).
+        if self.ac().pending_attach || self.tab_has_pending_attach(self.active_tab) {
+            self.ac_mut()
+                .master_session
+                .chat
+                .add_entry_follow_tail(ChatEntry::User {
+                    text: text.to_string(),
+                });
+            self.ac_mut().queued_prompts.push(text.to_string());
+            self.ac_mut()
+                .master_session
+                .chat
+                .add_entry(ChatEntry::Status {
+                    text: "Connecting… prompt queued and will send when the agent is ready."
+                        .to_string(),
+                });
+            self.notify(
+                "Connecting… prompt queued",
+                crate::components::notification::NotifyLevel::Info,
+            );
+            return;
+        }
+
         // The composed text always lands in the chat (the editor was
         // already emptied by take_submit) — on a dead connection it is the
         // only surviving copy (#1470 r3/r6, single add site).
@@ -186,6 +210,11 @@ impl App {
             self.note_disconnected_refusal();
             return;
         }
+        self.dispatch_master_user_text(text);
+    }
+
+    /// Send a master-session user message (Prompt or FollowUp) after connect.
+    pub(crate) fn dispatch_master_user_text(&mut self, text: &str) {
         let cmd = if self.ac().agent_state.is_running() {
             Command::FollowUp {
                 id: None,
@@ -199,6 +228,20 @@ impl App {
             }
         };
         self.send_command(cmd);
+    }
+
+    /// Deliver prompts queued while the active tab was still connecting (F7).
+    pub(crate) fn flush_queued_prompts(&mut self) {
+        let queued = std::mem::take(&mut self.ac_mut().queued_prompts);
+        for text in queued {
+            if !self.ac().agent_connected {
+                // Re-queue remainder if the connection dropped mid-flush.
+                self.ac_mut().queued_prompts.push(text);
+                break;
+            }
+            // Chat already recorded the User entry at queue time — only send.
+            self.dispatch_master_user_text(&text);
+        }
     }
 
     // ── Abort handling (bug fix) ──────────────────────────────────────

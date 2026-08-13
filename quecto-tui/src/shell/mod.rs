@@ -16,6 +16,7 @@ pub mod signals;
 pub(crate) mod socket_path;
 pub mod stdin_buffer;
 pub(crate) mod tab_registry;
+pub(crate) mod tab_spawn_policy;
 pub mod terminal;
 /// Shared test-only `tracing` warn-capture apparatus (#1112 review): used by
 /// the client defence unit tests and the workspace `bdd` target.

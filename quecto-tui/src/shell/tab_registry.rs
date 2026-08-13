@@ -177,6 +177,11 @@ fn socket_path_present(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// True when `path` exists and is a unix-domain socket file (AC6 stale probe).
+pub fn socket_path_is_live(path: &Path) -> bool {
+    !path.as_os_str().is_empty() && socket_path_present(path)
+}
+
 #[cfg(test)]
 #[path = "tab_registry_tests.rs"]
 mod tab_registry_tests;

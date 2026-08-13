@@ -225,7 +225,10 @@ impl super::App {
         }
     }
 
-    /// Apply deferred `/resume` once the active connection is live (AC6).
+    /// Apply deferred `/resume` once the active connection is live (AC6 / F6).
+    ///
+    /// Single send path: clears the pending latch before enqueue so attach
+    /// startup and this helper cannot double-fire `resume_session`.
     pub(crate) fn try_apply_pending_session_resume(&mut self) {
         let Some(session) = self.ac_mut().pending_session_resume.take() else {
             return;
@@ -234,7 +237,9 @@ impl super::App {
             self.ac_mut().pending_session_resume = Some(session);
             return;
         }
+        self.ac_mut().session_key = Some(session.clone());
         self.send_resume_session(&session);
+        self.persist_default_durability();
     }
 
     /// Test/helper: build a minimal in-memory workspace manifest.

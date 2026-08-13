@@ -38,7 +38,7 @@ static BUILTIN_COMMANDS: LazyLock<Vec<SlashCommand>> = LazyLock::new(|| {
         },
         SlashCommand {
             name: "tab-close".into(),
-            description: "Close the active tab (detach agent)".into(),
+            description: "Close active tab (terminate agent)".into(),
         },
         SlashCommand {
             name: "tab-next".into(),

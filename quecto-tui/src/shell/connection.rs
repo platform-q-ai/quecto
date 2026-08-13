@@ -70,14 +70,17 @@ pub(crate) struct Connection {
     /// Shared handle to the reader's oversized-drop counter (#1047), kept
     /// observable after the client moves into the feed task.
     dropped_oversized: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    /// The feed task owning the client, when one was spawned. Held so the
-    /// harness can abort it when it swaps this connection out — otherwise
-    /// the orphaned task keeps the real socket and injects a spurious
-    /// `Closed` sentinel into the fan-in later (#1470 review).
-    // Read only by the harness's `abort_feed`; in production the task runs
-    // for the connection's whole life and exits with the process.
-    #[cfg_attr(not(any(test, feature = "test-harness")), allow(dead_code))]
+    /// The feed task owning the client, when one was spawned. Held so drop /
+    /// replace can abort it — otherwise the orphaned task keeps the real
+    /// socket and injects a spurious `Closed` sentinel into the fan-in later
+    /// (#1470 / #1465 F1: TabId reuse would poison the next occupant).
     feed_task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        self.abort_feed();
+    }
 }
 
 impl Connection {
@@ -154,11 +157,9 @@ impl Connection {
         self.set_tab(tab);
     }
 
-    /// Test-only: abort the feed task owning the client. Harness paths that
-    /// swap this connection out for a disconnected stub MUST call this on
-    /// the replaced connection, or the orphaned task later injects a
-    /// spurious `Closed` sentinel the swap semantics never implied.
-    #[cfg(any(test, feature = "test-harness"))]
+    /// Abort the feed task owning the client. Called from [`Drop`] and by
+    /// harness paths that swap the connection out — otherwise an orphaned
+    /// task later injects a spurious `Closed` sentinel (#1465 F1).
     pub(crate) fn abort_feed(&self) {
         if let Some(task) = &self.feed_task {
             task.abort();

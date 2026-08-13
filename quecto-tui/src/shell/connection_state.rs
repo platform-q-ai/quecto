@@ -50,6 +50,14 @@ pub(crate) struct ConnectionState {
     pub(crate) pending_session_resume: Option<String>,
     /// True while a background spawn/reattach for this tab is in flight (AC2).
     pub(crate) pending_attach: bool,
+    /// Generation stamped when the current attach/spawn was kicked; outcomes
+    /// with a mismatched generation are rejected so close→reopen cannot attach
+    /// the wrong agent into a recycled TabId (#1465 F2).
+    pub(crate) attach_generation: u64,
+    /// Draft text composed while this tab was focused (swapped on tab switch).
+    pub(crate) editor_draft: String,
+    /// Prompts typed while attach was still pending; flushed after connect.
+    pub(crate) queued_prompts: Vec<String>,
     /// Oversized-event drops already surfaced as a notification, so each is
     /// reported exactly once (#1047).
     pub(crate) surfaced_oversized_drops: u64,
@@ -118,6 +126,9 @@ impl ConnectionState {
             session_key: None,
             pending_session_resume: None,
             pending_attach: false,
+            attach_generation: 0,
+            editor_draft: String::new(),
+            queued_prompts: Vec::new(),
             surfaced_oversized_drops: 0,
             disconnect_diag_pending: false,
             disconnect_refusal_notified: false,
@@ -249,5 +260,8 @@ impl App {
         self.tool_policy_modal_pending_catalogue_id = None;
         self.inference.model_selector = None;
         self.inference.effort_selector = None;
+        // Global model-selector open latch must not fire on the newly focused
+        // tab after a switch (#1465 F10).
+        self.inference.model_registry.open_pending = false;
     }
 }

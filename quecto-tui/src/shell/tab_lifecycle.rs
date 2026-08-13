@@ -11,6 +11,10 @@ use crate::shell::workspace_manifest::{
 
 impl super::App {
     /// Allocate the next free numeric tab id (monotonic, skips occupied).
+    ///
+    /// Ids with an in-flight attach are treated as occupied even after the
+    /// map entry is gone only via generation rejection; here we still skip
+    /// currently present keys (#1465 F2).
     pub(crate) fn allocate_tab_id(&self) -> TabId {
         let mut n = self
             .tabs
@@ -23,6 +27,16 @@ impl super::App {
             n = n.saturating_add(1);
         }
         TabId(n)
+    }
+
+    /// Mint a new attach generation for the next spawn/reattach of `tab`.
+    pub(crate) fn bump_attach_generation(&mut self, tab: TabId) -> u64 {
+        let generation = self.next_attach_generation;
+        self.next_attach_generation = self.next_attach_generation.saturating_add(1);
+        if let Some(c) = self.conn_mut(tab) {
+            c.attach_generation = generation;
+        }
+        generation
     }
 
     /// Open a connecting placeholder tab and focus it (AC2).
@@ -61,25 +75,37 @@ impl super::App {
 
     /// Background-spawn (or reattach) a persistent agent for `tab` and deliver
     /// the result on the tab-attach channel (AC1/AC2/AC6).
-    pub(crate) fn spawn_tab_agent_attach(&self, tab: TabId, resume_session: Option<String>) {
+    pub(crate) fn spawn_tab_agent_attach(&mut self, tab: TabId, resume_session: Option<String>) {
         let Some(tx) = self.tab_attach_tx.clone() else {
             return;
         };
-        // Prefer reattach when the tab already knows a live socket.
+        let generation = self.bump_attach_generation(tab);
+        // Prefer reattach only when the tab already knows a *live* socket.
+        // Stale registry paths must fall through to spawn+resume (AC6 / F5).
         let existing_socket = self
             .conn_for(tab)
             .and_then(|c| c.socket_path.clone())
-            .filter(|p| !p.as_os_str().is_empty());
+            .filter(|p| crate::shell::tab_registry::socket_path_is_live(p));
+        let policy = self.tab_spawn_policy.clone().unwrap_or_default();
         // Unit tests may call lifecycle helpers without a running runtime; the
         // pending_attach flag is still set by the caller for AC1/AC2 coverage.
         if tokio::runtime::Handle::try_current().is_err() {
             return;
         }
         tokio::spawn(async move {
-            let outcome = match existing_socket {
-                Some(path) => attach_existing_socket(tab, path).await,
-                None => spawn_and_attach_new_agent(tab, resume_session).await,
+            let mut outcome = match existing_socket {
+                Some(path) => {
+                    let out = attach_existing_socket(tab, path).await;
+                    // Dead/stale socket: Tier-2 spawn + resume_session (AC6).
+                    if out.result.is_err() {
+                        spawn_and_attach_new_agent(tab, resume_session, policy).await
+                    } else {
+                        out
+                    }
+                }
+                None => spawn_and_attach_new_agent(tab, resume_session, policy).await,
             };
+            outcome.generation = generation;
             let _ = tx.send(outcome).await;
         });
     }
@@ -87,8 +113,12 @@ impl super::App {
     /// Apply a successful/failed tab attach on the event loop (AC2).
     pub(crate) fn apply_tab_attach_outcome(&mut self, outcome: TabAttachOutcome) {
         let tab = outcome.tab;
-        if !self.tabs.contains_key(&tab) {
-            // Tab closed while spawning — terminate any owned child we got back.
+        let stale = match self.conn_for(tab) {
+            None => true,
+            Some(c) => c.attach_generation != outcome.generation,
+        };
+        if stale {
+            // Tab closed or recycled while spawning — terminate any owned child.
             if let Some(watch) = outcome.child_watch {
                 if tokio::runtime::Handle::try_current().is_ok() {
                     tokio::spawn(async move {
@@ -103,10 +133,15 @@ impl super::App {
         }
         match outcome.result {
             Ok(ready) => {
-                let pending_resume = self
-                    .conn_for(tab)
-                    .and_then(|c| c.pending_session_resume.clone())
-                    .or(ready.resume_session.clone());
+                // Keep deferred resume on the tab; attach_connection_to_tab
+                // applies it once via try_apply_pending_session_resume (F6).
+                if let Some(session) = ready.resume_session.clone() {
+                    if let Some(c) = self.conn_mut(tab) {
+                        if c.pending_session_resume.is_none() {
+                            c.pending_session_resume = Some(session);
+                        }
+                    }
+                }
                 let event_tx = match self.tab_event_tx.clone() {
                     Some(tx) => tx,
                     None => {
@@ -126,18 +161,14 @@ impl super::App {
                     }
                 }
                 self.attach_connection_to_tab(tab, transport, ready.child_watch);
-                if let Some(session) = pending_resume {
-                    if let Some(c) = self.conn_mut(tab) {
-                        c.pending_session_resume = None;
-                    }
-                    let _ = self.with_routing_tab(tab, |app| {
-                        app.send_resume_session(&session);
-                    });
-                } else {
-                    let _ = self.with_routing_tab(tab, |app| {
-                        app.request_master_attach_backfill();
-                    });
-                }
+                // Per-tab startup (GetState + roster + history), not master-only (F4).
+                let _ = self.with_routing_tab(tab, |app| {
+                    app.send_startup_requests();
+                });
+                // Flush prompts queued while connecting (F7) via submit helper.
+                let _ = self.with_routing_tab(tab, |app| {
+                    app.flush_queued_prompts();
+                });
                 self.notify(&format!("Tab {} connected", tab.0), NotifyLevel::Success);
                 self.persist_default_durability();
             }
@@ -181,8 +212,19 @@ impl super::App {
         if self.active_tab == tab {
             return true;
         }
+        // Park the active editor draft on the leaving tab; restore the target's (F11).
+        let leaving = self.active_tab;
+        let draft = self.editor.text();
+        if let Some(c) = self.conn_mut(leaving) {
+            c.editor_draft = draft;
+        }
         self.close_tab_switch_overlays();
         self.active_tab = tab;
+        let restore = self
+            .conn_for(tab)
+            .map(|c| c.editor_draft.clone())
+            .unwrap_or_default();
+        self.editor.set_text(&restore);
         // Panel cursor/key live on App-global SubagentUi; resync to the newly
         // focused tab's roster so a prior tab's selection cannot stick (review).
         self.subagents.panel_nav_key = None;
@@ -234,13 +276,28 @@ impl super::App {
         } else {
             ids.get(1).copied().unwrap_or(TabId::MASTER)
         };
+        // Invalidate in-flight attach outcomes before remove so a recycled id
+        // cannot accept a stale spawn (F2). Feed abort happens via Connection Drop (F1).
+        if let Some(c) = self.conn_mut(tab) {
+            c.attach_generation = 0;
+            c.pending_attach = false;
+            c.transport.abort_feed();
+        }
         let mut state = self.tabs.remove(&tab).expect("tab present");
         let watch = state.child_exit_watch.take();
         if self.active_tab == tab {
+            // Restore fallback draft without parking closed-tab text onto it.
+            self.editor.set_text(
+                &self
+                    .conn_for(fallback)
+                    .map(|c| c.editor_draft.clone())
+                    .unwrap_or_default(),
+            );
             self.active_tab = fallback;
             self.subagents.panel_nav_key = None;
             self.subagents.panel_nav.set_selected(0);
             self.sync_panel_selection_to_active();
+            self.inference.model_registry.open_pending = false;
         }
         self.routing_tab_override = self.routing_tab_override.filter(|t| *t != tab);
         self.persist_default_durability();
@@ -270,16 +327,16 @@ impl super::App {
         let Some(state) = self.tabs.get_mut(&tab) else {
             return;
         };
+        // Abort prior feed before overwrite (Drop also aborts; explicit is clearer).
+        state.transport.abort_feed();
         state.transport = transport;
         state.child_exit_watch = child_watch;
         state.agent_connected = true;
         state.agent_ever_connected = true;
         state.pending_attach = false;
         state.started_at = tokio::time::Instant::now();
-        if self.active_tab != tab {
-            self.switch_tab(tab);
-        }
-        // AC6: if restore deferred a session key while offline, apply it now.
+        // Do not steal focus if the user already navigated away (F9).
+        // AC6: if restore deferred a session key while offline, apply it once.
         let _ = self.with_routing_tab(tab, |app| {
             app.try_apply_pending_session_resume();
         });
@@ -393,6 +450,8 @@ impl super::App {
 /// Result delivered from a background tab spawn/reattach task.
 pub(crate) struct TabAttachOutcome {
     pub(crate) tab: TabId,
+    /// Must match the tab's `attach_generation` or the outcome is rejected (F2).
+    pub(crate) generation: u64,
     pub(crate) result: Result<TabAttachReady, String>,
     pub(crate) child_watch: Option<crate::shell::child_watch::ChildWatch>,
 }
@@ -417,6 +476,7 @@ async fn attach_existing_socket(tab: TabId, path: std::path::PathBuf) -> TabAtta
                 Err(e2) => {
                     return TabAttachOutcome {
                         tab,
+                        generation: 0,
                         result: Err(format!("reattach {path:?}: {e}; legacy: {e2}")),
                         child_watch: None,
                     };
@@ -426,6 +486,7 @@ async fn attach_existing_socket(tab: TabId, path: std::path::PathBuf) -> TabAtta
     };
     TabAttachOutcome {
         tab,
+        generation: 0,
         result: Ok(TabAttachReady {
             client,
             socket_path: path,
@@ -441,8 +502,9 @@ async fn attach_existing_socket(tab: TabId, path: std::path::PathBuf) -> TabAtta
 async fn spawn_and_attach_new_agent(
     tab: TabId,
     resume_session: Option<String>,
+    policy: crate::shell::cli::TabSpawnPolicy,
 ) -> TabAttachOutcome {
-    let flags = crate::shell::cli::tab_spawn_flags(resume_session.clone());
+    let flags = crate::shell::cli::tab_spawn_flags_from_policy(&policy, resume_session.clone());
     match crate::shell::cli::spawn_agent_for_tab(&flags).await {
         Ok((path, child, stderr_tail, announced)) => {
             let pid = child.id();
@@ -457,6 +519,7 @@ async fn spawn_and_attach_new_agent(
             match client {
                 Ok(c) => TabAttachOutcome {
                     tab,
+                    generation: 0,
                     child_watch: Some(watch.clone()),
                     result: Ok(TabAttachReady {
                         client: c,
@@ -471,6 +534,7 @@ async fn spawn_and_attach_new_agent(
                     watch.terminate().await;
                     TabAttachOutcome {
                         tab,
+                        generation: 0,
                         result: Err(format!("connect after spawn: {e}")),
                         child_watch: None,
                     }
@@ -479,6 +543,7 @@ async fn spawn_and_attach_new_agent(
         }
         Err(e) => TabAttachOutcome {
             tab,
+            generation: 0,
             result: Err(e),
             child_watch: None,
         },

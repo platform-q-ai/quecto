@@ -114,6 +114,10 @@ pub struct App {
     /// Background tab spawn/reattach results (#1465).
     pub(super) tab_attach_tx: Option<mpsc::Sender<tab_lifecycle::TabAttachOutcome>>,
     pub(super) tab_attach_rx: mpsc::Receiver<tab_lifecycle::TabAttachOutcome>,
+    /// Monotonic attach epoch so recycled TabIds reject stale spawn outcomes (#1465 F2).
+    pub(super) next_attach_generation: u64,
+    /// Parent CLI policy inherited by secondary tab spawns (#1465 F8).
+    pub(crate) tab_spawn_policy: Option<crate::shell::cli::TabSpawnPolicy>,
 }
 
 /// Id of the TUI's single (master) agent connection. With one replicant
@@ -193,6 +197,8 @@ impl App {
             tab_event_tx: Some(tab_event_tx),
             tab_attach_tx: Some(tab_attach_tx),
             tab_attach_rx,
+            next_attach_generation: 1,
+            tab_spawn_policy: None,
         }
     }
 
