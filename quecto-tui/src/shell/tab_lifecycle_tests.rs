@@ -100,3 +100,115 @@ fn attach_connection_marks_tab_connected() {
     assert!(a.conn_for(tab).unwrap().agent_connected);
     assert_eq!(a.active_tab, tab);
 }
+
+#[test]
+fn registry_snapshot_includes_live_socket_pid_and_session_key() {
+    let mut a = app();
+    let tab = a.open_placeholder_tab(Some("worker".into()));
+    let state = a.conn_mut(tab).unwrap();
+    state.agent_connected = true;
+    state.socket_path = Some(std::path::PathBuf::from("/tmp/quecto-tab-1.sock"));
+    state.session_key = Some("cli:worker-1".into());
+    state.child_pid = Some(4242);
+    let reg = a.registry_snapshot(Some("ws"));
+    let record = reg
+        .agents
+        .iter()
+        .find(|r| r.tab_id == tab.0)
+        .expect("tab record");
+    assert_eq!(record.pid, Some(4242));
+    assert_eq!(
+        record.socket_path,
+        std::path::PathBuf::from("/tmp/quecto-tab-1.sock")
+    );
+    assert_eq!(record.session_key.as_deref(), Some("cli:worker-1"));
+    let man = a.workspace_manifest_snapshot("ws");
+    let entry = man.tabs.iter().find(|t| t.tab_id == tab.0).unwrap();
+    assert_eq!(entry.session_key.as_deref(), Some("cli:worker-1"));
+}
+
+#[test]
+fn close_tab_with_kill_returns_child_watch_for_terminate() {
+    let mut a = app();
+    let t1 = a.open_placeholder_tab(None);
+    a.conn_mut(t1).unwrap().child_exit_watch =
+        Some(crate::shell::child_watch::ChildWatch::for_tests(Some(99)));
+    let returned = a.close_tab(t1, true).expect("close ok");
+    assert!(
+        returned.is_some(),
+        "AC3a: close must hand back the tab ChildWatch so the agent can be terminated"
+    );
+    assert_eq!(returned.unwrap().pid(), Some(99));
+}
+
+#[test]
+fn tab_close_slash_command_requests_kill_not_detach() {
+    let mut a = app();
+    let t1 = a.open_placeholder_tab(None);
+    a.active_tab = t1;
+    a.handle_submit("/tab-close");
+    assert_eq!(a.tabs.len(), 1, "tab closed");
+    let msgs = a.notifications.messages().join("\n");
+    assert!(
+        !msgs.to_lowercase().contains("detach"),
+        "AC3a: /tab-close must terminate, not detach; got {msgs:?}"
+    );
+}
+
+#[test]
+fn switch_tab_resyncs_panel_nav_to_active_roster() {
+    let mut a = app();
+    let t1 = a.open_placeholder_tab(None);
+    a.switch_tab(TabId::MASTER);
+    a.ac_mut().roster.tracked.insert(
+        "child-a".into(),
+        crate::agents::roster::TrackedSubagent::new(crate::protocol::client::SubagentInfoEvent {
+            agent_uuid: None,
+            display_name: None,
+            agent_id: "child-a".into(),
+            status: "running".into(),
+            last_tool: None,
+            last_error: None,
+            pid: 0,
+            socket_path: None,
+            parent_id: None,
+            workflow: None,
+            read_only: false,
+            execution_backend: None,
+            environment: None,
+        }),
+    );
+    a.subagents.panel_nav.set_selected(1);
+    a.subagents.panel_nav_key = Some("agent:child-a".into());
+    assert!(a.switch_tab(t1));
+    assert_eq!(
+        a.subagents.panel_nav.selected(),
+        0,
+        "panel cursor must resync to the newly focused tab roster"
+    );
+}
+
+#[test]
+fn collect_owned_child_watches_includes_every_tab() {
+    let mut a = app();
+    let t1 = a.open_placeholder_tab(None);
+    a.conn_mut(TabId::MASTER).unwrap().child_exit_watch =
+        Some(crate::shell::child_watch::ChildWatch::for_tests(Some(1)));
+    a.conn_mut(t1).unwrap().child_exit_watch =
+        Some(crate::shell::child_watch::ChildWatch::for_tests(Some(2)));
+    let watches = a.take_all_child_exit_watches();
+    assert_eq!(watches.len(), 2, "kill-on-exit must see every tab watch");
+}
+
+#[test]
+fn open_tab_records_spawn_intent_not_dead_placeholder_only() {
+    let mut a = app();
+    a.handle_submit("/tab-new");
+    assert_eq!(a.tabs.len(), 2);
+    let tab = a.active_tab;
+    assert_ne!(tab, TabId::MASTER);
+    assert!(
+        a.tab_has_pending_attach(tab),
+        "AC1/AC2: /tab-new must start a non-blocking live agent attach path, not only a dead placeholder"
+    );
+}

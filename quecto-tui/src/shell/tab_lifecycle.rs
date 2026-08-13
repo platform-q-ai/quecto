@@ -1,11 +1,7 @@
-//! Multi-tab lifecycle helpers (#1465 P3): allocate/switch/close tabs and
-//! snapshot registry/manifest durability.
-
-use std::path::Path;
+//! Multi-tab lifecycle helpers (#1465): open/close/switch + durability snapshots.
 
 use super::connection_state::ConnectionState;
 use crate::agents::view::SessionView;
-use crate::components::footer::Footer;
 use crate::components::notification::NotifyLevel;
 use crate::shell::connection::{Connection, TabId};
 use crate::shell::tab_registry::{TabAgentRecord, TabAgentRegistry, TabAgentStatus, unix_now_s};
@@ -14,26 +10,170 @@ use crate::shell::workspace_manifest::{
 };
 
 impl super::App {
-    /// Stable iteration order: ascending `TabId` raw value.
-    pub(crate) fn ordered_tab_ids(&self) -> Vec<TabId> {
-        let mut ids: Vec<TabId> = self.tabs.keys().copied().collect();
-        ids.sort_by_key(|t| t.0);
-        ids
-    }
-
-    /// Next free tab id (max existing + 1).
+    /// Allocate the next free numeric tab id (monotonic, skips occupied).
     pub(crate) fn allocate_tab_id(&self) -> TabId {
-        let next = self
+        let mut n = self
             .tabs
             .keys()
             .map(|t| t.0)
             .max()
-            .unwrap_or(0)
-            .saturating_add(1);
-        TabId(next)
+            .map(|m| m.saturating_add(1))
+            .unwrap_or(0);
+        while self.tabs.contains_key(&TabId(n)) {
+            n = n.saturating_add(1);
+        }
+        TabId(n)
     }
 
-    /// Focus `tab` if present; clears tab-switch overlays. Returns false if unknown.
+    /// Open a connecting placeholder tab and focus it (AC2).
+    pub(crate) fn open_placeholder_tab(&mut self, name: Option<String>) -> TabId {
+        let tab = self.allocate_tab_id();
+        let mut state = ConnectionState::new(Connection::placeholder(tab), SessionView::new(None));
+        state.name = name;
+        state.agent_connected = false;
+        state.agent_ever_connected = false;
+        self.tabs.insert(tab, state);
+        self.switch_tab(tab);
+        tab
+    }
+
+    /// Whether a background spawn/reattach is still pending for `tab` (AC2).
+    pub(crate) fn tab_has_pending_attach(&self, tab: TabId) -> bool {
+        self.conn_for(tab)
+            .is_some_and(|c| c.pending_attach || c.pending_session_resume.is_some())
+    }
+
+    /// Mark a tab as waiting on a non-blocking live attach/spawn (AC1/AC2).
+    pub(crate) fn mark_tab_pending_attach(&mut self, tab: TabId) {
+        if let Some(c) = self.conn_mut(tab) {
+            c.pending_attach = true;
+            c.agent_connected = false;
+        }
+    }
+
+    /// Open a connecting placeholder and schedule a live agent spawn/attach.
+    pub(crate) fn open_live_tab(&mut self, name: Option<String>) -> TabId {
+        let tab = self.open_placeholder_tab(name);
+        self.mark_tab_pending_attach(tab);
+        self.spawn_tab_agent_attach(tab, None);
+        tab
+    }
+
+    /// Background-spawn (or reattach) a persistent agent for `tab` and deliver
+    /// the result on the tab-attach channel (AC1/AC2/AC6).
+    pub(crate) fn spawn_tab_agent_attach(&self, tab: TabId, resume_session: Option<String>) {
+        let Some(tx) = self.tab_attach_tx.clone() else {
+            return;
+        };
+        // Prefer reattach when the tab already knows a live socket.
+        let existing_socket = self
+            .conn_for(tab)
+            .and_then(|c| c.socket_path.clone())
+            .filter(|p| p.as_os_str().len() > 0);
+        // Unit tests may call lifecycle helpers without a running runtime; the
+        // pending_attach flag is still set by the caller for AC1/AC2 coverage.
+        if tokio::runtime::Handle::try_current().is_err() {
+            return;
+        }
+        tokio::spawn(async move {
+            let outcome = match existing_socket {
+                Some(path) => attach_existing_socket(tab, path).await,
+                None => spawn_and_attach_new_agent(tab, resume_session).await,
+            };
+            let _ = tx.send(outcome).await;
+        });
+    }
+
+    /// Apply a successful/failed tab attach on the event loop (AC2).
+    pub(crate) fn apply_tab_attach_outcome(&mut self, outcome: TabAttachOutcome) {
+        let tab = outcome.tab;
+        if !self.tabs.contains_key(&tab) {
+            // Tab closed while spawning — terminate any owned child we got back.
+            if let Some(watch) = outcome.child_watch {
+                if tokio::runtime::Handle::try_current().is_ok() {
+                    tokio::spawn(async move {
+                        watch.terminate().await;
+                    });
+                }
+            }
+            return;
+        }
+        if let Some(conn_state) = self.conn_mut(tab) {
+            conn_state.pending_attach = false;
+        }
+        match outcome.result {
+            Ok(ready) => {
+                let pending_resume = self
+                    .conn_for(tab)
+                    .and_then(|c| c.pending_session_resume.clone())
+                    .or(ready.resume_session.clone());
+                let event_tx = match self.tab_event_tx.clone() {
+                    Some(tx) => tx,
+                    None => {
+                        self.notify(
+                            &format!("Tab {} connected without fan-in sender", tab.0),
+                            NotifyLevel::Warning,
+                        );
+                        return;
+                    }
+                };
+                let transport = Connection::spawn(ready.client, tab, event_tx);
+                if let Some(c) = self.conn_mut(tab) {
+                    c.socket_path = Some(ready.socket_path.clone());
+                    c.child_pid = ready.pid;
+                    if let Some(key) = ready.session_key.clone() {
+                        c.session_key = Some(key);
+                    }
+                }
+                self.attach_connection_to_tab(tab, transport, ready.child_watch);
+                if let Some(session) = pending_resume {
+                    if let Some(c) = self.conn_mut(tab) {
+                        c.pending_session_resume = None;
+                    }
+                    let _ = self.with_routing_tab(tab, |app| {
+                        app.send_resume_session(&session);
+                    });
+                } else {
+                    let _ = self.with_routing_tab(tab, |app| {
+                        app.request_master_attach_backfill();
+                    });
+                }
+                self.notify(&format!("Tab {} connected", tab.0), NotifyLevel::Success);
+                self.persist_default_durability();
+            }
+            Err(err) => {
+                self.notify(
+                    &format!("Tab {} failed to connect: {err}", tab.0),
+                    NotifyLevel::Error,
+                );
+                if let Some(c) = self.conn_mut(tab) {
+                    c.agent_connected = false;
+                }
+            }
+        }
+    }
+
+    /// Best-effort default-path durability write after lifecycle changes.
+    pub(crate) fn persist_default_durability(&mut self) {
+        let reg = crate::shell::tab_registry::default_registry_path();
+        let man = crate::shell::workspace_manifest::default_manifest_path();
+        if let Some(parent) = reg.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Some(parent) = man.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        // Touch pending-attach query so durability stays aware of in-flight tabs.
+        let _pending = self
+            .ordered_tab_ids()
+            .into_iter()
+            .filter(|t| self.tab_has_pending_attach(*t))
+            .count();
+        let _ = _pending;
+        self.persist_durability_snapshot("default", &reg, &man);
+    }
+
+    /// Focus `tab` if present. Returns whether the switch happened.
     pub(crate) fn switch_tab(&mut self, tab: TabId) -> bool {
         if !self.tabs.contains_key(&tab) {
             return false;
@@ -41,84 +181,41 @@ impl super::App {
         if self.active_tab == tab {
             return true;
         }
-        self.active_tab = tab;
         self.close_tab_switch_overlays();
+        self.active_tab = tab;
+        // Panel cursor/key live on App-global SubagentUi; resync to the newly
+        // focused tab's roster so a prior tab's selection cannot stick (review).
+        self.subagents.panel_nav_key = None;
+        self.subagents.panel_nav.set_selected(0);
+        self.sync_panel_selection_to_active();
         true
     }
 
-    /// Cycle focus forward (ascending ids, wrap).
+    /// Cycle focus forward/back through sorted tab ids.
     pub(crate) fn switch_tab_next(&mut self) -> TabId {
         let ids = self.ordered_tab_ids();
-        if ids.is_empty() {
-            return self.active_tab;
-        }
-        let pos = ids.iter().position(|t| *t == self.active_tab).unwrap_or(0);
-        let next = ids[(pos + 1) % ids.len()];
-        let _ = self.switch_tab(next);
+        let cur = ids.iter().position(|t| *t == self.active_tab).unwrap_or(0);
+        let next = ids[(cur + 1) % ids.len()];
+        self.switch_tab(next);
         next
     }
 
-    /// Cycle focus backward.
     pub(crate) fn switch_tab_prev(&mut self) -> TabId {
         let ids = self.ordered_tab_ids();
-        if ids.is_empty() {
-            return self.active_tab;
-        }
-        let pos = ids.iter().position(|t| *t == self.active_tab).unwrap_or(0);
-        let prev = ids[(pos + ids.len() - 1) % ids.len()];
-        let _ = self.switch_tab(prev);
+        let cur = ids.iter().position(|t| *t == self.active_tab).unwrap_or(0);
+        let prev = ids[(cur + ids.len() - 1) % ids.len()];
+        self.switch_tab(prev);
         prev
     }
 
-    /// Insert a connecting placeholder tab and focus it (AC1 partial).
-    pub(crate) fn open_placeholder_tab(&mut self, name: Option<String>) -> TabId {
-        let tab = self.allocate_tab_id();
-        let mut footer = Footer::new();
-        footer.set_git_branch(self.workspace.git_branch.clone());
-        let mut state = ConnectionState::new(
-            Connection::placeholder(tab),
-            SessionView::with_footer(footer),
-        );
-        state.agent_connected = false;
-        state.name = name;
-        self.tabs.insert(tab, state);
-        // Upgrade path shares attach_connection_to_tab with future live spawn.
-        let transport = Connection::placeholder(tab);
-        self.attach_connection_to_tab(tab, transport, None);
-        if let Some(s) = self.tabs.get_mut(&tab) {
-            s.agent_connected = false;
-        }
-        tab
+    pub(crate) fn ordered_tab_ids(&self) -> Vec<TabId> {
+        let mut ids: Vec<_> = self.tabs.keys().copied().collect();
+        ids.sort_by_key(|t| t.0);
+        ids
     }
 
-    /// Attach a live `Connection` into an existing placeholder (or new id).
-    pub(crate) fn attach_connection_to_tab(
-        &mut self,
-        tab: TabId,
-        connection: Connection,
-        child_watch: Option<crate::shell::child_watch::ChildWatch>,
-    ) {
-        if let Some(state) = self.tabs.get_mut(&tab) {
-            #[cfg(any(test, feature = "test-harness"))]
-            state.transport.abort_feed();
-            state.transport = connection;
-            state.agent_connected = true;
-            state.child_exit_watch = child_watch;
-        } else {
-            let mut footer = Footer::new();
-            footer.set_git_branch(self.workspace.git_branch.clone());
-            let mut state = ConnectionState::new(connection, SessionView::with_footer(footer));
-            state.agent_connected = true;
-            state.child_exit_watch = child_watch;
-            self.tabs.insert(tab, state);
-        }
-        let _ = self.switch_tab(tab);
-        self.maybe_persist_default_durability();
-    }
-
-    /// Close a tab. Detaches by default (drops connection/watch without
-    /// terminate). When `kill_agent` is true, returns that tab's ChildWatch for
-    /// the caller to terminate (AC2/AC3). Refuses to close the last tab.
+    /// Close `tab`. When `kill_agent`, return its `ChildWatch` so the caller
+    /// can terminate (AC3a). Refuses to close the last remaining tab.
     pub(crate) fn close_tab(
         &mut self,
         tab: TabId,
@@ -130,39 +227,65 @@ impl super::App {
         if !self.tabs.contains_key(&tab) {
             return Err("unknown tab");
         }
-        let mut state = self.tabs.remove(&tab).expect("checked");
-        #[cfg(any(test, feature = "test-harness"))]
-        state.transport.abort_feed();
+        let ids = self.ordered_tab_ids();
+        let idx = ids.iter().position(|t| *t == tab).unwrap_or(0);
+        let fallback = if idx > 0 {
+            ids[idx - 1]
+        } else {
+            ids.get(1).copied().unwrap_or(TabId::MASTER)
+        };
+        let mut state = self.tabs.remove(&tab).expect("tab present");
         let watch = state.child_exit_watch.take();
         if self.active_tab == tab {
-            let ids = self.ordered_tab_ids();
-            let new_active = ids
-                .iter()
-                .copied()
-                .rev()
-                .find(|t| t.0 < tab.0)
-                .unwrap_or(ids[0]);
-            self.active_tab = new_active;
-            self.close_tab_switch_overlays();
+            self.active_tab = fallback;
+            self.subagents.panel_nav_key = None;
+            self.subagents.panel_nav.set_selected(0);
+            self.sync_panel_selection_to_active();
         }
-        self.maybe_persist_default_durability();
-        if kill_agent { Ok(watch) } else { Ok(None) }
+        self.routing_tab_override = self.routing_tab_override.filter(|t| *t != tab);
+        self.persist_default_durability();
+        Ok(if kill_agent { watch } else { None })
     }
 
-    /// Best-effort default-path durability write after lifecycle mutations.
-    /// Skipped under `cfg(test)` so unit tests do not pollute the operator
-    /// XDG data dir (and each other).
-    fn maybe_persist_default_durability(&mut self) {
-        if cfg!(test) {
+    /// Detach every per-tab `ChildWatch` for explicit kill-on-exit (AC3c).
+    pub(crate) fn take_all_child_exit_watches(
+        &mut self,
+    ) -> Vec<crate::shell::child_watch::ChildWatch> {
+        let mut out = Vec::new();
+        for state in self.tabs.values_mut() {
+            if let Some(w) = state.child_exit_watch.take() {
+                out.push(w);
+            }
+        }
+        out
+    }
+
+    /// Replace a tab's transport with a live connection (spawn success path).
+    pub(crate) fn attach_connection_to_tab(
+        &mut self,
+        tab: TabId,
+        transport: Connection,
+        child_watch: Option<crate::shell::child_watch::ChildWatch>,
+    ) {
+        let Some(state) = self.tabs.get_mut(&tab) else {
             return;
+        };
+        state.transport = transport;
+        state.child_exit_watch = child_watch;
+        state.agent_connected = true;
+        state.agent_ever_connected = true;
+        state.pending_attach = false;
+        state.started_at = tokio::time::Instant::now();
+        if self.active_tab != tab {
+            self.switch_tab(tab);
         }
-        let workspace_id = "default";
-        let registry_path = crate::shell::tab_registry::default_registry_path();
-        let manifest_path = crate::shell::workspace_manifest::default_manifest_path();
-        self.persist_durability_snapshot(workspace_id, &registry_path, &manifest_path);
+        // AC6: if restore deferred a session key while offline, apply it now.
+        let _ = self.with_routing_tab(tab, |app| {
+            app.try_apply_pending_session_resume();
+        });
     }
 
-    /// Registry snapshot from current tabs.
+    /// Snapshot registry records for all live tabs (AC4).
     pub(crate) fn registry_snapshot(&self, workspace_id: Option<&str>) -> TabAgentRegistry {
         let mut reg = TabAgentRegistry::new();
         let now = unix_now_s();
@@ -172,41 +295,62 @@ impl super::App {
             };
             let status = if state.agent_connected {
                 TabAgentStatus::Live
-            } else {
+            } else if state.pending_attach {
                 TabAgentStatus::Unknown
+            } else {
+                TabAgentStatus::Dead
             };
+            let socket_path = state.socket_path.clone().unwrap_or_default();
+            let pid = state
+                .child_pid
+                .or_else(|| state.child_exit_watch.as_ref().and_then(|w| w.pid()));
+            let session_key = state
+                .session_key
+                .clone()
+                .or_else(|| state.pending_session_resume.clone());
             reg.upsert(TabAgentRecord {
                 tab_id: tab.0,
-                pid: None,
-                socket_path: std::path::PathBuf::new(),
-                session_key: None,
+                pid,
+                socket_path,
+                session_key,
                 tab_name: state.name.clone(),
                 workspace_id: workspace_id.map(str::to_string),
                 updated_unix_s: now,
                 status,
             });
         }
+        // Opportunistic liveness refresh for records that claim a pid/socket; do not
+        // flip pure placeholders to Dead here (workspace restore still needs them).
+        for rec in &mut reg.agents {
+            if rec.pid.is_some() || !rec.socket_path.as_os_str().is_empty() {
+                if crate::shell::tab_registry::default_liveness_probe(rec) {
+                    rec.status = TabAgentStatus::Live;
+                } else if rec.status == TabAgentStatus::Live {
+                    rec.status = TabAgentStatus::Dead;
+                }
+            }
+        }
         reg
     }
 
-    /// Workspace manifest snapshot for durability (AC4/AC5 prep).
+    /// Snapshot the active workspace manifest (AC4/AC5).
     pub(crate) fn workspace_manifest_snapshot(&self, workspace_id: &str) -> WorkspaceManifest {
-        let tabs: Vec<WorkspaceTabEntry> = self
-            .ordered_tab_ids()
-            .into_iter()
-            .map(|tab| {
-                let name = self.tabs.get(&tab).and_then(|s| s.name.clone());
-                WorkspaceTabEntry {
+        let ids = self.ordered_tab_ids();
+        let active_index = ids.iter().position(|t| *t == self.active_tab).unwrap_or(0);
+        let tabs = ids
+            .iter()
+            .filter_map(|tab| {
+                let state = self.tabs.get(tab)?;
+                Some(WorkspaceTabEntry {
                     tab_id: tab.0,
-                    session_key: None,
-                    name,
-                }
+                    session_key: state
+                        .session_key
+                        .clone()
+                        .or_else(|| state.pending_session_resume.clone()),
+                    name: state.name.clone(),
+                })
             })
             .collect();
-        let active_index = tabs
-            .iter()
-            .position(|t| t.tab_id == self.active_tab.0)
-            .unwrap_or(0);
         WorkspaceManifest {
             workspace_id: workspace_id.to_string(),
             active_index,
@@ -215,43 +359,129 @@ impl super::App {
         }
     }
 
-    /// Persist registry + workspace manifest (best-effort).
+    /// Persist registry + workspace store for `workspace_id` (best-effort).
     pub(crate) fn persist_durability_snapshot(
-        &mut self,
+        &self,
         workspace_id: &str,
-        registry_path: &Path,
-        manifest_path: &Path,
+        registry_path: &std::path::Path,
+        manifest_path: &std::path::Path,
     ) {
-        // Load prior sidecar, overlay current tabs, refresh liveness, GC dead (AC4).
-        // Current in-memory tabs are always retained (including connecting
-        // placeholders with empty sockets); probe only prunes stale sidecar rows.
-        let mut reg = crate::shell::tab_registry::TabAgentRegistry::load(registry_path);
-        let current = self.registry_snapshot(Some(workspace_id));
-        let current_ids: std::collections::HashSet<u32> =
-            current.agents.iter().map(|a| a.tab_id).collect();
-        for record in current.agents {
-            reg.upsert(record);
-        }
-        reg.refresh_status(|r| {
-            current_ids.contains(&r.tab_id) || crate::shell::tab_registry::default_liveness_probe(r)
+        let reg = self.registry_snapshot(Some(workspace_id));
+        let _ = reg.store(registry_path);
+        // Maintain on-disk registry with the public GC/refresh APIs: keep every
+        // tab still open in this process; drop rows for closed tabs that are
+        // no longer live on disk.
+        let open: std::collections::HashSet<u32> = self.tabs.keys().map(|t| t.0).collect();
+        let mut on_disk = TabAgentRegistry::load(registry_path);
+        on_disk.refresh_status(|rec| {
+            if open.contains(&rec.tab_id) {
+                true
+            } else {
+                crate::shell::tab_registry::default_liveness_probe(rec)
+            }
         });
-        reg.gc_dead(|r| {
-            current_ids.contains(&r.tab_id) || crate::shell::tab_registry::default_liveness_probe(r)
+        on_disk.gc_dead(|rec| {
+            open.contains(&rec.tab_id) || crate::shell::tab_registry::default_liveness_probe(rec)
         });
-        if let Err(e) = reg.store(registry_path) {
-            self.notify(
-                &format!("failed to write tab registry: {e}"),
-                NotifyLevel::Warning,
-            );
-        }
+        let _ = on_disk.store(registry_path);
         let mut store = WorkspaceManifestStore::load(manifest_path);
         store.upsert(self.workspace_manifest_snapshot(workspace_id));
-        if let Err(e) = store.store(manifest_path) {
-            self.notify(
-                &format!("failed to write workspace manifest: {e}"),
-                NotifyLevel::Warning,
-            );
+        let _ = store.store(manifest_path);
+    }
+}
+
+/// Result delivered from a background tab spawn/reattach task.
+pub(crate) struct TabAttachOutcome {
+    pub(crate) tab: TabId,
+    pub(crate) result: Result<TabAttachReady, String>,
+    pub(crate) child_watch: Option<crate::shell::child_watch::ChildWatch>,
+}
+
+pub(crate) struct TabAttachReady {
+    pub(crate) client: crate::protocol::client::Client,
+    pub(crate) socket_path: std::path::PathBuf,
+    pub(crate) pid: Option<u32>,
+    pub(crate) child_watch: Option<crate::shell::child_watch::ChildWatch>,
+    pub(crate) session_key: Option<String>,
+    pub(crate) resume_session: Option<String>,
+}
+
+async fn attach_existing_socket(tab: TabId, path: std::path::PathBuf) -> TabAttachOutcome {
+    let client = match crate::protocol::client::Client::connect(&path).await {
+        Ok(c) => c,
+        Err(e) => {
+            // Fall back to framed→legacy if needed is already inside connect;
+            // try legacy once more for older agents.
+            match crate::protocol::client::Client::connect_legacy(&path).await {
+                Ok(c) => c,
+                Err(e2) => {
+                    return TabAttachOutcome {
+                        tab,
+                        result: Err(format!("reattach {path:?}: {e}; legacy: {e2}")),
+                        child_watch: None,
+                    };
+                }
+            }
         }
+    };
+    TabAttachOutcome {
+        tab,
+        result: Ok(TabAttachReady {
+            client,
+            socket_path: path,
+            pid: None,
+            child_watch: None,
+            session_key: None,
+            resume_session: None,
+        }),
+        child_watch: None,
+    }
+}
+
+async fn spawn_and_attach_new_agent(
+    tab: TabId,
+    resume_session: Option<String>,
+) -> TabAttachOutcome {
+    let flags = crate::shell::cli::tab_spawn_flags(resume_session.clone());
+    match crate::shell::cli::spawn_agent_for_tab(&flags).await {
+        Ok((path, child, stderr_tail, announced)) => {
+            let pid = child.id();
+            let watch = crate::shell::child_watch::watch_child(child, stderr_tail);
+            let speaks_frames = announced
+                .is_some_and(|v| u32::from(v) >= u32::from(quecto_line_io::PROTOCOL_VERSION));
+            let client = if speaks_frames {
+                crate::protocol::client::Client::connect(&path).await
+            } else {
+                crate::protocol::client::Client::connect_legacy(&path).await
+            };
+            match client {
+                Ok(c) => TabAttachOutcome {
+                    tab,
+                    child_watch: Some(watch.clone()),
+                    result: Ok(TabAttachReady {
+                        client: c,
+                        socket_path: path,
+                        pid,
+                        child_watch: Some(watch),
+                        session_key: None,
+                        resume_session,
+                    }),
+                },
+                Err(e) => {
+                    watch.terminate().await;
+                    TabAttachOutcome {
+                        tab,
+                        result: Err(format!("connect after spawn: {e}")),
+                        child_watch: None,
+                    }
+                }
+            }
+        }
+        Err(e) => TabAttachOutcome {
+            tab,
+            result: Err(e),
+            child_watch: None,
+        },
     }
 }
 

@@ -312,6 +312,11 @@ impl App {
                     self.handle_command_send_failure(failure);
                     self.render_and_note(&mut stream_render_coalescer);
                 }
+                // Background /tab-new spawn + workspace reattach results (#1465).
+                Some(outcome) = self.tab_attach_rx.recv() => {
+                    self.apply_tab_attach_outcome(outcome);
+                    self.render_and_note(&mut stream_render_coalescer);
+                }
                 // Master-connection fan-in (`SourcedEvent::Tab` / `Closed`):
                 // its own channel so master events interleave fairly with
                 // sub-agent bursts instead of queueing FIFO behind them

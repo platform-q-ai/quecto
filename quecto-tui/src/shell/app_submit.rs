@@ -34,20 +34,29 @@ impl App {
                     return;
                 }
                 "/tab-new" => {
-                    let tab = self.open_placeholder_tab(None);
+                    // AC1/AC2: open a connecting tab and spawn a live persistent agent.
+                    let tab = self.open_live_tab(None);
                     self.notify(
-                        &format!("Opened tab {}", tab.0),
+                        &format!("Opened tab {} (connecting…)", tab.0),
                         crate::components::notification::NotifyLevel::Info,
                     );
                     return;
                 }
                 "/tab-close" => {
                     let tab = self.active_tab;
-                    match self.close_tab(tab, false) {
-                        Ok(_) => self.notify(
-                            &format!("Closed tab {} (agent detached)", tab.0),
-                            crate::components::notification::NotifyLevel::Info,
-                        ),
+                    // AC3a / ADR-0023: closing a tab terminates that tab's agent.
+                    match self.close_tab(tab, true) {
+                        Ok(watch) => {
+                            if let Some(w) = watch {
+                                tokio::spawn(async move {
+                                    w.terminate().await;
+                                });
+                            }
+                            self.notify(
+                                &format!("Closed tab {} (agent terminated)", tab.0),
+                                crate::components::notification::NotifyLevel::Info,
+                            );
+                        }
                         Err(msg) => {
                             self.notify(msg, crate::components::notification::NotifyLevel::Warning)
                         }

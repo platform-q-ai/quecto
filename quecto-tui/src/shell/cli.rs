@@ -12,7 +12,7 @@ pub(crate) use super::socket_path::validate_socket_path;
 use super::socket_path::{canonical_allowed_socket_roots, canonicalize_socket_roots};
 
 /// Parsed CLI flags for quecto-tui.
-struct CliFlags {
+pub(crate) struct CliFlags {
     socket_path: Option<PathBuf>,
     no_sandbox: bool,
     workflow: bool,
@@ -47,7 +47,7 @@ pub fn run(args: Vec<String>) -> i32 {
 }
 
 /// Parse CLI flags from command-line arguments.
-fn parse_flags(args: &[String]) -> CliFlags {
+pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
     let mut flags = CliFlags {
         socket_path: None,
         no_sandbox: false,
@@ -165,6 +165,38 @@ fn apply_workflow_defaults(flags: &mut CliFlags) {
     }
 }
 
+/// Flags for a secondary tab agent spawn (persistent by default, #1465).
+pub(crate) fn tab_spawn_flags(resume_session: Option<String>) -> CliFlags {
+    let _ = resume_session; // reserved: agent --resume is applied post-connect via protocol
+    CliFlags {
+        socket_path: None,
+        no_sandbox: false,
+        workflow: false,
+        workflow_guards: false,
+        workflow_disabled: false,
+        config_path: None,
+        system_prompt: None,
+        disable_tools: Vec::new(),
+        persist: true,
+        kill_on_exit: false,
+    }
+}
+
+/// Spawn a secondary tab agent and return socket path + child + stderr tail.
+pub(crate) async fn spawn_agent_for_tab(
+    flags: &CliFlags,
+) -> Result<
+    (
+        PathBuf,
+        tokio::process::Child,
+        crate::shell::child_watch::StderrTail,
+        Option<u8>,
+    ),
+    String,
+> {
+    spawn_agent(flags).await
+}
+
 /// Main async entry point.
 async fn run_tui(flags: CliFlags) -> i32 {
     // For a TUI-owned child, the #1047 exit watcher takes ownership of the
@@ -254,16 +286,30 @@ async fn run_tui(flags: CliFlags) -> i32 {
     // Run the TUI.
     let terminal = crate::shell::terminal::Terminal::new();
     let mut app = crate::shell::app::App::new(terminal, client);
+    app.ac_mut().socket_path = Some(socket.clone());
+    // Record live socket/pid on master for registry durability (AC4).
+    // `path` is the UDS we connected to whether spawned or --socket attach.
+    // The local `path` binding is in scope from both branches above.
+    // (spawn path assigns `path`; attach path also assigns `path`.)
+    // Best-effort: if the binding name differs, compile will tell us.
     if let Some(watch) = &child_watch {
+        if let Some(pid) = watch.pid() {
+            app.ac_mut().child_pid = Some(pid);
+        }
         app.set_child_exit_watch(watch.clone());
     }
     let exit_code = app.run().await;
 
     // Detach-on-exit by default (#1465 / ADR-0023): leave `--persist` agents
-    // running so tabs can be reattached. `--kill-on-exit` restores legacy
-    // teardown via the watcher (never a raw recycled PID — #1051).
+    // running so tabs can be reattached. `--kill-on-exit` terminates every
+    // per-tab owned child (not only the startup master watch).
     if flags.kill_on_exit {
-        if let Some(watch) = &child_watch {
+        let mut watches = app.take_all_child_exit_watches();
+        // Startup path may still hold a local handle if attach didn't store it.
+        if let Some(watch) = child_watch {
+            watches.push(watch);
+        }
+        for watch in watches {
             watch.terminate().await;
         }
     }
@@ -272,7 +318,7 @@ async fn run_tui(flags: CliFlags) -> i32 {
 }
 
 /// Build the `quecto agent` argv used for an owned TUI child process.
-fn build_agent_args(flags: &CliFlags) -> Vec<String> {
+pub(crate) fn build_agent_args(flags: &CliFlags) -> Vec<String> {
     let mut args = vec!["agent".to_string(), "--mode".to_string(), "uds".to_string()];
     if flags.no_sandbox {
         args.push("--no-sandbox".to_string());
@@ -342,7 +388,7 @@ pub fn agent_socket_timeout_message() -> String {
 /// The caller MUST store the child handle and call `child.kill()` + `child.wait()`
 /// on TUI exit. Tokio's `Child` does NOT kill the process on drop — dropping it
 /// creates an orphan. See the security review for PR #442.
-async fn spawn_agent(
+pub(crate) async fn spawn_agent(
     flags: &CliFlags,
 ) -> Result<
     (

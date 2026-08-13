@@ -120,3 +120,72 @@ fn unknown_workspace_notifies_without_changing_tabs() {
         "expected unknown-workspace notice, got {msgs:?}"
     );
 }
+
+#[test]
+fn apply_workspace_manifest_queues_deferred_resume_for_disconnected_tabs() {
+    let mut a = app();
+    // MASTER stays disconnected; restore must queue deferred resume instead of
+    // silently counting failure with no retry path.
+    a.ac_mut().agent_connected = false;
+    let manifest = App::test_workspace_manifest(
+        "ws",
+        vec![
+            WorkspaceTabEntry {
+                tab_id: 0,
+                session_key: Some("live-sess".into()),
+                name: Some("one".into()),
+            },
+            WorkspaceTabEntry {
+                tab_id: 1,
+                session_key: Some("dead-sess".into()),
+                name: Some("two".into()),
+            },
+        ],
+        0,
+    );
+    a.apply_workspace_manifest(&manifest);
+    assert!(
+        a.conn_for(TabId::MASTER)
+            .unwrap()
+            .pending_session_resume
+            .as_deref()
+            == Some("live-sess"),
+        "AC6: disconnected tab must retain deferred session resume"
+    );
+    assert!(
+        a.conn_for(TabId(1))
+            .unwrap()
+            .pending_session_resume
+            .as_deref()
+            == Some("dead-sess")
+    );
+}
+
+#[test]
+fn apply_workspace_manifest_updates_transport_tab_id_in_production_path() {
+    let mut a = app();
+    // Force allocate-then-remap path by requesting a non-sequential tab id.
+    let manifest = App::test_workspace_manifest(
+        "ws",
+        vec![
+            WorkspaceTabEntry {
+                tab_id: 0,
+                session_key: None,
+                name: Some("one".into()),
+            },
+            WorkspaceTabEntry {
+                tab_id: 7,
+                session_key: Some("s7".into()),
+                name: Some("seven".into()),
+            },
+        ],
+        1,
+    );
+    a.apply_workspace_manifest(&manifest);
+    let state = a.conn_for(TabId(7)).expect("tab 7 present");
+    assert_eq!(
+        state.transport.tab().0,
+        7,
+        "production remap must update Connection.tab, not only the HashMap key"
+    );
+}

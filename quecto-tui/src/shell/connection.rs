@@ -62,9 +62,6 @@ pub(crate) struct Connection {
     /// The tab this connection belongs to. Every correlation id the tab
     /// mints is namespaced `tab{N}:` from this id (#1463), so broadcast
     /// responses can never match another tab's pending latches.
-    // Production reads arrive with the cluster-2 id minting (#1463); until
-    // then only the test re-key hook touches it.
-    #[cfg_attr(not(any(test, feature = "test-harness")), allow(dead_code))]
     tab: TabId,
     sender: CommandSender,
     /// Per-connection ADR-0008 negotiation outcome (#1462 scope 4), copied
@@ -145,12 +142,16 @@ impl Connection {
         self.tab
     }
 
-    /// Test-only: re-key this connection to another tab, so unit tests can
-    /// pin that minted-id namespaces derive from the tab id rather than a
-    /// hard-coded `tab0:` literal (#1463 review).
+    /// Re-key this connection to another tab id (workspace restore remap).
+    /// Keeps minted correlation namespaces aligned with the map key (#1465).
+    pub(crate) fn set_tab(&mut self, tab: TabId) {
+        self.tab = tab;
+    }
+
+    /// Test-only alias for [`Self::set_tab`].
     #[cfg(any(test, feature = "test-harness"))]
     pub(crate) fn set_tab_for_tests(&mut self, tab: TabId) {
-        self.tab = tab;
+        self.set_tab(tab);
     }
 
     /// Test-only: abort the feed task owning the client. Harness paths that

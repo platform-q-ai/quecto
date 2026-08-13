@@ -500,6 +500,8 @@ impl App {
         }
         // Learn the connected agent's own id from its sessionKey ("cli:<name>").
         if let Some(key) = snap.session_key.as_deref() {
+            // Durable key for workspace/registry snapshots (AC4/AC5).
+            self.ac_mut().session_key = Some(key.to_string());
             let name = key.rsplit(':').next().unwrap_or("");
             self.ac_mut().connected_agent_id = match name {
                 "" | "default" => None,

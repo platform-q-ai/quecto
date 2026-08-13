@@ -40,6 +40,16 @@ pub(crate) struct ConnectionState {
     /// Exit-diagnosis watch for the TUI-owned agent child (#1047), published
     /// by [`crate::shell::child_watch`]. `None` for external sockets.
     pub(crate) child_exit_watch: Option<crate::shell::child_watch::ChildWatch>,
+    /// OS pid of the TUI-owned agent child when known (registry sidecar, AC4).
+    pub(crate) child_pid: Option<u32>,
+    /// Live UDS path for this tab's master agent (registry/reattach, AC4/AC6).
+    pub(crate) socket_path: Option<std::path::PathBuf>,
+    /// Durable session key for this tab's master agent (manifest, AC4/AC5/AC6).
+    pub(crate) session_key: Option<String>,
+    /// Session key to resume once this tab becomes connected (workspace restore).
+    pub(crate) pending_session_resume: Option<String>,
+    /// True while a background spawn/reattach for this tab is in flight (AC2).
+    pub(crate) pending_attach: bool,
     /// Oversized-event drops already surfaced as a notification, so each is
     /// reported exactly once (#1047).
     pub(crate) surfaced_oversized_drops: u64,
@@ -103,6 +113,11 @@ impl ConnectionState {
             agent_connected: true,
             agent_ever_connected: true,
             child_exit_watch: None,
+            child_pid: None,
+            socket_path: None,
+            session_key: None,
+            pending_session_resume: None,
+            pending_attach: false,
             surfaced_oversized_drops: 0,
             disconnect_diag_pending: false,
             disconnect_refusal_notified: false,

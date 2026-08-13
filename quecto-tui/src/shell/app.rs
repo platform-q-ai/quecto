@@ -108,6 +108,12 @@ pub struct App {
     /// burst (#1470 review). All tabs share this one channel, so the select
     /// arm count stays independent of N.
     pub(super) tab_event_rx: mpsc::Receiver<crate::shell::connection::SourcedEvent>,
+    /// Sender half of `tab_event_rx`, retained so newly spawned/reattached tabs
+    /// can join the same fan-in (#1465 AC1/AC2/AC6).
+    pub(super) tab_event_tx: Option<mpsc::Sender<crate::shell::connection::SourcedEvent>>,
+    /// Background tab spawn/reattach results (#1465).
+    pub(super) tab_attach_tx: Option<mpsc::Sender<tab_lifecycle::TabAttachOutcome>>,
+    pub(super) tab_attach_rx: mpsc::Receiver<tab_lifecycle::TabAttachOutcome>,
 }
 
 /// Id of the TUI's single (master) agent connection. With one replicant
@@ -137,10 +143,11 @@ impl App {
         // interleave fairly with sub-agent bursts (#1462 / #1470 review).
         let subagents = SubagentUi::new();
         let (tab_event_tx, tab_event_rx) = mpsc::channel(256);
+        let (tab_attach_tx, tab_attach_rx) = mpsc::channel(8);
         let connection = crate::shell::connection::Connection::spawn(
             client,
             crate::shell::connection::TabId::MASTER,
-            tab_event_tx,
+            tab_event_tx.clone(),
         );
 
         Self {
@@ -183,6 +190,9 @@ impl App {
             disconnect_diag_tx,
             disconnect_diag_rx,
             tab_event_rx,
+            tab_event_tx: Some(tab_event_tx),
+            tab_attach_tx: Some(tab_attach_tx),
+            tab_attach_rx,
         }
     }
 

@@ -118,8 +118,7 @@ impl super::App {
                 if opened != tab {
                     if let Some(mut state) = self.tabs.remove(&opened) {
                         // Keep transport tab id aligned with map key.
-                        #[cfg(any(test, feature = "test-harness"))]
-                        state.transport.set_tab_for_tests(tab);
+                        state.transport.set_tab(tab);
                         state.name = entry.name.clone();
                         self.tabs.insert(tab, state);
                         if self.active_tab == opened {
@@ -164,15 +163,28 @@ impl super::App {
             match key {
                 Some(session) if !session.trim().is_empty() => {
                     if self.ac().agent_connected {
-                        self.send_resume_session(&session);
+                        self.queue_or_send_session_resume(&session);
                         resumed += 1;
                     } else {
-                        // Rehydrate deferred: placeholder not live yet.
-                        failures += 1;
+                        // AC6: retain deferred resume and kick a live attach/spawn so
+                        // resume can retry once the tab connects (not a silent drop).
+                        self.ac_mut().session_key = Some(session.clone());
+                        self.ac_mut().pending_session_resume = Some(session.clone());
+                        self.ac_mut().pending_attach = true;
+                        // Prefer registry socket reattach when available.
+                        let reg_path = crate::shell::tab_registry::default_registry_path();
+                        let reg = crate::shell::tab_registry::TabAgentRegistry::load(&reg_path);
+                        if let Some(rec) = reg.agents.iter().find(|a| a.tab_id == tab.0) {
+                            if !rec.socket_path.as_os_str().is_empty() {
+                                self.ac_mut().socket_path = Some(rec.socket_path.clone());
+                            }
+                        }
+                        self.spawn_tab_agent_attach(tab, Some(session.clone()));
+                        failures += 1; // counted as deferred until attach completes
                         self.ac_mut().master_session.chat.add_entry(
                             crate::components::chat::ChatEntry::Status {
                                 text: format!(
-                                    "Tab {}: deferred resume of '{session}' (agent not connected)",
+                                    "Tab {}: deferred resume of '{session}' (connecting…)",
                                     tab.0
                                 ),
                             },
@@ -195,6 +207,34 @@ impl super::App {
             NotifyLevel::Info,
         );
         let _ = unix_now_s();
+    }
+
+    /// Queue a session resume for the active tab; apply immediately if connected.
+    pub(crate) fn queue_or_send_session_resume(&mut self, session: &str) {
+        let session = session.trim();
+        if session.is_empty() {
+            return;
+        }
+        if self.ac().agent_connected {
+            self.ac_mut().pending_session_resume = None;
+            self.ac_mut().session_key = Some(session.to_string());
+            self.send_resume_session(session);
+        } else {
+            self.ac_mut().pending_session_resume = Some(session.to_string());
+            self.ac_mut().session_key = Some(session.to_string());
+        }
+    }
+
+    /// Apply deferred `/resume` once the active connection is live (AC6).
+    pub(crate) fn try_apply_pending_session_resume(&mut self) {
+        let Some(session) = self.ac_mut().pending_session_resume.take() else {
+            return;
+        };
+        if !self.ac().agent_connected {
+            self.ac_mut().pending_session_resume = Some(session);
+            return;
+        }
+        self.send_resume_session(&session);
     }
 
     /// Test/helper: build a minimal in-memory workspace manifest.
