@@ -87,11 +87,6 @@ pub struct App {
     tool_catalogue: HashMap<String, crate::protocol::client::ToolCatalogueEntry>,
     tool_policy_modal: Option<SelectableItemModal>,
     tool_policy_modal_pending_catalogue_id: Option<String>,
-    /// Tool boxes observed since the current master AgentStart (#1060 recovery).
-    tools_this_turn: usize,
-    /// Tool starts not yet matched by an end; > 0 forces recovery on a dropped end.
-    open_tool_calls: usize,
-    active_turn_start: usize,
     command_send_failure_tx: mpsc::Sender<CommandSendFailure>,
     command_send_failure_rx: mpsc::Receiver<CommandSendFailure>,
     /// Completion channel for the OFF-LOOP disconnect diagnosis (#1462 scope
@@ -169,9 +164,6 @@ impl App {
             tool_catalogue: HashMap::new(),
             tool_policy_modal: None,
             tool_policy_modal_pending_catalogue_id: None,
-            tools_this_turn: 0,
-            open_tool_calls: 0,
-            active_turn_start: 0,
             command_send_failure_tx,
             command_send_failure_rx,
             disconnect_diag_tx,

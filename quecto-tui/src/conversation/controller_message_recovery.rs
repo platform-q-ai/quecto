@@ -35,10 +35,10 @@ impl App {
         // reading it, and the bounded assistant text scan clones the assistant
         // body — which can be megabytes for an inlined command dump.
         use crate::conversation::turn_recovery::TurnOutcome;
-        let open_tool_calls = self.open_tool_calls;
-        let tools_this_turn = self.tools_this_turn;
+        let open_tool_calls = self.master_session.open_tool_calls;
+        let tools_this_turn = self.master_session.tools_this_turn;
         let target_end = self.master_session.chat.entry_count();
-        let target_start = self.active_turn_start.min(target_end);
+        let target_start = self.master_session.active_turn_start.min(target_end);
         let needs_recovery = TurnOutcome::forced_without_text(refs, open_tool_calls) || {
             let assistant_text = self.latest_assistant_text_in_range(target_start, target_end);
             TurnOutcome {
@@ -351,14 +351,14 @@ mod recovery_cov_tests {
             text: "previous complete answer".to_string(),
             streaming: false,
         });
-        app.active_turn_start = app.master_session.chat.entry_count();
+        app.master_session.active_turn_start = app.master_session.chat.entry_count();
 
         app.maybe_recover_from_refs(&["current-ref".to_string()]);
 
         assert_eq!(app.conn.pending_message_recovery.len(), 1);
         assert_eq!(app.conn.message_recovery_batches.len(), 1);
         let batch = app.conn.message_recovery_batches.values().next().unwrap();
-        assert_eq!(batch.target_start, app.active_turn_start);
+        assert_eq!(batch.target_start, app.master_session.active_turn_start);
         assert_eq!(batch.target_end, app.master_session.chat.entry_count());
         let pending = app.conn.pending_message_recovery.values().next().unwrap();
         assert_eq!(pending.message_id, "current-ref");
@@ -371,7 +371,7 @@ mod recovery_cov_tests {
             text: "previous complete answer".to_string(),
             streaming: false,
         });
-        app.active_turn_start = app.master_session.chat.entry_count();
+        app.master_session.active_turn_start = app.master_session.chat.entry_count();
         app.master_session.chat.add_entry(ChatEntry::Assistant {
             text: "current complete answer".to_string(),
             streaming: false,
