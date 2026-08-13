@@ -59,7 +59,7 @@ async fn mint_resume_id(h: &mut TuiHarness) -> String {
 }
 
 async fn mint_rewind_refresh_id(h: &mut TuiHarness) -> String {
-    h.app_mut().rewind.pending_apply_id = Some("rw-a".into());
+    h.app_mut().conn.rewind.pending_apply_id = Some("rw-a".into());
     h.app_mut()
         .handle_response(Some("rw-a".into()), "rewind_to".into(), true, None, None);
     let id = h
@@ -145,7 +145,7 @@ async fn foreign_rewind_refresh_does_not_replace_other_client_transcript() {
 async fn foreign_rewind_open_does_not_replace_or_open_selector() {
     let mut b = harness().await;
     seed_client_b_transcript(b.app_mut());
-    b.app_mut().rewind.pending_open_id = Some("rewind-open-local".into());
+    b.app_mut().conn.rewind.pending_open_id = Some("rewind-open-local".into());
     let before_frame = b_frame(b.app_mut());
 
     respond(
@@ -161,9 +161,9 @@ async fn foreign_rewind_open_does_not_replace_or_open_selector() {
         frame, before_frame,
         "foreign rewind-open must not mutate chat"
     );
-    assert!(b.app_mut().rewind.selector.is_none());
+    assert!(b.app_mut().conn.rewind.selector.is_none());
     assert_eq!(
-        b.app_mut().rewind.pending_open_id.as_deref(),
+        b.app_mut().conn.rewind.pending_open_id.as_deref(),
         Some("rewind-open-local"),
         "foreign rewind-open must not clear local pending open"
     );
@@ -173,11 +173,11 @@ async fn foreign_rewind_open_does_not_replace_or_open_selector() {
 async fn foreign_rewind_load_and_apply_are_ignored_without_pending_mutation() {
     let mut b = harness().await;
     b.app_mut().editor.set_text("local draft");
-    b.app_mut().rewind.pending_load_id = Some("rewind-load-local".into());
-    b.app_mut().rewind.pending_apply_message_id = Some("local-message".into());
-    b.app_mut().rewind.pending_apply_id = Some("rewind-to-local".into());
-    b.app_mut().rewind.pending_apply_editor_baseline = Some("local draft".into());
-    b.app_mut().rewind.pending_apply_text = Some("local original".into());
+    b.app_mut().conn.rewind.pending_load_id = Some("rewind-load-local".into());
+    b.app_mut().conn.rewind.pending_apply_message_id = Some("local-message".into());
+    b.app_mut().conn.rewind.pending_apply_id = Some("rewind-to-local".into());
+    b.app_mut().conn.rewind.pending_apply_editor_baseline = Some("local draft".into());
+    b.app_mut().conn.rewind.pending_apply_text = Some("local original".into());
     let notifications_before = b.app_mut().notifications.messages().len();
 
     b.app_mut().handle_response(
@@ -196,15 +196,15 @@ async fn foreign_rewind_load_and_apply_are_ignored_without_pending_mutation() {
     );
 
     assert_eq!(
-        b.app_mut().rewind.pending_load_id.as_deref(),
+        b.app_mut().conn.rewind.pending_load_id.as_deref(),
         Some("rewind-load-local")
     );
     assert_eq!(
-        b.app_mut().rewind.pending_apply_message_id.as_deref(),
+        b.app_mut().conn.rewind.pending_apply_message_id.as_deref(),
         Some("local-message")
     );
     assert_eq!(
-        b.app_mut().rewind.pending_apply_id.as_deref(),
+        b.app_mut().conn.rewind.pending_apply_id.as_deref(),
         Some("rewind-to-local")
     );
     assert_eq!(b.app_mut().editor.text(), "local draft");

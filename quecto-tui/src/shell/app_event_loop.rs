@@ -386,7 +386,7 @@ impl App {
 
     pub(super) fn handle_key(&mut self, key: Key) {
         if !matches!(key, Key::Escape) {
-            self.rewind.last_idle_escape = None;
+            self.conn.rewind.last_idle_escape = None;
         }
 
         // Unconditional exit — Ctrl+D must work regardless of overlays,
@@ -400,36 +400,36 @@ impl App {
         }
 
         // If the resume selector is active, route input to it.
-        if self.sessions.resume_selector.is_some() {
-            self.rewind.last_idle_escape = None;
+        if self.conn.sessions.resume_selector.is_some() {
+            self.conn.rewind.last_idle_escape = None;
             self.handle_resume_selector_key(&key);
             return;
         }
 
         // If the rewind selector is active, route input to it.
-        if self.rewind.selector.is_some() {
-            self.rewind.last_idle_escape = None;
+        if self.conn.rewind.selector.is_some() {
+            self.conn.rewind.last_idle_escape = None;
             self.handle_rewind_selector_key(&key);
             return;
         }
 
         // If the tool policy modal is active, route input to it.
         if self.tool_policy_modal.is_some() {
-            self.rewind.last_idle_escape = None;
+            self.conn.rewind.last_idle_escape = None;
             self.handle_tool_policy_modal_key(&key);
             return;
         }
 
         // If the model selector is active, route input to it.
         if self.inference.model_selector.is_some() {
-            self.rewind.last_idle_escape = None;
+            self.conn.rewind.last_idle_escape = None;
             self.handle_model_selector_key(&key);
             return;
         }
 
         // If the effort selector is active, route input to it (#1067).
         if self.inference.effort_selector.is_some() {
-            self.rewind.last_idle_escape = None;
+            self.conn.rewind.last_idle_escape = None;
             self.handle_effort_selector_key(&key);
             return;
         }
@@ -439,7 +439,7 @@ impl App {
             match &key {
                 Key::Up | Key::Down | Key::Tab | Key::Escape => {
                     if matches!(key, Key::Escape) {
-                        self.rewind.last_idle_escape = None;
+                        self.conn.rewind.last_idle_escape = None;
                     }
                     self.autocomplete.handle_input(&key);
                     // Check if a suggestion was selected.
@@ -539,7 +539,7 @@ impl App {
             Key::Escape => {
                 // Parity: Esc stops the viewed agent if running, else back to master.
                 if self.subagents.active_agent_id.is_some() {
-                    self.rewind.last_idle_escape = None;
+                    self.conn.rewind.last_idle_escape = None;
                     if self.active_subagent_running() {
                         self.handle_abort();
                     } else {
@@ -548,10 +548,10 @@ impl App {
                     return;
                 }
                 if self.conn.agent_state.is_running() {
-                    self.rewind.last_idle_escape = None;
+                    self.conn.rewind.last_idle_escape = None;
                     self.handle_abort();
                 } else if !self.editor.text().is_empty() {
-                    self.rewind.last_idle_escape = None;
+                    self.conn.rewind.last_idle_escape = None;
                     self.editor.set_text("");
                     self.autocomplete.dismiss();
                 } else {

@@ -98,7 +98,7 @@ impl App {
     }
 
     pub(super) fn toggle_workflow_auto_continue(&mut self) {
-        let next = !self.workflow.auto_continue;
+        let next = !self.conn.workflow.auto_continue;
         self.send_command(Command::SetWorkflowAutomation {
             id: Some(self.conn.namespaced_id("workflow-auto")),
             auto_continue: Some(next),
@@ -107,7 +107,7 @@ impl App {
     }
 
     pub(super) fn toggle_workflow_completion_nudge(&mut self) {
-        let next = !self.workflow.completion_nudge;
+        let next = !self.conn.workflow.completion_nudge;
         self.send_command(Command::SetWorkflowAutomation {
             id: Some(self.conn.namespaced_id("workflow-nudge")),
             auto_continue: None,
@@ -134,7 +134,7 @@ impl App {
     pub(super) fn update_footer_stats(&mut self, data: &serde_json::Value) {
         let stats = session_payloads::parse_session_stats(data);
         if stats.context_usage.is_some() {
-            self.sessions.context_stats_requested = true;
+            self.conn.sessions.context_stats_requested = true;
         }
         // Shared session-stats→footer mapping (context + cost gate); see #805.
         self.master_session.footer.apply_session_stats(&stats);
@@ -198,11 +198,11 @@ impl App {
                 }
             })
             .collect::<Vec<_>>();
-        self.sessions.resume_selector = Some(SelectList::new(items, 10));
+        self.conn.sessions.resume_selector = Some(SelectList::new(items, 10));
     }
 
     pub(super) fn handle_resume_selector_key(&mut self, key: &Key) {
-        if let Some(session) = route_overlay_key(&mut self.sessions.resume_selector, key) {
+        if let Some(session) = route_overlay_key(&mut self.conn.sessions.resume_selector, key) {
             self.send_resume_session(&session);
         }
     }
@@ -449,12 +449,12 @@ impl App {
         // Composite the active centered overlay (only one is ever active at a
         // time). All three splice through the same ANSI-aware helper so the
         // centering and escape-safe splice rule lives in one place.
-        if let Some(selector) = &mut self.sessions.resume_selector {
+        if let Some(selector) = &mut self.conn.sessions.resume_selector {
             let (selector_lines, overlay_width) =
                 build_resume_selector_overlay(selector, width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
-        if let Some(selector) = &mut self.rewind.selector {
+        if let Some(selector) = &mut self.conn.rewind.selector {
             let (selector_lines, overlay_width) =
                 build_rewind_selector_overlay(selector, width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
@@ -620,7 +620,7 @@ impl App {
         // transcript can't splice into the cleared /clear-or-/new session (#1060 r4).
         self.clear_message_recovery();
         self.master_session.footer.set_context(None, 0);
-        self.sessions.context_stats_requested = false;
+        self.conn.sessions.context_stats_requested = false;
         // The agent resets session-scoped state (e.g. the effort override, #1067)
         // on new_session; re-fetch so the footer tracks it (commands dispatch in
         // order, so this get_state observes the fresh session).

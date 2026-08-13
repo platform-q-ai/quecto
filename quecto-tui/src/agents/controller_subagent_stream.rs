@@ -124,7 +124,7 @@ impl App {
                         session.footer.set_model(&model);
                     }
                     if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
-                        self.inference.current_model = Some(model);
+                        self.conn.inference.current_model = Some(model);
                     }
                 }
                 if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
@@ -188,11 +188,11 @@ impl App {
                 }
                 if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
                     if let Some(model) = snap.footer.model.clone() {
-                        self.inference.current_model = Some(model);
+                        self.conn.inference.current_model = Some(model);
                     }
-                    self.inference.current_effort = snap.footer.effort.clone();
+                    self.conn.inference.current_effort = snap.footer.effort.clone();
                     if !snap.effort_levels.is_empty() {
-                        self.inference.effort_levels = snap.effort_levels;
+                        self.conn.inference.effort_levels = snap.effort_levels;
                     }
                 }
                 return;
@@ -206,7 +206,7 @@ impl App {
                         session.footer.set_effort(Some(level.clone()));
                     }
                     if self.subagents.active_agent_id.as_deref() == Some(agent_id) {
-                        self.inference.current_effort = Some(level.clone());
+                        self.conn.inference.current_effort = Some(level.clone());
                         self.notify(&format!("Effort set to {level}"), NotifyLevel::Success);
                     }
                 }

@@ -279,10 +279,11 @@ impl App {
             "get_messages" if self.is_pending_attach_backfill(id.as_deref()) => {
                 self.conn.pending_attach_backfill_id = None;
             }
-            "rewind_to" if id.is_some() && id == self.rewind.pending_apply_id && success => {
-                self.rewind.pending_apply_id = None;
-                if let Some(text) = self.rewind.pending_apply_text.take() {
+            "rewind_to" if id.is_some() && id == self.conn.rewind.pending_apply_id && success => {
+                self.conn.rewind.pending_apply_id = None;
+                if let Some(text) = self.conn.rewind.pending_apply_text.take() {
                     let editor_unchanged = self
+                        .conn
                         .rewind
                         .pending_apply_editor_baseline
                         .take()
@@ -308,10 +309,10 @@ impl App {
                     agent_id: None,
                 });
             }
-            "rewind_to" if id.is_some() && id == self.rewind.pending_apply_id => {
-                self.rewind.pending_apply_id = None;
-                self.rewind.pending_apply_editor_baseline = None;
-                self.rewind.pending_apply_text = None;
+            "rewind_to" if id.is_some() && id == self.conn.rewind.pending_apply_id => {
+                self.conn.rewind.pending_apply_id = None;
+                self.conn.rewind.pending_apply_editor_baseline = None;
+                self.conn.rewind.pending_apply_text = None;
                 self.notify_response_error("Rewind failed", error);
             }
             "rewind_to" => {}
@@ -372,8 +373,8 @@ impl App {
             return;
         };
 
-        if id.is_some() && id == self.rewind.pending_open_id.as_deref() {
-            self.rewind.pending_open_id = None;
+        if id.is_some() && id == self.conn.rewind.pending_open_id.as_deref() {
+            self.conn.rewind.pending_open_id = None;
             self.open_rewind_selector(&data);
             return;
         }
@@ -442,7 +443,7 @@ impl App {
         }) {
             self.master_session.footer.set_model(&model);
             if self.subagents.active_agent_id.is_none() {
-                self.inference.current_model = Some(model);
+                self.conn.inference.current_model = Some(model);
             }
         }
         if self.subagents.active_agent_id.is_none() {
@@ -469,17 +470,17 @@ impl App {
             .apply_get_state_fields(&snap.footer)
         {
             if self.subagents.active_agent_id.is_none() {
-                self.inference.current_model = Some(model);
+                self.conn.inference.current_model = Some(model);
             }
         }
         if self.subagents.active_agent_id.is_none() {
-            self.inference.current_effort = snap.footer.effort.clone();
+            self.conn.inference.current_effort = snap.footer.effort.clone();
             if !snap.effort_levels.is_empty() {
-                self.inference.effort_levels = snap.effort_levels;
+                self.conn.inference.effort_levels = snap.effort_levels;
             }
         }
         if snap.footer.max_context_tokens.is_some() {
-            self.sessions.context_stats_requested = true;
+            self.conn.sessions.context_stats_requested = true;
         }
         // Learn the connected agent's own id from its sessionKey ("cli:<name>").
         if let Some(key) = snap.session_key.as_deref() {
@@ -498,10 +499,10 @@ impl App {
     fn sync_workflow_automation(&mut self, data: &serde_json::Value) {
         let flags = crate::protocol::workflow_payloads::parse_workflow_automation(data);
         if let Some(value) = flags.auto_continue {
-            self.workflow.auto_continue = value;
+            self.conn.workflow.auto_continue = value;
         }
         if let Some(value) = flags.completion_nudge {
-            self.workflow.completion_nudge = value;
+            self.conn.workflow.completion_nudge = value;
         }
         self.mirror_automation_to_bar();
     }
@@ -511,20 +512,21 @@ impl App {
     /// state instead of the hard-coded `false` from `parse_workflow_event`
     /// (#897 AC2). Call after any (re)build of `master_session.workflow_bar`.
     pub(super) fn mirror_automation_to_bar(&mut self) {
-        self.master_session.workflow_bar.workflow_auto_continue = self.workflow.auto_continue;
-        self.master_session.workflow_bar.workflow_completion_nudge = self.workflow.completion_nudge;
+        self.master_session.workflow_bar.workflow_auto_continue = self.conn.workflow.auto_continue;
+        self.master_session.workflow_bar.workflow_completion_nudge =
+            self.conn.workflow.completion_nudge;
     }
 
     fn handle_workflow_automation(&mut self, data: Option<serde_json::Value>) {
         if let Some(data) = data {
             self.sync_workflow_automation(&data);
         }
-        let auto = if self.workflow.auto_continue {
+        let auto = if self.conn.workflow.auto_continue {
             "ON"
         } else {
             "OFF"
         };
-        let nudge = if self.workflow.completion_nudge {
+        let nudge = if self.conn.workflow.completion_nudge {
             "ON"
         } else {
             "OFF"
@@ -567,7 +569,7 @@ impl App {
         data: Option<serde_json::Value>,
         error: Option<String>,
     ) {
-        if id.is_some() && id == self.rewind.pending_load_id {
+        if id.is_some() && id == self.conn.rewind.pending_load_id {
             if success {
                 self.handle_rewind_get_message_success(data);
             } else {
@@ -586,8 +588,8 @@ impl App {
     }
 
     fn handle_rewind_get_message_success(&mut self, data: Option<serde_json::Value>) {
-        self.rewind.pending_load_id = None;
-        let Some(message_id) = self.rewind.pending_apply_message_id.clone() else {
+        self.conn.rewind.pending_load_id = None;
+        let Some(message_id) = self.conn.rewind.pending_apply_message_id.clone() else {
             return;
         };
         let Some(data) = data else {
@@ -612,9 +614,9 @@ impl App {
         }
 
         let update = crate::protocol::range_accumulator::RangeAccumulator::new_with_expected_len(
-            std::mem::take(&mut self.rewind.pending_load_content),
-            self.rewind.pending_load_offset,
-            self.rewind.pending_load_content_len,
+            std::mem::take(&mut self.conn.rewind.pending_load_content),
+            self.conn.rewind.pending_load_offset,
+            self.conn.rewind.pending_load_content_len,
         )
         .apply(&data);
         let text = match update {
@@ -624,10 +626,10 @@ impl App {
                 content_len,
             }) => {
                 let id = self.next_rewind_request_id("load");
-                self.rewind.pending_load_id = Some(id.clone());
-                self.rewind.pending_load_content = content;
-                self.rewind.pending_load_offset = next_offset;
-                self.rewind.pending_load_content_len = content_len;
+                self.conn.rewind.pending_load_id = Some(id.clone());
+                self.conn.rewind.pending_load_content = content;
+                self.conn.rewind.pending_load_offset = next_offset;
+                self.conn.rewind.pending_load_content_len = content_len;
                 self.send_command(Command::GetMessage {
                     id: Some(id),
                     message_id,
@@ -651,9 +653,9 @@ impl App {
 
         self.clear_pending_rewind_load();
         let id = self.next_rewind_request_id("to");
-        self.rewind.pending_apply_id = Some(id.clone());
-        self.rewind.pending_apply_editor_baseline = Some(self.editor.text());
-        self.rewind.pending_apply_text = Some(text);
+        self.conn.rewind.pending_apply_id = Some(id.clone());
+        self.conn.rewind.pending_apply_editor_baseline = Some(self.editor.text());
+        self.conn.rewind.pending_apply_text = Some(text);
         self.send_command(Command::RewindTo {
             id: Some(id),
             message_id,
@@ -666,11 +668,11 @@ impl App {
     }
 
     fn clear_pending_rewind_load(&mut self) {
-        self.rewind.pending_load_id = None;
-        self.rewind.pending_apply_message_id = None;
-        self.rewind.pending_load_content.clear();
-        self.rewind.pending_load_offset = 0;
-        self.rewind.pending_load_content_len = None;
+        self.conn.rewind.pending_load_id = None;
+        self.conn.rewind.pending_apply_message_id = None;
+        self.conn.rewind.pending_load_content.clear();
+        self.conn.rewind.pending_load_offset = 0;
+        self.conn.rewind.pending_load_content_len = None;
     }
 
     fn handle_agent_error(&mut self, error: Option<String>) {

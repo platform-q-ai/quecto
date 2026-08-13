@@ -122,7 +122,7 @@ async fn rewind_to_drops_pending_recovery_so_late_response_is_ignored() {
     let recovery_id = pending_recovery_id(&mut h, ref_id).await;
 
     let a = h.app_mut();
-    a.rewind.pending_apply_id = Some("rw-apply".into());
+    a.conn.rewind.pending_apply_id = Some("rw-apply".into());
     a.handle_event(Event::Response {
         id: Some("rw-apply".into()),
         command: "rewind_to".into(),

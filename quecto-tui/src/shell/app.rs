@@ -66,11 +66,9 @@ pub struct App {
     kitty: KittyProtocol,
     should_exit: bool,
     stdin_buffer: crate::shell::stdin_buffer::StdinBuffer,
+    /// Global selector-overlay half of the inference flow; per-tab
+    /// model/effort state lives on `conn` (#1463).
     inference: InferenceFlow,
-    sessions: SessionsFlow,
-    workflow: WorkflowFlow,
-    /// Rewind flow state (#997).
-    rewind: RewindFlow,
     /// Sub-agent / multi-session UI state (#997).
     subagents: SubagentUi,
     /// Diagnostic: with `QUECTO_TUI_RENDER_LOG` set, frames are appended here.
@@ -160,9 +158,6 @@ impl App {
             should_exit: false,
             stdin_buffer: crate::shell::stdin_buffer::StdinBuffer::new(),
             inference: InferenceFlow::default(),
-            sessions: SessionsFlow::default(),
-            workflow: WorkflowFlow::default(),
-            rewind: RewindFlow::default(),
             subagents,
             render_log_path: std::env::var("QUECTO_TUI_RENDER_LOG").ok(),
             #[cfg(any(test, feature = "test-harness"))]

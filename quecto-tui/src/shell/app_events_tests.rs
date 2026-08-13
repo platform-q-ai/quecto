@@ -99,7 +99,7 @@ async fn handles_turn_end_usage_with_context_window_and_stats_fallback() {
             "maxContextTokens": 100
         }),
     });
-    assert!(app.sessions.context_stats_requested);
+    assert!(app.conn.sessions.context_stats_requested);
     let rendered = app.master_session.footer.render(80).join("\n");
     assert!(
         rendered.contains("40/100"),
@@ -110,7 +110,7 @@ async fn handles_turn_end_usage_with_context_window_and_stats_fallback() {
     app.handle_event(Event::TurnEnd {
         message: serde_json::json!({"usage": {"total": 1}}),
     });
-    assert!(app.sessions.context_stats_requested);
+    assert!(app.conn.sessions.context_stats_requested);
 }
 
 #[tokio::test]
@@ -125,7 +125,7 @@ async fn handles_turn_end_context_tokens_without_usage_field() {
             "maxContextTokens": 100
         }),
     });
-    assert!(app.sessions.context_stats_requested);
+    assert!(app.conn.sessions.context_stats_requested);
     let rendered = app.master_session.footer.render(80).join("\n");
     assert!(
         rendered.contains("40/100"),
@@ -262,7 +262,10 @@ async fn handles_response_variants() {
         })),
         error: None,
     });
-    assert_eq!(app.inference.current_model.as_deref(), Some("test-model"));
+    assert_eq!(
+        app.conn.inference.current_model.as_deref(),
+        Some("test-model")
+    );
 
     for command in ["set_model", "list_sessions", "resume_session"] {
         app.handle_event(Event::Response {

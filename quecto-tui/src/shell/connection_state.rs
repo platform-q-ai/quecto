@@ -63,6 +63,15 @@ pub(crate) struct ConnectionState {
     pub(crate) pending_attach_backfill_id: Option<String>,
     /// Local sequence suffix for minted solicited `get_messages` ids (#1237).
     pub(crate) solicited_get_messages_seq: u64,
+    /// Rewind flow state (#997) for this tab's conversation.
+    pub(crate) rewind: RewindFlow,
+    /// Session pick/resume flow state for this tab's agent.
+    pub(crate) sessions: SessionsFlow,
+    /// Workflow flow state for this tab's agent.
+    pub(crate) workflow: WorkflowFlow,
+    /// The model/effort the tab's agent currently runs with (#1463);
+    /// selector overlays stay global on `App`.
+    pub(crate) inference: app_inference::ConnInference,
 }
 
 impl ConnectionState {
@@ -88,6 +97,10 @@ impl ConnectionState {
             pending_rewind_refresh_id: None,
             pending_attach_backfill_id: None,
             solicited_get_messages_seq: 0,
+            rewind: RewindFlow::default(),
+            sessions: SessionsFlow::default(),
+            workflow: WorkflowFlow::default(),
+            inference: app_inference::ConnInference::default(),
         }
     }
 

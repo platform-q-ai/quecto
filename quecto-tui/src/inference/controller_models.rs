@@ -48,8 +48,8 @@ impl App {
         }
         self.send_command(cmd);
         self.master_session.footer.set_model(model);
-        self.inference.current_model = Some(model.to_string());
-        self.sessions.context_stats_requested = false;
+        self.conn.inference.current_model = Some(model.to_string());
+        self.conn.sessions.context_stats_requested = false;
     }
 
     pub(super) fn open_model_selector(&mut self) {
@@ -69,10 +69,10 @@ impl App {
 
     pub(super) fn open_model_selector_now(&mut self) {
         let selector = if self.inference.model_registry.entries.is_empty() {
-            ModelSelector::new(self.inference.current_model.as_deref())
+            ModelSelector::new(self.conn.inference.current_model.as_deref())
         } else {
             let entries = self.inference.model_registry.entries.clone();
-            ModelSelector::with_models(entries, self.inference.current_model.as_deref())
+            ModelSelector::with_models(entries, self.conn.inference.current_model.as_deref())
         };
         self.inference.model_selector = Some(selector);
     }

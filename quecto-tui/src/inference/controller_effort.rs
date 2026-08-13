@@ -26,15 +26,15 @@ impl App {
         // Local pre-validation against the agent-reported vocabulary; when it
         // hasn't arrived yet, defer to the agent's own validation (it rejects
         // invalid levels listing the valid ones).
-        if self.inference.effort_levels.is_empty()
-            || self.inference.effort_levels.iter().any(|l| l == arg)
+        if self.conn.inference.effort_levels.is_empty()
+            || self.conn.inference.effort_levels.iter().any(|l| l == arg)
         {
             self.send_set_effort(arg);
         } else {
             self.notify(
                 &format!(
                     "Invalid effort level \"{arg}\" — valid levels: {}",
-                    self.inference.effort_levels.join(", ")
+                    self.conn.inference.effort_levels.join(", ")
                 ),
                 NotifyLevel::Error,
             );
@@ -42,7 +42,7 @@ impl App {
     }
 
     pub(super) fn open_effort_selector(&mut self) {
-        if self.inference.effort_levels.is_empty() {
+        if self.conn.inference.effort_levels.is_empty() {
             self.notify(
                 "Effort levels not known yet — still waiting for agent state",
                 NotifyLevel::Warning,
@@ -50,6 +50,7 @@ impl App {
             return;
         }
         let levels: Vec<&str> = self
+            .conn
             .inference
             .effort_levels
             .iter()
@@ -57,7 +58,7 @@ impl App {
             .collect();
         self.inference.effort_selector = Some(EffortSelector::new(
             &levels,
-            self.inference.current_effort.as_deref(),
+            self.conn.inference.current_effort.as_deref(),
         ));
     }
 
@@ -115,7 +116,7 @@ impl App {
         self.master_session.footer.set_effort(Some(level.clone()));
         if self.subagents.active_agent_id.is_none() {
             self.notify(&format!("Effort set to {level}"), NotifyLevel::Success);
-            self.inference.current_effort = Some(level);
+            self.conn.inference.current_effort = Some(level);
         }
     }
 

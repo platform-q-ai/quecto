@@ -175,18 +175,19 @@ impl App {
         self.sync_panel_selection_to_active();
         let Some(id) = new_active else {
             // Restore model/effort markers from master footer (#1085).
-            self.inference.current_model =
+            self.conn.inference.current_model =
                 self.master_session.footer.known_model().map(str::to_string);
-            self.inference.current_effort = self.master_session.footer.effort().map(str::to_string);
-            self.inference.effort_levels.clear();
+            self.conn.inference.current_effort =
+                self.master_session.footer.effort().map(str::to_string);
+            self.conn.inference.effort_levels.clear();
             self.send_state_resync();
             return;
         };
         self.ensure_session(&id);
         let f = self.subagents.sessions.get(&id).map(|s| &s.footer);
-        self.inference.current_model = f.and_then(|f| f.known_model()).map(str::to_string);
-        self.inference.current_effort = f.and_then(|f| f.effort()).map(str::to_string);
-        self.inference.effort_levels.clear();
+        self.conn.inference.current_model = f.and_then(|f| f.known_model()).map(str::to_string);
+        self.conn.inference.current_effort = f.and_then(|f| f.effort()).map(str::to_string);
+        self.conn.inference.effort_levels.clear();
         self.seed_session_bar_from_snapshot(&id);
         self.ensure_synced_subagent_feed(&id);
         // Merge committed ledger + retained in-flight live tail so focusing a

@@ -27,7 +27,7 @@ impl TuiHarness {
 
     /// The rewind owner group's monotonic request sequence (#997).
     pub fn rewind_group_request_seq(&self) -> u64 {
-        self.app.rewind.request_seq
+        self.app.conn.rewind.request_seq
     }
 
     /// Request a model-selector open through the real (deferred) `/model` path.
@@ -95,7 +95,7 @@ impl TuiHarness {
     /// [`Self::master_footer_text`] to assert late master responses do not
     /// clobber focused-child state.
     pub fn current_model(&self) -> Option<String> {
-        self.app.inference.current_model.clone()
+        self.app.conn.inference.current_model.clone()
     }
 
     /// Master chat tool entries in transcript order: `(name, result)`.
