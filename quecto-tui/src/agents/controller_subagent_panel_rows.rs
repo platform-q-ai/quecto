@@ -9,7 +9,7 @@ impl App {
     /// tree depth-ordered by `parent_id` (grandchildren under their parent).
     pub(super) fn panel_rows(&self) -> Vec<PanelRow> {
         let master_wf = {
-            let wf = &self.master_session.workflow_bar;
+            let wf = &self.conn.master_session.workflow_bar;
             (wf.total > 0).then_some((wf.done, wf.total))
         };
         let mut rows = vec![PanelRow {

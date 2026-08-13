@@ -46,7 +46,7 @@ impl App {
         }
         match command {
             Command::GetMessages { id: Some(id), .. } => {
-                self.master_session.history.rollback_pending_page(id);
+                self.conn.master_session.history.rollback_pending_page(id);
                 self.rollback_pending_solicited_get_messages(id);
             }
             Command::GetMessage { id: Some(id), .. } => {
@@ -180,7 +180,7 @@ impl App {
         let (response_id, role) = crate::protocol::presentation_payloads::response_identity(data);
         let response_matches = response_id.as_deref() == Some(recall.message_id.as_str());
         let chat = match &recall.agent_id {
-            None => Some(&mut self.master_session.chat),
+            None => Some(&mut self.conn.master_session.chat),
             Some(child) => self
                 .subagents
                 .sessions
@@ -268,7 +268,7 @@ impl App {
         // with the message refs so a late page from the prior conversation
         // cannot prepend into the replacement transcript, and the new
         // conversation cannot request the prior cursor.
-        self.master_session.history.reset();
+        self.conn.master_session.history.reset();
         // Drop solicited resume/rewind/attach correlation too (#1237): a late
         // response from the prior boundary must not replace the new transcript.
         // Callers that mint a new id (resume success, rewind_to success) do so
@@ -293,11 +293,11 @@ impl App {
         data: &serde_json::Value,
         status: &str,
     ) {
-        self.master_session.chat.clear();
-        self.master_session.history.reopen_backfill();
+        self.conn.master_session.chat.clear();
+        self.conn.master_session.history.reopen_backfill();
         // The cursors themselves are reconciled from `data` below.
-        Self::reconcile_master_backfill_history(&mut self.master_session, data, false);
-        self.master_session.chat.add_entry(ChatEntry::Status {
+        Self::reconcile_master_backfill_history(&mut self.conn.master_session, data, false);
+        self.conn.master_session.chat.add_entry(ChatEntry::Status {
             text: status.to_string(),
         });
     }

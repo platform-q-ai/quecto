@@ -51,7 +51,8 @@ pub(super) fn page(
 }
 
 pub(super) fn chat_text(app: &mut App) -> String {
-    app.master_session
+    app.conn
+        .master_session
         .chat
         .render(120)
         .iter()
@@ -185,9 +186,13 @@ async fn subagent_older_history_request_is_disabled_after_legacy_backfill_remova
 #[tokio::test]
 async fn paged_resume_replaces_stale_chat_before_preserving_cursor() {
     let mut h = harness().await;
-    h.app_mut().master_session.chat.add_entry(ChatEntry::User {
-        text: "stale session A".into(),
-    });
+    h.app_mut()
+        .conn
+        .master_session
+        .chat
+        .add_entry(ChatEntry::User {
+            text: "stale session A".into(),
+        });
 
     respond(
         h.app_mut(),

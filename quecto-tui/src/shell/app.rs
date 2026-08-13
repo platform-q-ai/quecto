@@ -55,11 +55,6 @@ pub struct App {
     /// tab dispatch lands with N>1 tabs (epic #1467).
     conn: connection_state::ConnectionState,
     editor: Editor,
-    /// The master agent's own session, modeled as just another [`SessionView`]
-    /// (#828) so render/input share ONE active-session path with sub-agents
-    /// (`active_agent_id == None` selects this). Only `spinner`/`agent_state`
-    /// stay master-local; sub-agents derive `running` from forwarded events.
-    master_session: SessionView,
     autocomplete: Autocomplete,
     workspace: WorkspaceFlow,
     notifications: NotificationStack,
@@ -143,9 +138,11 @@ impl App {
         Self {
             terminal,
             renderer: DiffRenderer::new(std::io::stdout()),
-            conn: connection_state::ConnectionState::new(connection),
+            conn: connection_state::ConnectionState::new(
+                connection,
+                SessionView::with_footer(footer),
+            ),
             editor: Editor::new(),
-            master_session: SessionView::with_footer(footer),
             autocomplete: Autocomplete::new(builtin_commands().to_vec(), 8),
             workspace: WorkspaceFlow::new(git_branch, git_repo),
             notifications: NotificationStack::new(),
@@ -177,7 +174,7 @@ impl App {
             return false;
         }
         self.workspace.git_branch = branch.clone();
-        self.master_session.footer.set_git_branch(branch);
+        self.conn.master_session.footer.set_git_branch(branch);
         true
     }
 

@@ -242,7 +242,7 @@ impl TuiHarness {
 
     /// Mark the main session's streaming indicator.
     pub fn set_streaming(&mut self, streaming: bool) {
-        self.app.master_session.footer.set_streaming(streaming);
+        self.app.conn.master_session.footer.set_streaming(streaming);
     }
 
     /// Mark the main agent as not running.

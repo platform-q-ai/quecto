@@ -16,6 +16,12 @@ pub(crate) struct ConnectionState {
     /// (#1462). The feed task owns the [`Client`]; this is the command/state
     /// handle.
     pub(crate) transport: crate::shell::connection::Connection,
+    /// The tab's master agent session, modeled as just another
+    /// [`SessionView`] (#828) so render/input share ONE active-session path
+    /// with sub-agents (`active_agent_id == None` selects this). Only
+    /// `spinner`/`agent_state` stay master-local; sub-agents derive
+    /// `running` from forwarded events.
+    pub(crate) master_session: SessionView,
     /// Agent run state machine (abort-aware, #502).
     pub(crate) agent_state: AgentRunState,
     /// Working spinner for the tab's own agent turn; `None` when idle.
@@ -76,9 +82,13 @@ pub(crate) struct ConnectionState {
 
 impl ConnectionState {
     /// Bundle a freshly spawned transport with the connected-tab defaults.
-    pub(crate) fn new(transport: crate::shell::connection::Connection) -> Self {
+    pub(crate) fn new(
+        transport: crate::shell::connection::Connection,
+        master_session: SessionView,
+    ) -> Self {
         Self {
             transport,
+            master_session,
             agent_state: AgentRunState::new(),
             spinner: None,
             connected_agent_id: None,

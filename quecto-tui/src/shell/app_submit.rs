@@ -126,7 +126,8 @@ impl App {
         // The composed text always lands in the chat (the editor was
         // already emptied by take_submit) — on a dead connection it is the
         // only surviving copy (#1470 r3/r6, single add site).
-        self.master_session
+        self.conn
+            .master_session
             .chat
             .add_entry_follow_tail(ChatEntry::User {
                 text: text.to_string(),
@@ -179,17 +180,17 @@ impl App {
         // Abort the state machine — does NOT set running false; the matched
         // AgentEnd arrives and guards against stale events corrupting state (#502).
         self.conn.agent_state.abort();
-        self.master_session.footer.set_streaming(false);
+        self.conn.master_session.footer.set_streaming(false);
 
         // Stop spinner / working indicator; `agent_state` stays aborting (#828).
-        self.master_session.running = false;
+        self.conn.master_session.running = false;
         self.conn.spinner = None;
 
         // Finalize any streaming assistant message.
-        self.master_session.chat.finalize_assistant();
+        self.conn.master_session.chat.finalize_assistant();
 
         // Show abort status.
-        self.master_session.chat.add_entry(ChatEntry::Status {
+        self.conn.master_session.chat.add_entry(ChatEntry::Status {
             text: "Operation aborted".to_string(),
         });
     }

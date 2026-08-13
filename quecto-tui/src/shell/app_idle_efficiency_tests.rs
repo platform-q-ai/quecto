@@ -73,7 +73,7 @@ async fn streaming_status_keeps_animation_tick_armed() {
     let mut h = harness().await;
     let app = h.app_mut();
 
-    app.master_session.footer.set_streaming(true);
+    app.conn.master_session.footer.set_streaming(true);
     assert!(
         app.needs_animation_tick(false),
         "streaming status must continue advancing the activity indicator"

@@ -23,7 +23,7 @@ impl App {
     // ── Slash command handlers ─────────────────────────────────────────
 
     pub(super) fn reject_unknown_slash_command(&mut self, command: &str) {
-        self.master_session.chat.add_entry(ChatEntry::Status {
+        self.conn.master_session.chat.add_entry(ChatEntry::Status {
             text: format!(
                 "Unknown slash command: {command}\nType /help to see available commands."
             ),
@@ -67,13 +67,14 @@ impl App {
                 command.name, command.description
             ));
         }
-        self.master_session
+        self.conn
+            .master_session
             .chat
             .add_entry(ChatEntry::Status { text });
     }
 
     pub(super) fn show_workflow_status(&mut self) {
-        let wf = &self.master_session.workflow_bar;
+        let wf = &self.conn.master_session.workflow_bar;
         let text = if workflow_bar::render_widget(wf, self.terminal.width).is_empty() {
             "Workflow is not active. Start quecto-tui with --workflow to enable it.".to_string()
         } else {
@@ -92,7 +93,8 @@ impl App {
                 wf.total.max(1)
             )
         };
-        self.master_session
+        self.conn
+            .master_session
             .chat
             .add_entry(ChatEntry::Status { text });
     }
@@ -137,7 +139,7 @@ impl App {
             self.conn.sessions.context_stats_requested = true;
         }
         // Shared session-stats→footer mapping (context + cost gate); see #805.
-        self.master_session.footer.apply_session_stats(&stats);
+        self.conn.master_session.footer.apply_session_stats(&stats);
     }
 
     pub(super) fn send_list_sessions(&mut self) {
@@ -161,7 +163,7 @@ impl App {
         // Footer context/cost update has a single owner; this adds the chat line.
         self.update_footer_stats(data);
         let stats = session_payloads::parse_session_stats(data);
-        self.master_session.chat.add_entry(ChatEntry::Status {
+        self.conn.master_session.chat.add_entry(ChatEntry::Status {
             text: format!(
                 "Session: {} | Messages: {} | Tokens: ↑{} ↓{}",
                 stats.session_key, stats.total_messages, stats.input_tokens, stats.output_tokens
@@ -179,7 +181,7 @@ impl App {
             } else {
                 "No persisted sessions found."
             };
-            self.master_session.chat.add_entry(ChatEntry::Status {
+            self.conn.master_session.chat.add_entry(ChatEntry::Status {
                 text: text.to_string(),
             });
             return;
@@ -220,7 +222,8 @@ impl App {
             Ok(messages) => messages,
             Err(error) => {
                 let text = format!("Invalid resume payload: {}", error.description());
-                self.master_session
+                self.conn
+                    .master_session
                     .chat
                     .add_entry(ChatEntry::Status { text: text.clone() });
                 self.notify(&text, NotifyLevel::Error);
@@ -229,12 +232,12 @@ impl App {
         };
 
         let has_displayable_messages = !messages.is_empty();
-        self.master_session.chat.clear();
+        self.conn.master_session.chat.clear();
         for entry in Self::resumed_chat_entries(messages) {
-            self.master_session.chat.add_entry(entry);
+            self.conn.master_session.chat.add_entry(entry);
         }
         if !has_displayable_messages {
-            self.master_session.chat.add_entry(ChatEntry::Status {
+            self.conn.master_session.chat.add_entry(ChatEntry::Status {
                 text: empty_status.to_string(),
             });
         }
@@ -608,7 +611,7 @@ impl App {
         // identical to pre-seam master; command acks are phase-2 scope.
         let was_connected = self.conn.agent_connected;
         let agent_reset = self.send_new_session();
-        self.master_session.chat.clear();
+        self.conn.master_session.chat.clear();
         // The clear wiped any persistent refusal Status line; re-arm the
         // once-per-episode latch so the next refusal (send_state_resync
         // below, on a dead connection) re-raises the toast and re-writes
@@ -619,7 +622,7 @@ impl App {
         // Invalidate in-flight ref recovery so a late get_message from the OLD
         // transcript can't splice into the cleared /clear-or-/new session (#1060 r4).
         self.clear_message_recovery();
-        self.master_session.footer.set_context(None, 0);
+        self.conn.master_session.footer.set_context(None, 0);
         self.conn.sessions.context_stats_requested = false;
         // The agent resets session-scoped state (e.g. the effort override, #1067)
         // on new_session; re-fetch so the footer tracks it (commands dispatch in

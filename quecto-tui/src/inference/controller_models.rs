@@ -47,7 +47,7 @@ impl App {
             return;
         }
         self.send_command(cmd);
-        self.master_session.footer.set_model(model);
+        self.conn.master_session.footer.set_model(model);
         self.conn.inference.current_model = Some(model.to_string());
         self.conn.sessions.context_stats_requested = false;
     }

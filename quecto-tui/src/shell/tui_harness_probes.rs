@@ -87,7 +87,7 @@ impl TuiHarness {
     /// away from the focused child (which would hide the child's footer).
     pub fn master_footer_text(&mut self) -> String {
         use crate::components::component::Component;
-        let rendered = self.app.master_session.footer.render(200).join("\n");
+        let rendered = self.app.conn.master_session.footer.render(200).join("\n");
         crate::components::ansi::strip_ansi(&rendered)
     }
 
@@ -101,6 +101,7 @@ impl TuiHarness {
     /// Master chat tool entries in transcript order: `(name, result)`.
     pub fn master_tool_entries(&self) -> Vec<(String, Option<String>)> {
         self.app
+            .conn
             .master_session
             .chat
             .entries()
@@ -121,6 +122,7 @@ impl TuiHarness {
     /// cannot be substring-matched against a frame.
     pub fn master_assistant_texts(&self) -> Vec<String> {
         self.app
+            .conn
             .master_session
             .chat
             .entries()

@@ -23,11 +23,11 @@ impl App {
                 }
                 self.workspace.root = Some(root.clone());
                 self.workspace.git_repo = Some(root.clone());
-                self.master_session.footer.set_pwd_path(&root);
+                self.conn.master_session.footer.set_pwd_path(&root);
                 self.apply_git_branch(app_git::read_git_branch_from(&root));
             }
             Event::Token { token } => {
-                self.master_session.chat.append_token(&token);
+                self.conn.master_session.chat.append_token(&token);
                 self.reconcile_master_retention_trim();
             }
             Event::TurnStart => {}
@@ -138,29 +138,29 @@ impl App {
 
     fn handle_agent_start(&mut self) {
         self.active_conn_mut().agent_state.start();
-        self.master_session.tools_this_turn = 0;
-        self.master_session.open_tool_calls = 0;
-        let _ = self.master_session.chat.take_retention_front_delta();
-        self.master_session.active_turn_start = self.master_session.chat.entry_count();
+        self.conn.master_session.tools_this_turn = 0;
+        self.conn.master_session.open_tool_calls = 0;
+        let _ = self.conn.master_session.chat.take_retention_front_delta();
+        self.conn.master_session.active_turn_start = self.conn.master_session.chat.entry_count();
         // Mirror the abort-aware run state onto the master session's `running`
         // flag so the unified working indicator is driven by one per-session
         // flag for master and sub-agents alike (#828).
-        self.master_session.running = true;
-        self.master_session.footer.set_streaming(true);
+        self.conn.master_session.running = true;
+        self.conn.master_session.footer.set_streaming(true);
         self.conn.spinner = Some(Spinner::new("Working... (Esc to interrupt)"));
     }
 
     pub(super) fn reconcile_master_retention_trim(&mut self) {
         // Turn tracking lives on the SessionView for master and sub-agents
         // alike (#1463 cluster 4) — one retention-reconcile path, no drift.
-        self.master_session.reconcile_chat_retention_trim();
+        self.conn.master_session.reconcile_chat_retention_trim();
     }
 
     fn handle_agent_end(&mut self) {
-        self.master_session.running = false;
-        self.master_session.footer.set_streaming(false);
+        self.conn.master_session.running = false;
+        self.conn.master_session.footer.set_streaming(false);
         self.conn.spinner = None;
-        self.master_session.chat.finalize_assistant();
+        self.conn.master_session.chat.finalize_assistant();
         // Parent is now idle — flush any sub-agent completion notes that arrived
         // mid-turn, so they appear after the finished response instead of in it.
         // Flush onto the currently-viewed session (the same place
@@ -171,7 +171,7 @@ impl App {
     }
 
     fn handle_turn_end(&mut self, message: serde_json::Value) {
-        self.master_session.chat.finalize_assistant();
+        self.conn.master_session.chat.finalize_assistant();
         // #1060: messageRefs identify the turn; fetch-on-miss only when the
         // active-turn stream did not already deliver full content.
         let payload = crate::protocol::presentation_payloads::parse_turn_end(&message);
@@ -184,7 +184,8 @@ impl App {
         // independently and must still drive the footer.
         let total = payload.usage_total;
         if let (Some(used), Some(window)) = (payload.context_tokens, payload.max_context_tokens) {
-            self.master_session
+            self.conn
+                .master_session
                 .footer
                 .update_context_usage(used, window);
             self.conn.sessions.context_stats_requested = true;
@@ -218,12 +219,15 @@ impl App {
         // ledger and therefore contributes to end-of-turn `messageRefs`. Count it
         // regardless of display suppression, or `needs_message_recovery_for`
         // undercounts on spawn turns and fires needless recovery (#1060 review).
-        self.master_session.tools_this_turn = self.master_session.tools_this_turn.saturating_add(1);
-        self.master_session.open_tool_calls = self.master_session.open_tool_calls.saturating_add(1);
+        self.conn.master_session.tools_this_turn =
+            self.conn.master_session.tools_this_turn.saturating_add(1);
+        self.conn.master_session.open_tool_calls =
+            self.conn.master_session.open_tool_calls.saturating_add(1);
         if suppress_tool_box(&tool_name, &args) {
-            self.master_session.chat.finalize_assistant();
+            self.conn.master_session.chat.finalize_assistant();
         } else {
-            self.master_session
+            self.conn
+                .master_session
                 .chat
                 .start_tool(tool_call_id, tool_name, args_str);
             self.reconcile_master_retention_trim();
@@ -322,8 +326,10 @@ impl App {
         is_error: bool,
     ) {
         let result_text = crate::protocol::client::extract_result_text(&result);
-        self.master_session.open_tool_calls = self.master_session.open_tool_calls.saturating_sub(1);
-        self.master_session
+        self.conn.master_session.open_tool_calls =
+            self.conn.master_session.open_tool_calls.saturating_sub(1);
+        self.conn
+            .master_session
             .chat
             .complete_tool(&tool_call_id, &result_text, is_error, None);
         if tool_name == "spawn" && !is_error {
@@ -423,7 +429,7 @@ impl App {
                 return;
             }
         }
-        self.master_session.workflow_bar = build_workflow_state(
+        self.conn.master_session.workflow_bar = build_workflow_state(
             &steps,
             &progress,
             &active_issue,

@@ -50,9 +50,9 @@ impl App {
     fn mark_agent_disconnected(&mut self) {
         self.conn.agent_connected = false;
         self.conn.agent_state.reset();
-        self.master_session.running = false;
+        self.conn.master_session.running = false;
         self.conn.spinner = None;
-        self.master_session.chat.finalize_assistant();
+        self.conn.master_session.chat.finalize_assistant();
     }
 
     /// Emit the disconnect notification (and stderr-tail transcript entries,
@@ -72,14 +72,14 @@ impl App {
             .unwrap_or_default();
         if let Some(last) = stderr_tail.last() {
             message = format!("{message} — last stderr: {last}");
-            self.master_session.chat.add_entry(ChatEntry::Status {
+            self.conn.master_session.chat.add_entry(ChatEntry::Status {
                 text: format!(
                     "Agent disconnected — recent agent stderr ({} lines):",
                     stderr_tail.len()
                 ),
             });
             for line in &stderr_tail {
-                self.master_session.chat.add_entry(ChatEntry::Status {
+                self.conn.master_session.chat.add_entry(ChatEntry::Status {
                     text: format!("  {line}"),
                 });
             }
@@ -227,7 +227,7 @@ impl App {
         if !self.notifications.contains_visible(toast) {
             self.notify(toast, NotifyLevel::Error);
         }
-        self.master_session.chat.add_entry(ChatEntry::Status {
+        self.conn.master_session.chat.add_entry(ChatEntry::Status {
             text: "Agent disconnected — commands are not being sent (restart the TUI to reconnect)"
                 .to_string(),
         });

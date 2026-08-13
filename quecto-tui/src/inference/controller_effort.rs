@@ -113,7 +113,10 @@ impl App {
         // master's footer, but do not replace the focused child's selector state
         // or toast the master's level as if it were the child's (mirrors the
         // active-only notify on the sub-agent stream side).
-        self.master_session.footer.set_effort(Some(level.clone()));
+        self.conn
+            .master_session
+            .footer
+            .set_effort(Some(level.clone()));
         if self.subagents.active_agent_id.is_none() {
             self.notify(&format!("Effort set to {level}"), NotifyLevel::Success);
             self.conn.inference.current_effort = Some(level);

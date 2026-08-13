@@ -10,7 +10,7 @@ async fn harness() -> TuiHarness {
 }
 
 fn chat_text(app: &mut App) -> String {
-    let lines = app.master_session.chat.render(120);
+    let lines = app.conn.master_session.chat.render(120);
     lines
         .iter()
         .map(|l| super::app_render_helpers::strip_ansi(l))

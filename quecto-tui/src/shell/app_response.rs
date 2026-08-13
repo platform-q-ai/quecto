@@ -272,8 +272,13 @@ impl App {
                 self.handle_get_messages_success(id.as_deref(), data);
             }
             // Failed page fetch: same retry-unblock as the no-data case above.
-            "get_messages" if self.master_session.is_pending_history_page(id.as_deref()) => {
-                self.master_session.clear_pending_history_page();
+            "get_messages"
+                if self
+                    .conn
+                    .master_session
+                    .is_pending_history_page(id.as_deref()) =>
+            {
+                self.conn.master_session.clear_pending_history_page();
             }
             "get_messages" if self.take_pending_resume_or_rewind(id.as_deref()).is_some() => {}
             "get_messages" if self.is_pending_attach_backfill(id.as_deref()) => {
@@ -358,12 +363,12 @@ impl App {
     /// Order is load-bearing: exact own solicited ids first, then history pages,
     /// attach/id-less reconcile, foreign-family drop, and only then legacy replace.
     fn handle_get_messages_success(&mut self, id: Option<&str>, data: Option<serde_json::Value>) {
-        let own_page = self.master_session.is_pending_history_page(id);
+        let own_page = self.conn.master_session.is_pending_history_page(id);
         let Some(data) = data else {
             if own_page {
                 // Success but no data: clear the in-flight request so the same
                 // older page can be retried on the next scroll (#1061 review).
-                self.master_session.clear_pending_history_page();
+                self.conn.master_session.clear_pending_history_page();
             } else if self.take_pending_resume_or_rewind(id).is_some() {
                 // Exact pending matched but no payload — still clear pending
                 // so a later foreign id of the same family cannot apply.
@@ -388,7 +393,7 @@ impl App {
             } else {
                 self.clear_message_recovery();
                 if self.replace_chat_with_messages_with_empty_status(&data, status) {
-                    self.master_session.chat.add_entry(ChatEntry::Status {
+                    self.conn.master_session.chat.add_entry(ChatEntry::Status {
                         text: status.to_string(),
                     });
                 }
@@ -398,7 +403,7 @@ impl App {
         }
         if own_page {
             // This client's own older page extends the loaded prefix.
-            Self::reconcile_master_backfill_history(&mut self.master_session, &data, true);
+            Self::reconcile_master_backfill_history(&mut self.conn.master_session, &data, true);
             self.reconcile_master_retention_trim();
             return;
         }
@@ -416,7 +421,7 @@ impl App {
             if self.is_pending_attach_backfill(id) {
                 self.conn.pending_attach_backfill_id = None;
             }
-            Self::reconcile_master_backfill_history(&mut self.master_session, &data, false);
+            Self::reconcile_master_backfill_history(&mut self.conn.master_session, &data, false);
             self.reconcile_master_retention_trim();
             return;
         }
@@ -441,7 +446,7 @@ impl App {
                 &crate::components::ansi::sanitize_control,
             )
         }) {
-            self.master_session.footer.set_model(&model);
+            self.conn.master_session.footer.set_model(&model);
             if self.subagents.active_agent_id.is_none() {
                 self.conn.inference.current_model = Some(model);
             }
@@ -465,6 +470,7 @@ impl App {
         // when the master is selected. A late master get_state must not
         // overwrite a focused child's level/vocabulary/model.
         if let Some(model) = self
+            .conn
             .master_session
             .footer
             .apply_get_state_fields(&snap.footer)
@@ -491,7 +497,7 @@ impl App {
             };
         }
         if let Some(wf) = snap.workflow.as_ref() {
-            self.master_session.workflow_bar = workflow_bar::parse_workflow_event(wf);
+            self.conn.master_session.workflow_bar = workflow_bar::parse_workflow_event(wf);
             self.sync_workflow_automation(wf);
         }
     }
@@ -512,9 +518,12 @@ impl App {
     /// state instead of the hard-coded `false` from `parse_workflow_event`
     /// (#897 AC2). Call after any (re)build of `master_session.workflow_bar`.
     pub(super) fn mirror_automation_to_bar(&mut self) {
-        self.master_session.workflow_bar.workflow_auto_continue = self.conn.workflow.auto_continue;
-        self.master_session.workflow_bar.workflow_completion_nudge =
-            self.conn.workflow.completion_nudge;
+        self.conn.master_session.workflow_bar.workflow_auto_continue =
+            self.conn.workflow.auto_continue;
+        self.conn
+            .master_session
+            .workflow_bar
+            .workflow_completion_nudge = self.conn.workflow.completion_nudge;
     }
 
     fn handle_workflow_automation(&mut self, data: Option<serde_json::Value>) {
@@ -677,12 +686,12 @@ impl App {
 
     fn handle_agent_error(&mut self, error: Option<String>) {
         let msg = error.unwrap_or_else(|| "unknown error".into());
-        self.master_session.chat.add_entry(ChatEntry::Status {
+        self.conn.master_session.chat.add_entry(ChatEntry::Status {
             text: format!("Error: {}", msg),
         });
         self.conn.agent_state.reset();
-        self.master_session.running = false;
-        self.master_session.footer.set_streaming(false);
+        self.conn.master_session.running = false;
+        self.conn.master_session.footer.set_streaming(false);
         self.conn.spinner = None;
     }
 

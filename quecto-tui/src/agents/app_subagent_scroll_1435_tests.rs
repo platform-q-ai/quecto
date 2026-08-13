@@ -80,18 +80,18 @@ async fn handle_submit_master_message_repins_scrolled_chat_to_tail() {
     let mut h = crate::shell::app::tui_harness::TuiHarness::new().await;
     let a = h.app_mut();
     for i in 0..30 {
-        a.master_session.chat.add_entry(ChatEntry::User {
+        a.conn.master_session.chat.add_entry(ChatEntry::User {
             text: format!("history line {i}"),
         });
     }
-    a.master_session.chat.set_viewport_height(10);
-    a.master_session.chat.scroll_up(15);
-    let _ = a.master_session.chat.render(80);
+    a.conn.master_session.chat.set_viewport_height(10);
+    a.conn.master_session.chat.scroll_up(15);
+    let _ = a.conn.master_session.chat.render(80);
 
     a.handle_submit("visible master prompt");
-    let after = a.master_session.chat.render(80).join("\n");
+    let after = a.conn.master_session.chat.render(80).join("\n");
 
-    assert_eq!(a.master_session.chat.scroll_offset(), 0);
+    assert_eq!(a.conn.master_session.chat.scroll_offset(), 0);
     assert!(after.contains("visible master prompt"));
 }
 

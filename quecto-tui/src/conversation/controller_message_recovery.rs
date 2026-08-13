@@ -35,10 +35,10 @@ impl App {
         // reading it, and the bounded assistant text scan clones the assistant
         // body — which can be megabytes for an inlined command dump.
         use crate::conversation::turn_recovery::TurnOutcome;
-        let open_tool_calls = self.master_session.open_tool_calls;
-        let tools_this_turn = self.master_session.tools_this_turn;
-        let target_end = self.master_session.chat.entry_count();
-        let target_start = self.master_session.active_turn_start.min(target_end);
+        let open_tool_calls = self.conn.master_session.open_tool_calls;
+        let tools_this_turn = self.conn.master_session.tools_this_turn;
+        let target_end = self.conn.master_session.chat.entry_count();
+        let target_start = self.conn.master_session.active_turn_start.min(target_end);
         let needs_recovery = TurnOutcome::forced_without_text(refs, open_tool_calls) || {
             let assistant_text = self.latest_assistant_text_in_range(target_start, target_end);
             TurnOutcome {
@@ -110,7 +110,7 @@ impl App {
     }
 
     fn latest_assistant_text_in_range(&self, start: usize, end: usize) -> String {
-        let entries = self.master_session.chat.entries();
+        let entries = self.conn.master_session.chat.entries();
         entries[start.min(entries.len())..end.min(entries.len())]
             .iter()
             .rev()
@@ -219,7 +219,7 @@ impl App {
         let entries = recovered_chat_entries(&batch.refs, &batch.responses);
         match &batch.agent_id {
             None => {
-                self.master_session.chat.replace_range(
+                self.conn.master_session.chat.replace_range(
                     batch.target_start,
                     batch.target_end,
                     entries,
@@ -347,19 +347,25 @@ mod recovery_cov_tests {
     #[test]
     fn recovery_decision_ignores_assistant_text_before_active_turn() {
         let mut app = app_for_recovery_test();
-        app.master_session.chat.add_entry(ChatEntry::Assistant {
-            text: "previous complete answer".to_string(),
-            streaming: false,
-        });
-        app.master_session.active_turn_start = app.master_session.chat.entry_count();
+        app.conn
+            .master_session
+            .chat
+            .add_entry(ChatEntry::Assistant {
+                text: "previous complete answer".to_string(),
+                streaming: false,
+            });
+        app.conn.master_session.active_turn_start = app.conn.master_session.chat.entry_count();
 
         app.maybe_recover_from_refs(&["current-ref".to_string()]);
 
         assert_eq!(app.conn.pending_message_recovery.len(), 1);
         assert_eq!(app.conn.message_recovery_batches.len(), 1);
         let batch = app.conn.message_recovery_batches.values().next().unwrap();
-        assert_eq!(batch.target_start, app.master_session.active_turn_start);
-        assert_eq!(batch.target_end, app.master_session.chat.entry_count());
+        assert_eq!(
+            batch.target_start,
+            app.conn.master_session.active_turn_start
+        );
+        assert_eq!(batch.target_end, app.conn.master_session.chat.entry_count());
         let pending = app.conn.pending_message_recovery.values().next().unwrap();
         assert_eq!(pending.message_id, "current-ref");
     }
@@ -367,15 +373,21 @@ mod recovery_cov_tests {
     #[test]
     fn recovery_decision_uses_complete_assistant_text_in_active_turn() {
         let mut app = app_for_recovery_test();
-        app.master_session.chat.add_entry(ChatEntry::Assistant {
-            text: "previous complete answer".to_string(),
-            streaming: false,
-        });
-        app.master_session.active_turn_start = app.master_session.chat.entry_count();
-        app.master_session.chat.add_entry(ChatEntry::Assistant {
-            text: "current complete answer".to_string(),
-            streaming: false,
-        });
+        app.conn
+            .master_session
+            .chat
+            .add_entry(ChatEntry::Assistant {
+                text: "previous complete answer".to_string(),
+                streaming: false,
+            });
+        app.conn.master_session.active_turn_start = app.conn.master_session.chat.entry_count();
+        app.conn
+            .master_session
+            .chat
+            .add_entry(ChatEntry::Assistant {
+                text: "current complete answer".to_string(),
+                streaming: false,
+            });
 
         app.maybe_recover_from_refs(&["current-ref".to_string()]);
 

@@ -48,10 +48,10 @@ impl App {
     pub(super) fn active_session(&self) -> &SessionView {
         let ui = &self.subagents;
         match ui.active_agent_id.as_deref() {
-            None => &self.master_session,
+            None => &self.conn.master_session,
             // Fall back to the master session if a selected session is somehow
             // missing, mirroring `active_session_mut`'s lazy-create contract.
-            Some(id) => ui.sessions.get(id).unwrap_or(&self.master_session),
+            Some(id) => ui.sessions.get(id).unwrap_or(&self.conn.master_session),
         }
     }
 
@@ -60,7 +60,7 @@ impl App {
     /// master session always exists.
     pub(super) fn active_session_mut(&mut self) -> &mut SessionView {
         let Some(id) = self.subagents.active_agent_id.clone() else {
-            return &mut self.master_session;
+            return &mut self.conn.master_session;
         };
         if !self.subagents.sessions.contains_key(&id) {
             // Cold path only: clone git_branch and build the session here, so the
@@ -175,10 +175,14 @@ impl App {
         self.sync_panel_selection_to_active();
         let Some(id) = new_active else {
             // Restore model/effort markers from master footer (#1085).
-            self.conn.inference.current_model =
-                self.master_session.footer.known_model().map(str::to_string);
+            self.conn.inference.current_model = self
+                .conn
+                .master_session
+                .footer
+                .known_model()
+                .map(str::to_string);
             self.conn.inference.current_effort =
-                self.master_session.footer.effort().map(str::to_string);
+                self.conn.master_session.footer.effort().map(str::to_string);
             self.conn.inference.effort_levels.clear();
             self.send_state_resync();
             return;

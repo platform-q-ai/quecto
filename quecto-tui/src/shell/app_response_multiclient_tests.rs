@@ -19,12 +19,12 @@ fn raw_respond(app: &mut App, id: Option<&str>, data: serde_json::Value) {
 }
 
 fn seed_client_b_transcript(app: &mut App) {
-    app.master_session.chat.add_entry(ChatEntry::User {
+    app.conn.master_session.chat.add_entry(ChatEntry::User {
         text: "client-b private turn".into(),
     });
-    app.master_session.history.before_cursor = Some("b-cursor".into());
-    app.master_session.history.has_more_before = true;
-    app.master_session.history.partial_prefix_len = Some(1);
+    app.conn.master_session.history.before_cursor = Some("b-cursor".into());
+    app.conn.master_session.history.has_more_before = true;
+    app.conn.master_session.history.partial_prefix_len = Some(1);
 }
 
 fn b_frame(app: &mut App) -> String {
@@ -86,7 +86,13 @@ async fn mint_attach_id(h: &mut TuiHarness) -> String {
 async fn foreign_resume_does_not_replace_other_client_transcript() {
     let (mut a, mut b) = (harness().await, harness().await);
     seed_client_b_transcript(b.app_mut());
-    let before_cursor = b.app_mut().master_session.history.before_cursor.clone();
+    let before_cursor = b
+        .app_mut()
+        .conn
+        .master_session
+        .history
+        .before_cursor
+        .clone();
     let before_frame = b_frame(b.app_mut());
 
     let resume_id = mint_resume_id(&mut a).await;
@@ -109,7 +115,7 @@ async fn foreign_resume_does_not_replace_other_client_transcript() {
         "B must not show Session resumed for A's resume:\n{frame}"
     );
     assert_eq!(
-        b.app_mut().master_session.history.before_cursor,
+        b.app_mut().conn.master_session.history.before_cursor,
         before_cursor,
         "foreign resume must not clobber B paging cursors"
     );

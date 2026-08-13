@@ -4,15 +4,16 @@ use super::*;
 #[tokio::test]
 async fn subagent_notification_appends_one_status_line() {
     let mut app = test_app().await;
-    let before = app.master_session.chat.entry_count();
+    let before = app.conn.master_session.chat.entry_count();
     app.handle_event(Event::SubagentNotification {
         agent_id: "researcher".into(),
         sequence: 1,
         message: "Agent 'researcher' completed and is ready for inspection".into(),
     });
     // Exactly one status entry is appended — passive, non-interactive.
-    assert_eq!(app.master_session.chat.entry_count(), before + 1);
+    assert_eq!(app.conn.master_session.chat.entry_count(), before + 1);
     let text = app
+        .conn
         .master_session
         .chat
         .last_status_text()
@@ -32,6 +33,7 @@ async fn subagent_notification_sanitizes_control_sequences() {
         message: "done\u{1b}[31m hijack".into(),
     });
     let text = app
+        .conn
         .master_session
         .chat
         .last_status_text()
@@ -46,7 +48,7 @@ async fn subagent_notification_sanitizes_control_sequences() {
 async fn subagent_notification_deferred_while_parent_streams_then_flushed_on_idle() {
     let mut app = test_app().await;
     app.handle_event(Event::AgentStart);
-    let before = app.master_session.chat.entry_count();
+    let before = app.conn.master_session.chat.entry_count();
     app.handle_event(Event::SubagentNotification {
         agent_id: "worker".into(),
         sequence: 1,
@@ -54,7 +56,7 @@ async fn subagent_notification_deferred_while_parent_streams_then_flushed_on_idl
     });
     // Mid-turn: the note must NOT be inserted into the streaming response.
     assert_eq!(
-        app.master_session.chat.entry_count(),
+        app.conn.master_session.chat.entry_count(),
         before,
         "note must be deferred while the parent is streaming"
     );
@@ -64,6 +66,7 @@ async fn subagent_notification_deferred_while_parent_streams_then_flushed_on_idl
         message_refs: vec![],
     });
     let text = app
+        .conn
         .master_session
         .chat
         .last_status_text()
@@ -100,7 +103,7 @@ async fn handles_turn_end_usage_with_context_window_and_stats_fallback() {
         }),
     });
     assert!(app.conn.sessions.context_stats_requested);
-    let rendered = app.master_session.footer.render(80).join("\n");
+    let rendered = app.conn.master_session.footer.render(80).join("\n");
     assert!(
         rendered.contains("40/100"),
         "footer should use contextTokens: {rendered}"
@@ -126,7 +129,7 @@ async fn handles_turn_end_context_tokens_without_usage_field() {
         }),
     });
     assert!(app.conn.sessions.context_stats_requested);
-    let rendered = app.master_session.footer.render(80).join("\n");
+    let rendered = app.conn.master_session.footer.render(80).join("\n");
     assert!(
         rendered.contains("40/100"),
         "footer should use contextTokens even without usage: {rendered}"
@@ -148,7 +151,7 @@ async fn session_stats_footer_uses_context_tokens_not_cumulative_input() {
         error: None,
     });
 
-    let rendered = app.master_session.footer.render(80).join("\n");
+    let rendered = app.conn.master_session.footer.render(80).join("\n");
     let plain: String = rendered
         .chars()
         .filter(|c| !c.is_control() || *c == '\n')
@@ -209,13 +212,13 @@ async fn handles_tool_start_and_end_for_spawn_and_regular_tools() {
 #[tokio::test]
 async fn agent_cmd_get_state_renders_box_on_master_path() {
     let mut app = test_app().await;
-    let before = app.master_session.chat.entry_count();
+    let before = app.conn.master_session.chat.entry_count();
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "gs-1".into(),
         tool_name: "agent_cmd".into(),
         args: serde_json::json!({"agent_id":"worker-1", "command":"get_state"}),
     });
-    let after = app.master_session.chat.entry_count();
+    let after = app.conn.master_session.chat.entry_count();
     assert_eq!(after, before + 1, "get_state renders a box");
 }
 
@@ -340,7 +343,7 @@ async fn forwarded_child_workflow_state_does_not_clobber_parent_bar() {
         available_templates: None,
     });
     assert!(
-        app.master_session.workflow_bar.issue_number.is_none(),
+        app.conn.master_session.workflow_bar.issue_number.is_none(),
         "a forwarded child event must not set the parent's workflow bar"
     );
 
@@ -356,7 +359,7 @@ async fn forwarded_child_workflow_state_does_not_clobber_parent_bar() {
         available_templates: None,
     });
     assert!(
-        app.master_session.workflow_bar.issue_number.is_none(),
+        app.conn.master_session.workflow_bar.issue_number.is_none(),
         "an unregistered child's first forwarded event must not flash the parent bar"
     );
 
@@ -370,7 +373,7 @@ async fn forwarded_child_workflow_state_does_not_clobber_parent_bar() {
         active_template: None,
         available_templates: None,
     });
-    assert_eq!(app.master_session.workflow_bar.issue_number, Some(9));
+    assert_eq!(app.conn.master_session.workflow_bar.issue_number, Some(9));
 }
 
 #[tokio::test]
@@ -396,7 +399,7 @@ async fn named_connected_agent_own_workflow_updates_bar() {
         available_templates: None,
     });
     assert_eq!(
-        app.master_session.workflow_bar.issue_number,
+        app.conn.master_session.workflow_bar.issue_number,
         Some(11),
         "named agent's own event should update its bar"
     );
@@ -411,7 +414,7 @@ async fn named_connected_agent_own_workflow_updates_bar() {
         available_templates: None,
     });
     assert_eq!(
-        app.master_session.workflow_bar.issue_number,
+        app.conn.master_session.workflow_bar.issue_number,
         Some(11),
         "a child's forwarded event must not overwrite the named agent's bar"
     );

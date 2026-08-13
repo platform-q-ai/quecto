@@ -11,7 +11,8 @@ async fn harness() -> TuiHarness {
 }
 
 fn chat_text(app: &mut App) -> String {
-    app.master_session
+    app.conn
+        .master_session
         .chat
         .render(120)
         .iter()
@@ -36,9 +37,9 @@ fn command_has_string_fields(command: &str, expected: &[(&str, &str)]) -> bool {
 async fn reject_unknown_slash_command_adds_status_and_notifies() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.conn.master_session.chat.entry_count();
     a.reject_unknown_slash_command("/bogus");
-    assert_eq!(a.master_session.chat.entry_count(), before + 1);
+    assert_eq!(a.conn.master_session.chat.entry_count(), before + 1);
     assert!(!a.notifications.is_empty() && chat_text(a).contains("/bogus"));
 }
 
@@ -77,7 +78,7 @@ async fn show_workflow_status_when_active() {
         "progress": {"done": 1, "total": 2},
         "activeIssue": {"number": 7, "title": "thing"}
     });
-    h.app_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
+    h.app_mut().conn.master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
     let a = h.app_mut();
     a.show_workflow_status();
     let text = chat_text(a);
@@ -93,7 +94,7 @@ async fn show_workflow_status_complete_when_all_steps_done() {
         "progress": {"done": 1, "total": 1},
         "activeIssue": {"number": 7, "title": "thing"}
     });
-    h.app_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
+    h.app_mut().conn.master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
     let a = h.app_mut();
     a.show_workflow_status();
     assert!(chat_text(a).contains("complete"));
@@ -205,7 +206,7 @@ async fn update_footer_stats_sets_context_and_clears_zero_cost() {
         "cost": 0.0
     }));
     assert!(a.conn.sessions.context_stats_requested);
-    let footer = a.master_session.footer.render(120).join("\n");
+    let footer = a.conn.master_session.footer.render(120).join("\n");
     assert!(footer.contains("42"), "{footer}");
 }
 
@@ -215,7 +216,7 @@ async fn update_footer_stats_ignores_positive_cost_without_context() {
     let a = h.app_mut();
     a.update_footer_stats(&serde_json::json!({ "cost": 1.25 }));
     assert!(!a.conn.sessions.context_stats_requested);
-    let footer = a.master_session.footer.render(120).join("\n");
+    let footer = a.conn.master_session.footer.render(120).join("\n");
     assert!(!footer.contains("$"), "{footer}");
 }
 
@@ -327,7 +328,7 @@ async fn replace_chat_with_messages_missing_messages_preserves_chat_and_reports_
     let mut h = harness().await;
     let data = serde_json::json!({});
     let a = h.app_mut();
-    a.master_session.chat.add_entry(ChatEntry::User {
+    a.conn.master_session.chat.add_entry(ChatEntry::User {
         text: "keep me".into(),
     });
 
@@ -352,7 +353,7 @@ async fn replace_chat_with_messages_non_array_messages_preserves_chat_and_report
     let mut h = harness().await;
     let data = serde_json::json!({"messages": "bad"});
     let a = h.app_mut();
-    a.master_session.chat.add_entry(ChatEntry::User {
+    a.conn.master_session.chat.add_entry(ChatEntry::User {
         text: "keep me".into(),
     });
 
@@ -505,12 +506,13 @@ async fn notify_pushes_notification() {
 async fn reset_session_clears_chat_and_notifies() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.master_session
+    a.conn
+        .master_session
         .chat
         .add_entry(ChatEntry::User { text: "x".into() });
     a.conn.sessions.context_stats_requested = true;
     a.reset_session("New session");
-    assert_eq!(a.master_session.chat.entry_count(), 0);
+    assert_eq!(a.conn.master_session.chat.entry_count(), 0);
     assert!(!a.conn.sessions.context_stats_requested);
     assert!(!a.notifications.is_empty());
 }
@@ -560,7 +562,7 @@ async fn extract_selection_handles_out_of_range_rows() {
 async fn compose_frame_skips_full_clone_when_no_selection_active() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.master_session.chat.add_entry(ChatEntry::User {
+    a.conn.master_session.chat.add_entry(ChatEntry::User {
         text: "a line of chat that would be cloned every frame".into(),
     });
     // No selection is or was active.
@@ -579,7 +581,7 @@ async fn compose_frame_skips_full_clone_when_no_selection_active() {
 async fn compose_frame_populates_clone_while_selection_active() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.master_session.chat.add_entry(ChatEntry::User {
+    a.conn.master_session.chat.add_entry(ChatEntry::User {
         text: "selectable text".into(),
     });
     // A drag is in progress: selection is Some.
@@ -599,7 +601,7 @@ async fn compose_frame_populates_clone_while_selection_active() {
 async fn selection_extraction_works_after_drag_render() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.master_session.chat.add_entry(ChatEntry::User {
+    a.conn.master_session.chat.add_entry(ChatEntry::User {
         text: "hello world".into(),
     });
     // Simulate press+drag keeping the selection live, then a frame renders.

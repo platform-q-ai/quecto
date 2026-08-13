@@ -9,7 +9,7 @@ async fn harness() -> TuiHarness {
 }
 
 fn chat_text(app: &mut App) -> String {
-    let lines = app.master_session.chat.render(120);
+    let lines = app.conn.master_session.chat.render(120);
     lines
         .iter()
         .map(|l| super::app_methods::strip_ansi(l))
@@ -26,7 +26,7 @@ fn chat_text(app: &mut App) -> String {
 async fn internal_state_polling_response_renders_no_box() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.conn.master_session.chat.entry_count();
     a.handle_event(Event::Response {
         id: Some("init".into()),
         command: "get_state".into(),
@@ -46,7 +46,7 @@ async fn internal_state_polling_response_renders_no_box() {
         error: None,
     });
     assert_eq!(
-        a.master_session.chat.entry_count(),
+        a.conn.master_session.chat.entry_count(),
         before,
         "internal get_state/stats polling must not render a chat box (#865)"
     );
@@ -545,11 +545,11 @@ async fn response_rewind_to_unmatched_is_noop() {
 async fn response_unknown_is_noop() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.conn.master_session.chat.entry_count();
     respond(a, None, "totally_unknown_command", true, None, None);
     // An unknown response is not surfaced: no chat entries, no notifications.
     assert_eq!(
-        a.master_session.chat.entry_count(),
+        a.conn.master_session.chat.entry_count(),
         before,
         "noop responses must not add chat entries"
     );
@@ -565,10 +565,10 @@ async fn response_clear_history_signals_workflow_retained() {
     // conversation from the workflow engine state, which is retained by design.
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.conn.master_session.chat.entry_count();
     respond(a, None, "clear_history", true, None, None);
     assert_eq!(
-        a.master_session.chat.entry_count(),
+        a.conn.master_session.chat.entry_count(),
         before,
         "clear_history must not add chat entries"
     );

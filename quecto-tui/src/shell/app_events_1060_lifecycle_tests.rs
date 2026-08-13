@@ -5,7 +5,8 @@ use super::tui_harness::TuiHarness;
 use super::*;
 
 fn chat_text(app: &mut App) -> String {
-    app.master_session
+    app.conn
+        .master_session
         .chat
         .render(120)
         .iter()

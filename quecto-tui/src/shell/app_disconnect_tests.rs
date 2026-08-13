@@ -155,7 +155,7 @@ async fn oversized_event_drop_is_surfaced_as_notification() {
 async fn reset_session_clears_locally_and_warns_when_disconnected() {
     let mut h = TuiHarness::new().await;
     let a = h.app_mut();
-    a.master_session.chat.add_entry(ChatEntry::User {
+    a.conn.master_session.chat.add_entry(ChatEntry::User {
         text: "clear me".into(),
     });
     a.conn.agent_connected = false;
@@ -166,7 +166,7 @@ async fn reset_session_clears_locally_and_warns_when_disconnected() {
     // re-raised persistent refusal Status line (#1470 r6) so later refused
     // commands stay diagnosable in the fresh transcript.
     assert_eq!(
-        a.master_session.chat.entry_count(),
+        a.conn.master_session.chat.entry_count(),
         1,
         "a disconnected reset clears the transcript except the refusal line (#1470 r3/r6)"
     );

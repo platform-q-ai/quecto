@@ -194,10 +194,10 @@ async fn handle_key_ctrl_l_opens_model_selector() {
 async fn handle_key_ctrl_o_toggles_tool_expand() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.tool_expanded;
+    let before = a.conn.master_session.chat.tool_expanded;
     a.handle_key(Key::Ctrl('o'));
     assert_eq!(
-        a.master_session.chat.tool_expanded, !before,
+        a.conn.master_session.chat.tool_expanded, !before,
         "Ctrl+O should toggle tool expand"
     );
 }
@@ -208,11 +208,11 @@ async fn handle_key_ctrl_o_toggles_active_subagent_tool_expand() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.select_agent(Some("worker")); // lazily creates the child session view
-    let m0 = a.master_session.chat.tool_expanded;
+    let m0 = a.conn.master_session.chat.tool_expanded;
     let c0 = a.active_chat_mut().tool_expanded;
     a.handle_key(Key::Ctrl('o'));
     assert_eq!(a.active_chat_mut().tool_expanded, !c0, "toggles child");
-    assert_eq!(a.master_session.chat.tool_expanded, m0, "master kept");
+    assert_eq!(a.conn.master_session.chat.tool_expanded, m0, "master kept");
 }
 
 // The four scroll keys all move `chat.scroll_offset`: PageUp/ScrollUp increase
@@ -231,21 +231,21 @@ async fn scroll_keys_move_chat_offset() {
         // Seed more content than the viewport so scrolling back is observable
         // (render clamps offset to scrollable range, not just the raw setter).
         for i in 0..20 {
-            a.master_session.chat.add_entry(ChatEntry::User {
+            a.conn.master_session.chat.add_entry(ChatEntry::User {
                 text: format!("line {i}"),
             });
         }
-        a.master_session.chat.set_viewport_height(3);
-        a.master_session.chat.render(80);
+        a.conn.master_session.chat.set_viewport_height(3);
+        a.conn.master_session.chat.render(80);
         assert_eq!(
-            a.master_session.chat.scroll_offset(),
+            a.conn.master_session.chat.scroll_offset(),
             0,
             "fresh chat is pinned to bottom"
         );
         a.handle_key(key);
-        a.master_session.chat.render(80);
+        a.conn.master_session.chat.render(80);
         assert!(
-            a.master_session.chat.scroll_offset() > 0,
+            a.conn.master_session.chat.scroll_offset() > 0,
             "{label} should scroll chat back (offset > 0)"
         );
     }
@@ -255,11 +255,11 @@ async fn scroll_keys_move_chat_offset() {
         let mut h = harness().await;
         let a = h.app_mut();
         // First scroll back so there is something to scroll forward from.
-        a.master_session.chat.scroll_up(20);
-        let before = a.master_session.chat.scroll_offset();
+        a.conn.master_session.chat.scroll_up(20);
+        let before = a.conn.master_session.chat.scroll_offset();
         a.handle_key(key);
         assert!(
-            a.master_session.chat.scroll_offset() < before,
+            a.conn.master_session.chat.scroll_offset() < before,
             "{label} should scroll chat toward the latest output (offset shrinks)"
         );
     }
@@ -342,7 +342,7 @@ async fn handle_key_enter_when_editor_empty_is_noop() {
     let a = h.app_mut();
     a.handle_key(Key::Enter);
     // Empty submit is a no-op.
-    assert_eq!(a.master_session.chat.entry_count(), 0);
+    assert_eq!(a.conn.master_session.chat.entry_count(), 0);
 }
 
 // ── handle_submit: slash commands ──────────────────────────────────────
@@ -351,9 +351,9 @@ async fn handle_key_enter_when_editor_empty_is_noop() {
 async fn handle_submit_empty_text_is_noop() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.conn.master_session.chat.entry_count();
     a.handle_submit("   ");
-    assert_eq!(a.master_session.chat.entry_count(), before);
+    assert_eq!(a.conn.master_session.chat.entry_count(), before);
 }
 
 #[tokio::test]
@@ -376,12 +376,12 @@ async fn handle_submit_exit_sets_exit_flag() {
 async fn handle_submit_clear_clears_session() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.master_session.chat.add_entry(ChatEntry::User {
+    a.conn.master_session.chat.add_entry(ChatEntry::User {
         text: "data".into(),
     });
     a.handle_submit("/clear");
     assert_eq!(
-        a.master_session.chat.entry_count(),
+        a.conn.master_session.chat.entry_count(),
         0,
         "/clear should clear chat"
     );
@@ -391,12 +391,12 @@ async fn handle_submit_clear_clears_session() {
 async fn handle_submit_new_starts_new_session() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.master_session.chat.add_entry(ChatEntry::User {
+    a.conn.master_session.chat.add_entry(ChatEntry::User {
         text: "data".into(),
     });
     a.handle_submit("/new");
     assert_eq!(
-        a.master_session.chat.entry_count(),
+        a.conn.master_session.chat.entry_count(),
         0,
         "/new should clear chat"
     );
@@ -411,10 +411,10 @@ async fn handle_submit_new_starts_new_session() {
 async fn handle_submit_help_shows_shortcuts() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.conn.master_session.chat.entry_count();
     a.handle_submit("/help");
     assert!(
-        a.master_session.chat.entry_count() > before,
+        a.conn.master_session.chat.entry_count() > before,
         "/help should add a chat entry"
     );
 }
@@ -423,19 +423,19 @@ async fn handle_submit_help_shows_shortcuts() {
 async fn handle_submit_hotkeys_shows_shortcuts() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.conn.master_session.chat.entry_count();
     a.handle_submit("/hotkeys");
-    assert!(a.master_session.chat.entry_count() > before);
+    assert!(a.conn.master_session.chat.entry_count() > before);
 }
 
 #[tokio::test]
 async fn handle_submit_unknown_slash_command_notifies() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.conn.master_session.chat.entry_count();
     a.handle_submit("/bogus");
     assert!(
-        a.master_session.chat.entry_count() > before,
+        a.conn.master_session.chat.entry_count() > before,
         "unknown command should add status"
     );
     assert!(
@@ -472,10 +472,10 @@ async fn handle_submit_model_without_name_opens_selector() {
 async fn handle_submit_regular_message_adds_user_entry() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.conn.master_session.chat.entry_count();
     a.handle_submit("hello world");
     assert_eq!(
-        a.master_session.chat.entry_count(),
+        a.conn.master_session.chat.entry_count(),
         before + 1,
         "should add user message"
     );
@@ -511,10 +511,10 @@ async fn handle_submit_resume_with_name_sends_resume() {
 async fn handle_submit_workflow_shows_status() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.conn.master_session.chat.entry_count();
     a.handle_submit("/workflow");
     assert!(
-        a.master_session.chat.entry_count() > before,
+        a.conn.master_session.chat.entry_count() > before,
         "/workflow should show status"
     );
 }
@@ -633,10 +633,10 @@ async fn handle_abort_finalizes_assistant() {
 async fn handle_abort_adds_status_message() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.conn.master_session.chat.entry_count();
     a.handle_abort();
     assert!(
-        a.master_session.chat.entry_count() > before,
+        a.conn.master_session.chat.entry_count() > before,
         "abort should add a status entry"
     );
 }
@@ -658,10 +658,10 @@ async fn handle_abort_calls_agent_state_abort() {
 async fn handle_abort_sets_footer_streaming_false() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.master_session.footer.set_streaming(true);
+    a.conn.master_session.footer.set_streaming(true);
     a.handle_abort();
     // Footer streaming should be false after abort.
-    let rendered = a.master_session.footer.render(80).join("\n");
+    let rendered = a.conn.master_session.footer.render(80).join("\n");
     assert!(!rendered.contains("streaming") || !rendered.to_lowercase().contains("thinking"));
 }
 

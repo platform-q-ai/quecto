@@ -404,7 +404,8 @@ async fn resume_harness() -> super::tui_harness::TuiHarness {
 }
 
 fn resume_chat_text(app: &mut super::App) -> String {
-    app.master_session
+    app.conn
+        .master_session
         .chat
         .render(120)
         .iter()
@@ -686,7 +687,7 @@ async fn resumed_tool_name_strips_terminal_control_sequences() {
         ]})),
         None,
     );
-    let raw = a.master_session.chat.render(120).join("\n");
+    let raw = a.conn.master_session.chat.render(120).join("\n");
     let text = resume_chat_text(a);
     assert!(text.contains("evilname"), "{text}");
     assert!(!raw.contains("\u{1b}]8"), "{raw:?}");
