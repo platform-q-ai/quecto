@@ -598,14 +598,11 @@ impl App {
 
     /// Reset the conversation — clears agent history, chat UI, and context display.
     pub(super) fn reset_session(&mut self, message: &str) {
-        // Reset invalidates a pending off-loop disconnect diagnosis (#1470
-        // r2/r3): the gated `finish_agent_stream_closed` then drops the stale
-        // completion instead of dumping stderr into the fresh transcript.
+        // Invalidate a pending off-loop disconnect diagnosis (#1470 r2/r3)
+        // so the stale completion never lands in the fresh transcript.
         self.disconnect_diag_pending = false;
-        // On a dead connection NewSession cannot reach the agent (the writer
-        // outlives the closed stream) — still clear the LOCAL transcript so
-        // /clear works on a dead session, but say what actually happened
-        // instead of flashing a false "new session" success (#1470 r3).
+        // A dead connection still clears the LOCAL transcript (/clear must
+        // work on a dead session) but reports honestly (#1470 r3).
         // Optimistic-enqueue window (#1470 r5): a just-died socket whose
         // Closed sentinel has not drained still enqueues successfully —
         // identical to pre-seam master; command acks are phase-2 scope.
