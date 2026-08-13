@@ -136,7 +136,6 @@ impl App {
         // the message silently vanish. The persistent refusal Status line
         // keeps the undelivered message diagnosable after the toast expires.
         if !self.agent_connected {
-            self.notify("Agent disconnected — message not sent", NotifyLevel::Error);
             self.note_disconnected_refusal();
             return;
         }
