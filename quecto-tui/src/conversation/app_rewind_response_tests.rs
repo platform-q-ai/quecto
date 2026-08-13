@@ -348,7 +348,7 @@ async fn response_get_state_populates_model_and_agent_id() {
         a.inference.current_model.as_deref(),
         Some("anthropic/claude-opus-4-5")
     );
-    assert_eq!(a.connected_agent_id.as_deref(), Some("worker"));
+    assert_eq!(a.conn.connected_agent_id.as_deref(), Some("worker"));
     assert!(a.workflow.auto_continue);
     assert!(a.workflow.completion_nudge);
     assert!(a.sessions.context_stats_requested);
@@ -360,7 +360,7 @@ async fn response_get_state_default_session_clears_agent_id() {
     let data = serde_json::json!({"sessionKey": "cli:default"});
     let a = h.app_mut();
     respond(a, None, "get_state", true, Some(data), None);
-    assert!(a.connected_agent_id.is_none());
+    assert!(a.conn.connected_agent_id.is_none());
 }
 
 #[tokio::test]
@@ -604,10 +604,10 @@ async fn response_get_subagents_updates_bar() {
 async fn response_agent_error_appends_status_and_resets() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.spinner = Some(super::Spinner::new("x"));
+    a.conn.spinner = Some(super::Spinner::new("x"));
     respond(a, None, "agent_error", false, None, Some("kaboom"));
     assert!(chat_text(a).contains("kaboom"));
-    assert!(a.spinner.is_none());
+    assert!(a.conn.spinner.is_none());
 }
 
 #[tokio::test]

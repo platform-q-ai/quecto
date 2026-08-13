@@ -237,7 +237,7 @@ impl TuiHarness {
 
     /// Capture the current spinner frame index, when a spinner is visible.
     pub fn spinner_frame_index(&self) -> Option<usize> {
-        self.app.spinner.as_ref().map(Spinner::frame_index)
+        self.app.conn.spinner.as_ref().map(Spinner::frame_index)
     }
 
     /// Mark the main session's streaming indicator.
@@ -247,12 +247,12 @@ impl TuiHarness {
 
     /// Mark the main agent as not running.
     pub fn end_agent_run(&mut self) {
-        self.app.agent_state.end();
+        self.app.conn.agent_state.end();
     }
 
     /// Show a visible activity spinner in the main session.
     pub fn show_activity_spinner(&mut self, message: &str) {
-        self.app.spinner = Some(Spinner::new(message));
+        self.app.conn.spinner = Some(Spinner::new(message));
     }
 
     /// Show a visible notification.
@@ -340,7 +340,7 @@ impl TuiHarness {
         // Abort the replaced connection's feed task so it cannot later
         // inject a spurious `Closed` sentinel into the fan-in (#1470 review).
         let old = std::mem::replace(
-            &mut self.app.connection,
+            &mut self.app.conn.transport,
             crate::shell::connection::Connection::disconnected_for_tests(),
         );
         old.abort_feed();
@@ -452,14 +452,14 @@ impl TuiHarness {
 
     /// Whether the master agent run-state machine currently reports running.
     pub fn agent_running(&self) -> bool {
-        self.app.agent_state.is_running()
+        self.app.conn.agent_state.is_running()
     }
 
     /// Number of aborted runs whose stale `AgentEnd` events have not yet been
     /// consumed by the abort-aware state machine (#502/#536). Used to assert
     /// that Ctrl+C / Esc actually drove `handle_abort`.
     pub fn pending_aborts(&self) -> u32 {
-        self.app.agent_state.pending_aborts
+        self.app.conn.agent_state.pending_aborts
     }
 
     /// Set the editor text through the real editor component (the same call the

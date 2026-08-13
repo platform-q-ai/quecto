@@ -16,15 +16,15 @@ impl App {
     /// Attach the exit-diagnosis watch for a TUI-owned agent child (#1047),
     /// so a later disconnect can report WHY the agent went away.
     pub fn set_child_exit_watch(&mut self, watch: crate::shell::child_watch::ChildWatch) {
-        self.child_exit_watch = Some(watch);
+        self.conn.child_exit_watch = Some(watch);
     }
 
     /// Test fixture: model a TUI that never showed the panel. #1047 pins the
     /// panel once it has been seen connected, so both flags must be cleared.
     #[cfg(test)]
     pub(super) fn clear_panel_for_tests(&mut self) {
-        self.agent_connected = false;
-        self.agent_ever_connected = false;
+        self.conn.agent_connected = false;
+        self.conn.agent_ever_connected = false;
     }
 
     /// Handle the agent event stream closing (the connection feed task's
@@ -48,10 +48,10 @@ impl App {
     /// prompts as deliverable) while the disconnect diagnosis is still
     /// resolving off-loop (#1470 review).
     fn mark_agent_disconnected(&mut self) {
-        self.agent_connected = false;
-        self.agent_state.reset();
+        self.conn.agent_connected = false;
+        self.conn.agent_state.reset();
         self.master_session.running = false;
-        self.spinner = None;
+        self.conn.spinner = None;
         self.master_session.chat.finalize_assistant();
     }
 
@@ -65,6 +65,7 @@ impl App {
         // newest line (usually the panic message) goes into the one-line
         // notification; the full tail goes into the transcript.
         let stderr_tail = self
+            .conn
             .child_exit_watch
             .as_ref()
             .map(|w| w.stderr_tail_lines())
@@ -110,17 +111,17 @@ impl App {
         // later duplicate (ownerless attach connections included, where no
         // diagnosis latch is ever set) is a no-op — the exact once-per-
         // connection guarantee of the deleted gated select arm (#1470 r4).
-        if !self.agent_connected {
+        if !self.conn.agent_connected {
             return;
         }
-        self.disconnect_refusal_notified = false;
+        self.conn.disconnect_refusal_notified = false;
         self.surface_dropped_oversized_events();
         self.mark_agent_disconnected();
-        let Some(watch) = self.child_exit_watch.clone() else {
+        let Some(watch) = self.conn.child_exit_watch.clone() else {
             self.emit_agent_disconnected_notice(None);
             return;
         };
-        self.disconnect_diag_pending = true;
+        self.conn.disconnect_diag_pending = true;
         let tx = self.disconnect_diag_tx.clone();
         tokio::spawn(async move {
             // Best-effort read of the owned agent child's exit diagnosis. The
@@ -153,8 +154,13 @@ impl App {
         tab: crate::shell::connection::TabId,
         detail: Option<String>,
     ) {
-        let _ = tab; // Keyed for phase 2 (#1463); N=1 uses one latch.
-        if !self.disconnect_diag_pending {
+        // The latch lives on the tab's connection (#1463): a completion
+        // attributed to a tab this app does not hold must neither clear this
+        // tab's latch nor toast a misattributed exit detail into it.
+        if tab != self.conn.transport.tab() {
+            return;
+        }
+        if !self.conn.disconnect_diag_pending {
             // A reset invalidated the pending completion: the transcript
             // entries must not land in the fresh session, but the crash
             // diagnosis itself (#1047) must still surface as a toast —
@@ -165,7 +171,7 @@ impl App {
             }
             return;
         }
-        self.disconnect_diag_pending = false;
+        self.conn.disconnect_diag_pending = false;
         self.emit_agent_disconnected_notice(detail);
     }
 
@@ -173,12 +179,12 @@ impl App {
     /// so the loss is visible instead of the session silently appearing
     /// frozen (#1047). Returns whether a notification was raised.
     pub(super) fn surface_dropped_oversized_events(&mut self) -> bool {
-        let dropped = self.connection.dropped_oversized_events();
-        if dropped <= self.surfaced_oversized_drops {
+        let dropped = self.conn.transport.dropped_oversized_events();
+        if dropped <= self.conn.surfaced_oversized_drops {
             return false;
         }
-        let new = dropped - self.surfaced_oversized_drops;
-        self.surfaced_oversized_drops = dropped;
+        let new = dropped - self.conn.surfaced_oversized_drops;
+        self.conn.surfaced_oversized_drops = dropped;
         let message = if new == 1 {
             "Dropped an oversized agent event — some output may be missing".to_string()
         } else {
@@ -213,10 +219,10 @@ impl App {
     /// against a still-visible copy: a re-armed latch (reset during an
     /// episode) must not stack identical toasts.
     pub(super) fn note_disconnected_refusal(&mut self) {
-        if self.disconnect_refusal_notified {
+        if self.conn.disconnect_refusal_notified {
             return;
         }
-        self.disconnect_refusal_notified = true;
+        self.conn.disconnect_refusal_notified = true;
         let toast = "Agent disconnected — commands are not being sent";
         if !self.notifications.contains_visible(toast) {
             self.notify(toast, NotifyLevel::Error);

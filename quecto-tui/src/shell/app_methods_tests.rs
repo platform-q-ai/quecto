@@ -204,7 +204,7 @@ fn subagent_activity_line_frame_wraps() {
 #[tokio::test]
 async fn extract_selection_omits_navigation_panel_and_divider_columns() {
     let mut app = test_app_for_methods().await;
-    app.agent_connected = true;
+    app.conn.agent_connected = true;
 
     for terminal_width in [50, 80] {
         app.terminal.width = terminal_width;
@@ -247,8 +247,8 @@ async fn extract_selection_omits_navigation_panel_and_divider_columns() {
 #[tokio::test]
 async fn extract_selection_uses_display_columns_for_wide_text() {
     let mut app = test_app_for_methods().await;
-    app.agent_connected = false;
-    app.agent_ever_connected = false;
+    app.conn.agent_connected = false;
+    app.conn.agent_ever_connected = false;
     app.last_rendered_lines = vec!["ab界de".to_string()];
 
     let copied = app.extract_selection(
@@ -262,7 +262,7 @@ async fn extract_selection_uses_display_columns_for_wide_text() {
 #[tokio::test]
 async fn extract_selection_multi_row_omits_panel_and_divider() {
     let mut app = test_app_for_methods().await;
-    app.agent_connected = true;
+    app.conn.agent_connected = true;
 
     for terminal_width in [50, 80] {
         app.terminal.width = terminal_width;

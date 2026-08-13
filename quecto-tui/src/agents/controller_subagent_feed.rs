@@ -65,7 +65,7 @@ impl App {
             };
             tokio::spawn(task.with_subscriber(connect_dispatch))
         } else {
-            let root_sender = self.connection.clone_sender();
+            let root_sender = self.conn.transport.clone_sender();
             let task = async move {
                 let _ = root_sender.try_send(
                     &Command::GetState {

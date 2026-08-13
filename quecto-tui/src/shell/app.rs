@@ -49,39 +49,24 @@ use app_message_recovery::{MessageRecoveryBatch, PendingMessageRecovery};
 pub struct App {
     terminal: Terminal,
     renderer: DiffRenderer<std::io::Stdout>,
-    /// The master agent connection behind its feed task (#1462): the feed
-    /// task owns the [`Client`] and forwards events into the dedicated master
-    /// fan-in (`tab_event_tx`, drained by the `tab_event_rx` select arm); the
-    /// app holds only this command/state handle.
-    connection: crate::shell::connection::Connection,
+    /// The active tab's per-connection state (#1463): the transport handle
+    /// from phase 1 (#1462) plus everything scoped to that one connection.
+    /// Reached through `active_conn()` / `active_conn_mut()` — the seam where
+    /// tab dispatch lands with N>1 tabs (epic #1467).
+    conn: connection_state::ConnectionState,
     editor: Editor,
     /// The master agent's own session, modeled as just another [`SessionView`]
     /// (#828) so render/input share ONE active-session path with sub-agents
     /// (`active_agent_id == None` selects this). Only `spinner`/`agent_state`
     /// stay master-local; sub-agents derive `running` from forwarded events.
     master_session: SessionView,
-    spinner: Option<Spinner>,
     autocomplete: Autocomplete,
     workspace: WorkspaceFlow,
     notifications: NotificationStack,
     kitty: KittyProtocol,
-    agent_state: AgentRunState,
     should_exit: bool,
     stdin_buffer: crate::shell::stdin_buffer::StdinBuffer,
-    agent_connected: bool,
-    /// Pin: once the left panel has shown for a connected agent it must not
-    /// vanish when the agent dies (#1047) — the user keeps the session /
-    /// sub-agent context to diagnose the failure. Stays `true` on disconnect.
-    agent_ever_connected: bool,
-    /// Exit-diagnosis watch for the TUI-owned agent child (#1047), published by
-    /// [`crate::shell::child_watch`]. `None` for external sockets.
-    child_exit_watch: Option<crate::shell::child_watch::ChildWatch>,
-    /// Oversized-event drops already surfaced as a notification, so each is
-    /// reported exactly once (#1047).
-    surfaced_oversized_drops: u64,
     inference: InferenceFlow,
-    /// Connected agent's own id (get_state sessionKey), vs descendants' (#997).
-    connected_agent_id: Option<String>,
     sessions: SessionsFlow,
     workflow: WorkflowFlow,
     /// Rewind flow state (#997).
@@ -142,16 +127,6 @@ pub struct App {
     /// burst (#1470 review). All tabs share this one channel, so the select
     /// arm count stays independent of N.
     pub(super) tab_event_rx: mpsc::Receiver<crate::shell::connection::SourcedEvent>,
-    /// Whether a stream-closed disconnect diagnosis is resolving off-loop
-    /// (#1462 scope 3): set by `begin_agent_stream_closed` when it spawns
-    /// the bounded #1047 waits, cleared by `finish_agent_stream_closed`.
-    /// The harness keys its diagnosis pumping off this latch.
-    pub(super) disconnect_diag_pending: bool,
-    /// One "commands are not being sent" notice per disconnect episode
-    /// (#1470 r4): reset when a disconnect begins, set on first refusal.
-    disconnect_refusal_notified: bool,
-    /// When the TUI session started — drives the Master row's uptime timer (#820).
-    started_at: tokio::time::Instant,
 }
 
 /// Id of the TUI's single (master) agent connection. With one replicant
@@ -190,23 +165,16 @@ impl App {
         Self {
             terminal,
             renderer: DiffRenderer::new(std::io::stdout()),
-            connection,
+            conn: connection_state::ConnectionState::new(connection),
             editor: Editor::new(),
             master_session: SessionView::with_footer(footer),
-            spinner: None,
             autocomplete: Autocomplete::new(builtin_commands().to_vec(), 8),
             workspace: WorkspaceFlow::new(git_branch, git_repo),
             notifications: NotificationStack::new(),
             kitty: KittyProtocol::new(),
-            agent_state: AgentRunState::new(),
             should_exit: false,
             stdin_buffer: crate::shell::stdin_buffer::StdinBuffer::new(),
-            agent_connected: true,
-            agent_ever_connected: true,
-            child_exit_watch: None,
-            surfaced_oversized_drops: 0,
             inference: InferenceFlow::default(),
-            connected_agent_id: None,
             sessions: SessionsFlow::default(),
             workflow: WorkflowFlow::default(),
             rewind: RewindFlow::default(),
@@ -237,9 +205,6 @@ impl App {
             disconnect_diag_tx,
             disconnect_diag_rx,
             tab_event_rx,
-            disconnect_diag_pending: false,
-            disconnect_refusal_notified: false,
-            started_at: tokio::time::Instant::now(),
         }
     }
 
@@ -311,6 +276,9 @@ impl App {
         self.workspace.files_autocomplete.update(&line, col);
     }
 }
+
+#[path = "connection_state.rs"]
+mod connection_state;
 
 #[path = "app_disconnect.rs"]
 mod app_disconnect;

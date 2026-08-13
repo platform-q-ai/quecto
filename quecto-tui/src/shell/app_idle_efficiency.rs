@@ -17,8 +17,8 @@ impl App {
 
     pub(super) fn needs_animation_tick(&self, kitty_fallback_pending: bool) -> bool {
         kitty_fallback_pending
-            || self.spinner.is_some()
-            || self.agent_state.is_running()
+            || self.conn.spinner.is_some()
+            || self.conn.agent_state.is_running()
             || self.active_session().footer.is_streaming()
             || self.active_subagent_running()
             || self.subagents.tracked_active_count() > 0
@@ -30,7 +30,7 @@ impl App {
         kitty_deadline: tokio::time::Instant,
     ) -> bool {
         let mut needs_render = false;
-        if let Some(spinner) = &mut self.spinner {
+        if let Some(spinner) = &mut self.conn.spinner {
             if spinner.tick() {
                 needs_render = true;
             }

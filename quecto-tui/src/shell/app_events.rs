@@ -43,7 +43,7 @@ impl App {
                 result,
                 is_error,
             } => self.handle_tool_end(tool_call_id, tool_name, result, is_error),
-            Event::AgentEnd { message_refs, .. } if self.agent_state.end() => {
+            Event::AgentEnd { message_refs, .. } if self.conn.agent_state.end() => {
                 self.maybe_recover_from_refs(&message_refs);
                 self.handle_agent_end();
             }
@@ -137,7 +137,7 @@ impl App {
     }
 
     fn handle_agent_start(&mut self) {
-        self.agent_state.start();
+        self.active_conn_mut().agent_state.start();
         self.tools_this_turn = 0;
         self.open_tool_calls = 0;
         let _ = self.master_session.chat.take_retention_front_delta();
@@ -147,7 +147,7 @@ impl App {
         // flag for master and sub-agents alike (#828).
         self.master_session.running = true;
         self.master_session.footer.set_streaming(true);
-        self.spinner = Some(Spinner::new("Working... (Esc to interrupt)"));
+        self.conn.spinner = Some(Spinner::new("Working... (Esc to interrupt)"));
     }
 
     pub(super) fn reconcile_master_retention_trim(&mut self) {
@@ -163,7 +163,7 @@ impl App {
     fn handle_agent_end(&mut self) {
         self.master_session.running = false;
         self.master_session.footer.set_streaming(false);
-        self.spinner = None;
+        self.conn.spinner = None;
         self.master_session.chat.finalize_assistant();
         // Parent is now idle — flush any sub-agent completion notes that arrived
         // mid-turn, so they appear after the finished response instead of in it.
@@ -238,7 +238,7 @@ impl App {
     }
 
     fn update_tool_spinner(&mut self, tool_name: &str, args: &serde_json::Value, args_str: &str) {
-        let Some(spinner) = &mut self.spinner else {
+        let Some(spinner) = &mut self.conn.spinner else {
             return;
         };
         let msg = match tool_name {
@@ -271,7 +271,7 @@ impl App {
         // sub-agent completion notes are operator-facing status, not part of any
         // one transcript. When the master is active this is `master_session`, so
         // the existing master-path behaviour is unchanged.
-        let running = self.agent_state.is_running();
+        let running = self.conn.agent_state.is_running();
         let session = self.active_session_mut();
         Self::push_or_defer_note(
             &mut session.chat,
@@ -336,7 +336,7 @@ impl App {
         if is_subagent_tool(&tool_name) {
             self.send_command(Command::GetSubagents { id: None });
         }
-        if let Some(spinner) = &mut self.spinner {
+        if let Some(spinner) = &mut self.conn.spinner {
             spinner.set_message("Working... (Esc to interrupt)");
         }
     }
@@ -408,7 +408,7 @@ impl App {
         // session's own workflow bar. Compare to the connected id so a
         // *named*/resumed agent still updates its main bar.
         if let Some(id) = agent_id.as_deref() {
-            if self.connected_agent_id.as_deref() != Some(id) {
+            if self.conn.connected_agent_id.as_deref() != Some(id) {
                 let bar = build_workflow_state(
                     &steps,
                     &progress,

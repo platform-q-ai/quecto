@@ -20,7 +20,7 @@ impl App {
     /// also survives an agent disconnect (#1047): the user keeps the session
     /// tree context needed to diagnose why the agent went away.
     pub(super) fn subagent_panel_visible(&self) -> bool {
-        self.agent_ever_connected
+        self.conn.agent_ever_connected
     }
 
     /// The agent whose session is currently shown in the body. `None` = master.
@@ -485,7 +485,7 @@ impl App {
     /// tree depth-ordered by `parent_id` (grandchildren under their parent).
     /// Master's live status: `running` while processing, else `idle` (#820).
     pub(super) fn master_status(&self) -> &'static str {
-        if self.agent_state.is_running() {
+        if self.conn.agent_state.is_running() {
             "running"
         } else {
             "idle"
@@ -609,7 +609,10 @@ impl App {
 
     fn panel_row_timer(&self, id: Option<&str>, now: tokio::time::Instant) -> String {
         match id {
-            None => fmt_mss(now.saturating_duration_since(self.started_at).as_secs()),
+            None => fmt_mss(
+                now.saturating_duration_since(self.active_conn().started_at)
+                    .as_secs(),
+            ),
             Some(id) => {
                 let t = self.subagents.tracked.get(id);
                 t.map(|t| fmt_mss(t.elapsed_secs(now))).unwrap_or_default()
@@ -622,7 +625,10 @@ impl App {
     pub(super) fn panel_row_elapsed(&self, id: Option<&str>, now: tokio::time::Instant) -> String {
         let Some(id) = id else {
             // Master row → session uptime.
-            return fmt_mss(now.saturating_duration_since(self.started_at).as_secs());
+            return fmt_mss(
+                now.saturating_duration_since(self.active_conn().started_at)
+                    .as_secs(),
+            );
         };
         let Some(t) = self.subagents.tracked.get(id) else {
             return String::new();

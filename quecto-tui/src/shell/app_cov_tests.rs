@@ -678,7 +678,7 @@ async fn spinner_renders_in_bottom_subagent_moved_to_panel() {
         super::tui_harness::subagent("orderworker", "running", None),
     ]));
     // Parent is actively working -> a real spinner line is rendered.
-    h.app_mut().spinner = Some(Spinner::new("order-spinner-marker"));
+    h.app_mut().conn.spinner = Some(Spinner::new("order-spinner-marker"));
 
     let bottom: Vec<String> = h
         .app_mut()

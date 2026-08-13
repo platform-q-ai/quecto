@@ -614,13 +614,13 @@ async fn disconnect_diag_completion_for_another_tab_leaves_this_latch_pending() 
     // accepted phase-2 debt from PR #1470): a completion attributed to some
     // other tab must not clear (or emit through) this tab's latch.
     let mut h = harness().await;
-    h.app_mut().disconnect_diag_pending = true;
+    h.app_mut().conn.disconnect_diag_pending = true;
     h.app_mut().finish_agent_stream_closed(
         crate::shell::connection::TabId(1),
         Some("other tab's exit detail".into()),
     );
     assert!(
-        h.app_mut().disconnect_diag_pending,
+        h.app_mut().conn.disconnect_diag_pending,
         "a diagnosis completion keyed to another tab must leave this tab's \
          pending latch set (#1463)"
     );

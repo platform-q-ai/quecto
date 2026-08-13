@@ -135,12 +135,12 @@ impl App {
         // channel can outlive the stream, so an enqueue could "succeed" and
         // the message silently vanish. The persistent refusal Status line
         // keeps the undelivered message diagnosable after the toast expires.
-        if !self.agent_connected {
+        if !self.conn.agent_connected {
             self.notify("Agent disconnected — message not sent", NotifyLevel::Error);
             self.note_disconnected_refusal();
             return;
         }
-        let cmd = if self.agent_state.is_running() {
+        let cmd = if self.conn.agent_state.is_running() {
             Command::FollowUp {
                 id: None,
                 message: text.to_string(),
@@ -178,12 +178,12 @@ impl App {
 
         // Abort the state machine — does NOT set running false; the matched
         // AgentEnd arrives and guards against stale events corrupting state (#502).
-        self.agent_state.abort();
+        self.conn.agent_state.abort();
         self.master_session.footer.set_streaming(false);
 
         // Stop spinner / working indicator; `agent_state` stays aborting (#828).
         self.master_session.running = false;
-        self.spinner = None;
+        self.conn.spinner = None;
 
         // Finalize any streaming assistant message.
         self.master_session.chat.finalize_assistant();

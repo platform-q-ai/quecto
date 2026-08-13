@@ -103,12 +103,12 @@ async fn handle_key_ctrl_d_sets_exit_flag() {
 async fn handle_key_ctrl_d_aborts_if_agent_running() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.agent_state.start();
-    assert!(a.agent_state.is_running());
+    a.conn.agent_state.start();
+    assert!(a.conn.agent_state.is_running());
     a.handle_key(Key::Ctrl('d'));
     assert!(a.should_exit);
     // Abort should have been called (agent_state.abort sets running=false).
-    assert!(!a.agent_state.is_running());
+    assert!(!a.conn.agent_state.is_running());
 }
 
 #[tokio::test]
@@ -128,10 +128,10 @@ async fn handle_key_ctrl_c_clears_editor_with_text() {
 async fn handle_key_ctrl_c_aborts_when_running_and_editor_empty() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.agent_state.start();
+    a.conn.agent_state.start();
     a.handle_key(Key::Ctrl('c'));
     assert!(
-        !a.agent_state.is_running(),
+        !a.conn.agent_state.is_running(),
         "Ctrl+C should abort when running and editor empty"
     );
 }
@@ -141,7 +141,7 @@ async fn handle_key_ctrl_c_noop_when_idle_and_editor_empty() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.handle_key(Key::Ctrl('c'));
-    assert!(!a.agent_state.is_running());
+    assert!(!a.conn.agent_state.is_running());
     assert_eq!(a.editor.text(), "");
 }
 
@@ -160,10 +160,10 @@ async fn handle_key_escape_when_idle_and_editor_empty_arms_rewind() {
 async fn handle_key_escape_when_running_aborts_agent() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.agent_state.start();
+    a.conn.agent_state.start();
     a.handle_key(Key::Escape);
     assert!(
-        !a.agent_state.is_running(),
+        !a.conn.agent_state.is_running(),
         "Escape should abort running agent"
     );
 }
@@ -573,7 +573,7 @@ async fn handle_submit_quit_does_not_send_prompt() {
 #[tokio::test]
 async fn handle_submit_follow_up_command_when_running() {
     let mut h = harness().await;
-    h.app_mut().agent_state.start();
+    h.app_mut().conn.agent_state.start();
     h.app_mut().handle_submit("follow-up message");
     let cmds = h.drain_commands().await;
     assert!(
@@ -609,21 +609,21 @@ async fn handle_abort_sends_abort_command() {
 async fn handle_abort_stops_spinner() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.agent_state.start();
-    a.spinner = Some(Spinner::new("Working"));
+    a.conn.agent_state.start();
+    a.conn.spinner = Some(Spinner::new("Working"));
     a.handle_abort();
-    assert!(a.spinner.is_none(), "abort should clear spinner");
+    assert!(a.conn.spinner.is_none(), "abort should clear spinner");
 }
 
 #[tokio::test]
 async fn handle_abort_finalizes_assistant() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.agent_state.start();
-    a.spinner = Some(Spinner::new("Working"));
+    a.conn.agent_state.start();
+    a.conn.spinner = Some(Spinner::new("Working"));
     a.handle_abort();
     // finalize_assistant is called; just verify no panic and spinner cleared.
-    assert!(a.spinner.is_none());
+    assert!(a.conn.spinner.is_none());
 }
 
 #[tokio::test]
@@ -642,10 +642,13 @@ async fn handle_abort_adds_status_message() {
 async fn handle_abort_calls_agent_state_abort() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.agent_state.start();
-    assert!(a.agent_state.is_running());
+    a.conn.agent_state.start();
+    assert!(a.conn.agent_state.is_running());
     a.handle_abort();
-    assert!(!a.agent_state.is_running(), "abort should stop agent_state");
+    assert!(
+        !a.conn.agent_state.is_running(),
+        "abort should stop agent_state"
+    );
 }
 
 #[tokio::test]

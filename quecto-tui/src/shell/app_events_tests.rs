@@ -75,8 +75,8 @@ async fn subagent_notification_deferred_while_parent_streams_then_flushed_on_idl
 async fn handles_agent_lifecycle_and_token_events() {
     let mut app = test_app().await;
     app.handle_event(Event::AgentStart);
-    assert!(app.agent_state.is_running());
-    assert!(app.spinner.is_some());
+    assert!(app.conn.agent_state.is_running());
+    assert!(app.conn.spinner.is_some());
     app.handle_event(Event::Token {
         token: "hello".into(),
     });
@@ -85,8 +85,8 @@ async fn handles_agent_lifecycle_and_token_events() {
         messages: vec![],
         message_refs: vec![],
     });
-    assert!(!app.agent_state.is_running());
-    assert!(app.spinner.is_none());
+    assert!(!app.conn.agent_state.is_running());
+    assert!(app.conn.spinner.is_none());
 }
 
 #[tokio::test]
@@ -166,7 +166,7 @@ async fn session_stats_footer_uses_context_tokens_not_cumulative_input() {
 #[tokio::test]
 async fn handles_tool_start_and_end_for_spawn_and_regular_tools() {
     let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
+    app.conn.spinner = Some(Spinner::new("Working"));
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "spawn-1".into(),
         tool_name: "spawn".into(),
@@ -222,14 +222,14 @@ async fn agent_cmd_get_state_renders_box_on_master_path() {
 #[tokio::test]
 async fn handles_agent_cmd_spinner_and_subagent_refresh() {
     let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
+    app.conn.spinner = Some(Spinner::new("Working"));
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "cmd-1".into(),
         tool_name: "agent_cmd".into(),
         args: serde_json::json!({"agent_id":"worker-1", "command":"get_state"}),
     });
     assert_eq!(
-        app.spinner.as_ref().unwrap().message(),
+        app.conn.spinner.as_ref().unwrap().message(),
         "get_state → worker-1...",
         "agent_cmd includes command and target"
     );
@@ -242,7 +242,7 @@ async fn handles_agent_cmd_spinner_and_subagent_refresh() {
     });
     // Tool end keeps the spinner alive and resets it to the working message.
     assert_eq!(
-        app.spinner.as_ref().unwrap().message(),
+        app.conn.spinner.as_ref().unwrap().message(),
         awaiting,
         "tool end keeps working msg"
     );
@@ -464,7 +464,7 @@ async fn handles_subagent_workflow_and_error_events() {
         data: None,
         error: Some("boom".into()),
     });
-    assert!(!app.agent_state.is_running());
+    assert!(!app.conn.agent_state.is_running());
 }
 #[test]
 fn sanitized_arg_strips_control_chars_and_uses_fallback() {
@@ -480,27 +480,27 @@ async fn update_tool_spinner_is_noop_when_spinner_none() {
     // When no spinner is active, update_tool_spinner should be a no-op
     // (no panic, no spinner magically created).
     let mut app = test_app().await;
-    assert!(app.spinner.is_none());
+    assert!(app.conn.spinner.is_none());
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "t1".into(),
         tool_name: "bash".into(),
         args: serde_json::json!({"command": "ls"}),
     });
     // Spinner should still be None — handle_tool_start doesn't create one.
-    assert!(app.spinner.is_none());
+    assert!(app.conn.spinner.is_none());
 }
 
 #[tokio::test]
 async fn update_tool_spinner_formats_spawn_message() {
     let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
+    app.conn.spinner = Some(Spinner::new("Working"));
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "spawn-1".into(),
         tool_name: "spawn".into(),
         args: serde_json::json!({"agent_id": "my-agent"}),
     });
     // The spinner message should contain the agent_id.
-    if let Some(ref spinner) = app.spinner {
+    if let Some(ref spinner) = app.conn.spinner {
         let msg = spinner.message();
         assert!(
             msg.contains("my-agent"),
@@ -512,13 +512,13 @@ async fn update_tool_spinner_formats_spawn_message() {
 #[tokio::test]
 async fn update_tool_spinner_formats_agent_cmd_generic_message() {
     let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
+    app.conn.spinner = Some(Spinner::new("Working"));
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "cmd-1".into(),
         tool_name: "agent_cmd".into(),
         args: serde_json::json!({"agent_id": "worker-1", "command": "prompt"}),
     });
-    if let Some(ref spinner) = app.spinner {
+    if let Some(ref spinner) = app.conn.spinner {
         let msg = spinner.message();
         assert!(
             msg.contains("prompt"),
@@ -534,13 +534,13 @@ async fn update_tool_spinner_formats_agent_cmd_generic_message() {
 #[tokio::test]
 async fn update_tool_spinner_formats_generic_tool_message() {
     let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
+    app.conn.spinner = Some(Spinner::new("Working"));
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "read-1".into(),
         tool_name: "read".into(),
         args: serde_json::json!({"path": "file.txt"}),
     });
-    if let Some(ref spinner) = app.spinner {
+    if let Some(ref spinner) = app.conn.spinner {
         let msg = spinner.message();
         assert!(
             msg.contains("read"),

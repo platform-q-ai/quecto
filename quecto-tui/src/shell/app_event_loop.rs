@@ -392,7 +392,7 @@ impl App {
         // Unconditional exit — Ctrl+D must work regardless of overlays,
         // autocomplete state, or agent activity (#478).
         if matches!(key, Key::Ctrl('d')) {
-            if self.agent_state.is_running() {
+            if self.conn.agent_state.is_running() {
                 self.handle_abort();
             }
             self.should_exit = true;
@@ -523,7 +523,7 @@ impl App {
         // Note: Ctrl+D is handled at the top of handle_key (unconditional exit).
         match &key {
             Key::Ctrl('c') => {
-                let running = self.agent_state.is_running() || self.active_subagent_running();
+                let running = self.conn.agent_state.is_running() || self.active_subagent_running();
                 match ctrl_c_action(running, self.editor.text().is_empty()) {
                     CtrlCAction::ClearEditor => {
                         self.editor.set_text("");
@@ -547,7 +547,7 @@ impl App {
                     }
                     return;
                 }
-                if self.agent_state.is_running() {
+                if self.conn.agent_state.is_running() {
                     self.rewind.last_idle_escape = None;
                     self.handle_abort();
                 } else if !self.editor.text().is_empty() {

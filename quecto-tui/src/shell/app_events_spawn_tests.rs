@@ -5,7 +5,7 @@ use crate::components::chat::ChatEntry;
 #[tokio::test]
 async fn track_starting_subagent_without_agent_id_is_noop() {
     let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
+    app.conn.spinner = Some(Spinner::new("Working"));
     // spawn tool with no agent_id → track_starting_subagent should bail.
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "spawn-1".into(),
@@ -22,7 +22,7 @@ async fn track_starting_subagent_without_agent_id_is_noop() {
 #[tokio::test]
 async fn track_starting_subagent_strips_control_chars_from_id() {
     let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
+    app.conn.spinner = Some(Spinner::new("Working"));
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "spawn-1".into(),
         tool_name: "spawn".into(),
@@ -42,7 +42,7 @@ async fn track_starting_subagent_strips_control_chars_from_id() {
 #[tokio::test]
 async fn mark_spawned_subagent_running_with_no_quotes_is_noop() {
     let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
+    app.conn.spinner = Some(Spinner::new("Working"));
     // First, track a subagent via spawn start.
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "spawn-1".into(),
@@ -71,7 +71,7 @@ async fn mark_spawned_subagent_running_with_no_quotes_is_noop() {
 #[tokio::test]
 async fn mark_spawned_subagent_running_with_one_quote_is_noop() {
     let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
+    app.conn.spinner = Some(Spinner::new("Working"));
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "spawn-1".into(),
         tool_name: "spawn".into(),
@@ -96,7 +96,7 @@ async fn mark_spawned_subagent_running_with_one_quote_is_noop() {
 #[tokio::test]
 async fn handle_tool_end_spawn_error_does_not_mark_running() {
     let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
+    app.conn.spinner = Some(Spinner::new("Working"));
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "spawn-1".into(),
         tool_name: "spawn".into(),
@@ -410,7 +410,7 @@ async fn snapshot_uuid_migrate_moves_sessions_feeds_and_session_order() {
 #[tokio::test]
 async fn mark_spawned_subagent_running_with_unknown_id_is_noop() {
     let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
+    app.conn.spinner = Some(Spinner::new("Working"));
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "spawn-1".into(),
         tool_name: "spawn".into(),

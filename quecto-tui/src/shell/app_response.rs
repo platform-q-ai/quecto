@@ -461,7 +461,7 @@ impl App {
         // Learn the connected agent's own id from its sessionKey ("cli:<name>").
         if let Some(key) = snap.session_key.as_deref() {
             let name = key.rsplit(':').next().unwrap_or("");
-            self.connected_agent_id = match name {
+            self.conn.connected_agent_id = match name {
                 "" | "default" => None,
                 other => Some(crate::components::ansi::sanitize_control(other)),
             };
@@ -655,10 +655,10 @@ impl App {
         self.master_session.chat.add_entry(ChatEntry::Status {
             text: format!("Error: {}", msg),
         });
-        self.agent_state.reset();
+        self.conn.agent_state.reset();
         self.master_session.running = false;
         self.master_session.footer.set_streaming(false);
-        self.spinner = None;
+        self.conn.spinner = None;
     }
 
     fn notify_response_error(&mut self, prefix: &str, error: Option<String>) {
@@ -703,7 +703,8 @@ impl App {
     /// minted-id namespaces derive from the connection's tab rather than a
     /// hard-coded `tab0:` literal (#1463 review).
     pub fn test_set_master_tab(&mut self, tab: u32) {
-        self.connection
+        self.conn
+            .transport
             .set_tab_for_tests(crate::shell::connection::TabId(tab));
     }
 }

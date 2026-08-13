@@ -140,6 +140,11 @@ impl Connection {
         }
     }
 
+    /// The tab this connection belongs to.
+    pub(crate) fn tab(&self) -> TabId {
+        self.tab
+    }
+
     /// Test-only: re-key this connection to another tab, so unit tests can
     /// pin that minted-id namespaces derive from the tab id rather than a
     /// hard-coded `tab0:` literal (#1463 review).

@@ -23,7 +23,7 @@ async fn left_panel_stays_visible_after_agent_disconnect() {
     app.handle_agent_disconnected(None);
 
     assert!(
-        !app.agent_connected,
+        !app.conn.agent_connected,
         "disconnect must still mark the agent as not connected"
     );
     assert!(
@@ -129,7 +129,7 @@ async fn oversized_event_drop_is_surfaced_as_notification() {
         "no drops recorded — nothing to surface"
     );
 
-    app.connection.record_dropped_oversized_for_tests(1);
+    app.conn.transport.record_dropped_oversized_for_tests(1);
     assert!(
         app.surface_dropped_oversized_events(),
         "a recorded drop must raise a notification"
@@ -158,7 +158,7 @@ async fn reset_session_clears_locally_and_warns_when_disconnected() {
     a.master_session.chat.add_entry(ChatEntry::User {
         text: "clear me".into(),
     });
-    a.agent_connected = false;
+    a.conn.agent_connected = false;
 
     a.reset_session("New session started");
 
@@ -189,7 +189,7 @@ async fn reset_session_clears_locally_and_warns_when_disconnected() {
 async fn send_command_refuses_when_disconnected() {
     let mut h = TuiHarness::new().await;
     let a = h.app_mut();
-    a.agent_connected = false;
+    a.conn.agent_connected = false;
     assert!(
         !a.send_command(Command::NewSession { id: None }),
         "a known-dead connection must refuse the enqueue"

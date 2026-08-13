@@ -280,11 +280,11 @@ impl App {
         let mut bottom = Vec::new();
 
         // Sub-agent/workflow bars moved out of the bottom stack.
-        if self.subagents.active_agent_id.is_none() && self.spinner.is_some() {
+        if self.subagents.active_agent_id.is_none() && self.conn.spinner.is_some() {
             // Master is active and mid-turn: show its richer tool spinner (tool
             // name + elapsed), the only master-local render telemetry layered on
             // top of the shared per-session `running` flag (#828).
-            if let Some(spinner) = &mut self.spinner {
+            if let Some(spinner) = &mut self.conn.spinner {
                 if self.subagents.tracked.is_empty() {
                     bottom.push(String::new());
                 }
@@ -600,21 +600,21 @@ impl App {
     pub(super) fn reset_session(&mut self, message: &str) {
         // Invalidate a pending off-loop disconnect diagnosis (#1470 r2/r3)
         // so the stale completion never lands in the fresh transcript.
-        self.disconnect_diag_pending = false;
+        self.conn.disconnect_diag_pending = false;
         // A dead connection still clears the LOCAL transcript (/clear must
         // work on a dead session) but reports honestly (#1470 r3).
         // Optimistic-enqueue window (#1470 r5): a just-died socket whose
         // Closed sentinel has not drained still enqueues successfully —
         // identical to pre-seam master; command acks are phase-2 scope.
-        let was_connected = self.agent_connected;
+        let was_connected = self.conn.agent_connected;
         let agent_reset = self.send_new_session();
         self.master_session.chat.clear();
         // The clear wiped any persistent refusal Status line; re-arm the
         // once-per-episode latch so the next refusal (send_state_resync
         // below, on a dead connection) re-raises the toast and re-writes
         // the line into the fresh transcript (#1470 r6).
-        if !self.agent_connected {
-            self.disconnect_refusal_notified = false;
+        if !self.conn.agent_connected {
+            self.conn.disconnect_refusal_notified = false;
         }
         // Invalidate in-flight ref recovery so a late get_message from the OLD
         // transcript can't splice into the cleared /clear-or-/new session (#1060 r4).
@@ -659,14 +659,14 @@ impl App {
         // event stream, so `try_send` would return `Ok` and the command vanish
         // into a dead socket. Bail silently and return false — callers that show
         // user feedback (e.g. `reset_session`) act on that (#1470 review).
-        if !self.agent_connected {
+        if !self.conn.agent_connected {
             self.refuse_disconnected_command(&cmd);
             return false;
         }
         // Enqueue synchronously in call order onto the client's FIFO writer; a
         // prior per-command `tokio::spawn` let bursts reach the agent reordered
         // or look incomplete to an observer draining mid-batch (#1060 review).
-        if let Err(e) = self.connection.try_send(&cmd) {
+        if let Err(e) = self.conn.transport.try_send(&cmd) {
             // Roll back synchronously: the diagnostic side channel below is
             // best-effort, and if its receiver is gone we must not leave
             // pending history/resume/stub state stranded.
