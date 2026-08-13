@@ -95,8 +95,15 @@ impl App {
             "N=1: only the master tab exists (#1462)"
         );
         match item {
-            SourcedEvent::Tab(_, ev) => {
+            SourcedEvent::Tab(tab, ev) => {
                 let is_token = Self::is_token_event(&ev);
+                // Tab guard (#1472 sweep, mirrors Closed/Subagent): release
+                // builds compile out the N=1 debug_assert above, so a
+                // foreign-tab master event must not mutate this app's active
+                // connection.
+                if tab != self.conn.transport.tab() {
+                    return SourcedRender::Stream { is_token };
+                }
                 self.handle_event(ev);
                 if self.surface_dropped_oversized_events() {
                     SourcedRender::Immediate
@@ -104,9 +111,15 @@ impl App {
                     SourcedRender::Stream { is_token }
                 }
             }
-            SourcedEvent::Subagent(_, agent_id, ev) => {
+            SourcedEvent::Subagent(tab, agent_id, ev) => {
                 let is_token = Self::is_token_event(&ev);
-                self.route_subagent_event(&agent_id, ev);
+                // Tab guard (#1472 r1, mirrors Closed): a direct child feed
+                // belongs to the tab that opened it. Release builds compile
+                // out the N=1 debug_assert above, so a foreign-tab event must
+                // not mutate this app's active connection.
+                if tab == self.conn.transport.tab() {
+                    self.route_subagent_event(&agent_id, ev);
+                }
                 SourcedRender::Stream { is_token }
             }
             SourcedEvent::Closed(tab) => {

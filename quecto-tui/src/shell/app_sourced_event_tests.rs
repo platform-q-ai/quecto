@@ -221,6 +221,30 @@ use super::app_event_loop::SourcedRender;
 use crate::shell::connection::{SourcedEvent, TabId};
 
 #[tokio::test]
+async fn route_sourced_ignores_master_event_for_foreign_tab() {
+    let mut h = TuiHarness::new().await;
+    h.app_mut().test_set_master_tab(1);
+
+    let got = h.app_mut().route_sourced(SourcedEvent::Tab(
+        TabId::MASTER,
+        Event::Token {
+            token: "foreign-master-token".into(),
+        },
+    ));
+    h.capture();
+
+    assert_eq!(
+        got,
+        SourcedRender::Stream { is_token: true },
+        "foreign master events are still classified for the stream paint path"
+    );
+    assert!(
+        !h.full_frame().contains("foreign-master-token"),
+        "a SourcedEvent::Tab tagged for a different tab must not mutate the active connection (#1472 sweep)"
+    );
+}
+
+#[tokio::test]
 async fn route_sourced_master_token_coalesces_as_stream_token() {
     let mut h = TuiHarness::new().await;
     let got = h.app_mut().route_sourced(SourcedEvent::Tab(
@@ -262,6 +286,37 @@ async fn route_sourced_master_event_with_surfaced_drops_paints_immediately() {
         got,
         SourcedRender::Immediate,
         "surfacing an oversized-line drop must force an immediate paint (#1047)"
+    );
+}
+
+#[tokio::test]
+async fn route_sourced_ignores_subagent_event_for_foreign_tab() {
+    let mut h = TuiHarness::new().await;
+    h.app_mut().test_set_master_tab(1);
+    h.event(tui_harness::subagents_changed(vec![tui_harness::subagent(
+        "foreign-a1",
+        "running",
+        None,
+    )]));
+    h.select(Some("foreign-a1"));
+
+    let got = h.app_mut().route_sourced(SourcedEvent::Subagent(
+        TabId::MASTER,
+        "foreign-a1".into(),
+        Event::Token {
+            token: "foreign-tab-token".into(),
+        },
+    ));
+    h.capture();
+
+    assert_eq!(
+        got,
+        SourcedRender::Stream { is_token: true },
+        "foreign sub-agent events are still classified for the stream paint path"
+    );
+    assert!(
+        !h.full_frame().contains("foreign-tab-token"),
+        "a SourcedEvent::Subagent tagged for a different tab must not mutate the active connection (#1472)"
     );
 }
 
