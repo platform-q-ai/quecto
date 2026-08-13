@@ -171,14 +171,31 @@ fn route_sourced_subagent_same_agent_id_isolated_per_tab() {
             .sessions
             .insert("worker".into(), SessionView::new(None));
     }
-    let t0_before = app
-        .conn_for(TabId::MASTER)
-        .unwrap()
-        .roster
-        .sessions
-        .get("worker")
-        .map(|s| s.chat.entry_count())
-        .unwrap_or(0);
+    let worker_chat_count = |app: &App, tab: u32| -> usize {
+        app.conn_for(TabId(tab))
+            .unwrap()
+            .roster
+            .sessions
+            .get("worker")
+            .map(|s| s.chat.entry_count())
+            .unwrap_or(0)
+    };
+    let worker_has = |app: &App, tab: u32, needle: &str| -> bool {
+        app.conn_for(TabId(tab))
+            .unwrap()
+            .roster
+            .sessions
+            .get("worker")
+            .map(|s| {
+                s.chat
+                    .entries()
+                    .iter()
+                    .any(|e| format!("{e:?}").contains(needle))
+            })
+            .unwrap_or(false)
+    };
+    let t0_before = worker_chat_count(&app, 0);
+    let t1_before = worker_chat_count(&app, 1);
 
     let _ = app.route_sourced(SourcedEvent::Subagent(
         TabId(1),
@@ -188,33 +205,19 @@ fn route_sourced_subagent_same_agent_id_isolated_per_tab() {
         },
     ));
 
-    let t0_after = app
-        .conn_for(TabId::MASTER)
-        .unwrap()
-        .roster
-        .sessions
-        .get("worker")
-        .map(|s| s.chat.entry_count())
-        .unwrap_or(0);
-    assert_eq!(t0_before, t0_after, "active tab panel/feed must not change");
-    // Owner tab should have received the token into its session chat when retained.
-    let t1_chat = app
-        .conn_for(TabId(1))
-        .unwrap()
-        .roster
-        .sessions
-        .get("worker")
-        .map(|s| {
-            s.chat
-                .entries()
-                .iter()
-                .any(|e| format!("{e:?}").contains("child-t1"))
-        })
-        .unwrap_or(false);
-    // route_subagent_event may require feeds; accept either owner chat growth
-    // or at least that active stayed clean (AC7 primary).
-    let _ = t1_chat;
-    assert_eq!(t0_before, t0_after);
+    assert_eq!(
+        worker_chat_count(&app, 0),
+        t0_before,
+        "active tab panel/feed must not change"
+    );
+    assert!(
+        !worker_has(&app, 0, "child-t1"),
+        "active tab must not receive foreign subagent token"
+    );
+    assert!(
+        worker_chat_count(&app, 1) > t1_before || worker_has(&app, 1, "child-t1"),
+        "owner tab worker session must receive the subagent token"
+    );
 }
 
 #[test]
@@ -351,22 +354,31 @@ fn route_sourced_inactive_oversized_drop_surfaces_on_owner() {
         .transport
         .record_dropped_oversized_for_tests(3);
     let before_t0 = app.test_tab_ac7_snapshot(0);
+    let before_t1_surfaced = app.conn_for(TabId(1)).unwrap().surfaced_oversized_drops;
+    let before_notices = app.notifications.messages().len();
     let _ = app.route_sourced(SourcedEvent::Tab(
         TabId(1),
         Event::Token {
             token: "drop-path".into(),
         },
     ));
+    let after_t1_surfaced = app.conn_for(TabId(1)).unwrap().surfaced_oversized_drops;
     assert!(
-        app.conn_for(TabId(1)).unwrap().surfaced_oversized_drops >= 3
-            || app.test_tab_chat_contains(1, "drop")
+        after_t1_surfaced > before_t1_surfaced,
+        "routing owner path must surface new oversized drops (before={before_t1_surfaced}, after={after_t1_surfaced})"
+    );
+    assert!(
+        after_t1_surfaced >= 3,
+        "owner surfaced counter should catch up to transport drops"
+    );
+    assert!(
+        app.notifications.messages().len() > before_notices
             || app
-                .conn_for(TabId(1))
-                .unwrap()
-                .transport
-                .dropped_oversized_events()
-                >= 3,
-        "owner path must observe oversized drops"
+                .notifications
+                .messages()
+                .iter()
+                .any(|m| m.contains("oversized")),
+        "owner path should notify about oversized drops"
     );
     assert_eq!(
         app.test_tab_ac7_snapshot(0).3,
@@ -374,9 +386,9 @@ fn route_sourced_inactive_oversized_drop_surfaces_on_owner() {
         "active drop counter unchanged"
     );
     assert!(!app.test_tab_chat_contains(0, "oversized"));
-    assert!(!app.test_tab_chat_contains(0, "drop-path") || true);
     // active transcript must not gain the inactive token
     assert!(!app.test_tab_chat_contains(0, "drop-path"));
+    assert!(app.test_tab_chat_contains(1, "drop-path"));
 }
 
 #[test]
@@ -424,10 +436,15 @@ fn closed_on_one_tab_does_not_disconnect_sibling() {
     let mut app = two_tab_app();
     app.conn_mut(TabId::MASTER).unwrap().agent_connected = true;
     app.conn_mut(TabId(1)).unwrap().agent_connected = true;
+    let before_t0 = app.test_tab_ac7_snapshot(0);
     let _ = app.route_sourced(SourcedEvent::Closed(TabId(1)));
     assert!(!app.conn_for(TabId(1)).unwrap().agent_connected);
     assert!(app.conn_for(TabId::MASTER).unwrap().agent_connected);
-    assert!(app.test_tab_chat_contains(0, "") || true);
-    // active still master and still connected
+    assert_eq!(
+        app.test_tab_ac7_snapshot(0),
+        before_t0,
+        "sibling run/chat snapshot must be unchanged"
+    );
+    assert!(!app.test_tab_chat_contains(0, "disconnected"));
     assert_eq!(app.active_tab, TabId::MASTER);
 }

@@ -80,18 +80,43 @@ fn apply_workspace_manifest_opens_tabs() {
 #[test]
 fn bare_session_selection_still_current_tab() {
     let mut a = app();
+    // Live writer so resume commands are observable on the active tab sender.
+    let (mut live, mut rx) = crate::shell::connection::Connection::live_for_tests();
+    live.set_tab_for_tests(TabId::MASTER);
+    a.ac_mut().transport = live;
     a.ac_mut().agent_connected = true;
+    assert_eq!(a.active_tab, TabId::MASTER);
     a.apply_resume_selection("session:my-key");
+    let line = rx
+        .try_recv()
+        .expect("session: prefix must send resume on active tab");
+    assert!(line.contains("resume_session"), "wire={line}");
+    assert!(line.contains("my-key"), "wire={line}");
+    assert_eq!(a.active_tab, TabId::MASTER, "must not open/switch tabs");
     a.apply_resume_selection("plain-key");
+    let line = rx
+        .try_recv()
+        .expect("bare key must send resume on active tab");
+    assert!(line.contains("resume_session"), "wire={line}");
+    assert!(line.contains("plain-key"), "wire={line}");
+    assert_eq!(a.active_tab, TabId::MASTER);
+    assert_eq!(a.tabs.len(), 1);
 }
 
 #[test]
 fn unknown_workspace_notifies_without_changing_tabs() {
     let mut a = app();
     let n = a.tabs.len();
+    let active = a.active_tab;
     a.restore_workspace_from_path(
         "nope",
         std::path::Path::new("/tmp/does-not-exist-1465.json"),
     );
     assert_eq!(a.tabs.len(), n);
+    assert_eq!(a.active_tab, active);
+    let msgs = a.notifications.messages().join("\n");
+    assert!(
+        msgs.contains("Unknown workspace"),
+        "expected unknown-workspace notice, got {msgs:?}"
+    );
 }
