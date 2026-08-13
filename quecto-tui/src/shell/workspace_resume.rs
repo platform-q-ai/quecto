@@ -65,7 +65,12 @@ impl super::App {
             .strip_prefix(SESSION_RESUME_PREFIX)
             .unwrap_or(raw)
             .trim();
-        self.send_resume_session(session);
+        if session.is_empty() {
+            self.send_list_sessions();
+        } else {
+            // Latch when the tab is still connecting / disconnected (AC5).
+            self.queue_or_send_session_resume(session);
+        }
     }
 
     /// Restore a workspace tab set from the durable manifest (AC5/AC6 foundation).
@@ -95,6 +100,18 @@ impl super::App {
 
     /// Apply an already-loaded workspace manifest to the tab collection.
     pub(crate) fn apply_workspace_manifest(&mut self, manifest: &WorkspaceManifest) {
+        self.apply_workspace_manifest_with_registry(
+            manifest,
+            &crate::shell::tab_registry::default_registry_path(),
+        );
+    }
+
+    /// Apply a workspace manifest, consulting `registry_path` for live reattach (AC6).
+    pub(crate) fn apply_workspace_manifest_with_registry(
+        &mut self,
+        manifest: &WorkspaceManifest,
+        registry_path: &std::path::Path,
+    ) {
         if manifest.tabs.is_empty() {
             self.notify("Workspace has no tabs", NotifyLevel::Warning);
             return;
@@ -162,7 +179,27 @@ impl super::App {
             let _ = self.switch_tab(tab);
             match key {
                 Some(session) if !session.trim().is_empty() => {
-                    if self.ac().agent_connected {
+                    let live_socket = live_registry_socket_for_tab(registry_path, tab, &session);
+                    if let Some(socket) = live_socket {
+                        // AC6: prefer the live detached owner even when this TUI
+                        // already spawned a fresh connected master. Resuming into
+                        // the new agent would contend for the session lock.
+                        self.ac_mut().socket_path = Some(socket);
+                        self.ac_mut().session_key = Some(session.clone());
+                        self.ac_mut().pending_session_resume = Some(session.clone());
+                        self.ac_mut().pending_attach = true;
+                        self.ac_mut().agent_connected = false;
+                        self.spawn_tab_agent_attach(tab, Some(session.clone()));
+                        failures += 1; // counted as deferred until attach completes
+                        self.ac_mut().master_session.chat.add_entry(
+                            crate::components::chat::ChatEntry::Status {
+                                text: format!(
+                                    "Tab {}: reattaching live agent for '{session}'",
+                                    tab.0
+                                ),
+                            },
+                        );
+                    } else if self.ac().agent_connected {
                         self.queue_or_send_session_resume(&session);
                         resumed += 1;
                     } else {
@@ -171,14 +208,6 @@ impl super::App {
                         self.ac_mut().session_key = Some(session.clone());
                         self.ac_mut().pending_session_resume = Some(session.clone());
                         self.ac_mut().pending_attach = true;
-                        // Prefer registry socket reattach when available.
-                        let reg_path = crate::shell::tab_registry::default_registry_path();
-                        let reg = crate::shell::tab_registry::TabAgentRegistry::load(&reg_path);
-                        if let Some(rec) = reg.agents.iter().find(|a| a.tab_id == tab.0) {
-                            if !rec.socket_path.as_os_str().is_empty() {
-                                self.ac_mut().socket_path = Some(rec.socket_path.clone());
-                            }
-                        }
                         self.spawn_tab_agent_attach(tab, Some(session.clone()));
                         failures += 1; // counted as deferred until attach completes
                         self.ac_mut().master_session.chat.add_entry(
@@ -255,6 +284,27 @@ impl super::App {
             tabs,
             updated_unix_s: unix_now_s(),
         }
+    }
+}
+
+/// Live registry socket for `tab` / `session` if the process still owns it.
+fn live_registry_socket_for_tab(
+    registry_path: &std::path::Path,
+    tab: TabId,
+    session: &str,
+) -> Option<std::path::PathBuf> {
+    let reg = crate::shell::tab_registry::TabAgentRegistry::load(registry_path);
+    let rec = reg
+        .agents
+        .iter()
+        .find(|a| a.tab_id == tab.0 && a.session_key.as_deref() == Some(session))?;
+    if rec.socket_path.as_os_str().is_empty() {
+        return None;
+    }
+    if crate::shell::tab_registry::socket_path_is_live(&rec.socket_path) {
+        Some(rec.socket_path.clone())
+    } else {
+        None
     }
 }
 

@@ -106,7 +106,12 @@ impl App {
                 }
                 _ if trimmed.starts_with("/resume ") => {
                     let session = trimmed["/resume".len()..].trim();
-                    self.send_resume_session(session);
+                    if session.is_empty() {
+                        self.send_list_sessions();
+                    } else {
+                        // Latch when the tab is still connecting / disconnected (AC5).
+                        self.queue_or_send_session_resume(session);
+                    }
                     return;
                 }
                 _ if trimmed.starts_with("/effort") => {

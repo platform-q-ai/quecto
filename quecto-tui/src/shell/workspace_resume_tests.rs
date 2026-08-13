@@ -189,3 +189,92 @@ fn apply_workspace_manifest_updates_transport_tab_id_in_production_path() {
         "production remap must update Connection.tab, not only the HashMap key"
     );
 }
+
+#[test]
+fn apply_workspace_manifest_reattaches_live_registry_socket_on_connected_tab() {
+    use crate::shell::tab_registry::{TabAgentRecord, TabAgentRegistry, TabAgentStatus};
+    use std::os::unix::net::UnixListener;
+
+    let mut a = app();
+    a.ac_mut().agent_connected = true;
+    a.ac_mut().session_key = Some("cli:fresh-master".into());
+    a.ac_mut().socket_path = Some(std::path::PathBuf::from("/tmp/fresh-master.sock"));
+    let (fresh, mut fresh_rx) = crate::shell::connection::Connection::live_for_tests();
+    a.ac_mut().transport = fresh;
+
+    let dir = tempfile::tempdir().unwrap();
+    let live_sock = dir.path().join("old-master.sock");
+    let _listener = UnixListener::bind(&live_sock).unwrap();
+    let rpath = dir.path().join("registry.json");
+    let mut reg = TabAgentRegistry::new();
+    reg.upsert(TabAgentRecord {
+        tab_id: 0,
+        pid: Some(std::process::id()),
+        socket_path: live_sock.clone(),
+        session_key: Some("cli:work".into()),
+        tab_name: Some("main".into()),
+        workspace_id: Some("ws".into()),
+        updated_unix_s: 1,
+        status: TabAgentStatus::Live,
+    });
+    reg.store(&rpath).unwrap();
+
+    let manifest = App::test_workspace_manifest(
+        "ws",
+        vec![WorkspaceTabEntry {
+            tab_id: 0,
+            session_key: Some("cli:work".into()),
+            name: Some("main".into()),
+        }],
+        0,
+    );
+    a.apply_workspace_manifest_with_registry(&manifest, &rpath);
+
+    let master = a.conn_for(TabId::MASTER).unwrap();
+    assert_eq!(
+        master.socket_path.as_deref(),
+        Some(live_sock.as_path()),
+        "AC6: connected restore must prefer the live detached socket, not resume into the new master"
+    );
+    assert!(
+        master.pending_attach,
+        "live reattach must be scheduled against the detached agent"
+    );
+    assert_eq!(
+        master.pending_session_resume.as_deref(),
+        Some("cli:work"),
+        "session key stays latched until the live socket attach completes"
+    );
+    assert!(
+        fresh_rx.try_recv().is_err(),
+        "must not send resume_session into the freshly spawned master while a live owner exists"
+    );
+}
+
+#[test]
+fn resume_key_and_selector_latch_deferred_resume_while_disconnected() {
+    let mut a = app();
+    a.ac_mut().agent_connected = false;
+    a.ac_mut().pending_attach = true;
+    a.handle_submit("/resume my-session");
+    assert_eq!(
+        a.ac().pending_session_resume.as_deref(),
+        Some("my-session"),
+        "AC5: /resume <key> on a connecting tab must latch deferred resume"
+    );
+
+    let mut b = app();
+    b.ac_mut().agent_connected = false;
+    b.apply_resume_selection("session:sel-key");
+    assert_eq!(
+        b.ac().pending_session_resume.as_deref(),
+        Some("sel-key"),
+        "AC5: selector session rows must latch deferred resume when disconnected"
+    );
+    b.apply_resume_selection("plain-key");
+    assert_eq!(
+        b.ac().pending_session_resume.as_deref(),
+        Some("plain-key"),
+        "AC5: bare selector keys must also latch"
+    );
+}

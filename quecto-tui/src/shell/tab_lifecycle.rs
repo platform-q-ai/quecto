@@ -52,9 +52,11 @@ impl super::App {
     }
 
     /// Whether a background spawn/reattach is still pending for `tab` (AC2).
+    ///
+    /// A leftover `pending_session_resume` latch alone is not "still connecting":
+    /// treating it that way queued prompts forever after a failed attach.
     pub(crate) fn tab_has_pending_attach(&self, tab: TabId) -> bool {
-        self.conn_for(tab)
-            .is_some_and(|c| c.pending_attach || c.pending_session_resume.is_some())
+        self.conn_for(tab).is_some_and(|c| c.pending_attach)
     }
 
     /// Mark a tab as waiting on a non-blocking live attach/spawn (AC1/AC2).
@@ -179,6 +181,10 @@ impl super::App {
                 );
                 if let Some(c) = self.conn_mut(tab) {
                     c.agent_connected = false;
+                    // Final failure: drop the resume latch so later prompts are
+                    // not treated as still-connecting (#1481 review).
+                    c.pending_session_resume = None;
+                    c.queued_prompts.clear();
                 }
             }
         }
@@ -423,13 +429,15 @@ impl super::App {
         registry_path: &std::path::Path,
         manifest_path: &std::path::Path,
     ) {
-        let reg = self.registry_snapshot(Some(workspace_id));
-        let _ = reg.store(registry_path);
-        // Maintain on-disk registry with the public GC/refresh APIs: keep every
-        // tab still open in this process; drop rows for closed tabs that are
-        // no longer live on disk.
-        let open: std::collections::HashSet<u32> = self.tabs.keys().map(|t| t.0).collect();
+        // Merge the open-tab snapshot into the on-disk document. A full replace
+        // would drop detached-but-live rows (AC3b / AC6): later load/refresh/gc
+        // and workspace restore would never see them.
+        let open_snapshot = self.registry_snapshot(Some(workspace_id));
         let mut on_disk = TabAgentRegistry::load(registry_path);
+        for rec in open_snapshot.agents {
+            on_disk.upsert(rec);
+        }
+        let open: std::collections::HashSet<u32> = self.tabs.keys().map(|t| t.0).collect();
         on_disk.refresh_status(|rec| {
             if open.contains(&rec.tab_id) {
                 true

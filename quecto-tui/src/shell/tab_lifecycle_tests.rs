@@ -344,3 +344,108 @@ fn single_resume_path_after_attach() {
         "pending latch cleared"
     );
 }
+
+#[test]
+fn persist_merges_open_tabs_and_keeps_detached_live_registry_rows() {
+    use crate::shell::tab_registry::{TabAgentRecord, TabAgentStatus};
+    use std::os::unix::net::UnixListener;
+
+    let mut a = app();
+    // Fresh TUI: only MASTER is open, with a new socket/session.
+    let dir = tempfile::tempdir().unwrap();
+    let master_sock = dir.path().join("master-new.sock");
+    let detached_sock = dir.path().join("tab1-live.sock");
+    let _master_listener = UnixListener::bind(&master_sock).unwrap();
+    let _detached_listener = UnixListener::bind(&detached_sock).unwrap();
+
+    a.ac_mut().agent_connected = true;
+    a.ac_mut().socket_path = Some(master_sock.clone());
+    a.ac_mut().session_key = Some("cli:new-master".into());
+    a.ac_mut().child_pid = Some(std::process::id());
+
+    let rpath = dir.path().join("registry.json");
+    let mpath = dir.path().join("manifest.json");
+    let mut preexisting = TabAgentRegistry::new();
+    preexisting.upsert(TabAgentRecord {
+        tab_id: 0,
+        pid: Some(std::process::id()),
+        socket_path: dir.path().join("old-master.sock"),
+        session_key: Some("cli:old-master".into()),
+        tab_name: Some("old".into()),
+        workspace_id: Some("ws".into()),
+        updated_unix_s: 1,
+        status: TabAgentStatus::Live,
+    });
+    preexisting.upsert(TabAgentRecord {
+        tab_id: 1,
+        pid: Some(std::process::id()),
+        socket_path: detached_sock.clone(),
+        session_key: Some("cli:tab1".into()),
+        tab_name: Some("two".into()),
+        workspace_id: Some("ws".into()),
+        updated_unix_s: 1,
+        status: TabAgentStatus::Live,
+    });
+    preexisting.store(&rpath).unwrap();
+
+    a.persist_durability_snapshot("ws", &rpath, &mpath);
+
+    let loaded = TabAgentRegistry::load(&rpath);
+    let tab1 = loaded
+        .agents
+        .iter()
+        .find(|r| r.tab_id == 1)
+        .expect("AC3b/AC6: detached-but-live tab 1 must survive persist of a one-tab restart");
+    assert_eq!(tab1.session_key.as_deref(), Some("cli:tab1"));
+    assert_eq!(tab1.socket_path, detached_sock);
+    let tab0 = loaded
+        .agents
+        .iter()
+        .find(|r| r.tab_id == 0)
+        .expect("open master must remain in registry");
+    assert_eq!(tab0.session_key.as_deref(), Some("cli:new-master"));
+    assert_eq!(tab0.socket_path, master_sock);
+}
+
+#[test]
+fn failed_attach_clears_deferred_resume_so_prompts_are_not_queued_forever() {
+    let mut a = app();
+    let tab = a.open_placeholder_tab(None);
+    a.mark_tab_pending_attach(tab);
+    a.conn_mut(tab).unwrap().pending_session_resume = Some("cli:work".into());
+    let generation = a.bump_attach_generation(tab);
+    a.apply_tab_attach_outcome(super::TabAttachOutcome {
+        tab,
+        generation,
+        result: Err("spawn failed".into()),
+        child_watch: None,
+    });
+    assert!(
+        !a.conn_for(tab).unwrap().pending_attach,
+        "attach flag must clear on final failure"
+    );
+    assert!(
+        a.conn_for(tab).unwrap().pending_session_resume.is_none(),
+        "final attach failure must drop the resume latch so later prompts are not treated as still-connecting"
+    );
+    assert!(
+        !a.tab_has_pending_attach(tab),
+        "failed attach must not keep tab_has_pending_attach true"
+    );
+    a.handle_submit("hello after failed attach");
+    let status = a
+        .ac()
+        .master_session
+        .chat
+        .last_status_text()
+        .unwrap_or("")
+        .to_lowercase();
+    assert!(
+        !status.contains("connecting"),
+        "must not queue forever as connecting after final attach failure: {status}"
+    );
+    assert!(
+        a.ac().queued_prompts.is_empty(),
+        "prompt must not be latched as a connecting queue after attach failure"
+    );
+}
