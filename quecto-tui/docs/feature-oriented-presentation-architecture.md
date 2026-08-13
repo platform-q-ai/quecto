@@ -338,8 +338,10 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_events_test_support.rs` | `shell` test support (relocated, #1257 Phase 6) |
 | `shell/app_idle_efficiency.rs` | `shell` event-loop policy (relocated, #1257 Phase 6) |
 | `shell/app_methods.rs` | `shell` composition methods (relocated, #1257 Phase 6) |
+| `shell/app_methods_send.rs` | `shell` send/selection helpers split for line budget (#1465) |
 | `shell/app_render_helpers.rs` | `shell` render helper extraction (line-count split, #1334 PR 4) |
 | `shell/app_response.rs` | `shell` response dispatch seam (relocated, #1257 Phase 6; protocol-mapper allowlist #1220) |
+| `shell/app_response_test_api.rs` | `shell` multi-tab test/harness API (#1465) |
 | `shell/app_selection.rs` | `shell` focus/selection routing (relocated, #1257 Phase 6) |
 | `shell/app_stdin.rs` | `shell` stdin coordination (relocated, #1257 Phase 6) |
 | `shell/app_submit.rs` | `shell` submit/prompt coordination (relocated, #1257 Phase 6) |
@@ -358,6 +360,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/terminal.rs` | `shell` terminal adapter (relocated, #1257 Phase 1) |
 | `shell/tool_policy.rs` | `shell` live tool/profile policy modal controller (#1334 PR 4) |
 | `shell/tui_harness.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
+| `shell/tui_harness_layout.rs` | `shell` harness layout probes split for line budget (#1465) |
 | `shell/tui_harness_sourced.rs` | `shell` fan-in/feed-task harness drivers for the #1462 seam |
 | `shell/tui_harness_tool_policy.rs` | `shell` tool policy test-harness event helpers (#1334 PR 4) |
 | `shell/tui_harness_disconnect.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
