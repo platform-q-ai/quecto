@@ -190,10 +190,9 @@ impl App {
         error: Option<String>,
     ) {
         if let Some(agent_id) = id.as_deref().and_then(|id| {
-            // Only OUR OWN namespace may classify as a routed-subagent
-            // response (#1472 r2): stripping any tab's prefix let a foreign
-            // tab's rev-relative sync delta fast-forward this feed's rev
-            // past revisions it never received.
+            // Only OUR OWN namespace classifies as routed-subagent (#1472
+            // r2): any-tab stripping let a foreign rev-relative sync delta
+            // fast-forward this feed's rev past unreceived revisions.
             let own = self.conn.id_namespace();
             let id = id.strip_prefix(own.as_str()).unwrap_or(id);
             if id.starts_with("tab") && id.contains(':') {
@@ -247,10 +246,8 @@ impl App {
                     if id.as_deref() == Some(self.conn.namespaced_id("stats-footer").as_str()) {
                         self.update_footer_stats(&data);
                     } else if is_foreign_stats_footer {
-                        // A peer's quiet footer refresh (any tab namespace, or
-                        // a legacy bare literal) must stay quiet — falling
-                        // through would print unrequested stats into the chat
-                        // after every peer turn (#1472 r2).
+                        // Peer quiet refreshes stay quiet (#1472 r2) — the
+                        // fallthrough printed unrequested stats per peer turn.
                     } else {
                         self.show_session_stats(&data);
                     }
