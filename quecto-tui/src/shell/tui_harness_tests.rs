@@ -167,13 +167,13 @@ async fn agent_cmd_get_state_renders_a_tool_box() {
 async fn agent_cmd_abort_and_kill_append_chat_entry_on_master_path() {
     for cmd in ["abort", "kill"] {
         let mut h = TuiHarness::new().await;
-        let before = h.app_mut().conn.master_session.chat.entry_count();
+        let before = h.app_mut().ac().master_session.chat.entry_count();
         h.event(Event::ToolExecutionStart {
             tool_call_id: "t1".into(),
             tool_name: "agent_cmd".into(),
             args: serde_json::json!({"command":cmd,"agent_id":"worker-1"}),
         });
-        let after = h.app_mut().conn.master_session.chat.entry_count();
+        let after = h.app_mut().ac().master_session.chat.entry_count();
         assert_eq!(
             after,
             before + 1,

@@ -49,11 +49,19 @@ use app_message_recovery::{MessageRecoveryBatch, PendingMessageRecovery};
 pub struct App {
     terminal: Terminal,
     renderer: DiffRenderer<std::io::Stdout>,
-    /// The active tab's per-connection state (#1463): the transport handle
-    /// from phase 1 (#1462) plus everything scoped to that one connection.
-    /// Reached through `active_conn()` / `active_conn_mut()` — the seam where
-    /// tab dispatch lands with N>1 tabs (epic #1467).
-    conn: connection_state::ConnectionState,
+    /// Per-tab connection states (#1465 / epic #1467). Indexed by [`TabId`];
+    /// the active tab is selected by `active_tab`. Call sites reach the
+    /// active slot via `ac()` / `ac()`, and a specific
+    /// tab via `conn_for` / `conn_mut`.
+    tabs: std::collections::HashMap<
+        crate::shell::connection::TabId,
+        connection_state::ConnectionState,
+    >,
+    /// Which tab is focused for input, render, and active command send.
+    active_tab: crate::shell::connection::TabId,
+    /// When set, `active_conn(_mut)` temporarily targets this tab so inbound
+    /// `SourcedEvent` routing can mutate the owner without flipping focus.
+    routing_tab_override: Option<crate::shell::connection::TabId>,
     editor: Editor,
     autocomplete: Autocomplete,
     workspace: WorkspaceFlow,
@@ -100,6 +108,16 @@ pub struct App {
     /// burst (#1470 review). All tabs share this one channel, so the select
     /// arm count stays independent of N.
     pub(super) tab_event_rx: mpsc::Receiver<crate::shell::connection::SourcedEvent>,
+    /// Sender half of `tab_event_rx`, retained so newly spawned/reattached tabs
+    /// can join the same fan-in (#1465 AC1/AC2/AC6).
+    pub(super) tab_event_tx: Option<mpsc::Sender<crate::shell::connection::SourcedEvent>>,
+    /// Background tab spawn/reattach results (#1465).
+    pub(super) tab_attach_tx: Option<mpsc::Sender<tab_lifecycle::TabAttachOutcome>>,
+    pub(super) tab_attach_rx: mpsc::Receiver<tab_lifecycle::TabAttachOutcome>,
+    /// Monotonic attach epoch so recycled TabIds reject stale spawn outcomes (#1465 F2).
+    pub(super) next_attach_generation: u64,
+    /// Parent CLI policy inherited by secondary tab spawns (#1465 F8).
+    pub(crate) tab_spawn_policy: Option<crate::shell::cli::TabSpawnPolicy>,
 }
 
 /// Id of the TUI's single (master) agent connection. With one replicant
@@ -129,19 +147,29 @@ impl App {
         // interleave fairly with sub-agent bursts (#1462 / #1470 review).
         let subagents = SubagentUi::new();
         let (tab_event_tx, tab_event_rx) = mpsc::channel(256);
+        let (tab_attach_tx, tab_attach_rx) = mpsc::channel(8);
         let connection = crate::shell::connection::Connection::spawn(
             client,
             crate::shell::connection::TabId::MASTER,
-            tab_event_tx,
+            tab_event_tx.clone(),
         );
 
         Self {
             terminal,
             renderer: DiffRenderer::new(std::io::stdout()),
-            conn: connection_state::ConnectionState::new(
-                connection,
-                SessionView::with_footer(footer),
-            ),
+            tabs: {
+                let mut tabs = std::collections::HashMap::new();
+                tabs.insert(
+                    crate::shell::connection::TabId::MASTER,
+                    connection_state::ConnectionState::new(
+                        connection,
+                        SessionView::with_footer(footer),
+                    ),
+                );
+                tabs
+            },
+            active_tab: crate::shell::connection::TabId::MASTER,
+            routing_tab_override: None,
             editor: Editor::new(),
             autocomplete: Autocomplete::new(builtin_commands().to_vec(), 8),
             workspace: WorkspaceFlow::new(git_branch, git_repo),
@@ -166,6 +194,11 @@ impl App {
             disconnect_diag_tx,
             disconnect_diag_rx,
             tab_event_rx,
+            tab_event_tx: Some(tab_event_tx),
+            tab_attach_tx: Some(tab_attach_tx),
+            tab_attach_rx,
+            next_attach_generation: 1,
+            tab_spawn_policy: None,
         }
     }
 
@@ -174,7 +207,7 @@ impl App {
             return false;
         }
         self.workspace.git_branch = branch.clone();
-        self.conn.master_session.footer.set_git_branch(branch);
+        self.ac_mut().master_session.footer.set_git_branch(branch);
         true
     }
 
@@ -281,6 +314,8 @@ mod app_ledger_sync;
 pub(crate) mod app_message_recovery;
 #[path = "app_methods.rs"]
 mod app_methods;
+#[path = "app_methods_send.rs"]
+mod app_methods_send;
 #[path = "../inference/controller_models.rs"]
 mod app_models;
 #[path = "../conversation/controller_paged_history.rs"]
@@ -289,6 +324,9 @@ mod app_paged_history;
 mod app_render_helpers;
 #[path = "app_response.rs"]
 mod app_response;
+#[cfg(any(test, feature = "test-harness"))]
+#[path = "app_response_test_api.rs"]
+mod app_response_test_api;
 #[path = "../conversation/controller_resumed_history.rs"]
 mod app_resumed_history;
 #[path = "../conversation/controller_rewind.rs"]
@@ -307,6 +345,10 @@ mod app_subagent_panel_rows;
 mod app_submit;
 #[path = "app_time.rs"]
 mod app_time;
+#[path = "tab_lifecycle.rs"]
+mod tab_lifecycle;
+#[path = "workspace_resume.rs"]
+mod workspace_resume;
 use crate::agents::roster::{
     gc_exited_subagents, next_exited_subagent_gc_deadline, subagent_status_is_active,
 };
@@ -624,6 +666,9 @@ mod app_subagent_workflow_sticky_tests;
 #[cfg(test)]
 #[path = "../agents/app_subagents_tests.rs"]
 mod app_subagents_tests;
+#[cfg(test)]
+#[path = "app_tab_collection_tests.rs"]
+mod app_tab_collection_tests;
 #[cfg(test)]
 #[path = "../agents/app_tab_render_tests.rs"]
 mod app_tab_render_tests;

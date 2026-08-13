@@ -14,7 +14,7 @@ async fn source_scoped_roster_accepts_recursive_descendants_in_one_event() {
     );
 
     assert_eq!(
-        a.conn.roster.tracked["g1"].info.parent_id.as_deref(),
+        a.ac().roster.tracked["g1"].info.parent_id.as_deref(),
         Some("a1")
     );
 }
@@ -27,7 +27,7 @@ async fn source_scoped_roster_cannot_reparent_existing_root() {
 
     a.update_subagent_bar_from_source(Some("a"), vec![info_with_parent("b", "idle", "a")]);
 
-    assert_eq!(a.conn.roster.tracked["b"].info.parent_id, None);
+    assert_eq!(a.ac().roster.tracked["b"].info.parent_id, None);
 }
 
 #[tokio::test]
@@ -42,7 +42,7 @@ async fn direct_child_metadata_survives_later_master_snapshot() {
         info_with_parent("a1", "running", "a"),
     ]);
 
-    assert_eq!(a.conn.roster.tracked["a1"].info.status, "idle");
+    assert_eq!(a.ac().roster.tracked["a1"].info.status, "idle");
 }
 
 use super::tui_harness::*;
@@ -77,11 +77,11 @@ async fn recursive_discovery_registers_grandchild_and_opens_warm_feed() {
     );
 
     assert_eq!(
-        a.conn.roster.tracked["g1"].info.parent_id.as_deref(),
+        a.ac().roster.tracked["g1"].info.parent_id.as_deref(),
         Some("a1")
     );
     assert_eq!(
-        a.conn.roster.tracked["g1"].info.socket_path.as_deref(),
+        a.ac().roster.tracked["g1"].info.socket_path.as_deref(),
         Some(socket.to_string_lossy().as_ref())
     );
 
@@ -98,7 +98,7 @@ async fn recursive_discovery_registers_grandchild_and_opens_warm_feed() {
         "recursive discovery must open a warm synced feed and request an initial ledger sync; got {commands:?}"
     );
     assert_eq!(
-        a.conn.roster.feeds["g1"].authority,
+        a.ac().roster.feeds["g1"].authority,
         crate::agents::feed::FeedAuthority::WarmSync,
         "warm feeds must not suppress legacy child events until sync support is confirmed"
     );
@@ -139,7 +139,7 @@ async fn selecting_warm_synced_agent_reuses_existing_feed() {
 
     let feed_cmd = h
         .app_mut()
-        .conn
+        .ac()
         .roster
         .feeds
         .get("warm-focus")
@@ -155,7 +155,7 @@ async fn selecting_warm_synced_agent_reuses_existing_feed() {
     .await;
     let still = h
         .app_mut()
-        .conn
+        .ac()
         .roster
         .feeds
         .get("warm-focus")
@@ -190,14 +190,14 @@ async fn selecting_warm_unsynced_agent_does_not_reopen_legacy_backfill_feed() {
 
     let feed_cmd = h
         .app_mut()
-        .conn
+        .ac()
         .roster
         .feeds
         .get("legacy-focus")
         .expect("warm feed opened on discovery")
         .cmd_tx
         .clone();
-    let feeds_before = h.app_mut().conn.roster.feeds.len();
+    let feeds_before = h.app_mut().ac().roster.feeds.len();
 
     h.select(Some("legacy-focus"));
     let after_focus = drain_child_commands_until_quiet(&mut child_rx).await;
@@ -210,13 +210,13 @@ async fn selecting_warm_unsynced_agent_does_not_reopen_legacy_backfill_feed() {
         "unsynced warm focus must not re-issue startup sync; got {after_focus:?}"
     );
     assert_eq!(
-        h.app_mut().conn.roster.feeds.len(),
+        h.app_mut().ac().roster.feeds.len(),
         feeds_before,
         "focus must not open an additional feed entry"
     );
     let still = h
         .app_mut()
-        .conn
+        .ac()
         .roster
         .feeds
         .get("legacy-focus")
@@ -259,7 +259,7 @@ async fn stale_synced_focus_requests_exactly_one_catch_up_sync() {
         }),
     );
     h.app_mut()
-        .conn
+        .ac_mut()
         .roster
         .feeds
         .get_mut("stale-focus")

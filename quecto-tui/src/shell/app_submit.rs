@@ -33,6 +33,52 @@ impl App {
                     self.reset_session("New session started");
                     return;
                 }
+                "/tab-new" => {
+                    // AC1/AC2: open a connecting tab and spawn a live persistent agent.
+                    let tab = self.open_live_tab(None);
+                    self.notify(
+                        &format!("Opened tab {} (connecting…)", tab.0),
+                        crate::components::notification::NotifyLevel::Info,
+                    );
+                    return;
+                }
+                "/tab-close" => {
+                    let tab = self.active_tab;
+                    // AC3a / ADR-0023: closing a tab terminates that tab's agent.
+                    match self.close_tab(tab, true) {
+                        Ok(watch) => {
+                            if let Some(w) = watch {
+                                tokio::spawn(async move {
+                                    w.terminate().await;
+                                });
+                            }
+                            self.notify(
+                                &format!("Closed tab {} (agent terminated)", tab.0),
+                                crate::components::notification::NotifyLevel::Info,
+                            );
+                        }
+                        Err(msg) => {
+                            self.notify(msg, crate::components::notification::NotifyLevel::Warning)
+                        }
+                    }
+                    return;
+                }
+                "/tab-next" => {
+                    let tab = self.switch_tab_next();
+                    self.notify(
+                        &format!("Active tab {}", tab.0),
+                        crate::components::notification::NotifyLevel::Info,
+                    );
+                    return;
+                }
+                "/tab-prev" => {
+                    let tab = self.switch_tab_prev();
+                    self.notify(
+                        &format!("Active tab {}", tab.0),
+                        crate::components::notification::NotifyLevel::Info,
+                    );
+                    return;
+                }
                 "/help" | "/hotkeys" => {
                     self.show_help();
                     return;
@@ -60,7 +106,12 @@ impl App {
                 }
                 _ if trimmed.starts_with("/resume ") => {
                     let session = trimmed["/resume".len()..].trim();
-                    self.send_resume_session(session);
+                    if session.is_empty() {
+                        self.send_list_sessions();
+                    } else {
+                        // Latch when the tab is still connecting / disconnected (AC5).
+                        self.queue_or_send_session_resume(session);
+                    }
                     return;
                 }
                 _ if trimmed.starts_with("/effort") => {
@@ -97,7 +148,7 @@ impl App {
         // targets THAT agent over its own connection and lands in its session,
         // not master's. When the selected child is already running, Enter queues
         // a follow-up behind the current turn; it does not interrupt/steer.
-        if self.conn.roster.active_agent_id.is_some() {
+        if self.ac().roster.active_agent_id.is_some() {
             let cmd = if self.active_subagent_running() {
                 Command::FollowUp {
                     id: None,
@@ -123,10 +174,34 @@ impl App {
             return;
         }
 
+        // Pending attach: queue the prompt with connecting UX — not a dead
+        // disconnect refusal that tells the user to restart (F7 / AC2).
+        if self.ac().pending_attach || self.tab_has_pending_attach(self.active_tab) {
+            self.ac_mut()
+                .master_session
+                .chat
+                .add_entry_follow_tail(ChatEntry::User {
+                    text: text.to_string(),
+                });
+            self.ac_mut().queued_prompts.push(text.to_string());
+            self.ac_mut()
+                .master_session
+                .chat
+                .add_entry(ChatEntry::Status {
+                    text: "Connecting… prompt queued and will send when the agent is ready."
+                        .to_string(),
+                });
+            self.notify(
+                "Connecting… prompt queued",
+                crate::components::notification::NotifyLevel::Info,
+            );
+            return;
+        }
+
         // The composed text always lands in the chat (the editor was
         // already emptied by take_submit) — on a dead connection it is the
         // only surviving copy (#1470 r3/r6, single add site).
-        self.conn
+        self.ac_mut()
             .master_session
             .chat
             .add_entry_follow_tail(ChatEntry::User {
@@ -136,11 +211,16 @@ impl App {
         // channel can outlive the stream, so an enqueue could "succeed" and
         // the message silently vanish. The persistent refusal Status line
         // keeps the undelivered message diagnosable after the toast expires.
-        if !self.conn.agent_connected {
+        if !self.ac().agent_connected {
             self.note_disconnected_refusal();
             return;
         }
-        let cmd = if self.conn.agent_state.is_running() {
+        self.dispatch_master_user_text(text);
+    }
+
+    /// Send a master-session user message (Prompt or FollowUp) after connect.
+    pub(crate) fn dispatch_master_user_text(&mut self, text: &str) {
+        let cmd = if self.ac().agent_state.is_running() {
             Command::FollowUp {
                 id: None,
                 message: text.to_string(),
@@ -155,16 +235,30 @@ impl App {
         self.send_command(cmd);
     }
 
+    /// Deliver prompts queued while the active tab was still connecting (F7).
+    pub(crate) fn flush_queued_prompts(&mut self) {
+        let queued = std::mem::take(&mut self.ac_mut().queued_prompts);
+        for text in queued {
+            if !self.ac().agent_connected {
+                // Re-queue remainder if the connection dropped mid-flush.
+                self.ac_mut().queued_prompts.push(text);
+                break;
+            }
+            // Chat already recorded the User entry at queue time — only send.
+            self.dispatch_master_user_text(&text);
+        }
+    }
+
     // ── Abort handling (bug fix) ──────────────────────────────────────
 
     pub(super) fn handle_abort(&mut self) {
         // Abort targets the ACTIVE session (#802): a selected sub-agent's abort is
         // routed over its own connection and finalizes its transcript.
-        if self.conn.roster.active_agent_id.is_some() {
+        if self.ac().roster.active_agent_id.is_some() {
             self.send_to_active_subagent(Command::Abort { id: None });
             self.active_chat_mut().finalize_assistant();
-            if let Some(id) = self.conn.roster.active_agent_id.clone() {
-                if let Some(session) = self.conn.roster.sessions.get_mut(&id) {
+            if let Some(id) = self.ac().roster.active_agent_id.clone() {
+                if let Some(session) = self.ac_mut().roster.sessions.get_mut(&id) {
                     session.running = false;
                     // Just cancelled: mark run-state observed so the lagging tracked
                     // status can't keep it "running" and re-abort on a 2nd Esc (#834).
@@ -178,19 +272,22 @@ impl App {
 
         // Abort the state machine — does NOT set running false; the matched
         // AgentEnd arrives and guards against stale events corrupting state (#502).
-        self.conn.agent_state.abort();
-        self.conn.master_session.footer.set_streaming(false);
+        self.ac_mut().agent_state.abort();
+        self.ac_mut().master_session.footer.set_streaming(false);
 
         // Stop spinner / working indicator; `agent_state` stays aborting (#828).
-        self.conn.master_session.running = false;
-        self.conn.spinner = None;
+        self.ac_mut().master_session.running = false;
+        self.ac_mut().spinner = None;
 
         // Finalize any streaming assistant message.
-        self.conn.master_session.chat.finalize_assistant();
+        self.ac_mut().master_session.chat.finalize_assistant();
 
         // Show abort status.
-        self.conn.master_session.chat.add_entry(ChatEntry::Status {
-            text: "Operation aborted".to_string(),
-        });
+        self.ac_mut()
+            .master_session
+            .chat
+            .add_entry(ChatEntry::Status {
+                text: "Operation aborted".to_string(),
+            });
     }
 }

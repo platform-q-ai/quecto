@@ -7,7 +7,7 @@ impl App {
             .next_expiry()
             .map(tokio::time::Instant::from_std);
         let subagent_gc_deadline =
-            next_exited_subagent_gc_deadline(&self.conn.roster.tracked, EXITED_SUBAGENT_GRACE);
+            next_exited_subagent_gc_deadline(&self.ac().roster.tracked, EXITED_SUBAGENT_GRACE);
         match (notification_deadline, subagent_gc_deadline) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (Some(a), None) | (None, Some(a)) => Some(a),
@@ -17,11 +17,11 @@ impl App {
 
     pub(super) fn needs_animation_tick(&self, kitty_fallback_pending: bool) -> bool {
         kitty_fallback_pending
-            || self.conn.spinner.is_some()
-            || self.conn.agent_state.is_running()
+            || self.ac().spinner.is_some()
+            || self.ac().agent_state.is_running()
             || self.active_session().footer.is_streaming()
             || self.active_subagent_running()
-            || self.conn.roster.tracked_active_count() > 0
+            || self.ac().roster.tracked_active_count() > 0
     }
 
     pub(super) fn service_animation_tick(
@@ -30,7 +30,7 @@ impl App {
         kitty_deadline: tokio::time::Instant,
     ) -> bool {
         let mut needs_render = false;
-        if let Some(spinner) = &mut self.conn.spinner {
+        if let Some(spinner) = &mut self.ac_mut().spinner {
             if spinner.tick() {
                 needs_render = true;
             }

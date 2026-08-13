@@ -86,50 +86,37 @@ impl App {
         &mut self,
         item: crate::shell::connection::SourcedEvent,
     ) -> SourcedRender {
-        use crate::shell::connection::{SourcedEvent, TabId};
-        // Single N=1 guard for every arm (#1470 r4) — phase 2 (#1463)
-        // replaces this one assert when tabs become plural.
-        debug_assert_eq!(
-            item.tab(),
-            TabId::MASTER,
-            "N=1: only the master tab exists (#1462)"
-        );
+        use crate::shell::connection::SourcedEvent;
+        // #1465: fan-in may carry any known tab; unknown tabs no-op in arms.
+        // Touch `.tab()` so the multipath helper stays live under deny(dead_code).
+        let _routed_tab = item.tab();
         match item {
             SourcedEvent::Tab(tab, ev) => {
                 let is_token = Self::is_token_event(&ev);
-                // Tab guard (#1472 sweep, mirrors Closed/Subagent): release
-                // builds compile out the N=1 debug_assert above, so a
-                // foreign-tab master event must not mutate this app's active
-                // connection.
-                if tab != self.conn.transport.tab() {
+                // Route to the owner tab (#1465). Unknown/foreign tabs are a
+                // no-op: no ghost state, no fallthrough onto the active slot.
+                let Some(paint) = self.with_routing_tab(tab, |app| {
+                    app.handle_event(ev);
+                    if app.surface_dropped_oversized_events() {
+                        SourcedRender::Immediate
+                    } else {
+                        SourcedRender::Stream { is_token }
+                    }
+                }) else {
                     return SourcedRender::Stream { is_token };
-                }
-                self.handle_event(ev);
-                if self.surface_dropped_oversized_events() {
-                    SourcedRender::Immediate
-                } else {
-                    SourcedRender::Stream { is_token }
-                }
+                };
+                paint
             }
             SourcedEvent::Subagent(tab, agent_id, ev) => {
                 let is_token = Self::is_token_event(&ev);
-                // Tab guard (#1472 r1, mirrors Closed): a direct child feed
-                // belongs to the tab that opened it. Release builds compile
-                // out the N=1 debug_assert above, so a foreign-tab event must
-                // not mutate this app's active connection.
-                if tab == self.conn.transport.tab() {
-                    self.route_subagent_event(&agent_id, ev);
-                }
+                // Direct child feeds belong to the tab that opened them.
+                let _ = self.with_routing_tab(tab, |app| {
+                    app.route_subagent_event(&agent_id, ev);
+                });
                 SourcedRender::Stream { is_token }
             }
             SourcedEvent::Closed(tab) => {
-                // Master stream closed — the session is marked disconnected
-                // and dropped events surfaced SYNCHRONOUSLY here; only the
-                // child-exit diagnosis text is dispatched off-loop (#1047
-                // via #1462 scope 3). Paint now either way so the UI never
-                // shows a live session after the stream closed; with an
-                // owned child the notification follows when the diagnosis
-                // lands on its select arm.
+                // Owner-targeted disconnect (#1465 / #1047 via #1462).
                 self.begin_agent_stream_closed(tab);
                 SourcedRender::Immediate
             }
@@ -193,10 +180,10 @@ impl App {
     pub(super) fn send_startup_requests(&mut self) {
         self.send_command(Command::GetState {
             agent_id: None,
-            id: Some(self.conn.namespaced_id("init")),
+            id: Some(self.ac().namespaced_id("init")),
         });
         self.send_command(Command::GetSubagents {
-            id: Some(self.conn.namespaced_id("init-subagents")),
+            id: Some(self.ac().namespaced_id("init-subagents")),
         });
         self.request_master_attach_backfill();
     }
@@ -325,6 +312,11 @@ impl App {
                     self.handle_command_send_failure(failure);
                     self.render_and_note(&mut stream_render_coalescer);
                 }
+                // Background /tab-new spawn + workspace reattach results (#1465).
+                Some(outcome) = self.tab_attach_rx.recv() => {
+                    self.apply_tab_attach_outcome(outcome);
+                    self.render_and_note(&mut stream_render_coalescer);
+                }
                 // Master-connection fan-in (`SourcedEvent::Tab` / `Closed`):
                 // its own channel so master events interleave fairly with
                 // sub-agent bursts instead of queueing FIFO behind them
@@ -399,13 +391,13 @@ impl App {
 
     pub(super) fn handle_key(&mut self, key: Key) {
         if !matches!(key, Key::Escape) {
-            self.conn.rewind.last_idle_escape = None;
+            self.ac_mut().rewind.last_idle_escape = None;
         }
 
         // Unconditional exit — Ctrl+D must work regardless of overlays,
         // autocomplete state, or agent activity (#478).
         if matches!(key, Key::Ctrl('d')) {
-            if self.conn.agent_state.is_running() {
+            if self.ac().agent_state.is_running() {
                 self.handle_abort();
             }
             self.should_exit = true;
@@ -413,36 +405,36 @@ impl App {
         }
 
         // If the resume selector is active, route input to it.
-        if self.active_conn().sessions.resume_selector.is_some() {
-            self.conn.rewind.last_idle_escape = None;
+        if self.ac().sessions.resume_selector.is_some() {
+            self.ac_mut().rewind.last_idle_escape = None;
             self.handle_resume_selector_key(&key);
             return;
         }
 
         // If the rewind selector is active, route input to it.
-        if self.active_conn().rewind.selector.is_some() {
-            self.conn.rewind.last_idle_escape = None;
+        if self.ac().rewind.selector.is_some() {
+            self.ac_mut().rewind.last_idle_escape = None;
             self.handle_rewind_selector_key(&key);
             return;
         }
 
         // If the tool policy modal is active, route input to it.
         if self.tool_policy_modal.is_some() {
-            self.conn.rewind.last_idle_escape = None;
+            self.ac_mut().rewind.last_idle_escape = None;
             self.handle_tool_policy_modal_key(&key);
             return;
         }
 
         // If the model selector is active, route input to it.
         if self.inference.model_selector.is_some() {
-            self.conn.rewind.last_idle_escape = None;
+            self.ac_mut().rewind.last_idle_escape = None;
             self.handle_model_selector_key(&key);
             return;
         }
 
         // If the effort selector is active, route input to it (#1067).
         if self.inference.effort_selector.is_some() {
-            self.conn.rewind.last_idle_escape = None;
+            self.ac_mut().rewind.last_idle_escape = None;
             self.handle_effort_selector_key(&key);
             return;
         }
@@ -452,7 +444,7 @@ impl App {
             match &key {
                 Key::Up | Key::Down | Key::Tab | Key::Escape => {
                     if matches!(key, Key::Escape) {
-                        self.conn.rewind.last_idle_escape = None;
+                        self.ac_mut().rewind.last_idle_escape = None;
                     }
                     self.autocomplete.handle_input(&key);
                     // Check if a suggestion was selected.
@@ -536,7 +528,7 @@ impl App {
         // Note: Ctrl+D is handled at the top of handle_key (unconditional exit).
         match &key {
             Key::Ctrl('c') => {
-                let running = self.conn.agent_state.is_running() || self.active_subagent_running();
+                let running = self.ac().agent_state.is_running() || self.active_subagent_running();
                 match ctrl_c_action(running, self.editor.text().is_empty()) {
                     CtrlCAction::ClearEditor => {
                         self.editor.set_text("");
@@ -551,8 +543,8 @@ impl App {
             }
             Key::Escape => {
                 // Parity: Esc stops the viewed agent if running, else back to master.
-                if self.conn.roster.active_agent_id.is_some() {
-                    self.conn.rewind.last_idle_escape = None;
+                if self.ac().roster.active_agent_id.is_some() {
+                    self.ac_mut().rewind.last_idle_escape = None;
                     if self.active_subagent_running() {
                         self.handle_abort();
                     } else {
@@ -560,11 +552,11 @@ impl App {
                     }
                     return;
                 }
-                if self.conn.agent_state.is_running() {
-                    self.conn.rewind.last_idle_escape = None;
+                if self.ac().agent_state.is_running() {
+                    self.ac_mut().rewind.last_idle_escape = None;
                     self.handle_abort();
                 } else if !self.editor.text().is_empty() {
-                    self.conn.rewind.last_idle_escape = None;
+                    self.ac_mut().rewind.last_idle_escape = None;
                     self.editor.set_text("");
                     self.autocomplete.dismiss();
                 } else {

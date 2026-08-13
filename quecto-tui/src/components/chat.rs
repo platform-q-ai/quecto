@@ -432,8 +432,8 @@ impl Chat {
         height * (2 * RENDER_CACHE_RETAIN_VIEWPORTS + 1)
     }
 
-    /// Text of the last `Status` entry, if the last entry is one (tests only).
-    #[cfg(test)]
+    /// Text of the last `Status` entry, if the last entry is one (tests/harness).
+    #[cfg(any(test, feature = "test-harness"))]
     pub fn last_status_text(&self) -> Option<&str> {
         match self.entries.last() {
             Some(ChatEntry::Status { text }) => Some(text.as_str()),

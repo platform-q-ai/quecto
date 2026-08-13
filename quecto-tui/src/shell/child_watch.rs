@@ -98,6 +98,8 @@ pub struct ChildWatch {
     exit_rx: watch::Receiver<Option<String>>,
     term_tx: mpsc::Sender<oneshot::Sender<()>>,
     stderr_tail: StderrTail,
+    /// OS pid of the watched child at spawn time (registry durability, #1465).
+    pid: Option<u32>,
 }
 
 /// Take ownership of the spawned agent child, reap it in the background, and
@@ -109,9 +111,8 @@ pub struct ChildWatch {
 pub fn watch_child(mut child: tokio::process::Child, stderr_tail: StderrTail) -> ChildWatch {
     let (exit_tx, exit_rx) = watch::channel(None);
     let (term_tx, mut term_rx) = mpsc::channel::<oneshot::Sender<()>>(1);
-    let pgid = child
-        .id()
-        .and_then(|raw| crate::shell::process::checked_pid(raw).ok());
+    let pid = child.id();
+    let pgid = pid.and_then(|raw| crate::shell::process::checked_pid(raw).ok());
     tokio::spawn(async move {
         tokio::select! {
             status = child.wait() => {
@@ -152,10 +153,29 @@ pub fn watch_child(mut child: tokio::process::Child, stderr_tail: StderrTail) ->
         exit_rx,
         term_tx,
         stderr_tail,
+        pid,
     }
 }
 
 impl ChildWatch {
+    /// Test-only handle that never owns a real process.
+    #[cfg(any(test, feature = "test-harness"))]
+    pub fn for_tests(pid: Option<u32>) -> Self {
+        let (_exit_tx, exit_rx) = watch::channel(None);
+        let (term_tx, _term_rx) = mpsc::channel::<oneshot::Sender<()>>(1);
+        ChildWatch {
+            exit_rx,
+            term_tx,
+            stderr_tail: StderrTail::default(),
+            pid,
+        }
+    }
+
+    /// OS pid captured when the watcher was created (may be gone if reaped).
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
+    }
+
     /// The recorded exit detail, if the child has exited and been reaped.
     pub fn exit_detail(&self) -> Option<String> {
         self.exit_rx.borrow().clone()

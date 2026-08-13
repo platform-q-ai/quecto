@@ -53,7 +53,7 @@ async fn focus_mid_turn_backfills_inflight_live_prefix_before_streaming_continue
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.conn.roster.feeds.insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.update_subagent_bar(vec![subagent("worker", "running")]);
     // Stay on master while the child streams its in-flight turn.
     app.ensure_session("worker");
@@ -85,7 +85,7 @@ async fn focus_mid_turn_backfills_inflight_live_prefix_before_streaming_continue
 
     // Focus mid-turn: the full in-flight prefix must already be visible.
     app.select_agent(Some("worker"));
-    let entries = app.conn.roster.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(
             entries,
@@ -104,7 +104,7 @@ async fn focus_mid_turn_backfills_inflight_live_prefix_before_streaming_continue
             token: " suffix".into(),
         },
     );
-    let entries = app.conn.roster.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(
             entries,
@@ -126,7 +126,7 @@ async fn refocus_mid_turn_preserves_inflight_transcript_across_ledger_reproject(
     let app = h.app_mut();
     let (mut feed, mut rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.conn.roster.feeds.insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.update_subagent_bar(vec![subagent("worker", "running")]);
     app.select_agent(Some("worker"));
     app.ensure_session("worker");
@@ -176,7 +176,7 @@ async fn refocus_mid_turn_preserves_inflight_transcript_across_ledger_reproject(
         }),
     );
 
-    let entries = app.conn.roster.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(
             entries,
@@ -194,7 +194,7 @@ async fn refocus_mid_turn_preserves_inflight_transcript_across_ledger_reproject(
             token: " after refocus".into(),
         },
     );
-    let entries = app.conn.roster.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(
             entries,
@@ -216,7 +216,7 @@ async fn mid_turn_higher_rev_sync_keeps_uncommitted_live_tail() {
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.conn.roster.feeds.insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.update_subagent_bar(vec![subagent("worker", "running")]);
     app.select_agent(Some("worker"));
     app.ensure_session("worker");
@@ -254,7 +254,7 @@ async fn mid_turn_higher_rev_sync_keeps_uncommitted_live_tail() {
         }),
     );
 
-    let entries = app.conn.roster.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(
             entries,
@@ -275,7 +275,7 @@ async fn pre_authority_live_events_retained_across_first_sync() {
     let app = h.app_mut();
     // WarmSync, supports_sync not yet latched — the initial connect race.
     let (feed, _rx) = feed_with_rx();
-    app.conn.roster.feeds.insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.update_subagent_bar(vec![subagent("worker", "running")]);
     app.ensure_session("worker");
 
@@ -301,7 +301,7 @@ async fn pre_authority_live_events_retained_across_first_sync() {
     );
 
     app.select_agent(Some("worker"));
-    let entries = app.conn.roster.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(
             entries,
@@ -324,7 +324,7 @@ async fn live_inflight_buffer_is_entry_capped() {
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.conn.roster.feeds.insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.update_subagent_bar(vec![subagent("worker", "running")]);
     app.ensure_session("worker");
     app.route_sync_response(
@@ -363,14 +363,14 @@ async fn live_inflight_buffer_is_entry_capped() {
         );
     }
 
-    let live_n = app.conn.roster.sessions["worker"]
+    let live_n = app.ac().roster.sessions["worker"]
         .live_inflight
         .entry_count();
     assert!(
         live_n <= LIVE_INFLIGHT_ENTRY_CAP,
         "live_inflight must stay within entry cap ({LIVE_INFLIGHT_ENTRY_CAP}), got {live_n}"
     );
-    let has_truncation = app.conn.roster.sessions["worker"]
+    let has_truncation = app.ac().roster.sessions["worker"]
         .live_inflight
         .entries()
         .iter()
@@ -389,7 +389,7 @@ async fn later_turn_user_rev_advance_keeps_current_live_tail() {
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.conn.roster.feeds.insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.update_subagent_bar(vec![subagent("worker", "running")]);
     app.select_agent(Some("worker"));
     app.ensure_session("worker");
@@ -427,7 +427,7 @@ async fn later_turn_user_rev_advance_keeps_current_live_tail() {
         }),
     );
 
-    let entries = app.conn.roster.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(
             entries,
@@ -454,7 +454,7 @@ async fn inflight_live_buffer_reconciles_without_duplication_at_turn_end() {
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.conn.roster.feeds.insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.update_subagent_bar(vec![subagent("worker", "running")]);
     app.ensure_session("worker");
     app.route_sync_response(
@@ -496,7 +496,7 @@ async fn inflight_live_buffer_reconciles_without_duplication_at_turn_end() {
         }),
     );
 
-    let entries = app.conn.roster.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(
             entries,

@@ -10,33 +10,33 @@ pub(super) fn rewind_preview(content: &str) -> String {
 
 impl App {
     pub(super) fn next_rewind_request_id(&mut self, kind: &str) -> String {
-        self.conn.rewind.request_seq = self.conn.rewind.request_seq.wrapping_add(1);
+        self.ac_mut().rewind.request_seq = self.ac_mut().rewind.request_seq.wrapping_add(1);
         format!(
             "{}rewind-{kind}-{}-{}",
-            self.conn.id_namespace(),
+            self.ac().id_namespace(),
             super::app_events::uuid_like(),
-            self.conn.rewind.request_seq
+            self.ac().rewind.request_seq
         )
     }
 
     pub(super) fn handle_idle_escape_for_rewind(&mut self) {
         let now = tokio::time::Instant::now();
         if self
-            .conn
+            .ac()
             .rewind
             .last_idle_escape
             .is_some_and(|prev| now.duration_since(prev) <= DOUBLE_ESC_WINDOW)
         {
-            self.conn.rewind.last_idle_escape = None;
+            self.ac_mut().rewind.last_idle_escape = None;
             let id = self.next_rewind_request_id("open");
-            self.conn.rewind.pending_open_id = Some(id.clone());
+            self.ac_mut().rewind.pending_open_id = Some(id.clone());
             self.send_command(Command::GetMessages {
                 agent_id: None,
                 id: Some(id),
                 before: None,
             });
         } else {
-            self.conn.rewind.last_idle_escape = Some(now);
+            self.ac_mut().rewind.last_idle_escape = Some(now);
             self.notify(
                 "Press Esc again to choose where to go back",
                 NotifyLevel::Info,
@@ -86,19 +86,19 @@ impl App {
             self.notify("No previous user turns to rewind", NotifyLevel::Info);
             return;
         }
-        self.conn.rewind.selector = Some(SelectList::new(items, 10));
+        self.ac_mut().rewind.selector = Some(SelectList::new(items, 10));
     }
 
     pub(super) fn handle_rewind_selector_key(&mut self, key: &Key) {
-        let Some(message_id) = route_overlay_key(&mut self.conn.rewind.selector, key) else {
+        let Some(message_id) = route_overlay_key(&mut self.ac_mut().rewind.selector, key) else {
             return;
         };
         let id = self.next_rewind_request_id("load");
-        self.conn.rewind.pending_load_id = Some(id.clone());
-        self.conn.rewind.pending_apply_message_id = Some(message_id.clone());
-        self.conn.rewind.pending_load_content.clear();
-        self.conn.rewind.pending_load_offset = 0;
-        self.conn.rewind.pending_load_content_len = None;
+        self.ac_mut().rewind.pending_load_id = Some(id.clone());
+        self.ac_mut().rewind.pending_apply_message_id = Some(message_id.clone());
+        self.ac_mut().rewind.pending_load_content.clear();
+        self.ac_mut().rewind.pending_load_offset = 0;
+        self.ac_mut().rewind.pending_load_content_len = None;
         self.send_command(Command::GetMessage {
             id: Some(id),
             message_id,

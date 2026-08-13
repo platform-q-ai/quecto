@@ -62,9 +62,6 @@ pub(crate) struct Connection {
     /// The tab this connection belongs to. Every correlation id the tab
     /// mints is namespaced `tab{N}:` from this id (#1463), so broadcast
     /// responses can never match another tab's pending latches.
-    // Production reads arrive with the cluster-2 id minting (#1463); until
-    // then only the test re-key hook touches it.
-    #[cfg_attr(not(any(test, feature = "test-harness")), allow(dead_code))]
     tab: TabId,
     sender: CommandSender,
     /// Per-connection ADR-0008 negotiation outcome (#1462 scope 4), copied
@@ -73,14 +70,17 @@ pub(crate) struct Connection {
     /// Shared handle to the reader's oversized-drop counter (#1047), kept
     /// observable after the client moves into the feed task.
     dropped_oversized: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    /// The feed task owning the client, when one was spawned. Held so the
-    /// harness can abort it when it swaps this connection out — otherwise
-    /// the orphaned task keeps the real socket and injects a spurious
-    /// `Closed` sentinel into the fan-in later (#1470 review).
-    // Read only by the harness's `abort_feed`; in production the task runs
-    // for the connection's whole life and exits with the process.
-    #[cfg_attr(not(any(test, feature = "test-harness")), allow(dead_code))]
+    /// The feed task owning the client, when one was spawned. Held so drop /
+    /// replace can abort it — otherwise the orphaned task keeps the real
+    /// socket and injects a spurious `Closed` sentinel into the fan-in later
+    /// (#1470 / #1465 F1: TabId reuse would poison the next occupant).
     feed_task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        self.abort_feed();
+    }
 }
 
 impl Connection {
@@ -145,19 +145,21 @@ impl Connection {
         self.tab
     }
 
-    /// Test-only: re-key this connection to another tab, so unit tests can
-    /// pin that minted-id namespaces derive from the tab id rather than a
-    /// hard-coded `tab0:` literal (#1463 review).
-    #[cfg(any(test, feature = "test-harness"))]
-    pub(crate) fn set_tab_for_tests(&mut self, tab: TabId) {
+    /// Re-key this connection to another tab id (workspace restore remap).
+    /// Keeps minted correlation namespaces aligned with the map key (#1465).
+    pub(crate) fn set_tab(&mut self, tab: TabId) {
         self.tab = tab;
     }
 
-    /// Test-only: abort the feed task owning the client. Harness paths that
-    /// swap this connection out for a disconnected stub MUST call this on
-    /// the replaced connection, or the orphaned task later injects a
-    /// spurious `Closed` sentinel the swap semantics never implied.
+    /// Test-only alias for [`Self::set_tab`].
     #[cfg(any(test, feature = "test-harness"))]
+    pub(crate) fn set_tab_for_tests(&mut self, tab: TabId) {
+        self.set_tab(tab);
+    }
+
+    /// Abort the feed task owning the client. Called from [`Drop`] and by
+    /// harness paths that swap the connection out — otherwise an orphaned
+    /// task later injects a spurious `Closed` sentinel (#1465 F1).
     pub(crate) fn abort_feed(&self) {
         if let Some(task) = &self.feed_task {
             task.abort();
@@ -193,6 +195,20 @@ impl Connection {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Connecting/placeholder tab: no live writer and no feed task.
+    /// Used while a new tab's agent is spawning (#1465 AC1).
+    pub(crate) fn placeholder(tab: TabId) -> Self {
+        let (tx, rx) = tokio::sync::mpsc::channel::<String>(1);
+        drop(rx);
+        Self {
+            tab,
+            sender: CommandSender { tx },
+            speaks_frames: true,
+            dropped_oversized: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            feed_task: None,
+        }
+    }
+
     /// Test-only: a connection whose writer channel is already closed, so
     /// `try_send` deterministically fails with `Disconnected` — the seam
     /// replacement for swapping in `Client::disconnected_for_tests()`.
@@ -206,6 +222,30 @@ impl Connection {
             dropped_oversized: client.dropped_oversized_handle(),
             feed_task: None,
         }
+    }
+
+    /// Test-only: a connection with a live writer channel. The returned
+    /// receiver must be held open for `try_send` to succeed (#1465 AC8).
+    #[cfg(test)]
+    pub(crate) fn live_for_tests() -> (Self, tokio::sync::mpsc::Receiver<String>) {
+        let (tx, rx) = tokio::sync::mpsc::channel::<String>(16);
+        let sender = crate::protocol::client::CommandSender { tx };
+        (
+            Self {
+                tab: TabId::MASTER,
+                sender,
+                speaks_frames: true,
+                dropped_oversized: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                feed_task: None,
+            },
+            rx,
+        )
+    }
+
+    /// Test-only: force the ADR-0008 negotiation flag for isolation checks.
+    #[cfg(test)]
+    pub(crate) fn set_speaks_frames_for_tests(&mut self, speaks: bool) {
+        self.speaks_frames = speaks;
     }
 
     /// Test-only: simulate the reader recording `n` oversized-line drops.

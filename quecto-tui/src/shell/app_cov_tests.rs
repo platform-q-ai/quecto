@@ -11,7 +11,7 @@ async fn harness() -> TuiHarness {
 }
 
 fn chat_text(app: &mut App) -> String {
-    app.conn
+    app.ac_mut()
         .master_session
         .chat
         .render(120)
@@ -37,9 +37,9 @@ fn command_has_string_fields(command: &str, expected: &[(&str, &str)]) -> bool {
 async fn reject_unknown_slash_command_adds_status_and_notifies() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.conn.master_session.chat.entry_count();
+    let before = a.ac().master_session.chat.entry_count();
     a.reject_unknown_slash_command("/bogus");
-    assert_eq!(a.conn.master_session.chat.entry_count(), before + 1);
+    assert_eq!(a.ac().master_session.chat.entry_count(), before + 1);
     assert!(!a.notifications.is_empty() && chat_text(a).contains("/bogus"));
 }
 
@@ -78,7 +78,7 @@ async fn show_workflow_status_when_active() {
         "progress": {"done": 1, "total": 2},
         "activeIssue": {"number": 7, "title": "thing"}
     });
-    h.app_mut().conn.master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
+    h.app_mut().ac_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
     let a = h.app_mut();
     a.show_workflow_status();
     let text = chat_text(a);
@@ -94,7 +94,7 @@ async fn show_workflow_status_complete_when_all_steps_done() {
         "progress": {"done": 1, "total": 1},
         "activeIssue": {"number": 7, "title": "thing"}
     });
-    h.app_mut().conn.master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
+    h.app_mut().ac_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
     let a = h.app_mut();
     a.show_workflow_status();
     assert!(chat_text(a).contains("complete"));
@@ -173,7 +173,7 @@ async fn show_session_stats_with_context_updates_footer_flag() {
     });
     let a = h.app_mut();
     a.show_session_stats(&data);
-    assert!(a.conn.sessions.context_stats_requested);
+    assert!(a.ac().sessions.context_stats_requested);
     assert!(chat_text(a).contains("Session: cli:foo"));
 }
 
@@ -183,17 +183,17 @@ async fn show_session_stats_without_context_leaves_flag_false() {
     let data = serde_json::json!({"sessionKey": "cli:bar"});
     let a = h.app_mut();
     a.show_session_stats(&data);
-    assert!(!a.conn.sessions.context_stats_requested);
+    assert!(!a.ac().sessions.context_stats_requested);
 }
 
 #[tokio::test]
 async fn send_set_model_records_current_model() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.conn.sessions.context_stats_requested = true;
+    a.ac_mut().sessions.context_stats_requested = true;
     a.send_set_model(MODEL_ID);
-    assert_eq!(a.conn.inference.current_model.as_deref(), Some(MODEL_ID));
-    assert!(!a.conn.sessions.context_stats_requested);
+    assert_eq!(a.ac().inference.current_model.as_deref(), Some(MODEL_ID));
+    assert!(!a.ac().sessions.context_stats_requested);
 }
 
 #[tokio::test]
@@ -205,8 +205,8 @@ async fn update_footer_stats_sets_context_and_clears_zero_cost() {
         "maxContextTokens": 100,
         "cost": 0.0
     }));
-    assert!(a.conn.sessions.context_stats_requested);
-    let footer = a.conn.master_session.footer.render(120).join("\n");
+    assert!(a.ac().sessions.context_stats_requested);
+    let footer = a.ac_mut().master_session.footer.render(120).join("\n");
     assert!(footer.contains("42"), "{footer}");
 }
 
@@ -215,20 +215,23 @@ async fn update_footer_stats_ignores_positive_cost_without_context() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.update_footer_stats(&serde_json::json!({ "cost": 1.25 }));
-    assert!(!a.conn.sessions.context_stats_requested);
-    let footer = a.conn.master_session.footer.render(120).join("\n");
+    assert!(!a.ac().sessions.context_stats_requested);
+    let footer = a.ac_mut().master_session.footer.render(120).join("\n");
     assert!(!footer.contains("$"), "{footer}");
 }
 
 // ── app_methods: resume selector ─────────────────────────────────────
+fn empty_manifest_path() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("q-empty-man-{}.json", std::process::id()))
+}
 
 #[tokio::test]
 async fn open_resume_selector_empty_shows_status_no_selector() {
     let mut h = harness().await;
     let data = serde_json::json!({"sessions": []});
     let a = h.app_mut();
-    a.open_resume_selector(&data);
-    assert!(a.conn.sessions.resume_selector.is_none());
+    a.open_resume_selector_at(&data, &empty_manifest_path());
+    assert!(a.ac().sessions.resume_selector.is_none());
     assert!(chat_text(a).contains("No persisted sessions"));
 }
 
@@ -242,9 +245,9 @@ async fn open_resume_selector_with_names_builds_list() {
         ]
     });
     let a = h.app_mut();
-    a.open_resume_selector(&data);
+    a.open_resume_selector_at(&data, &empty_manifest_path());
     assert_eq!(
-        a.conn
+        a.ac()
             .sessions
             .resume_selector
             .as_ref()
@@ -259,8 +262,8 @@ async fn open_resume_selector_without_names_shows_status() {
     let mut h = harness().await;
     let data = serde_json::json!({"sessions": [{"messageCount": 1}]});
     let a = h.app_mut();
-    a.open_resume_selector(&data);
-    assert!(a.conn.sessions.resume_selector.is_none());
+    a.open_resume_selector_at(&data, &empty_manifest_path());
+    assert!(a.ac().sessions.resume_selector.is_none());
     assert!(chat_text(a).contains("No resumable"));
 }
 
@@ -269,9 +272,9 @@ async fn handle_resume_selector_key_enter_selects_and_closes() {
     let mut h = harness().await;
     let data = serde_json::json!({"sessions": [{"name": "alpha", "messageCount": 3}]});
     let a = h.app_mut();
-    a.open_resume_selector(&data);
+    a.open_resume_selector_at(&data, &empty_manifest_path());
     a.handle_resume_selector_key(&Key::Enter);
-    assert!(a.conn.sessions.resume_selector.is_none());
+    assert!(a.ac().sessions.resume_selector.is_none());
     let cmds = h.drain_commands().await;
     assert!(
         cmds.iter().any(|c| command_has_string_fields(
@@ -287,9 +290,9 @@ async fn handle_resume_selector_key_escape_cancels() {
     let mut h = harness().await;
     let data = serde_json::json!({"sessions": [{"name": "alpha"}]});
     let a = h.app_mut();
-    a.open_resume_selector(&data);
+    a.open_resume_selector_at(&data, &empty_manifest_path());
     a.handle_resume_selector_key(&Key::Escape);
-    assert!(a.conn.sessions.resume_selector.is_none());
+    assert!(a.ac().sessions.resume_selector.is_none());
 }
 
 #[tokio::test]
@@ -297,9 +300,9 @@ async fn handle_resume_selector_key_pending_keeps_selector() {
     let mut h = harness().await;
     let data = serde_json::json!({"sessions": [{"name": "a"}, {"name": "b"}]});
     let a = h.app_mut();
-    a.open_resume_selector(&data);
+    a.open_resume_selector_at(&data, &empty_manifest_path());
     a.handle_resume_selector_key(&Key::Down);
-    assert!(a.conn.sessions.resume_selector.is_some());
+    assert!(a.ac().sessions.resume_selector.is_some());
 }
 
 // ── app_methods: replace chat with messages ──────────────────────────
@@ -328,7 +331,7 @@ async fn replace_chat_with_messages_missing_messages_preserves_chat_and_reports_
     let mut h = harness().await;
     let data = serde_json::json!({});
     let a = h.app_mut();
-    a.conn.master_session.chat.add_entry(ChatEntry::User {
+    a.ac_mut().master_session.chat.add_entry(ChatEntry::User {
         text: "keep me".into(),
     });
 
@@ -353,7 +356,7 @@ async fn replace_chat_with_messages_non_array_messages_preserves_chat_and_report
     let mut h = harness().await;
     let data = serde_json::json!({"messages": "bad"});
     let a = h.app_mut();
-    a.conn.master_session.chat.add_entry(ChatEntry::User {
+    a.ac_mut().master_session.chat.add_entry(ChatEntry::User {
         text: "keep me".into(),
     });
 
@@ -391,7 +394,7 @@ async fn model_selector_enter_selects_and_sets_model() {
     a.handle_model_selector_key(&Key::Enter);
     assert!(a.inference.model_selector.is_none());
     assert_eq!(
-        a.conn.inference.current_model.as_deref(),
+        a.ac().inference.current_model.as_deref(),
         Some("openai-api/gpt-5.5")
     );
     let cmds = h.drain_commands().await;
@@ -506,14 +509,14 @@ async fn notify_pushes_notification() {
 async fn reset_session_clears_chat_and_notifies() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.conn
+    a.ac_mut()
         .master_session
         .chat
         .add_entry(ChatEntry::User { text: "x".into() });
-    a.conn.sessions.context_stats_requested = true;
+    a.ac_mut().sessions.context_stats_requested = true;
     a.reset_session("New session");
-    assert_eq!(a.conn.master_session.chat.entry_count(), 0);
-    assert!(!a.conn.sessions.context_stats_requested);
+    assert_eq!(a.ac().master_session.chat.entry_count(), 0);
+    assert!(!a.ac().sessions.context_stats_requested);
     assert!(!a.notifications.is_empty());
 }
 
@@ -562,7 +565,7 @@ async fn extract_selection_handles_out_of_range_rows() {
 async fn compose_frame_skips_full_clone_when_no_selection_active() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.conn.master_session.chat.add_entry(ChatEntry::User {
+    a.ac_mut().master_session.chat.add_entry(ChatEntry::User {
         text: "a line of chat that would be cloned every frame".into(),
     });
     // No selection is or was active.
@@ -581,7 +584,7 @@ async fn compose_frame_skips_full_clone_when_no_selection_active() {
 async fn compose_frame_populates_clone_while_selection_active() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.conn.master_session.chat.add_entry(ChatEntry::User {
+    a.ac_mut().master_session.chat.add_entry(ChatEntry::User {
         text: "selectable text".into(),
     });
     // A drag is in progress: selection is Some.
@@ -601,7 +604,7 @@ async fn compose_frame_populates_clone_while_selection_active() {
 async fn selection_extraction_works_after_drag_render() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.conn.master_session.chat.add_entry(ChatEntry::User {
+    a.ac_mut().master_session.chat.add_entry(ChatEntry::User {
         text: "hello world".into(),
     });
     // Simulate press+drag keeping the selection live, then a frame renders.
@@ -633,7 +636,8 @@ async fn selection_extraction_works_after_drag_render() {
 async fn compose_frame_with_resume_overlay() {
     let mut h = harness().await;
     let data = serde_json::json!({"sessions": [{"name": "alpha", "messageCount": 1}]});
-    h.app_mut().open_resume_selector(&data);
+    h.app_mut()
+        .open_resume_selector_at(&data, &empty_manifest_path());
     let frame = h.app_mut().compose_frame().join("\n");
     assert!(frame.contains("Resume session"));
     assert!(frame.contains("alpha"));
@@ -688,7 +692,7 @@ async fn spinner_renders_in_bottom_subagent_moved_to_panel() {
         super::tui_harness::subagent("orderworker", "running", None),
     ]));
     // Parent is actively working -> a real spinner line is rendered.
-    h.app_mut().conn.spinner = Some(Spinner::new("order-spinner-marker"));
+    h.app_mut().ac_mut().spinner = Some(Spinner::new("order-spinner-marker"));
 
     let bottom: Vec<String> = h
         .app_mut()

@@ -10,7 +10,7 @@ async fn harness() -> TuiHarness {
 }
 
 fn chat_text(app: &mut App) -> String {
-    let lines = app.conn.master_session.chat.render(120);
+    let lines = app.ac_mut().master_session.chat.render(120);
     lines
         .iter()
         .map(|l| super::app_render_helpers::strip_ansi(l))
@@ -425,7 +425,7 @@ async fn rewind_open_get_messages_still_opens_selector_over_attach_path() {
     // attach-backfill reconcile, even if history is also pending.
     let mut h = harness().await;
     let a = h.app_mut();
-    a.conn.rewind.pending_open_id = Some("rewind-open-1".into());
+    a.ac_mut().rewind.pending_open_id = Some("rewind-open-1".into());
     respond(
         a,
         Some("rewind-open-1"),
@@ -435,11 +435,11 @@ async fn rewind_open_get_messages_still_opens_selector_over_attach_path() {
         None,
     );
     assert!(
-        a.conn.rewind.selector.is_some(),
+        a.ac().rewind.selector.is_some(),
         "rewind pending id must open the rewind selector"
     );
     assert!(
-        a.conn.rewind.pending_open_id.is_none(),
+        a.ac().rewind.pending_open_id.is_none(),
         "rewind open id must be cleared after handling"
     );
     let frame = chat_text(a);
