@@ -69,7 +69,7 @@ impl super::App {
         let existing_socket = self
             .conn_for(tab)
             .and_then(|c| c.socket_path.clone())
-            .filter(|p| p.as_os_str().len() > 0);
+            .filter(|p| !p.as_os_str().is_empty());
         // Unit tests may call lifecycle helpers without a running runtime; the
         // pending_attach flag is still set by the caller for AC1/AC2 coverage.
         if tokio::runtime::Handle::try_current().is_err() {
