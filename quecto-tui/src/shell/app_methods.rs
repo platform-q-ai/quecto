@@ -606,11 +606,9 @@ impl App {
         // outlives the closed stream) — still clear the LOCAL transcript so
         // /clear works on a dead session, but say what actually happened
         // instead of flashing a false "new session" success (#1470 r3).
-        // NOTE (#1470 r5): between the socket dying and its Closed sentinel
-        // draining, `agent_connected` is still true and the enqueue succeeds,
-        // so this success path is optimistic — identical to pre-seam master,
-        // where try_send Ok against a dying socket also toasted success.
-        // Closing that window needs command acks (phase 2+, #1463).
+        // Optimistic-enqueue window (#1470 r5): a just-died socket whose
+        // Closed sentinel has not drained still enqueues successfully —
+        // identical to pre-seam master; command acks are phase-2 scope.
         let was_connected = self.agent_connected;
         let agent_reset = self.send_new_session();
         self.master_session.chat.clear();
@@ -658,11 +656,9 @@ impl App {
         // into a dead socket. Bail silently and return false — callers that show
         // user feedback (e.g. `reset_session`) act on that (#1470 review).
         if !self.agent_connected {
-            // Roll back any pending state minted for this command (also
-            // latches failed stub recalls, so scrolling a dead session does
-            // not re-issue them, #1470 r4), and surface the refusal ONCE per
-            // disconnect episode — per-command failure toasts would flood and
-            // bury deliberate caller messaging like reset_session's warning.
+            // Roll back pending state (latching failed stub recalls, #1470
+            // r4) and surface the refusal ONCE per disconnect episode —
+            // per-command toasts would bury deliberate caller messaging.
             self.rollback_failed_history_command(MASTER_CONNECTION_ID, &cmd, true);
             if !self.disconnect_refusal_notified {
                 self.disconnect_refusal_notified = true;
