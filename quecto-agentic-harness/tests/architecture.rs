@@ -1231,7 +1231,9 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// #1465 P1 multi-tab collection adds one seam mention on
 /// `shell/connection.rs` (`CommandSender { tx }` live test transport) —
 /// transport-seam usage, not feature/view growth (138 → 139).
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 139;
+/// #1465 P3 placeholder connection uses `CommandSender { tx }` for the
+/// connecting-tab stub — transport-seam usage (139 → 140).
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 140;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///
