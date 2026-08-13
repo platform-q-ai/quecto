@@ -44,13 +44,13 @@ impl App {
                 };
                 let _ = client
                     .send(&Command::GetState {
-                        id: Some(format!("{ns}subagent-state")),
+                        id: Some(crate::shell::connection::feed_id(&ns, "subagent-state")),
                         agent_id: None,
                     })
                     .await;
                 let _ = client
                     .send(&Command::Sync {
-                        id: Some(format!("{ns}subagent-sync")),
+                        id: Some(crate::shell::connection::feed_id(&ns, "subagent-sync")),
                         epoch: 0,
                         since_rev: 0,
                         agent_id: None,

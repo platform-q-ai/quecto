@@ -254,11 +254,9 @@ impl App {
             command.kind()
         );
         // A burst (scroll issuing N stub recalls against a full writer)
-        // would stack N identical toasts — show each distinct message once
-        // while it is still visible; expired entries do not suppress a
-        // legitimately repeated failure (#1470 r5/r6).
-        if !self.notifications.contains_visible(&msg) {
-            self.notify(&msg, NotifyLevel::Error);
-        }
+        // Every distinct failure surfaces (#1472 r2: a visible-window dedupe
+        // here swallowed a second genuine failure with identical text). The
+        // stack's MAX_NOTIFICATIONS cap bounds a burst.
+        self.notify(&msg, NotifyLevel::Error);
     }
 }

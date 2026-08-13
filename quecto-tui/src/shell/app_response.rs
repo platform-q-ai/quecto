@@ -190,8 +190,17 @@ impl App {
         error: Option<String>,
     ) {
         if let Some(agent_id) = id.as_deref().and_then(|id| {
+            // Only OUR OWN namespace may classify as a routed-subagent
+            // response (#1472 r2): stripping any tab's prefix let a foreign
+            // tab's rev-relative sync delta fast-forward this feed's rev
+            // past revisions it never received.
+            let own = self.conn.id_namespace();
+            let id = id.strip_prefix(own.as_str()).unwrap_or(id);
+            if id.starts_with("tab") && id.contains(':') {
+                return None; // foreign tab's routed id — drop, never route.
+            }
             routed_subagent_prefix(
-                strip_tab_namespace(id),
+                id,
                 &[
                     "subagent-state:",
                     "subagent-sync:",
@@ -232,8 +241,16 @@ impl App {
                 if let Some(data) = data {
                     // A quiet footer refresh (id "stats-footer") updates the
                     // cost/context indicators without adding a chat Status line.
+                    let is_foreign_stats_footer = id
+                        .as_deref()
+                        .is_some_and(|id| strip_tab_namespace(id) == "stats-footer");
                     if id.as_deref() == Some(self.conn.namespaced_id("stats-footer").as_str()) {
                         self.update_footer_stats(&data);
+                    } else if is_foreign_stats_footer {
+                        // A peer's quiet footer refresh (any tab namespace, or
+                        // a legacy bare literal) must stay quiet — falling
+                        // through would print unrequested stats into the chat
+                        // after every peer turn (#1472 r2).
                     } else {
                         self.show_session_stats(&data);
                     }

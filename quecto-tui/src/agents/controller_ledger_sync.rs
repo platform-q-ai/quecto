@@ -15,7 +15,7 @@ impl App {
                 .cmd_tx
                 .try_send(Command::Sync {
                     agent_id: None,
-                    id: Some(format!("{ns}subagent-sync")),
+                    id: Some(crate::shell::connection::feed_id(&ns, "subagent-sync")),
                     epoch,
                     since_rev,
                 })
@@ -65,7 +65,7 @@ impl App {
             } else if let Some(next_rev) = delta.next_rev {
                 let _ = feed.cmd_tx.try_send(Command::Sync {
                     agent_id: None,
-                    id: Some(format!("{ns}subagent-sync")),
+                    id: Some(crate::shell::connection::feed_id(&ns, "subagent-sync")),
                     epoch: delta.epoch,
                     since_rev: next_rev,
                 });

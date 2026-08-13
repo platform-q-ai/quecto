@@ -122,6 +122,8 @@ impl ConnectionState {
     /// (#1463): `tab{N}:`. Every id the tab mints carries it, so broadcast
     /// responses can never match another tab's pending latches.
     pub(crate) fn id_namespace(&self) -> String {
+        // Kept as an owned String for call-site compatibility; derived from
+        // the tab id so it can never drift from the transport (#1463).
         format!("tab{}:", self.transport.tab().0)
     }
 
@@ -134,11 +136,10 @@ impl ConnectionState {
 impl App {
     /// The active tab's connection state. N=1: always the master tab.
     ///
-    /// This pair is the tab-dispatch seam (#1463): with N>1 tabs the lookup
-    /// by active tab id lands here, exactly like `active_session_mut()`
-    /// dispatches over sessions. Call sites may also reach the state through
-    /// the `conn` field directly where split borrows require a plain place
-    /// expression.
+    /// Accessor for the (single, N=1) connection. NOTE (#1472 r2): most
+    /// sites still access `self.conn` directly — phase 3 (#1464) routes
+    /// rendering through here; this is NOT yet a sufficient dispatch seam
+    /// for N>1 on its own.
     pub(crate) fn active_conn(&self) -> &ConnectionState {
         &self.conn
     }

@@ -13,6 +13,20 @@ fn subagent_inspection_id(
 /// `ns` is the owning tab's connection namespace (`tab{N}:`, #1463): minted
 /// ids carry it so broadcast responses can never match another tab's feeds.
 /// ONE routable-variant list serves both routing and namespacing (#1472 r1).
+/// Whether `cmd` is a routable inspection command — the side-effect-free
+/// gate for inspection-only feeds (#1472 r2: no Command clone, and no
+/// empty-namespace sentinel that could leak un-namespaced ids).
+pub(crate) fn is_inspection_routable(cmd: &Command) -> bool {
+    matches!(
+        cmd,
+        Command::GetState { .. }
+            | Command::GetMessages { .. }
+            | Command::GetMessagesTail { .. }
+            | Command::GetMessage { .. }
+            | Command::Sync { .. }
+    )
+}
+
 pub(crate) fn with_inspection_agent_id(cmd: &Command, agent_id: &str, ns: &str) -> Option<Command> {
     let routed_agent_id = Some(agent_id.to_string());
     Some(match cmd.clone() {

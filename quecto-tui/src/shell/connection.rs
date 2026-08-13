@@ -219,3 +219,10 @@ impl Connection {
 #[cfg(test)]
 #[path = "connection_tests.rs"]
 mod connection_tests;
+
+/// Compose a feed correlation id under a connection namespace — the ONE
+/// composition site (#1472 r2), so the namespace encoding cannot drift
+/// between hand-rolled `format!` copies.
+pub(crate) fn feed_id(ns: &str, suffix: &str) -> String {
+    format!("{ns}{suffix}")
+}
