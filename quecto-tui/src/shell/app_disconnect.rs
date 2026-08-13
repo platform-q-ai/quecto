@@ -58,10 +58,7 @@ impl App {
     /// Emit the disconnect notification (and stderr-tail transcript entries,
     /// #1047) once the exit diagnosis — possibly deferred — is known.
     fn emit_agent_disconnected_notice(&mut self, exit_detail: Option<String>) {
-        let mut message = match exit_detail {
-            Some(detail) => format!("Agent disconnected — {detail}"),
-            None => "Agent disconnected".to_string(),
-        };
+        let mut message = Self::disconnect_notice_text(exit_detail.as_deref());
         // Include the child's drained stderr tail (#1047): under the workspace
         // `panic = "abort"` the panic message lands on stderr right before the
         // process dies — without it every recurrence is undiagnosable. The
@@ -162,11 +159,9 @@ impl App {
             // entries must not land in the fresh session, but the crash
             // diagnosis itself (#1047) must still surface as a toast —
             // pre-seam the diagnosis was always shown (#1470 r6).
-            if let Some(detail) = detail {
-                self.notify(
-                    &format!("Agent disconnected — {detail}"),
-                    NotifyLevel::Error,
-                );
+            if detail.is_some() {
+                let text = Self::disconnect_notice_text(detail.as_deref());
+                self.notify(&text, NotifyLevel::Error);
             }
             return;
         }
@@ -195,6 +190,14 @@ impl App {
 }
 
 impl App {
+    /// Single source for the disconnect-notification wording (#1470 r7).
+    fn disconnect_notice_text(detail: Option<&str>) -> String {
+        match detail {
+            Some(detail) => format!("Agent disconnected — {detail}"),
+            None => "Agent disconnected".to_string(),
+        }
+    }
+
     /// Refuse a command on a known-dead connection (#1470 r3-r6): roll back
     /// pending state (latching failed stub recalls) and surface the refusal
     /// ONCE per disconnect episode — a toast plus a persistent transcript
@@ -202,14 +205,22 @@ impl App {
     /// expires without per-command spam.
     pub(super) fn refuse_disconnected_command(&mut self, cmd: &Command) {
         self.rollback_failed_history_command(super::MASTER_CONNECTION_ID, cmd, true);
+        self.note_disconnected_refusal();
+    }
+
+    /// The once-per-episode refusal surfacing, shared by command refusals
+    /// and the disconnected chat-submit path (#1470 r7). The toast dedupes
+    /// against a still-visible copy: a re-armed latch (reset during an
+    /// episode) must not stack identical toasts.
+    pub(super) fn note_disconnected_refusal(&mut self) {
         if self.disconnect_refusal_notified {
             return;
         }
         self.disconnect_refusal_notified = true;
-        self.notify(
-            "Agent disconnected — commands are not being sent",
-            NotifyLevel::Error,
-        );
+        let toast = "Agent disconnected — commands are not being sent";
+        if !self.notifications.contains_visible(toast) {
+            self.notify(toast, NotifyLevel::Error);
+        }
         self.master_session.chat.add_entry(ChatEntry::Status {
             text: "Agent disconnected — commands are not being sent (restart the TUI to reconnect)"
                 .to_string(),
