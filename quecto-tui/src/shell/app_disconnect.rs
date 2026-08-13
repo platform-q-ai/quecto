@@ -109,9 +109,14 @@ impl App {
     /// pending is a no-op: state is already flipped and a second diag task
     /// would duplicate the notification.
     pub(super) fn begin_agent_stream_closed(&mut self, tab: crate::shell::connection::TabId) {
-        if self.disconnect_diag_pending {
+        // Duplicate gate: the first sentinel flips `agent_connected`; any
+        // later duplicate (ownerless attach connections included, where no
+        // diagnosis latch is ever set) is a no-op — the exact once-per-
+        // connection guarantee of the deleted gated select arm (#1470 r4).
+        if !self.agent_connected {
             return;
         }
+        self.disconnect_refusal_notified = false;
         self.surface_dropped_oversized_events();
         self.mark_agent_disconnected();
         let Some(watch) = self.child_exit_watch.clone() else {
@@ -151,11 +156,7 @@ impl App {
         tab: crate::shell::connection::TabId,
         detail: Option<String>,
     ) {
-        debug_assert_eq!(
-            tab,
-            crate::shell::connection::TabId::MASTER,
-            "N=1: only the master tab exists (#1462)"
-        );
+        let _ = tab; // Keyed for phase 2 (#1463); N=1 uses one latch.
         if !self.disconnect_diag_pending {
             return;
         }

@@ -36,6 +36,17 @@ pub(crate) enum SourcedEvent {
     Closed(TabId),
 }
 
+impl SourcedEvent {
+    /// The tab this item belongs to, regardless of variant.
+    pub(crate) fn tab(&self) -> TabId {
+        match self {
+            SourcedEvent::Tab(tab, _)
+            | SourcedEvent::Subagent(tab, _, _)
+            | SourcedEvent::Closed(tab) => *tab,
+        }
+    }
+}
+
 /// A master connection behind a feed task: the feed task owns the [`Client`]
 /// (and with it the socket's event stream), forwards events into the shared
 /// fan-in tagged `SourcedEvent::Tab(tab, ..)`, and emits `SourcedEvent::Closed(tab)` when

@@ -606,6 +606,7 @@ impl App {
         // outlives the closed stream) — still clear the LOCAL transcript so
         // /clear works on a dead session, but say what actually happened
         // instead of flashing a false "new session" success (#1470 r3).
+        let was_connected = self.agent_connected;
         let agent_reset = self.send_new_session();
         self.master_session.chat.clear();
         // Invalidate in-flight ref recovery so a late get_message from the OLD
@@ -619,6 +620,13 @@ impl App {
         self.send_state_resync();
         if agent_reset {
             self.notify(message, NotifyLevel::Success);
+        } else if was_connected {
+            // Connected but the enqueue failed (backpressure): a disconnect
+            // diagnosis here would misdirect the user (#1470 r4).
+            self.notify(
+                "Cleared locally — sending new_session failed, retry /new",
+                NotifyLevel::Warning,
+            );
         } else {
             self.notify(
                 "Cleared locally — agent disconnected, no new session started",
@@ -645,16 +653,19 @@ impl App {
         // into a dead socket. Bail silently and return false — callers that show
         // user feedback (e.g. `reset_session`) act on that (#1470 review).
         if !self.agent_connected {
-            // Same cleanup + surfacing as a failed enqueue (#1470 r3): roll
-            // back any pending state minted for this command and report via
-            // the failure channel, so a post-disconnect action is a visible
-            // error, never a silent no-op that wedges paging/recovery.
+            // Roll back any pending state minted for this command (also
+            // latches failed stub recalls, so scrolling a dead session does
+            // not re-issue them, #1470 r4), and surface the refusal ONCE per
+            // disconnect episode — per-command failure toasts would flood and
+            // bury deliberate caller messaging like reset_session's warning.
             self.rollback_failed_history_command(MASTER_CONNECTION_ID, &cmd);
-            let _ = self.command_send_failure_tx.try_send(CommandSendFailure {
-                command: cmd,
-                error: "agent disconnected".to_string(),
-                connection: MASTER_CONNECTION_ID.to_string(),
-            });
+            if !self.disconnect_refusal_notified {
+                self.disconnect_refusal_notified = true;
+                self.notify(
+                    "Agent disconnected — commands are not being sent",
+                    NotifyLevel::Error,
+                );
+            }
             return false;
         }
         // Enqueue synchronously in call order onto the client's FIFO writer; a

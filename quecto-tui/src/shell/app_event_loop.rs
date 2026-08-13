@@ -87,13 +87,15 @@ impl App {
         item: crate::shell::connection::SourcedEvent,
     ) -> SourcedRender {
         use crate::shell::connection::{SourcedEvent, TabId};
+        // Single N=1 guard for every arm (#1470 r4) — phase 2 (#1463)
+        // replaces this one assert when tabs become plural.
+        debug_assert_eq!(
+            item.tab(),
+            TabId::MASTER,
+            "N=1: only the master tab exists (#1462)"
+        );
         match item {
-            SourcedEvent::Tab(tab, ev) => {
-                debug_assert_eq!(
-                    tab,
-                    TabId::MASTER,
-                    "N=1: only the master tab exists (#1462)"
-                );
+            SourcedEvent::Tab(_, ev) => {
                 let is_token = Self::is_token_event(&ev);
                 self.handle_event(ev);
                 if self.surface_dropped_oversized_events() {
@@ -102,22 +104,12 @@ impl App {
                     SourcedRender::Stream { is_token }
                 }
             }
-            SourcedEvent::Subagent(tab, agent_id, ev) => {
-                debug_assert_eq!(
-                    tab,
-                    TabId::MASTER,
-                    "N=1: only the master tab exists (#1462)"
-                );
+            SourcedEvent::Subagent(_, agent_id, ev) => {
                 let is_token = Self::is_token_event(&ev);
                 self.route_subagent_event(&agent_id, ev);
                 SourcedRender::Stream { is_token }
             }
             SourcedEvent::Closed(tab) => {
-                debug_assert_eq!(
-                    tab,
-                    TabId::MASTER,
-                    "N=1: only the master tab exists (#1462)"
-                );
                 // Master stream closed — the session is marked disconnected
                 // and dropped events surfaced SYNCHRONOUSLY here; only the
                 // child-exit diagnosis text is dispatched off-loop (#1047

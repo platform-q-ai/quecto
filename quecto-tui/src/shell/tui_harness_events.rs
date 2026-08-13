@@ -311,9 +311,9 @@ pub fn mask_clocks(frame: &str) -> String {
         // panel's Master uptime, #820). An unconditional digit-run+`:dd`
         // mask would also normalize real content differences shaped like
         // `N:dd`, silently narrowing the parity assertions (#1470 r3).
-        let after_clock_label =
-            out.ends_with("idle ") || out.ends_with("ran ") || out.ends_with("  ");
-        if cs[i].is_ascii_digit() && after_clock_label {
+        let after_clock_label = out.ends_with("idle ") || out.ends_with("ran ");
+        let right_aligned = out.ends_with("  ");
+        if cs[i].is_ascii_digit() && (after_clock_label || right_aligned) {
             // Consume the leading digit run, then any `:dd` groups.
             let mut j = i;
             while j < cs.len() && cs[j].is_ascii_digit() {
@@ -327,7 +327,14 @@ pub fn mask_clocks(frame: &str) -> String {
             {
                 end += 3;
             }
-            if end > j {
+            // The bare right-aligned anchor additionally requires the clock
+            // to run to end-of-line (trailing spaces only), so indented
+            // content like "  1:23 elapsed" is never masked (#1470 r4).
+            let to_line_end = cs[end..]
+                .iter()
+                .take_while(|c| **c != '\n')
+                .all(|c| *c == ' ');
+            if end > j && (after_clock_label || to_line_end) {
                 out.push_str("#:##");
                 i = end;
             } else {

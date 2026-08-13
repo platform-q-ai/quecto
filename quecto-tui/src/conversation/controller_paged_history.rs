@@ -42,7 +42,13 @@ impl App {
                 self.rollback_pending_solicited_get_messages(id);
             }
             Command::GetMessage { id: Some(id), .. } => {
-                self.pending_stub_recall.remove(id);
+                // Latch the failure too: without it, every scroll re-issues
+                // every visible stub recall against a dead connection and
+                // floods failure reports (#1470 r4).
+                if let Some(recall) = self.pending_stub_recall.remove(id) {
+                    self.failed_stub_recalls
+                        .insert((recall.agent_id.clone(), recall.message_id.clone()));
+                }
             }
             _ => {}
         }

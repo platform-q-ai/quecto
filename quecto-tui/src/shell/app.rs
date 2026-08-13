@@ -147,6 +147,9 @@ pub struct App {
     /// the bounded #1047 waits, cleared by `finish_agent_stream_closed`.
     /// The harness keys its diagnosis pumping off this latch.
     pub(super) disconnect_diag_pending: bool,
+    /// One "commands are not being sent" notice per disconnect episode
+    /// (#1470 r4): reset when a disconnect begins, set on first refusal.
+    disconnect_refusal_notified: bool,
     /// When the TUI session started — drives the Master row's uptime timer (#820).
     started_at: tokio::time::Instant,
 }
@@ -235,6 +238,7 @@ impl App {
             disconnect_diag_rx,
             tab_event_rx,
             disconnect_diag_pending: false,
+            disconnect_refusal_notified: false,
             started_at: tokio::time::Instant::now(),
         }
     }
