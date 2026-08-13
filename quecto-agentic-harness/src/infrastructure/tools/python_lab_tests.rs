@@ -268,6 +268,50 @@ fn inherited_child_policy_snapshot_trait_defaults_are_covered() {
     assert!(lab.inherited_child_policy_snapshot_for_spawn().is_none());
 }
 
+#[tokio::test]
+async fn default_op_and_file_change_reporting_cover_metadata_edges() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("nested")).unwrap();
+    let result = tool(tmp.path())
+        .execute(
+            r#"{"code":"from pathlib import Path\nPath('created.txt').write_text('new')\nPath('nested/changed.txt').write_text('changed')"}"#,
+        )
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(v["status"], "completed");
+    let changed = v["files_created_or_modified"].as_array().unwrap();
+    assert!(changed.iter().any(|p| p == "created.txt"));
+    assert!(changed.iter().any(|p| p == "nested/changed.txt"));
+}
+
+#[tokio::test]
+async fn stderr_and_stdout_truncation_report_both_artifacts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let result = tool(tmp.path())
+        .execute(
+            r#"{"op":"run","code":"import sys; print('abcdefghijklmnop'); sys.stderr.write('qrstuvwxyz')","max_output_bytes":4}"#,
+        )
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(v["stdout_truncated"], true);
+    assert_eq!(v["stderr_truncated"], true);
+    let artifacts = v["artifact_paths"].as_array().unwrap();
+    assert_eq!(artifacts.len(), 2);
+    assert!(
+        artifacts
+            .iter()
+            .any(|p| p.as_str().unwrap().ends_with("stdout.txt"))
+    );
+    assert!(
+        artifacts
+            .iter()
+            .any(|p| p.as_str().unwrap().ends_with("stderr.txt"))
+    );
+}
+
 #[test]
 fn python_lab_config_deserializes_partial_and_full_json_shapes() {
     let partial: super::python_lab::PythonLabToolConfig =

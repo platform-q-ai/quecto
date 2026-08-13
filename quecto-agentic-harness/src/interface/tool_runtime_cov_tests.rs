@@ -1,6 +1,64 @@
 use super::*;
 
 #[test]
+fn entrypoint_and_profile_policy_helpers_cover_all_variants() {
+    assert!(ToolEntrypoint::CliAgent.agent_control_default_enabled());
+    assert!(ToolEntrypoint::UdsAgent.agent_control_default_enabled());
+    assert!(!ToolEntrypoint::Repl.agent_control_default_enabled());
+
+    assert!(ToolEntrypoint::CliAgent.web_default_enabled());
+    assert!(ToolEntrypoint::UdsAgent.web_default_enabled());
+    assert!(!ToolEntrypoint::Repl.web_default_enabled());
+
+    assert!(!ToolEntrypoint::CliAgent.workflow_supported());
+    assert!(ToolEntrypoint::UdsAgent.workflow_supported());
+    assert!(!ToolEntrypoint::Repl.workflow_supported());
+
+    assert_eq!(
+        ToolRuntimeProfileContext::from_spawned(false),
+        ToolRuntimeProfileContext::Parent
+    );
+    assert_eq!(
+        ToolRuntimeProfileContext::from_spawned(true),
+        ToolRuntimeProfileContext::Child
+    );
+    assert!(!ToolRuntimeProfileContext::Parent.is_child());
+    assert!(ToolRuntimeProfileContext::Child.is_child());
+    assert_eq!(
+        ToolRuntimeProfileContext::Parent.profile_context(),
+        crate::domain::tool::ToolProfileContext::Parent
+    );
+    assert_eq!(
+        ToolRuntimeProfileContext::Child.profile_context(),
+        crate::domain::tool::ToolProfileContext::Child
+    );
+
+    let repl = ToolRuntimePolicyState::for_entrypoint(ToolEntrypoint::Repl);
+    assert_eq!(repl.entrypoint, ToolEntrypoint::Repl);
+    assert!(!repl.agent_control_default_enabled);
+    assert!(!repl.web_default_enabled);
+    assert!(!repl.workflow_supported);
+    assert!(repl.inherited_tool_policy.is_none());
+}
+
+#[test]
+fn load_workflow_spec_rejects_oversized_specs_before_reading() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("oversized.json");
+    std::fs::write(
+        &path,
+        vec![b' '; crate::domain::workflow::MAX_WORKFLOW_SPEC_BYTES + 1],
+    )
+    .expect("write oversized spec");
+    let err = load_workflow_spec(&path).expect_err("oversized spec must fail");
+    assert!(err.contains("workflow spec too large"), "{err}");
+    assert!(
+        path.exists(),
+        "oversized spec is rejected before consumption"
+    );
+}
+
+#[test]
 fn load_workflow_spec_reports_io_and_json_errors_and_success() {
     let tmp = tempfile::TempDir::new().unwrap();
     let missing = tmp.path().join("missing.json");
