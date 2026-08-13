@@ -398,13 +398,18 @@ fn persist_merges_open_tabs_and_keeps_detached_live_registry_rows() {
         .expect("AC3b/AC6: detached-but-live tab 1 must survive persist of a one-tab restart");
     assert_eq!(tab1.session_key.as_deref(), Some("cli:tab1"));
     assert_eq!(tab1.socket_path, detached_sock);
-    let tab0 = loaded
+    let tab0_new = loaded
         .agents
         .iter()
-        .find(|r| r.tab_id == 0)
+        .find(|r| r.tab_id == 0 && r.session_key.as_deref() == Some("cli:new-master"))
         .expect("open master must remain in registry");
-    assert_eq!(tab0.session_key.as_deref(), Some("cli:new-master"));
-    assert_eq!(tab0.socket_path, master_sock);
+    assert_eq!(tab0_new.socket_path, master_sock);
+    let tab0_old = loaded
+        .agents
+        .iter()
+        .find(|r| r.tab_id == 0 && r.session_key.as_deref() == Some("cli:old-master"))
+        .expect("AC3b/AC6: detached live master must survive fresh master persist");
+    assert_eq!(tab0_old.socket_path, dir.path().join("old-master.sock"));
 }
 
 #[test]

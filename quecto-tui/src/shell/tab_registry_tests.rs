@@ -106,7 +106,7 @@ fn refresh_status_marks_dead_without_removing() {
 }
 
 #[test]
-fn upsert_replaces_same_tab_id() {
+fn upsert_replaces_same_tab_stable_identity() {
     let mut reg = TabAgentRegistry::new();
     reg.upsert(sample(0, PathBuf::from("/tmp/a"), TabAgentStatus::Live));
     let mut next = sample(0, PathBuf::from("/tmp/b"), TabAgentStatus::Live);
@@ -115,6 +115,38 @@ fn upsert_replaces_same_tab_id() {
     assert_eq!(reg.agents.len(), 1);
     assert_eq!(reg.agents[0].tab_name.as_deref(), Some("renamed"));
     assert_eq!(reg.agents[0].socket_path, PathBuf::from("/tmp/b"));
+}
+
+#[test]
+fn upsert_preserves_detached_master_with_different_session_key() {
+    let mut reg = TabAgentRegistry::new();
+    let mut detached = sample(
+        0,
+        PathBuf::from("/tmp/old-master.sock"),
+        TabAgentStatus::Live,
+    );
+    detached.session_key = Some("cli:work".into());
+    reg.upsert(detached);
+
+    let mut fresh = sample(
+        0,
+        PathBuf::from("/tmp/new-master.sock"),
+        TabAgentStatus::Live,
+    );
+    fresh.session_key = Some("cli:new-master".into());
+    reg.upsert(fresh);
+
+    assert_eq!(
+        reg.agents.len(),
+        2,
+        "same tab id across TUI lifetimes must not erase the detached live owner"
+    );
+    assert!(reg.agents.iter().any(|a| a.tab_id == 0
+        && a.session_key.as_deref() == Some("cli:work")
+        && a.socket_path == std::path::Path::new("/tmp/old-master.sock")));
+    assert!(reg.agents.iter().any(|a| a.tab_id == 0
+        && a.session_key.as_deref() == Some("cli:new-master")
+        && a.socket_path == std::path::Path::new("/tmp/new-master.sock")));
 }
 
 #[test]

@@ -88,13 +88,33 @@ impl TabAgentRegistry {
         write_atomic(path, &bytes)
     }
 
-    /// Upsert by `tab_id` (last write wins for that slot).
+    /// Upsert by stable durable identity.
+    ///
+    /// `tab_id` is reused across TUI lifetimes (notably master tab 0), so it is
+    /// not sufficient on its own: a fresh master must not overwrite a detached
+    /// live master whose workspace manifest still points at `(tab_id,
+    /// session_key)`. Prefer the manifest identity when present; otherwise fall
+    /// back to the concrete socket identity for pre-session/placeholder rows.
     pub fn upsert(&mut self, record: TabAgentRecord) {
-        if let Some(existing) = self.agents.iter_mut().find(|a| a.tab_id == record.tab_id) {
+        if let Some(existing) = self
+            .agents
+            .iter_mut()
+            .find(|a| Self::is_same_durable_identity(a, &record))
+        {
             *existing = record;
         } else {
             self.agents.push(record);
         }
+    }
+
+    /// Is `candidate` the same durable owner row as `record`?
+    fn is_same_durable_identity(candidate: &TabAgentRecord, record: &TabAgentRecord) -> bool {
+        candidate.tab_id == record.tab_id
+            && candidate.workspace_id == record.workspace_id
+            && match (&candidate.session_key, &record.session_key) {
+                (Some(a), Some(b)) => a == b,
+                _ => candidate.socket_path == record.socket_path,
+            }
     }
 
     /// Remove entries whose liveness probe reports dead, and entries already
