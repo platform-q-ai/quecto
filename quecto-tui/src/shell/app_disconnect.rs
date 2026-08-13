@@ -158,6 +158,16 @@ impl App {
     ) {
         let _ = tab; // Keyed for phase 2 (#1463); N=1 uses one latch.
         if !self.disconnect_diag_pending {
+            // A reset invalidated the pending completion: the transcript
+            // entries must not land in the fresh session, but the crash
+            // diagnosis itself (#1047) must still surface as a toast —
+            // pre-seam the diagnosis was always shown (#1470 r6).
+            if let Some(detail) = detail {
+                self.notify(
+                    &format!("Agent disconnected — {detail}"),
+                    NotifyLevel::Error,
+                );
+            }
             return;
         }
         self.disconnect_diag_pending = false;
@@ -201,8 +211,9 @@ impl App {
         );
         // A burst (scroll issuing N stub recalls against a full writer)
         // would stack N identical toasts — show each distinct message once
-        // while it is still visible (#1470 r5).
-        if !self.notifications.messages().iter().any(|m| m == &msg) {
+        // while it is still visible; expired entries do not suppress a
+        // legitimately repeated failure (#1470 r5/r6).
+        if !self.notifications.contains_visible(&msg) {
             self.notify(&msg, NotifyLevel::Error);
         }
     }

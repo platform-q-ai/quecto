@@ -97,13 +97,24 @@ impl NotificationStack {
     }
 
     /// Raw messages of every notification pushed and not yet gc'd, INCLUDING
-    /// expired ones. Test seam (#1067) and production dedupe consumer
-    /// (#1470 r5): a burst of identical send-failure toasts is shown once.
+    /// expired ones. Test seam (#1067): asserting "a notification was
+    /// pushed with this content" must not race the 3s display lifetime.
+    #[cfg(any(test, feature = "test-harness"))]
     pub fn messages(&self) -> Vec<String> {
         self.notifications
             .iter()
-            .map(|n| n.message.clone())
+            .map(|n| n.message().to_string())
             .collect()
+    }
+
+    /// Whether an UNEXPIRED notification with exactly this message is
+    /// currently in the stack — the dedupe check for repeated failure
+    /// toasts (#1470 r6): an expired-but-not-yet-gc'd entry must not
+    /// suppress a legitimately repeated failure.
+    pub fn contains_visible(&self, message: &str) -> bool {
+        self.notifications
+            .iter()
+            .any(|n| !n.is_expired() && n.message == message)
     }
 
     pub fn push(&mut self, notification: Notification) {

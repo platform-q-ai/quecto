@@ -128,21 +128,18 @@ impl App {
         // "succeed" and the message silently vanish. The composed text is
         // preserved as a visible chat entry (the editor was already emptied
         // by take_submit), matching the pre-seam failure behaviour.
-        if !self.agent_connected {
-            self.master_session
-                .chat
-                .add_entry_follow_tail(ChatEntry::User {
-                    text: text.to_string(),
-                });
-            self.notify("Agent disconnected — message not sent", NotifyLevel::Error);
-            return;
-        }
-        // Add user message to chat and send to the primary agent.
+        // The composed text always lands in the chat (the editor was
+        // already emptied by take_submit) — on a dead connection it is the
+        // only surviving copy (#1470 r3/r6, single add site).
         self.master_session
             .chat
             .add_entry_follow_tail(ChatEntry::User {
                 text: text.to_string(),
             });
+        if !self.agent_connected {
+            self.notify("Agent disconnected — message not sent", NotifyLevel::Error);
+            return;
+        }
         let cmd = if self.agent_state.is_running() {
             Command::FollowUp {
                 id: None,

@@ -609,6 +609,13 @@ impl App {
         let was_connected = self.agent_connected;
         let agent_reset = self.send_new_session();
         self.master_session.chat.clear();
+        // The clear wiped any persistent refusal Status line; re-arm the
+        // once-per-episode latch so the next refusal (send_state_resync
+        // below, on a dead connection) re-raises the toast and re-writes
+        // the line into the fresh transcript (#1470 r6).
+        if !self.agent_connected {
+            self.disconnect_refusal_notified = false;
+        }
         // Invalidate in-flight ref recovery so a late get_message from the OLD
         // transcript can't splice into the cleared /clear-or-/new session (#1060 r4).
         self.clear_message_recovery();

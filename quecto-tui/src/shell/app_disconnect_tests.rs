@@ -162,10 +162,13 @@ async fn reset_session_clears_locally_and_warns_when_disconnected() {
 
     a.reset_session("New session started");
 
+    // The old transcript is gone; the only surviving entry is the
+    // re-raised persistent refusal Status line (#1470 r6) so later refused
+    // commands stay diagnosable in the fresh transcript.
     assert_eq!(
         a.master_session.chat.entry_count(),
-        0,
-        "a disconnected reset must still clear the local transcript (#1470 r3)"
+        1,
+        "a disconnected reset clears the transcript except the refusal line (#1470 r3/r6)"
     );
     let msgs = a.notifications.messages();
     assert!(

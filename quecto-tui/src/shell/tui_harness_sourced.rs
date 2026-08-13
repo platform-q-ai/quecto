@@ -81,12 +81,7 @@ impl TuiHarness {
     /// then pump ONE item from the app's fan-in channels through the
     /// production routing, and capture the frame.
     pub async fn wire_master_event_line(&mut self, json: &str) -> &mut Self {
-        self.agent_event_tx
-            .as_ref()
-            .expect("agent side already closed")
-            .send(format!("{json}\n"))
-            .await
-            .expect("write event line on the agent side");
+        self.send_agent_event_line(json).await;
         self.pump_sourced().await;
         self.capture();
         self

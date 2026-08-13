@@ -305,6 +305,10 @@ pub fn mask_clocks(frame: &str) -> String {
     let cs: Vec<char> = frame.chars().collect();
     let mut out = String::with_capacity(frame.len());
     let mut i = 0;
+    // Whether the current line has already passed a '│': the FIRST '│' of a
+    // row is the panel cell divider; later ones are chat-content gutters
+    // where the bare right-aligned rule must not apply (#1470 r6).
+    let mut past_panel_divider = false;
     while i < cs.len() {
         // Only mask digit runs anchored like clock cells — after the
         // "idle " / "ran " labels or right-aligned behind 2+ spaces (the
@@ -312,7 +316,7 @@ pub fn mask_clocks(frame: &str) -> String {
         // mask would also normalize real content differences shaped like
         // `N:dd`, silently narrowing the parity assertions (#1470 r3).
         let after_clock_label = out.ends_with("idle ") || out.ends_with("ran ");
-        let right_aligned = out.ends_with("  ");
+        let right_aligned = out.ends_with("  ") && !past_panel_divider;
         if cs[i].is_ascii_digit() && (after_clock_label || right_aligned) {
             // Consume the leading digit run, then any `:dd` groups.
             let mut j = i;
@@ -345,6 +349,11 @@ pub fn mask_clocks(frame: &str) -> String {
                 i = j;
             }
         } else {
+            match cs[i] {
+                '\n' => past_panel_divider = false,
+                '│' => past_panel_divider = true,
+                _ => {}
+            }
             out.push(cs[i]);
             i += 1;
         }
