@@ -51,7 +51,7 @@ impl App {
                     });
                 }
                 PanelNode::Agent(id) => {
-                    let info = self.subagents.tracked.get(&id).map(|t| &t.info);
+                    let info = self.conn.roster.tracked.get(&id).map(|t| &t.info);
                     let workflow = info
                         .and_then(|i| i.workflow.as_ref())
                         .filter(|w| w.steps_total > 0)
@@ -101,7 +101,7 @@ impl App {
         // members). Environment node keys can never collide with sanitized
         // agent ids because of the `\0` byte.
         let mut children: BTreeMap<Option<String>, Vec<PanelNode>> = BTreeMap::new();
-        for (id, tracked) in &self.subagents.tracked {
+        for (id, tracked) in &self.conn.roster.tracked {
             let parent = if grouped.contains(id.as_str()) {
                 // Grouped members always nest under their environment row.
                 tracked
@@ -115,7 +115,7 @@ impl App {
                     .info
                     .parent_id
                     .clone()
-                    .filter(|p| self.subagents.tracked.contains_key(p))
+                    .filter(|p| self.conn.roster.tracked.contains_key(p))
             };
             children
                 .entry(parent)

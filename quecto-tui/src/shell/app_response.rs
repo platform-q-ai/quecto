@@ -218,7 +218,7 @@ impl App {
             "get_state" if success => self.handle_get_state(data),
             "set_model" if success => self.handle_set_model_success(data),
             // Late master failure must not toast over a focused child (#1085).
-            "set_model" if self.subagents.active_agent_id.is_none() => {
+            "set_model" if self.conn.roster.active_agent_id.is_none() => {
                 self.notify_response_error("Model switch failed", error)
             }
             "set_model" => {}
@@ -447,11 +447,11 @@ impl App {
             )
         }) {
             self.conn.master_session.footer.set_model(&model);
-            if self.subagents.active_agent_id.is_none() {
+            if self.conn.roster.active_agent_id.is_none() {
                 self.conn.inference.current_model = Some(model);
             }
         }
-        if self.subagents.active_agent_id.is_none() {
+        if self.conn.roster.active_agent_id.is_none() {
             self.notify("Model switched", NotifyLevel::Success);
             // A model switch can change the provider's effort vocabulary
             // and context window — re-sync from the agent (#1067).
@@ -475,11 +475,11 @@ impl App {
             .footer
             .apply_get_state_fields(&snap.footer)
         {
-            if self.subagents.active_agent_id.is_none() {
+            if self.conn.roster.active_agent_id.is_none() {
                 self.conn.inference.current_model = Some(model);
             }
         }
-        if self.subagents.active_agent_id.is_none() {
+        if self.conn.roster.active_agent_id.is_none() {
             self.conn.inference.current_effort = snap.footer.effort.clone();
             if !snap.effort_levels.is_empty() {
                 self.conn.inference.effort_levels = snap.effort_levels;

@@ -33,7 +33,7 @@ impl App {
     /// always reachable through the row.
     pub(super) fn environment_groups(&self) -> BTreeMap<String, Vec<String>> {
         let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for (id, tracked) in &self.subagents.tracked {
+        for (id, tracked) in &self.conn.roster.tracked {
             if let Some(env) = &tracked.info.environment {
                 if !env.group_key().is_empty() {
                     groups
@@ -53,7 +53,8 @@ impl App {
     /// body could silently diverge). `environment_groups` builds group keys
     /// from the same `group_key()` field; keep the two in lockstep.
     pub(super) fn environment_member_ids(&self, key: &str) -> Vec<String> {
-        self.subagents
+        self.conn
+            .roster
             .tracked
             .iter()
             .filter(|(_, t)| {
@@ -73,7 +74,7 @@ impl App {
     pub(super) fn environment_info(&self, key: &str) -> Option<&SubagentEnvironmentInfo> {
         self.environment_member_ids(key)
             .into_iter()
-            .find_map(|id| self.subagents.tracked.get(&id)?.info.environment.as_ref())
+            .find_map(|id| self.conn.roster.tracked.get(&id)?.info.environment.as_ref())
     }
 
     /// Aggregate status across every member of the environment `key`: the
@@ -94,7 +95,7 @@ impl App {
         }
         self.environment_member_ids(key)
             .into_iter()
-            .filter_map(|id| self.subagents.tracked.get(&id)?.info.environment.as_ref())
+            .filter_map(|id| self.conn.roster.tracked.get(&id)?.info.environment.as_ref())
             .map(|e| e.status.as_str())
             .filter(|s| !s.is_empty())
             .max_by_key(|s| (rank(s), s.to_string()))
@@ -109,7 +110,7 @@ impl App {
         let mut modes: Vec<&str> = self
             .environment_member_ids(key)
             .into_iter()
-            .filter_map(|id| self.subagents.tracked.get(&id)?.info.environment.as_ref())
+            .filter_map(|id| self.conn.roster.tracked.get(&id)?.info.environment.as_ref())
             .map(|e| e.socket_mode.as_str())
             .filter(|m| !m.is_empty())
             .collect();
@@ -127,7 +128,7 @@ impl App {
     /// The selected environment's detail chrome for the main pane, or `None`
     /// when no environment is selected (or its metadata is gone).
     pub(super) fn render_environment_chrome(&self, width: usize) -> Option<Vec<String>> {
-        let env_key = self.subagents.selected_environment.as_deref()?;
+        let env_key = self.conn.roster.selected_environment.as_deref()?;
         let env = self.environment_info(env_key)?;
         let dot = theme::dim("·");
         let name = env
@@ -213,7 +214,7 @@ impl App {
     /// reaches the TUI roster. Renders-not-decides: add it here only once the
     /// harness forwards it on the wire.
     pub(super) fn render_environment_body(&self, width: usize) -> Option<Vec<String>> {
-        let env_key = self.subagents.selected_environment.as_deref()?;
+        let env_key = self.conn.roster.selected_environment.as_deref()?;
         let env = self.environment_info(env_key)?;
         let mut lines = Vec::new();
         let header = format!(
@@ -242,7 +243,7 @@ impl App {
         let member_ids = self.environment_member_ids(env_key);
         let members: Vec<_> = member_ids
             .iter()
-            .filter_map(|id| self.subagents.tracked.get(id))
+            .filter_map(|id| self.conn.roster.tracked.get(id))
             .collect();
         let count = members.len();
         for (i, t) in members.into_iter().enumerate() {
@@ -327,11 +328,11 @@ impl App {
         state: &workflow_bar::WorkflowBarState,
         now: tokio::time::Instant,
     ) -> String {
-        let (name, status) = match self.subagents.active_agent_id.as_deref() {
+        let (name, status) = match self.conn.roster.active_agent_id.as_deref() {
             None => ("Master".to_string(), self.master_status().to_string()),
             Some(id) => {
                 // Selection is UUID-keyed; paint the human display label (#1378).
-                let tracked = self.subagents.tracked.get(id);
+                let tracked = self.conn.roster.tracked.get(id);
                 let label = tracked
                     .map(|t| {
                         t.info
@@ -346,7 +347,7 @@ impl App {
                 (label, status)
             }
         };
-        let elapsed = self.panel_row_elapsed(self.subagents.active_agent_id.as_deref(), now);
+        let elapsed = self.panel_row_elapsed(self.conn.roster.active_agent_id.as_deref(), now);
         let mut title = format!(
             "{} {} {} {}",
             theme::bold(&sanitize_panel_label(&name)),

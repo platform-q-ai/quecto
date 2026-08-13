@@ -175,7 +175,7 @@ async fn handles_tool_start_and_end_for_spawn_and_regular_tools() {
         tool_name: "spawn".into(),
         args: serde_json::json!({"agent_id":"worker-1"}),
     });
-    assert!(app.subagents.tracked.contains_key("worker-1"));
+    assert!(app.conn.roster.tracked.contains_key("worker-1"));
 
     app.handle_event(Event::ToolExecutionEnd {
             tool_call_id: "spawn-1".into(),
@@ -185,13 +185,13 @@ async fn handles_tool_start_and_end_for_spawn_and_regular_tools() {
         });
     // #1378: ToolEnd rekeys the optimistic display row onto the durable UUID.
     assert!(
-        !app.subagents.tracked.contains_key("worker-1"),
+        !app.conn.roster.tracked.contains_key("worker-1"),
         "display-keyed optimistic row must be migrated"
     );
     let uuid = "33333333-3333-4333-8333-333333333333";
-    assert_eq!(app.subagents.tracked[uuid].info.status, "running");
+    assert_eq!(app.conn.roster.tracked[uuid].info.status, "running");
     assert_eq!(
-        app.subagents.tracked[uuid].info.display_name.as_deref(),
+        app.conn.roster.tracked[uuid].info.display_name.as_deref(),
         Some("worker-1")
     );
 

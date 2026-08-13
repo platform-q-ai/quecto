@@ -86,7 +86,7 @@ impl App {
             id: Some(self.conn.namespaced_id("se")),
             effort: effort.to_string(),
         };
-        if self.subagents.active_agent_id.is_some() {
+        if self.conn.roster.active_agent_id.is_some() {
             if !self.send_to_active_subagent(cmd) {
                 self.notify(
                     "Selected sub-agent is not ready for effort changes yet",
@@ -117,7 +117,7 @@ impl App {
             .master_session
             .footer
             .set_effort(Some(level.clone()));
-        if self.subagents.active_agent_id.is_none() {
+        if self.conn.roster.active_agent_id.is_none() {
             self.notify(&format!("Effort set to {level}"), NotifyLevel::Success);
             self.conn.inference.current_effort = Some(level);
         }

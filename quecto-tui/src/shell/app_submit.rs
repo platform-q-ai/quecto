@@ -97,7 +97,7 @@ impl App {
         // targets THAT agent over its own connection and lands in its session,
         // not master's. When the selected child is already running, Enter queues
         // a follow-up behind the current turn; it does not interrupt/steer.
-        if self.subagents.active_agent_id.is_some() {
+        if self.conn.roster.active_agent_id.is_some() {
             let cmd = if self.active_subagent_running() {
                 Command::FollowUp {
                     id: None,
@@ -161,11 +161,11 @@ impl App {
     pub(super) fn handle_abort(&mut self) {
         // Abort targets the ACTIVE session (#802): a selected sub-agent's abort is
         // routed over its own connection and finalizes its transcript.
-        if self.subagents.active_agent_id.is_some() {
+        if self.conn.roster.active_agent_id.is_some() {
             self.send_to_active_subagent(Command::Abort { id: None });
             self.active_chat_mut().finalize_assistant();
-            if let Some(id) = self.subagents.active_agent_id.clone() {
-                if let Some(session) = self.subagents.sessions.get_mut(&id) {
+            if let Some(id) = self.conn.roster.active_agent_id.clone() {
+                if let Some(session) = self.conn.roster.sessions.get_mut(&id) {
                     session.running = false;
                     // Just cancelled: mark run-state observed so the lagging tracked
                     // status can't keep it "running" and re-abort on a 2nd Esc (#834).

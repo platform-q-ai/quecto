@@ -4,7 +4,7 @@ use crate::shell::socket_path::usable_socket_path;
 
 impl App {
     pub(super) fn ensure_synced_subagent_feed(&mut self, id: &str) {
-        if self.subagents.feeds.contains_key(id) {
+        if self.conn.roster.feeds.contains_key(id) {
             return;
         }
         self.open_subagent_feed(id, crate::agents::feed::FeedAuthority::WarmSync);
@@ -15,10 +15,10 @@ impl App {
     /// are sent to the master connection with `agent_id` and routed by the agent
     /// through the nearest reachable ancestor (#1442).
     fn open_subagent_feed(&mut self, id: &str, authority: crate::agents::feed::FeedAuthority) {
-        if self.subagents.feeds.contains_key(id) {
+        if self.conn.roster.feeds.contains_key(id) {
             return;
         }
-        let Some(tracked) = self.subagents.tracked.get(id) else {
+        let Some(tracked) = self.conn.roster.tracked.get(id) else {
             return;
         };
         let socket = tracked.info.socket_path.clone();
@@ -113,7 +113,7 @@ impl App {
             };
             tokio::spawn(task.with_subscriber(connect_dispatch))
         };
-        self.subagents.feeds.insert(
+        self.conn.roster.feeds.insert(
             id.to_string(),
             FeedState::from_parts(
                 crate::agents::runtime::FeedRuntime {

@@ -7,7 +7,7 @@ impl App {
             .next_expiry()
             .map(tokio::time::Instant::from_std);
         let subagent_gc_deadline =
-            next_exited_subagent_gc_deadline(&self.subagents.tracked, EXITED_SUBAGENT_GRACE);
+            next_exited_subagent_gc_deadline(&self.conn.roster.tracked, EXITED_SUBAGENT_GRACE);
         match (notification_deadline, subagent_gc_deadline) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (Some(a), None) | (None, Some(a)) => Some(a),
@@ -21,7 +21,7 @@ impl App {
             || self.conn.agent_state.is_running()
             || self.active_session().footer.is_streaming()
             || self.active_subagent_running()
-            || self.subagents.tracked_active_count() > 0
+            || self.conn.roster.tracked_active_count() > 0
     }
 
     pub(super) fn service_animation_tick(

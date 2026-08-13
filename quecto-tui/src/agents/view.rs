@@ -119,17 +119,19 @@ impl FeedState {
     }
 }
 
-/// Concrete sub-agent / multi-session UI state, grouped by owner (#997) and
-/// backed by the pure agents roster/feed/focus policy modules (#1222).
-pub(crate) struct SubagentUi {
+/// The per-connection roster half of the sub-agent UI (#1463): everything
+/// scoped to ONE tab's agent tree — its tracked children, their sessions and
+/// feeds, and which of them is focused. Lives on `ConnectionState`.
+pub(crate) struct ConnectionRoster {
     /// Client-side subagent state for immediate bar updates (#525).
     /// Updated from tool events (spawn/agent_cmd) and server pushes.
     /// Entries track expiry timestamps for auto-removal (#540).
     pub(crate) tracked: BTreeMap<String, TrackedSubagent<SubagentInfoEvent>>,
     /// Animation frame for the subagent spinner, advanced on each spinner tick.
     pub(crate) frame: usize,
-    /// Per-sub-agent session views, keyed by agent id (#800). The master is not
-    /// in this map — it is top-level App state and `active_agent_id == None`.
+    /// Per-sub-agent session views, keyed by agent id (#800). The master is
+    /// not in this map — it lives on the connection and
+    /// `active_agent_id == None` selects it.
     pub(crate) sessions: BTreeMap<String, SessionView>,
     /// Insertion order of session ids, for bounded retention eviction (#800).
     pub(crate) session_order: Vec<String>,
@@ -140,25 +142,11 @@ pub(crate) struct SubagentUi {
     /// key (`SubagentEnvironmentInfo::group_key`, review #1392), not the
     /// painted ref. `None` = agent chrome.
     pub(crate) selected_environment: Option<String>,
-    /// Left-panel selection cursor over the flattened (master + tree) rows.
-    pub(crate) panel_nav: ListNavigator,
-    /// Durable identity for the focused panel cursor. The row index is only a
-    /// viewport coordinate; live roster updates can reorder rows, so focused
-    /// navigation preserves/commits by this key when possible.
-    pub(crate) panel_nav_key: Option<String>,
-    /// Shared fan-in for the tab's master connection AND its direct/routed
-    /// sub-agent feeds (#800/#1442/#1462), keyed by
-    /// [`crate::shell::connection::SourcedEvent`] so the event loop drains ONE
-    /// channel regardless of connection count.
-    pub(crate) event_tx: mpsc::Sender<crate::shell::connection::SourcedEvent>,
-    pub(crate) event_rx: mpsc::Receiver<crate::shell::connection::SourcedEvent>,
     /// Per-subagent synced feed state keyed by agent id.
     pub(crate) feeds: BTreeMap<String, FeedState>,
-    /// Which pane has keyboard focus: the editor or the side panel (#802).
-    pub(crate) focus: Focus,
 }
 
-impl SubagentUi {
+impl ConnectionRoster {
     /// How many tracked child agents are currently in an active status.
     pub(crate) fn tracked_active_count(&self) -> usize {
         self.tracked
@@ -173,7 +161,6 @@ impl SubagentUi {
     }
 
     pub(crate) fn new() -> Self {
-        let (event_tx, event_rx) = mpsc::channel(256);
         Self {
             tracked: BTreeMap::new(),
             frame: 0,
@@ -181,11 +168,39 @@ impl SubagentUi {
             session_order: Vec::new(),
             active_agent_id: None,
             selected_environment: None,
+            feeds: BTreeMap::new(),
+        }
+    }
+}
+
+/// The global UI half of the sub-agent state (#997/#1463): panel focus and
+/// cursor are app chrome shared across tabs, and the event channel is the
+/// shared fan-in transport for every tab's feeds.
+pub(crate) struct SubagentUi {
+    /// Left-panel selection cursor over the flattened (master + tree) rows.
+    pub(crate) panel_nav: ListNavigator,
+    /// Durable identity for the focused panel cursor. The row index is only a
+    /// viewport coordinate; live roster updates can reorder rows, so focused
+    /// navigation preserves/commits by this key when possible.
+    pub(crate) panel_nav_key: Option<String>,
+    /// Shared fan-in for the tab's master connection AND its direct/routed
+    /// sub-agent feeds (#800/#1442/#1462), keyed by
+    /// [`crate::shell::connection::SourcedEvent`] so the event loop drains ONE
+    /// channel regardless of connection count.
+    pub(crate) event_tx: mpsc::Sender<crate::shell::connection::SourcedEvent>,
+    pub(crate) event_rx: mpsc::Receiver<crate::shell::connection::SourcedEvent>,
+    /// Which pane has keyboard focus: the editor or the side panel (#802).
+    pub(crate) focus: Focus,
+}
+
+impl SubagentUi {
+    pub(crate) fn new() -> Self {
+        let (event_tx, event_rx) = mpsc::channel(256);
+        Self {
             panel_nav: ListNavigator::new(),
             panel_nav_key: None,
             event_tx,
             event_rx,
-            feeds: BTreeMap::new(),
             focus: Focus::Input,
         }
     }

@@ -600,7 +600,7 @@ async fn response_get_subagents_updates_bar() {
         ]
     });
     respond(a, None, "get_subagents", true, Some(data), None);
-    assert!(!a.subagents.tracked.is_empty());
+    assert!(!a.conn.roster.tracked.is_empty());
 }
 
 #[tokio::test]

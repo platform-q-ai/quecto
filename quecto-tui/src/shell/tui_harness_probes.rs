@@ -54,7 +54,7 @@ impl TuiHarness {
 
     /// Tracked sub-agent count held by the sub-agent UI owner group (#997).
     pub fn subagent_group_tracked(&self) -> usize {
-        self.app.subagents.tracked.len()
+        self.app.conn.roster.tracked.len()
     }
 
     /// Drain whatever commands are ALREADY queued, without the bounded
@@ -152,7 +152,7 @@ impl TuiHarness {
                 agent_id: None,
             })
             .expect("prefill");
-        self.app.subagents.feeds.insert(
+        self.app.conn.roster.feeds.insert(
             id.to_string(),
             crate::agents::view::FeedState {
                 cmd_tx,
@@ -177,6 +177,11 @@ impl TuiHarness {
 
     /// The child feed's recorded in-flight sync target, if any.
     pub fn child_feed_pending_rev(&self, id: &str) -> Option<u64> {
-        self.app.subagents.feeds.get(id).and_then(|f| f.pending_rev)
+        self.app
+            .conn
+            .roster
+            .feeds
+            .get(id)
+            .and_then(|f| f.pending_rev)
     }
 }

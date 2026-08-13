@@ -538,7 +538,7 @@ impl App {
             }
             Key::Escape => {
                 // Parity: Esc stops the viewed agent if running, else back to master.
-                if self.subagents.active_agent_id.is_some() {
+                if self.conn.roster.active_agent_id.is_some() {
                     self.conn.rewind.last_idle_escape = None;
                     if self.active_subagent_running() {
                         self.handle_abort();

@@ -32,7 +32,7 @@ impl App {
             provider: None,
             model_id: None,
         };
-        if self.subagents.active_agent_id.is_some() {
+        if self.conn.roster.active_agent_id.is_some() {
             if !self.send_to_active_subagent(cmd) {
                 self.notify(
                     "Selected sub-agent is not ready for model changes yet",

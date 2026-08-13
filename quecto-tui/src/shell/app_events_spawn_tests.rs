@@ -14,7 +14,7 @@ async fn track_starting_subagent_without_agent_id_is_noop() {
     });
     // No subagent should be tracked.
     assert!(
-        app.subagents.tracked.is_empty(),
+        app.conn.roster.tracked.is_empty(),
         "spawn without agent_id should not track a subagent"
     );
 }
@@ -30,11 +30,11 @@ async fn track_starting_subagent_strips_control_chars_from_id() {
     });
     // The sanitized id should be stored, not the raw one.
     assert!(
-        app.subagents.tracked.contains_key("ab"),
+        app.conn.roster.tracked.contains_key("ab"),
         "control chars should be stripped from agent_id"
     );
     assert!(
-        !app.subagents.tracked.contains_key("a\u{0007}b"),
+        !app.conn.roster.tracked.contains_key("a\u{0007}b"),
         "raw (unsanitized) id should not be a key"
     );
 }
@@ -49,8 +49,8 @@ async fn mark_spawned_subagent_running_with_no_quotes_is_noop() {
         tool_name: "spawn".into(),
         args: serde_json::json!({"agent_id": "worker-1"}),
     });
-    assert!(app.subagents.tracked.contains_key("worker-1"));
-    assert_eq!(app.subagents.tracked["worker-1"].info.status, "starting");
+    assert!(app.conn.roster.tracked.contains_key("worker-1"));
+    assert_eq!(app.conn.roster.tracked["worker-1"].info.status, "starting");
 
     // Tool end with result text that has NO single quotes.
     app.handle_event(Event::ToolExecutionEnd {
@@ -63,7 +63,7 @@ async fn mark_spawned_subagent_running_with_no_quotes_is_noop() {
     });
     // Status should remain "starting" (not updated to "running").
     assert_eq!(
-        app.subagents.tracked["worker-1"].info.status, "starting",
+        app.conn.roster.tracked["worker-1"].info.status, "starting",
         "malformed result (no quotes) should not update status"
     );
 }
@@ -88,7 +88,7 @@ async fn mark_spawned_subagent_running_with_one_quote_is_noop() {
         is_error: false,
     });
     assert_eq!(
-        app.subagents.tracked["worker-1"].info.status, "starting",
+        app.conn.roster.tracked["worker-1"].info.status, "starting",
         "result with only one quote should not update status"
     );
 }
@@ -113,7 +113,7 @@ async fn handle_tool_end_spawn_error_does_not_mark_running() {
         is_error: true,
     });
     assert_eq!(
-        app.subagents.tracked["worker-1"].info.status, "starting",
+        app.conn.roster.tracked["worker-1"].info.status, "starting",
         "error result should not mark subagent as running"
     );
 }
@@ -128,8 +128,8 @@ async fn optimistic_display_row_reconciles_to_uuid_snapshot_without_dual_rows() 
         tool_name: "spawn".into(),
         args: serde_json::json!({"agent_id": "worker-1"}),
     });
-    assert!(app.subagents.tracked.contains_key("worker-1"));
-    assert!(app.subagents.tracked["worker-1"].optimistic);
+    assert!(app.conn.roster.tracked.contains_key("worker-1"));
+    assert!(app.conn.roster.tracked["worker-1"].optimistic);
 
     let uuid = "55555555-5555-4555-8555-555555555555";
     app.update_subagent_bar(vec![crate::protocol::client::SubagentInfoEvent {
@@ -149,17 +149,17 @@ async fn optimistic_display_row_reconciles_to_uuid_snapshot_without_dual_rows() 
     }]);
 
     assert!(
-        !app.subagents.tracked.contains_key("worker-1"),
+        !app.conn.roster.tracked.contains_key("worker-1"),
         "display-keyed optimistic row must not survive next to UUID row"
     );
     assert!(
-        app.subagents.tracked.contains_key(uuid),
+        app.conn.roster.tracked.contains_key(uuid),
         "authoritative UUID row must be present"
     );
-    assert!(!app.subagents.tracked[uuid].optimistic);
-    assert_eq!(app.subagents.tracked[uuid].info.status, "running");
+    assert!(!app.conn.roster.tracked[uuid].optimistic);
+    assert_eq!(app.conn.roster.tracked[uuid].info.status, "running");
     assert_eq!(
-        app.subagents.tracked[uuid].info.display_name.as_deref(),
+        app.conn.roster.tracked[uuid].info.display_name.as_deref(),
         Some("worker-1")
     );
 }
@@ -177,10 +177,11 @@ async fn tool_end_uuid_rekey_migrates_sessions_feeds_and_session_order() {
     });
     // User focuses the optimistic row before uuid arrives → session under display.
     app.select_agent(Some("worker-1"));
-    assert!(app.subagents.sessions.contains_key("worker-1"));
-    assert_eq!(app.subagents.active_agent_id.as_deref(), Some("worker-1"));
+    assert!(app.conn.roster.sessions.contains_key("worker-1"));
+    assert_eq!(app.conn.roster.active_agent_id.as_deref(), Some("worker-1"));
     // Seed a distinguishable transcript so we can prove migration, not recreate.
-    app.subagents
+    app.conn
+        .roster
         .sessions
         .get_mut("worker-1")
         .unwrap()
@@ -188,7 +189,7 @@ async fn tool_end_uuid_rekey_migrates_sessions_feeds_and_session_order() {
         .append_token("pre-rekey transcript");
     // Synthetic feed under the display key (as ensure_session/select would pair).
     let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::channel(1);
-    app.subagents.feeds.insert(
+    app.conn.roster.feeds.insert(
         "worker-1".into(),
         crate::agents::view::FeedState {
             cmd_tx,
@@ -204,7 +205,8 @@ async fn tool_end_uuid_rekey_migrates_sessions_feeds_and_session_order() {
         },
     );
     assert!(
-        app.subagents
+        app.conn
+            .roster
             .session_order
             .iter()
             .any(|id| id == "worker-1")
@@ -224,20 +226,20 @@ async fn tool_end_uuid_rekey_migrates_sessions_feeds_and_session_order() {
     });
 
     assert!(
-        !app.subagents.tracked.contains_key("worker-1"),
+        !app.conn.roster.tracked.contains_key("worker-1"),
         "tracked must leave the display key"
     );
-    assert!(app.subagents.tracked.contains_key(uuid));
-    assert_eq!(app.subagents.active_agent_id.as_deref(), Some(uuid));
+    assert!(app.conn.roster.tracked.contains_key(uuid));
+    assert_eq!(app.conn.roster.active_agent_id.as_deref(), Some(uuid));
     assert!(
-        !app.subagents.sessions.contains_key("worker-1"),
+        !app.conn.roster.sessions.contains_key("worker-1"),
         "sessions must rekey with tracked"
     );
     assert!(
-        app.subagents.sessions.contains_key(uuid),
+        app.conn.roster.sessions.contains_key(uuid),
         "session must land under UUID"
     );
-    let migrated = app.subagents.sessions[uuid]
+    let migrated = app.conn.roster.sessions[uuid]
         .chat
         .entries()
         .iter()
@@ -252,19 +254,20 @@ async fn tool_end_uuid_rekey_migrates_sessions_feeds_and_session_order() {
         "pre-rekey transcript must migrate, not be orphaned"
     );
     assert!(
-        !app.subagents.feeds.contains_key("worker-1"),
+        !app.conn.roster.feeds.contains_key("worker-1"),
         "feeds must rekey with tracked"
     );
-    assert!(app.subagents.feeds.contains_key(uuid));
+    assert!(app.conn.roster.feeds.contains_key(uuid));
     assert!(
-        !app.subagents
+        !app.conn
+            .roster
             .session_order
             .iter()
             .any(|id| id == "worker-1"),
         "session_order must drop display key"
     );
     assert!(
-        app.subagents.session_order.iter().any(|id| id == uuid),
+        app.conn.roster.session_order.iter().any(|id| id == uuid),
         "session_order must carry UUID key"
     );
 }
@@ -281,7 +284,7 @@ async fn tool_end_uuid_rekey_migrates_child_recovery_state() {
         args: serde_json::json!({"agent_id": "worker-1"}),
     });
     app.select_agent(Some("worker-1"));
-    let session = app.subagents.sessions.get_mut("worker-1").unwrap();
+    let session = app.conn.roster.sessions.get_mut("worker-1").unwrap();
     session.active_turn_start = 0;
     session.chat.append_token("…truncated");
 
@@ -325,7 +328,7 @@ async fn tool_end_uuid_rekey_migrates_child_recovery_state() {
     );
 
     assert!(
-        app.subagents.sessions[uuid].chat.entries().iter().any(|entry| {
+        app.conn.roster.sessions[uuid].chat.entries().iter().any(|entry| {
             matches!(entry, ChatEntry::Assistant { text, .. } if text.contains("RECOVERED_UUID_CHILD_BODY"))
         }),
         "completed recovery after rekey must update the UUID-keyed child session"
@@ -342,14 +345,15 @@ async fn snapshot_uuid_migrate_moves_sessions_feeds_and_session_order() {
         args: serde_json::json!({"agent_id": "worker-1"}),
     });
     app.select_agent(Some("worker-1"));
-    app.subagents
+    app.conn
+        .roster
         .sessions
         .get_mut("worker-1")
         .unwrap()
         .chat
         .append_token("snapshot-migrate");
     let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::channel(1);
-    app.subagents.feeds.insert(
+    app.conn.roster.feeds.insert(
         "worker-1".into(),
         crate::agents::view::FeedState {
             cmd_tx,
@@ -382,9 +386,9 @@ async fn snapshot_uuid_migrate_moves_sessions_feeds_and_session_order() {
         environment: None,
     }]);
 
-    assert!(!app.subagents.sessions.contains_key("worker-1"));
-    assert!(app.subagents.sessions.contains_key(uuid));
-    let migrated = app.subagents.sessions[uuid]
+    assert!(!app.conn.roster.sessions.contains_key("worker-1"));
+    assert!(app.conn.roster.sessions.contains_key(uuid));
+    let migrated = app.conn.roster.sessions[uuid]
         .chat
         .entries()
         .iter()
@@ -395,16 +399,17 @@ async fn snapshot_uuid_migrate_moves_sessions_feeds_and_session_order() {
             _ => false,
         });
     assert!(migrated, "snapshot migrate must keep session content");
-    assert!(!app.subagents.feeds.contains_key("worker-1"));
-    assert!(app.subagents.feeds.contains_key(uuid));
+    assert!(!app.conn.roster.feeds.contains_key("worker-1"));
+    assert!(app.conn.roster.feeds.contains_key(uuid));
     assert!(
-        !app.subagents
+        !app.conn
+            .roster
             .session_order
             .iter()
             .any(|id| id == "worker-1")
     );
-    assert!(app.subagents.session_order.iter().any(|id| id == uuid));
-    assert_eq!(app.subagents.active_agent_id.as_deref(), Some(uuid));
+    assert!(app.conn.roster.session_order.iter().any(|id| id == uuid));
+    assert_eq!(app.conn.roster.active_agent_id.as_deref(), Some(uuid));
 }
 
 #[tokio::test]
@@ -427,6 +432,6 @@ async fn mark_spawned_subagent_running_with_unknown_id_is_noop() {
         is_error: false,
     });
     // worker-1 should remain "starting"; unknown-agent was never tracked.
-    assert_eq!(app.subagents.tracked["worker-1"].info.status, "starting");
-    assert!(!app.subagents.tracked.contains_key("unknown-agent"));
+    assert_eq!(app.conn.roster.tracked["worker-1"].info.status, "starting");
+    assert!(!app.conn.roster.tracked.contains_key("unknown-agent"));
 }

@@ -78,6 +78,9 @@ pub(crate) struct ConnectionState {
     /// The model/effort the tab's agent currently runs with (#1463);
     /// selector overlays stay global on `App`.
     pub(crate) inference: app_inference::ConnInference,
+    /// This tab's agent tree: tracked children, their sessions and feeds
+    /// (#1463 cluster 6); the panel focus/cursor half stays global.
+    pub(crate) roster: crate::agents::view::ConnectionRoster,
 }
 
 impl ConnectionState {
@@ -111,6 +114,7 @@ impl ConnectionState {
             sessions: SessionsFlow::default(),
             workflow: WorkflowFlow::default(),
             inference: app_inference::ConnInference::default(),
+            roster: crate::agents::view::ConnectionRoster::new(),
         }
     }
 

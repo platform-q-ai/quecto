@@ -283,12 +283,12 @@ impl App {
         let mut bottom = Vec::new();
 
         // Sub-agent/workflow bars moved out of the bottom stack.
-        if self.subagents.active_agent_id.is_none() && self.conn.spinner.is_some() {
+        if self.conn.roster.active_agent_id.is_none() && self.conn.spinner.is_some() {
             // Master is active and mid-turn: show its richer tool spinner (tool
             // name + elapsed), the only master-local render telemetry layered on
             // top of the shared per-session `running` flag (#828).
             if let Some(spinner) = &mut self.conn.spinner {
-                if self.subagents.tracked.is_empty() {
+                if self.conn.roster.tracked.is_empty() {
                     bottom.push(String::new());
                 }
                 bottom.extend(spinner.render(width));
@@ -298,13 +298,13 @@ impl App {
             // follow-up work, or the master before its spinner exists); show the
             // working indicator so it never looks dead.
             bottom.push(String::new());
-            bottom.push(subagent_activity_line(1, self.subagents.frame));
-        } else if !self.subagents.tracked.is_empty() {
-            let active = self.subagents.tracked_active_count();
+            bottom.push(subagent_activity_line(1, self.conn.roster.frame));
+        } else if !self.conn.roster.tracked.is_empty() {
+            let active = self.conn.roster.tracked_active_count();
             if active > 0 {
-                bottom.push(subagent_activity_line(active, self.subagents.frame));
+                bottom.push(subagent_activity_line(active, self.conn.roster.frame));
             } else {
-                bottom.push(subagent_idle_line(self.subagents.tracked.len()));
+                bottom.push(subagent_idle_line(self.conn.roster.tracked.len()));
             }
         }
 

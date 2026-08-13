@@ -77,7 +77,7 @@ impl App {
     }
 
     pub(super) fn next_history_page_request(&mut self) -> Option<(String, String)> {
-        if self.subagents.active_agent_id.is_some() {
+        if self.conn.roster.active_agent_id.is_some() {
             return None;
         }
         let ns = self.conn.id_namespace();
@@ -111,7 +111,7 @@ impl App {
     /// routing — so the response returns on the master stream and is applied to
     /// the child's chat.
     pub(super) fn request_active_visible_stub_recalls(&mut self) {
-        let agent_id = self.subagents.active_agent_id.clone();
+        let agent_id = self.conn.roster.active_agent_id.clone();
         let stub_infos = self.active_session().chat.visible_stub_message_infos();
         for (message_id, content_len) in stub_infos {
             let recall_key = (agent_id.clone(), message_id.clone());
@@ -182,7 +182,8 @@ impl App {
         let chat = match &recall.agent_id {
             None => Some(&mut self.conn.master_session.chat),
             Some(child) => self
-                .subagents
+                .conn
+                .roster
                 .sessions
                 .get_mut(child)
                 .map(|session| &mut session.chat),
