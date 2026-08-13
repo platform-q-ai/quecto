@@ -3,7 +3,6 @@
 //! Maps a workspace id → ordered tabs (session key + name) + active index.
 //! Partial/crashed writes must not leave corrupt authoritative state.
 
-#![allow(dead_code)] // P2 manifest library; resume UX is P4
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -53,6 +52,7 @@ impl Default for WorkspaceManifestStore {
 }
 
 impl WorkspaceManifestStore {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn new() -> Self {
         Self::default()
     }
@@ -105,6 +105,8 @@ impl WorkspaceManifestStore {
             .find(|w| w.workspace_id == workspace_id)
     }
 
+    /// Remove a workspace row (lifecycle cleanup / tests).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn remove(&mut self, workspace_id: &str) -> bool {
         let before = self.workspaces.len();
         self.workspaces.retain(|w| w.workspace_id != workspace_id);

@@ -73,8 +73,6 @@ impl super::App {
     /// Insert a connecting placeholder tab and focus it (AC1 partial).
     pub(crate) fn open_placeholder_tab(&mut self, name: Option<String>) -> TabId {
         let tab = self.allocate_tab_id();
-        let transport = Connection::placeholder(tab);
-        // Insert disconnected skeleton first so attach can upgrade the slot.
         let mut footer = Footer::new();
         footer.set_git_branch(self.workspace.git_branch.clone());
         let mut state = ConnectionState::new(
@@ -84,9 +82,9 @@ impl super::App {
         state.agent_connected = false;
         state.name = name;
         self.tabs.insert(tab, state);
-        // Re-enter via attach so the production path stays live for spawn-connect.
+        // Upgrade path shares attach_connection_to_tab with future live spawn.
+        let transport = Connection::placeholder(tab);
         self.attach_connection_to_tab(tab, transport, None);
-        // Placeholder must remain not-connected until a live client is attached.
         if let Some(s) = self.tabs.get_mut(&tab) {
             s.agent_connected = false;
         }
@@ -224,7 +222,13 @@ impl super::App {
         registry_path: &Path,
         manifest_path: &Path,
     ) {
-        let reg = self.registry_snapshot(Some(workspace_id));
+        // Load prior sidecar, overlay current tabs, refresh liveness, GC dead (AC4).
+        let mut reg = crate::shell::tab_registry::TabAgentRegistry::load(registry_path);
+        for record in self.registry_snapshot(Some(workspace_id)).agents {
+            reg.upsert(record);
+        }
+        reg.refresh_status(crate::shell::tab_registry::default_liveness_probe);
+        reg.gc_dead(crate::shell::tab_registry::default_liveness_probe);
         if let Err(e) = reg.store(registry_path) {
             self.notify(
                 &format!("failed to write tab registry: {e}"),

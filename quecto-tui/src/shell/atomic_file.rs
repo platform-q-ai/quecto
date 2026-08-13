@@ -3,7 +3,6 @@
 //! Writes go to a same-directory temporary file, then `rename` replaces the
 //! destination so readers never observe a partial authoritative file.
 
-#![allow(dead_code)] // P2 durability primitive; callers land in P3 lifecycle
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;

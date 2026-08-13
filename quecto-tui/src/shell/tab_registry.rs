@@ -4,7 +4,6 @@
 //! workspace id, timestamps/status) with atomic load/store and GC helpers.
 //! No dependency on `quecto-runtime-manager`.
 
-#![allow(dead_code)] // P2 registry library; lifecycle wiring is P3
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
