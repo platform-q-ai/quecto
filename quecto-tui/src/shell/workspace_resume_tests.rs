@@ -240,14 +240,24 @@ fn apply_workspace_manifest_reattaches_live_registry_socket_on_connected_tab() {
         master.pending_attach,
         "live reattach must be scheduled against the detached agent"
     );
-    assert_eq!(
-        master.pending_session_resume.as_deref(),
-        Some("cli:work"),
-        "session key stays latched until the live socket attach completes"
+    assert!(
+        master.pending_session_resume.is_none(),
+        "live reattach must not latch a resume_session for the already-running owner"
     );
     assert!(
         fresh_rx.try_recv().is_err(),
         "must not send resume_session into the freshly spawned master while a live owner exists"
+    );
+
+    let (reattached, mut reattached_rx) = crate::shell::connection::Connection::live_for_tests();
+    a.attach_connection_to_tab(TabId::MASTER, reattached, None);
+    let mut wire = Vec::new();
+    while let Ok(line) = reattached_rx.try_recv() {
+        wire.push(line);
+    }
+    assert!(
+        wire.iter().all(|line| !line.contains("resume_session")),
+        "successful live-socket reattach must not send resume_session back to the detached owner: {wire:?}"
     );
 }
 

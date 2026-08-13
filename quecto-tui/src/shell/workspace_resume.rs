@@ -186,7 +186,12 @@ impl super::App {
                         // the new agent would contend for the session lock.
                         self.ac_mut().socket_path = Some(socket);
                         self.ac_mut().session_key = Some(session.clone());
-                        self.ac_mut().pending_session_resume = Some(session.clone());
+                        // Tier-1 live reattach reconnects to the already-running
+                        // owner; do not send resume_session back into it after
+                        // attach completes. Tier-2 stale/dead sockets still pass
+                        // `session` to spawn_tab_agent_attach so fallback spawn
+                        // resumes the persistent session.
+                        self.ac_mut().pending_session_resume = None;
                         self.ac_mut().pending_attach = true;
                         self.ac_mut().agent_connected = false;
                         self.spawn_tab_agent_attach(tab, Some(session.clone()));
