@@ -338,6 +338,10 @@ fn parse_modify_other_keys(params: &[u8]) -> Option<Key> {
     let ctrl = mod_bits & 4 != 0;
 
     match codepoint {
+        // Tab-switch chords (#1466 decision 5), mirroring parse_kitty_key:
+        // Ctrl/Alt+Tab cycles next, Shift variants cycle back.
+        9 if (ctrl || alt) && shift => Some(Key::TabSwitchPrev),
+        9 if ctrl || alt => Some(Key::TabSwitchNext),
         65..=90 if ctrl && shift => Some(Key::CtrlShift(((codepoint as u8) + b'a' - b'A') as char)),
         97..=122 if ctrl && shift => Some(Key::CtrlShift((codepoint as u8) as char)),
         65..=90 if ctrl => Some(Key::Ctrl(((codepoint as u8) + b'a' - b'A') as char)),

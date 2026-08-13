@@ -507,6 +507,9 @@ async fn kitty_ctrl_digit_alias_matches_alt_digit_primary() {
 async fn ctrl_digit_past_open_tab_count_is_a_no_op() {
     let mut app = two_tab_app();
     let (key, _) = parse_key(b"\x1b[57;5u").expect("kitty Ctrl+9 parses");
+    // Assert parse identity so this test fails if the Ctrl+digit alias arm is
+    // removed (Key::Unknown would also be a no-op, making the test vacuous).
+    assert_eq!(key, Key::Alt('9'), "kitty Ctrl+9 must alias Alt+9");
     app.handle_key(key);
     assert_eq!(
         app.active_tab,
@@ -541,7 +544,11 @@ async fn kitty_ctrl_tab_alias_cycles_to_next_tab() {
 
 #[tokio::test]
 async fn kitty_ctrl_shift_tab_alias_cycles_to_previous_tab() {
+    // Three tabs so direction is falsifiable: from MASTER, prev wraps to
+    // TabId(2) while next would land on TabId(1) — two tabs cannot tell
+    // switch_tab_prev apart from switch_tab_next.
     let mut app = two_tab_app();
+    app.test_insert_disconnected_tab(2);
     // CSI 9;6u = Ctrl + Shift + Tab under the kitty keyboard protocol.
     let (key, _) = parse_key(b"\x1b[9;6u").expect("kitty Ctrl+Shift+Tab parses");
     assert_ne!(
@@ -560,7 +567,7 @@ async fn kitty_ctrl_shift_tab_alias_cycles_to_previous_tab() {
     app.handle_key(key);
     assert_eq!(
         app.active_tab,
-        TabId(1),
+        TabId(2),
         "kitty Ctrl+Shift+Tab must cycle to the previous tab (wraps)"
     );
 }

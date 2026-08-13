@@ -123,6 +123,15 @@ impl super::App {
             return;
         }
 
+        // Adopt the resumed workspace's identity: subsequent persists must
+        // update the existing row instead of forking a duplicate under the
+        // constructor-minted UUID (which would also strand the old row and
+        // discard its label).
+        self.workspace_id = manifest.workspace_id.clone();
+        if !manifest.label.trim().is_empty() {
+            self.workspace_label = manifest.label.clone();
+        }
+
         // Ensure tab slots exist matching manifest order.
         for (idx, entry) in manifest.tabs.iter().enumerate() {
             let tab = TabId(entry.tab_id);

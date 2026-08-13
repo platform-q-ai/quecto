@@ -466,15 +466,22 @@ impl super::App {
             on_disk.upsert(rec);
         }
         let open: std::collections::HashSet<u32> = self.tabs.keys().map(|t| t.0).collect();
+        // A row is "ours" only when both the tab id is open AND the row's
+        // workspace matches: matching on tab_id alone would flip dead foreign
+        // rows Live (tab 0 is open in every TUI) and make them immortal,
+        // which in turn pins their session-less manifests past gc_orphaned.
+        let is_open_own = |rec: &crate::shell::tab_registry::TabAgentRecord| {
+            open.contains(&rec.tab_id) && rec.workspace_id.as_deref() == Some(workspace_id)
+        };
         on_disk.refresh_status(|rec| {
-            if open.contains(&rec.tab_id) {
+            if is_open_own(rec) {
                 true
             } else {
                 crate::shell::tab_registry::default_liveness_probe(rec)
             }
         });
         on_disk.gc_dead(|rec| {
-            open.contains(&rec.tab_id) || crate::shell::tab_registry::default_liveness_probe(rec)
+            is_open_own(rec) || crate::shell::tab_registry::default_liveness_probe(rec)
         });
         let _ = on_disk.store(registry_path);
         let mut store = WorkspaceManifestStore::load(manifest_path);
