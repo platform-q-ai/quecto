@@ -1,7 +1,7 @@
 pub(super) use super::app_render_helpers::{
     strip_ansi, subagent_activity_line, subagent_idle_line,
 };
-use super::app_selection::{SelectionAnchor, apply_selection_highlight, display_col_to_char_idx};
+use super::app_selection::apply_selection_highlight;
 use super::*;
 use crate::components::select_list::route_overlay_key;
 use crate::components::select_overlay::{
@@ -23,7 +23,7 @@ impl App {
     // ── Slash command handlers ─────────────────────────────────────────
 
     pub(super) fn reject_unknown_slash_command(&mut self, command: &str) {
-        self.active_conn_mut()
+        self.ac_mut()
             .master_session
             .chat
             .add_entry(ChatEntry::Status {
@@ -70,14 +70,14 @@ impl App {
                 command.name, command.description
             ));
         }
-        self.active_conn_mut()
+        self.ac_mut()
             .master_session
             .chat
             .add_entry(ChatEntry::Status { text });
     }
 
     pub(super) fn show_workflow_status(&mut self) {
-        let wf = &self.active_conn().master_session.workflow_bar;
+        let wf = &self.ac().master_session.workflow_bar;
         let text = if workflow_bar::render_widget(wf, self.terminal.width).is_empty() {
             "Workflow is not active. Start quecto-tui with --workflow to enable it.".to_string()
         } else {
@@ -96,25 +96,25 @@ impl App {
                 wf.total.max(1)
             )
         };
-        self.active_conn_mut()
+        self.ac_mut()
             .master_session
             .chat
             .add_entry(ChatEntry::Status { text });
     }
 
     pub(super) fn toggle_workflow_auto_continue(&mut self) {
-        let next = !self.active_conn().workflow.auto_continue;
+        let next = !self.ac().workflow.auto_continue;
         self.send_command(Command::SetWorkflowAutomation {
-            id: Some(self.active_conn().namespaced_id("workflow-auto")),
+            id: Some(self.ac().namespaced_id("workflow-auto")),
             auto_continue: Some(next),
             completion_nudge: None,
         });
     }
 
     pub(super) fn toggle_workflow_completion_nudge(&mut self) {
-        let next = !self.active_conn().workflow.completion_nudge;
+        let next = !self.ac().workflow.completion_nudge;
         self.send_command(Command::SetWorkflowAutomation {
-            id: Some(self.active_conn().namespaced_id("workflow-nudge")),
+            id: Some(self.ac().namespaced_id("workflow-nudge")),
             auto_continue: None,
             completion_nudge: Some(next),
         });
@@ -122,7 +122,7 @@ impl App {
 
     pub(super) fn send_session_stats(&mut self) {
         self.send_command(Command::GetSessionStats {
-            id: Some(self.active_conn().namespaced_id("stats")),
+            id: Some(self.ac().namespaced_id("stats")),
         });
     }
 
@@ -130,7 +130,7 @@ impl App {
     /// line). Routed by the "stats-footer" id in the response handler.
     pub(super) fn send_session_stats_footer(&mut self) {
         self.send_command(Command::GetSessionStats {
-            id: Some(self.active_conn().namespaced_id("stats-footer")),
+            id: Some(self.ac().namespaced_id("stats-footer")),
         });
     }
 
@@ -139,10 +139,10 @@ impl App {
     pub(super) fn update_footer_stats(&mut self, data: &serde_json::Value) {
         let stats = session_payloads::parse_session_stats(data);
         if stats.context_usage.is_some() {
-            self.active_conn_mut().sessions.context_stats_requested = true;
+            self.ac_mut().sessions.context_stats_requested = true;
         }
         // Shared session-stats→footer mapping (context + cost gate); see #805.
-        self.active_conn_mut()
+        self.ac_mut()
             .master_session
             .footer
             .apply_session_stats(&stats);
@@ -150,7 +150,7 @@ impl App {
 
     pub(super) fn send_list_sessions(&mut self) {
         self.send_command(Command::ListSessions {
-            id: Some(self.active_conn().namespaced_id("resume-list")),
+            id: Some(self.ac().namespaced_id("resume-list")),
         });
     }
 
@@ -160,7 +160,7 @@ impl App {
             return;
         }
         self.send_command(Command::ResumeSession {
-            id: Some(self.active_conn().namespaced_id("resume")),
+            id: Some(self.ac().namespaced_id("resume")),
             session: session.trim().to_string(),
         });
     }
@@ -169,7 +169,7 @@ impl App {
         // Footer context/cost update has a single owner; this adds the chat line.
         self.update_footer_stats(data);
         let stats = session_payloads::parse_session_stats(data);
-        self.active_conn_mut()
+        self.ac_mut()
             .master_session
             .chat
             .add_entry(ChatEntry::Status {
@@ -193,7 +193,7 @@ impl App {
             } else {
                 "No persisted sessions found."
             };
-            self.active_conn_mut()
+            self.ac_mut()
                 .master_session
                 .chat
                 .add_entry(ChatEntry::Status {
@@ -215,13 +215,11 @@ impl App {
                 }
             })
             .collect::<Vec<_>>();
-        self.active_conn_mut().sessions.resume_selector = Some(SelectList::new(items, 10));
+        self.ac_mut().sessions.resume_selector = Some(SelectList::new(items, 10));
     }
 
     pub(super) fn handle_resume_selector_key(&mut self, key: &Key) {
-        if let Some(session) =
-            route_overlay_key(&mut self.active_conn_mut().sessions.resume_selector, key)
-        {
+        if let Some(session) = route_overlay_key(&mut self.ac_mut().sessions.resume_selector, key) {
             self.send_resume_session(&session);
         }
     }
@@ -239,7 +237,7 @@ impl App {
             Ok(messages) => messages,
             Err(error) => {
                 let text = format!("Invalid resume payload: {}", error.description());
-                self.active_conn_mut()
+                self.ac_mut()
                     .master_session
                     .chat
                     .add_entry(ChatEntry::Status { text: text.clone() });
@@ -249,12 +247,12 @@ impl App {
         };
 
         let has_displayable_messages = !messages.is_empty();
-        self.active_conn_mut().master_session.chat.clear();
+        self.ac_mut().master_session.chat.clear();
         for entry in Self::resumed_chat_entries(messages) {
-            self.active_conn_mut().master_session.chat.add_entry(entry);
+            self.ac_mut().master_session.chat.add_entry(entry);
         }
         if !has_displayable_messages {
-            self.active_conn_mut()
+            self.ac_mut()
                 .master_session
                 .chat
                 .add_entry(ChatEntry::Status {
@@ -303,14 +301,14 @@ impl App {
         let mut bottom = Vec::new();
 
         // Sub-agent/workflow bars moved out of the bottom stack.
-        let active_is_master = self.active_conn().roster.active_agent_id.is_none();
-        let active_spinner_visible = self.active_conn().spinner.is_some();
-        let active_roster_empty = self.active_conn().roster.tracked.is_empty();
+        let active_is_master = self.ac().roster.active_agent_id.is_none();
+        let active_spinner_visible = self.ac().spinner.is_some();
+        let active_roster_empty = self.ac().roster.tracked.is_empty();
         if active_is_master && active_spinner_visible {
             // Master is active and mid-turn: show its richer tool spinner (tool
             // name + elapsed), the only master-local render telemetry layered on
             // top of the shared per-session `running` flag (#828).
-            if let Some(spinner) = &mut self.active_conn_mut().spinner {
+            if let Some(spinner) = &mut self.ac_mut().spinner {
                 if active_roster_empty {
                     bottom.push(String::new());
                 }
@@ -321,9 +319,9 @@ impl App {
             // follow-up work, or the master before its spinner exists); show the
             // working indicator so it never looks dead.
             bottom.push(String::new());
-            bottom.push(subagent_activity_line(1, self.active_conn().roster.frame));
-        } else if !self.active_conn().roster.tracked.is_empty() {
-            let roster = &self.active_conn().roster;
+            bottom.push(subagent_activity_line(1, self.ac().roster.frame));
+        } else if !self.ac().roster.tracked.is_empty() {
+            let roster = &self.ac().roster;
             let active = roster.tracked_active_count();
             if active > 0 {
                 bottom.push(subagent_activity_line(active, roster.frame));
@@ -476,12 +474,12 @@ impl App {
         // Composite the active centered overlay (only one is ever active at a
         // time). All three splice through the same ANSI-aware helper so the
         // centering and escape-safe splice rule lives in one place.
-        if let Some(selector) = &mut self.active_conn_mut().sessions.resume_selector {
+        if let Some(selector) = &mut self.ac_mut().sessions.resume_selector {
             let (selector_lines, overlay_width) =
                 build_resume_selector_overlay(selector, width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
-        if let Some(selector) = &mut self.active_conn_mut().rewind.selector {
+        if let Some(selector) = &mut self.ac_mut().rewind.selector {
             let (selector_lines, overlay_width) =
                 build_rewind_selector_overlay(selector, width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
@@ -627,30 +625,27 @@ impl App {
     pub(super) fn reset_session(&mut self, message: &str) {
         // Invalidate a pending off-loop disconnect diagnosis (#1470 r2/r3)
         // so the stale completion never lands in the fresh transcript.
-        self.active_conn_mut().disconnect_diag_pending = false;
+        self.ac_mut().disconnect_diag_pending = false;
         // A dead connection still clears the LOCAL transcript (/clear must
         // work on a dead session) but reports honestly (#1470 r3).
         // Optimistic-enqueue window (#1470 r5): a just-died socket whose
         // Closed sentinel has not drained still enqueues successfully —
         // identical to pre-seam master; command acks are phase-2 scope.
-        let was_connected = self.active_conn().agent_connected;
+        let was_connected = self.ac().agent_connected;
         let agent_reset = self.send_new_session();
-        self.active_conn_mut().master_session.chat.clear();
+        self.ac_mut().master_session.chat.clear();
         // The clear wiped any persistent refusal Status line; re-arm the
         // once-per-episode latch so the next refusal (send_state_resync
         // below, on a dead connection) re-raises the toast and re-writes
         // the line into the fresh transcript (#1470 r6).
-        if !self.active_conn().agent_connected {
-            self.active_conn_mut().disconnect_refusal_notified = false;
+        if !self.ac().agent_connected {
+            self.ac_mut().disconnect_refusal_notified = false;
         }
         // Invalidate in-flight ref recovery so a late get_message from the OLD
         // transcript can't splice into the cleared /clear-or-/new session (#1060 r4).
         self.clear_message_recovery();
-        self.active_conn_mut()
-            .master_session
-            .footer
-            .set_context(None, 0);
-        self.active_conn_mut().sessions.context_stats_requested = false;
+        self.ac_mut().master_session.footer.set_context(None, 0);
+        self.ac_mut().sessions.context_stats_requested = false;
         // The agent resets session-scoped state (e.g. the effort override, #1067)
         // on new_session; re-fetch so the footer tracks it (commands dispatch in
         // order, so this get_state observes the fresh session).
@@ -683,88 +678,4 @@ impl App {
     }
 
     // ── Command sending ───────────────────────────────────────────────
-
-    pub(super) fn send_command(&mut self, cmd: Command) -> bool {
-        // Refuse a known-dead connection: the writer channel outlives the closed
-        // event stream, so `try_send` would return `Ok` and the command vanish
-        // into a dead socket. Bail silently and return false — callers that show
-        // user feedback (e.g. `reset_session`) act on that (#1470 review).
-        if !self.active_conn().agent_connected {
-            self.refuse_disconnected_command(&cmd);
-            return false;
-        }
-        // Enqueue synchronously in call order onto the client's FIFO writer; a
-        // prior per-command `tokio::spawn` let bursts reach the agent reordered
-        // or look incomplete to an observer draining mid-batch (#1060 review).
-        if let Err(e) = self.active_conn().transport.try_send(&cmd) {
-            // Roll back synchronously: the diagnostic side channel below is
-            // best-effort, and if its receiver is gone we must not leave
-            // pending history/resume/stub state stranded.
-            self.rollback_failed_history_command(MASTER_CONNECTION_ID, &cmd, false);
-            // Report without blocking the loop (a dropped notice is acceptable).
-            let _ = self.command_send_failure_tx.try_send(CommandSendFailure {
-                command: cmd,
-                error: e.to_string(),
-                connection: MASTER_CONNECTION_ID.to_string(),
-            });
-            return false;
-        }
-        true
-    }
-
-    // ── Mouse text selection (#528) ───────────────────────────────────
-
-    /// Extract visible text from the rendered buffer between two selection anchors.
-    pub(super) fn extract_selection(
-        &self,
-        start: &SelectionAnchor,
-        end: &SelectionAnchor,
-    ) -> String {
-        // Normalize: ensure start ≤ end (top-to-bottom, left-to-right).
-        let (start, end) = if (start.row, start.col) <= (end.row, end.col) {
-            (start, end)
-        } else {
-            (end, start)
-        };
-
-        let lines = &self.last_rendered_lines;
-        let (panel_width, divider_width, _) = self.frame_split();
-        let body_start_col = panel_width.saturating_add(divider_width);
-        let mut result = String::new();
-
-        for row in start.row..=end.row {
-            let row_idx = row as usize;
-            if row_idx >= lines.len() {
-                break;
-            }
-            let visible = strip_ansi_for_selection(&lines[row_idx]);
-            let visible_width = crate::components::utils::visible_width(&visible);
-            let chars: Vec<char> = visible.chars().collect();
-
-            let col_start = if row == start.row {
-                start.col as usize
-            } else {
-                0
-            };
-            let col_end = if row == end.row {
-                end.col as usize
-            } else {
-                visible_width
-            };
-
-            let col_start = col_start.max(body_start_col).min(visible_width);
-            let col_end = col_end.max(body_start_col).min(visible_width);
-
-            let start_idx = display_col_to_char_idx(&chars, col_start);
-            let end_idx = display_col_to_char_idx(&chars, col_end);
-            let segment: String = chars[start_idx..end_idx].iter().collect();
-
-            if !result.is_empty() {
-                result.push('\n');
-            }
-            result.push_str(&segment);
-        }
-
-        result
-    }
 }

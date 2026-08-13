@@ -35,14 +35,10 @@ impl App {
         // reading it, and the bounded assistant text scan clones the assistant
         // body — which can be megabytes for an inlined command dump.
         use crate::conversation::turn_recovery::TurnOutcome;
-        let open_tool_calls = self.active_conn().master_session.open_tool_calls;
-        let tools_this_turn = self.active_conn().master_session.tools_this_turn;
-        let target_end = self.active_conn().master_session.chat.entry_count();
-        let target_start = self
-            .active_conn()
-            .master_session
-            .active_turn_start
-            .min(target_end);
+        let open_tool_calls = self.ac().master_session.open_tool_calls;
+        let tools_this_turn = self.ac().master_session.tools_this_turn;
+        let target_end = self.ac().master_session.chat.entry_count();
+        let target_start = self.ac().master_session.active_turn_start.min(target_end);
         let needs_recovery = TurnOutcome::forced_without_text(refs, open_tool_calls) || {
             let assistant_text = self.latest_assistant_text_in_range(target_start, target_end);
             TurnOutcome {
@@ -58,7 +54,7 @@ impl App {
             return;
         }
         if refs.iter().any(|message_id| {
-            self.active_conn()
+            self.ac()
                 .pending_message_recovery
                 .values()
                 .any(|pending| pending.agent_id.is_none() && pending.message_id == *message_id)
@@ -67,16 +63,16 @@ impl App {
         }
         let batch_id = format!(
             "{}recovery-batch-{}",
-            self.active_conn().id_namespace(),
+            self.ac().id_namespace(),
             super::app_events::uuid_like()
         );
-        self.active_conn_mut().message_recovery_batches.insert(
+        self.ac_mut().message_recovery_batches.insert(
             batch_id.clone(),
             MessageRecoveryBatch::new(refs.to_vec(), target_start, target_end, None),
         );
         for message_id in refs {
             if self
-                .active_conn()
+                .ac()
                 .pending_message_recovery
                 .values()
                 .any(|pending| pending.agent_id.is_none() && pending.message_id == *message_id)
@@ -85,10 +81,10 @@ impl App {
             }
             let req_id = format!(
                 "{}msg-recovery-{}",
-                self.active_conn().id_namespace(),
+                self.ac().id_namespace(),
                 super::app_events::uuid_like()
             );
-            self.active_conn_mut().pending_message_recovery.insert(
+            self.ac_mut().pending_message_recovery.insert(
                 req_id.clone(),
                 PendingMessageRecovery {
                     message_id: message_id.clone(),
@@ -114,7 +110,7 @@ impl App {
     }
 
     fn latest_assistant_text_in_range(&self, start: usize, end: usize) -> String {
-        let entries = self.active_conn().master_session.chat.entries();
+        let entries = self.ac().master_session.chat.entries();
         entries[start.min(entries.len())..end.min(entries.len())]
             .iter()
             .rev()
@@ -135,11 +131,7 @@ impl App {
         data: Option<serde_json::Value>,
     ) {
         let Some(req_id) = id else { return };
-        let Some(pending) = self
-            .active_conn_mut()
-            .pending_message_recovery
-            .remove(req_id)
-        else {
+        let Some(pending) = self.ac_mut().pending_message_recovery.remove(req_id) else {
             return;
         };
         if !success {
@@ -172,13 +164,13 @@ impl App {
             }) => {
                 let req_id = format!(
                     "{}msg-recovery-{}",
-                    self.active_conn().id_namespace(),
+                    self.ac().id_namespace(),
                     super::app_events::uuid_like()
                 );
                 let message_id = pending.message_id;
                 let batch_id = pending.batch_id;
                 let agent_id = pending.agent_id;
-                self.active_conn_mut().pending_message_recovery.insert(
+                self.ac_mut().pending_message_recovery.insert(
                     req_id.clone(),
                     PendingMessageRecovery {
                         message_id: message_id.clone(),
@@ -209,7 +201,7 @@ impl App {
         data["content"] = serde_json::Value::String(accumulated);
         data["hasMoreContent"] = serde_json::Value::Bool(false);
         let Some(batch) = self
-            .active_conn_mut()
+            .ac_mut()
             .message_recovery_batches
             .get_mut(&pending.batch_id)
         else {
@@ -220,14 +212,14 @@ impl App {
             return;
         }
         let batch = self
-            .active_conn_mut()
+            .ac_mut()
             .message_recovery_batches
             .remove(&pending.batch_id)
             .unwrap();
         let entries = recovered_chat_entries(&batch.refs, &batch.responses);
         match &batch.agent_id {
             None => {
-                self.active_conn_mut().master_session.chat.replace_range(
+                self.ac_mut().master_session.chat.replace_range(
                     batch.target_start,
                     batch.target_end,
                     entries,
@@ -235,7 +227,7 @@ impl App {
                 self.reconcile_master_retention_trim();
             }
             Some(child) => {
-                if let Some(session) = self.active_conn_mut().roster.sessions.get_mut(child) {
+                if let Some(session) = self.ac_mut().roster.sessions.get_mut(child) {
                     session
                         .chat
                         .replace_range(batch.target_start, batch.target_end, entries);
@@ -246,10 +238,8 @@ impl App {
     }
 
     pub(super) fn abandon_recovery_batch(&mut self, batch_id: &str) {
-        self.active_conn_mut()
-            .message_recovery_batches
-            .remove(batch_id);
-        self.active_conn_mut()
+        self.ac_mut().message_recovery_batches.remove(batch_id);
+        self.ac_mut()
             .pending_message_recovery
             .retain(|_, pending| pending.batch_id != batch_id);
     }
@@ -357,56 +347,43 @@ mod recovery_cov_tests {
     #[test]
     fn recovery_decision_ignores_assistant_text_before_active_turn() {
         let mut app = app_for_recovery_test();
-        app.active_conn_mut()
+        app.ac_mut()
             .master_session
             .chat
             .add_entry(ChatEntry::Assistant {
                 text: "previous complete answer".to_string(),
                 streaming: false,
             });
-        app.active_conn_mut().master_session.active_turn_start =
-            app.active_conn_mut().master_session.chat.entry_count();
+        app.ac_mut().master_session.active_turn_start =
+            app.ac_mut().master_session.chat.entry_count();
 
         app.maybe_recover_from_refs(&["current-ref".to_string()]);
 
-        assert_eq!(app.active_conn().pending_message_recovery.len(), 1);
-        assert_eq!(app.active_conn().message_recovery_batches.len(), 1);
-        let batch = app
-            .active_conn()
-            .message_recovery_batches
-            .values()
-            .next()
-            .unwrap();
+        assert_eq!(app.ac().pending_message_recovery.len(), 1);
+        assert_eq!(app.ac().message_recovery_batches.len(), 1);
+        let batch = app.ac().message_recovery_batches.values().next().unwrap();
         assert_eq!(
             batch.target_start,
-            app.active_conn().master_session.active_turn_start
+            app.ac().master_session.active_turn_start
         );
-        assert_eq!(
-            batch.target_end,
-            app.active_conn().master_session.chat.entry_count()
-        );
-        let pending = app
-            .active_conn()
-            .pending_message_recovery
-            .values()
-            .next()
-            .unwrap();
+        assert_eq!(batch.target_end, app.ac().master_session.chat.entry_count());
+        let pending = app.ac().pending_message_recovery.values().next().unwrap();
         assert_eq!(pending.message_id, "current-ref");
     }
 
     #[test]
     fn recovery_decision_uses_complete_assistant_text_in_active_turn() {
         let mut app = app_for_recovery_test();
-        app.active_conn_mut()
+        app.ac_mut()
             .master_session
             .chat
             .add_entry(ChatEntry::Assistant {
                 text: "previous complete answer".to_string(),
                 streaming: false,
             });
-        app.active_conn_mut().master_session.active_turn_start =
-            app.active_conn_mut().master_session.chat.entry_count();
-        app.active_conn_mut()
+        app.ac_mut().master_session.active_turn_start =
+            app.ac_mut().master_session.chat.entry_count();
+        app.ac_mut()
             .master_session
             .chat
             .add_entry(ChatEntry::Assistant {
@@ -416,8 +393,8 @@ mod recovery_cov_tests {
 
         app.maybe_recover_from_refs(&["current-ref".to_string()]);
 
-        assert!(app.active_conn().pending_message_recovery.is_empty());
-        assert!(app.active_conn().message_recovery_batches.is_empty());
+        assert!(app.ac().pending_message_recovery.is_empty());
+        assert!(app.ac().message_recovery_batches.is_empty());
     }
 
     #[test]

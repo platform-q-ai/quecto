@@ -12,7 +12,7 @@ use crate::protocol::client::Command;
 async fn disconnected_chat_submit_does_not_stack_duplicate_refusal_toasts() {
     let mut h = TuiHarness::new().await;
     let app = h.app_mut();
-    app.active_conn_mut().agent_connected = false;
+    app.ac_mut().agent_connected = false;
 
     app.handle_submit("first drafted message");
     app.handle_submit("second drafted message");
@@ -49,7 +49,7 @@ async fn left_panel_stays_visible_after_agent_disconnect() {
     app.handle_agent_disconnected(None);
 
     assert!(
-        !app.active_conn().agent_connected,
+        !app.ac().agent_connected,
         "disconnect must still mark the agent as not connected"
     );
     assert!(
@@ -155,9 +155,7 @@ async fn oversized_event_drop_is_surfaced_as_notification() {
         "no drops recorded — nothing to surface"
     );
 
-    app.active_conn()
-        .transport
-        .record_dropped_oversized_for_tests(1);
+    app.ac().transport.record_dropped_oversized_for_tests(1);
     assert!(
         app.surface_dropped_oversized_events(),
         "a recorded drop must raise a notification"
@@ -183,13 +181,10 @@ async fn oversized_event_drop_is_surfaced_as_notification() {
 async fn reset_session_clears_locally_and_warns_when_disconnected() {
     let mut h = TuiHarness::new().await;
     let a = h.app_mut();
-    a.active_conn_mut()
-        .master_session
-        .chat
-        .add_entry(ChatEntry::User {
-            text: "clear me".into(),
-        });
-    a.active_conn_mut().agent_connected = false;
+    a.ac_mut().master_session.chat.add_entry(ChatEntry::User {
+        text: "clear me".into(),
+    });
+    a.ac_mut().agent_connected = false;
 
     a.reset_session("New session started");
 
@@ -197,7 +192,7 @@ async fn reset_session_clears_locally_and_warns_when_disconnected() {
     // re-raised persistent refusal Status line (#1470 r6) so later refused
     // commands stay diagnosable in the fresh transcript.
     assert_eq!(
-        a.active_conn().master_session.chat.entry_count(),
+        a.ac().master_session.chat.entry_count(),
         1,
         "a disconnected reset clears the transcript except the refusal line (#1470 r3/r6)"
     );
@@ -220,7 +215,7 @@ async fn reset_session_clears_locally_and_warns_when_disconnected() {
 async fn send_command_refuses_when_disconnected() {
     let mut h = TuiHarness::new().await;
     let a = h.app_mut();
-    a.active_conn_mut().agent_connected = false;
+    a.ac_mut().agent_connected = false;
     assert!(
         !a.send_command(Command::NewSession { id: None }),
         "a known-dead connection must refuse the enqueue"

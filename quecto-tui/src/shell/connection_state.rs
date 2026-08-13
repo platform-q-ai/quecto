@@ -177,6 +177,18 @@ impl App {
             .unwrap_or_else(|| panic!("missing connection state for effective tab {tab:?}"))
     }
 
+    /// Short alias for dense call sites (line-budget / rustfmt).
+    #[inline]
+    pub(crate) fn ac(&self) -> &ConnectionState {
+        self.active_conn()
+    }
+
+    /// Short alias for dense call sites (line-budget / rustfmt).
+    #[inline]
+    pub(crate) fn ac_mut(&mut self) -> &mut ConnectionState {
+        self.active_conn_mut()
+    }
+
     /// Immutable lookup for a specific tab (None if unknown).
     pub(crate) fn conn_for(
         &self,

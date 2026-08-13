@@ -30,8 +30,8 @@ fn app_new_has_single_master_tab() {
     let app = headless_app();
     assert_eq!(app.tabs.len(), 1);
     assert_eq!(app.active_tab, TabId::MASTER);
-    assert_eq!(app.active_conn().transport.tab(), TabId::MASTER);
-    assert_eq!(app.active_conn().name, None);
+    assert_eq!(app.ac().transport.tab(), TabId::MASTER);
+    assert_eq!(app.ac().name, None);
     assert!(app.conn_for(TabId::MASTER).is_some());
     assert_eq!(
         app.conn_for(TabId::MASTER).unwrap().transport.tab(),
@@ -222,7 +222,7 @@ fn mint_namespace_from_multi_slot_tab() {
     // M8
     let mut app = two_tab_app();
     app.test_set_active_tab(1);
-    let id = app.active_conn().namespaced_id("resume");
+    let id = app.ac().namespaced_id("resume");
     assert!(
         id.starts_with("tab1:"),
         "namespace must derive from multi-slot tab, got {id}"
@@ -383,10 +383,10 @@ fn route_sourced_inactive_oversized_drop_surfaces_on_owner() {
 fn active_conn_tracks_active_tab() {
     // M14 foundation
     let mut app = two_tab_app();
-    assert_eq!(app.active_conn().transport.tab(), TabId::MASTER);
+    assert_eq!(app.ac().transport.tab(), TabId::MASTER);
     app.test_set_active_tab(1);
-    assert_eq!(app.active_conn().transport.tab(), TabId(1));
-    app.active_conn_mut().name = Some("t1".into());
+    assert_eq!(app.ac().transport.tab(), TabId(1));
+    app.ac_mut().name = Some("t1".into());
     assert_eq!(app.conn_for(TabId(1)).unwrap().name.as_deref(), Some("t1"));
     assert_eq!(app.conn_for(TabId::MASTER).unwrap().name, None);
 }

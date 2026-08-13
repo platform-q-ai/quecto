@@ -51,7 +51,7 @@ pub struct App {
     renderer: DiffRenderer<std::io::Stdout>,
     /// Per-tab connection states (#1465 / epic #1467). Indexed by [`TabId`];
     /// the active tab is selected by `active_tab`. Call sites reach the
-    /// active slot via `active_conn()` / `active_conn()`, and a specific
+    /// active slot via `ac()` / `ac()`, and a specific
     /// tab via `conn_for` / `conn_mut`.
     tabs: std::collections::HashMap<
         crate::shell::connection::TabId,
@@ -191,10 +191,7 @@ impl App {
             return false;
         }
         self.workspace.git_branch = branch.clone();
-        self.active_conn_mut()
-            .master_session
-            .footer
-            .set_git_branch(branch);
+        self.ac_mut().master_session.footer.set_git_branch(branch);
         true
     }
 
@@ -301,6 +298,8 @@ mod app_ledger_sync;
 pub(crate) mod app_message_recovery;
 #[path = "app_methods.rs"]
 mod app_methods;
+#[path = "app_methods_send.rs"]
+mod app_methods_send;
 #[path = "../inference/controller_models.rs"]
 mod app_models;
 #[path = "../conversation/controller_paged_history.rs"]
@@ -309,6 +308,9 @@ mod app_paged_history;
 mod app_render_helpers;
 #[path = "app_response.rs"]
 mod app_response;
+#[cfg(any(test, feature = "test-harness"))]
+#[path = "app_response_test_api.rs"]
+mod app_response_test_api;
 #[path = "../conversation/controller_resumed_history.rs"]
 mod app_resumed_history;
 #[path = "../conversation/controller_rewind.rs"]

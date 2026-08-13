@@ -94,7 +94,7 @@ async fn warm_feed_startup_sends_get_state_then_initial_sync_once() {
 
     let feed_cmd = h
         .app_mut()
-        .active_conn()
+        .ac()
         .roster
         .feeds
         .get("worker")
@@ -122,7 +122,7 @@ async fn warm_feed_startup_sends_get_state_then_initial_sync_once() {
     .await;
     let still = h
         .app_mut()
-        .active_conn()
+        .ac()
         .roster
         .feeds
         .get("worker")
@@ -137,33 +137,33 @@ async fn warm_feed_startup_sends_get_state_then_initial_sync_once() {
 async fn retained_sessions_and_warm_feeds_evict_oldest_non_active_beyond_cap() {
     let mut h = super::tui_harness::TuiHarness::new().await;
     let app = h.app_mut();
-    app.active_conn_mut().roster.active_agent_id = Some("agent-00".into());
+    app.ac_mut().roster.active_agent_id = Some("agent-00".into());
     for i in 0..17 {
         let id = format!("agent-{i:02}");
         let (feed, _rx) = feed_with_rx();
-        app.active_conn_mut().roster.feeds.insert(id.clone(), feed);
+        app.ac_mut().roster.feeds.insert(id.clone(), feed);
         app.ensure_session(&id);
     }
 
-    assert_eq!(app.active_conn().roster.sessions.len(), 16);
-    assert_eq!(app.active_conn().roster.feeds.len(), 16);
+    assert_eq!(app.ac().roster.sessions.len(), 16);
+    assert_eq!(app.ac().roster.feeds.len(), 16);
     assert!(
-        app.active_conn().roster.sessions.contains_key("agent-00"),
+        app.ac().roster.sessions.contains_key("agent-00"),
         "active session must be preserved even when it is oldest"
     );
     assert!(
-        app.active_conn().roster.feeds.contains_key("agent-00"),
+        app.ac().roster.feeds.contains_key("agent-00"),
         "active feed must be preserved with its active session"
     );
     assert!(
-        !app.active_conn().roster.sessions.contains_key("agent-01"),
+        !app.ac().roster.sessions.contains_key("agent-01"),
         "the oldest non-active retained session should be evicted first"
     );
     assert!(
-        !app.active_conn().roster.feeds.contains_key("agent-01"),
+        !app.ac().roster.feeds.contains_key("agent-01"),
         "evicting a retained session must also clean up its warm feed"
     );
-    assert!(app.active_conn().roster.sessions.contains_key("agent-16"));
+    assert!(app.ac().roster.sessions.contains_key("agent-16"));
 }
 
 #[test]
@@ -204,10 +204,7 @@ async fn ledger_hint_at_current_revision_records_freshness_without_redundant_syn
     feed.supports_sync = true;
     feed.epoch = 7;
     feed.rev = 11;
-    app.active_conn_mut()
-        .roster
-        .feeds
-        .insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
 
     app.note_ledger_advanced("worker", 7, 11);
 
@@ -215,12 +212,7 @@ async fn ledger_hint_at_current_revision_records_freshness_without_redundant_syn
         rx.try_recv().is_err(),
         "a ledger hint at the already-applied revision must not request a duplicate sync"
     );
-    let feed = app
-        .active_conn_mut()
-        .roster
-        .feeds
-        .get_mut("worker")
-        .unwrap();
+    let feed = app.ac_mut().roster.feeds.get_mut("worker").unwrap();
     assert_eq!(feed.epoch, 7);
     assert_eq!(feed.rev, 11);
     assert_eq!(feed.pending_rev, None);
@@ -245,10 +237,7 @@ async fn caught_up_sync_clears_pending_revision_without_follow_up_command() {
     let (mut feed, mut rx) = feed_with_rx();
     feed.supports_sync = true;
     feed.pending_rev = Some(9);
-    app.active_conn_mut()
-        .roster
-        .feeds
-        .insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.ensure_session("worker");
 
     app.route_sync_response(
@@ -267,7 +256,7 @@ async fn caught_up_sync_clears_pending_revision_without_follow_up_command() {
         rx.try_recv().is_err(),
         "a caught-up sync delta must not enqueue a continuation request"
     );
-    let feed = app.active_conn().roster.feeds.get("worker").unwrap();
+    let feed = app.ac().roster.feeds.get("worker").unwrap();
     assert_eq!(feed.epoch, 3);
     assert_eq!(feed.rev, 9);
     assert_eq!(feed.pending_rev, None);
@@ -276,7 +265,7 @@ async fn caught_up_sync_clears_pending_revision_without_follow_up_command() {
         crate::agents::feed::FeedAuthority::SyncedAuthoritative,
         "authority changes only after applying a valid sync delta"
     );
-    let entries = app.active_conn().roster.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(matches!(entries, [ChatEntry::User { text }] if text == "ledger text"));
 }
 
@@ -306,15 +295,15 @@ async fn active_child_removed_by_its_source_feed_falls_back_to_master_only() {
         "removing the active child through its authoritative source feed must fall back to master"
     );
     assert!(
-        app.active_conn().roster.tracked.contains_key("parent"),
+        app.ac().roster.tracked.contains_key("parent"),
         "source-scoped removal must not drop the source root itself"
     );
     assert!(
-        app.active_conn().roster.tracked.contains_key("sibling"),
+        app.ac().roster.tracked.contains_key("sibling"),
         "source-scoped removal must preserve unrelated master-owned siblings"
     );
-    assert!(!app.active_conn().roster.tracked.contains_key("child"));
-    assert!(!app.active_conn().roster.tracked.contains_key("grandchild"));
+    assert!(!app.ac().roster.tracked.contains_key("child"));
+    assert!(!app.ac().roster.tracked.contains_key("grandchild"));
 }
 
 #[tokio::test]
@@ -323,10 +312,7 @@ async fn unfocused_authoritative_ledger_projection_suppresses_legacy_live_child_
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.active_conn_mut()
-        .roster
-        .feeds
-        .insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.ensure_session("worker");
     app.route_sync_response(
         "worker",
@@ -347,7 +333,7 @@ async fn unfocused_authoritative_ledger_projection_suppresses_legacy_live_child_
         },
     );
 
-    let entries = app.active_conn().roster.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(entries, [ChatEntry::Assistant { text, streaming: false }] if text == "from ledger"),
         "once sync is authoritative for an unfocused child, legacy live tokens must not duplicate the ledger transcript: {entries:?}"
@@ -360,10 +346,7 @@ async fn focused_authoritative_ledger_projection_suppresses_stale_live_child_tok
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.active_conn_mut()
-        .roster
-        .feeds
-        .insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.update_subagent_bar(vec![subagent("worker", "running")]);
     app.select_agent(Some("worker"));
     app.ensure_session("worker");
@@ -386,7 +369,7 @@ async fn focused_authoritative_ledger_projection_suppresses_stale_live_child_tok
         },
     );
 
-    let entries = app.active_conn().roster.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(entries, [ChatEntry::Assistant { text, streaming: false }] if text == "from ledger"),
         "focused authoritative ledger projection must suppress stale live tokens after caught-up sync: {entries:?}"
@@ -399,10 +382,7 @@ async fn focused_authoritative_child_turn_end_finalizes_after_focus_switch() {
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.active_conn_mut()
-        .roster
-        .feeds
-        .insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.update_subagent_bar(vec![subagent("worker", "running")]);
     app.select_agent(Some("worker"));
     app.ensure_session("worker");
@@ -428,7 +408,7 @@ async fn focused_authoritative_child_turn_end_finalizes_after_focus_switch() {
     app.select_agent(None);
     app.route_subagent_event("worker", Event::TurnEnd { message: json!({}) });
 
-    let entries = app.active_conn().roster.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(entries, [ChatEntry::User { text, .. }, ChatEntry::Assistant { text: live, streaming: false }] if text == "initial task" && live == "live work"),
         "turn end must finalize existing focused live output even if focus moved away before ledger reconciliation: {entries:?}"
@@ -441,10 +421,7 @@ async fn focused_authoritative_child_renders_live_tokens_until_ledger_reconciles
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.active_conn_mut()
-        .roster
-        .feeds
-        .insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.update_subagent_bar(vec![subagent("worker", "running")]);
     app.select_agent(Some("worker"));
     app.ensure_session("worker");
@@ -468,7 +445,7 @@ async fn focused_authoritative_child_renders_live_tokens_until_ledger_reconciles
         },
     );
 
-    let entries = app.active_conn().roster.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(entries, [ChatEntry::User { text, .. }, ChatEntry::Assistant { text: live, streaming: true }] if text == "initial task" && live == "live work"),
         "focused busy child must render live output before turn commit: {entries:?}"
@@ -486,7 +463,7 @@ async fn focused_authoritative_child_renders_live_tokens_until_ledger_reconciles
         }),
     );
 
-    let entries = app.active_conn().roster.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(entries, [ChatEntry::User { text, .. }, ChatEntry::Assistant { text: committed, streaming: false }] if text == "initial task" && committed == "committed work"),
         "ledger reconciliation must replace the focused live projection without duplication: {entries:?}"

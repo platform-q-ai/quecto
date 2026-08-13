@@ -97,7 +97,7 @@ impl App {
         // targets THAT agent over its own connection and lands in its session,
         // not master's. When the selected child is already running, Enter queues
         // a follow-up behind the current turn; it does not interrupt/steer.
-        if self.active_conn().roster.active_agent_id.is_some() {
+        if self.ac().roster.active_agent_id.is_some() {
             let cmd = if self.active_subagent_running() {
                 Command::FollowUp {
                     id: None,
@@ -126,7 +126,7 @@ impl App {
         // The composed text always lands in the chat (the editor was
         // already emptied by take_submit) — on a dead connection it is the
         // only surviving copy (#1470 r3/r6, single add site).
-        self.active_conn_mut()
+        self.ac_mut()
             .master_session
             .chat
             .add_entry_follow_tail(ChatEntry::User {
@@ -136,11 +136,11 @@ impl App {
         // channel can outlive the stream, so an enqueue could "succeed" and
         // the message silently vanish. The persistent refusal Status line
         // keeps the undelivered message diagnosable after the toast expires.
-        if !self.active_conn().agent_connected {
+        if !self.ac().agent_connected {
             self.note_disconnected_refusal();
             return;
         }
-        let cmd = if self.active_conn().agent_state.is_running() {
+        let cmd = if self.ac().agent_state.is_running() {
             Command::FollowUp {
                 id: None,
                 message: text.to_string(),
@@ -160,11 +160,11 @@ impl App {
     pub(super) fn handle_abort(&mut self) {
         // Abort targets the ACTIVE session (#802): a selected sub-agent's abort is
         // routed over its own connection and finalizes its transcript.
-        if self.active_conn().roster.active_agent_id.is_some() {
+        if self.ac().roster.active_agent_id.is_some() {
             self.send_to_active_subagent(Command::Abort { id: None });
             self.active_chat_mut().finalize_assistant();
-            if let Some(id) = self.active_conn().roster.active_agent_id.clone() {
-                if let Some(session) = self.active_conn_mut().roster.sessions.get_mut(&id) {
+            if let Some(id) = self.ac().roster.active_agent_id.clone() {
+                if let Some(session) = self.ac_mut().roster.sessions.get_mut(&id) {
                     session.running = false;
                     // Just cancelled: mark run-state observed so the lagging tracked
                     // status can't keep it "running" and re-abort on a 2nd Esc (#834).
@@ -178,24 +178,18 @@ impl App {
 
         // Abort the state machine — does NOT set running false; the matched
         // AgentEnd arrives and guards against stale events corrupting state (#502).
-        self.active_conn_mut().agent_state.abort();
-        self.active_conn_mut()
-            .master_session
-            .footer
-            .set_streaming(false);
+        self.ac_mut().agent_state.abort();
+        self.ac_mut().master_session.footer.set_streaming(false);
 
         // Stop spinner / working indicator; `agent_state` stays aborting (#828).
-        self.active_conn_mut().master_session.running = false;
-        self.active_conn_mut().spinner = None;
+        self.ac_mut().master_session.running = false;
+        self.ac_mut().spinner = None;
 
         // Finalize any streaming assistant message.
-        self.active_conn_mut()
-            .master_session
-            .chat
-            .finalize_assistant();
+        self.ac_mut().master_session.chat.finalize_assistant();
 
         // Show abort status.
-        self.active_conn_mut()
+        self.ac_mut()
             .master_session
             .chat
             .add_entry(ChatEntry::Status {

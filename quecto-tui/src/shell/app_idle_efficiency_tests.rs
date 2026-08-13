@@ -33,7 +33,7 @@ async fn visible_spinner_keeps_animation_tick_armed() {
     let mut h = harness().await;
     let app = h.app_mut();
 
-    app.active_conn_mut().spinner = Some(Spinner::new("working"));
+    app.ac_mut().spinner = Some(Spinner::new("working"));
     assert!(
         app.needs_animation_tick(false),
         "a visible spinner must continue advancing while the TUI is otherwise idle"
@@ -61,7 +61,7 @@ async fn running_master_work_keeps_animation_tick_armed() {
     let mut h = harness().await;
     let app = h.app_mut();
 
-    app.active_conn_mut().agent_state.start();
+    app.ac_mut().agent_state.start();
     assert!(
         app.needs_animation_tick(false),
         "running master work must continue advancing the activity indicator"
@@ -73,10 +73,7 @@ async fn streaming_status_keeps_animation_tick_armed() {
     let mut h = harness().await;
     let app = h.app_mut();
 
-    app.active_conn_mut()
-        .master_session
-        .footer
-        .set_streaming(true);
+    app.ac_mut().master_session.footer.set_streaming(true);
     assert!(
         app.needs_animation_tick(false),
         "streaming status must continue advancing the activity indicator"
@@ -112,14 +109,14 @@ fn event_loop_gates_animation_timer_on_needs_animation_tick() {
 async fn spinner_animation_tick_advances_visible_frame() {
     let mut h = harness().await;
     let app = h.app_mut();
-    app.active_conn_mut().spinner = Some(Spinner::new("working"));
-    let before = app.active_conn().spinner.as_ref().unwrap().frame_index();
+    app.ac_mut().spinner = Some(Spinner::new("working"));
+    let before = app.ac().spinner.as_ref().unwrap().frame_index();
     let mut fallback_done = true;
 
     assert!(app.service_animation_tick(&mut fallback_done, tokio::time::Instant::now()));
 
     assert_ne!(
-        app.active_conn().spinner.as_ref().unwrap().frame_index(),
+        app.ac().spinner.as_ref().unwrap().frame_index(),
         before,
         "spinner service tick should visibly advance the spinner frame"
     );

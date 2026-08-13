@@ -2,7 +2,7 @@
 //!
 //! Phase 2 of the multi-session TUI (epic #1467): connection-scoped state
 //! moves off `App` into the per-tab connection structures (behind the
-//! `active_conn()`/`active_conn()` seam), and every minted correlation id
+//! `ac()`/`ac()` seam), and every minted correlation id
 //! gains a connection namespace so a broadcast response can never match a
 //! pending latch on another tab. The master tab is `TabId(0)`, so its
 //! namespace prefix is `tab0:`. The prefix assertion is an explicit contract

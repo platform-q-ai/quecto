@@ -16,15 +16,15 @@ impl App {
     /// Attach the exit-diagnosis watch for a TUI-owned agent child (#1047),
     /// so a later disconnect can report WHY the agent went away.
     pub fn set_child_exit_watch(&mut self, watch: crate::shell::child_watch::ChildWatch) {
-        self.active_conn_mut().child_exit_watch = Some(watch);
+        self.ac_mut().child_exit_watch = Some(watch);
     }
 
     /// Test fixture: model a TUI that never showed the panel. #1047 pins the
     /// panel once it has been seen connected, so both flags must be cleared.
     #[cfg(test)]
     pub(super) fn clear_panel_for_tests(&mut self) {
-        self.active_conn_mut().agent_connected = false;
-        self.active_conn_mut().agent_ever_connected = false;
+        self.ac_mut().agent_connected = false;
+        self.ac_mut().agent_ever_connected = false;
     }
 
     /// Handle the agent event stream closing (the connection feed task's
@@ -48,14 +48,11 @@ impl App {
     /// prompts as deliverable) while the disconnect diagnosis is still
     /// resolving off-loop (#1470 review).
     fn mark_agent_disconnected(&mut self) {
-        self.active_conn_mut().agent_connected = false;
-        self.active_conn_mut().agent_state.reset();
-        self.active_conn_mut().master_session.running = false;
-        self.active_conn_mut().spinner = None;
-        self.active_conn_mut()
-            .master_session
-            .chat
-            .finalize_assistant();
+        self.ac_mut().agent_connected = false;
+        self.ac_mut().agent_state.reset();
+        self.ac_mut().master_session.running = false;
+        self.ac_mut().spinner = None;
+        self.ac_mut().master_session.chat.finalize_assistant();
     }
 
     /// Emit the disconnect notification (and stderr-tail transcript entries,
@@ -68,14 +65,14 @@ impl App {
         // newest line (usually the panic message) goes into the one-line
         // notification; the full tail goes into the transcript.
         let stderr_tail = self
-            .active_conn()
+            .ac()
             .child_exit_watch
             .as_ref()
             .map(|w| w.stderr_tail_lines())
             .unwrap_or_default();
         if let Some(last) = stderr_tail.last() {
             message = format!("{message} — last stderr: {last}");
-            self.active_conn_mut()
+            self.ac_mut()
                 .master_session
                 .chat
                 .add_entry(ChatEntry::Status {
@@ -85,7 +82,7 @@ impl App {
                     ),
                 });
             for line in &stderr_tail {
-                self.active_conn_mut()
+                self.ac_mut()
                     .master_session
                     .chat
                     .add_entry(ChatEntry::Status {
@@ -123,17 +120,17 @@ impl App {
             // later duplicate (ownerless attach connections included, where no
             // diagnosis latch is ever set) is a no-op — the exact once-per-
             // connection guarantee of the deleted gated select arm (#1470 r4).
-            if !app.active_conn().agent_connected {
+            if !app.ac().agent_connected {
                 return;
             }
-            app.active_conn_mut().disconnect_refusal_notified = false;
+            app.ac_mut().disconnect_refusal_notified = false;
             app.surface_dropped_oversized_events();
             app.mark_agent_disconnected();
-            let Some(watch) = app.active_conn().child_exit_watch.clone() else {
+            let Some(watch) = app.ac().child_exit_watch.clone() else {
                 app.emit_agent_disconnected_notice(None);
                 return;
             };
-            app.active_conn_mut().disconnect_diag_pending = true;
+            app.ac_mut().disconnect_diag_pending = true;
             let tx = app.disconnect_diag_tx.clone();
             tokio::spawn(async move {
                 // Best-effort read of the owned agent child's exit diagnosis. The
@@ -169,7 +166,7 @@ impl App {
     ) {
         // Owner-targeted diag completion (#1465 / #1463): unknown tabs no-op.
         let _ = self.with_routing_tab(tab, |app| {
-            if !app.active_conn().disconnect_diag_pending {
+            if !app.ac().disconnect_diag_pending {
                 // A reset invalidated the pending completion: the transcript
                 // entries must not land in the fresh session, but the crash
                 // diagnosis itself (#1047) must still surface as a toast —
@@ -180,7 +177,7 @@ impl App {
                 }
                 return;
             }
-            app.active_conn_mut().disconnect_diag_pending = false;
+            app.ac_mut().disconnect_diag_pending = false;
             app.emit_agent_disconnected_notice(detail);
         });
     }
@@ -189,12 +186,12 @@ impl App {
     /// so the loss is visible instead of the session silently appearing
     /// frozen (#1047). Returns whether a notification was raised.
     pub(super) fn surface_dropped_oversized_events(&mut self) -> bool {
-        let dropped = self.active_conn().transport.dropped_oversized_events();
-        if dropped <= self.active_conn().surfaced_oversized_drops {
+        let dropped = self.ac().transport.dropped_oversized_events();
+        if dropped <= self.ac().surfaced_oversized_drops {
             return false;
         }
-        let new = dropped - self.active_conn().surfaced_oversized_drops;
-        self.active_conn_mut().surfaced_oversized_drops = dropped;
+        let new = dropped - self.ac().surfaced_oversized_drops;
+        self.ac_mut().surfaced_oversized_drops = dropped;
         let message = if new == 1 {
             "Dropped an oversized agent event — some output may be missing".to_string()
         } else {
@@ -229,15 +226,15 @@ impl App {
     /// against a still-visible copy: a re-armed latch (reset during an
     /// episode) must not stack identical toasts.
     pub(super) fn note_disconnected_refusal(&mut self) {
-        if self.active_conn().disconnect_refusal_notified {
+        if self.ac().disconnect_refusal_notified {
             return;
         }
-        self.active_conn_mut().disconnect_refusal_notified = true;
+        self.ac_mut().disconnect_refusal_notified = true;
         let toast = "Agent disconnected — commands are not being sent";
         if !self.notifications.contains_visible(toast) {
             self.notify(toast, NotifyLevel::Error);
         }
-        self.active_conn_mut()
+        self.ac_mut()
             .master_session
             .chat
             .add_entry(ChatEntry::Status {

@@ -19,18 +19,12 @@ fn raw_respond(app: &mut App, id: Option<&str>, data: serde_json::Value) {
 }
 
 fn seed_client_b_transcript(app: &mut App) {
-    app.active_conn_mut()
-        .master_session
-        .chat
-        .add_entry(ChatEntry::User {
-            text: "client-b private turn".into(),
-        });
-    app.active_conn_mut().master_session.history.before_cursor = Some("b-cursor".into());
-    app.active_conn_mut().master_session.history.has_more_before = true;
-    app.active_conn_mut()
-        .master_session
-        .history
-        .partial_prefix_len = Some(1);
+    app.ac_mut().master_session.chat.add_entry(ChatEntry::User {
+        text: "client-b private turn".into(),
+    });
+    app.ac_mut().master_session.history.before_cursor = Some("b-cursor".into());
+    app.ac_mut().master_session.history.has_more_before = true;
+    app.ac_mut().master_session.history.partial_prefix_len = Some(1);
 }
 
 fn b_frame(app: &mut App) -> String {
@@ -65,7 +59,7 @@ async fn mint_resume_id(h: &mut TuiHarness) -> String {
 }
 
 async fn mint_rewind_refresh_id(h: &mut TuiHarness) -> String {
-    h.app_mut().active_conn_mut().rewind.pending_apply_id = Some("rw-a".into());
+    h.app_mut().ac_mut().rewind.pending_apply_id = Some("rw-a".into());
     h.app_mut()
         .handle_response(Some("rw-a".into()), "rewind_to".into(), true, None, None);
     let id = h
@@ -94,7 +88,7 @@ async fn foreign_resume_does_not_replace_other_client_transcript() {
     seed_client_b_transcript(b.app_mut());
     let before_cursor = b
         .app_mut()
-        .active_conn()
+        .ac()
         .master_session
         .history
         .before_cursor
@@ -121,11 +115,7 @@ async fn foreign_resume_does_not_replace_other_client_transcript() {
         "B must not show Session resumed for A's resume:\n{frame}"
     );
     assert_eq!(
-        b.app_mut()
-            .active_conn()
-            .master_session
-            .history
-            .before_cursor,
+        b.app_mut().ac().master_session.history.before_cursor,
         before_cursor,
         "foreign resume must not clobber B paging cursors"
     );
@@ -161,7 +151,7 @@ async fn foreign_rewind_refresh_does_not_replace_other_client_transcript() {
 async fn foreign_rewind_open_does_not_replace_or_open_selector() {
     let mut b = harness().await;
     seed_client_b_transcript(b.app_mut());
-    b.app_mut().active_conn_mut().rewind.pending_open_id = Some("rewind-open-local".into());
+    b.app_mut().ac_mut().rewind.pending_open_id = Some("rewind-open-local".into());
     let before_frame = b_frame(b.app_mut());
 
     respond(
@@ -177,9 +167,9 @@ async fn foreign_rewind_open_does_not_replace_or_open_selector() {
         frame, before_frame,
         "foreign rewind-open must not mutate chat"
     );
-    assert!(b.app_mut().active_conn().rewind.selector.is_none());
+    assert!(b.app_mut().ac().rewind.selector.is_none());
     assert_eq!(
-        b.app_mut().active_conn().rewind.pending_open_id.as_deref(),
+        b.app_mut().ac().rewind.pending_open_id.as_deref(),
         Some("rewind-open-local"),
         "foreign rewind-open must not clear local pending open"
     );
@@ -189,17 +179,11 @@ async fn foreign_rewind_open_does_not_replace_or_open_selector() {
 async fn foreign_rewind_load_and_apply_are_ignored_without_pending_mutation() {
     let mut b = harness().await;
     b.app_mut().editor.set_text("local draft");
-    b.app_mut().active_conn_mut().rewind.pending_load_id = Some("rewind-load-local".into());
-    b.app_mut()
-        .active_conn_mut()
-        .rewind
-        .pending_apply_message_id = Some("local-message".into());
-    b.app_mut().active_conn_mut().rewind.pending_apply_id = Some("rewind-to-local".into());
-    b.app_mut()
-        .active_conn_mut()
-        .rewind
-        .pending_apply_editor_baseline = Some("local draft".into());
-    b.app_mut().active_conn_mut().rewind.pending_apply_text = Some("local original".into());
+    b.app_mut().ac_mut().rewind.pending_load_id = Some("rewind-load-local".into());
+    b.app_mut().ac_mut().rewind.pending_apply_message_id = Some("local-message".into());
+    b.app_mut().ac_mut().rewind.pending_apply_id = Some("rewind-to-local".into());
+    b.app_mut().ac_mut().rewind.pending_apply_editor_baseline = Some("local draft".into());
+    b.app_mut().ac_mut().rewind.pending_apply_text = Some("local original".into());
     let notifications_before = b.app_mut().notifications.messages().len();
 
     b.app_mut().handle_response(
@@ -218,19 +202,15 @@ async fn foreign_rewind_load_and_apply_are_ignored_without_pending_mutation() {
     );
 
     assert_eq!(
-        b.app_mut().active_conn().rewind.pending_load_id.as_deref(),
+        b.app_mut().ac().rewind.pending_load_id.as_deref(),
         Some("rewind-load-local")
     );
     assert_eq!(
-        b.app_mut()
-            .active_conn()
-            .rewind
-            .pending_apply_message_id
-            .as_deref(),
+        b.app_mut().ac().rewind.pending_apply_message_id.as_deref(),
         Some("local-message")
     );
     assert_eq!(
-        b.app_mut().active_conn().rewind.pending_apply_id.as_deref(),
+        b.app_mut().ac().rewind.pending_apply_id.as_deref(),
         Some("rewind-to-local")
     );
     assert_eq!(b.app_mut().editor.text(), "local draft");
@@ -475,17 +455,17 @@ async fn message_recovery_ids_carry_connection_namespace() {
     let _ = h.drain_commands().await;
     let app = h.app_mut();
     assert!(
-        !app.active_conn().pending_message_recovery.is_empty(),
+        !app.ac().pending_message_recovery.is_empty(),
         "precondition: content-less refs mint recovery requests"
     );
-    for id in app.active_conn().pending_message_recovery.keys() {
+    for id in app.ac().pending_message_recovery.keys() {
         assert_namespaced(id, "message-recovery request id");
     }
     assert!(
-        !app.active_conn().message_recovery_batches.is_empty(),
+        !app.ac().message_recovery_batches.is_empty(),
         "precondition: recovery mints a batch id"
     );
-    for id in app.active_conn().message_recovery_batches.keys() {
+    for id in app.ac().message_recovery_batches.keys() {
         assert_namespaced(id, "message-recovery batch id");
     }
 }
@@ -560,10 +540,10 @@ async fn stub_recall_ids_carry_connection_namespace() {
     let _ = h.drain_commands().await;
     let app = h.app_mut();
     assert!(
-        !app.active_conn().pending_stub_recall.is_empty(),
+        !app.ac().pending_stub_recall.is_empty(),
         "precondition: a visible stub mints a recall request"
     );
-    for id in app.active_conn().pending_stub_recall.keys() {
+    for id in app.ac().pending_stub_recall.keys() {
         assert_namespaced(id, "stub-recall request id");
     }
 }
@@ -640,13 +620,13 @@ async fn disconnect_diag_completion_for_another_tab_leaves_this_latch_pending() 
     // accepted phase-2 debt from PR #1470): a completion attributed to some
     // other tab must not clear (or emit through) this tab's latch.
     let mut h = harness().await;
-    h.app_mut().active_conn_mut().disconnect_diag_pending = true;
+    h.app_mut().ac_mut().disconnect_diag_pending = true;
     h.app_mut().finish_agent_stream_closed(
         crate::shell::connection::TabId(1),
         Some("other tab's exit detail".into()),
     );
     assert!(
-        h.app_mut().active_conn().disconnect_diag_pending,
+        h.app_mut().ac().disconnect_diag_pending,
         "a diagnosis completion keyed to another tab must leave this tab's \
          pending latch set (#1463)"
     );

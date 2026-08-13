@@ -145,7 +145,7 @@ async fn focused_panel_environment_highlight_is_not_restored_by_live_sync() {
         h.left_panel()
     );
 
-    h.app_mut().active_conn_mut().roster.selected_environment = Some("stale-env".to_string());
+    h.app_mut().ac_mut().roster.selected_environment = Some("stale-env".to_string());
     h.event(subagents_changed(vec![
         subagent("alpha", "idle", None),
         subagent("bravo", "idle", None),

@@ -26,20 +26,15 @@ impl App {
         // Local pre-validation against the agent-reported vocabulary; when it
         // hasn't arrived yet, defer to the agent's own validation (it rejects
         // invalid levels listing the valid ones).
-        if self.active_conn().inference.effort_levels.is_empty()
-            || self
-                .active_conn()
-                .inference
-                .effort_levels
-                .iter()
-                .any(|l| l == arg)
+        if self.ac().inference.effort_levels.is_empty()
+            || self.ac().inference.effort_levels.iter().any(|l| l == arg)
         {
             self.send_set_effort(arg);
         } else {
             self.notify(
                 &format!(
                     "Invalid effort level \"{arg}\" — valid levels: {}",
-                    self.active_conn().inference.effort_levels.join(", ")
+                    self.ac().inference.effort_levels.join(", ")
                 ),
                 NotifyLevel::Error,
             );
@@ -47,7 +42,7 @@ impl App {
     }
 
     pub(super) fn open_effort_selector(&mut self) {
-        if self.active_conn().inference.effort_levels.is_empty() {
+        if self.ac().inference.effort_levels.is_empty() {
             self.notify(
                 "Effort levels not known yet — still waiting for agent state",
                 NotifyLevel::Warning,
@@ -55,7 +50,7 @@ impl App {
             return;
         }
         let levels: Vec<&str> = self
-            .active_conn()
+            .ac()
             .inference
             .effort_levels
             .iter()
@@ -63,7 +58,7 @@ impl App {
             .collect();
         self.inference.effort_selector = Some(EffortSelector::new(
             &levels,
-            self.active_conn().inference.current_effort.as_deref(),
+            self.ac().inference.current_effort.as_deref(),
         ));
     }
 
@@ -88,10 +83,10 @@ impl App {
     /// switch visibly keeps the previous level.
     pub(super) fn send_set_effort(&mut self, effort: &str) {
         let cmd = Command::SetEffort {
-            id: Some(self.active_conn().namespaced_id("se")),
+            id: Some(self.ac().namespaced_id("se")),
             effort: effort.to_string(),
         };
-        if self.active_conn().roster.active_agent_id.is_some() {
+        if self.ac().roster.active_agent_id.is_some() {
             if !self.send_to_active_subagent(cmd) {
                 self.notify(
                     "Selected sub-agent is not ready for effort changes yet",
@@ -118,13 +113,13 @@ impl App {
         // master's footer, but do not replace the focused child's selector state
         // or toast the master's level as if it were the child's (mirrors the
         // active-only notify on the sub-agent stream side).
-        self.active_conn_mut()
+        self.ac_mut()
             .master_session
             .footer
             .set_effort(Some(level.clone()));
-        if self.active_conn().roster.active_agent_id.is_none() {
+        if self.ac().roster.active_agent_id.is_none() {
             self.notify(&format!("Effort set to {level}"), NotifyLevel::Success);
-            self.active_conn_mut().inference.current_effort = Some(level);
+            self.ac_mut().inference.current_effort = Some(level);
         }
     }
 
@@ -134,7 +129,7 @@ impl App {
     pub(super) fn send_state_resync(&mut self) {
         self.send_command(Command::GetState {
             agent_id: None,
-            id: Some(self.active_conn().namespaced_id("resync")),
+            id: Some(self.ac().namespaced_id("resync")),
         });
     }
 }

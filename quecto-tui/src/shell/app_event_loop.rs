@@ -180,10 +180,10 @@ impl App {
     pub(super) fn send_startup_requests(&mut self) {
         self.send_command(Command::GetState {
             agent_id: None,
-            id: Some(self.active_conn().namespaced_id("init")),
+            id: Some(self.ac().namespaced_id("init")),
         });
         self.send_command(Command::GetSubagents {
-            id: Some(self.active_conn().namespaced_id("init-subagents")),
+            id: Some(self.ac().namespaced_id("init-subagents")),
         });
         self.request_master_attach_backfill();
     }
@@ -386,13 +386,13 @@ impl App {
 
     pub(super) fn handle_key(&mut self, key: Key) {
         if !matches!(key, Key::Escape) {
-            self.active_conn_mut().rewind.last_idle_escape = None;
+            self.ac_mut().rewind.last_idle_escape = None;
         }
 
         // Unconditional exit — Ctrl+D must work regardless of overlays,
         // autocomplete state, or agent activity (#478).
         if matches!(key, Key::Ctrl('d')) {
-            if self.active_conn().agent_state.is_running() {
+            if self.ac().agent_state.is_running() {
                 self.handle_abort();
             }
             self.should_exit = true;
@@ -400,36 +400,36 @@ impl App {
         }
 
         // If the resume selector is active, route input to it.
-        if self.active_conn().sessions.resume_selector.is_some() {
-            self.active_conn_mut().rewind.last_idle_escape = None;
+        if self.ac().sessions.resume_selector.is_some() {
+            self.ac_mut().rewind.last_idle_escape = None;
             self.handle_resume_selector_key(&key);
             return;
         }
 
         // If the rewind selector is active, route input to it.
-        if self.active_conn().rewind.selector.is_some() {
-            self.active_conn_mut().rewind.last_idle_escape = None;
+        if self.ac().rewind.selector.is_some() {
+            self.ac_mut().rewind.last_idle_escape = None;
             self.handle_rewind_selector_key(&key);
             return;
         }
 
         // If the tool policy modal is active, route input to it.
         if self.tool_policy_modal.is_some() {
-            self.active_conn_mut().rewind.last_idle_escape = None;
+            self.ac_mut().rewind.last_idle_escape = None;
             self.handle_tool_policy_modal_key(&key);
             return;
         }
 
         // If the model selector is active, route input to it.
         if self.inference.model_selector.is_some() {
-            self.active_conn_mut().rewind.last_idle_escape = None;
+            self.ac_mut().rewind.last_idle_escape = None;
             self.handle_model_selector_key(&key);
             return;
         }
 
         // If the effort selector is active, route input to it (#1067).
         if self.inference.effort_selector.is_some() {
-            self.active_conn_mut().rewind.last_idle_escape = None;
+            self.ac_mut().rewind.last_idle_escape = None;
             self.handle_effort_selector_key(&key);
             return;
         }
@@ -439,7 +439,7 @@ impl App {
             match &key {
                 Key::Up | Key::Down | Key::Tab | Key::Escape => {
                     if matches!(key, Key::Escape) {
-                        self.active_conn_mut().rewind.last_idle_escape = None;
+                        self.ac_mut().rewind.last_idle_escape = None;
                     }
                     self.autocomplete.handle_input(&key);
                     // Check if a suggestion was selected.
@@ -523,8 +523,7 @@ impl App {
         // Note: Ctrl+D is handled at the top of handle_key (unconditional exit).
         match &key {
             Key::Ctrl('c') => {
-                let running =
-                    self.active_conn().agent_state.is_running() || self.active_subagent_running();
+                let running = self.ac().agent_state.is_running() || self.active_subagent_running();
                 match ctrl_c_action(running, self.editor.text().is_empty()) {
                     CtrlCAction::ClearEditor => {
                         self.editor.set_text("");
@@ -539,8 +538,8 @@ impl App {
             }
             Key::Escape => {
                 // Parity: Esc stops the viewed agent if running, else back to master.
-                if self.active_conn().roster.active_agent_id.is_some() {
-                    self.active_conn_mut().rewind.last_idle_escape = None;
+                if self.ac().roster.active_agent_id.is_some() {
+                    self.ac_mut().rewind.last_idle_escape = None;
                     if self.active_subagent_running() {
                         self.handle_abort();
                     } else {
@@ -548,11 +547,11 @@ impl App {
                     }
                     return;
                 }
-                if self.active_conn().agent_state.is_running() {
-                    self.active_conn_mut().rewind.last_idle_escape = None;
+                if self.ac().agent_state.is_running() {
+                    self.ac_mut().rewind.last_idle_escape = None;
                     self.handle_abort();
                 } else if !self.editor.text().is_empty() {
-                    self.active_conn_mut().rewind.last_idle_escape = None;
+                    self.ac_mut().rewind.last_idle_escape = None;
                     self.editor.set_text("");
                     self.autocomplete.dismiss();
                 } else {

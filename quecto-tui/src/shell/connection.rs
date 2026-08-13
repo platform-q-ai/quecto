@@ -213,7 +213,7 @@ impl Connection {
     #[cfg(any(test, feature = "test-harness"))]
     pub(crate) fn live_for_tests() -> (Self, tokio::sync::mpsc::Receiver<String>) {
         let (tx, rx) = tokio::sync::mpsc::channel::<String>(16);
-        let sender = crate::protocol::client::CommandSender::from_tx_for_tests(tx);
+        let sender = crate::protocol::client::CommandSender { tx };
         (
             Self {
                 tab: TabId::MASTER,

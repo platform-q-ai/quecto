@@ -112,16 +112,16 @@ async fn successful_delete_all_aborts_all_existing_feed_tasks() {
     let (selected_feed, selected_done) = pending_feed();
     let (inactive_feed, inactive_done) = pending_feed();
     h.app_mut()
-        .active_conn_mut()
+        .ac_mut()
         .roster
         .feeds
         .insert("selected".into(), selected_feed);
     h.app_mut()
-        .active_conn_mut()
+        .ac_mut()
         .roster
         .feeds
         .insert("inactive".into(), inactive_feed);
-    h.app_mut().active_conn_mut().roster.active_agent_id = Some("selected".into());
+    h.app_mut().ac_mut().roster.active_agent_id = Some("selected".into());
 
     h.app_mut().handle_submit("/delete-all-subagents");
 
@@ -144,7 +144,7 @@ async fn failed_delete_all_preserves_feed_task() {
     let mut h = harness().await;
     let (feed, done_rx) = pending_feed();
     h.app_mut()
-        .active_conn_mut()
+        .ac_mut()
         .roster
         .feeds
         .insert("worker".into(), feed);
@@ -156,7 +156,7 @@ async fn failed_delete_all_preserves_feed_task() {
     h.app_mut().handle_command_send_failure(failure);
     let feed = h
         .app_mut()
-        .active_conn()
+        .ac()
         .roster
         .feeds
         .get("worker")
@@ -205,7 +205,7 @@ async fn successful_delete_all_cancels_feed_blocked_on_bounded_fan_in_send() {
     let mut feed = feed_from_handle(handle);
     feed.cmd_tx = cmd_tx;
     h.app_mut()
-        .active_conn_mut()
+        .ac_mut()
         .roster
         .feeds
         .insert("blocked".into(), feed);

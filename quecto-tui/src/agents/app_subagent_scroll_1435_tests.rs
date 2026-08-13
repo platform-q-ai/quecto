@@ -80,29 +80,18 @@ async fn handle_submit_master_message_repins_scrolled_chat_to_tail() {
     let mut h = crate::shell::app::tui_harness::TuiHarness::new().await;
     let a = h.app_mut();
     for i in 0..30 {
-        a.active_conn_mut()
-            .master_session
-            .chat
-            .add_entry(ChatEntry::User {
-                text: format!("history line {i}"),
-            });
+        a.ac_mut().master_session.chat.add_entry(ChatEntry::User {
+            text: format!("history line {i}"),
+        });
     }
-    a.active_conn_mut()
-        .master_session
-        .chat
-        .set_viewport_height(10);
-    a.active_conn_mut().master_session.chat.scroll_up(15);
-    let _ = a.active_conn_mut().master_session.chat.render(80);
+    a.ac_mut().master_session.chat.set_viewport_height(10);
+    a.ac_mut().master_session.chat.scroll_up(15);
+    let _ = a.ac_mut().master_session.chat.render(80);
 
     a.handle_submit("visible master prompt");
-    let after = a
-        .active_conn_mut()
-        .master_session
-        .chat
-        .render(80)
-        .join("\n");
+    let after = a.ac_mut().master_session.chat.render(80).join("\n");
 
-    assert_eq!(a.active_conn().master_session.chat.scroll_offset(), 0);
+    assert_eq!(a.ac().master_session.chat.scroll_offset(), 0);
     assert!(after.contains("visible master prompt"));
 }
 
@@ -112,8 +101,8 @@ async fn handle_submit_subagent_message_repins_scrolled_chat_to_tail() {
     let a = h.app_mut();
     let (tx, _rx) = tokio::sync::mpsc::channel(4);
     let id = "child".to_string();
-    a.active_conn_mut().roster.active_agent_id = Some(id.clone());
-    a.active_conn_mut().roster.feeds.insert(
+    a.ac_mut().roster.active_agent_id = Some(id.clone());
+    a.ac_mut().roster.feeds.insert(
         id.clone(),
         crate::agents::view::FeedState {
             cmd_tx: tx,
@@ -129,7 +118,7 @@ async fn handle_submit_subagent_message_repins_scrolled_chat_to_tail() {
         },
     );
     a.ensure_session(&id);
-    let session = a.active_conn_mut().roster.sessions.get_mut(&id).unwrap();
+    let session = a.ac_mut().roster.sessions.get_mut(&id).unwrap();
     for i in 0..30 {
         session.chat.add_entry(ChatEntry::User {
             text: format!("history line {i}"),
@@ -140,13 +129,7 @@ async fn handle_submit_subagent_message_repins_scrolled_chat_to_tail() {
     let _ = session.chat.render(80);
 
     a.handle_submit("visible child prompt");
-    let chat = &mut a
-        .active_conn_mut()
-        .roster
-        .sessions
-        .get_mut(&id)
-        .unwrap()
-        .chat;
+    let chat = &mut a.ac_mut().roster.sessions.get_mut(&id).unwrap().chat;
     let after = chat.render(80).join("\n");
 
     assert_eq!(chat.scroll_offset(), 0);
