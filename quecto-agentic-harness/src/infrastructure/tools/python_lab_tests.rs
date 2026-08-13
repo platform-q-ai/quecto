@@ -205,3 +205,57 @@ fn python_lab_config_defaults_and_conversion_are_stable() {
     assert_eq!(runtime_cfg.default_timeout_seconds, 60);
     assert_eq!(runtime_cfg.max_output_bytes, 1_000_000);
 }
+
+#[tokio::test]
+async fn invalid_json_and_non_array_args_are_tool_errors() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(tool(tmp.path()).execute("not-json").await.unwrap().is_error);
+    assert!(
+        tool(tmp.path())
+            .execute(r#"{"op":"run","code":"print(1)","args":"bad"}"#)
+            .await
+            .unwrap()
+            .is_error
+    );
+}
+
+#[tokio::test]
+async fn session_key_and_limit_clamping_are_reported() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lab = tool(tmp.path());
+    lab.set_session_key("session-a".to_string());
+    let result = lab
+        .execute(
+            r#"{"op":"run","code":"print('ok')","timeout_seconds":999,"max_output_bytes":999}"#,
+        )
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(v["session_id"], "session-a");
+    assert_eq!(v["timeout_seconds"], 2);
+    assert_eq!(v["stdout"], "ok\n");
+    assert_eq!(v["output_truncated"], false);
+    assert!(v["artifact_paths"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn inherit_environment_can_be_enabled() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lab = PythonLabTool::new(
+        Arc::new(tmp.path().to_path_buf()),
+        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), true)),
+        PythonLabConfig {
+            inherit_environment: true,
+            default_max_output_bytes: 32,
+            ..Default::default()
+        },
+    );
+    let result = lab
+        .execute(r#"{"op":"run","code":"import os; print('PATH' in os.environ)"}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(v["stdout"], "True\n");
+}
