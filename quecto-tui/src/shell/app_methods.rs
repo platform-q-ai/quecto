@@ -35,8 +35,21 @@ impl App {
     }
 
     pub(super) fn show_help(&mut self) {
-        let mut text = String::from(
-            "Keyboard shortcuts:\n\
+        // Slash commands first, keyboard shortcuts last: compose_frame follows the
+        // chat tail, so Ctrl+T (and other shortcuts) stay in the viewport as the
+        // slash list grows (#1465 /tab-* entries).
+        let mut text = String::from("Slash commands:");
+        // Derive the slash-command listing from the single source of truth so it
+        // can never drift from the autocomplete set or the dispatch handler.
+        for command in builtin_commands() {
+            text.push_str(&format!(
+                "\n  /{:<14} {}",
+                command.name, command.description
+            ));
+        }
+        text.push_str(
+            "\n\n\
+             Keyboard shortcuts:\n\
              \x20 Enter          Send message (idle) / queue follow-up (running)\n\
              \x20 Shift+Enter    Insert newline\n\
              \x20 Alt+Enter      Insert newline\n\
@@ -58,18 +71,8 @@ impl App {
              \x20 Drag           Select text\n\
              \x20 Shift+click    Open markdown/OSC 8 link in browser\n\
              \x20                (when mouse capture is on; some terminals\n\
-             \x20                use Ctrl/Cmd+click instead)\n\
-             \n\
-             Slash commands:",
+             \x20                use Ctrl/Cmd+click instead)\n",
         );
-        // Derive the slash-command listing from the single source of truth so it
-        // can never drift from the autocomplete set or the dispatch handler.
-        for command in builtin_commands() {
-            text.push_str(&format!(
-                "\n  /{:<14} {}",
-                command.name, command.description
-            ));
-        }
         self.ac_mut()
             .master_session
             .chat

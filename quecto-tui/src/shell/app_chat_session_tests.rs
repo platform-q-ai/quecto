@@ -19,7 +19,13 @@ async fn resume_selector_renders_chat_metadata_and_uses_key_for_selection() {
     });
     let a = h.app_mut();
 
-    a.open_resume_selector(&data);
+    // Empty manifest path so operator workspace sidecars cannot inflate the list.
+    let empty_manifest = std::env::temp_dir().join(format!(
+        "quecto-resume-selector-empty-{}.json",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&empty_manifest);
+    a.open_resume_selector_at(&data, &empty_manifest);
 
     let selector = a.ac_mut().sessions.resume_selector.as_mut().unwrap();
     assert_eq!(selector.item_count(), 1);
