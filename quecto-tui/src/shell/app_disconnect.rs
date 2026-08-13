@@ -195,6 +195,27 @@ impl App {
 }
 
 impl App {
+    /// Refuse a command on a known-dead connection (#1470 r3-r6): roll back
+    /// pending state (latching failed stub recalls) and surface the refusal
+    /// ONCE per disconnect episode — a toast plus a persistent transcript
+    /// Status line, so later refusals stay diagnosable after the toast
+    /// expires without per-command spam.
+    pub(super) fn refuse_disconnected_command(&mut self, cmd: &Command) {
+        self.rollback_failed_history_command(super::MASTER_CONNECTION_ID, cmd, true);
+        if self.disconnect_refusal_notified {
+            return;
+        }
+        self.disconnect_refusal_notified = true;
+        self.notify(
+            "Agent disconnected — commands are not being sent",
+            NotifyLevel::Error,
+        );
+        self.master_session.chat.add_entry(ChatEntry::Status {
+            text: "Agent disconnected — commands are not being sent (restart the TUI to reconnect)"
+                .to_string(),
+        });
+    }
+
     /// Surface a failed command send, attributed to the connection it
     /// happened on (#1460) so that with N per-tab connections the
     /// rollback/notice cannot be misrouted cross-tab.

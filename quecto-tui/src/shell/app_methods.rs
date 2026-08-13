@@ -660,23 +660,7 @@ impl App {
         // into a dead socket. Bail silently and return false — callers that show
         // user feedback (e.g. `reset_session`) act on that (#1470 review).
         if !self.agent_connected {
-            // Roll back pending state (latching failed stub recalls, #1470
-            // r4) and surface the refusal ONCE per disconnect episode —
-            // per-command toasts would bury deliberate caller messaging.
-            self.rollback_failed_history_command(MASTER_CONNECTION_ID, &cmd, true);
-            if !self.disconnect_refusal_notified {
-                self.disconnect_refusal_notified = true;
-                self.notify(
-                    "Agent disconnected — commands are not being sent",
-                    NotifyLevel::Error,
-                );
-                // Notifications expire; a persistent transcript line keeps
-                // later refusals diagnosable ("why won't history load?")
-                // without per-command spam (#1470 r5).
-                self.master_session.chat.add_entry(ChatEntry::Status {
-                    text: "Agent disconnected — commands are not being sent (restart the TUI to reconnect)".to_string(),
-                });
-            }
+            self.refuse_disconnected_command(&cmd);
             return false;
         }
         // Enqueue synchronously in call order onto the client's FIFO writer; a
