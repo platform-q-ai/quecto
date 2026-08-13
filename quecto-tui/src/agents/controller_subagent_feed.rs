@@ -77,7 +77,7 @@ impl App {
                         agent_id: None,
                     }
                     .with_inspection_agent_id(&agent_id)
-                    .map(|cmd| cmd.with_tab_namespace(&ns))
+                    .map(|cmd| crate::protocol::inspection_routing::with_tab_namespace(cmd, &ns))
                     .expect("get_state is routable inspection"),
                 );
                 let _ = root_sender.try_send(
@@ -88,7 +88,7 @@ impl App {
                         agent_id: None,
                     }
                     .with_inspection_agent_id(&agent_id)
-                    .map(|cmd| cmd.with_tab_namespace(&ns))
+                    .map(|cmd| crate::protocol::inspection_routing::with_tab_namespace(cmd, &ns))
                     .expect("sync is routable inspection"),
                 );
                 // A cold routed feed has no direct child stream to backfill from.
@@ -102,12 +102,14 @@ impl App {
                         agent_id: None,
                     }
                     .with_inspection_agent_id(&agent_id)
-                    .map(|cmd| cmd.with_tab_namespace(&ns))
+                    .map(|cmd| crate::protocol::inspection_routing::with_tab_namespace(cmd, &ns))
                     .expect("get_messages_tail is routable inspection"),
                 );
                 while let Some(cmd) = cmd_rx.recv().await {
                     if let Some(routed) = cmd.with_inspection_agent_id(&agent_id) {
-                        let _ = root_sender.try_send(&routed.with_tab_namespace(&ns));
+                        let _ = root_sender.try_send(
+                            &crate::protocol::inspection_routing::with_tab_namespace(routed, &ns),
+                        );
                     }
                 }
             };

@@ -395,13 +395,6 @@ impl Command {
         super::inspection_routing::with_inspection_agent_id(self, agent_id)
     }
 
-    /// Prefix this command's correlation id with a tab's connection
-    /// namespace (`tab{N}:`, #1463). See
-    /// [`super::inspection_routing::with_tab_namespace`].
-    pub fn with_tab_namespace(self, ns: &str) -> Self {
-        super::inspection_routing::with_tab_namespace(self, ns)
-    }
-
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Prompt { .. } => "prompt",
