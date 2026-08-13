@@ -23,7 +23,7 @@ fn routed_subagent_prefix<'a>(id: &'a str, prefixes: &[&str]) -> Option<&'a str>
 /// responses stay agent-keyed; solicited get_messages families drop), while
 /// exact pending latches always compare the full namespaced id, so a foreign
 /// tab's response can never resolve this tab's pendings.
-fn strip_tab_namespace(id: &str) -> &str {
+pub(super) fn strip_tab_namespace(id: &str) -> &str {
     let Some(rest) = id.strip_prefix("tab") else {
         return id;
     };
@@ -190,13 +190,13 @@ impl App {
         error: Option<String>,
     ) {
         if let Some(agent_id) = id.as_deref().and_then(|id| {
-            // Only OUR OWN namespace classifies as routed-subagent (#1472
-            // r2): any-tab stripping let a foreign rev-relative sync delta
-            // fast-forward this feed's rev past unreceived revisions.
-            let own = self.conn.id_namespace();
-            let id = id.strip_prefix(own.as_str()).unwrap_or(id);
+            // Own-namespace only (#1472 r2): a foreign rev-relative sync
+            // delta must never fast-forward this feed's rev.
+            let id = id
+                .strip_prefix(self.conn.id_namespace().as_str())
+                .unwrap_or(id);
             if id.starts_with("tab") && id.contains(':') {
-                return None; // foreign tab's routed id — drop, never route.
+                return None;
             }
             routed_subagent_prefix(
                 id,
@@ -237,21 +237,7 @@ impl App {
                 self.notify_response_error("Workflow automation update failed", error)
             }
             "get_session_stats" if success => {
-                if let Some(data) = data {
-                    // A quiet footer refresh (id "stats-footer") updates the
-                    // cost/context indicators without adding a chat Status line.
-                    let is_foreign_stats_footer = id
-                        .as_deref()
-                        .is_some_and(|id| strip_tab_namespace(id) == "stats-footer");
-                    if id.as_deref() == Some(self.conn.namespaced_id("stats-footer").as_str()) {
-                        self.update_footer_stats(&data);
-                    } else if is_foreign_stats_footer {
-                        // Peer quiet refreshes stay quiet (#1472 r2) — the
-                        // fallthrough printed unrequested stats per peer turn.
-                    } else {
-                        self.show_session_stats(&data);
-                    }
-                }
+                self.handle_session_stats_response(id.as_deref(), data)
             }
             "list_models" if success => self.handle_list_models(data),
             "list_models" => {
