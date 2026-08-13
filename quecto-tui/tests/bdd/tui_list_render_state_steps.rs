@@ -303,7 +303,7 @@ fn rewind_open_emitted(world: &mut TuiWorld) {
     // `contains("rewind-open-1")` only matched when the embedded hex PID
     // happened to start with a 1.
     assert!(
-        cmds.iter().any(|c| c.contains(r#""id":"rewind-open-"#)
+        cmds.iter().any(|c| c.contains(r#""id":"tab0:rewind-open-"#)
             && c.contains(r#""type":"get_messages""#)
             && c.contains(r#"-1""#)),
         "the real double-Escape path must issue a seq-1 rewind-open get_messages: {cmds:?}"

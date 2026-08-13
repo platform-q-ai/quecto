@@ -20,38 +20,38 @@ impl App {
     /// also survives an agent disconnect (#1047): the user keeps the session
     /// tree context needed to diagnose why the agent went away.
     pub(super) fn subagent_panel_visible(&self) -> bool {
-        self.agent_ever_connected
+        self.conn.agent_ever_connected
     }
 
     /// The agent whose session is currently shown in the body. `None` = master.
     #[cfg(any(test, feature = "test-harness"))]
     pub(super) fn active_agent_id(&self) -> Option<&str> {
-        self.subagents.active_agent_id.as_deref()
+        self.conn.roster.active_agent_id.as_deref()
     }
 
     /// Ids of all retained sub-agent sessions (live or exited but still
     /// viewable per the retention policy).
     #[cfg(test)]
     pub(super) fn retained_session_ids(&self) -> Vec<String> {
-        self.subagents.sessions.keys().cloned().collect()
+        self.conn.roster.sessions.keys().cloned().collect()
     }
 
     /// The socket path the child-feed connection would dial for `id`, as
     /// surfaced by the kernel (#800). `None` when unknown.
     #[cfg(test)]
     pub(super) fn subagent_socket_path(&self, id: &str) -> Option<String> {
-        let tracked = self.subagents.tracked.get(id)?;
+        let tracked = self.conn.roster.tracked.get(id)?;
         tracked.info.socket_path.clone()
     }
 
     /// The active session, master or selected sub-agent.
     pub(super) fn active_session(&self) -> &SessionView {
-        let ui = &self.subagents;
+        let ui = &self.conn.roster;
         match ui.active_agent_id.as_deref() {
-            None => &self.master_session,
+            None => &self.conn.master_session,
             // Fall back to the master session if a selected session is somehow
             // missing, mirroring `active_session_mut`'s lazy-create contract.
-            Some(id) => ui.sessions.get(id).unwrap_or(&self.master_session),
+            Some(id) => ui.sessions.get(id).unwrap_or(&self.conn.master_session),
         }
     }
 
@@ -59,19 +59,20 @@ impl App {
     /// sub-agent's session so a selection always has a body to render; the
     /// master session always exists.
     pub(super) fn active_session_mut(&mut self) -> &mut SessionView {
-        let Some(id) = self.subagents.active_agent_id.clone() else {
-            return &mut self.master_session;
+        let Some(id) = self.conn.roster.active_agent_id.clone() else {
+            return &mut self.conn.master_session;
         };
-        if !self.subagents.sessions.contains_key(&id) {
+        if !self.conn.roster.sessions.contains_key(&id) {
             // Cold path only: clone git_branch and build the session here, so the
             // common already-exists render path allocates nothing extra (#827 perf).
             let git_branch = self.workspace.git_branch.clone();
-            Self::remember_session(&mut self.subagents.session_order, &id);
-            self.subagents
+            Self::remember_session(&mut self.conn.roster.session_order, &id);
+            self.conn
+                .roster
                 .sessions
                 .insert(id.clone(), SessionView::new(git_branch));
         }
-        self.subagents.sessions.get_mut(&id).unwrap()
+        self.conn.roster.sessions.get_mut(&id).unwrap()
     }
 
     /// The chat buffer for the active session (master or selected sub-agent).
@@ -83,7 +84,7 @@ impl App {
     /// the deferred-note buffer cap independently of the rendered viewport).
     #[cfg(test)]
     pub(crate) fn session_chat_entry_count(&self, agent_id: &str) -> Option<usize> {
-        let session = self.subagents.sessions.get(agent_id)?;
+        let session = self.conn.roster.sessions.get(agent_id)?;
         Some(session.chat.entry_count())
     }
 
@@ -118,7 +119,7 @@ impl App {
         // and missed `agent_start`, so `session.running` reads a false
         // negative. Fall back to the master's tracked status (`subagent_local`)
         // so Esc still cancels a busy sub-agent instead of navigating to master.
-        let ui = &self.subagents;
+        let ui = &self.conn.roster;
         match &ui.active_agent_id {
             Some(id) => ui
                 .tracked
@@ -142,13 +143,15 @@ impl App {
 
     /// Send a command to the active sub-agent connection.
     pub(super) fn send_to_active_subagent(&mut self, cmd: Command) -> bool {
-        let Some(id) = self.subagents.active_agent_id.clone() else {
+        let Some(id) = self.conn.roster.active_agent_id.clone() else {
             return false;
         };
-        let Some(feed) = self.subagents.feeds.get(&id) else {
+        let Some(feed) = self.conn.roster.feeds.get(&id) else {
             return false;
         };
-        if feed.inspection_only && cmd.with_inspection_agent_id(&id).is_none() {
+        if feed.inspection_only
+            && !crate::protocol::inspection_routing::is_inspection_routable(&cmd)
+        {
             return false;
         }
         // Exact active-agent-id lookup is the command-routing guard: callers
@@ -161,13 +164,13 @@ impl App {
         // (#1369 slice 4); selecting the master keeps it (environment rows
         // render their details over the master body).
         if agent_id.is_some() {
-            self.subagents.selected_environment = None;
+            self.conn.roster.selected_environment = None;
         }
         let new_active = agent_id.map(str::to_string);
-        if new_active == self.subagents.active_agent_id {
+        if new_active == self.conn.roster.active_agent_id {
             return;
         }
-        self.subagents.active_agent_id = new_active.clone();
+        self.conn.roster.active_agent_id = new_active.clone();
         self.subagents.panel_nav_key = new_active
             .as_deref()
             .map(|id| format!("agent:{id}"))
@@ -175,18 +178,23 @@ impl App {
         self.sync_panel_selection_to_active();
         let Some(id) = new_active else {
             // Restore model/effort markers from master footer (#1085).
-            self.inference.current_model =
-                self.master_session.footer.known_model().map(str::to_string);
-            self.inference.current_effort = self.master_session.footer.effort().map(str::to_string);
-            self.inference.effort_levels.clear();
+            self.conn.inference.current_model = self
+                .conn
+                .master_session
+                .footer
+                .known_model()
+                .map(str::to_string);
+            self.conn.inference.current_effort =
+                self.conn.master_session.footer.effort().map(str::to_string);
+            self.conn.inference.effort_levels.clear();
             self.send_state_resync();
             return;
         };
         self.ensure_session(&id);
-        let f = self.subagents.sessions.get(&id).map(|s| &s.footer);
-        self.inference.current_model = f.and_then(|f| f.known_model()).map(str::to_string);
-        self.inference.current_effort = f.and_then(|f| f.effort()).map(str::to_string);
-        self.inference.effort_levels.clear();
+        let f = self.conn.roster.sessions.get(&id).map(|s| &s.footer);
+        self.conn.inference.current_model = f.and_then(|f| f.known_model()).map(str::to_string);
+        self.conn.inference.current_effort = f.and_then(|f| f.effort()).map(str::to_string);
+        self.conn.inference.effort_levels.clear();
         self.seed_session_bar_from_snapshot(&id);
         self.ensure_synced_subagent_feed(&id);
         // Merge committed ledger + retained in-flight live tail so focusing a
@@ -199,7 +207,8 @@ impl App {
     /// plus any retained in-flight live buffer (#1259).
     pub(super) fn reproject_child_chat_with_live(&mut self, id: &str) {
         let Some(entries) = self
-            .subagents
+            .conn
+            .roster
             .feeds
             .get(id)
             .filter(|f| f.authority == crate::agents::feed::FeedAuthority::SyncedAuthoritative)
@@ -207,7 +216,7 @@ impl App {
         else {
             return;
         };
-        let Some(session) = self.subagents.sessions.get_mut(id) else {
+        let Some(session) = self.conn.roster.sessions.get_mut(id) else {
             return;
         };
         // Focus always attaches the retained buffer; never clear it here.
@@ -215,8 +224,8 @@ impl App {
     }
 
     fn reconcile_active_agent(&mut self) {
-        if let Some(active) = self.subagents.active_agent_id.clone() {
-            if !self.subagents.tracked.contains_key(&active) {
+        if let Some(active) = self.conn.roster.active_agent_id.clone() {
+            if !self.conn.roster.tracked.contains_key(&active) {
                 self.select_agent(None);
             }
         }
@@ -225,12 +234,12 @@ impl App {
     /// Create the session for `id` if missing, recording retention order and
     /// evicting the oldest non-active session beyond the cap.
     pub(super) fn ensure_session(&mut self, id: &str) {
-        if !self.subagents.sessions.contains_key(id) {
-            self.subagents.sessions.insert(
+        if !self.conn.roster.sessions.contains_key(id) {
+            self.conn.roster.sessions.insert(
                 id.to_string(),
                 SessionView::new(self.workspace.git_branch.clone()),
             );
-            Self::remember_session(&mut self.subagents.session_order, id);
+            Self::remember_session(&mut self.conn.roster.session_order, id);
             self.evict_retained_sessions();
         }
     }
@@ -244,7 +253,7 @@ impl App {
     /// Bound retained-session memory: drop the oldest sessions (never the
     /// active one) once the retained count exceeds `MAX_RETAINED_SESSIONS`.
     fn evict_retained_sessions(&mut self) {
-        let subs = &mut self.subagents;
+        let subs = &mut self.conn.roster;
         while subs.sessions.len() > MAX_RETAINED_SESSIONS {
             let order = &subs.session_order;
             let Some(pos) = order
@@ -262,17 +271,18 @@ impl App {
     }
 
     fn refresh_synced_feed_for_focus(&mut self, id: &str) {
-        let stale = self.subagents.feeds.get(id).is_some_and(|feed| {
+        let stale = self.conn.roster.feeds.get(id).is_some_and(|feed| {
             feed.authority == crate::agents::feed::FeedAuthority::SyncedAuthoritative
                 && feed
                     .last_fresh_at
                     .is_none_or(|fresh| fresh.elapsed().as_secs() > 0)
         });
         if stale {
-            if let Some(feed) = self.subagents.feeds.get_mut(id) {
+            let sync_id = self.conn.namespaced_id("subagent-sync");
+            if let Some(feed) = self.conn.roster.feeds.get_mut(id) {
                 let _ = feed.cmd_tx.try_send(Command::Sync {
                     agent_id: None,
-                    id: Some("subagent-sync".into()),
+                    id: Some(sync_id),
                     epoch: feed.epoch,
                     since_rev: feed.rev,
                 });
@@ -281,7 +291,7 @@ impl App {
     }
 
     pub(super) fn is_synced_authoritative_feed(&self, id: &str) -> bool {
-        self.subagents.feeds.get(id).is_some_and(|feed| {
+        self.conn.roster.feeds.get(id).is_some_and(|feed| {
             feed.authority == crate::agents::feed::FeedAuthority::SyncedAuthoritative
         })
     }
@@ -290,7 +300,7 @@ impl App {
     /// Includes warm-sync feeds before the first authoritative sync response so
     /// connect races do not drop the in-flight prefix.
     pub(super) fn retains_live_inflight_feed(&self, id: &str) -> bool {
-        self.subagents.feeds.get(id).is_some_and(|feed| {
+        self.conn.roster.feeds.get(id).is_some_and(|feed| {
             feed.supports_sync
                 || matches!(
                     feed.authority,
@@ -301,18 +311,19 @@ impl App {
     }
 
     pub(super) fn enforce_warm_feed_cap(&mut self) {
-        while self.subagents.feeds.len() > MAX_WARM_AGENT_FEEDS {
+        while self.conn.roster.feeds.len() > MAX_WARM_AGENT_FEEDS {
             let Some(victim) = self
-                .subagents
+                .conn
+                .roster
                 .session_order
                 .iter()
-                .filter(|id| Some(*id) != self.subagents.active_agent_id.as_ref())
-                .find(|id| self.subagents.feeds.contains_key(id.as_str()))
+                .filter(|id| Some(*id) != self.conn.roster.active_agent_id.as_ref())
+                .find(|id| self.conn.roster.feeds.contains_key(id.as_str()))
                 .cloned()
             else {
                 break;
             };
-            if let Some(feed) = self.subagents.feeds.remove(&victim) {
+            if let Some(feed) = self.conn.roster.feeds.remove(&victim) {
                 feed.handle.abort();
             }
         }
@@ -408,13 +419,13 @@ impl App {
         if row.is_environment() {
             // Selecting an environment row shows its details in the main-pane
             // chrome over the master body (#1369 slice 4).
-            self.subagents.selected_environment = row.env_key.clone();
+            self.conn.roster.selected_environment = row.env_key.clone();
             self.subagents.panel_nav_key = row.env_key.as_deref().map(|key| format!("env:{key}"));
             self.select_agent(None);
             return;
         }
         let target = row.id.clone();
-        self.subagents.selected_environment = None;
+        self.conn.roster.selected_environment = None;
         self.subagents.panel_nav_key = target
             .as_deref()
             .map(|id| format!("agent:{id}"))
@@ -459,7 +470,7 @@ impl App {
         // environment selected `active_agent_id` is `None`, which would
         // otherwise match the Master row and silently snap the cursor away
         // from the environment whose chrome is showing (review #1392).
-        if let Some(env_key) = self.subagents.selected_environment.as_deref() {
+        if let Some(env_key) = self.conn.roster.selected_environment.as_deref() {
             if let Some(idx) = rows
                 .iter()
                 .position(|r| r.env_key.as_deref() == Some(env_key))
@@ -469,11 +480,11 @@ impl App {
             }
             // The group dissolved (member exited/refreshed away): drop the
             // stale selection so the chrome and cursor fall back together.
-            self.subagents.selected_environment = None;
+            self.conn.roster.selected_environment = None;
         }
         if let Some(idx) = rows
             .iter()
-            .position(|r| r.id.as_deref() == self.subagents.active_agent_id.as_deref())
+            .position(|r| r.id.as_deref() == self.conn.roster.active_agent_id.as_deref())
         {
             self.subagents.panel_nav.set_selected(idx);
         }
@@ -485,7 +496,7 @@ impl App {
     /// tree depth-ordered by `parent_id` (grandchildren under their parent).
     /// Master's live status: `running` while processing, else `idle` (#820).
     pub(super) fn master_status(&self) -> &'static str {
-        if self.agent_state.is_running() {
+        if self.conn.agent_state.is_running() {
             "running"
         } else {
             "idle"
@@ -500,7 +511,7 @@ impl App {
     ) -> Vec<String> {
         let rows = self.panel_rows();
         let selected = self.subagents.panel_nav.selected();
-        let active = self.subagents.active_agent_id.as_deref();
+        let active = self.conn.roster.active_agent_id.as_deref();
         let focused = matches!(self.subagents.focus, Focus::Panel);
 
         let blocks: Vec<Vec<String>> = rows
@@ -599,7 +610,7 @@ impl App {
 
     fn panel_row_observer(&self, id: Option<&str>) -> Option<&'static str> {
         let id = id?;
-        let entry = self.subagents.tracked.get(id)?;
+        let entry = self.conn.roster.tracked.get(id)?;
         if entry.info.read_only {
             Some(theme::OBSERVER_MARKER)
         } else {
@@ -609,9 +620,12 @@ impl App {
 
     fn panel_row_timer(&self, id: Option<&str>, now: tokio::time::Instant) -> String {
         match id {
-            None => fmt_mss(now.saturating_duration_since(self.started_at).as_secs()),
+            None => fmt_mss(
+                now.saturating_duration_since(self.active_conn().started_at)
+                    .as_secs(),
+            ),
             Some(id) => {
-                let t = self.subagents.tracked.get(id);
+                let t = self.conn.roster.tracked.get(id);
                 t.map(|t| fmt_mss(t.elapsed_secs(now))).unwrap_or_default()
             }
         }
@@ -622,9 +636,12 @@ impl App {
     pub(super) fn panel_row_elapsed(&self, id: Option<&str>, now: tokio::time::Instant) -> String {
         let Some(id) = id else {
             // Master row → session uptime.
-            return fmt_mss(now.saturating_duration_since(self.started_at).as_secs());
+            return fmt_mss(
+                now.saturating_duration_since(self.active_conn().started_at)
+                    .as_secs(),
+            );
         };
-        let Some(t) = self.subagents.tracked.get(id) else {
+        let Some(t) = self.conn.roster.tracked.get(id) else {
             return String::new();
         };
         // Per-row timer (#838): non-running agents show a FROZEN value

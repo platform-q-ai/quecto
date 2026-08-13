@@ -15,7 +15,7 @@ use crate::conversation::history_paging::{PENDING_HISTORY_PAGE_RETRY, PendingHis
 async fn independent_clients_do_not_reuse_history_page_correlation_ids() {
     let (mut first, mut second) = (harness().await, harness().await);
     for h in [&mut first, &mut second] {
-        let session = &mut h.app_mut().master_session;
+        let session = &mut h.app_mut().conn.master_session;
         session.history.has_more_before = true;
         session.history.before_cursor = Some("cursor".into());
         session.chat.set_viewport_height(1);
@@ -32,7 +32,7 @@ async fn stale_in_flight_page_is_retried_after_age_window() {
     // (#1061 review follow-up).
     let mut h = harness().await;
     {
-        let session = &mut h.app_mut().master_session;
+        let session = &mut h.app_mut().conn.master_session;
         session.history.has_more_before = true;
         session.history.before_cursor = Some("cursor".into());
         session.history.pending_page = Some(PendingHistoryPage {
@@ -78,6 +78,7 @@ async fn late_twin_of_stale_retried_page_is_dropped() {
 
     // Age the in-flight request past the retry window, then retry the cursor.
     h.app_mut()
+        .conn
         .master_session
         .history
         .pending_page
@@ -376,6 +377,7 @@ async fn stub_recall_rejects_first_page_content_length_that_differs_from_stub_me
     );
     assert!(
         h.app_mut()
+            .conn
             .failed_stub_recalls
             .contains(&(None, "length-pinned-stub".to_string())),
         "mismatched first page must mark the stub recall failed"
@@ -420,6 +422,7 @@ async fn wholesale_replacement_with_stale_prefix_keeps_later_live_entries() {
         page(&[("r1", "replacement newest")], Some("r1"), true),
     );
     h.app_mut()
+        .conn
         .master_session
         .chat
         .add_entry(ChatEntry::Assistant {

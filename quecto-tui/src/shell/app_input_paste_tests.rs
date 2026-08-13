@@ -135,7 +135,7 @@ async fn slash_command_looking_paste_does_not_execute() {
 #[tokio::test(start_paused = true)]
 async fn paste_while_agent_runs_does_not_follow_up_before_explicit_submit() {
     let mut h = TuiHarness::new().await;
-    h.app_mut().agent_state.start();
+    h.app_mut().conn.agent_state.start();
     let text = "alpha\nbeta\n";
     assert_draft_without_model_action(&mut h, &[text.as_bytes().to_vec()], text).await;
 

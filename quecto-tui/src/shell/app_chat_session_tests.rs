@@ -21,7 +21,7 @@ async fn resume_selector_renders_chat_metadata_and_uses_key_for_selection() {
 
     a.open_resume_selector(&data);
 
-    let selector = a.sessions.resume_selector.as_mut().unwrap();
+    let selector = a.conn.sessions.resume_selector.as_mut().unwrap();
     assert_eq!(selector.item_count(), 1);
     let rendered = selector.render_text(80);
     assert!(rendered.contains("Fix the auth bug"));

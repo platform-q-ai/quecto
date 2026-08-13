@@ -95,8 +95,15 @@ impl App {
             "N=1: only the master tab exists (#1462)"
         );
         match item {
-            SourcedEvent::Tab(_, ev) => {
+            SourcedEvent::Tab(tab, ev) => {
                 let is_token = Self::is_token_event(&ev);
+                // Tab guard (#1472 sweep, mirrors Closed/Subagent): release
+                // builds compile out the N=1 debug_assert above, so a
+                // foreign-tab master event must not mutate this app's active
+                // connection.
+                if tab != self.conn.transport.tab() {
+                    return SourcedRender::Stream { is_token };
+                }
                 self.handle_event(ev);
                 if self.surface_dropped_oversized_events() {
                     SourcedRender::Immediate
@@ -104,9 +111,15 @@ impl App {
                     SourcedRender::Stream { is_token }
                 }
             }
-            SourcedEvent::Subagent(_, agent_id, ev) => {
+            SourcedEvent::Subagent(tab, agent_id, ev) => {
                 let is_token = Self::is_token_event(&ev);
-                self.route_subagent_event(&agent_id, ev);
+                // Tab guard (#1472 r1, mirrors Closed): a direct child feed
+                // belongs to the tab that opened it. Release builds compile
+                // out the N=1 debug_assert above, so a foreign-tab event must
+                // not mutate this app's active connection.
+                if tab == self.conn.transport.tab() {
+                    self.route_subagent_event(&agent_id, ev);
+                }
                 SourcedRender::Stream { is_token }
             }
             SourcedEvent::Closed(tab) => {
@@ -169,6 +182,25 @@ impl App {
         }
     }
 
+    /// Send the connect-time state requests for this tab's connection.
+    ///
+    /// Queries initial agent state and sub-agent roster (#525) through the
+    /// shared command path so startup send failures surface in the UI like
+    /// user-initiated sends, then backfills durable master history so
+    /// `--socket` attach (and any reconnect) shows prior session content
+    /// without waiting for new events. Empty payloads do not latch the
+    /// guard (#1050 / #828).
+    pub(super) fn send_startup_requests(&mut self) {
+        self.send_command(Command::GetState {
+            agent_id: None,
+            id: Some(self.conn.namespaced_id("init")),
+        });
+        self.send_command(Command::GetSubagents {
+            id: Some(self.conn.namespaced_id("init-subagents")),
+        });
+        self.request_master_attach_backfill();
+    }
+
     pub async fn run(&mut self) -> i32 {
         self.terminal.enter_raw_mode();
         self.terminal.hide_cursor();
@@ -176,20 +208,7 @@ impl App {
         // Query Kitty keyboard protocol support.
         self.kitty.query();
 
-        // Query initial state from agent through the shared command path so
-        // startup send failures surface in the UI like user-initiated sends.
-        self.send_command(Command::GetState {
-            agent_id: None,
-            id: Some("init".into()),
-        });
-        // Query initial subagent state (#525).
-        self.send_command(Command::GetSubagents {
-            id: Some("init-subagents".into()),
-        });
-        // Backfill durable master history on connect so `--socket` attach (and
-        // any reconnect) shows prior session content without waiting for new
-        // events. Empty payloads do not latch the guard (#1050 / #828).
-        self.request_master_attach_backfill();
+        self.send_startup_requests();
 
         // Set up SIGWINCH handler.
         let mut resize_rx = crate::shell::signals::sigwinch_stream().await;
@@ -380,13 +399,13 @@ impl App {
 
     pub(super) fn handle_key(&mut self, key: Key) {
         if !matches!(key, Key::Escape) {
-            self.rewind.last_idle_escape = None;
+            self.conn.rewind.last_idle_escape = None;
         }
 
         // Unconditional exit — Ctrl+D must work regardless of overlays,
         // autocomplete state, or agent activity (#478).
         if matches!(key, Key::Ctrl('d')) {
-            if self.agent_state.is_running() {
+            if self.conn.agent_state.is_running() {
                 self.handle_abort();
             }
             self.should_exit = true;
@@ -394,36 +413,36 @@ impl App {
         }
 
         // If the resume selector is active, route input to it.
-        if self.sessions.resume_selector.is_some() {
-            self.rewind.last_idle_escape = None;
+        if self.conn.sessions.resume_selector.is_some() {
+            self.conn.rewind.last_idle_escape = None;
             self.handle_resume_selector_key(&key);
             return;
         }
 
         // If the rewind selector is active, route input to it.
-        if self.rewind.selector.is_some() {
-            self.rewind.last_idle_escape = None;
+        if self.conn.rewind.selector.is_some() {
+            self.conn.rewind.last_idle_escape = None;
             self.handle_rewind_selector_key(&key);
             return;
         }
 
         // If the tool policy modal is active, route input to it.
         if self.tool_policy_modal.is_some() {
-            self.rewind.last_idle_escape = None;
+            self.conn.rewind.last_idle_escape = None;
             self.handle_tool_policy_modal_key(&key);
             return;
         }
 
         // If the model selector is active, route input to it.
         if self.inference.model_selector.is_some() {
-            self.rewind.last_idle_escape = None;
+            self.conn.rewind.last_idle_escape = None;
             self.handle_model_selector_key(&key);
             return;
         }
 
         // If the effort selector is active, route input to it (#1067).
         if self.inference.effort_selector.is_some() {
-            self.rewind.last_idle_escape = None;
+            self.conn.rewind.last_idle_escape = None;
             self.handle_effort_selector_key(&key);
             return;
         }
@@ -433,7 +452,7 @@ impl App {
             match &key {
                 Key::Up | Key::Down | Key::Tab | Key::Escape => {
                     if matches!(key, Key::Escape) {
-                        self.rewind.last_idle_escape = None;
+                        self.conn.rewind.last_idle_escape = None;
                     }
                     self.autocomplete.handle_input(&key);
                     // Check if a suggestion was selected.
@@ -517,7 +536,7 @@ impl App {
         // Note: Ctrl+D is handled at the top of handle_key (unconditional exit).
         match &key {
             Key::Ctrl('c') => {
-                let running = self.agent_state.is_running() || self.active_subagent_running();
+                let running = self.conn.agent_state.is_running() || self.active_subagent_running();
                 match ctrl_c_action(running, self.editor.text().is_empty()) {
                     CtrlCAction::ClearEditor => {
                         self.editor.set_text("");
@@ -532,8 +551,8 @@ impl App {
             }
             Key::Escape => {
                 // Parity: Esc stops the viewed agent if running, else back to master.
-                if self.subagents.active_agent_id.is_some() {
-                    self.rewind.last_idle_escape = None;
+                if self.conn.roster.active_agent_id.is_some() {
+                    self.conn.rewind.last_idle_escape = None;
                     if self.active_subagent_running() {
                         self.handle_abort();
                     } else {
@@ -541,11 +560,11 @@ impl App {
                     }
                     return;
                 }
-                if self.agent_state.is_running() {
-                    self.rewind.last_idle_escape = None;
+                if self.conn.agent_state.is_running() {
+                    self.conn.rewind.last_idle_escape = None;
                     self.handle_abort();
                 } else if !self.editor.text().is_empty() {
-                    self.rewind.last_idle_escape = None;
+                    self.conn.rewind.last_idle_escape = None;
                     self.editor.set_text("");
                     self.autocomplete.dismiss();
                 } else {

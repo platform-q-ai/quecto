@@ -391,8 +391,8 @@ pub struct CommandSender {
     tx: mpsc::Sender<String>,
 }
 impl Command {
-    pub fn with_inspection_agent_id(&self, agent_id: &str) -> Option<Self> {
-        super::inspection_routing::with_inspection_agent_id(self, agent_id)
+    pub fn with_inspection_agent_id(&self, agent_id: &str, ns: &str) -> Option<Self> {
+        super::inspection_routing::with_inspection_agent_id(self, agent_id, ns)
     }
 
     pub fn kind(&self) -> &'static str {

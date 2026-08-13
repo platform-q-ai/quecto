@@ -38,7 +38,8 @@ async fn background_forwarded_child_workflow_state_updates_left_panel_snapshot()
     });
 
     let wf = app
-        .subagents
+        .conn
+        .roster
         .tracked
         .get("child")
         .and_then(|entry| entry.info.workflow.as_ref())
@@ -46,7 +47,7 @@ async fn background_forwarded_child_workflow_state_updates_left_panel_snapshot()
     assert_eq!(wf.steps_completed, 4);
     assert_eq!(wf.steps_total, 7);
     assert_eq!(
-        app.master_session.workflow_bar.total, 0,
+        app.conn.master_session.workflow_bar.total, 0,
         "child progress must not clobber master bar"
     );
 }
@@ -78,7 +79,8 @@ async fn background_forwarded_empty_workflow_does_not_regress_visible_child_prog
     });
 
     let wf = app
-        .subagents
+        .conn
+        .roster
         .tracked
         .get("child")
         .and_then(|entry| entry.info.workflow.as_ref())
@@ -114,7 +116,8 @@ async fn background_forwarded_completed_workflow_records_completed_mode() {
     });
 
     let wf = app
-        .subagents
+        .conn
+        .roster
         .tracked
         .get("child")
         .and_then(|entry| entry.info.workflow.as_ref())

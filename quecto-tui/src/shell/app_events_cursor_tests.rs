@@ -2,7 +2,8 @@ use super::app_events_test_support::test_app;
 use super::*;
 
 fn rendered_chat(app: &mut App) -> String {
-    app.master_session
+    app.conn
+        .master_session
         .chat
         .render(80)
         .join("\n")

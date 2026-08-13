@@ -112,7 +112,7 @@ async fn incremental_catalogue_event_during_pending_ctrl_t_does_not_open_or_cons
 
     let request_id = request_tool_catalogue(&mut h).await;
     assert!(
-        request_id.starts_with("tool-policy-catalogue-"),
+        request_id.starts_with("tab0:tool-policy-catalogue-"),
         "{request_id}"
     );
 
@@ -167,7 +167,7 @@ async fn stale_get_tool_catalogue_response_does_not_open_or_consume_pending_ctrl
 
     let request_id = request_tool_catalogue(&mut h).await;
     assert!(
-        request_id.starts_with("tool-policy-catalogue-"),
+        request_id.starts_with("tab0:tool-policy-catalogue-"),
         "{request_id}"
     );
 

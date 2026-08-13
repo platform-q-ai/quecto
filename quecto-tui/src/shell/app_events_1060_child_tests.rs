@@ -12,7 +12,8 @@ use crate::shell::app::app_events::recovered_chat_entries;
 use crate::shell::app::tui_harness::{TuiHarness, subagent, subagents_changed};
 
 fn chat_text(app: &mut App) -> String {
-    app.master_session
+    app.conn
+        .master_session
         .chat
         .render(120)
         .iter()

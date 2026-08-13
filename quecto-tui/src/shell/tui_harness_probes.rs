@@ -27,7 +27,7 @@ impl TuiHarness {
 
     /// The rewind owner group's monotonic request sequence (#997).
     pub fn rewind_group_request_seq(&self) -> u64 {
-        self.app.rewind.request_seq
+        self.app.conn.rewind.request_seq
     }
 
     /// Request a model-selector open through the real (deferred) `/model` path.
@@ -54,7 +54,7 @@ impl TuiHarness {
 
     /// Tracked sub-agent count held by the sub-agent UI owner group (#997).
     pub fn subagent_group_tracked(&self) -> usize {
-        self.app.subagents.tracked.len()
+        self.app.conn.roster.tracked.len()
     }
 
     /// Drain whatever commands are ALREADY queued, without the bounded
@@ -87,7 +87,7 @@ impl TuiHarness {
     /// away from the focused child (which would hide the child's footer).
     pub fn master_footer_text(&mut self) -> String {
         use crate::components::component::Component;
-        let rendered = self.app.master_session.footer.render(200).join("\n");
+        let rendered = self.app.conn.master_session.footer.render(200).join("\n");
         crate::components::ansi::strip_ansi(&rendered)
     }
 
@@ -95,12 +95,13 @@ impl TuiHarness {
     /// [`Self::master_footer_text`] to assert late master responses do not
     /// clobber focused-child state.
     pub fn current_model(&self) -> Option<String> {
-        self.app.inference.current_model.clone()
+        self.app.conn.inference.current_model.clone()
     }
 
     /// Master chat tool entries in transcript order: `(name, result)`.
     pub fn master_tool_entries(&self) -> Vec<(String, Option<String>)> {
         self.app
+            .conn
             .master_session
             .chat
             .entries()
@@ -121,6 +122,7 @@ impl TuiHarness {
     /// cannot be substring-matched against a frame.
     pub fn master_assistant_texts(&self) -> Vec<String> {
         self.app
+            .conn
             .master_session
             .chat
             .entries()
@@ -150,7 +152,7 @@ impl TuiHarness {
                 agent_id: None,
             })
             .expect("prefill");
-        self.app.subagents.feeds.insert(
+        self.app.conn.roster.feeds.insert(
             id.to_string(),
             crate::agents::view::FeedState {
                 cmd_tx,
@@ -175,6 +177,11 @@ impl TuiHarness {
 
     /// The child feed's recorded in-flight sync target, if any.
     pub fn child_feed_pending_rev(&self, id: &str) -> Option<u64> {
-        self.app.subagents.feeds.get(id).and_then(|f| f.pending_rev)
+        self.app
+            .conn
+            .roster
+            .feeds
+            .get(id)
+            .and_then(|f| f.pending_rev)
     }
 }

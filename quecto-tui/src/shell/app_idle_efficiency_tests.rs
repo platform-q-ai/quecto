@@ -33,7 +33,7 @@ async fn visible_spinner_keeps_animation_tick_armed() {
     let mut h = harness().await;
     let app = h.app_mut();
 
-    app.spinner = Some(Spinner::new("working"));
+    app.conn.spinner = Some(Spinner::new("working"));
     assert!(
         app.needs_animation_tick(false),
         "a visible spinner must continue advancing while the TUI is otherwise idle"
@@ -61,7 +61,7 @@ async fn running_master_work_keeps_animation_tick_armed() {
     let mut h = harness().await;
     let app = h.app_mut();
 
-    app.agent_state.start();
+    app.conn.agent_state.start();
     assert!(
         app.needs_animation_tick(false),
         "running master work must continue advancing the activity indicator"
@@ -73,7 +73,7 @@ async fn streaming_status_keeps_animation_tick_armed() {
     let mut h = harness().await;
     let app = h.app_mut();
 
-    app.master_session.footer.set_streaming(true);
+    app.conn.master_session.footer.set_streaming(true);
     assert!(
         app.needs_animation_tick(false),
         "streaming status must continue advancing the activity indicator"
@@ -109,14 +109,14 @@ fn event_loop_gates_animation_timer_on_needs_animation_tick() {
 async fn spinner_animation_tick_advances_visible_frame() {
     let mut h = harness().await;
     let app = h.app_mut();
-    app.spinner = Some(Spinner::new("working"));
-    let before = app.spinner.as_ref().unwrap().frame_index();
+    app.conn.spinner = Some(Spinner::new("working"));
+    let before = app.conn.spinner.as_ref().unwrap().frame_index();
     let mut fallback_done = true;
 
     assert!(app.service_animation_tick(&mut fallback_done, tokio::time::Instant::now()));
 
     assert_ne!(
-        app.spinner.as_ref().unwrap().frame_index(),
+        app.conn.spinner.as_ref().unwrap().frame_index(),
         before,
         "spinner service tick should visibly advance the spinner frame"
     );

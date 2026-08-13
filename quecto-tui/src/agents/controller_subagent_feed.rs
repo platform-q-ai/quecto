@@ -4,7 +4,7 @@ use crate::shell::socket_path::usable_socket_path;
 
 impl App {
     pub(super) fn ensure_synced_subagent_feed(&mut self, id: &str) {
-        if self.subagents.feeds.contains_key(id) {
+        if self.conn.roster.feeds.contains_key(id) {
             return;
         }
         self.open_subagent_feed(id, crate::agents::feed::FeedAuthority::WarmSync);
@@ -15,10 +15,10 @@ impl App {
     /// are sent to the master connection with `agent_id` and routed by the agent
     /// through the nearest reachable ancestor (#1442).
     fn open_subagent_feed(&mut self, id: &str, authority: crate::agents::feed::FeedAuthority) {
-        if self.subagents.feeds.contains_key(id) {
+        if self.conn.roster.feeds.contains_key(id) {
             return;
         }
-        let Some(tracked) = self.subagents.tracked.get(id) else {
+        let Some(tracked) = self.conn.roster.tracked.get(id) else {
             return;
         };
         let socket = tracked.info.socket_path.clone();
@@ -27,33 +27,40 @@ impl App {
         use tracing::instrument::WithSubscriber;
         let connect_dispatch = tracing::dispatcher::get_default(Clone::clone);
         let inspection_only = !usable_socket_path(socket.as_deref());
+        // Every id this feed mints (direct-socket literals and routed
+        // inspection ids alike) carries the tab's connection namespace
+        // (#1463) so broadcast responses can never match another tab's feed.
+        let ns = self.conn.id_namespace();
         let handle = if !inspection_only {
             let path = std::path::PathBuf::from(socket.expect("checked usable socket"));
             let tx = self.subagents.event_tx.clone();
             let agent_id_for_task = agent_id.clone();
+            // The forwarded-event tag must agree with the id namespace about
+            // which tab owns this feed (#1472 r1).
+            let feed_tab = self.conn.transport.tab();
             let task = async move {
                 let Ok(mut client) = Client::connect(&path).await else {
                     return;
                 };
                 let _ = client
                     .send(&Command::GetState {
-                        id: Some("subagent-state".into()),
+                        id: Some(crate::shell::connection::feed_id(&ns, "subagent-state")),
                         agent_id: None,
                     })
                     .await;
                 let _ = client
                     .send(&Command::Sync {
-                        id: Some("subagent-sync".into()),
+                        id: Some(crate::shell::connection::feed_id(&ns, "subagent-sync")),
                         epoch: 0,
                         since_rev: 0,
                         agent_id: None,
                     })
                     .await;
-                use crate::shell::connection::{SourcedEvent, TabId};
+                use crate::shell::connection::SourcedEvent;
                 loop {
                     tokio::select! {
                         ev = client.recv() => match ev {
-                            Some(ev) => if tx.send(SourcedEvent::Subagent(TabId::MASTER, agent_id_for_task.clone(), ev)).await.is_err() { break; },
+                            Some(ev) => if tx.send(SourcedEvent::Subagent(feed_tab, agent_id_for_task.clone(), ev)).await.is_err() { break; },
                             None => break,
                         },
                         cmd = cmd_rx.recv() => match cmd {
@@ -65,14 +72,14 @@ impl App {
             };
             tokio::spawn(task.with_subscriber(connect_dispatch))
         } else {
-            let root_sender = self.connection.clone_sender();
+            let root_sender = self.conn.transport.clone_sender();
             let task = async move {
                 let _ = root_sender.try_send(
                     &Command::GetState {
                         id: Some("initial".into()),
                         agent_id: None,
                     }
-                    .with_inspection_agent_id(&agent_id)
+                    .with_inspection_agent_id(&agent_id, &ns)
                     .expect("get_state is routable inspection"),
                 );
                 let _ = root_sender.try_send(
@@ -82,7 +89,7 @@ impl App {
                         since_rev: 0,
                         agent_id: None,
                     }
-                    .with_inspection_agent_id(&agent_id)
+                    .with_inspection_agent_id(&agent_id, &ns)
                     .expect("sync is routable inspection"),
                 );
                 // A cold routed feed has no direct child stream to backfill from.
@@ -95,18 +102,18 @@ impl App {
                         count: 20,
                         agent_id: None,
                     }
-                    .with_inspection_agent_id(&agent_id)
+                    .with_inspection_agent_id(&agent_id, &ns)
                     .expect("get_messages_tail is routable inspection"),
                 );
                 while let Some(cmd) = cmd_rx.recv().await {
-                    if let Some(routed) = cmd.with_inspection_agent_id(&agent_id) {
+                    if let Some(routed) = cmd.with_inspection_agent_id(&agent_id, &ns) {
                         let _ = root_sender.try_send(&routed);
                     }
                 }
             };
             tokio::spawn(task.with_subscriber(connect_dispatch))
         };
-        self.subagents.feeds.insert(
+        self.conn.roster.feeds.insert(
             id.to_string(),
             FeedState::from_parts(
                 crate::agents::runtime::FeedRuntime {

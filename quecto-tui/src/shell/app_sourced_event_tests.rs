@@ -86,7 +86,7 @@ async fn wire_close_runs_disconnect_handling_via_closed_sentinel() {
     h.wire_close_master_connection().await;
 
     assert!(
-        !h.app_mut().agent_connected,
+        !h.app_mut().conn.agent_connected,
         "a real EOF must mark the agent as not connected via the Closed sentinel (#1462)"
     );
     let messages = h.notification_messages().join("\n");
@@ -153,7 +153,7 @@ async fn closed_sentinel_marks_agent_disconnected() {
     h.deliver_closed_sentinel().await;
 
     assert!(
-        !h.app_mut().agent_connected,
+        !h.app_mut().conn.agent_connected,
         "the Closed sentinel must mark the agent as not connected (#1462)"
     );
     assert!(
@@ -221,6 +221,30 @@ use super::app_event_loop::SourcedRender;
 use crate::shell::connection::{SourcedEvent, TabId};
 
 #[tokio::test]
+async fn route_sourced_ignores_master_event_for_foreign_tab() {
+    let mut h = TuiHarness::new().await;
+    h.app_mut().test_set_master_tab(1);
+
+    let got = h.app_mut().route_sourced(SourcedEvent::Tab(
+        TabId::MASTER,
+        Event::Token {
+            token: "foreign-master-token".into(),
+        },
+    ));
+    h.capture();
+
+    assert_eq!(
+        got,
+        SourcedRender::Stream { is_token: true },
+        "foreign master events are still classified for the stream paint path"
+    );
+    assert!(
+        !h.full_frame().contains("foreign-master-token"),
+        "a SourcedEvent::Tab tagged for a different tab must not mutate the active connection (#1472 sweep)"
+    );
+}
+
+#[tokio::test]
 async fn route_sourced_master_token_coalesces_as_stream_token() {
     let mut h = TuiHarness::new().await;
     let got = h.app_mut().route_sourced(SourcedEvent::Tab(
@@ -250,7 +274,10 @@ async fn route_sourced_master_non_token_paints_stream_immediately() {
 #[tokio::test]
 async fn route_sourced_master_event_with_surfaced_drops_paints_immediately() {
     let mut h = TuiHarness::new().await;
-    h.app_mut().connection.record_dropped_oversized_for_tests(1);
+    h.app_mut()
+        .conn
+        .transport
+        .record_dropped_oversized_for_tests(1);
     let got = h.app_mut().route_sourced(SourcedEvent::Tab(
         TabId::MASTER,
         Event::Token { token: "t".into() },
@@ -259,6 +286,37 @@ async fn route_sourced_master_event_with_surfaced_drops_paints_immediately() {
         got,
         SourcedRender::Immediate,
         "surfacing an oversized-line drop must force an immediate paint (#1047)"
+    );
+}
+
+#[tokio::test]
+async fn route_sourced_ignores_subagent_event_for_foreign_tab() {
+    let mut h = TuiHarness::new().await;
+    h.app_mut().test_set_master_tab(1);
+    h.event(tui_harness::subagents_changed(vec![tui_harness::subagent(
+        "foreign-a1",
+        "running",
+        None,
+    )]));
+    h.select(Some("foreign-a1"));
+
+    let got = h.app_mut().route_sourced(SourcedEvent::Subagent(
+        TabId::MASTER,
+        "foreign-a1".into(),
+        Event::Token {
+            token: "foreign-tab-token".into(),
+        },
+    ));
+    h.capture();
+
+    assert_eq!(
+        got,
+        SourcedRender::Stream { is_token: true },
+        "foreign sub-agent events are still classified for the stream paint path"
+    );
+    assert!(
+        !h.full_frame().contains("foreign-tab-token"),
+        "a SourcedEvent::Subagent tagged for a different tab must not mutate the active connection (#1472)"
     );
 }
 
@@ -309,7 +367,7 @@ async fn run_select_loop_drains_tab_fan_in_even_when_disconnected() {
     // tab arm, so re-gating the tab arm on `agent_connected` (which would
     // starve the master feed and the `Closed` sentinel after a disconnect)
     // would ship uncaught. Driving the tab arm here makes that regression fail.
-    h.app_mut().agent_connected = false;
+    h.app_mut().conn.agent_connected = false;
     h.send_agent_event_line("{\"type\":\"token\",\"token\":\"tab-arm-disconnected-token\"}")
         .await;
 

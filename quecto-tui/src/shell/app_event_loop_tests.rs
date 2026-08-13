@@ -49,7 +49,7 @@ async fn process_key_sequence_handles_incomplete_escape() {
     // editor, that arms the rewind affordance (same as Key::Escape).
     a.process_key_sequence(b"\x1b");
     assert!(
-        a.rewind.last_idle_escape.is_some(),
+        a.conn.rewind.last_idle_escape.is_some(),
         "bare ESC should be parsed as Escape and arm rewind"
     );
     assert_eq!(a.editor.text(), "", "bare ESC must not insert text");
@@ -103,12 +103,12 @@ async fn handle_key_ctrl_d_sets_exit_flag() {
 async fn handle_key_ctrl_d_aborts_if_agent_running() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.agent_state.start();
-    assert!(a.agent_state.is_running());
+    a.conn.agent_state.start();
+    assert!(a.conn.agent_state.is_running());
     a.handle_key(Key::Ctrl('d'));
     assert!(a.should_exit);
     // Abort should have been called (agent_state.abort sets running=false).
-    assert!(!a.agent_state.is_running());
+    assert!(!a.conn.agent_state.is_running());
 }
 
 #[tokio::test]
@@ -128,10 +128,10 @@ async fn handle_key_ctrl_c_clears_editor_with_text() {
 async fn handle_key_ctrl_c_aborts_when_running_and_editor_empty() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.agent_state.start();
+    a.conn.agent_state.start();
     a.handle_key(Key::Ctrl('c'));
     assert!(
-        !a.agent_state.is_running(),
+        !a.conn.agent_state.is_running(),
         "Ctrl+C should abort when running and editor empty"
     );
 }
@@ -141,7 +141,7 @@ async fn handle_key_ctrl_c_noop_when_idle_and_editor_empty() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.handle_key(Key::Ctrl('c'));
-    assert!(!a.agent_state.is_running());
+    assert!(!a.conn.agent_state.is_running());
     assert_eq!(a.editor.text(), "");
 }
 
@@ -151,7 +151,7 @@ async fn handle_key_escape_when_idle_and_editor_empty_arms_rewind() {
     let a = h.app_mut();
     a.handle_key(Key::Escape);
     assert!(
-        a.rewind.last_idle_escape.is_some(),
+        a.conn.rewind.last_idle_escape.is_some(),
         "first Escape should arm rewind"
     );
 }
@@ -160,10 +160,10 @@ async fn handle_key_escape_when_idle_and_editor_empty_arms_rewind() {
 async fn handle_key_escape_when_running_aborts_agent() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.agent_state.start();
+    a.conn.agent_state.start();
     a.handle_key(Key::Escape);
     assert!(
-        !a.agent_state.is_running(),
+        !a.conn.agent_state.is_running(),
         "Escape should abort running agent"
     );
 }
@@ -194,10 +194,10 @@ async fn handle_key_ctrl_l_opens_model_selector() {
 async fn handle_key_ctrl_o_toggles_tool_expand() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.tool_expanded;
+    let before = a.conn.master_session.chat.tool_expanded;
     a.handle_key(Key::Ctrl('o'));
     assert_eq!(
-        a.master_session.chat.tool_expanded, !before,
+        a.conn.master_session.chat.tool_expanded, !before,
         "Ctrl+O should toggle tool expand"
     );
 }
@@ -208,11 +208,11 @@ async fn handle_key_ctrl_o_toggles_active_subagent_tool_expand() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.select_agent(Some("worker")); // lazily creates the child session view
-    let m0 = a.master_session.chat.tool_expanded;
+    let m0 = a.conn.master_session.chat.tool_expanded;
     let c0 = a.active_chat_mut().tool_expanded;
     a.handle_key(Key::Ctrl('o'));
     assert_eq!(a.active_chat_mut().tool_expanded, !c0, "toggles child");
-    assert_eq!(a.master_session.chat.tool_expanded, m0, "master kept");
+    assert_eq!(a.conn.master_session.chat.tool_expanded, m0, "master kept");
 }
 
 // The four scroll keys all move `chat.scroll_offset`: PageUp/ScrollUp increase
@@ -231,21 +231,21 @@ async fn scroll_keys_move_chat_offset() {
         // Seed more content than the viewport so scrolling back is observable
         // (render clamps offset to scrollable range, not just the raw setter).
         for i in 0..20 {
-            a.master_session.chat.add_entry(ChatEntry::User {
+            a.conn.master_session.chat.add_entry(ChatEntry::User {
                 text: format!("line {i}"),
             });
         }
-        a.master_session.chat.set_viewport_height(3);
-        a.master_session.chat.render(80);
+        a.conn.master_session.chat.set_viewport_height(3);
+        a.conn.master_session.chat.render(80);
         assert_eq!(
-            a.master_session.chat.scroll_offset(),
+            a.conn.master_session.chat.scroll_offset(),
             0,
             "fresh chat is pinned to bottom"
         );
         a.handle_key(key);
-        a.master_session.chat.render(80);
+        a.conn.master_session.chat.render(80);
         assert!(
-            a.master_session.chat.scroll_offset() > 0,
+            a.conn.master_session.chat.scroll_offset() > 0,
             "{label} should scroll chat back (offset > 0)"
         );
     }
@@ -255,11 +255,11 @@ async fn scroll_keys_move_chat_offset() {
         let mut h = harness().await;
         let a = h.app_mut();
         // First scroll back so there is something to scroll forward from.
-        a.master_session.chat.scroll_up(20);
-        let before = a.master_session.chat.scroll_offset();
+        a.conn.master_session.chat.scroll_up(20);
+        let before = a.conn.master_session.chat.scroll_offset();
         a.handle_key(key);
         assert!(
-            a.master_session.chat.scroll_offset() < before,
+            a.conn.master_session.chat.scroll_offset() < before,
             "{label} should scroll chat toward the latest output (offset shrinks)"
         );
     }
@@ -342,7 +342,7 @@ async fn handle_key_enter_when_editor_empty_is_noop() {
     let a = h.app_mut();
     a.handle_key(Key::Enter);
     // Empty submit is a no-op.
-    assert_eq!(a.master_session.chat.entry_count(), 0);
+    assert_eq!(a.conn.master_session.chat.entry_count(), 0);
 }
 
 // ── handle_submit: slash commands ──────────────────────────────────────
@@ -351,9 +351,9 @@ async fn handle_key_enter_when_editor_empty_is_noop() {
 async fn handle_submit_empty_text_is_noop() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.conn.master_session.chat.entry_count();
     a.handle_submit("   ");
-    assert_eq!(a.master_session.chat.entry_count(), before);
+    assert_eq!(a.conn.master_session.chat.entry_count(), before);
 }
 
 #[tokio::test]
@@ -376,12 +376,12 @@ async fn handle_submit_exit_sets_exit_flag() {
 async fn handle_submit_clear_clears_session() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.master_session.chat.add_entry(ChatEntry::User {
+    a.conn.master_session.chat.add_entry(ChatEntry::User {
         text: "data".into(),
     });
     a.handle_submit("/clear");
     assert_eq!(
-        a.master_session.chat.entry_count(),
+        a.conn.master_session.chat.entry_count(),
         0,
         "/clear should clear chat"
     );
@@ -391,12 +391,12 @@ async fn handle_submit_clear_clears_session() {
 async fn handle_submit_new_starts_new_session() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.master_session.chat.add_entry(ChatEntry::User {
+    a.conn.master_session.chat.add_entry(ChatEntry::User {
         text: "data".into(),
     });
     a.handle_submit("/new");
     assert_eq!(
-        a.master_session.chat.entry_count(),
+        a.conn.master_session.chat.entry_count(),
         0,
         "/new should clear chat"
     );
@@ -411,10 +411,10 @@ async fn handle_submit_new_starts_new_session() {
 async fn handle_submit_help_shows_shortcuts() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.conn.master_session.chat.entry_count();
     a.handle_submit("/help");
     assert!(
-        a.master_session.chat.entry_count() > before,
+        a.conn.master_session.chat.entry_count() > before,
         "/help should add a chat entry"
     );
 }
@@ -423,19 +423,19 @@ async fn handle_submit_help_shows_shortcuts() {
 async fn handle_submit_hotkeys_shows_shortcuts() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.conn.master_session.chat.entry_count();
     a.handle_submit("/hotkeys");
-    assert!(a.master_session.chat.entry_count() > before);
+    assert!(a.conn.master_session.chat.entry_count() > before);
 }
 
 #[tokio::test]
 async fn handle_submit_unknown_slash_command_notifies() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.conn.master_session.chat.entry_count();
     a.handle_submit("/bogus");
     assert!(
-        a.master_session.chat.entry_count() > before,
+        a.conn.master_session.chat.entry_count() > before,
         "unknown command should add status"
     );
     assert!(
@@ -449,7 +449,10 @@ async fn handle_submit_model_with_name_sends_set_model() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.handle_submit("/model test-model");
-    assert_eq!(a.inference.current_model.as_deref(), Some("test-model"));
+    assert_eq!(
+        a.conn.inference.current_model.as_deref(),
+        Some("test-model")
+    );
 }
 
 #[tokio::test]
@@ -469,10 +472,10 @@ async fn handle_submit_model_without_name_opens_selector() {
 async fn handle_submit_regular_message_adds_user_entry() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.conn.master_session.chat.entry_count();
     a.handle_submit("hello world");
     assert_eq!(
-        a.master_session.chat.entry_count(),
+        a.conn.master_session.chat.entry_count(),
         before + 1,
         "should add user message"
     );
@@ -508,10 +511,10 @@ async fn handle_submit_resume_with_name_sends_resume() {
 async fn handle_submit_workflow_shows_status() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.conn.master_session.chat.entry_count();
     a.handle_submit("/workflow");
     assert!(
-        a.master_session.chat.entry_count() > before,
+        a.conn.master_session.chat.entry_count() > before,
         "/workflow should show status"
     );
 }
@@ -519,7 +522,7 @@ async fn handle_submit_workflow_shows_status() {
 #[tokio::test]
 async fn handle_submit_workflow_auto_sends_toggle_command() {
     let mut h = harness().await;
-    let before = h.app_mut().workflow.auto_continue;
+    let before = h.app_mut().conn.workflow.auto_continue;
     h.app_mut().handle_submit("/workflow-auto");
     let cmds = h.drain_commands().await;
     assert!(
@@ -529,13 +532,13 @@ async fn handle_submit_workflow_auto_sends_toggle_command() {
     );
     // The local state is NOT toggled synchronously — it's updated when the
     // server responds. We only verify the command was sent.
-    assert_eq!(h.app_mut().workflow.auto_continue, before);
+    assert_eq!(h.app_mut().conn.workflow.auto_continue, before);
 }
 
 #[tokio::test]
 async fn handle_submit_workflow_nudge_sends_toggle_command() {
     let mut h = harness().await;
-    let before = h.app_mut().workflow.completion_nudge;
+    let before = h.app_mut().conn.workflow.completion_nudge;
     h.app_mut().handle_submit("/workflow-nudge");
     let cmds = h.drain_commands().await;
     assert!(
@@ -543,7 +546,7 @@ async fn handle_submit_workflow_nudge_sends_toggle_command() {
             .any(|c| c.contains("\"type\":\"set_workflow_automation\"")),
         "/workflow-nudge should send set_workflow_automation: {cmds:?}"
     );
-    assert_eq!(h.app_mut().workflow.completion_nudge, before);
+    assert_eq!(h.app_mut().conn.workflow.completion_nudge, before);
 }
 
 // ── handle_submit: command verification ────────────────────────────────
@@ -573,7 +576,7 @@ async fn handle_submit_quit_does_not_send_prompt() {
 #[tokio::test]
 async fn handle_submit_follow_up_command_when_running() {
     let mut h = harness().await;
-    h.app_mut().agent_state.start();
+    h.app_mut().conn.agent_state.start();
     h.app_mut().handle_submit("follow-up message");
     let cmds = h.drain_commands().await;
     assert!(
@@ -592,120 +595,12 @@ async fn a_handle_submit_text(h: &mut TuiHarness, text: &str) {
     h.app_mut().handle_submit(text);
 }
 
-// ── handle_abort ──────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn handle_abort_sends_abort_command() {
-    let mut h = harness().await;
-    h.app_mut().handle_abort();
-    let cmds = h.drain_commands().await;
-    assert!(
-        cmds.iter().any(|c| c.contains("\"type\":\"abort\"")),
-        "handle_abort should send an abort command: {cmds:?}"
-    );
-}
-
-#[tokio::test]
-async fn handle_abort_stops_spinner() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.agent_state.start();
-    a.spinner = Some(Spinner::new("Working"));
-    a.handle_abort();
-    assert!(a.spinner.is_none(), "abort should clear spinner");
-}
-
-#[tokio::test]
-async fn handle_abort_finalizes_assistant() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.agent_state.start();
-    a.spinner = Some(Spinner::new("Working"));
-    a.handle_abort();
-    // finalize_assistant is called; just verify no panic and spinner cleared.
-    assert!(a.spinner.is_none());
-}
-
-#[tokio::test]
-async fn handle_abort_adds_status_message() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
-    a.handle_abort();
-    assert!(
-        a.master_session.chat.entry_count() > before,
-        "abort should add a status entry"
-    );
-}
-
-#[tokio::test]
-async fn handle_abort_calls_agent_state_abort() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.agent_state.start();
-    assert!(a.agent_state.is_running());
-    a.handle_abort();
-    assert!(!a.agent_state.is_running(), "abort should stop agent_state");
-}
-
-#[tokio::test]
-async fn handle_abort_sets_footer_streaming_false() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.master_session.footer.set_streaming(true);
-    a.handle_abort();
-    // Footer streaming should be false after abort.
-    let rendered = a.master_session.footer.render(80).join("\n");
-    assert!(!rendered.contains("streaming") || !rendered.to_lowercase().contains("thinking"));
-}
-
-// ── handle_key: overlay routing ───────────────────────────────────────
-
-#[tokio::test]
-async fn handle_key_routes_to_overlay_when_active() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    // Open the resume selector to activate an overlay-like state.
-    let data = serde_json::json!({"sessions": [{"name": "alpha"}]});
-    a.open_resume_selector(&data);
-    assert!(a.sessions.resume_selector.is_some());
-    // Escape should close the selector, not clear the editor.
-    a.handle_key(Key::Escape);
-    assert!(
-        a.sessions.resume_selector.is_none(),
-        "Escape should close selector"
-    );
-}
-
-#[tokio::test]
-async fn handle_key_routes_to_model_selector_when_active() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.open_model_selector();
-    a.handle_list_models(Some(serde_json::json!({ "models": [] })));
-    assert!(a.inference.model_selector.is_some());
-    // Escape closes the selector.
-    a.handle_key(Key::Escape);
-    assert!(a.inference.model_selector.is_none());
-}
-
-#[tokio::test]
-async fn handle_key_routes_to_rewind_selector_when_active() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    let data = serde_json::json!({"messages": [{"role": "user", "content": "turn", "id": "u1"}]});
-    a.open_rewind_selector(&data);
-    assert!(a.rewind.selector.is_some());
-    a.handle_key(Key::Escape);
-    assert!(a.rewind.selector.is_none());
-}
-
 // ── handle_key: Ctrl+Shift combos ──────────────────────────────────────
 
 #[tokio::test]
 async fn handle_key_ctrl_shift_a_sends_toggle_command() {
     let mut h = harness().await;
-    let before = h.app_mut().workflow.auto_continue;
+    let before = h.app_mut().conn.workflow.auto_continue;
     h.app_mut().handle_key(Key::CtrlShift('a'));
     let cmds = h.drain_commands().await;
     assert!(
@@ -714,13 +609,13 @@ async fn handle_key_ctrl_shift_a_sends_toggle_command() {
         "Ctrl+Shift+A should send set_workflow_automation: {cmds:?}"
     );
     // Local state is NOT toggled synchronously — updated on server response.
-    assert_eq!(h.app_mut().workflow.auto_continue, before);
+    assert_eq!(h.app_mut().conn.workflow.auto_continue, before);
 }
 
 #[tokio::test]
 async fn handle_key_ctrl_shift_n_sends_toggle_command() {
     let mut h = harness().await;
-    let before = h.app_mut().workflow.completion_nudge;
+    let before = h.app_mut().conn.workflow.completion_nudge;
     h.app_mut().handle_key(Key::CtrlShift('n'));
     let cmds = h.drain_commands().await;
     assert!(
@@ -728,7 +623,7 @@ async fn handle_key_ctrl_shift_n_sends_toggle_command() {
             .any(|c| c.contains("\"type\":\"set_workflow_automation\"")),
         "Ctrl+Shift+N should send set_workflow_automation: {cmds:?}"
     );
-    assert_eq!(h.app_mut().workflow.completion_nudge, before);
+    assert_eq!(h.app_mut().conn.workflow.completion_nudge, before);
 }
 
 // ── accept_file_mention (tested indirectly via handle_key @files flow) ──

@@ -15,7 +15,7 @@ async fn main_pane_compact_line_reflects_live_auto_continue_state() {
         "progress": {"done": 0, "total": 1},
         "activeIssue": {"number": 7, "title": "thing"}
     });
-    h.app_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
+    h.app_mut().conn.master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
     let now = tokio::time::Instant::now();
     let render = |a: &App| -> String {
         a.render_main_pane_workflow(120, 120, now)
@@ -41,7 +41,7 @@ async fn main_pane_compact_line_reflects_live_auto_continue_state() {
         "{}",
         render(h.app_mut())
     );
-    h.app_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
+    h.app_mut().conn.master_session.workflow_bar = workflow_bar::parse_workflow_event(&wf);
     h.app_mut().mirror_automation_to_bar();
     assert!(
         render(h.app_mut()).contains("auto:on"),

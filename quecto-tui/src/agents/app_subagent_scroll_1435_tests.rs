@@ -80,18 +80,18 @@ async fn handle_submit_master_message_repins_scrolled_chat_to_tail() {
     let mut h = crate::shell::app::tui_harness::TuiHarness::new().await;
     let a = h.app_mut();
     for i in 0..30 {
-        a.master_session.chat.add_entry(ChatEntry::User {
+        a.conn.master_session.chat.add_entry(ChatEntry::User {
             text: format!("history line {i}"),
         });
     }
-    a.master_session.chat.set_viewport_height(10);
-    a.master_session.chat.scroll_up(15);
-    let _ = a.master_session.chat.render(80);
+    a.conn.master_session.chat.set_viewport_height(10);
+    a.conn.master_session.chat.scroll_up(15);
+    let _ = a.conn.master_session.chat.render(80);
 
     a.handle_submit("visible master prompt");
-    let after = a.master_session.chat.render(80).join("\n");
+    let after = a.conn.master_session.chat.render(80).join("\n");
 
-    assert_eq!(a.master_session.chat.scroll_offset(), 0);
+    assert_eq!(a.conn.master_session.chat.scroll_offset(), 0);
     assert!(after.contains("visible master prompt"));
 }
 
@@ -101,8 +101,8 @@ async fn handle_submit_subagent_message_repins_scrolled_chat_to_tail() {
     let a = h.app_mut();
     let (tx, _rx) = tokio::sync::mpsc::channel(4);
     let id = "child".to_string();
-    a.subagents.active_agent_id = Some(id.clone());
-    a.subagents.feeds.insert(
+    a.conn.roster.active_agent_id = Some(id.clone());
+    a.conn.roster.feeds.insert(
         id.clone(),
         crate::agents::view::FeedState {
             cmd_tx: tx,
@@ -118,7 +118,7 @@ async fn handle_submit_subagent_message_repins_scrolled_chat_to_tail() {
         },
     );
     a.ensure_session(&id);
-    let session = a.subagents.sessions.get_mut(&id).unwrap();
+    let session = a.conn.roster.sessions.get_mut(&id).unwrap();
     for i in 0..30 {
         session.chat.add_entry(ChatEntry::User {
             text: format!("history line {i}"),
@@ -129,7 +129,7 @@ async fn handle_submit_subagent_message_repins_scrolled_chat_to_tail() {
     let _ = session.chat.render(80);
 
     a.handle_submit("visible child prompt");
-    let chat = &mut a.subagents.sessions.get_mut(&id).unwrap().chat;
+    let chat = &mut a.conn.roster.sessions.get_mut(&id).unwrap().chat;
     let after = chat.render(80).join("\n");
 
     assert_eq!(chat.scroll_offset(), 0);

@@ -138,6 +138,9 @@ pub struct TuiWorld {
     /// The sub-agent id currently being viewed (#828): captured on select so
     /// backfill/assertion steps route to the right session, not a literal id.
     pub tui_viewed_agent: Option<String>,
+    /// TUI per-connection state BDD (#1463): the correlation id minted by the
+    /// scenario's When, for connection-namespace assertions.
+    pub tui_minted_correlation_id: Option<String>,
     /// TUI scrollback BDD: viewport captured after streaming growth.
     pub tui_viewport_after_stream: Vec<String>,
     /// TUI #981 render-cache BDD: tail render captured before scrollback.
@@ -357,6 +360,7 @@ mod tui_master_connection_feed_steps;
 mod tui_new_reset_context_steps;
 mod tui_paged_history_1094_steps;
 mod tui_paged_history_steps;
+mod tui_per_connection_state_steps;
 mod tui_pid_safety_steps;
 mod tui_stdin_buffer_cap_steps;
 mod tui_stdin_retry_steps;

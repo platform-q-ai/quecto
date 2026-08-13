@@ -79,7 +79,7 @@ fn session_bar<'a>(
     app: &'a mut super::App,
     id: &str,
 ) -> &'a crate::components::workflow_bar::WorkflowBarState {
-    &app.subagents.sessions.get(id).unwrap().workflow_bar
+    &app.conn.roster.sessions.get(id).unwrap().workflow_bar
 }
 
 #[tokio::test]
@@ -538,7 +538,8 @@ async fn forwarded_grandchild_workflow_routes_by_event_agent_id_not_connection()
         "child C's bar must keep C's own workflow, not the grandchild's"
     );
     assert_eq!(
-        app.subagents
+        app.conn
+            .roster
             .sessions
             .get("G")
             .expect("grandchild G must get its own session")
@@ -613,7 +614,7 @@ async fn forwarded_workflow_for_untracked_agent_is_dropped() {
         .route_subagent_event("C", forwarded_workflow("X", 2, 4));
     let app = h.app_mut();
     assert!(
-        !app.subagents.sessions.contains_key("X"),
+        !app.conn.roster.sessions.contains_key("X"),
         "an untracked forwarded id must not create a phantom session"
     );
     assert_eq!(

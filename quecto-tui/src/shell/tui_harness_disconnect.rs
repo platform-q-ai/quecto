@@ -17,7 +17,7 @@ impl TuiHarness {
     /// when the real socket drops (#1470 review).
     pub fn disconnect_master_commands(&mut self) {
         let old = std::mem::replace(
-            &mut self.app.connection,
+            &mut self.app.conn.transport,
             crate::shell::connection::Connection::disconnected_for_tests(),
         );
         old.abort_feed();
@@ -59,7 +59,7 @@ impl TuiHarness {
 
     /// #1047: whether the app still believes the agent is connected.
     pub fn agent_connected(&self) -> bool {
-        self.app.agent_connected
+        self.app.conn.agent_connected
     }
 
     /// #1047: drive the production disconnect handling for an unexpectedly
