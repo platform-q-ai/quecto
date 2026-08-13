@@ -67,6 +67,9 @@ pub(super) enum SourcedRender {
     Immediate,
     /// Stream render: token events coalesce, everything else paints now.
     Stream { is_token: bool },
+    /// No paint, no deferred wakeup (#1466): a background-tab event; state
+    /// (and the tab's unread dot) updated silently.
+    Silent,
 }
 
 impl App {
@@ -105,15 +108,18 @@ impl App {
                 }) else {
                     return SourcedRender::Stream { is_token };
                 };
-                paint
+                self.background_render_gate(tab, paint)
             }
             SourcedEvent::Subagent(tab, agent_id, ev) => {
                 let is_token = Self::is_token_event(&ev);
                 // Direct child feeds belong to the tab that opened them.
-                let _ = self.with_routing_tab(tab, |app| {
+                let stream = SourcedRender::Stream { is_token };
+                match self.with_routing_tab(tab, |app| {
                     app.route_subagent_event(&agent_id, ev);
-                });
-                SourcedRender::Stream { is_token }
+                }) {
+                    Some(()) => self.background_render_gate(tab, stream),
+                    None => stream,
+                }
             }
             SourcedEvent::Closed(tab) => {
                 // Owner-targeted disconnect (#1465 / #1047 via #1462).
@@ -133,6 +139,10 @@ impl App {
         match render {
             SourcedRender::Immediate => self.render_and_note(coalescer),
             SourcedRender::Stream { is_token } => self.render_stream_event(coalescer, is_token),
+            // Background-tab event (#1466 decision 3): the coalescer is left
+            // untouched, so an idle loop stays idle no matter how many
+            // background tabs are streaming.
+            SourcedRender::Silent => {}
         }
     }
 
@@ -676,6 +686,8 @@ impl App {
                 self.active_chat_mut().scroll_down(10);
                 return;
             }
+            // Tab-switch chords (#1466 decision 5) — see `handle_tab_switch_key`.
+            _ if self.handle_tab_switch_key(&key) => return,
             _ => {}
         }
 

@@ -4,6 +4,8 @@ use std::fs;
 fn ws(id: &str, tabs: Vec<WorkspaceTabEntry>, active: usize) -> WorkspaceManifest {
     WorkspaceManifest {
         workspace_id: id.into(),
+        label: String::new(),
+        last_active_unix_s: 0,
         active_index: active,
         tabs,
         updated_unix_s: 42,

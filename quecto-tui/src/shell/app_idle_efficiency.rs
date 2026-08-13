@@ -22,6 +22,15 @@ impl App {
             || self.active_session().footer.is_streaming()
             || self.active_subagent_running()
             || self.ac().roster.tracked_active_count() > 0
+            // Any-tab-busy (#1466 scope 2): a running BACKGROUND turn keeps
+            // the tab-bar spinner animating; idle background tabs add nothing.
+            || self.any_tab_turn_running()
+    }
+
+    /// Cheap "any tab busy" flag (#1466): whether any tab's master turn is in
+    /// flight, focused or not.
+    fn any_tab_turn_running(&self) -> bool {
+        self.tabs.values().any(|c| c.agent_state.is_running())
     }
 
     pub(super) fn service_animation_tick(

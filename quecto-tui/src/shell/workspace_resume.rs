@@ -28,16 +28,22 @@ impl super::App {
         empty_status: Option<&str>,
     ) {
         let store = WorkspaceManifestStore::load(manifest_path);
+        let now = unix_now_s();
+        // #1466 decision 1: list by human label + relative last-active time;
+        // the raw UUID stays in `value` for dispatch, never in the row text.
         let mut items: Vec<SelectItem> = store
             .workspaces
             .iter()
             .map(|ws| SelectItem {
                 value: format!("{WORKSPACE_RESUME_PREFIX}{}", ws.workspace_id),
-                label: format!("workspace · {}", ws.workspace_id),
+                label: format!("workspace · {}", ws.display_label()),
                 description: Some(format!(
-                    "{} tabs · active #{}",
+                    "{} tabs · {}",
                     ws.tabs.len(),
-                    ws.active_index.saturating_add(1)
+                    crate::shell::workspace_manifest::relative_age_label(
+                        now,
+                        ws.last_active_or_updated_s()
+                    )
                 )),
             })
             .collect();
@@ -285,6 +291,8 @@ impl super::App {
     ) -> WorkspaceManifest {
         WorkspaceManifest {
             workspace_id: workspace_id.into(),
+            label: String::new(),
+            last_active_unix_s: 0,
             active_index,
             tabs,
             updated_unix_s: unix_now_s(),

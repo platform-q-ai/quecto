@@ -32,6 +32,8 @@ mod disconnect;
 mod events;
 #[path = "tui_harness_sourced.rs"]
 mod sourced;
+#[path = "tui_harness_tabs.rs"]
+mod tabs;
 // Re-export the scenario event builders so callers keep using
 // `tui_harness::subagent(..)` etc. `normalize` stays module-internal.
 pub use events::*;

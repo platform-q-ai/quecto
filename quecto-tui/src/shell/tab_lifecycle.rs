@@ -207,7 +207,10 @@ impl super::App {
             .filter(|t| self.tab_has_pending_attach(*t))
             .count();
         let _ = _pending;
-        self.persist_durability_snapshot("default", &reg, &man);
+        // #1466 decision 1: durability is keyed by this TUI's UUID identity,
+        // never a shared literal, so two TUIs can never clobber each other.
+        let workspace_id = self.workspace_id.clone();
+        self.persist_durability_snapshot(&workspace_id, &reg, &man);
     }
 
     /// Focus `tab` if present. Returns whether the switch happened.
@@ -226,6 +229,10 @@ impl super::App {
         }
         self.close_tab_switch_overlays();
         self.active_tab = tab;
+        // Viewing the tab consumes its unread dot (#1466 decision 4).
+        if let Some(c) = self.conn_mut(tab) {
+            c.unread_output = false;
+        }
         let restore = self
             .conn_for(tab)
             .map(|c| c.editor_draft.clone())
@@ -237,6 +244,19 @@ impl super::App {
         self.subagents.panel_nav.set_selected(0);
         self.sync_panel_selection_to_active();
         true
+    }
+
+    /// Focus the `ordinal`-th tab (1-based, tab-bar order). Ordinals past the
+    /// open tab count no-op (#1466 decision 5).
+    pub(crate) fn focus_tab_ordinal(&mut self, ordinal: usize) -> bool {
+        let Some(tab) = self
+            .ordered_tab_ids()
+            .get(ordinal.saturating_sub(1))
+            .copied()
+        else {
+            return false;
+        };
+        self.switch_tab(tab)
     }
 
     /// Cycle focus forward/back through sorted tab ids.
@@ -416,6 +436,14 @@ impl super::App {
             .collect();
         WorkspaceManifest {
             workspace_id: workspace_id.to_string(),
+            // Own workspace: stamp our auto-generated label (#1466 decision 1).
+            // Foreign ids leave it empty; persist preserves the stored label.
+            label: if workspace_id == self.workspace_id {
+                self.workspace_label.clone()
+            } else {
+                String::new()
+            },
+            last_active_unix_s: unix_now_s(),
             active_index,
             tabs,
             updated_unix_s: unix_now_s(),
@@ -450,7 +478,17 @@ impl super::App {
         });
         let _ = on_disk.store(registry_path);
         let mut store = WorkspaceManifestStore::load(manifest_path);
-        store.upsert(self.workspace_manifest_snapshot(workspace_id));
+        let mut manifest = self.workspace_manifest_snapshot(workspace_id);
+        // Preserve a stored (possibly renamed) label the snapshot doesn't know.
+        if manifest.label.trim().is_empty() {
+            if let Some(prev) = store.get(workspace_id) {
+                manifest.label = prev.label.clone();
+            }
+        }
+        store.upsert(manifest);
+        // Orphaned-workspace GC (#1466): rows with no resumable session key
+        // and no registry record are dead weight in `/resume` — drop them.
+        let _ = store.gc_orphaned(&on_disk);
         let _ = store.store(manifest_path);
     }
 }

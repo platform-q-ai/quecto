@@ -27,6 +27,13 @@ pub enum Key {
     CtrlShift(char),
     /// Alt + a character.
     Alt(char),
+    /// Tab-switch chord: focus next tab (#1466 decision 5). Primary is
+    /// Alt+Tab; the kitty Ctrl+Tab alias parses to the same key so alias
+    /// and primary can never dispatch to different actions.
+    TabSwitchNext,
+    /// Tab-switch chord: focus previous tab (#1466 decision 5). Primary is
+    /// Alt+Shift+Tab; kitty Ctrl+Shift+Tab is the alias.
+    TabSwitchPrev,
     /// Insert key.
     Insert,
     /// Shift + Enter (for newline in editor).
@@ -274,6 +281,10 @@ fn parse_kitty_key(params: &[u8]) -> Key {
         8 => Key::PageDown,
         13 if shift => Key::ShiftEnter,
         13 => Key::Enter,
+        // Tab-switch chords (#1466 decision 5): Alt+Tab primary and kitty
+        // Ctrl+Tab alias collapse to one key, so alias == primary by parse.
+        9 if (ctrl || alt) && shift => Key::TabSwitchPrev,
+        9 if ctrl || alt => Key::TabSwitchNext,
         9 if shift => Key::BackTab,
         9 => Key::Tab,
         127 => Key::Backspace,
@@ -287,6 +298,9 @@ fn parse_kitty_key(params: &[u8]) -> Key {
         97..=122 if ctrl => Key::Ctrl((keycode as u8) as char),
         // Alt+letter: keycode 97..=122 (a-z) with alt modifier (no ctrl).
         97..=122 if alt => Key::Alt((keycode as u8) as char),
+        // Alt+digit is the tab-focus primary; kitty Ctrl+digit is its alias
+        // (#1466 decision 5) — both parse to the same key.
+        48..=57 if ctrl || alt => Key::Alt((keycode as u8) as char),
         // Plain printable ASCII (keycode 32..=126) with no modifier.
         32..=126 if !ctrl && !alt && !shift => Key::Char(char::from(keycode as u8)),
         _ => Key::Unknown(params.to_vec()),
@@ -330,6 +344,8 @@ fn parse_modify_other_keys(params: &[u8]) -> Option<Key> {
         97..=122 if ctrl => Some(Key::Ctrl((codepoint as u8) as char)),
         65..=90 if alt => Some(Key::Alt(((codepoint as u8) + b'a' - b'A') as char)),
         97..=122 if alt => Some(Key::Alt((codepoint as u8) as char)),
+        // Ctrl+digit aliases the Alt+digit tab-focus primary (#1466 dec. 5).
+        48..=57 if ctrl || alt => Some(Key::Alt((codepoint as u8) as char)),
         32..=126 if !ctrl && !alt && !shift => Some(Key::Char(char::from(codepoint as u8))),
         _ => None,
     }

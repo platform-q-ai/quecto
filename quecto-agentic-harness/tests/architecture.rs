@@ -1234,7 +1234,10 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// #1465 P3 placeholder connection uses `CommandSender { tx }` for the
 /// connecting-tab stub — transport-seam usage (139 → 140).
 /// multi-tab live attach/reattach path (#1465 review) — Client connect seams (140 → 146).
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 146;
+/// #1466 background-tab paint/activity harness drivers in
+/// `shell/tui_harness_tabs.rs` mention `Event` per routed variant — harness
+/// seam usage, not feature/view growth (146 → 151).
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 151;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///
