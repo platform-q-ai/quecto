@@ -388,7 +388,7 @@ impl From<serde_json::Error> for ClientError {
 /// Multiple tasks can hold a `CommandSender` to send commands concurrently.
 #[derive(Clone)]
 pub struct CommandSender {
-    tx: mpsc::Sender<String>,
+    pub(crate) tx: mpsc::Sender<String>,
 }
 impl Command {
     pub fn with_inspection_agent_id(&self, agent_id: &str, ns: &str) -> Option<Self> {
@@ -423,10 +423,7 @@ impl Command {
         }
     }
 }
-/// Serialize a command to its JSON-lines wire form (JSON + trailing newline).
-///
-/// Both [`CommandSender::send`] and [`Client::send`] write the same framed wire
-/// format, so the serialize-and-newline rule lives here in one place.
+/// Serialize a command to JSON-lines wire form (JSON + trailing newline).
 fn serialize_command(cmd: &Command) -> Result<String, ClientError> {
     let mut json = serde_json::to_string(cmd)?;
     json.push('\n');

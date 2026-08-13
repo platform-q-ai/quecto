@@ -40,6 +40,24 @@ pub(crate) struct ConnectionState {
     /// Exit-diagnosis watch for the TUI-owned agent child (#1047), published
     /// by [`crate::shell::child_watch`]. `None` for external sockets.
     pub(crate) child_exit_watch: Option<crate::shell::child_watch::ChildWatch>,
+    /// OS pid of the TUI-owned agent child when known (registry sidecar, AC4).
+    pub(crate) child_pid: Option<u32>,
+    /// Live UDS path for this tab's master agent (registry/reattach, AC4/AC6).
+    pub(crate) socket_path: Option<std::path::PathBuf>,
+    /// Durable session key for this tab's master agent (manifest, AC4/AC5/AC6).
+    pub(crate) session_key: Option<String>,
+    /// Session key to resume once this tab becomes connected (workspace restore).
+    pub(crate) pending_session_resume: Option<String>,
+    /// True while a background spawn/reattach for this tab is in flight (AC2).
+    pub(crate) pending_attach: bool,
+    /// Generation stamped when the current attach/spawn was kicked; outcomes
+    /// with a mismatched generation are rejected so close→reopen cannot attach
+    /// the wrong agent into a recycled TabId (#1465 F2).
+    pub(crate) attach_generation: u64,
+    /// Draft text composed while this tab was focused (swapped on tab switch).
+    pub(crate) editor_draft: String,
+    /// Prompts typed while attach was still pending; flushed after connect.
+    pub(crate) queued_prompts: Vec<String>,
     /// Oversized-event drops already surfaced as a notification, so each is
     /// reported exactly once (#1047).
     pub(crate) surfaced_oversized_drops: u64,
@@ -103,6 +121,14 @@ impl ConnectionState {
             agent_connected: true,
             agent_ever_connected: true,
             child_exit_watch: None,
+            child_pid: None,
+            socket_path: None,
+            session_key: None,
+            pending_session_resume: None,
+            pending_attach: false,
+            attach_generation: 0,
+            editor_draft: String::new(),
+            queued_prompts: Vec::new(),
             surfaced_oversized_drops: 0,
             disconnect_diag_pending: false,
             disconnect_refusal_notified: false,
@@ -156,32 +182,86 @@ impl ConnectionState {
 }
 
 impl App {
-    /// The active tab's connection state. N=1: always the master tab.
-    ///
-    /// Accessor for the (single, N=1) connection. NOTE (#1472 r2): most
-    /// sites still access `self.conn` directly — phase 3 (#1464) routes
-    /// rendering through here; this is NOT yet a sufficient dispatch seam
-    /// for N>1 on its own.
+    /// Resolve which tab `active_conn*` should address: routing override
+    /// (inbound event owner) if set, otherwise the focused `active_tab`.
+    fn effective_tab(&self) -> crate::shell::connection::TabId {
+        self.routing_tab_override.unwrap_or(self.active_tab)
+    }
+
+    /// The focused (or routing-override) tab's connection state.
     pub(crate) fn active_conn(&self) -> &ConnectionState {
-        &self.conn
+        let tab = self.effective_tab();
+        self.tabs
+            .get(&tab)
+            .unwrap_or_else(|| panic!("missing connection state for effective tab {tab:?}"))
     }
 
     /// Mutable counterpart to [`Self::active_conn`].
     pub(crate) fn active_conn_mut(&mut self) -> &mut ConnectionState {
-        &mut self.conn
+        let tab = self.effective_tab();
+        self.conn_mut(tab)
+            .unwrap_or_else(|| panic!("missing connection state for effective tab {tab:?}"))
+    }
+
+    /// Short alias for dense call sites (line-budget / rustfmt).
+    #[inline]
+    pub(crate) fn ac(&self) -> &ConnectionState {
+        self.active_conn()
+    }
+
+    /// Short alias for dense call sites (line-budget / rustfmt).
+    #[inline]
+    pub(crate) fn ac_mut(&mut self) -> &mut ConnectionState {
+        self.active_conn_mut()
+    }
+
+    /// Immutable lookup for a specific tab (None if unknown).
+    pub(crate) fn conn_for(
+        &self,
+        tab: crate::shell::connection::TabId,
+    ) -> Option<&ConnectionState> {
+        self.tabs.get(&tab)
+    }
+
+    /// Mutable lookup for a specific tab (None if unknown).
+    pub(crate) fn conn_mut(
+        &mut self,
+        tab: crate::shell::connection::TabId,
+    ) -> Option<&mut ConnectionState> {
+        self.tabs.get_mut(&tab)
+    }
+
+    /// Run `f` with `active_conn*` temporarily addressing `tab` so existing
+    /// handlers can mutate the event owner without changing focus (#1465).
+    /// Unknown tabs are a no-op (AC7: no ghost state, no active fallthrough).
+    pub(crate) fn with_routing_tab<R>(
+        &mut self,
+        tab: crate::shell::connection::TabId,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> Option<R> {
+        self.conn_for(tab)?;
+        let prev = self.routing_tab_override;
+        self.routing_tab_override = Some(tab);
+        let out = f(self);
+        self.routing_tab_override = prev;
+        Some(out)
     }
 
     /// Close global overlay surfaces when switching the active tab/session.
     /// N=1 session switches use the same seam; this preserves compose-frame
     /// idempotence by doing the state transition outside render composition.
     pub(crate) fn close_tab_switch_overlays(&mut self) {
-        self.conn.sessions.resume_selector = None;
-        self.conn.rewind.selector = None;
+        let conn = self.active_conn_mut();
+        conn.sessions.resume_selector = None;
+        conn.rewind.selector = None;
         self.autocomplete.dismiss();
         self.workspace.files_autocomplete.dismiss();
         self.tool_policy_modal = None;
         self.tool_policy_modal_pending_catalogue_id = None;
         self.inference.model_selector = None;
         self.inference.effort_selector = None;
+        // Global model-selector open latch must not fire on the newly focused
+        // tab after a switch (#1465 F10).
+        self.inference.model_registry.open_pending = false;
     }
 }

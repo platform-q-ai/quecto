@@ -27,8 +27,8 @@ impl App {
     }
 
     pub(super) fn note_ledger_advanced(&mut self, agent_id: &str, epoch: u64, rev: u64) {
-        let ns = self.conn.id_namespace();
-        if let Some(feed) = self.conn.roster.feeds.get_mut(agent_id) {
+        let ns = self.ac().id_namespace();
+        if let Some(feed) = self.ac_mut().roster.feeds.get_mut(agent_id) {
             if feed.supports_sync {
                 Self::request_sync(feed, &ns, epoch, rev);
             } else {
@@ -40,13 +40,13 @@ impl App {
     }
 
     pub(super) fn route_sync_response(&mut self, agent_id: &str, data: &serde_json::Value) {
-        let ns = self.conn.id_namespace();
+        let ns = self.ac().id_namespace();
         let Ok(delta) = serde_json::from_value::<crate::protocol::agent_ledger_payloads::SyncDelta>(
             data.clone(),
         ) else {
             return;
         };
-        if let Some(feed) = self.conn.roster.feeds.get_mut(agent_id) {
+        if let Some(feed) = self.ac_mut().roster.feeds.get_mut(agent_id) {
             if feed.epoch != 0 && delta.epoch != feed.epoch && !delta.resync {
                 return;
             }
@@ -83,9 +83,9 @@ impl App {
             // - rev advance after the turn goes idle clears it
             let hard_supersede = delta.resync || (prev_epoch != 0 && feed.epoch != prev_epoch);
             let rev_advanced = feed.rev != prev_rev;
-            let focused = self.conn.roster.active_agent_id.as_deref() == Some(agent_id);
+            let focused = self.ac().roster.active_agent_id.as_deref() == Some(agent_id);
             let session_running = self
-                .conn
+                .ac()
                 .roster
                 .sessions
                 .get(agent_id)
@@ -99,7 +99,7 @@ impl App {
                 .any(|message| message.role() == "assistant");
             let supersede_live =
                 hard_supersede || (rev_advanced && (!session_running || delta_has_assistant));
-            if let Some(session) = self.conn.roster.sessions.get_mut(agent_id) {
+            if let Some(session) = self.ac_mut().roster.sessions.get_mut(agent_id) {
                 session.project_ledger_with_live(
                     entries,
                     focused && !supersede_live,
@@ -111,8 +111,8 @@ impl App {
     }
 
     pub(super) fn note_sync_capability(&mut self, agent_id: &str, data: &serde_json::Value) {
-        let ns = self.conn.id_namespace();
-        if let Some(feed) = self.conn.roster.feeds.get_mut(agent_id) {
+        let ns = self.ac().id_namespace();
+        if let Some(feed) = self.ac_mut().roster.feeds.get_mut(agent_id) {
             feed.supports_sync = crate::protocol::agent_ledger_payloads::supports_sync(data);
             if feed.supports_sync {
                 if let Some(target_rev) = feed.pending_rev {

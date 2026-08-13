@@ -46,17 +46,20 @@ impl App {
         }
         match command {
             Command::GetMessages { id: Some(id), .. } => {
-                self.conn.master_session.history.rollback_pending_page(id);
+                self.ac_mut()
+                    .master_session
+                    .history
+                    .rollback_pending_page(id);
                 self.rollback_pending_solicited_get_messages(id);
             }
             Command::GetMessage { id: Some(id), .. } => {
                 // On a dead connection, latch the failure too: without it,
                 // every scroll re-issues every visible stub recall and
                 // floods failure reports (#1470 r4/r5).
-                if let Some(recall) = self.conn.pending_stub_recall.remove(id)
+                if let Some(recall) = self.ac_mut().pending_stub_recall.remove(id)
                     && latch_failures
                 {
-                    self.conn
+                    self.ac_mut()
                         .failed_stub_recalls
                         .insert((recall.agent_id.clone(), recall.message_id.clone()));
                 }
@@ -77,10 +80,10 @@ impl App {
     }
 
     pub(super) fn next_history_page_request(&mut self) -> Option<(String, String)> {
-        if self.conn.roster.active_agent_id.is_some() {
+        if self.ac().roster.active_agent_id.is_some() {
             return None;
         }
-        let ns = self.conn.id_namespace();
+        let ns = self.ac().id_namespace();
         let session = self.active_session_mut();
         let at_oldest = session.chat.is_at_oldest_loaded_history();
         let request = session.history.next_page_request(
@@ -111,13 +114,13 @@ impl App {
     /// routing — so the response returns on the master stream and is applied to
     /// the child's chat.
     pub(super) fn request_active_visible_stub_recalls(&mut self) {
-        let agent_id = self.conn.roster.active_agent_id.clone();
+        let agent_id = self.ac().roster.active_agent_id.clone();
         let stub_infos = self.active_session().chat.visible_stub_message_infos();
         for (message_id, content_len) in stub_infos {
             let recall_key = (agent_id.clone(), message_id.clone());
-            if self.conn.failed_stub_recalls.contains(&recall_key)
+            if self.ac().failed_stub_recalls.contains(&recall_key)
                 || self
-                    .conn
+                    .ac()
                     .pending_stub_recall
                     .values()
                     .any(|r| r.agent_id == agent_id && r.message_id == message_id)
@@ -126,10 +129,10 @@ impl App {
             }
             let req_id = format!(
                 "{}stub-recall-{}",
-                self.conn.id_namespace(),
+                self.ac().id_namespace(),
                 super::app_events::uuid_like()
             );
-            self.conn.pending_stub_recall.insert(
+            self.ac_mut().pending_stub_recall.insert(
                 req_id.clone(),
                 StubRecall {
                     agent_id: agent_id.clone(),
@@ -163,16 +166,16 @@ impl App {
         data: Option<&serde_json::Value>,
     ) -> bool {
         let Some(req_id) = id else { return false };
-        let Some(recall) = self.conn.pending_stub_recall.remove(req_id) else {
+        let Some(recall) = self.ac_mut().pending_stub_recall.remove(req_id) else {
             return false;
         };
         let recall_key = (recall.agent_id.clone(), recall.message_id.clone());
         if !success {
-            self.conn.failed_stub_recalls.insert(recall_key);
+            self.ac_mut().failed_stub_recalls.insert(recall_key);
             return true;
         }
         let Some(data) = data else {
-            self.conn.failed_stub_recalls.insert(recall_key);
+            self.ac_mut().failed_stub_recalls.insert(recall_key);
             return true;
         };
         // Reject a mismatched body (stale / rerouted response) and require the
@@ -180,16 +183,16 @@ impl App {
         let (response_id, role) = crate::protocol::presentation_payloads::response_identity(data);
         let response_matches = response_id.as_deref() == Some(recall.message_id.as_str());
         let chat = match &recall.agent_id {
-            None => Some(&mut self.conn.master_session.chat),
+            None => Some(&mut self.ac_mut().master_session.chat),
             Some(child) => self
-                .conn
+                .ac_mut()
                 .roster
                 .sessions
                 .get_mut(child)
                 .map(|session| &mut session.chat),
         };
         let Some(chat) = chat else {
-            self.conn.failed_stub_recalls.insert(recall_key);
+            self.ac_mut().failed_stub_recalls.insert(recall_key);
             return true;
         };
         if !response_matches
@@ -197,7 +200,7 @@ impl App {
                 .as_deref()
                 .is_some_and(|role| chat.stub_role_matches(&recall.message_id, role))
         {
-            self.conn.failed_stub_recalls.insert(recall_key);
+            self.ac_mut().failed_stub_recalls.insert(recall_key);
             return true;
         }
         let update = crate::protocol::range_accumulator::RangeAccumulator::new_with_expected_len(
@@ -214,10 +217,10 @@ impl App {
             }) => {
                 let req_id = format!(
                     "{}stub-recall-{}",
-                    self.conn.id_namespace(),
+                    self.ac().id_namespace(),
                     super::app_events::uuid_like()
                 );
-                self.conn.pending_stub_recall.insert(
+                self.ac_mut().pending_stub_recall.insert(
                     req_id.clone(),
                     StubRecall {
                         agent_id: recall.agent_id.clone(),
@@ -239,7 +242,7 @@ impl App {
             }
             Ok(crate::protocol::range_accumulator::RangeUpdate::Complete(content)) => content,
             Err(_) => {
-                self.conn.failed_stub_recalls.insert(recall_key);
+                self.ac_mut().failed_stub_recalls.insert(recall_key);
                 return true;
             }
         };
@@ -248,7 +251,7 @@ impl App {
         // sequences are interpreted identically to the original message.
         let accumulated = crate::components::ansi::sanitize_control_keep_newlines(&accumulated);
         if !chat.recall_stub(&recall.message_id, &accumulated) {
-            self.conn.failed_stub_recalls.insert(recall_key);
+            self.ac_mut().failed_stub_recalls.insert(recall_key);
         }
         true
     }
@@ -260,16 +263,16 @@ impl App {
     /// recall in the new conversation: a pending recall whose response was lost
     /// (e.g. disconnect mid-flight) would otherwise dedupe that stub forever.
     pub(super) fn clear_message_recovery(&mut self) {
-        self.conn.message_recovery_batches.clear();
-        self.conn.pending_message_recovery.clear();
-        self.conn.pending_stub_recall.clear();
-        self.conn.failed_stub_recalls.clear();
+        self.ac_mut().message_recovery_batches.clear();
+        self.ac_mut().pending_message_recovery.clear();
+        self.ac_mut().pending_stub_recall.clear();
+        self.ac_mut().failed_stub_recalls.clear();
         // Every caller is a master-conversation lifecycle boundary (new,
         // resume, rewind, or clear). Invalidate paging correlation and cursors
         // with the message refs so a late page from the prior conversation
         // cannot prepend into the replacement transcript, and the new
         // conversation cannot request the prior cursor.
-        self.conn.master_session.history.reset();
+        self.ac_mut().master_session.history.reset();
         // Drop solicited resume/rewind/attach correlation too (#1237): a late
         // response from the prior boundary must not replace the new transcript.
         // Callers that mint a new id (resume success, rewind_to success) do so
@@ -294,12 +297,15 @@ impl App {
         data: &serde_json::Value,
         status: &str,
     ) {
-        self.conn.master_session.chat.clear();
-        self.conn.master_session.history.reopen_backfill();
+        self.ac_mut().master_session.chat.clear();
+        self.ac_mut().master_session.history.reopen_backfill();
         // The cursors themselves are reconciled from `data` below.
-        Self::reconcile_master_backfill_history(&mut self.conn.master_session, data, false);
-        self.conn.master_session.chat.add_entry(ChatEntry::Status {
-            text: status.to_string(),
-        });
+        Self::reconcile_master_backfill_history(&mut self.ac_mut().master_session, data, false);
+        self.ac_mut()
+            .master_session
+            .chat
+            .add_entry(ChatEntry::Status {
+                text: status.to_string(),
+            });
     }
 }

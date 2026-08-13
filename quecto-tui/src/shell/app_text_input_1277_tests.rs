@@ -52,7 +52,7 @@ async fn handle_key_enter_with_nonempty_editor_submits_prompt_and_clears() {
         "Enter must clear the draft after submit"
     );
     assert!(
-        a.conn.master_session.chat.entry_count() >= 1,
+        a.ac().master_session.chat.entry_count() >= 1,
         "Enter must dispatch handle_submit (user entry appears)"
     );
     let cmds = h.drain_commands().await;

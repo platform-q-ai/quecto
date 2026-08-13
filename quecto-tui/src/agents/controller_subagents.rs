@@ -11,18 +11,18 @@ const OPTIMISTIC_SUBAGENT_GRACE: Duration = Duration::from_secs(30);
 impl App {
     pub(super) fn delete_all_subagents(&mut self) {
         if !self.send_command(Command::DeleteAllSubagents {
-            id: Some(self.conn.namespaced_id("delete-all-subagents")),
+            id: Some(self.ac().namespaced_id("delete-all-subagents")),
         }) {
             return;
         }
-        self.conn.roster.tracked.clear();
-        self.conn.roster.sessions.clear();
-        self.conn.roster.session_order.clear();
-        for (_, feed) in std::mem::take(&mut self.conn.roster.feeds) {
+        self.ac_mut().roster.tracked.clear();
+        self.ac_mut().roster.sessions.clear();
+        self.ac_mut().roster.session_order.clear();
+        for (_, feed) in std::mem::take(&mut self.ac_mut().roster.feeds) {
             feed.handle.abort();
         }
-        self.conn.roster.active_agent_id = None;
-        self.conn.roster.selected_environment = None;
+        self.ac_mut().roster.active_agent_id = None;
+        self.ac_mut().roster.selected_environment = None;
         self.subagents.panel_nav = crate::components::list_navigator::ListNavigator::new();
         self.subagents.panel_nav_key = Some("master".to_string());
         self.notify("Deleting all subagents", NotifyLevel::Info);
@@ -39,24 +39,24 @@ impl App {
             return;
         }
 
-        if let Some(session) = self.conn.roster.sessions.remove(from) {
-            self.conn
+        if let Some(session) = self.ac_mut().roster.sessions.remove(from) {
+            self.ac_mut()
                 .roster
                 .sessions
                 .entry(to.to_string())
                 .or_insert(session);
         }
 
-        if let Some(feed) = self.conn.roster.feeds.remove(from) {
-            if self.conn.roster.feeds.contains_key(to) {
+        if let Some(feed) = self.ac_mut().roster.feeds.remove(from) {
+            if self.ac().roster.feeds.contains_key(to) {
                 feed.handle.abort();
             } else {
-                self.conn.roster.feeds.insert(to.to_string(), feed);
+                self.ac_mut().roster.feeds.insert(to.to_string(), feed);
             }
         }
 
         let mut saw_to = false;
-        self.conn.roster.session_order.retain_mut(|id| {
+        self.ac_mut().roster.session_order.retain_mut(|id| {
             if id == from {
                 if saw_to {
                     return false;
@@ -75,19 +75,19 @@ impl App {
             }
         });
 
-        for pending in self.conn.pending_message_recovery.values_mut() {
+        for pending in self.ac_mut().pending_message_recovery.values_mut() {
             if pending.agent_id.as_deref() == Some(from) {
                 pending.agent_id = Some(to.to_string());
             }
         }
-        for batch in self.conn.message_recovery_batches.values_mut() {
+        for batch in self.ac_mut().message_recovery_batches.values_mut() {
             if batch.agent_id.as_deref() == Some(from) {
                 batch.agent_id = Some(to.to_string());
             }
         }
 
-        if self.conn.roster.active_agent_id.as_deref() == Some(from) {
-            self.conn.roster.active_agent_id = Some(to.to_string());
+        if self.ac().roster.active_agent_id.as_deref() == Some(from) {
+            self.ac_mut().roster.active_agent_id = Some(to.to_string());
         }
         let from_key = format!("agent:{from}");
         if self.subagents.panel_nav_key.as_deref() == Some(from_key.as_str()) {
@@ -171,14 +171,17 @@ impl App {
             if display_key == *uuid_key {
                 continue;
             }
-            if let Some(entry) = self.conn.roster.tracked.get(&display_key) {
-                if entry.optimistic && !self.conn.roster.tracked.contains_key(uuid_key) {
-                    if let Some(mut migrated) = self.conn.roster.tracked.remove(&display_key) {
+            if let Some(entry) = self.ac().roster.tracked.get(&display_key) {
+                if entry.optimistic && !self.ac().roster.tracked.contains_key(uuid_key) {
+                    if let Some(mut migrated) = self.ac_mut().roster.tracked.remove(&display_key) {
                         migrated.info.agent_uuid = Some(uuid_key.clone());
                         if migrated.info.display_name.is_none() {
                             migrated.info.display_name = Some(display_key.clone());
                         }
-                        self.conn.roster.tracked.insert(uuid_key.clone(), migrated);
+                        self.ac_mut()
+                            .roster
+                            .tracked
+                            .insert(uuid_key.clone(), migrated);
                         pending_rekeys.push((display_key, uuid_key.clone()));
                     }
                 }
@@ -189,7 +192,7 @@ impl App {
         }
 
         crate::agents::roster::apply_roster_snapshot(
-            &mut self.conn.roster.tracked,
+            &mut self.ac_mut().roster.tracked,
             source_agent_id.as_deref(),
             candidates,
             tokio::time::Instant::now(),
@@ -198,7 +201,7 @@ impl App {
         );
 
         let warm_ids = self
-            .conn
+            .ac()
             .roster
             .tracked
             .iter()
@@ -222,11 +225,11 @@ impl App {
         // `running` flag is the source for its working spinner, and the
         // master's `subagent_local` status may still read idle for it.
         let any_active =
-            self.active_subagent_running() || self.conn.roster.tracked_active_count() > 0;
+            self.active_subagent_running() || self.ac().roster.tracked_active_count() > 0;
         if !any_active {
             return false;
         }
-        self.conn.roster.frame = self.conn.roster.frame.wrapping_add(1);
+        self.ac_mut().roster.frame = self.ac_mut().roster.frame.wrapping_add(1);
         // The sub-agent-first panel reads live state directly, so the only
         // consumer of `subagent_frame` is the "N working" activity line (#820
         // review). The frame bump above is all this tick needs.
@@ -236,11 +239,11 @@ impl App {
     /// GC exited subagent bars whose grace period has elapsed (#540).
     /// Returns `true` if the bar was modified.
     pub(super) fn gc_exited_subagents(&mut self) -> bool {
-        if self.conn.roster.tracked.is_empty() {
+        if self.ac().roster.tracked.is_empty() {
             return false;
         }
         gc_exited_subagents(
-            &mut self.conn.roster.tracked,
+            &mut self.ac_mut().roster.tracked,
             tokio::time::Instant::now(),
             EXITED_SUBAGENT_GRACE,
         )

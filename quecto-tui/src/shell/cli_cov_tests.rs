@@ -706,3 +706,35 @@ async fn spawn_agent_program_rejects_announced_regular_file_socket() {
     assert!(err.contains("not a Unix socket"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn parse_flags_default_persist_and_detach_on_exit() {
+    let f = parse_flags(&["quecto-tui".into()]);
+    assert!(f.persist);
+    assert!(!f.kill_on_exit);
+}
+
+#[test]
+fn parse_flags_kill_on_exit_and_no_persist() {
+    let f = parse_flags(&[
+        "quecto-tui".into(),
+        "--kill-on-exit".into(),
+        "--no-persist".into(),
+    ]);
+    assert!(f.kill_on_exit);
+    assert!(!f.persist);
+}
+
+#[test]
+fn build_agent_args_includes_persist_by_default() {
+    let f = parse_flags(&["quecto-tui".into()]);
+    let args = build_agent_args(&f);
+    assert!(args.iter().any(|a| a == "--persist"), "{args:?}");
+}
+
+#[test]
+fn build_agent_args_omits_persist_when_disabled() {
+    let f = parse_flags(&["quecto-tui".into(), "--no-persist".into()]);
+    let args = build_agent_args(&f);
+    assert!(!args.iter().any(|a| a == "--persist"), "{args:?}");
+}

@@ -237,22 +237,26 @@ impl TuiHarness {
 
     /// Capture the current spinner frame index, when a spinner is visible.
     pub fn spinner_frame_index(&self) -> Option<usize> {
-        self.app.conn.spinner.as_ref().map(Spinner::frame_index)
+        self.app.ac().spinner.as_ref().map(Spinner::frame_index)
     }
 
     /// Mark the main session's streaming indicator.
     pub fn set_streaming(&mut self, streaming: bool) {
-        self.app.conn.master_session.footer.set_streaming(streaming);
+        self.app
+            .ac_mut()
+            .master_session
+            .footer
+            .set_streaming(streaming);
     }
 
     /// Mark the main agent as not running.
     pub fn end_agent_run(&mut self) {
-        self.app.conn.agent_state.end();
+        self.app.ac_mut().agent_state.end();
     }
 
     /// Show a visible activity spinner in the main session.
     pub fn show_activity_spinner(&mut self, message: &str) {
-        self.app.conn.spinner = Some(Spinner::new(message));
+        self.app.ac_mut().spinner = Some(Spinner::new(message));
     }
 
     /// Show a visible notification.
@@ -340,7 +344,7 @@ impl TuiHarness {
         // Abort the replaced connection's feed task so it cannot later
         // inject a spurious `Closed` sentinel into the fan-in (#1470 review).
         let old = std::mem::replace(
-            &mut self.app.conn.transport,
+            &mut self.app.ac_mut().transport,
             crate::shell::connection::Connection::disconnected_for_tests(),
         );
         old.abort_feed();
@@ -452,14 +456,14 @@ impl TuiHarness {
 
     /// Whether the master agent run-state machine currently reports running.
     pub fn agent_running(&self) -> bool {
-        self.app.conn.agent_state.is_running()
+        self.app.ac().agent_state.is_running()
     }
 
     /// Number of aborted runs whose stale `AgentEnd` events have not yet been
     /// consumed by the abort-aware state machine (#502/#536). Used to assert
     /// that Ctrl+C / Esc actually drove `handle_abort`.
     pub fn pending_aborts(&self) -> u32 {
-        self.app.conn.agent_state.pending_aborts
+        self.app.ac().agent_state.pending_aborts
     }
 
     /// Set the editor text through the real editor component (the same call the
@@ -570,10 +574,23 @@ impl TuiHarness {
         false
     }
 
-    /// Open help through the production handler and return the rendered frame.
+    /// Open help through the production handler and return the full help body.
+    ///
+    /// Uses the Status entry text (not the scrolled viewport): slash-command
+    /// growth can push early rows off-frame while the chat still holds them.
     pub fn show_help_frame(&mut self) -> String {
         self.app.show_help();
-        self.full_frame()
+        let body = self
+            .app
+            .ac()
+            .master_session
+            .chat
+            .last_status_text()
+            .unwrap_or_default()
+            .to_string();
+        // Still paint so callers that read `full_frame` / capture see help too.
+        let _ = self.full_frame();
+        body
     }
 
     /// Abort through the real abort path (targets the active session).
@@ -657,87 +674,10 @@ impl TuiHarness {
     pub fn full_frame_raw(&mut self) -> String {
         self.app.compose_frame().join("\n")
     }
-
-    /// The bottom stack (below-chat section), ANSI-stripped — for asserting on
-    /// what does (or no longer does) render in the input/footer area (#820).
-    pub fn bottom_stack(&mut self) -> String {
-        // Render at the reduced body width the real frame uses once the panel
-        // is on (#820 review), not the full terminal width.
-        let width = self.app.body_width();
-        self.app
-            .compose_bottom(width)
-            .iter()
-            .map(|l| strip_ansi(l))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    /// The main-pane (top) region of the frame — everything above the bottom
-    /// stack — ANSI-stripped, for asserting on the relocated workflow bar (#820).
-    pub fn main_pane(&mut self) -> String {
-        // Slice the real frame at the same body width compose_frame used, so the
-        // top/bottom split matches what the user sees (#820 review).
-        let width = self.app.body_width();
-        let bottom_len = self.app.compose_bottom(width).len();
-        let frame = self.app.compose_frame();
-        let top = &frame[..frame.len().saturating_sub(bottom_len)];
-        top.iter()
-            .map(|l| strip_ansi(l))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    /// The left sub-agent panel region of the frame — the first `panel_width`
-    /// columns of every line, ANSI-stripped — for asserting on panel content
-    /// such as the read-only observer marker (#966).
-    pub fn left_panel(&mut self) -> String {
-        let (panel_width, _, _) = self.app.frame_split();
-        self.app
-            .compose_frame()
-            .iter()
-            .map(|l| {
-                let stripped = strip_ansi(l);
-                let chars: Vec<char> = stripped.chars().collect();
-                let take: Vec<char> = chars.into_iter().take(panel_width).collect();
-                take.into_iter().collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    pub async fn drain_commands(&mut self) -> Vec<String> {
-        // A command reaches this channel only after several async hops (writer
-        // task → socket → reader task → channel), so a multi-command batch is
-        // not all visible at once. Returning on the FIRST arrival would observe
-        // a scheduler-dependent subset — the source of the flaky recovery
-        // assertions. Instead, wait for the stream to go QUIET: keep polling
-        // until no new command has arrived for a short settle window, so the
-        // whole batch is collected (in wire order, which `send_command` now
-        // makes deterministic). Bounded overall so a genuinely empty stream
-        // still returns.
-        const SETTLE_POLLS: usize = 15;
-        const MAX_POLLS: usize = 400;
-        let mut out = Vec::new();
-        let mut idle = 0;
-        for _ in 0..MAX_POLLS {
-            let mut got = false;
-            while let Ok(line) = self.cmd_rx.try_recv() {
-                out.push(line);
-                got = true;
-            }
-            if got {
-                idle = 0;
-            } else if !out.is_empty() {
-                idle += 1;
-                if idle >= SETTLE_POLLS {
-                    break;
-                }
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-        }
-        out
-    }
 }
+
+#[path = "tui_harness_layout.rs"]
+mod layout;
 
 #[path = "tui_harness_panel.rs"]
 mod panel;

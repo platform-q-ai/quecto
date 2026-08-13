@@ -4,7 +4,7 @@ use crate::shell::socket_path::usable_socket_path;
 
 impl App {
     pub(super) fn ensure_synced_subagent_feed(&mut self, id: &str) {
-        if self.conn.roster.feeds.contains_key(id) {
+        if self.ac().roster.feeds.contains_key(id) {
             return;
         }
         self.open_subagent_feed(id, crate::agents::feed::FeedAuthority::WarmSync);
@@ -15,10 +15,10 @@ impl App {
     /// are sent to the master connection with `agent_id` and routed by the agent
     /// through the nearest reachable ancestor (#1442).
     fn open_subagent_feed(&mut self, id: &str, authority: crate::agents::feed::FeedAuthority) {
-        if self.conn.roster.feeds.contains_key(id) {
+        if self.ac().roster.feeds.contains_key(id) {
             return;
         }
-        let Some(tracked) = self.conn.roster.tracked.get(id) else {
+        let Some(tracked) = self.ac().roster.tracked.get(id) else {
             return;
         };
         let socket = tracked.info.socket_path.clone();
@@ -30,14 +30,14 @@ impl App {
         // Every id this feed mints (direct-socket literals and routed
         // inspection ids alike) carries the tab's connection namespace
         // (#1463) so broadcast responses can never match another tab's feed.
-        let ns = self.conn.id_namespace();
+        let ns = self.ac().id_namespace();
         let handle = if !inspection_only {
             let path = std::path::PathBuf::from(socket.expect("checked usable socket"));
             let tx = self.subagents.event_tx.clone();
             let agent_id_for_task = agent_id.clone();
             // The forwarded-event tag must agree with the id namespace about
             // which tab owns this feed (#1472 r1).
-            let feed_tab = self.conn.transport.tab();
+            let feed_tab = self.ac().transport.tab();
             let task = async move {
                 let Ok(mut client) = Client::connect(&path).await else {
                     return;
@@ -72,7 +72,7 @@ impl App {
             };
             tokio::spawn(task.with_subscriber(connect_dispatch))
         } else {
-            let root_sender = self.conn.transport.clone_sender();
+            let root_sender = self.ac().transport.clone_sender();
             let task = async move {
                 let _ = root_sender.try_send(
                     &Command::GetState {
@@ -113,7 +113,7 @@ impl App {
             };
             tokio::spawn(task.with_subscriber(connect_dispatch))
         };
-        self.conn.roster.feeds.insert(
+        self.ac_mut().roster.feeds.insert(
             id.to_string(),
             FeedState::from_parts(
                 crate::agents::runtime::FeedRuntime {

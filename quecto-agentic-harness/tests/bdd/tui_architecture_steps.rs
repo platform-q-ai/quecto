@@ -894,7 +894,7 @@ fn then_tui_validates_resumed_messages_before_replacing_chat(_world: &mut Quecto
         .find("session_payloads::parse_resumed_messages")
         .expect("resume replacement should call the protocol-layer parser");
     let clear_pos = body
-        .find("self.conn.master_session.chat.clear()")
+        .find("master_session.chat.clear()")
         .expect("resume replacement should still clear chat after valid resume data");
     assert!(
         parse_pos < clear_pos

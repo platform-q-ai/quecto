@@ -90,23 +90,24 @@ impl App {
     /// exact pending correlation token for `kind` (#1237). Overwrites any prior
     /// same-kind pending so a stale late response can no longer match.
     fn mint_pending_solicited_get_messages(&mut self, kind: SolicitedGetMessagesKind) -> String {
-        self.conn.solicited_get_messages_seq = self.conn.solicited_get_messages_seq.wrapping_add(1);
+        self.ac_mut().solicited_get_messages_seq =
+            self.ac_mut().solicited_get_messages_seq.wrapping_add(1);
         let id = format!(
             "{}{}-{}-{}",
-            self.conn.id_namespace(),
+            self.ac().id_namespace(),
             kind.id_prefix(),
             super::app_events::uuid_like(),
-            self.conn.solicited_get_messages_seq
+            self.ac().solicited_get_messages_seq
         );
         match kind {
             SolicitedGetMessagesKind::Resume => {
-                self.conn.pending_resume_messages_id = Some(id.clone());
+                self.ac_mut().pending_resume_messages_id = Some(id.clone());
             }
             SolicitedGetMessagesKind::RewindRefresh => {
-                self.conn.pending_rewind_refresh_id = Some(id.clone());
+                self.ac_mut().pending_rewind_refresh_id = Some(id.clone());
             }
             SolicitedGetMessagesKind::Attach => {
-                self.conn.pending_attach_backfill_id = Some(id.clone());
+                self.ac_mut().pending_attach_backfill_id = Some(id.clone());
             }
         }
         id
@@ -114,22 +115,22 @@ impl App {
 
     /// Drop all solicited resume/rewind/attach pending ids (lifecycle boundary).
     pub(super) fn clear_pending_solicited_get_messages(&mut self) {
-        self.conn.pending_resume_messages_id = None;
-        self.conn.pending_rewind_refresh_id = None;
-        self.conn.pending_attach_backfill_id = None;
+        self.ac_mut().pending_resume_messages_id = None;
+        self.ac_mut().pending_rewind_refresh_id = None;
+        self.ac_mut().pending_attach_backfill_id = None;
     }
 
     /// Roll back a failed enqueue of a solicited get_messages when the id still
     /// matches the pending slot for that family.
     pub(super) fn rollback_pending_solicited_get_messages(&mut self, id: &str) {
-        if self.conn.pending_resume_messages_id.as_deref() == Some(id) {
-            self.conn.pending_resume_messages_id = None;
+        if self.ac().pending_resume_messages_id.as_deref() == Some(id) {
+            self.ac_mut().pending_resume_messages_id = None;
         }
-        if self.conn.pending_rewind_refresh_id.as_deref() == Some(id) {
-            self.conn.pending_rewind_refresh_id = None;
+        if self.ac().pending_rewind_refresh_id.as_deref() == Some(id) {
+            self.ac_mut().pending_rewind_refresh_id = None;
         }
-        if self.conn.pending_attach_backfill_id.as_deref() == Some(id) {
-            self.conn.pending_attach_backfill_id = None;
+        if self.ac().pending_attach_backfill_id.as_deref() == Some(id) {
+            self.ac_mut().pending_attach_backfill_id = None;
         }
     }
 
@@ -138,12 +139,12 @@ impl App {
         id: Option<&str>,
     ) -> Option<SolicitedGetMessagesKind> {
         let id = id?;
-        if self.conn.pending_resume_messages_id.as_deref() == Some(id) {
-            self.conn.pending_resume_messages_id = None;
+        if self.ac().pending_resume_messages_id.as_deref() == Some(id) {
+            self.ac_mut().pending_resume_messages_id = None;
             return Some(SolicitedGetMessagesKind::Resume);
         }
-        if self.conn.pending_rewind_refresh_id.as_deref() == Some(id) {
-            self.conn.pending_rewind_refresh_id = None;
+        if self.ac().pending_rewind_refresh_id.as_deref() == Some(id) {
+            self.ac_mut().pending_rewind_refresh_id = None;
             return Some(SolicitedGetMessagesKind::RewindRefresh);
         }
         None
@@ -151,7 +152,7 @@ impl App {
 
     fn is_pending_attach_backfill(&self, id: Option<&str>) -> bool {
         matches!(
-            (id, self.conn.pending_attach_backfill_id.as_deref()),
+            (id, self.ac().pending_attach_backfill_id.as_deref()),
             (Some(got), Some(pending)) if got == pending
         )
     }
@@ -193,7 +194,7 @@ impl App {
             // Own-namespace only (#1472 r2): a foreign rev-relative sync
             // delta must never fast-forward this feed's rev.
             let id = id
-                .strip_prefix(self.conn.id_namespace().as_str())
+                .strip_prefix(self.ac().id_namespace().as_str())
                 .unwrap_or(id);
             if id.starts_with("tab") && id.contains(':') {
                 return None;
@@ -226,7 +227,7 @@ impl App {
             "get_state" if success => self.handle_get_state(data),
             "set_model" if success => self.handle_set_model_success(data),
             // Late master failure must not toast over a focused child (#1085).
-            "set_model" if self.conn.roster.active_agent_id.is_none() => {
+            "set_model" if self.ac().roster.active_agent_id.is_none() => {
                 self.notify_response_error("Model switch failed", error)
             }
             "set_model" => {}
@@ -274,21 +275,23 @@ impl App {
             // Failed page fetch: same retry-unblock as the no-data case above.
             "get_messages"
                 if self
-                    .conn
+                    .ac()
                     .master_session
                     .is_pending_history_page(id.as_deref()) =>
             {
-                self.conn.master_session.clear_pending_history_page();
+                self.ac_mut().master_session.clear_pending_history_page();
             }
             "get_messages" if self.take_pending_resume_or_rewind(id.as_deref()).is_some() => {}
             "get_messages" if self.is_pending_attach_backfill(id.as_deref()) => {
-                self.conn.pending_attach_backfill_id = None;
+                self.ac_mut().pending_attach_backfill_id = None;
             }
-            "rewind_to" if id.is_some() && id == self.conn.rewind.pending_apply_id && success => {
-                self.conn.rewind.pending_apply_id = None;
-                if let Some(text) = self.conn.rewind.pending_apply_text.take() {
+            "rewind_to"
+                if id.is_some() && id == self.ac_mut().rewind.pending_apply_id && success =>
+            {
+                self.ac_mut().rewind.pending_apply_id = None;
+                if let Some(text) = self.ac_mut().rewind.pending_apply_text.take() {
                     let editor_unchanged = self
-                        .conn
+                        .ac_mut()
                         .rewind
                         .pending_apply_editor_baseline
                         .take()
@@ -314,10 +317,10 @@ impl App {
                     agent_id: None,
                 });
             }
-            "rewind_to" if id.is_some() && id == self.conn.rewind.pending_apply_id => {
-                self.conn.rewind.pending_apply_id = None;
-                self.conn.rewind.pending_apply_editor_baseline = None;
-                self.conn.rewind.pending_apply_text = None;
+            "rewind_to" if id.is_some() && id == self.ac().rewind.pending_apply_id => {
+                self.ac_mut().rewind.pending_apply_id = None;
+                self.ac_mut().rewind.pending_apply_editor_baseline = None;
+                self.ac_mut().rewind.pending_apply_text = None;
                 self.notify_response_error("Rewind failed", error);
             }
             "rewind_to" => {}
@@ -363,23 +366,23 @@ impl App {
     /// Order is load-bearing: exact own solicited ids first, then history pages,
     /// attach/id-less reconcile, foreign-family drop, and only then legacy replace.
     fn handle_get_messages_success(&mut self, id: Option<&str>, data: Option<serde_json::Value>) {
-        let own_page = self.conn.master_session.is_pending_history_page(id);
+        let own_page = self.ac().master_session.is_pending_history_page(id);
         let Some(data) = data else {
             if own_page {
                 // Success but no data: clear the in-flight request so the same
                 // older page can be retried on the next scroll (#1061 review).
-                self.conn.master_session.clear_pending_history_page();
+                self.ac_mut().master_session.clear_pending_history_page();
             } else if self.take_pending_resume_or_rewind(id).is_some() {
                 // Exact pending matched but no payload — still clear pending
                 // so a later foreign id of the same family cannot apply.
             } else if self.is_pending_attach_backfill(id) {
-                self.conn.pending_attach_backfill_id = None;
+                self.ac_mut().pending_attach_backfill_id = None;
             }
             return;
         };
 
-        if id.is_some() && id == self.conn.rewind.pending_open_id.as_deref() {
-            self.conn.rewind.pending_open_id = None;
+        if id.is_some() && id == self.ac().rewind.pending_open_id.as_deref() {
+            self.ac_mut().rewind.pending_open_id = None;
             self.open_rewind_selector(&data);
             return;
         }
@@ -393,9 +396,12 @@ impl App {
             } else {
                 self.clear_message_recovery();
                 if self.replace_chat_with_messages_with_empty_status(&data, status) {
-                    self.conn.master_session.chat.add_entry(ChatEntry::Status {
-                        text: status.to_string(),
-                    });
+                    self.ac_mut()
+                        .master_session
+                        .chat
+                        .add_entry(ChatEntry::Status {
+                            text: status.to_string(),
+                        });
                 }
             }
             self.reconcile_master_retention_trim();
@@ -403,7 +409,7 @@ impl App {
         }
         if own_page {
             // This client's own older page extends the loaded prefix.
-            Self::reconcile_master_backfill_history(&mut self.conn.master_session, &data, true);
+            Self::reconcile_master_backfill_history(&mut self.ac_mut().master_session, &data, true);
             self.reconcile_master_retention_trim();
             return;
         }
@@ -419,9 +425,13 @@ impl App {
             // id-less snapshot — a trimmed snapshot must leave the later full
             // attach able to restore omitted history (#1050 / #1237).
             if self.is_pending_attach_backfill(id) {
-                self.conn.pending_attach_backfill_id = None;
+                self.ac_mut().pending_attach_backfill_id = None;
             }
-            Self::reconcile_master_backfill_history(&mut self.conn.master_session, &data, false);
+            Self::reconcile_master_backfill_history(
+                &mut self.ac_mut().master_session,
+                &data,
+                false,
+            );
             self.reconcile_master_retention_trim();
             return;
         }
@@ -446,12 +456,12 @@ impl App {
                 &crate::components::ansi::sanitize_control,
             )
         }) {
-            self.conn.master_session.footer.set_model(&model);
-            if self.conn.roster.active_agent_id.is_none() {
-                self.conn.inference.current_model = Some(model);
+            self.ac_mut().master_session.footer.set_model(&model);
+            if self.ac().roster.active_agent_id.is_none() {
+                self.ac_mut().inference.current_model = Some(model);
             }
         }
-        if self.conn.roster.active_agent_id.is_none() {
+        if self.ac().roster.active_agent_id.is_none() {
             self.notify("Model switched", NotifyLevel::Success);
             // A model switch can change the provider's effort vocabulary
             // and context window — re-sync from the agent (#1067).
@@ -470,34 +480,40 @@ impl App {
         // when the master is selected. A late master get_state must not
         // overwrite a focused child's level/vocabulary/model.
         if let Some(model) = self
-            .conn
+            .ac_mut()
             .master_session
             .footer
             .apply_get_state_fields(&snap.footer)
         {
-            if self.conn.roster.active_agent_id.is_none() {
-                self.conn.inference.current_model = Some(model);
+            if self.ac().roster.active_agent_id.is_none() {
+                self.ac_mut().inference.current_model = Some(model);
             }
         }
-        if self.conn.roster.active_agent_id.is_none() {
-            self.conn.inference.current_effort = snap.footer.effort.clone();
+        if self.ac().roster.active_agent_id.is_none() {
+            self.ac_mut().inference.current_effort = snap.footer.effort.clone();
             if !snap.effort_levels.is_empty() {
-                self.conn.inference.effort_levels = snap.effort_levels;
+                self.ac_mut().inference.effort_levels = snap.effort_levels;
             }
         }
         if snap.footer.max_context_tokens.is_some() {
-            self.conn.sessions.context_stats_requested = true;
+            self.ac_mut().sessions.context_stats_requested = true;
         }
         // Learn the connected agent's own id from its sessionKey ("cli:<name>").
         if let Some(key) = snap.session_key.as_deref() {
+            // Durable key for workspace/registry snapshots (AC4/AC5 / F3).
+            let changed = self.ac().session_key.as_deref() != Some(key);
+            self.ac_mut().session_key = Some(key.to_string());
             let name = key.rsplit(':').next().unwrap_or("");
-            self.conn.connected_agent_id = match name {
+            self.ac_mut().connected_agent_id = match name {
                 "" | "default" => None,
                 other => Some(crate::components::ansi::sanitize_control(other)),
             };
+            if changed {
+                self.persist_default_durability();
+            }
         }
         if let Some(wf) = snap.workflow.as_ref() {
-            self.conn.master_session.workflow_bar = workflow_bar::parse_workflow_event(wf);
+            self.ac_mut().master_session.workflow_bar = workflow_bar::parse_workflow_event(wf);
             self.sync_workflow_automation(wf);
         }
     }
@@ -505,10 +521,10 @@ impl App {
     fn sync_workflow_automation(&mut self, data: &serde_json::Value) {
         let flags = crate::protocol::workflow_payloads::parse_workflow_automation(data);
         if let Some(value) = flags.auto_continue {
-            self.conn.workflow.auto_continue = value;
+            self.ac_mut().workflow.auto_continue = value;
         }
         if let Some(value) = flags.completion_nudge {
-            self.conn.workflow.completion_nudge = value;
+            self.ac_mut().workflow.completion_nudge = value;
         }
         self.mirror_automation_to_bar();
     }
@@ -518,24 +534,26 @@ impl App {
     /// state instead of the hard-coded `false` from `parse_workflow_event`
     /// (#897 AC2). Call after any (re)build of `master_session.workflow_bar`.
     pub(super) fn mirror_automation_to_bar(&mut self) {
-        self.conn.master_session.workflow_bar.workflow_auto_continue =
-            self.conn.workflow.auto_continue;
-        self.conn
+        self.ac_mut()
             .master_session
             .workflow_bar
-            .workflow_completion_nudge = self.conn.workflow.completion_nudge;
+            .workflow_auto_continue = self.ac().workflow.auto_continue;
+        self.ac_mut()
+            .master_session
+            .workflow_bar
+            .workflow_completion_nudge = self.ac().workflow.completion_nudge;
     }
 
     fn handle_workflow_automation(&mut self, data: Option<serde_json::Value>) {
         if let Some(data) = data {
             self.sync_workflow_automation(&data);
         }
-        let auto = if self.conn.workflow.auto_continue {
+        let auto = if self.ac().workflow.auto_continue {
             "ON"
         } else {
             "OFF"
         };
-        let nudge = if self.conn.workflow.completion_nudge {
+        let nudge = if self.ac().workflow.completion_nudge {
             "ON"
         } else {
             "OFF"
@@ -578,7 +596,7 @@ impl App {
         data: Option<serde_json::Value>,
         error: Option<String>,
     ) {
-        if id.is_some() && id == self.conn.rewind.pending_load_id {
+        if id.is_some() && id == self.ac().rewind.pending_load_id {
             if success {
                 self.handle_rewind_get_message_success(data);
             } else {
@@ -597,8 +615,8 @@ impl App {
     }
 
     fn handle_rewind_get_message_success(&mut self, data: Option<serde_json::Value>) {
-        self.conn.rewind.pending_load_id = None;
-        let Some(message_id) = self.conn.rewind.pending_apply_message_id.clone() else {
+        self.ac_mut().rewind.pending_load_id = None;
+        let Some(message_id) = self.ac().rewind.pending_apply_message_id.clone() else {
             return;
         };
         let Some(data) = data else {
@@ -623,9 +641,9 @@ impl App {
         }
 
         let update = crate::protocol::range_accumulator::RangeAccumulator::new_with_expected_len(
-            std::mem::take(&mut self.conn.rewind.pending_load_content),
-            self.conn.rewind.pending_load_offset,
-            self.conn.rewind.pending_load_content_len,
+            std::mem::take(&mut self.ac_mut().rewind.pending_load_content),
+            self.ac().rewind.pending_load_offset,
+            self.ac().rewind.pending_load_content_len,
         )
         .apply(&data);
         let text = match update {
@@ -635,10 +653,10 @@ impl App {
                 content_len,
             }) => {
                 let id = self.next_rewind_request_id("load");
-                self.conn.rewind.pending_load_id = Some(id.clone());
-                self.conn.rewind.pending_load_content = content;
-                self.conn.rewind.pending_load_offset = next_offset;
-                self.conn.rewind.pending_load_content_len = content_len;
+                self.ac_mut().rewind.pending_load_id = Some(id.clone());
+                self.ac_mut().rewind.pending_load_content = content;
+                self.ac_mut().rewind.pending_load_offset = next_offset;
+                self.ac_mut().rewind.pending_load_content_len = content_len;
                 self.send_command(Command::GetMessage {
                     id: Some(id),
                     message_id,
@@ -662,9 +680,9 @@ impl App {
 
         self.clear_pending_rewind_load();
         let id = self.next_rewind_request_id("to");
-        self.conn.rewind.pending_apply_id = Some(id.clone());
-        self.conn.rewind.pending_apply_editor_baseline = Some(self.editor.text());
-        self.conn.rewind.pending_apply_text = Some(text);
+        self.ac_mut().rewind.pending_apply_id = Some(id.clone());
+        self.ac_mut().rewind.pending_apply_editor_baseline = Some(self.editor.text());
+        self.ac_mut().rewind.pending_apply_text = Some(text);
         self.send_command(Command::RewindTo {
             id: Some(id),
             message_id,
@@ -677,68 +695,29 @@ impl App {
     }
 
     fn clear_pending_rewind_load(&mut self) {
-        self.conn.rewind.pending_load_id = None;
-        self.conn.rewind.pending_apply_message_id = None;
-        self.conn.rewind.pending_load_content.clear();
-        self.conn.rewind.pending_load_offset = 0;
-        self.conn.rewind.pending_load_content_len = None;
+        self.ac_mut().rewind.pending_load_id = None;
+        self.ac_mut().rewind.pending_apply_message_id = None;
+        self.ac_mut().rewind.pending_load_content.clear();
+        self.ac_mut().rewind.pending_load_offset = 0;
+        self.ac_mut().rewind.pending_load_content_len = None;
     }
 
     fn handle_agent_error(&mut self, error: Option<String>) {
         let msg = error.unwrap_or_else(|| "unknown error".into());
-        self.conn.master_session.chat.add_entry(ChatEntry::Status {
-            text: format!("Error: {}", msg),
-        });
-        self.conn.agent_state.reset();
-        self.conn.master_session.running = false;
-        self.conn.master_session.footer.set_streaming(false);
-        self.conn.spinner = None;
+        self.ac_mut()
+            .master_session
+            .chat
+            .add_entry(ChatEntry::Status {
+                text: format!("Error: {}", msg),
+            });
+        self.ac_mut().agent_state.reset();
+        self.ac_mut().master_session.running = false;
+        self.ac_mut().master_session.footer.set_streaming(false);
+        self.ac_mut().spinner = None;
     }
 
     fn notify_response_error(&mut self, prefix: &str, error: Option<String>) {
         let msg = error.unwrap_or_else(|| "unknown error".into());
         self.notify(&format!("{prefix}: {msg}"), NotifyLevel::Error);
-    }
-}
-
-#[cfg(any(test, feature = "test-harness"))]
-impl App {
-    /// Arm exact-pending attach correlation for a synthetic response delivery.
-    pub fn test_arm_attach_backfill(&mut self, id: &str) {
-        self.conn.pending_attach_backfill_id = Some(id.to_string());
-    }
-
-    /// Arm exact-pending resume correlation for a synthetic response delivery.
-    pub fn test_arm_resume_messages(&mut self, id: &str) {
-        self.conn.pending_resume_messages_id = Some(id.to_string());
-    }
-
-    /// Arm exact-pending rewind-refresh correlation for a synthetic response delivery.
-    pub fn test_arm_rewind_refresh(&mut self, id: &str) {
-        self.conn.pending_rewind_refresh_id = Some(id.to_string());
-    }
-
-    /// Pending attach id (test inspection / capture after real mint).
-    pub fn test_pending_attach_backfill_id(&self) -> Option<&str> {
-        self.conn.pending_attach_backfill_id.as_deref()
-    }
-
-    /// Pending resume id (test inspection / capture after real mint).
-    pub fn test_pending_resume_messages_id(&self) -> Option<&str> {
-        self.conn.pending_resume_messages_id.as_deref()
-    }
-
-    /// Pending rewind-refresh id (test inspection / capture after real mint).
-    pub fn test_pending_rewind_refresh_id(&self) -> Option<&str> {
-        self.conn.pending_rewind_refresh_id.as_deref()
-    }
-
-    /// Re-key the master connection to another tab id, so tests can pin that
-    /// minted-id namespaces derive from the connection's tab rather than a
-    /// hard-coded `tab0:` literal (#1463 review).
-    pub fn test_set_master_tab(&mut self, tab: u32) {
-        self.conn
-            .transport
-            .set_tab_for_tests(crate::shell::connection::TabId(tab));
     }
 }

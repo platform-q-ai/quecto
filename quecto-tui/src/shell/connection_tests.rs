@@ -258,3 +258,24 @@ async fn legacy_connection_reports_negotiation_and_writes_ndjson() {
         "the NDJSON line must carry the enqueued command, got: {line:?}"
     );
 }
+
+/// #1465 F1: dropping a Connection must abort its feed task so a recycled
+/// TabId cannot receive a late Closed sentinel from the previous occupant.
+#[tokio::test]
+async fn connection_drop_aborts_feed_task() {
+    let (client, server) = connected_pair().await;
+    let (tx, mut rx) = mpsc::channel::<SourcedEvent>(16);
+    let conn = Connection::spawn(client, TabId::MASTER, tx);
+    drop(conn);
+    // Drop the server side so a non-aborted feed would eventually emit Closed.
+    drop(server);
+    let closed = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await;
+    // Aborted feed should not deliver Closed (or anything). Either timeout or
+    // channel closed without a Closed sentinel is acceptable; a Closed event is not.
+    if let Ok(Some(item)) = closed {
+        assert!(
+            !matches!(item, SourcedEvent::Closed(_)),
+            "F1: drop must abort feed before Closed can poison the fan-in"
+        );
+    }
+}

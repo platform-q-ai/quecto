@@ -710,10 +710,17 @@ async fn tool_policy_changed_result_updates_reopened_modal_scope() {
 async fn help_mentions_ctrl_t_tool_policy_shortcut() {
     let mut h = harness().await;
     h.app_mut().show_help();
-    let frame = h.app_mut().compose_frame().join("\n");
+    // Status body (not viewport): slash-command growth can scroll shortcuts off-frame.
+    let body = h
+        .app_mut()
+        .ac()
+        .master_session
+        .chat
+        .last_status_text()
+        .unwrap_or("");
     assert!(
-        crate::components::ansi::strip_ansi(&frame)
-            .contains("Ctrl+T         Open tool policy selector")
+        body.contains("Ctrl+T         Open tool policy selector"),
+        "{body}"
     );
 }
 

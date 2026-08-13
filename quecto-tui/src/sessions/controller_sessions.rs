@@ -19,7 +19,7 @@ impl super::App {
         data: Option<serde_json::Value>,
     ) {
         let Some(data) = data else { return };
-        if id == Some(self.conn.namespaced_id("stats-footer").as_str()) {
+        if id == Some(self.ac().namespaced_id("stats-footer").as_str()) {
             self.update_footer_stats(&data);
         } else if id.is_some_and(|i| super::app_response::strip_tab_namespace(i) == "stats-footer")
         {
