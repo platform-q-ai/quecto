@@ -606,6 +606,11 @@ impl App {
         // outlives the closed stream) — still clear the LOCAL transcript so
         // /clear works on a dead session, but say what actually happened
         // instead of flashing a false "new session" success (#1470 r3).
+        // NOTE (#1470 r5): between the socket dying and its Closed sentinel
+        // draining, `agent_connected` is still true and the enqueue succeeds,
+        // so this success path is optimistic — identical to pre-seam master,
+        // where try_send Ok against a dying socket also toasted success.
+        // Closing that window needs command acks (phase 2+, #1463).
         let was_connected = self.agent_connected;
         let agent_reset = self.send_new_session();
         self.master_session.chat.clear();
@@ -658,13 +663,19 @@ impl App {
             // not re-issue them, #1470 r4), and surface the refusal ONCE per
             // disconnect episode — per-command failure toasts would flood and
             // bury deliberate caller messaging like reset_session's warning.
-            self.rollback_failed_history_command(MASTER_CONNECTION_ID, &cmd);
+            self.rollback_failed_history_command(MASTER_CONNECTION_ID, &cmd, true);
             if !self.disconnect_refusal_notified {
                 self.disconnect_refusal_notified = true;
                 self.notify(
                     "Agent disconnected — commands are not being sent",
                     NotifyLevel::Error,
                 );
+                // Notifications expire; a persistent transcript line keeps
+                // later refusals diagnosable ("why won't history load?")
+                // without per-command spam (#1470 r5).
+                self.master_session.chat.add_entry(ChatEntry::Status {
+                    text: "Agent disconnected — commands are not being sent (restart the TUI to reconnect)".to_string(),
+                });
             }
             return false;
         }
@@ -675,7 +686,7 @@ impl App {
             // Roll back synchronously: the diagnostic side channel below is
             // best-effort, and if its receiver is gone we must not leave
             // pending history/resume/stub state stranded.
-            self.rollback_failed_history_command(MASTER_CONNECTION_ID, &cmd);
+            self.rollback_failed_history_command(MASTER_CONNECTION_ID, &cmd, false);
             // Report without blocking the loop (a dropped notice is acceptable).
             let _ = self.command_send_failure_tx.try_send(CommandSendFailure {
                 command: cmd,

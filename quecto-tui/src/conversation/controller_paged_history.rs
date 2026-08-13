@@ -32,7 +32,15 @@ impl SessionView {
 }
 
 impl App {
-    pub(super) fn rollback_failed_history_command(&mut self, connection: &str, command: &Command) {
+    /// `latch_failures`: true only for a disconnected refusal — a transient
+    /// enqueue failure on a live connection must stay retryable, not be
+    /// permanently latched into `failed_stub_recalls` (#1470 r5).
+    pub(super) fn rollback_failed_history_command(
+        &mut self,
+        connection: &str,
+        command: &Command,
+        latch_failures: bool,
+    ) {
         if connection != super::MASTER_CONNECTION_ID {
             return;
         }
@@ -42,10 +50,12 @@ impl App {
                 self.rollback_pending_solicited_get_messages(id);
             }
             Command::GetMessage { id: Some(id), .. } => {
-                // Latch the failure too: without it, every scroll re-issues
-                // every visible stub recall against a dead connection and
-                // floods failure reports (#1470 r4).
-                if let Some(recall) = self.pending_stub_recall.remove(id) {
+                // On a dead connection, latch the failure too: without it,
+                // every scroll re-issues every visible stub recall and
+                // floods failure reports (#1470 r4/r5).
+                if let Some(recall) = self.pending_stub_recall.remove(id)
+                    && latch_failures
+                {
                     self.failed_stub_recalls
                         .insert((recall.agent_id.clone(), recall.message_id.clone()));
                 }

@@ -330,11 +330,14 @@ pub fn mask_clocks(frame: &str) -> String {
             // The bare right-aligned anchor additionally requires the clock
             // to run to end-of-line (trailing spaces only), so indented
             // content like "  1:23 elapsed" is never masked (#1470 r4).
-            let to_line_end = cs[end..]
+            // '│' (the panel cell divider) ends a segment like a newline:
+            // the panel's right-aligned Master/sub-agent uptime clocks sit
+            // mid-line before the divider (#1470 r5).
+            let to_segment_end = cs[end..]
                 .iter()
-                .take_while(|c| **c != '\n')
+                .take_while(|c| **c != '\n' && **c != '│')
                 .all(|c| *c == ' ');
-            if end > j && (after_clock_label || to_line_end) {
+            if end > j && (after_clock_label || to_segment_end) {
                 out.push_str("#:##");
                 i = end;
             } else {

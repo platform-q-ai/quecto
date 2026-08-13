@@ -194,11 +194,16 @@ impl App {
             error,
             connection,
         } = failure;
-        self.rollback_failed_history_command(&connection, &command);
+        self.rollback_failed_history_command(&connection, &command, false);
         let msg = format!(
             "Failed to send {} command on connection {connection}: {error}",
             command.kind()
         );
-        self.notify(&msg, NotifyLevel::Error);
+        // A burst (scroll issuing N stub recalls against a full writer)
+        // would stack N identical toasts — show each distinct message once
+        // while it is still visible (#1470 r5).
+        if !self.notifications.messages().iter().any(|m| m == &msg) {
+            self.notify(&msg, NotifyLevel::Error);
+        }
     }
 }

@@ -97,15 +97,12 @@ impl NotificationStack {
     }
 
     /// Raw messages of every notification pushed and not yet gc'd, INCLUDING
-    /// expired ones. Test seam (#1067): asserting "a notification was pushed
-    /// with this content" must not race the 3s display lifetime. Gated like
-    /// its only consumers (the cfg'd test-harness modules) so a plain build
-    /// never ships a zero-caller accessor.
-    #[cfg(any(test, feature = "test-harness"))]
+    /// expired ones. Test seam (#1067) and production dedupe consumer
+    /// (#1470 r5): a burst of identical send-failure toasts is shown once.
     pub fn messages(&self) -> Vec<String> {
         self.notifications
             .iter()
-            .map(|n| n.message().to_string())
+            .map(|n| n.message.clone())
             .collect()
     }
 
