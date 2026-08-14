@@ -78,27 +78,25 @@ impl App {
     /// events (`SourcedEvent::Subagent`) through sub-agent routing, and the
     /// `SourcedEvent::Closed` sentinel runs the #1047 disconnect diagnosis path.
     ///
-    /// The `SourcedEvent::Closed` arm never awaits the child-exit diagnosis here
-    /// (#1462 scope 3): when the TUI owns the agent child, the bounded
+    /// The `SourcedEvent::Closed` arm never awaits the child-exit diagnosis
+    /// here (#1462 scope 3): when the TUI owns the agent child, the bounded
     /// #1047 waits run on a spawned task and complete through the
     /// disconnect-diagnosis select arm — a dying child cannot stall event
-    /// processing while other connections' events are queued.
-    /// Sync by design (#1462 scope 3): the "never blocks the select loop"
-    /// contract is checkable by signature — nothing here can await.
+    /// processing while other connections' events are queued. Sync by design:
+    /// "never blocks the select loop" is checkable by signature — no awaits.
     pub(super) fn route_sourced(
         &mut self,
         item: crate::shell::connection::SourcedEvent,
     ) -> SourcedRender {
         use crate::shell::connection::SourcedEvent;
-        // #1465: fan-in may carry any known tab; unknown tabs no-op in arms.
-        // Touch `.tab()` so the multipath helper stays live under deny(dead_code).
+        // #1465: fan-in may carry any known tab (unknown tabs no-op in arms);
+        // touching `.tab()` keeps the helper live under deny(dead_code).
         let _routed_tab = item.tab();
         match item {
             SourcedEvent::Tab(tab, ev) => {
                 let is_token = Self::is_token_event(&ev);
                 let was_running = self.tab_spinner_active(tab);
-                // Route to the owner tab (#1465). Unknown/foreign tabs are a
-                // no-op: no ghost state, no fallthrough onto the active slot.
+                // Route to the owner tab (#1465); unknown tabs no-op.
                 let Some(paint) = self.with_routing_tab(tab, |app| {
                     app.handle_event(ev);
                     if app.surface_dropped_oversized_events() {
@@ -109,26 +107,18 @@ impl App {
                 }) else {
                     return SourcedRender::Stream { is_token };
                 };
-                // Turn-state TRANSITIONS on a background tab must still
-                // paint once (PR #1485 review): after a turn ends,
-                // `needs_animation_tick` disarms, so a Silent demotion here
-                // would leave the bar's spinner frozen "running" forever.
-                // The gate still runs (unread dot semantics); only the paint
-                // decision is preserved for the transition frame.
-                if tab != self.active_tab && was_running != self.tab_spinner_active(tab) {
-                    let _ = self.background_render_gate(tab, paint);
-                    return paint;
-                }
-                self.background_render_gate(tab, paint)
+                self.background_render_gate(tab, paint, was_running)
             }
             SourcedEvent::Subagent(tab, agent_id, ev) => {
-                let is_token = Self::is_token_event(&ev);
                 // Direct child feeds belong to the tab that opened them.
-                let stream = SourcedRender::Stream { is_token };
+                let stream = SourcedRender::Stream {
+                    is_token: Self::is_token_event(&ev),
+                };
+                let was_running = self.tab_spinner_active(tab);
                 match self.with_routing_tab(tab, |app| {
                     app.route_subagent_event(&agent_id, ev);
                 }) {
-                    Some(()) => self.background_render_gate(tab, stream),
+                    Some(()) => self.background_render_gate(tab, stream, was_running),
                     None => stream,
                 }
             }

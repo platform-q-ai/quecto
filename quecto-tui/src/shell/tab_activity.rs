@@ -33,16 +33,25 @@ impl App {
     /// Demote a routed event's paint to [`SourcedRender::Silent`] when its
     /// owner tab is not the focused one (#1466 decision 3), marking the tab
     /// unread instead — the repaint happens once, on switch.
+    ///
+    /// Exception (PR #1485 review): a turn-state TRANSITION (`was_running`
+    /// differs from the tab's running state after the event) keeps its paint.
+    /// After a turn ends `needs_animation_tick` disarms, so a Silent demotion
+    /// of the ending event would leave the bar's spinner frozen forever.
     pub(super) fn background_render_gate(
         &mut self,
         tab: crate::shell::connection::TabId,
         paint: super::app_event_loop::SourcedRender,
+        was_running: bool,
     ) -> super::app_event_loop::SourcedRender {
         if tab == self.active_tab {
             return paint;
         }
         if let Some(c) = self.conn_mut(tab) {
             c.unread_output = true;
+        }
+        if was_running != self.tab_spinner_active(tab) {
+            return paint;
         }
         super::app_event_loop::SourcedRender::Silent
     }
