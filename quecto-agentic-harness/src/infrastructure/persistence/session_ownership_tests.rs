@@ -186,41 +186,75 @@ fn concurrent_acquires_yield_exactly_one_owner() {
 }
 
 #[test]
-fn owner_description_never_claims_a_dead_process_is_live() {
-    // The refusal message used to assert "live process" for whatever pid the
-    // stamp happened to contain, including our own and long-dead ones.
-    assert_eq!(
-        describe_owner(Some(std::process::id())),
-        format!("this process ({})", std::process::id())
+fn owner_description_is_honest_and_actionable() {
+    // The refusal used to assert "live process" for whatever pid the stamp held
+    // — including our own and long-dead ones — and told the user to close a
+    // process that was not running.
+    let ours = describe_owner(Some(std::process::id()));
+    assert!(
+        ours.contains("this process already holds it"),
+        "our own pid must not read as a foreign owner: {ours}"
     );
-    assert_eq!(describe_owner(None), "an unidentified process");
+    assert!(
+        !ours.contains("close that agent"),
+        "must not advise closing our own agent: {ours}"
+    );
 
-    // A pid that cannot be running: pid 0 is never a userspace process here.
+    // pid 0 is never a userspace process: kill(0, ..) targets our own process
+    // group and would otherwise report success.
     let dead = describe_owner(Some(0));
     assert!(
-        dead.contains("no longer running"),
+        dead.contains("not running"),
         "a dead pid must not be reported as live: {dead}"
     );
+    assert!(
+        !dead.contains("close that agent"),
+        "must not advise closing a process that is not running: {dead}"
+    );
+
+    // A live foreign owner is the one case where the advice is actionable, and
+    // the pid must appear (the refusal contract the BDD steps assert on).
+    let live = describe_owner(Some(other_live_pid()));
+    assert!(
+        live.contains(&other_live_pid().to_string()) && live.contains("close that agent"),
+        "a live owner must be named and actionable: {live}"
+    );
+
+    assert!(describe_owner(None).contains("unidentified"));
+}
+
+/// A pid that is certainly alive and is not this process: our parent.
+fn other_live_pid() -> u32 {
+    // SAFETY: getppid takes no arguments and cannot fail.
+    unsafe { libc::getppid() as u32 }
 }
 
 #[test]
-fn release_then_reclaim_succeeds_while_children_are_being_spawned() {
-    // Regression: a concurrent fork duplicates the lock descriptor, so a
-    // reclaim straight after release could transiently see the key as held.
+fn release_unlocks_even_when_a_descriptor_duplicate_survives() {
+    use std::os::fd::AsRawFd;
+
+    // A lock belongs to the open file description, so a child forked anywhere
+    // in this process keeps it alive until it execs. `dup` reproduces that
+    // deterministically: closing our descriptor alone leaves the lock held,
+    // and only an explicit unlock releases it for the duplicate too.
     let dir = tempfile::tempdir().expect("tempdir");
-    let spawning = std::thread::spawn(|| {
-        for _ in 0..40 {
-            let _ = std::process::Command::new("true").status();
-        }
-    });
-    for _ in 0..15 {
-        let registry = SessionOwnershipRegistry::default();
-        registry
-            .claim(dir.path(), "churn-key")
-            .expect("claim must acquire the key");
-        registry.release("churn-key");
-        SessionOwnershipGuard::acquire(dir.path(), "churn-key")
-            .expect("release must relinquish the key even while forks are in flight");
-    }
-    spawning.join().expect("spawner thread");
+    let registry = SessionOwnershipRegistry::default();
+    registry
+        .claim(dir.path(), "dup-key")
+        .expect("claim must acquire the key");
+
+    let duplicate = {
+        let owned = registry.owned.lock().expect("registry mutex");
+        let guard = owned.get("dup-key").expect("claimed guard");
+        // SAFETY: dup on a descriptor owned by the live guard.
+        unsafe { libc::dup(guard._lock_file.as_raw_fd()) }
+    };
+    assert!(duplicate >= 0, "dup must succeed");
+
+    registry.release("dup-key");
+    let reclaimed = SessionOwnershipGuard::acquire(dir.path(), "dup-key");
+
+    // SAFETY: closing the duplicate we created above.
+    unsafe { libc::close(duplicate) };
+    reclaimed.expect("release must unlock for duplicated descriptors too");
 }
