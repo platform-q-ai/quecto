@@ -192,6 +192,8 @@ impl std::fmt::Debug for OpenAiCompatibleEndpoint {
 pub struct ToolsConfig {
     #[serde(default)]
     pub web: WebToolConfig,
+    #[serde(default)]
+    pub python_lab: crate::infrastructure::tools::python_lab::PythonLabToolConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

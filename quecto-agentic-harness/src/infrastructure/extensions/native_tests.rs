@@ -242,11 +242,20 @@ fn build_official_tool_extensions_lists_core_workspace_tools() {
         sandbox,
         exec_options: crate::infrastructure::tools::bash::ExecOptions::default(),
         docs_content_policy: crate::infrastructure::tools::docs::DocsContentPolicy::Parent,
+        python_lab_config: crate::infrastructure::tools::python_lab::PythonLabConfig::default(),
     });
     assert_eq!(exts.len(), 1);
     assert_eq!(exts[0].name(), "quecto:official-tools");
     for name in [
-        "bash", "read", "write", "edit", "ls", "grep", "find", "docs",
+        "bash",
+        "read",
+        "write",
+        "edit",
+        "ls",
+        "grep",
+        "python_lab",
+        "find",
+        "docs",
     ] {
         assert!(has_tool(&exts, name), "missing official tool {name}");
     }
@@ -326,6 +335,7 @@ fn register_bundled_native_tools_marks_official_not_extension_tracked() {
             sandbox,
             exec_options: crate::infrastructure::tools::bash::ExecOptions::default(),
             docs_content_policy: crate::infrastructure::tools::docs::DocsContentPolicy::Parent,
+            python_lab_config: crate::infrastructure::tools::python_lab::PythonLabConfig::default(),
         }),
     );
     assert!(registry.get("bash").is_some());

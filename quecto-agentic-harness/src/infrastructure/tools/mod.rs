@@ -13,6 +13,13 @@ pub(crate) mod inherited_tool_policy;
 mod inherited_tool_policy_unit_tests;
 pub mod path_utils;
 mod process_tree;
+pub mod python_lab;
+#[cfg(test)]
+mod python_lab_ac_gap_tests;
+#[cfg(test)]
+mod python_lab_job_tests;
+#[cfg(test)]
+mod python_lab_tests;
 pub mod recall;
 pub mod registration;
 #[cfg(test)]

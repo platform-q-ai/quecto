@@ -6,7 +6,7 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.105.11**.
+Current version: **0.105.13**.
 
 ## Quick Start
 
@@ -467,6 +467,18 @@ Config file: `~/.quecto/config.json`
         "enabled": false,
         "max_response_kb": 32
       }
+    },
+    "python_lab": {
+      "default_timeout_seconds": 60,
+      "max_foreground_seconds": 300,
+      "max_background_seconds": 1800,
+      "default_max_output_bytes": 200000,
+      "max_output_bytes": 1000000,
+      "max_memory_bytes": null,
+      "max_cpu_seconds": null,
+      "max_processes": 1,
+      "max_concurrent_jobs": 2,
+      "inherit_environment": false
     }
   },
   "workflow": {
@@ -584,6 +596,34 @@ To use an OAuth-backed registry provider, first run `quecto auth login openai` o
 - `Sandbox::validate_command` rejects a denylist of destructive commands (e.g. `rm -rf /`, recursive `chown root`) before execution; this stays active unless `--no-sandbox` is passed.
 - There is no built-in process/network/resource isolation. For untrusted workloads, run Quecto inside a container (or other OS-level sandbox), which bounds filesystem, network, and resource access for the whole process.
 
+### Python Lab limits (`tools.python_lab`)
+
+`python_lab` is always registered; this block only tunes its limits. Every key is optional.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `default_timeout_seconds` | `60` | Timeout applied when a call omits `timeout_seconds` |
+| `max_foreground_seconds` | `300` | Ceiling a foreground call's `timeout_seconds` is clamped to |
+| `max_background_seconds` | `1800` | Ceiling a background job's `timeout_seconds` is clamped to |
+| `default_max_output_bytes` | `200000` | Inline stdout/stderr preview size when a call omits `max_output_bytes` |
+| `max_output_bytes` | `1000000` | Hard cap on bytes persisted per stream. stdout and stderr get separate budgets, so a program that floods one cannot erase the other; worst case per execution is twice this value |
+| `max_memory_bytes` | `null` | `RLIMIT_AS` for the interpreter; `null` leaves address space unbounded |
+| `max_cpu_seconds` | `null` | `RLIMIT_CPU` for the interpreter; `null` leaves CPU time unbounded |
+| `max_processes` | `1` | `RLIMIT_NPROC`; the default blocks the program from spawning subprocesses |
+| `max_concurrent_jobs` | `2` | Background jobs that may run at once; further starts are `rejected` |
+| `inherit_environment` | `false` | When false the interpreter starts from a cleared environment with only `PATH=/usr/local/bin:/usr/bin:/bin` and `PYTHONNOUSERSITE=1` |
+
+Runtime policy:
+
+- **Interpreter** — `python3` resolved from `PATH`, started with `-I` (isolated mode) directly via argv. No shell is involved, so arguments are never word-split or expanded.
+- **Working directory** — the agent's workspace. Files a program writes persist for the lifetime of the task and are reported back in `files_created_or_modified`.
+- **Path validation** — a `path` argument is resolved against the workspace and checked by the same sandbox validator the filesystem tools use, so traversal and symlink escapes are rejected. The validator's documented TOCTOU limitation applies.
+- **Output** — the inline result carries a preview capped at `max_output_bytes` for the call; the complete output is written to `.quecto/python_lab/<execution_id>/{stdout,stderr}.txt` and listed in `artifact_paths` when the preview was truncated. Output beyond the configured `max_output_bytes` hard cap is dropped and flagged. That cap applies per stream, so an execution can retain up to twice it in total.
+- **Artifact retention** — every execution leaves a `.quecto/python_lab/<execution_id>/` directory. The 32 most recent are kept and older ones are deleted as new runs start; a directory belonging to a job that has not finished is never removed. Paging a job's output re-reads these files, so `output` also reports `artifacts_modified` if their size no longer matches what was captured at completion.
+- **Resource limits** — memory, CPU, and process limits are applied with `setrlimit` in the child before `exec`, on Unix only. On non-Unix platforms these keys are accepted but not enforced. Two caveats worth knowing: `max_processes` maps to `RLIMIT_NPROC`, which the kernel counts **per user**, not per process — so it is only meaningful as the default `1` (block subprocess creation entirely), it is silently ineffective when the harness runs as root, and any larger value will behave unpredictably on a busy machine. `max_memory_bytes` maps to `RLIMIT_AS`, which bounds virtual address space rather than resident memory; CPython reserves far more address space than it resides, so set it generously or a program will fail to start at all.
+- **Background jobs** — live for the session. Cancellation, timeout, and dropping the tool kill the process group and its descendants.
+- **Network** — `python_lab` adds no network isolation of its own; a program reaches whatever the surrounding process or container can reach. Restricting egress is the deployment's job (see [Security](#security)).
+
 ### Environment variable overrides
 
 | Variable | Overrides |
@@ -618,6 +658,7 @@ External tool binaries (`rg`, `fd`) are resolved from `PATH`; missing binaries r
 | `ls` | List directory contents. Case-insensitive sort, `/` suffix for directories, configurable limit (default 500, max 5000), 50KB output cap |
 | `grep` | Search file contents with ripgrep (`rg --json`). Regex or literal, case-insensitive option, context lines from file cache, 100-match / 50KB limit, 500-char line truncation |
 | `find` | Find files by glob pattern with fd. Respects nested `.gitignore` files, path-segment patterns via `--full-path`, configurable limit (default 1000), 50KB output cap |
+| `python_lab` | Execute Python in the workspace for domain-neutral computation. `op=run` with exactly one of `code` (inline) or `path` (workspace file), plus optional `args`/`stdin`. `background=true` returns a `job_id` for `status`/`output`/`cancel`. Runs `python3` directly with argv (never a shell), capped by [`tools.python_lab`](#python-lab-limits-toolspython_lab) |
 | `recall` | Retrieve a spilled tool output by its spill ID (e.g. `turn20:bash:0`). Use `recall("list")` for the full index |
 | `spawn` | Spawn a background UDS-mode subagent for long-running tasks |
 | `agent_cmd` | Send commands to spawned UDS subagents: `prompt`, `steer`, `follow_up`, `abort`, `kill`, `get_state`, `get_messages` (optional `count`/`before` — omit both for the newest history page, N for last N, `before` pages backward), `get_session_stats`, `get_subagents`, `get_subagents_all`, `get_containers`, `kill_container`, `get_tool_catalogue`, `set_model`, `set_effort`, `clear_history`. Prefer spawn → end turn → passive completion note → `get_messages`. Do not poll `get_subagents` / `get_subagents_all` or sleep as a wait loop. |
@@ -636,6 +677,7 @@ Quecto provides **in-process guardrails for the filesystem tools only**; real is
 
 - **Workspace restriction (filesystem tools)**: When `restrict_to_workspace` is `true` (default), `read`/`write`/`edit`/`ls` are confined to the workspace. Symlinks pointing outside are blocked; path traversal (`../`) is caught.
 - **`bash` is NOT confined**: the exec tool runs commands natively as the invoking user. Its working directory is the workspace, but it can read any path the user can (`~/.ssh`, `~/.aws`, cloud/`git` credentials, `/etc/passwd`) and reach the network. It has **no resource limits** (memory/PID/CPU/wall-time are unbounded). The `Sandbox::validate_command` denylist (`rm -rf /`, `mkfs`, `dd`, fork bombs, `curl|sh`, …) is a **best-effort speed-bump, not a security boundary** — trivially bypassed via shell escapes/`base64`/env indirection. Do not rely on it to contain untrusted commands.
+- **`python_lab` executes arbitrary code, with limits but no isolation**: it runs `python3` directly (never through a shell), starts from a cleared environment so host credentials in the Quecto process environment are not visible to the program, applies `setrlimit` memory/CPU/process caps, and defaults to `max_processes: 1` so a program cannot spawn subprocesses. Its `path` argument is confined to the workspace by the sandbox validator. It is **not** a security boundary: a program can still read any file the user can via absolute paths, and it inherits the process's network access. Treat it like `bash` for threat-modelling purposes and rely on the container for real isolation.
 - **Isolation is the container's responsibility**: to run untrusted workloads safely, run Quecto in a container that is **non-root**, with **minimal/read-only mounts** (so `bash` can't read host secrets), **cgroup resource limits** (`--memory`, `--pids-limit`, `--cpus`), and a **network policy** (drop egress unless needed). A default `docker run` enforces none of these. (Old config files' `tools.exec` isolation/nsjail keys are now ignored.)
 - **Environment handling**: `bash` children are launched with `env_clear()` and then receive the current process environment (or explicit test overrides). Do not place secrets in the Quecto process environment if the agent should not be able to read them with shell commands.
 - **Secret redaction**: Log/status output redacts OpenAI/Anthropic (`sk-*`), Groq (`gsk_*`/`gsk-*`), and Telegram bot token values.

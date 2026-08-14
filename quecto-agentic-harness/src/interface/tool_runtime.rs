@@ -219,6 +219,9 @@ pub(crate) fn build_tool_runtime(
             } else {
                 crate::infrastructure::tools::docs::DocsContentPolicy::Parent
             },
+            python_lab_config: crate::infrastructure::tools::python_lab::PythonLabConfig::from(
+                config.tools.python_lab.clone(),
+            ),
         }),
         match profile_context {
             // A fresh top-level session has no user/profile policy yet. Leaving
