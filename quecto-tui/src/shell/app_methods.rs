@@ -660,9 +660,10 @@ impl App {
         self.render();
     }
 
-    /// Reset the workspace for `/new`: keep the master transport, drop stale
-    /// workspace chrome/tabs, mint a fresh identity, then reset the master session.
+    /// Start a fresh `/new` workspace, preserving the old one for `/resume`.
     pub(super) fn reset_workspace(&mut self) -> Vec<crate::shell::child_watch::ChildWatch> {
+        self.persist_default_durability();
+
         let mut master = self
             .tabs
             .remove(&crate::shell::connection::TabId::MASTER)
