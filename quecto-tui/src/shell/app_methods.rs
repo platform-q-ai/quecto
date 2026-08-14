@@ -660,6 +660,32 @@ impl App {
         self.render();
     }
 
+    /// Reset the workspace for `/new`: keep the master transport, drop stale
+    /// workspace chrome/tabs, mint a fresh identity, then reset the master session.
+    pub(super) fn reset_workspace(&mut self) {
+        let mut master = self
+            .tabs
+            .remove(&crate::shell::connection::TabId::MASTER)
+            .expect("workspace reset requires a master tab");
+        for (_, state) in self.tabs.drain() {
+            state.transport.abort_feed();
+        }
+        master.name = None;
+        master.session_key = None;
+        master.pending_session_resume = None;
+        master.roster = crate::agents::view::ConnectionRoster::new();
+        self.tabs
+            .insert(crate::shell::connection::TabId::MASTER, master);
+        self.active_tab = crate::shell::connection::TabId::MASTER;
+        self.routing_tab_override = None;
+        self.editor.set_text("");
+        self.subagents = crate::agents::view::SubagentUi::new();
+        self.workspace_id = crate::shell::workspace_manifest::generate_workspace_id();
+        self.workspace_label = crate::shell::workspace_manifest::generate_workspace_label();
+        self.reset_session("New session started");
+        self.persist_default_durability();
+    }
+
     /// Reset the conversation — clears agent history, chat UI, and context display.
     pub(super) fn reset_session(&mut self, message: &str) {
         // Invalidate a pending off-loop disconnect diagnosis (#1470 r2/r3)

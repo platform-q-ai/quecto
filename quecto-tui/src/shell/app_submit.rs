@@ -30,7 +30,7 @@ impl App {
                     return;
                 }
                 "/new" => {
-                    self.reset_session("New session started");
+                    self.reset_workspace();
                     return;
                 }
                 "/tab-new" => {
