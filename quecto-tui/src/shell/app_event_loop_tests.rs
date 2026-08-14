@@ -409,6 +409,68 @@ async fn handle_submit_new_starts_new_session() {
 }
 
 #[tokio::test]
+async fn handle_submit_new_preserves_departing_workspace_manifest() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    let old_workspace_id = a.workspace_id.clone();
+    let old_workspace_label = a.workspace_label.clone();
+    let data_home = tempfile::tempdir().expect("isolated tui data");
+    // SAFETY: this test runs before invoking `/new`; the isolated path prevents touching user state.
+    unsafe {
+        std::env::set_var("XDG_DATA_HOME", data_home.path());
+    }
+    a.ac_mut().session_key = Some("cli:old-master".into());
+    a.ac_mut().master_session.chat.add_entry(ChatEntry::User {
+        text: "keep master".into(),
+    });
+    a.test_insert_disconnected_tab(1);
+    let tab1 = crate::shell::connection::TabId(1);
+    a.conn_mut(tab1).unwrap().session_key = Some("cli:old-tab".into());
+    a.conn_mut(tab1).unwrap().name = Some("worker".into());
+    a.switch_tab(tab1);
+
+    a.handle_submit("/new");
+
+    assert_ne!(
+        a.workspace_id, old_workspace_id,
+        "/new must mint a fresh workspace id"
+    );
+    assert_eq!(a.tabs.len(), 1, "/new must close departing workspace tabs");
+    assert_eq!(a.active_tab, crate::shell::connection::TabId::MASTER);
+    assert_eq!(
+        a.ac().session_key,
+        None,
+        "new blank master must not reuse old session"
+    );
+
+    let store = crate::shell::workspace_manifest::WorkspaceManifestStore::load(
+        &crate::shell::workspace_manifest::default_manifest_path(),
+    );
+    let preserved = store
+        .get(&old_workspace_id)
+        .expect("/new must leave the old workspace in the resume manifest");
+    assert_eq!(preserved.label, old_workspace_label);
+    assert_eq!(
+        preserved.tabs.len(),
+        2,
+        "departing workspace tabs must remain resumable"
+    );
+    assert_eq!(
+        preserved.active_index, 1,
+        "departing active tab should be preserved"
+    );
+    assert_eq!(
+        preserved.tabs[0].session_key.as_deref(),
+        Some("cli:old-master")
+    );
+    assert_eq!(
+        preserved.tabs[1].session_key.as_deref(),
+        Some("cli:old-tab")
+    );
+    assert_eq!(preserved.tabs[1].name.as_deref(), Some("worker"));
+}
+
+#[tokio::test]
 async fn handle_submit_help_shows_shortcuts() {
     let mut h = harness().await;
     let a = h.app_mut();
