@@ -194,33 +194,42 @@ pub(crate) fn kill_pid(_pid: u32) {}
 
 /// The interpreter banner is stable for the lifetime of the process, so it is
 /// resolved once instead of forking `python3 --version` on every result build.
-static INTERPRETER_VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+/// Cached per environment mode, because the child's PATH differs between them
+/// and a single cache would report an interpreter that never ran.
+static INTERPRETER_VERSION_ISOLATED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+static INTERPRETER_VERSION_INHERITED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
-pub(crate) fn interpreter_version() -> String {
-    INTERPRETER_VERSION
-        .get_or_init(|| {
-            // Probed under the same PATH the child gets, otherwise the audit
-            // record can name a different interpreter than the one that ran
-            // (pyenv/venv shims are a common way for the two to diverge).
-            std::process::Command::new("python3")
-                .env_clear()
-                .env("PATH", CHILD_PATH)
-                .arg("--version")
-                .output()
-                .ok()
-                .and_then(|out| {
-                    let text = if out.stdout.is_empty() {
-                        out.stderr
-                    } else {
-                        out.stdout
-                    };
-                    String::from_utf8(text).ok()
-                })
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "python3".to_string())
-        })
-        .clone()
+pub(crate) fn interpreter_version(inherit_environment: bool) -> String {
+    let cell = if inherit_environment {
+        &INTERPRETER_VERSION_INHERITED
+    } else {
+        &INTERPRETER_VERSION_ISOLATED
+    };
+    cell.get_or_init(|| {
+        // Probed exactly the way the child is launched, otherwise the
+        // audit record can name a different interpreter than the one that
+        // ran (pyenv/venv shims are a common way for the two to diverge).
+        let mut probe = std::process::Command::new("python3");
+        if !inherit_environment {
+            probe.env_clear().env("PATH", CHILD_PATH);
+        }
+        probe
+            .arg("--version")
+            .output()
+            .ok()
+            .and_then(|out| {
+                let text = if out.stdout.is_empty() {
+                    out.stderr
+                } else {
+                    out.stdout
+                };
+                String::from_utf8(text).ok()
+            })
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "python3".to_string())
+    })
+    .clone()
 }
 
 #[cfg(unix)]

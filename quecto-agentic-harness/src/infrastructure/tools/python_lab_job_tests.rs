@@ -371,3 +371,77 @@ async fn background_output_is_error_for_terminal_failure() {
         .unwrap();
     assert!(output.is_error, "{}", output.content);
 }
+
+#[tokio::test]
+async fn concurrent_foreground_run_keeps_its_artifacts_while_others_prune() {
+    // Foreground runs have no job-registry entry, so pruning used to delete
+    // their artifact directory mid-run and the run then failed hard on ENOENT.
+    let tmp = tempfile::tempdir().unwrap();
+    let lab = Arc::new(tool(tmp.path()));
+    let slow = {
+        let lab = lab.clone();
+        tokio::spawn(async move {
+            lab.execute(r#"{"op":"run","code":"import time; time.sleep(1.5); print('survived')","timeout_seconds":2}"#)
+                .await
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    for _ in 0..40 {
+        lab.execute(r#"{"op":"run","code":"pass"}"#).await.unwrap();
+    }
+    let result = slow.await.unwrap().expect("slow run should not error");
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(v["status"], "completed", "{}", result.content);
+    assert!(
+        v["stdout"].as_str().unwrap().starts_with("survived"),
+        "slow run lost its output to pruning: {}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn cancel_during_result_build_is_not_overwritten() {
+    // The terminal status is published after the result is built; a cancel
+    // landing in that window must not be clobbered back to "completed".
+    let tmp = tempfile::tempdir().unwrap();
+    let lab = tool(tmp.path());
+    let started = lab
+        .execute(r#"{"op":"run","code":"print('done')","background":true}"#)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&started.content).unwrap();
+    let job_id = v["job_id"].as_str().unwrap().to_string();
+    // Cancel repeatedly across the whole run/build window.
+    for _ in 0..60 {
+        let status = lab
+            .execute(&format!(r#"{{"op":"status","job_id":"{job_id}"}}"#))
+            .await
+            .unwrap();
+        let s: serde_json::Value = serde_json::from_str(&status.content).unwrap();
+        let observed = s["status"].as_str().unwrap_or_default().to_string();
+        if observed == "cancelling" {
+            // Once a cancel is acknowledged the job must settle as cancelled.
+            for _ in 0..50 {
+                let later = lab
+                    .execute(&format!(r#"{{"op":"status","job_id":"{job_id}"}}"#))
+                    .await
+                    .unwrap();
+                let l: serde_json::Value = serde_json::from_str(&later.content).unwrap();
+                match l["status"].as_str().unwrap_or_default() {
+                    "cancelling" => {}
+                    "cancelled" => return,
+                    other => panic!("acknowledged cancel settled as {other:?}: {later:?}"),
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            panic!("cancelling never settled");
+        }
+        if observed == "completed" {
+            return; // finished before any cancel was acknowledged
+        }
+        let _ = lab
+            .execute(&format!(r#"{{"op":"cancel","job_id":"{job_id}"}}"#))
+            .await;
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    }
+}

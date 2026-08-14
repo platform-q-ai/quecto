@@ -116,12 +116,31 @@ impl Default for PythonLabConfig {
 /// Registry of background jobs, keyed by job id.
 type JobRegistry = Arc<Mutex<HashMap<String, Arc<Mutex<JobState>>>>>;
 
+/// Execution ids with a run in flight. Foreground runs never enter the job
+/// registry, so without this their artifact directory is prunable from the
+/// moment it is created — pruning it mid-run destroys the output the run is
+/// about to read back.
+type ActiveExecutions = Arc<Mutex<std::collections::HashSet<String>>>;
+
+/// Removes its execution id on drop, so an early return or an error cannot
+/// leave an id marked active forever.
+struct ActiveGuard(ActiveExecutions, String);
+
+impl Drop for ActiveGuard {
+    fn drop(&mut self) {
+        if let Ok(mut set) = self.0.lock() {
+            set.remove(&self.1);
+        }
+    }
+}
+
 pub struct PythonLabTool {
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
     config: PythonLabConfig,
     session_key: Mutex<String>,
     jobs: JobRegistry,
+    active: ActiveExecutions,
 }
 
 #[derive(Debug)]
@@ -151,6 +170,7 @@ impl PythonLabTool {
             config,
             session_key: Mutex::new(String::new()),
             jobs: Arc::new(Mutex::new(HashMap::new())),
+            active: Arc::new(Mutex::new(std::collections::HashSet::new())),
         }
     }
 }
@@ -195,6 +215,7 @@ impl Tool for PythonLabTool {
         let sandbox = self.sandbox.clone();
         let cfg = self.config.clone();
         let jobs = self.jobs.clone();
+        let active = self.active.clone();
         let session_key = self
             .session_key
             .lock()
@@ -206,7 +227,7 @@ impl Tool for PythonLabTool {
                 Err(e) => return tool_err(format!("invalid JSON arguments: {e}")),
             };
             match v.get("op").and_then(|x| x.as_str()).unwrap_or("run") {
-                "run" => run_op(v, workspace, sandbox, cfg, jobs, session_key).await,
+                "run" => run_op(v, workspace, sandbox, cfg, jobs, active, session_key).await,
                 "status" => status_op(&v, jobs).await,
                 "output" => output_op(&v, workspace, jobs).await,
                 "cancel" => cancel_op(&v, jobs).await,
@@ -224,7 +245,8 @@ async fn run_op(
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
     cfg: PythonLabConfig,
-    jobs: Arc<Mutex<HashMap<String, Arc<Mutex<JobState>>>>>,
+    jobs: JobRegistry,
+    active: ActiveExecutions,
     session_key: String,
 ) -> Result<ToolResult, DomainError> {
     let spec = match parse_run(&v, &workspace, &sandbox, &cfg) {
@@ -238,12 +260,29 @@ async fn run_op(
         EXEC_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
     let start = now_ms();
-    let before = snapshot_files(&workspace);
+    let before = {
+        let ws = workspace.clone();
+        // Recursive stat of the whole workspace: blocking work, not async work.
+        tokio::task::spawn_blocking(move || snapshot_files(&ws))
+            .await
+            .map_err(|e| DomainError::Other(e.to_string()))?
+    };
     let artifact_dir = workspace.join(".quecto/python_lab").join(&exec_id);
     tokio::fs::create_dir_all(&artifact_dir)
         .await
         .map_err(ioerr)?;
-    prune_artifact_dirs(&workspace, &jobs);
+    if let Ok(mut set) = active.lock() {
+        set.insert(exec_id.clone());
+    }
+    // Held for the rest of the call. A background run also registers a job, so
+    // it stays protected after this guard drops at the end of run_op.
+    let _active_guard = ActiveGuard(active.clone(), exec_id.clone());
+    {
+        let (ws, jobs, active) = (workspace.clone(), jobs.clone(), active.clone());
+        // read_dir plus an unbounded number of remove_dir_all calls must not
+        // run on the async worker thread.
+        let _ = tokio::task::spawn_blocking(move || prune_artifact_dirs(&ws, &jobs, &active)).await;
+    }
     let stdout_path = artifact_dir.join("stdout.txt");
     let stderr_path = artifact_dir.join("stderr.txt");
     if spec.background {
@@ -314,7 +353,12 @@ async fn run_op(
                 st
             };
             let completed_ms = now_ms();
-            let changed = changed_files(&workspace, before);
+            let changed = {
+                let ws = workspace.clone();
+                tokio::task::spawn_blocking(move || changed_files(&ws, before))
+                    .await
+                    .unwrap_or_default()
+            };
             let res = build_result(ResultContext {
                 status: &final_status,
                 exit_code,
@@ -336,9 +380,15 @@ async fn run_op(
                 s.exit_code = exit_code;
                 s.completed_ms = Some(completed_ms);
                 s.result = Some(res);
-                // Published last: callers poll on status, so everything they
-                // will read next must already be in place.
-                s.status = final_status;
+                // Re-read the cancel flag under the publishing lock. Building
+                // the result reads both artifacts, and a cancel arriving during
+                // that window would otherwise be overwritten — the caller would
+                // be told "cancelling" and the job would report "completed".
+                s.status = if s.cancel_requested {
+                    "cancelled".to_string()
+                } else {
+                    final_status
+                };
             }
         });
         return ok_json(
@@ -349,7 +399,12 @@ async fn run_op(
     let (status, code) =
         run_child(spec.clone(), &workspace, &stdout_path, &stderr_path, None).await?;
     let end = now_ms();
-    let changed = changed_files(&workspace, before);
+    let changed = {
+        let ws = workspace.clone();
+        tokio::task::spawn_blocking(move || changed_files(&ws, before))
+            .await
+            .map_err(|e| DomainError::Other(e.to_string()))?
+    };
     let result = build_result(ResultContext {
         status: &status,
         exit_code: code,
@@ -540,7 +595,9 @@ async fn artifacts_diverged(
         ("stderr_bytes_retained", stderr_path),
     ] {
         let Some(captured) = usage.get(key).and_then(|v| v.as_u64()) else {
-            return false;
+            // Nothing was captured for this stream, so there is nothing to
+            // compare — check the other one rather than giving up on both.
+            continue;
         };
         if file_len(path).await != Some(captured) {
             return true;
@@ -581,20 +638,25 @@ const MAX_RETAINED_ARTIFACT_DIRS: usize = 32;
 /// Deletes the oldest artifact directories once the retention ceiling is
 /// passed. Directories belonging to a job that has not finished are never
 /// removed, so a running program cannot have its output deleted underneath it.
-fn prune_artifact_dirs(workspace: &Path, jobs: &JobRegistry) {
+fn prune_artifact_dirs(workspace: &Path, jobs: &JobRegistry, active: &ActiveExecutions) {
     let root = workspace.join(".quecto/python_lab");
-    let live: Vec<String> = jobs
+    let mut live: Vec<String> = active
         .lock()
-        .map(|registry| {
-            registry
-                .values()
-                .filter_map(|job| {
-                    let j = job.lock().ok()?;
-                    (!is_terminal(&j.status)).then(|| j.execution_id.clone())
-                })
-                .collect()
-        })
+        .map(|set| set.iter().cloned().collect())
         .unwrap_or_default();
+    live.extend(
+        jobs.lock()
+            .map(|registry| {
+                registry
+                    .values()
+                    .filter_map(|job| {
+                        let j = job.lock().ok()?;
+                        (!is_terminal(&j.status)).then(|| j.execution_id.clone())
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+    );
     let Ok(entries) = std::fs::read_dir(&root) else {
         return;
     };
@@ -696,7 +758,7 @@ async fn build_result(ctx: ResultContext<'_>) -> Result<serde_json::Value, Domai
         "max_rss_bytes": serde_json::Value::Null,
     });
     Ok(
-        json!({"status":ctx.status,"exit_code":ctx.exit_code,"execution_id":ctx.exec_id,"session_id":ctx.session_key,"invocation_type":ctx.invocation_type,"interpreter":"python3","interpreter_version":interpreter_version(),"start_time_ms":ctx.start,"completion_time_ms":ctx.end,"duration_ms":ctx.end.saturating_sub(ctx.start),"timeout_seconds":ctx.timeout,"timeout_or_cancel_reason": if ctx.status=="timed_out" {"timeout"} else if ctx.status=="cancelled" {"cancelled"} else {""},"stdout":stdout,"stderr":stderr,"output_truncated":st||et,"stdout_truncated":st,"stderr_truncated":et,"artifact_paths":artifact_paths,"files_created_or_modified":ctx.changed,"resource_limits":{"memory_bytes":ctx.cfg.max_memory_bytes,"cpu_seconds":ctx.cfg.max_cpu_seconds,"processes":ctx.cfg.max_processes},"resource_usage":resource_usage}),
+        json!({"status":ctx.status,"exit_code":ctx.exit_code,"execution_id":ctx.exec_id,"session_id":ctx.session_key,"invocation_type":ctx.invocation_type,"interpreter":"python3","interpreter_version":interpreter_version(ctx.cfg.inherit_environment),"start_time_ms":ctx.start,"completion_time_ms":ctx.end,"duration_ms":ctx.end.saturating_sub(ctx.start),"timeout_seconds":ctx.timeout,"timeout_or_cancel_reason": if ctx.status=="timed_out" {"timeout"} else if ctx.status=="cancelled" {"cancelled"} else {""},"stdout":stdout,"stderr":stderr,"output_truncated":st||et,"stdout_truncated":st,"stderr_truncated":et,"artifact_paths":artifact_paths,"files_created_or_modified":ctx.changed,"resource_limits":{"memory_bytes":ctx.cfg.max_memory_bytes,"cpu_seconds":ctx.cfg.max_cpu_seconds,"processes":ctx.cfg.max_processes},"resource_usage":resource_usage}),
     )
 }
 /// `None` when the artifact is absent or unreadable, so a missing file is not

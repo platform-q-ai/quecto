@@ -520,3 +520,48 @@ async fn preview_larger_than_one_read_is_returned_whole() {
     assert_eq!(v["stdout"].as_str().unwrap().len(), 3_000_000);
     assert_eq!(v["output_truncated"], false);
 }
+
+#[tokio::test]
+async fn snapshot_depth_cap_bounds_reported_changes() {
+    // Without an assertion on the cap itself, the iterative rewrite alone
+    // satisfies the deep-tree test and removing the cap would go unnoticed.
+    let tmp = tempfile::tempdir().unwrap();
+    let result = tool(tmp.path())
+        .execute(
+            r#"{"op":"run","code":"import os\nfor _ in range(80):\n    os.mkdir('d'); os.chdir('d')\nopen('deep.txt','w').write('x')\n","timeout_seconds":2}"#,
+        )
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(v["status"], "completed", "{}", result.content);
+    let changed: Vec<&str> = v["files_created_or_modified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|x| x.as_str())
+        .collect();
+    assert!(
+        !changed.iter().any(|p| p.ends_with("deep.txt")),
+        "a file below the depth cap should not be walked: {changed:?}"
+    );
+}
+
+#[tokio::test]
+async fn wide_directory_snapshot_is_bounded() {
+    // The entry cap was only checked per directory, so one flat directory with
+    // more files than the cap was walked in full.
+    let tmp = tempfile::tempdir().unwrap();
+    let result = tool(tmp.path())
+        .execute(
+            r#"{"op":"run","code":"import os\nos.mkdir('many')\nfor i in range(25000):\n    open(f'many/f{i}','w').close()\n","timeout_seconds":20}"#,
+        )
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(v["status"], "completed", "{}", result.content);
+    let changed = v["files_created_or_modified"].as_array().unwrap().len();
+    assert!(
+        changed <= 20_000,
+        "snapshot should be bounded by the entry cap, reported {changed}"
+    );
+}

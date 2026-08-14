@@ -34,6 +34,9 @@ pub(crate) fn snapshot_files(root: &Path) -> BTreeMap<String, SystemTime> {
             continue;
         };
         for e in rd.flatten() {
+            if m.len() >= SNAPSHOT_MAX_ENTRIES {
+                return m;
+            }
             let p = e.path();
             // The tool's own stdout/stderr artifacts live here; reporting them
             // as files the program wrote would be misleading.
@@ -82,7 +85,12 @@ pub(crate) async fn truncation_marker_exists(path: &Path) -> Result<bool, Domain
 }
 
 pub(crate) async fn read_preview(path: &Path, max: usize) -> Result<(String, bool), DomainError> {
-    let md = tokio::fs::metadata(path).await.map_err(ioerr)?;
+    // A missing artifact reads as empty rather than failing the call: the
+    // directory can legitimately be gone if another instance sharing this
+    // workspace pruned it.
+    let Ok(md) = tokio::fs::metadata(path).await else {
+        return Ok((String::new(), false));
+    };
     let trunc = md.len() as usize > max;
     let f = tokio::fs::File::open(path).await.map_err(ioerr)?;
     // A single read() is capped by tokio's internal buffer (2 MiB), which would
