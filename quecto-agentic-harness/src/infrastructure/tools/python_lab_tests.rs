@@ -358,259 +358,6 @@ fn python_lab_config_deserializes_partial_and_full_json_shapes() {
 }
 
 #[tokio::test]
-async fn background_completion_retains_result_and_output_pages() {
-    let tmp = tempfile::tempdir().unwrap();
-    let lab = tool(tmp.path());
-    let started = lab
-        .execute(r#"{"op":"run","code":"print('abcdef')","background":true,"max_output_bytes":4}"#)
-        .await
-        .unwrap();
-    let v: serde_json::Value = serde_json::from_str(&started.content).unwrap();
-    let job_id = v["job_id"].as_str().unwrap();
-    for _ in 0..20 {
-        let status = lab
-            .execute(&format!(r#"{{"op":"status","job_id":"{}"}}"#, job_id))
-            .await
-            .unwrap();
-        if status.content.contains("completed") {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    let status = lab
-        .execute(&format!(r#"{{"op":"status","job_id":"{}"}}"#, job_id))
-        .await
-        .unwrap();
-    assert!(status.content.contains("completed"), "{}", status.content);
-    let page = lab
-        .execute(&format!(
-            r#"{{"op":"output","job_id":"{}","offset":2,"limit":3}}"#,
-            job_id
-        ))
-        .await
-        .unwrap();
-    let out: serde_json::Value = serde_json::from_str(&page.content).unwrap();
-    // Paging reads the retained artifact, which holds the full output rather
-    // than the 4-byte inline preview.
-    assert_eq!(out["stdout"], "cde");
-    // "abcdef\n" is 7 bytes, so a 3-byte page from offset 2 leaves more to read.
-    assert_eq!(out["stdout_more"], true);
-    assert!(out["result"]["output_truncated"].as_bool().unwrap());
-}
-
-#[tokio::test]
-async fn concurrent_background_jobs_are_capped_until_cancelled() {
-    let tmp = tempfile::tempdir().unwrap();
-    let lab = PythonLabTool::new(
-        Arc::new(tmp.path().to_path_buf()),
-        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), true)),
-        PythonLabConfig {
-            max_concurrent_jobs: 1,
-            default_timeout_seconds: 5,
-            ..Default::default()
-        },
-    );
-    let first = lab
-        .execute(r#"{"op":"run","code":"import time; time.sleep(5)","background":true}"#)
-        .await
-        .unwrap();
-    let first_v: serde_json::Value = serde_json::from_str(&first.content).unwrap();
-    let second = lab
-        .execute(r#"{"op":"run","code":"print(1)","background":true}"#)
-        .await
-        .unwrap();
-    assert!(second.is_error);
-    assert!(second.content.contains("concurrent job limit"));
-    let job_id = first_v["job_id"].as_str().unwrap();
-    lab.execute(&format!(r#"{{"op":"cancel","job_id":"{}"}}"#, job_id))
-        .await
-        .unwrap();
-}
-
-#[tokio::test]
-async fn default_environment_filters_sensitive_variables() {
-    let tmp = tempfile::tempdir().unwrap();
-    // SAFETY: this test mutates a unique environment key and removes it before returning.
-    unsafe { std::env::set_var("PYTHON_LAB_SECRET_SHOULD_NOT_LEAK", "secret-value") };
-    let result = tool(tmp.path())
-        .execute(r#"{"op":"run","code":"import os; print(os.environ.get('PYTHON_LAB_SECRET_SHOULD_NOT_LEAK', 'missing'))"}"#)
-        .await
-        .unwrap();
-    // SAFETY: paired cleanup for the unique key set above.
-    unsafe { std::env::remove_var("PYTHON_LAB_SECRET_SHOULD_NOT_LEAK") };
-    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
-    assert_eq!(v["stdout"], "missing\n");
-}
-
-#[tokio::test]
-async fn absolute_and_symlink_script_escapes_are_rejected() {
-    let tmp = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    let outside_script = outside.path().join("outside.py");
-    std::fs::write(&outside_script, "print('outside')").unwrap();
-    let abs = tool(tmp.path())
-        .execute(&format!(
-            r#"{{"op":"run","path":"{}"}}"#,
-            outside_script.display()
-        ))
-        .await
-        .unwrap();
-    assert!(abs.is_error);
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(&outside_script, tmp.path().join("link.py")).unwrap();
-        let sym = tool(tmp.path())
-            .execute(r#"{"op":"run","path":"link.py"}"#)
-            .await
-            .unwrap();
-        assert!(sym.is_error, "{}", sym.content);
-    }
-}
-
-#[tokio::test]
-async fn repeated_truncated_runs_use_distinct_artifacts() {
-    let tmp = tempfile::tempdir().unwrap();
-    let lab = tool(tmp.path());
-    let a = lab
-        .execute(r#"{"op":"run","code":"print('aaaaaaaaaaaaaaaa')","max_output_bytes":4}"#)
-        .await
-        .unwrap();
-    let b = lab
-        .execute(r#"{"op":"run","code":"print('bbbbbbbbbbbbbbbb')","max_output_bytes":4}"#)
-        .await
-        .unwrap();
-    let av: serde_json::Value = serde_json::from_str(&a.content).unwrap();
-    let bv: serde_json::Value = serde_json::from_str(&b.content).unwrap();
-    assert_ne!(av["artifact_paths"][0], bv["artifact_paths"][0]);
-}
-
-#[tokio::test]
-async fn background_output_is_empty_before_artifacts_exist() {
-    let tmp = tempfile::tempdir().unwrap();
-    let lab = tool(tmp.path());
-    let started = lab
-        .execute(r#"{"op":"run","code":"import time; time.sleep(1)","background":true}"#)
-        .await
-        .unwrap();
-    let v: serde_json::Value = serde_json::from_str(&started.content).unwrap();
-    let job_id = v["job_id"].as_str().unwrap();
-    for entry in std::fs::read_dir(tmp.path().join(".quecto/python_lab")).unwrap() {
-        let dir = entry.unwrap().path();
-        let _ = std::fs::remove_file(dir.join("stdout.txt"));
-        let _ = std::fs::remove_file(dir.join("stderr.txt"));
-    }
-    let output = lab
-        .execute(&format!(r#"{{"op":"output","job_id":"{}"}}"#, job_id))
-        .await
-        .unwrap();
-    assert!(!output.is_error, "{}", output.content);
-    let out: serde_json::Value = serde_json::from_str(&output.content).unwrap();
-    assert_eq!(out["stdout"], "");
-    assert_eq!(out["stderr"], "");
-    let _ = lab
-        .execute(&format!(r#"{{"op":"cancel","job_id":"{}"}}"#, job_id))
-        .await;
-}
-
-#[tokio::test]
-async fn cancelling_completed_background_job_preserves_terminal_status() {
-    let tmp = tempfile::tempdir().unwrap();
-    let lab = tool(tmp.path());
-    let started = lab
-        .execute(r#"{"op":"run","code":"print('done')","background":true}"#)
-        .await
-        .unwrap();
-    let v: serde_json::Value = serde_json::from_str(&started.content).unwrap();
-    let job_id = v["job_id"].as_str().unwrap();
-    for _ in 0..20 {
-        let status = lab
-            .execute(&format!(r#"{{"op":"status","job_id":"{}"}}"#, job_id))
-            .await
-            .unwrap();
-        if status.content.contains("completed") {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    let cancel = lab
-        .execute(&format!(r#"{{"op":"cancel","job_id":"{}"}}"#, job_id))
-        .await
-        .unwrap();
-    assert!(!cancel.is_error, "{}", cancel.content);
-    assert!(cancel.content.contains("completed"), "{}", cancel.content);
-}
-
-#[tokio::test]
-async fn foreground_output_artifact_is_hard_capped() {
-    let tmp = tempfile::tempdir().unwrap();
-    // The per-call max_output_bytes caps only the inline preview. The artifact
-    // is capped by the configured hard maximum (32 bytes for this test tool),
-    // so output beyond that is dropped rather than filling the workspace.
-    let result = tool(tmp.path())
-        .execute(r#"{"op":"run","code":"print('a' * 500)","max_output_bytes":4}"#)
-        .await
-        .unwrap();
-    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
-    let artifact = v["artifact_paths"][0].as_str().unwrap();
-    assert_eq!(
-        std::fs::metadata(tmp.path().join(artifact)).unwrap().len(),
-        32
-    );
-}
-
-#[tokio::test]
-async fn background_status_includes_audit_metadata() {
-    let tmp = tempfile::tempdir().unwrap();
-    let lab = tool(tmp.path());
-    lab.set_session_key("session-bg".to_string());
-    let started = lab
-        .execute(r#"{"op":"run","code":"import time; time.sleep(1)","background":true,"timeout_seconds":2}"#)
-        .await
-        .unwrap();
-    let v: serde_json::Value = serde_json::from_str(&started.content).unwrap();
-    let job_id = v["job_id"].as_str().unwrap();
-    let status = lab
-        .execute(&format!(r#"{{"op":"status","job_id":"{}"}}"#, job_id))
-        .await
-        .unwrap();
-    let s: serde_json::Value = serde_json::from_str(&status.content).unwrap();
-    assert_eq!(s["session_id"], "session-bg");
-    assert_eq!(s["invocation_type"], "inline");
-    assert_eq!(s["timeout_seconds"], 2);
-    assert!(s["resource_limits"].is_object());
-    let _ = lab
-        .execute(&format!(r#"{{"op":"cancel","job_id":"{}"}}"#, job_id))
-        .await;
-}
-
-#[tokio::test]
-async fn background_output_is_error_for_terminal_failure() {
-    let tmp = tempfile::tempdir().unwrap();
-    let lab = tool(tmp.path());
-    let started = lab
-        .execute(r#"{"op":"run","code":"import sys; sys.exit(7)","background":true}"#)
-        .await
-        .unwrap();
-    let v: serde_json::Value = serde_json::from_str(&started.content).unwrap();
-    let job_id = v["job_id"].as_str().unwrap();
-    for _ in 0..20 {
-        let status = lab
-            .execute(&format!(r#"{{"op":"status","job_id":"{}"}}"#, job_id))
-            .await
-            .unwrap();
-        if status.content.contains("completed") {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    let output = lab
-        .execute(&format!(r#"{{"op":"output","job_id":"{}"}}"#, job_id))
-        .await
-        .unwrap();
-    assert!(output.is_error, "{}", output.content);
-}
-
-#[tokio::test]
 async fn capped_stdout_is_drained_so_program_can_finish() {
     let tmp = tempfile::tempdir().unwrap();
     let code = "import pathlib, sys\nsys.stdout.write('x' * 200000)\nsys.stdout.flush()\npathlib.Path('finished.txt').write_text('ok')";
@@ -626,7 +373,7 @@ async fn capped_stdout_is_drained_so_program_can_finish() {
 }
 
 #[tokio::test]
-async fn max_output_bytes_is_shared_across_stdout_and_stderr_artifacts() {
+async fn max_output_bytes_caps_each_stream_artifact_independently() {
     let tmp = tempfile::tempdir().unwrap();
     let result = tool(tmp.path())
         .execute(r#"{"op":"run","code":"import sys; sys.stdout.write('a' * 40); sys.stdout.flush(); sys.stderr.write('w' * 40); sys.stderr.flush()","max_output_bytes":4}"#)
@@ -636,18 +383,16 @@ async fn max_output_bytes_is_shared_across_stdout_and_stderr_artifacts() {
     let exec_id = v["execution_id"].as_str().unwrap();
     let stdout_artifact = format!(".quecto/python_lab/{exec_id}/stdout.txt");
     let stderr_artifact = format!(".quecto/python_lab/{exec_id}/stderr.txt");
-    let total = std::fs::metadata(tmp.path().join(stdout_artifact))
-        .unwrap()
-        .len()
-        + std::fs::metadata(tmp.path().join(stderr_artifact))
-            .unwrap()
-            .len();
-    // Both streams draw on one shared budget sized by the configured hard cap.
-    assert!(
-        total <= 32,
-        "total persisted bytes was {total}: {}",
-        result.content
-    );
+    // Each stream gets its own budget sized by the configured hard cap, so a
+    // flooding stdout cannot consume the allowance stderr needs for a traceback.
+    for artifact in [stdout_artifact, stderr_artifact] {
+        let len = std::fs::metadata(tmp.path().join(&artifact)).unwrap().len();
+        assert_eq!(
+            len, 32,
+            "{artifact} persisted {len} bytes: {}",
+            result.content
+        );
+    }
 }
 
 #[tokio::test]
@@ -694,4 +439,84 @@ async fn exact_combined_stdout_stderr_cap_is_not_reported_truncated() {
     assert_eq!(v["stdout_truncated"], false);
     assert_eq!(v["stderr_truncated"], false);
     assert!(v["artifact_paths"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn deeply_nested_workspace_does_not_overflow_the_snapshot_walk() {
+    // A recursive walk here overflows the worker thread's stack, which aborts
+    // the process rather than unwinding, so a program could kill the harness.
+    let tmp = tempfile::tempdir().unwrap();
+    let result = tool(tmp.path())
+        .execute(
+            r#"{"op":"run","code":"import os\nfor _ in range(400):\n    os.mkdir('d'); os.chdir('d')\n","timeout_seconds":2}"#,
+        )
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(v["status"], "completed", "{}", result.content);
+    // The follow-up run also walks the tree the first one left behind, so this
+    // proves the deep directories do not poison every subsequent execution.
+    let again = tool(tmp.path())
+        .execute(r#"{"op":"run","code":"print('ok')"}"#)
+        .await
+        .unwrap();
+    let again_v: serde_json::Value = serde_json::from_str(&again.content).unwrap();
+    assert_eq!(again_v["status"], "completed", "{}", again.content);
+    assert_eq!(again_v["stdout"], "ok\n");
+}
+
+#[tokio::test]
+async fn own_artifacts_are_not_reported_as_program_writes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let result = tool(tmp.path())
+        .execute(r#"{"op":"run","code":"open('made.txt','w').write('x')"}"#)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    let changed: Vec<&str> = v["files_created_or_modified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x.as_str().unwrap())
+        .collect();
+    assert_eq!(changed, vec!["made.txt"], "{}", result.content);
+}
+
+#[tokio::test]
+async fn script_paths_inside_the_artifact_directory_are_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let result = tool(tmp.path())
+        .execute(r#"{"op":"run","path":".quecto/python_lab/planted.py"}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(
+        result.content.contains("security violation"),
+        "{}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn preview_larger_than_one_read_is_returned_whole() {
+    // tokio caps a single read at 2 MiB; a lone read() would silently return a
+    // short preview while reporting output_truncated: false.
+    let tmp = tempfile::tempdir().unwrap();
+    let lab = PythonLabTool::new(
+        Arc::new(tmp.path().to_path_buf()),
+        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), true)),
+        PythonLabConfig {
+            default_timeout_seconds: 30,
+            default_max_output_bytes: 8_000_000,
+            max_output_bytes: 8_000_000,
+            ..Default::default()
+        },
+    );
+    let result = lab
+        .execute(r#"{"op":"run","code":"import sys; sys.stdout.write('x' * 3000000)"}"#)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(v["stdout"].as_str().unwrap().len(), 3_000_000);
+    assert_eq!(v["output_truncated"], false);
 }

@@ -1,13 +1,12 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::io::AsyncReadExt;
 
 #[path = "python_lab_process.rs"]
 mod python_lab_process;
@@ -114,12 +113,15 @@ impl Default for PythonLabConfig {
     }
 }
 
+/// Registry of background jobs, keyed by job id.
+type JobRegistry = Arc<Mutex<HashMap<String, Arc<Mutex<JobState>>>>>;
+
 pub struct PythonLabTool {
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
     config: PythonLabConfig,
     session_key: Mutex<String>,
-    jobs: Arc<Mutex<HashMap<String, Arc<Mutex<JobState>>>>>,
+    jobs: JobRegistry,
 }
 
 #[derive(Debug)]
@@ -158,6 +160,12 @@ impl Drop for PythonLabTool {
         if let Ok(jobs) = self.jobs.lock() {
             for job in jobs.values() {
                 if let Ok(mut j) = job.lock() {
+                    // Terminal jobs have already been reaped. Signalling them
+                    // would both stall teardown (each kill forks pgrep) and
+                    // risk hitting a recycled pid.
+                    if is_terminal(&j.status) {
+                        continue;
+                    }
                     j.cancel_requested = true;
                     if let Some(pid) = j.pid {
                         kill_pid(pid);
@@ -235,6 +243,7 @@ async fn run_op(
     tokio::fs::create_dir_all(&artifact_dir)
         .await
         .map_err(ioerr)?;
+    prune_artifact_dirs(&workspace, &jobs);
     let stdout_path = artifact_dir.join("stdout.txt");
     let stderr_path = artifact_dir.join("stderr.txt");
     if spec.background {
@@ -272,6 +281,7 @@ async fn run_op(
                     true,
                 );
             }
+            evict_finished_jobs(&mut registry);
             registry.insert(job_id.clone(), state.clone());
         }
         let spec_bg = spec.clone();
@@ -287,23 +297,23 @@ async fn run_op(
                 Some(state.clone()),
             )
             .await;
-            let (final_status, exit_code, completed_ms, max_output_bytes) = {
-                let mut s = state.lock().unwrap();
-                let canceled = s.cancel_requested;
-                let (st, code) = match result {
-                    Ok((st, code)) => (st, code),
-                    Err(e) => (format!("failed: {e}"), None),
-                };
-                s.status = if canceled { "cancelled".into() } else { st };
-                s.exit_code = code;
-                s.completed_ms = Some(now_ms());
-                (
-                    s.status.clone(),
-                    s.exit_code,
-                    s.completed_ms.unwrap(),
-                    s.max_output_bytes,
-                )
+            // The terminal status is computed here but published only once the
+            // result JSON is built. Flipping status first let a caller observe
+            // "completed" while `result` was still null.
+            let (canceled, max_output_bytes) = state
+                .lock()
+                .map(|s| (s.cancel_requested, s.max_output_bytes))
+                .unwrap_or((false, spec_bg.max_out));
+            let (st, exit_code) = match result {
+                Ok((st, code)) => (st, code),
+                Err(e) => (format!("failed: {e}"), None),
             };
+            let final_status = if canceled {
+                "cancelled".to_string()
+            } else {
+                st
+            };
+            let completed_ms = now_ms();
             let changed = changed_files(&workspace, before);
             let res = build_result(ResultContext {
                 status: &final_status,
@@ -323,7 +333,12 @@ async fn run_op(
             .await
             .unwrap_or_else(|e| json!({"status":"failed","message":e.to_string()}));
             if let Ok(mut s) = state.lock() {
+                s.exit_code = exit_code;
+                s.completed_ms = Some(completed_ms);
                 s.result = Some(res);
+                // Published last: callers poll on status, so everything they
+                // will read next must already be in place.
+                s.status = final_status;
             }
         });
         return ok_json(
@@ -423,6 +438,13 @@ fn parse_run(
     )
     .map_err(DomainError::Other)? as usize;
     let script = if let Some(p) = path {
+        // The tool's own artifact tree is off limits as a script source, so a
+        // program cannot stage code inside another execution's directory.
+        if is_reserved_artifact_rel(Path::new(p)) {
+            return Err(DomainError::Security(
+                ".quecto/python_lab is reserved for python_lab artifacts".into(),
+            ));
+        }
         let p = workspace.join(p);
         Some(
             sandbox
@@ -440,7 +462,9 @@ fn parse_run(
         stdin: v.get("stdin").and_then(|x| x.as_str()).map(str::to_string),
         timeout_secs,
         max_out,
-        artifact_max_bytes: cfg.max_output_bytes.max(max_out),
+        // bounded_u64 already clamps max_out to cfg.max_output_bytes, so the
+        // configured maximum is always the larger of the two.
+        artifact_max_bytes: cfg.max_output_bytes,
         background: v
             .get("background")
             .and_then(|x| x.as_bool())
@@ -452,10 +476,7 @@ fn parse_run(
     })
 }
 
-async fn status_op(
-    v: &serde_json::Value,
-    jobs: Arc<Mutex<HashMap<String, Arc<Mutex<JobState>>>>>,
-) -> Result<ToolResult, DomainError> {
+async fn status_op(v: &serde_json::Value, jobs: JobRegistry) -> Result<ToolResult, DomainError> {
     let id = job_id(v)?;
     let Some(job) = jobs.lock().unwrap().get(id).cloned() else {
         return ok_json(json!({"status":"not_found","job_id":id}), true);
@@ -463,13 +484,15 @@ async fn status_op(
     let s = job.lock().unwrap();
     ok_json(
         json!({"status":s.status,"job_id":id,"execution_id":s.execution_id,"session_id":s.session_id,"invocation_type":s.invocation_type,"exit_code":s.exit_code,"start_time_ms":s.started_ms,"completion_time_ms":s.completed_ms,"duration_ms":s.completed_ms.unwrap_or_else(now_ms).saturating_sub(s.started_ms),"timeout_seconds":s.timeout_seconds,"timeout_or_cancel_reason": if s.status=="timed_out" {"timeout"} else if s.status=="cancelled" || s.status=="cancelling" {"cancelled"} else {""},"resource_limits":s.resource_limits}),
-        s.status == "not_found",
+        // The missing-job case already returned above, so a reported status is
+        // never an error here.
+        false,
     )
 }
 async fn output_op(
     v: &serde_json::Value,
     workspace: Arc<PathBuf>,
-    jobs: Arc<Mutex<HashMap<String, Arc<Mutex<JobState>>>>>,
+    jobs: JobRegistry,
 ) -> Result<ToolResult, DomainError> {
     let id = job_id(v)?;
     let offset = bounded_u64(v, "offset", 0, u64::MAX).map_err(DomainError::Other)? as usize;
@@ -489,17 +512,44 @@ async fn output_op(
     };
     let stdout = read_slice(&outp, offset, limit).await?;
     let stderr = read_slice(&errp, offset, limit).await?;
+    // Paging reads the artifacts back off disk so callers can walk output far
+    // larger than the inline preview. Nothing stops a later program from
+    // rewriting those files, so the sizes captured at completion are compared
+    // against what is on disk now and any divergence is surfaced.
+    let artifacts_modified = artifacts_diverged(result.as_ref(), &outp, &errp).await;
     let is_err = (status != "running" && status != "cancelling" && status != "completed")
         || (status == "completed" && exit_code.unwrap_or(0) != 0);
     ok_json(
-        json!({"status":status,"job_id":id,"stdout":stdout.0,"stderr":stderr.0,"offset":offset,"limit":limit,"stdout_more":stdout.1,"stderr_more":stderr.1,"result":result,"artifact_paths":[rel(&workspace,&outp),rel(&workspace,&errp)]}),
+        json!({"status":status,"job_id":id,"stdout":stdout.0,"stderr":stderr.0,"offset":offset,"limit":limit,"stdout_more":stdout.1,"stderr_more":stderr.1,"result":result,"artifacts_modified":artifacts_modified,"artifact_paths":[rel(&workspace,&outp),rel(&workspace,&errp)]}),
         is_err,
     )
 }
-async fn cancel_op(
-    v: &serde_json::Value,
-    jobs: Arc<Mutex<HashMap<String, Arc<Mutex<JobState>>>>>,
-) -> Result<ToolResult, DomainError> {
+/// True when an artifact's size no longer matches what was captured when the
+/// job completed, which means something rewrote it after the fact. Reports
+/// false while the job is still running and has no captured sizes yet.
+async fn artifacts_diverged(
+    result: Option<&serde_json::Value>,
+    stdout_path: &Path,
+    stderr_path: &Path,
+) -> bool {
+    let Some(usage) = result.and_then(|r| r.get("resource_usage")) else {
+        return false;
+    };
+    for (key, path) in [
+        ("stdout_bytes_retained", stdout_path),
+        ("stderr_bytes_retained", stderr_path),
+    ] {
+        let Some(captured) = usage.get(key).and_then(|v| v.as_u64()) else {
+            return false;
+        };
+        if file_len(path).await != Some(captured) {
+            return true;
+        }
+    }
+    false
+}
+
+async fn cancel_op(v: &serde_json::Value, jobs: JobRegistry) -> Result<ToolResult, DomainError> {
     let id = job_id(v)?;
     let Some(job) = jobs.lock().unwrap().get(id).cloned() else {
         return ok_json(json!({"status":"not_found","job_id":id}), true);
@@ -522,6 +572,80 @@ async fn cancel_op(
         false,
     )
 }
+/// Executions whose artifact directories are kept on disk. Every run writes
+/// stdout/stderr artifacts and nothing else ever deletes them, so without this
+/// a long session grows the workspace by up to `max_output_bytes` per call,
+/// forever.
+const MAX_RETAINED_ARTIFACT_DIRS: usize = 32;
+
+/// Deletes the oldest artifact directories once the retention ceiling is
+/// passed. Directories belonging to a job that has not finished are never
+/// removed, so a running program cannot have its output deleted underneath it.
+fn prune_artifact_dirs(workspace: &Path, jobs: &JobRegistry) {
+    let root = workspace.join(".quecto/python_lab");
+    let live: Vec<String> = jobs
+        .lock()
+        .map(|registry| {
+            registry
+                .values()
+                .filter_map(|job| {
+                    let j = job.lock().ok()?;
+                    (!is_terminal(&j.status)).then(|| j.execution_id.clone())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let Ok(entries) = std::fs::read_dir(&root) else {
+        return;
+    };
+    let mut dirs: Vec<(SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter(|e| !live.iter().any(|id| *id == e.file_name().to_string_lossy()))
+        .filter_map(|e| {
+            let modified = e.metadata().ok()?.modified().ok()?;
+            Some((modified, e.path()))
+        })
+        .collect();
+    if dirs.len() <= MAX_RETAINED_ARTIFACT_DIRS {
+        return;
+    }
+    dirs.sort_unstable_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+    for (_, path) in dirs.into_iter().skip(MAX_RETAINED_ARTIFACT_DIRS) {
+        let _ = std::fs::remove_dir_all(path);
+    }
+}
+
+/// A job is terminal once it has been reaped and its result published.
+fn is_terminal(status: &str) -> bool {
+    !matches!(status, "running" | "cancelling")
+}
+
+/// Completed jobs are kept so their results stay retrievable, but not forever:
+/// each retained job holds its full result JSON. Once the retention ceiling is
+/// reached the oldest finished jobs are dropped. Live jobs are never evicted.
+const MAX_RETAINED_JOBS: usize = 32;
+
+fn evict_finished_jobs(registry: &mut HashMap<String, Arc<Mutex<JobState>>>) {
+    if registry.len() < MAX_RETAINED_JOBS {
+        return;
+    }
+    let mut finished: Vec<(u128, String)> = registry
+        .iter()
+        .filter_map(|(id, job)| {
+            let j = job.lock().ok()?;
+            is_terminal(&j.status).then(|| (j.completed_ms.unwrap_or(j.started_ms), id.clone()))
+        })
+        .collect();
+    finished.sort_unstable();
+    for (_, id) in finished
+        .into_iter()
+        .take((registry.len() + 1).saturating_sub(MAX_RETAINED_JOBS))
+    {
+        registry.remove(&id);
+    }
+}
+
 fn job_id(v: &serde_json::Value) -> Result<&str, DomainError> {
     v.get("job_id")
         .and_then(|x| x.as_str())
@@ -560,10 +684,14 @@ async fn build_result(ctx: ResultContext<'_>) -> Result<serde_json::Value, Domai
     // tokio::process reaps internally and does not expose. Those fields are
     // reported as null rather than omitted so consumers can tell "not measured"
     // apart from "measured as zero".
+    // Byte counts are what was RETAINED after the cap clipped the streams, not
+    // what the program produced — named accordingly so they are not read as
+    // output volume. A missing artifact reports null rather than 0, so "no file"
+    // stays distinguishable from "wrote nothing". Wall-clock time is already
+    // reported as `duration_ms` on the enclosing object and is not repeated.
     let resource_usage = json!({
-        "wall_clock_ms": ctx.end.saturating_sub(ctx.start),
-        "stdout_bytes": file_len(ctx.stdout_path).await,
-        "stderr_bytes": file_len(ctx.stderr_path).await,
+        "stdout_bytes_retained": file_len(ctx.stdout_path).await,
+        "stderr_bytes_retained": file_len(ctx.stderr_path).await,
         "cpu_time_ms": serde_json::Value::Null,
         "max_rss_bytes": serde_json::Value::Null,
     });
@@ -571,11 +699,10 @@ async fn build_result(ctx: ResultContext<'_>) -> Result<serde_json::Value, Domai
         json!({"status":ctx.status,"exit_code":ctx.exit_code,"execution_id":ctx.exec_id,"session_id":ctx.session_key,"invocation_type":ctx.invocation_type,"interpreter":"python3","interpreter_version":interpreter_version(),"start_time_ms":ctx.start,"completion_time_ms":ctx.end,"duration_ms":ctx.end.saturating_sub(ctx.start),"timeout_seconds":ctx.timeout,"timeout_or_cancel_reason": if ctx.status=="timed_out" {"timeout"} else if ctx.status=="cancelled" {"cancelled"} else {""},"stdout":stdout,"stderr":stderr,"output_truncated":st||et,"stdout_truncated":st,"stderr_truncated":et,"artifact_paths":artifact_paths,"files_created_or_modified":ctx.changed,"resource_limits":{"memory_bytes":ctx.cfg.max_memory_bytes,"cpu_seconds":ctx.cfg.max_cpu_seconds,"processes":ctx.cfg.max_processes},"resource_usage":resource_usage}),
     )
 }
-async fn file_len(path: &Path) -> u64 {
-    tokio::fs::metadata(path)
-        .await
-        .map(|m| m.len())
-        .unwrap_or(0)
+/// `None` when the artifact is absent or unreadable, so a missing file is not
+/// reported as a zero-byte one.
+async fn file_len(path: &Path) -> Option<u64> {
+    tokio::fs::metadata(path).await.ok().map(|m| m.len())
 }
 fn tool_err(content: String) -> Result<ToolResult, DomainError> {
     Ok(ToolResult {
@@ -591,120 +718,6 @@ fn ok_json(v: serde_json::Value, is_error: bool) -> Result<ToolResult, DomainErr
         image_blocks: vec![],
     })
 }
-static EXEC_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-fn now_ms() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-}
-fn snapshot_files(root: &Path) -> BTreeMap<String, SystemTime> {
-    let mut m = BTreeMap::new();
-    snapshot_rec(root, root, &mut m);
-    m
-}
-fn snapshot_rec(root: &Path, dir: &Path, m: &mut BTreeMap<String, SystemTime>) {
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                snapshot_rec(root, &p, m)
-            } else if let Ok(md) = e.metadata() {
-                if let Ok(rel) = p.strip_prefix(root) {
-                    m.insert(
-                        rel.to_string_lossy().to_string(),
-                        md.modified().unwrap_or(UNIX_EPOCH),
-                    );
-                }
-            }
-        }
-    }
-}
-fn changed_files(root: &Path, before: BTreeMap<String, SystemTime>) -> Vec<String> {
-    snapshot_files(root)
-        .into_iter()
-        .filter(|(p, t)| before.get(p).map(|b| b < t).unwrap_or(true))
-        .map(|(p, _)| p)
-        .collect()
-}
-async fn truncation_marker_exists(path: &Path) -> Result<bool, DomainError> {
-    let mut marker = path.to_path_buf();
-    marker.set_extension("truncated");
-    match tokio::fs::metadata(marker).await {
-        Ok(_) => Ok(true),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(ioerr(e)),
-    }
-}
-
-async fn read_preview(path: &Path, max: usize) -> Result<(String, bool), DomainError> {
-    let md = tokio::fs::metadata(path).await.map_err(ioerr)?;
-    let trunc = md.len() as usize > max;
-    let mut f = tokio::fs::File::open(path).await.map_err(ioerr)?;
-    let mut buf = vec![0; max];
-    let n = f.read(&mut buf).await.map_err(ioerr)?;
-    buf.truncate(n);
-    Ok((String::from_utf8_lossy(&buf).to_string(), trunc))
-}
-async fn read_slice(
-    path: &Path,
-    offset: usize,
-    limit: usize,
-) -> Result<(String, bool), DomainError> {
-    use tokio::io::AsyncSeekExt;
-    let metadata = match tokio::fs::metadata(path).await {
-        Ok(metadata) => metadata,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((String::new(), false)),
-        Err(e) => return Err(ioerr(e)),
-    };
-    let len = metadata.len();
-    if offset as u128 >= len as u128 {
-        return Ok((String::new(), false));
-    }
-    let mut file = tokio::fs::File::open(path).await.map_err(ioerr)?;
-    file.seek(std::io::SeekFrom::Start(offset as u64))
-        .await
-        .map_err(ioerr)?;
-    let to_read = limit.min((len - offset as u64) as usize);
-    let mut buf = vec![0; to_read];
-    let n = file.read(&mut buf).await.map_err(ioerr)?;
-    buf.truncate(n);
-    Ok((
-        String::from_utf8_lossy(&buf).to_string(),
-        (offset as u64).saturating_add(n as u64) < len,
-    ))
-}
-fn rel(workspace: &Path, p: &Path) -> String {
-    p.strip_prefix(workspace)
-        .unwrap_or(p)
-        .to_string_lossy()
-        .to_string()
-}
-fn artifact_rel(p: &Path) -> String {
-    let parts: Vec<_> = p
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().to_string())
-        .collect();
-    if let Some(i) = parts.iter().position(|x| x == ".quecto") {
-        parts[i..].join("/")
-    } else {
-        p.to_string_lossy().to_string()
-    }
-}
-fn bounded_u64(
-    value: &serde_json::Value,
-    key: &str,
-    default: u64,
-    maximum: u64,
-) -> Result<u64, String> {
-    match value.get(key) {
-        None => Ok(default.min(maximum)),
-        Some(v) => v
-            .as_u64()
-            .map(|n| n.min(maximum))
-            .ok_or_else(|| format!("{key} must be a non-negative integer")),
-    }
-}
-fn ioerr(e: std::io::Error) -> DomainError {
-    DomainError::Other(e.to_string())
-}
+#[path = "python_lab_support.rs"]
+mod python_lab_support;
+pub(crate) use python_lab_support::*;

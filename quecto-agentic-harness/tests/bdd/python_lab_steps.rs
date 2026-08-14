@@ -209,6 +209,20 @@ fn then_status(world: &mut QuectoWorld, expected: String) {
     assert_eq!(actual, expected, "unexpected python lab status");
 }
 
+/// Distinguishes a sandbox refusal from the tool merely failing for some other
+/// reason — a rejected path and a path that simply does not exist both surface
+/// as errors, so asserting only `is_error` would pass with no sandbox at all.
+#[then("the python lab result should be a sandbox rejection")]
+fn then_sandbox_rejection(world: &mut QuectoWorld) {
+    let result = result(world);
+    assert!(result.is_error, "expected an error: {}", result.content);
+    assert!(
+        result.content.contains("security violation"),
+        "expected a sandbox rejection, got: {}",
+        result.content
+    );
+}
+
 #[then("the python lab result should be an error")]
 fn then_is_error(world: &mut QuectoWorld) {
     assert!(
@@ -286,11 +300,20 @@ fn then_artifact_has_full_output(world: &mut QuectoWorld) {
         .get("stdout")
         .and_then(|v| v.as_str())
         .unwrap_or_default();
+    // The scenario prints exactly 5000 'x' plus a newline. Asserting the whole
+    // thing survived, rather than merely "more than the preview", is what makes
+    // this prove the output is recoverable.
+    assert_eq!(
+        full,
+        format!("{}\n", "x".repeat(5000)),
+        "artifact should hold the complete output, got {} bytes",
+        full.len()
+    );
     assert!(
         full.len() > preview.len(),
-        "artifact should hold more than the truncated preview ({} vs {})",
-        full.len(),
-        preview.len()
+        "preview should be shorter than the artifact ({} vs {})",
+        preview.len(),
+        full.len()
     );
 }
 
@@ -320,19 +343,25 @@ fn then_audit_metadata(world: &mut QuectoWorld) {
         "resource_usage",
         "files_created_or_modified",
     ] {
+        // Rejects explicit nulls: `.is_some()` alone would pass for a field
+        // that is present but carries no value.
         assert!(
-            json.get(field).is_some(),
-            "audit metadata should include {field}: {json}"
+            json.get(field).is_some_and(|v| !v.is_null()),
+            "audit metadata should include a non-null {field}: {json}"
         );
     }
     let usage = &json["resource_usage"];
     assert!(
-        usage.get("wall_clock_ms").is_some(),
-        "resource_usage should report wall_clock_ms: {usage}"
+        usage
+            .get("stdout_bytes_retained")
+            .is_some_and(|v| v.is_u64()),
+        "resource_usage should report stdout_bytes_retained: {usage}"
     );
     assert!(
-        usage.get("stdout_bytes").is_some(),
-        "resource_usage should report stdout_bytes: {usage}"
+        usage
+            .get("stderr_bytes_retained")
+            .is_some_and(|v| v.is_u64()),
+        "resource_usage should report stderr_bytes_retained: {usage}"
     );
 }
 
@@ -367,6 +396,51 @@ fn then_job_reaches_status(world: &mut QuectoWorld, expected: String) {
         );
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
+}
+
+fn pid_is_alive(pid: i32) -> bool {
+    // SAFETY: kill(pid, 0) only checks existence/permission, sending no signal.
+    unsafe { libc::kill(pid, 0) == 0 }
+}
+
+/// Reads the pid the background program recorded for itself, waiting for the
+/// file to appear.
+fn recorded_pid(world: &mut QuectoWorld) -> i32 {
+    let ws = ensure_workspace(world);
+    let path = ws.join("pid.txt");
+    for _ in 0..100 {
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            if let Ok(pid) = text.trim().parse::<i32>() {
+                return pid;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    panic!("background program never recorded its pid at {path:?}");
+}
+
+#[then("the background python lab process should be running")]
+fn then_process_running(world: &mut QuectoWorld) {
+    let pid = recorded_pid(world);
+    world.python_lab_pid = Some(pid);
+    assert!(pid_is_alive(pid), "expected pid {pid} to be running");
+}
+
+/// Asserts the observable effect of cancellation rather than the wording of the
+/// reply: a cancel that returned "cancelling" without killing anything would
+/// still satisfy a response-only assertion.
+#[then("the cancelled python lab process should no longer be running")]
+fn then_process_dead(world: &mut QuectoWorld) {
+    let pid = world
+        .python_lab_pid
+        .expect("expected a recorded pid from an earlier step");
+    for _ in 0..100 {
+        if !pid_is_alive(pid) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    panic!("pid {pid} was still alive after cancellation");
 }
 
 #[then(regex = r#"^the background python lab output should contain "(.+)"$"#)]

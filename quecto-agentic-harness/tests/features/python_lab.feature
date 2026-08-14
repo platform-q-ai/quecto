@@ -47,7 +47,11 @@ Feature: Python Lab Tool
 
   Scenario: Paths cannot escape the workspace
     When I run python lab file "../outside.py"
-    Then the python lab result should be an error
+    Then the python lab result should be a sandbox rejection
+
+  Scenario: The artifact directory is reserved against script execution
+    When I run python lab file ".quecto/python_lab/planted.py"
+    Then the python lab result should be a sandbox rejection
 
   Scenario: Runtime errors surface a non-zero exit and stderr
     When I run python lab inline code "raise ValueError('boom')"
@@ -87,7 +91,7 @@ Feature: Python Lab Tool
 
   Scenario: Only an explicit minimal environment reaches the interpreter
     When I run python lab inline code "import os; print('PATH=' + os.environ.get('PATH','') + ' HOME=' + os.environ.get('HOME','absent'))"
-    Then the python lab result should contain "PATH=/usr/bin:/bin HOME=absent"
+    Then the python lab result should contain "PATH=/usr/local/bin:/usr/bin:/bin HOME=absent"
 
   Scenario: Background job starts, reports status, and streams output
     When I run python lab inline code "print('bg done')" in the background
@@ -96,10 +100,19 @@ Feature: Python Lab Tool
     And the background python lab output should contain "bg done"
 
   Scenario: Background job can be cancelled
-    When I run python lab inline code "import time; time.sleep(30)" in the background
+    When I run python lab inline code "import os,pathlib,time; pathlib.Path('pid.txt').write_text(str(os.getpid())); time.sleep(30)" in the background
     Then the python lab result should report a job id
+    And the background python lab process should be running
     When I cancel the background python lab job
     Then the python lab result should contain "cancelling"
+    And the background python lab job should reach status "cancelled"
+    And the cancelled python lab process should no longer be running
+
+  Scenario: Concurrent background jobs are capped
+    When I run python lab inline code "import time; time.sleep(30)" in the background
+    And I run python lab inline code "import time; time.sleep(30)" in the background
+    And I run python lab inline code "import time; time.sleep(30)" in the background
+    Then the python lab result should contain "concurrent job limit reached"
 
   Scenario: Status for an unknown job id is reported as not found
     When I ask for python lab status of job "job_missing"

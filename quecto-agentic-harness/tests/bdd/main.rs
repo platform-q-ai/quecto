@@ -682,6 +682,8 @@ pub struct QuectoWorld {
     pub python_lab_tool: Option<DebugPythonLab>,
     /// Job id returned by the most recent background run
     pub python_lab_job_id: Option<String>,
+    /// Pid a background python lab program recorded for itself
+    pub python_lab_pid: Option<i32>,
     // --- Find BDD fields ---
     /// Temp dir for find workspace (kept alive)
     pub _find_temp_dir: Option<TempDir>,

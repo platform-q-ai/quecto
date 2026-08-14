@@ -152,8 +152,16 @@ async fn memory_cpu_and_process_rlimits_are_enforced() {
         .await
         .unwrap();
     let cpu_v: serde_json::Value = serde_json::from_str(&cpu.content).unwrap();
+    // Deliberately does not accept `cpu.is_error` on its own: the 5s wall-clock
+    // timeout also sets that, so the disjunct would pass with RLIMIT_CPU never
+    // applied. SIGXCPU must kill the interpreter well before the timeout.
+    assert_eq!(
+        cpu_v["status"], "completed",
+        "CPU limit should end the run before the wall-clock timeout: {}",
+        cpu.content
+    );
     assert!(
-        cpu.is_error || cpu_v["duration_ms"].as_u64().unwrap_or(u64::MAX) < 4_500,
+        cpu_v["duration_ms"].as_u64().unwrap_or(u64::MAX) < 4_500,
         "CPU limit was not enforced before timeout: {}",
         cpu.content
     );

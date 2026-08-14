@@ -9,6 +9,11 @@ use tokio::process::Command;
 use crate::domain::error::DomainError;
 use crate::infrastructure::tools::python_lab::{JobState, RunSpec};
 
+/// PATH handed to the interpreter when the environment is cleared. Includes
+/// `/usr/local/bin` because that is where a source-built or Homebrew `python3`
+/// commonly lives; omitting it made the tool unusable on those hosts.
+const CHILD_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
+
 pub(crate) async fn run_child(
     spec: RunSpec,
     workspace: &Path,
@@ -23,13 +28,18 @@ pub(crate) async fn run_child(
         cmd.env("PYTHONNOUSERSITE", "1");
     } else {
         cmd.env_clear()
-            .env("PATH", "/usr/bin:/bin")
+            .env("PATH", CHILD_PATH)
             .env("PYTHONNOUSERSITE", "1");
     }
     apply_child_limits(&mut cmd, &spec);
     if let Some(src) = spec.code {
         cmd.arg("-c").arg(src);
     } else {
+        // Defence in depth only: `spec.script` comes back from the sandbox
+        // validator already canonicalised and absolute, so it can never be
+        // mistaken for an interpreter option. That also makes this separator
+        // impossible to exercise through the public API — it guards against a
+        // future change that stops canonicalising, not against today's input.
         cmd.arg("--").arg(spec.script.unwrap());
     }
     for a in spec.args {
@@ -43,19 +53,22 @@ pub(crate) async fn run_child(
     let mut child = cmd
         .spawn()
         .map_err(|e| DomainError::Other(format!("failed to start python3: {e}")))?;
-    let output_budget = Arc::new(AtomicUsize::new(spec.artifact_max_bytes));
+    // Each stream gets its own budget. A shared one let whichever stream wrote
+    // first consume the whole allowance, so a program that flooded stdout could
+    // erase its own traceback from stderr — including from the artifact that is
+    // supposed to make truncated output recoverable.
     let stdout_task = child.stdout.take().map(|pipe| {
         tokio::spawn(copy_output(
             pipe,
             stdout_path.to_path_buf(),
-            Arc::clone(&output_budget),
+            Arc::new(AtomicUsize::new(spec.artifact_max_bytes)),
         ))
     });
     let stderr_task = child.stderr.take().map(|pipe| {
         tokio::spawn(copy_output(
             pipe,
             stderr_path.to_path_buf(),
-            Arc::clone(&output_budget),
+            Arc::new(AtomicUsize::new(spec.artifact_max_bytes)),
         ))
     });
     if let Some(st) = &state {
@@ -90,6 +103,14 @@ pub(crate) async fn run_child(
             Ok(("timed_out".into(), None))
         }
     };
+    // The child has been reaped, so its pid may be recycled by the OS at any
+    // point from here. Clear it before anything else can signal it: a later
+    // cancel or teardown would otherwise SIGKILL an unrelated process group.
+    if let Some(st) = &state {
+        if let Ok(mut s) = st.lock() {
+            s.pid = None;
+        }
+    }
     let drain_timeout = if matches!(outcome, Ok((ref st, _)) if st == "timed_out")
         || state
             .as_ref()
@@ -178,7 +199,12 @@ static INTERPRETER_VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::n
 pub(crate) fn interpreter_version() -> String {
     INTERPRETER_VERSION
         .get_or_init(|| {
+            // Probed under the same PATH the child gets, otherwise the audit
+            // record can name a different interpreter than the one that ran
+            // (pyenv/venv shims are a common way for the two to diverge).
             std::process::Command::new("python3")
+                .env_clear()
+                .env("PATH", CHILD_PATH)
                 .arg("--version")
                 .output()
                 .ok()

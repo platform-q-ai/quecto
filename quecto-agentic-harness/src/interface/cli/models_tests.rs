@@ -1,5 +1,182 @@
 use super::*;
 use wiremock::matchers::{header, method, path};
+
+#[test]
+fn cmd_models_discover_success_reports_count_and_accepts_interval() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{"id": "one"}, {"id": "two"}]
+            })))
+            .mount(&server)
+            .await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("models.json"),
+            serde_json::json!({"providers": {"local": {
+                "api": "openai-completions",
+                "baseUrl": format!("{}/v1", server.uri()),
+                "models": []
+            }}})
+            .to_string(),
+        )
+        .unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
+        };
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        let ctx_for_discovery = ctx.clone();
+        let code = tokio::task::spawn_blocking(move || {
+            cmd_models(
+                &ctx_for_discovery,
+                &[
+                    "discover".to_string(),
+                    "local".to_string(),
+                    "--interval".to_string(),
+                    "1".to_string(),
+                ],
+                &mut stdout,
+                &mut stderr,
+            )
+        })
+        .await
+        .unwrap();
+        assert_eq!(code, 0);
+    });
+}
+
+#[test]
+fn cmd_models_usage_and_discover_error_paths_are_reported() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    assert_eq!(cmd_models(&ctx, &[], &mut stdout, &mut stderr), 1);
+    assert!(stderr.contains("Usage: quecto models discover"));
+    assert!(stdout.is_empty());
+
+    stdout.clear();
+    stderr.clear();
+    assert_eq!(
+        cmd_models(&ctx, &["discover".to_string()], &mut stdout, &mut stderr),
+        1
+    );
+    assert!(stderr.contains("Usage: quecto models discover"));
+
+    std::fs::write(
+        tmp.path().join("models.json"),
+        serde_json::json!({"providers": {"bad": {
+            "api": "anthropic-messages",
+            "baseUrl": "https://example.test/v1",
+            "models": []
+        }}})
+        .to_string(),
+    )
+    .unwrap();
+    stdout.clear();
+    stderr.clear();
+    assert_eq!(
+        cmd_models(
+            &ctx,
+            &["discover".to_string(), "bad".to_string()],
+            &mut stdout,
+            &mut stderr,
+        ),
+        1
+    );
+    assert!(stderr.contains("models discover failed"));
+    assert!(stderr.contains("not an openai-completions provider"));
+}
+
+#[test]
+fn cmd_models_discover_option_validation_branches_are_reported() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+
+    assert_eq!(
+        cmd_models(
+            &ctx,
+            &[
+                "discover".to_string(),
+                "provider".to_string(),
+                "--watch".to_string(),
+                "--interval".to_string(),
+            ],
+            &mut stdout,
+            &mut stderr,
+        ),
+        1
+    );
+    assert!(stderr.contains("Unknown models discover option: --interval"));
+
+    stderr.clear();
+
+    assert_eq!(
+        cmd_models(
+            &ctx,
+            &[
+                "discover".to_string(),
+                "provider".to_string(),
+                "--interval".to_string(),
+                "0".to_string(),
+            ],
+            &mut stdout,
+            &mut stderr,
+        ),
+        1
+    );
+    assert!(stderr.contains("at least 1 second"));
+
+    stderr.clear();
+    assert_eq!(
+        cmd_models(
+            &ctx,
+            &[
+                "discover".to_string(),
+                "provider".to_string(),
+                "--interval".to_string(),
+                "abc".to_string(),
+            ],
+            &mut stdout,
+            &mut stderr,
+        ),
+        1
+    );
+    assert!(stderr.contains("integer number of seconds"));
+
+    stderr.clear();
+    assert_eq!(
+        cmd_models(
+            &ctx,
+            &[
+                "discover".to_string(),
+                "provider".to_string(),
+                "--bogus".to_string(),
+            ],
+            &mut stdout,
+            &mut stderr,
+        ),
+        1
+    );
+    assert!(stderr.contains("Unknown models discover option"));
+}
+
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[test]

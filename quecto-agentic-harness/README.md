@@ -611,7 +611,7 @@ To use an OAuth-backed registry provider, first run `quecto auth login openai` o
 | `max_cpu_seconds` | `null` | `RLIMIT_CPU` for the interpreter; `null` leaves CPU time unbounded |
 | `max_processes` | `1` | `RLIMIT_NPROC`; the default blocks the program from spawning subprocesses |
 | `max_concurrent_jobs` | `2` | Background jobs that may run at once; further starts are `rejected` |
-| `inherit_environment` | `false` | When false the interpreter starts from a cleared environment with only `PATH=/usr/bin:/bin` and `PYTHONNOUSERSITE=1` |
+| `inherit_environment` | `false` | When false the interpreter starts from a cleared environment with only `PATH=/usr/local/bin:/usr/bin:/bin` and `PYTHONNOUSERSITE=1` |
 
 Runtime policy:
 
@@ -619,7 +619,8 @@ Runtime policy:
 - **Working directory** — the agent's workspace. Files a program writes persist for the lifetime of the task and are reported back in `files_created_or_modified`.
 - **Path validation** — a `path` argument is resolved against the workspace and checked by the same sandbox validator the filesystem tools use, so traversal and symlink escapes are rejected. The validator's documented TOCTOU limitation applies.
 - **Output** — the inline result carries a preview capped at `max_output_bytes` for the call; the complete output is written to `.quecto/python_lab/<execution_id>/{stdout,stderr}.txt` and listed in `artifact_paths` when the preview was truncated. Output beyond the configured `max_output_bytes` hard cap is dropped and flagged.
-- **Resource limits** — memory, CPU, and process limits are applied with `setrlimit` in the child before `exec`, on Unix only. On non-Unix platforms these keys are accepted but not enforced.
+- **Artifact retention** — every execution leaves a `.quecto/python_lab/<execution_id>/` directory. The 32 most recent are kept and older ones are deleted as new runs start; a directory belonging to a job that has not finished is never removed. Paging a job's output re-reads these files, so `output` also reports `artifacts_modified` if their size no longer matches what was captured at completion.
+- **Resource limits** — memory, CPU, and process limits are applied with `setrlimit` in the child before `exec`, on Unix only. On non-Unix platforms these keys are accepted but not enforced. Two caveats worth knowing: `max_processes` maps to `RLIMIT_NPROC`, which the kernel counts **per user**, not per process — so it is only meaningful as the default `1` (block subprocess creation entirely), it is silently ineffective when the harness runs as root, and any larger value will behave unpredictably on a busy machine. `max_memory_bytes` maps to `RLIMIT_AS`, which bounds virtual address space rather than resident memory; CPython reserves far more address space than it resides, so set it generously or a program will fail to start at all.
 - **Background jobs** — live for the session. Cancellation, timeout, and dropping the tool kill the process group and its descendants.
 - **Network** — `python_lab` adds no network isolation of its own; a program reaches whatever the surrounding process or container can reach. Restricting egress is the deployment's job (see [Security](#security)).
 
