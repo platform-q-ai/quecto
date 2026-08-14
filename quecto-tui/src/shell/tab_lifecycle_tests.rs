@@ -53,6 +53,56 @@ fn close_last_tab_refused() {
 }
 
 #[test]
+fn new_command_resets_workspace_not_just_active_session() {
+    let mut a = app();
+    let old_workspace_id = a.workspace_id.clone();
+    a.active_chat_mut()
+        .add_entry(crate::components::chat::ChatEntry::User {
+            text: "master old".into(),
+        });
+    let t1 = a.open_placeholder_tab(Some("stale".into()));
+    a.active_chat_mut()
+        .add_entry(crate::components::chat::ChatEntry::User {
+            text: "background old".into(),
+        });
+    a.subagents.panel_nav_key = Some("stale-agent".into());
+    a.subagents.panel_nav.set_selected(3);
+
+    a.handle_submit("/new");
+
+    assert_eq!(a.tabs.len(), 1, "/new must close stale workspace tabs");
+    assert!(a.tabs.contains_key(&TabId::MASTER));
+    assert!(!a.tabs.contains_key(&t1));
+    assert_eq!(a.active_tab, TabId::MASTER);
+    assert_eq!(a.ac().master_session.chat.entry_count(), 0);
+    assert_eq!(a.ac().name, None);
+    assert_eq!(a.ac().session_key, None);
+    assert_eq!(a.ac().pending_session_resume, None);
+    assert_eq!(a.subagents.panel_nav_key, None);
+    assert_eq!(a.subagents.panel_nav.selected(), 0);
+    assert_ne!(a.workspace_id, old_workspace_id);
+    assert!(!a.workspace_label.is_empty());
+}
+
+#[test]
+fn reset_workspace_returns_stale_tab_child_watches_for_termination() {
+    let mut a = app();
+    let t1 = a.open_placeholder_tab(Some("owned".into()));
+    a.conn_mut(t1).unwrap().child_exit_watch =
+        Some(crate::shell::child_watch::ChildWatch::for_tests(Some(77)));
+
+    let watches = a.reset_workspace();
+
+    assert_eq!(
+        watches.iter().map(|w| w.pid()).collect::<Vec<_>>(),
+        vec![Some(77)],
+        "/new must hand back non-master ChildWatch values so callers can terminate owned agents"
+    );
+    assert_eq!(a.tabs.len(), 1);
+    assert!(a.tabs.contains_key(&TabId::MASTER));
+}
+
+#[test]
 fn close_active_prefers_previous_id() {
     let mut a = app();
     let _t1 = a.open_placeholder_tab(None);
