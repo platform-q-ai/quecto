@@ -541,18 +541,10 @@ struct ResultContext<'a> {
 async fn build_result(ctx: ResultContext<'_>) -> Result<serde_json::Value, DomainError> {
     let (stdout, stdout_full) = read_preview(ctx.stdout_path, ctx.max_out).await?;
     let (stderr, stderr_full) = read_preview(ctx.stderr_path, ctx.max_out).await?;
-    let stdout_len = tokio::fs::metadata(ctx.stdout_path)
-        .await
-        .map_err(ioerr)?
-        .len();
-    let stderr_len = tokio::fs::metadata(ctx.stderr_path)
-        .await
-        .map_err(ioerr)?
-        .len();
-    let persisted = stdout_len + stderr_len;
-    let output_truncated = persisted as usize >= ctx.max_out && ctx.max_out > 0;
-    let st = stdout_full || (output_truncated && stdout_len > 0);
-    let et = stderr_full || (output_truncated && stderr_len > 0);
+    let stdout_marker = truncation_marker_exists(ctx.stdout_path).await?;
+    let stderr_marker = truncation_marker_exists(ctx.stderr_path).await?;
+    let st = stdout_full || stdout_marker;
+    let et = stderr_full || stderr_marker;
     let artifact_paths = [(st, ctx.stdout_path), (et, ctx.stderr_path)]
         .into_iter()
         .filter(|(t, _)| *t)
@@ -612,9 +604,19 @@ fn changed_files(root: &Path, before: BTreeMap<String, SystemTime>) -> Vec<Strin
         .map(|(p, _)| p)
         .collect()
 }
+async fn truncation_marker_exists(path: &Path) -> Result<bool, DomainError> {
+    let mut marker = path.to_path_buf();
+    marker.set_extension("truncated");
+    match tokio::fs::metadata(marker).await {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(ioerr(e)),
+    }
+}
+
 async fn read_preview(path: &Path, max: usize) -> Result<(String, bool), DomainError> {
     let md = tokio::fs::metadata(path).await.map_err(ioerr)?;
-    let trunc = md.len() as usize >= max && max > 0;
+    let trunc = md.len() as usize > max;
     let mut f = tokio::fs::File::open(path).await.map_err(ioerr)?;
     let mut buf = vec![0; max];
     let n = f.read(&mut buf).await.map_err(ioerr)?;

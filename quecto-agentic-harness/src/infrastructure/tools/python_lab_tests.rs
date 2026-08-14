@@ -637,3 +637,49 @@ async fn max_output_bytes_is_shared_across_stdout_and_stderr_artifacts() {
         result.content
     );
 }
+
+#[tokio::test]
+async fn exact_cap_stdout_is_not_reported_truncated() {
+    let tmp = tempfile::tempdir().unwrap();
+    let result = tool(tmp.path())
+        .execute(
+            r#"{"op":"run","code":"import sys; sys.stdout.write('abcd')","max_output_bytes":4}"#,
+        )
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(v["stdout"], "abcd");
+    assert_eq!(v["output_truncated"], false);
+    assert_eq!(v["stdout_truncated"], false);
+    assert!(v["artifact_paths"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn exact_cap_stderr_is_not_reported_truncated() {
+    let tmp = tempfile::tempdir().unwrap();
+    let result = tool(tmp.path())
+        .execute(
+            r#"{"op":"run","code":"import sys; sys.stderr.write('wxyz')","max_output_bytes":4}"#,
+        )
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(v["stderr"], "wxyz");
+    assert_eq!(v["output_truncated"], false);
+    assert_eq!(v["stderr_truncated"], false);
+    assert!(v["artifact_paths"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn exact_combined_stdout_stderr_cap_is_not_reported_truncated() {
+    let tmp = tempfile::tempdir().unwrap();
+    let result = tool(tmp.path())
+        .execute(r#"{"op":"run","code":"import sys; sys.stdout.write('ab'); sys.stdout.flush(); sys.stderr.write('cd'); sys.stderr.flush()","max_output_bytes":4}"#)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(v["output_truncated"], false);
+    assert_eq!(v["stdout_truncated"], false);
+    assert_eq!(v["stderr_truncated"], false);
+    assert!(v["artifact_paths"].as_array().unwrap().is_empty());
+}

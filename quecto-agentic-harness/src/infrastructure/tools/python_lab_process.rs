@@ -112,7 +112,7 @@ async fn copy_output<R>(mut reader: R, path: PathBuf, budget: Arc<AtomicUsize>)
 where
     R: tokio::io::AsyncRead + Unpin,
 {
-    let Ok(mut out) = tokio::fs::File::create(path).await else {
+    let Ok(mut out) = tokio::fs::File::create(&path).await else {
         return;
     };
     let mut buf = [0_u8; 8192];
@@ -122,10 +122,19 @@ where
             Ok(n) => n,
         };
         let writable = reserve_output_bytes(&budget, n);
+        if writable < n {
+            mark_truncated(&path).await;
+        }
         if writable > 0 && out.write_all(&buf[..writable]).await.is_err() {
             return;
         }
     }
+}
+
+async fn mark_truncated(path: &Path) {
+    let mut marker = path.to_path_buf();
+    marker.set_extension("truncated");
+    let _ = tokio::fs::write(marker, b"1").await;
 }
 
 fn reserve_output_bytes(budget: &AtomicUsize, requested: usize) -> usize {
