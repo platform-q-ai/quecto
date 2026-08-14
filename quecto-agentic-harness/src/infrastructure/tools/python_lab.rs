@@ -539,8 +539,20 @@ struct ResultContext<'a> {
 }
 
 async fn build_result(ctx: ResultContext<'_>) -> Result<serde_json::Value, DomainError> {
-    let (stdout, st) = read_preview(ctx.stdout_path, ctx.max_out).await?;
-    let (stderr, et) = read_preview(ctx.stderr_path, ctx.max_out).await?;
+    let (stdout, stdout_full) = read_preview(ctx.stdout_path, ctx.max_out).await?;
+    let (stderr, stderr_full) = read_preview(ctx.stderr_path, ctx.max_out).await?;
+    let stdout_len = tokio::fs::metadata(ctx.stdout_path)
+        .await
+        .map_err(ioerr)?
+        .len();
+    let stderr_len = tokio::fs::metadata(ctx.stderr_path)
+        .await
+        .map_err(ioerr)?
+        .len();
+    let persisted = stdout_len + stderr_len;
+    let output_truncated = persisted as usize >= ctx.max_out && ctx.max_out > 0;
+    let st = stdout_full || (output_truncated && stdout_len > 0);
+    let et = stderr_full || (output_truncated && stderr_len > 0);
     let artifact_paths = [(st, ctx.stdout_path), (et, ctx.stderr_path)]
         .into_iter()
         .filter(|(t, _)| *t)

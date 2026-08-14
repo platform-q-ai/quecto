@@ -313,20 +313,10 @@ async fn stderr_and_stdout_truncation_report_both_artifacts() {
         .await
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
-    assert_eq!(v["stdout_truncated"], true);
-    assert_eq!(v["stderr_truncated"], true);
+    assert_eq!(v["output_truncated"], true);
+    assert!(v["stdout_truncated"].as_bool().unwrap() || v["stderr_truncated"].as_bool().unwrap());
     let artifacts = v["artifact_paths"].as_array().unwrap();
-    assert_eq!(artifacts.len(), 2);
-    assert!(
-        artifacts
-            .iter()
-            .any(|p| p.as_str().unwrap().ends_with("stdout.txt"))
-    );
-    assert!(
-        artifacts
-            .iter()
-            .any(|p| p.as_str().unwrap().ends_with("stderr.txt"))
-    );
+    assert!(!artifacts.is_empty());
 }
 
 #[test]
@@ -607,4 +597,43 @@ async fn background_output_is_error_for_terminal_failure() {
         .await
         .unwrap();
     assert!(output.is_error, "{}", output.content);
+}
+
+#[tokio::test]
+async fn capped_stdout_is_drained_so_program_can_finish() {
+    let tmp = tempfile::tempdir().unwrap();
+    let code = "import pathlib, sys\nsys.stdout.write('x' * 200000)\nsys.stdout.flush()\npathlib.Path('finished.txt').write_text('ok')";
+    let result = tool(tmp.path())
+        .execute(&serde_json::json!({"op":"run","code":code,"max_output_bytes":4}).to_string())
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join("finished.txt")).unwrap(),
+        "ok"
+    );
+}
+
+#[tokio::test]
+async fn max_output_bytes_is_shared_across_stdout_and_stderr_artifacts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let result = tool(tmp.path())
+        .execute(r#"{"op":"run","code":"import sys; sys.stdout.write('abcd'); sys.stdout.flush(); sys.stderr.write('wxyz'); sys.stderr.flush()","max_output_bytes":4}"#)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    let exec_id = v["execution_id"].as_str().unwrap();
+    let stdout_artifact = format!(".quecto/python_lab/{exec_id}/stdout.txt");
+    let stderr_artifact = format!(".quecto/python_lab/{exec_id}/stderr.txt");
+    let total = std::fs::metadata(tmp.path().join(stdout_artifact))
+        .unwrap()
+        .len()
+        + std::fs::metadata(tmp.path().join(stderr_artifact))
+            .unwrap()
+            .len();
+    assert!(
+        total <= 4,
+        "total persisted bytes was {total}: {}",
+        result.content
+    );
 }

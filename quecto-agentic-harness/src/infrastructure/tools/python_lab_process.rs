@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -41,14 +42,21 @@ pub(crate) async fn run_child(
     let mut child = cmd
         .spawn()
         .map_err(|e| DomainError::Other(format!("failed to start python3: {e}")))?;
-    let stdout_task = child
-        .stdout
-        .take()
-        .map(|pipe| tokio::spawn(copy_output(pipe, stdout_path.to_path_buf(), spec.max_out)));
-    let stderr_task = child
-        .stderr
-        .take()
-        .map(|pipe| tokio::spawn(copy_output(pipe, stderr_path.to_path_buf(), spec.max_out)));
+    let output_budget = Arc::new(AtomicUsize::new(spec.max_out));
+    let stdout_task = child.stdout.take().map(|pipe| {
+        tokio::spawn(copy_output(
+            pipe,
+            stdout_path.to_path_buf(),
+            Arc::clone(&output_budget),
+        ))
+    });
+    let stderr_task = child.stderr.take().map(|pipe| {
+        tokio::spawn(copy_output(
+            pipe,
+            stderr_path.to_path_buf(),
+            Arc::clone(&output_budget),
+        ))
+    });
     if let Some(st) = &state {
         if let Ok(mut s) = st.lock() {
             s.pid = child.id();
@@ -100,25 +108,42 @@ pub(crate) async fn run_child(
     outcome
 }
 
-async fn copy_output<R>(mut reader: R, path: PathBuf, max_bytes: usize)
+async fn copy_output<R>(mut reader: R, path: PathBuf, budget: Arc<AtomicUsize>)
 where
     R: tokio::io::AsyncRead + Unpin,
 {
     let Ok(mut out) = tokio::fs::File::create(path).await else {
         return;
     };
-    let mut remaining = max_bytes;
     let mut buf = [0_u8; 8192];
-    while remaining > 0 {
-        let cap = buf.len().min(remaining);
-        let n = match reader.read(&mut buf[..cap]).await {
+    loop {
+        let n = match reader.read(&mut buf).await {
             Ok(0) | Err(_) => return,
             Ok(n) => n,
         };
-        if out.write_all(&buf[..n]).await.is_err() {
+        let writable = reserve_output_bytes(&budget, n);
+        if writable > 0 && out.write_all(&buf[..writable]).await.is_err() {
             return;
         }
-        remaining -= n;
+    }
+}
+
+fn reserve_output_bytes(budget: &AtomicUsize, requested: usize) -> usize {
+    let mut available = budget.load(Ordering::Relaxed);
+    loop {
+        if available == 0 {
+            return 0;
+        }
+        let writable = requested.min(available);
+        match budget.compare_exchange_weak(
+            available,
+            available - writable,
+            Ordering::AcqRel,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return writable,
+            Err(actual) => available = actual,
+        }
     }
 }
 
