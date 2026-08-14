@@ -379,7 +379,10 @@ fn then_has_job_id(world: &mut QuectoWorld) {
 #[then(regex = r#"^the background python lab job should reach status "([^"]+)"$"#)]
 fn then_job_reaches_status(world: &mut QuectoWorld, expected: String) {
     let id = job_id(world);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    // Kept short deliberately: cucumber drives every step on one executor
+    // thread, so a stalled poll here blocks the whole shard against its
+    // 5-minute CI budget. The jobs these scenarios run finish in milliseconds.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         run(world, serde_json::json!({"op": "status", "job_id": id}));
         let actual = result_json(world)
