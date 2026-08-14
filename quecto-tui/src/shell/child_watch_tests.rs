@@ -77,14 +77,19 @@ async fn terminate_after_reap_kills_surviving_group_members() {
     tokio::time::timeout(Duration::from_secs(5), watch.terminate())
         .await
         .expect("terminate must complete within the grace window");
-    // A SIGKILLed member can linger a beat before the kernel removes it
-    // from the group, so poll the probe briefly.
+    // A SIGKILLed orphan can briefly remain as an unreaped zombie owned by
+    // init, so assert there are no live (non-zombie) members left in the group.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     loop {
-        // SAFETY: pgid > 0 (from child.id()), so -pgid targets that group; signal 0 only probes for members without delivering a signal.
-        let probe = unsafe { libc::kill(-pgid, 0) };
-        if probe == -1 {
-            break; // Group empty — the survivor was terminated.
+        let out = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-g", &pgid.to_string()])
+            .output()
+            .expect("ps must run");
+        let has_live_member = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .any(|stat| !stat.trim_start().starts_with('Z'));
+        if !has_live_member {
+            break;
         }
         assert!(
             tokio::time::Instant::now() < deadline,

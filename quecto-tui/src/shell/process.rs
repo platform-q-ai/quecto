@@ -93,8 +93,11 @@ pub async fn terminate_child(child: &mut tokio::process::Child, grace_ms: u64) {
                         .await;
                 }
 
-                // Still alive — force kill the group.
-                kill_process_group(pid, libc::SIGKILL);
+                // Still alive — force kill the group, then give the kernel a
+                // brief window to remove surviving group members.
+                if kill_process_group(pid, libc::SIGKILL) != -1 {
+                    wait_group_empty(pid, grace_ms).await;
+                }
             }
             Err(e) => {
                 eprintln!("Warning: unsafe PID {raw_pid}, falling back to child.kill(): {e}");
@@ -137,7 +140,17 @@ pub async fn terminate_group_if_alive(pgid: i32, grace_ms: u64) {
         }
         tokio::time::sleep(std::time::Duration::from_millis(TERMINATE_POLL_TICK_MS)).await;
     }
-    kill_process_group(pgid, libc::SIGKILL);
+    if kill_process_group(pgid, libc::SIGKILL) == -1 {
+        return;
+    }
+    wait_group_empty(pgid, grace_ms).await;
+}
+
+async fn wait_group_empty(pgid: i32, grace_ms: u64) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(grace_ms);
+    while kill_process_group(pgid, 0) != -1 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(TERMINATE_POLL_TICK_MS)).await;
+    }
 }
 
 #[cfg(test)]

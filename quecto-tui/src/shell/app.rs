@@ -213,7 +213,11 @@ impl App {
             return false;
         }
         self.workspace.git_branch = branch.clone();
-        self.ac_mut().master_session.footer.set_git_branch(branch);
+        let ac = self.ac_mut();
+        ac.master_session.footer.set_git_branch(branch.clone());
+        for session in ac.roster.sessions.values_mut() {
+            session.footer.set_git_branch(branch.clone());
+        }
         true
     }
 

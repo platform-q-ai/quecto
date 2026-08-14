@@ -1,5 +1,7 @@
 //! Tests for git branch footer discovery and polling policy.
 
+use crate::components::component::Component;
+
 #[tokio::test]
 async fn git_branch_refresh_task_reflects_branch_switches_promptly() {
     let repo = std::env::temp_dir().join(format!(
@@ -18,7 +20,13 @@ async fn git_branch_refresh_task_reflects_branch_switches_promptly() {
     std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/feature/footer\n").unwrap();
     assert!(h.refresh_branch_from_repo().await);
     assert!(
-        h.bottom_stack().contains("feature/footer"),
+        h.app_mut()
+            .ac_mut()
+            .master_session
+            .footer
+            .render(120)
+            .join("\n")
+            .contains("feature/footer"),
         "production branch refresh path should update the footer after a branch switch"
     );
     let interval = super::app_git::GIT_BRANCH_POLL_INTERVAL;

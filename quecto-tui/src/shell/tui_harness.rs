@@ -283,15 +283,13 @@ impl TuiHarness {
 
     /// Drive the same branch refresh task used by the event-loop interval.
     pub async fn refresh_branch_from_repo(&mut self) -> bool {
-        let (tx, mut rx) = mpsc::channel(1);
-        let mut in_flight = false;
-        self.app.start_git_branch_refresh(&tx, &mut in_flight);
-        drop(tx);
-        if let Some(branch) = rx.recv().await {
-            self.app.apply_git_branch(branch)
-        } else {
-            false
-        }
+        let branch = self
+            .app
+            .workspace
+            .git_repo
+            .as_deref()
+            .and_then(super::app_git::read_git_branch_from);
+        self.app.apply_git_branch(branch)
     }
 
     /// Feed printable input through the real key handler.
