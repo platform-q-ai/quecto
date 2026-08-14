@@ -1,13 +1,17 @@
+use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::process::Command;
+use tokio::io::AsyncReadExt;
+
+#[path = "python_lab_process.rs"]
+mod python_lab_process;
+use python_lab_process::{kill_pid, run_child};
 
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
@@ -67,24 +71,22 @@ impl Default for PythonLabToolConfig {
         }
     }
 }
-
 impl From<PythonLabToolConfig> for PythonLabConfig {
-    fn from(value: PythonLabToolConfig) -> Self {
+    fn from(v: PythonLabToolConfig) -> Self {
         Self {
-            default_timeout_seconds: value.default_timeout_seconds,
-            max_foreground_seconds: value.max_foreground_seconds,
-            max_background_seconds: value.max_background_seconds,
-            default_max_output_bytes: value.default_max_output_bytes,
-            max_output_bytes: value.max_output_bytes,
-            max_memory_bytes: value.max_memory_bytes,
-            max_cpu_seconds: value.max_cpu_seconds,
-            max_processes: value.max_processes,
-            max_concurrent_jobs: value.max_concurrent_jobs,
-            inherit_environment: value.inherit_environment,
+            default_timeout_seconds: v.default_timeout_seconds,
+            max_foreground_seconds: v.max_foreground_seconds,
+            max_background_seconds: v.max_background_seconds,
+            default_max_output_bytes: v.default_max_output_bytes,
+            max_output_bytes: v.max_output_bytes,
+            max_memory_bytes: v.max_memory_bytes,
+            max_cpu_seconds: v.max_cpu_seconds,
+            max_processes: v.max_processes,
+            max_concurrent_jobs: v.max_concurrent_jobs,
+            inherit_environment: v.inherit_environment,
         }
     }
 }
-
 fn default_python_lab_timeout_seconds() -> u64 {
     60
 }
@@ -106,21 +108,9 @@ fn default_python_lab_max_processes() -> Option<u32> {
 fn default_python_lab_concurrent_jobs() -> usize {
     2
 }
-
 impl Default for PythonLabConfig {
     fn default() -> Self {
-        Self {
-            default_timeout_seconds: 60,
-            max_foreground_seconds: 300,
-            max_background_seconds: 1800,
-            default_max_output_bytes: 200_000,
-            max_output_bytes: 1_000_000,
-            max_memory_bytes: None,
-            max_cpu_seconds: None,
-            max_processes: Some(1),
-            max_concurrent_jobs: 2,
-            inherit_environment: false,
-        }
+        PythonLabToolConfig::default().into()
     }
 }
 
@@ -128,7 +118,23 @@ pub struct PythonLabTool {
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
     config: PythonLabConfig,
-    session_key: std::sync::Mutex<String>,
+    session_key: Mutex<String>,
+    jobs: Arc<Mutex<HashMap<String, Arc<Mutex<JobState>>>>>,
+}
+
+#[derive(Debug)]
+pub(crate) struct JobState {
+    pub(crate) execution_id: String,
+    pub(crate) status: String,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) pid: Option<u32>,
+    pub(crate) started_ms: u128,
+    pub(crate) completed_ms: Option<u128>,
+    pub(crate) stdout_path: PathBuf,
+    pub(crate) stderr_path: PathBuf,
+    pub(crate) max_output_bytes: usize,
+    pub(crate) result: Option<serde_json::Value>,
+    pub(crate) cancel_requested: bool,
 }
 
 impl PythonLabTool {
@@ -137,26 +143,36 @@ impl PythonLabTool {
             workspace,
             sandbox,
             config,
-            session_key: std::sync::Mutex::new(String::new()),
+            session_key: Mutex::new(String::new()),
+            jobs: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+impl Drop for PythonLabTool {
+    fn drop(&mut self) {
+        if let Ok(jobs) = self.jobs.lock() {
+            for job in jobs.values() {
+                if let Ok(mut j) = job.lock() {
+                    j.cancel_requested = true;
+                    if let Some(pid) = j.pid {
+                        kill_pid(pid);
+                    }
+                }
+            }
         }
     }
 }
 
 impl Tool for PythonLabTool {
     fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: "python_lab".into(),
-            description: "Execute Python programs in the persistent task workspace for domain-neutral computation. Provide op=run with exactly one of code or path; programs may read and write workspace files. Prefer concise output and store large results as artifacts. Example: {\"op\":\"run\",\"code\":\"print(2 + 2)\"}".into(),
-            parameters_schema: r#"{"type":"object","properties":{"op":{"type":"string","enum":["run","status","output","cancel"],"default":"run"},"code":{"type":"string"},"path":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"stdin":{"type":"string"},"timeout_seconds":{"type":"number"},"max_output_bytes":{"type":"number"},"background":{"type":"boolean"},"job_id":{"type":"string"},"offset":{"type":"number"},"limit":{"type":"number"}},"required":["op"]}"#.into(),
-        }
+        ToolDefinition { name: "python_lab".into(), description: "Execute Python programs in the persistent task workspace for domain-neutral computation. Provide op=run with exactly one of code or path; programs may read and write workspace files. Use background=true for long computations, then status/output/cancel by job_id. Prefer concise output and store large results as artifacts.".into(), parameters_schema: r#"{"type":"object","properties":{"op":{"type":"string","enum":["run","status","output","cancel"],"default":"run"},"code":{"type":"string"},"path":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"stdin":{"type":"string"},"timeout_seconds":{"type":"number"},"max_output_bytes":{"type":"number"},"background":{"type":"boolean"},"job_id":{"type":"string"},"offset":{"type":"number"},"limit":{"type":"number"}},"required":["op"]}"#.into() }
     }
-
     fn set_session_key(&self, session_key: String) {
         if let Ok(mut g) = self.session_key.lock() {
             *g = session_key;
         }
     }
-
     fn execute(
         &self,
         arguments: &str,
@@ -165,6 +181,7 @@ impl Tool for PythonLabTool {
         let workspace = self.workspace.clone();
         let sandbox = self.sandbox.clone();
         let cfg = self.config.clone();
+        let jobs = self.jobs.clone();
         let session_key = self
             .session_key
             .lock()
@@ -175,175 +192,342 @@ impl Tool for PythonLabTool {
                 Ok(v) => v,
                 Err(e) => return tool_err(format!("invalid JSON arguments: {e}")),
             };
-            let op = v.get("op").and_then(|x| x.as_str()).unwrap_or("run");
-            if op != "run" {
-                return ok_json(
-                    json!({"status":"not_implemented","op":op,"message":"python_lab background job operations are reserved for the background-jobs slice"}),
+            match v.get("op").and_then(|x| x.as_str()).unwrap_or("run") {
+                "run" => run_op(v, workspace, sandbox, cfg, jobs, session_key).await,
+                "status" => status_op(&v, jobs).await,
+                "output" => output_op(&v, workspace, jobs).await,
+                "cancel" => cancel_op(&v, jobs).await,
+                op => ok_json(
+                    json!({"status":"error","message":format!("unknown op {op}")}),
                     true,
-                );
+                ),
             }
-            if v.get("background")
-                .and_then(|x| x.as_bool())
-                .unwrap_or(false)
-            {
-                return ok_json(
-                    json!({"status":"not_implemented","message":"background execution is reserved for the background-jobs slice"}),
-                    true,
-                );
-            }
-            let code = v.get("code").and_then(|x| x.as_str());
-            let path = v.get("path").and_then(|x| x.as_str());
-            if code.is_some() == path.is_some() {
-                return tool_err("exactly one of 'code' or 'path' is required".to_string());
-            }
-            let args: Vec<String> = match v.get("args") {
-                None => Vec::new(),
-                Some(value) => match value.as_array() {
-                    Some(items) => {
-                        let mut parsed = Vec::with_capacity(items.len());
-                        for item in items {
-                            let Some(arg) = item.as_str() else {
-                                return tool_err("args must be an array of strings".to_string());
-                            };
-                            parsed.push(arg.to_string());
-                        }
-                        parsed
-                    }
-                    None => return tool_err("args must be an array of strings".to_string()),
-                },
-            };
-            let stdin = v
-                .get("stdin")
-                .and_then(|x| x.as_str())
-                .map(ToString::to_string);
-            let timeout_secs = match bounded_u64(
-                &v,
-                "timeout_seconds",
-                cfg.default_timeout_seconds,
-                cfg.max_foreground_seconds,
-            ) {
-                Ok(n) => n,
-                Err(msg) => return tool_err(msg),
-            };
-            let max_out = match bounded_u64(
-                &v,
-                "max_output_bytes",
-                cfg.default_max_output_bytes as u64,
-                cfg.max_output_bytes as u64,
-            ) {
-                Ok(n) => n as usize,
-                Err(msg) => return tool_err(msg),
-            };
-            let exec_id = format!(
-                "py_{}_{:x}_{}",
-                std::process::id(),
-                now_ms(),
-                EXEC_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            );
-            let start_ms = now_ms();
-            let before = snapshot_files(&workspace);
-
-            let mut cmd = Command::new("python3");
-            cmd.current_dir(&*workspace).kill_on_drop(true);
-            if !cfg.inherit_environment {
-                cmd.env_clear()
-                    .env(
-                        "PATH",
-                        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".into()),
-                    )
-                    .env("PYTHONNOUSERSITE", "1");
-            }
-            let invocation_type;
-            if let Some(src) = code {
-                invocation_type = "inline";
-                cmd.arg("-c").arg(src);
-            } else {
-                invocation_type = "file";
-                let p = workspace.join(path.unwrap());
-                let validated = sandbox
-                    .validate_path(&p.to_string_lossy())
-                    .map_err(|e| DomainError::Security(e.to_string()))?;
-                cmd.arg("--").arg(validated);
-            }
-            for a in args {
-                cmd.arg(a);
-            }
-            if stdin.is_some() {
-                cmd.stdin(std::process::Stdio::piped());
-            }
-            let artifact_dir = workspace.join(".quecto/python_lab").join(&exec_id);
-            tokio::fs::create_dir_all(&artifact_dir)
-                .await
-                .map_err(|e| DomainError::Other(e.to_string()))?;
-            let stdout_path = artifact_dir.join("stdout.txt");
-            let stderr_path = artifact_dir.join("stderr.txt");
-            let stdout_file = std::fs::File::create(&stdout_path)
-                .map_err(|e| DomainError::Other(e.to_string()))?;
-            let stderr_file = std::fs::File::create(&stderr_path)
-                .map_err(|e| DomainError::Other(e.to_string()))?;
-            cmd.stdout(std::process::Stdio::from(stdout_file))
-                .stderr(std::process::Stdio::from(stderr_file));
-            let mut child = cmd
-                .spawn()
-                .map_err(|e| DomainError::Other(format!("failed to start python3: {e}")))?;
-            if let Some(input) = stdin {
-                if let Some(mut pipe) = child.stdin.take() {
-                    tokio::spawn(async move {
-                        let _ = pipe.write_all(input.as_bytes()).await;
-                    });
-                }
-            }
-            let timed = tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait()).await;
-            let (status, exit_code) = match timed {
-                Ok(Ok(status)) => ("completed", status.code()),
-                Ok(Err(e)) => {
-                    return Err(DomainError::Other(format!("python3 execution failed: {e}")));
-                }
-                Err(_) => {
-                    let _ = child.kill().await;
-                    let _ = child.wait().await;
-                    ("timed_out", None)
-                }
-            };
-            let end_ms = now_ms();
-            let (stdout_preview, stdout_trunc) = read_preview(&stdout_path, max_out).await?;
-            let (stderr_preview, stderr_trunc) = read_preview(&stderr_path, max_out).await?;
-            let mut artifact_paths = Vec::new();
-            if stdout_trunc {
-                artifact_paths.push(
-                    stdout_path
-                        .strip_prefix(&*workspace)
-                        .unwrap()
-                        .to_string_lossy()
-                        .to_string(),
-                );
-            }
-            if stderr_trunc {
-                artifact_paths.push(
-                    stderr_path
-                        .strip_prefix(&*workspace)
-                        .unwrap()
-                        .to_string_lossy()
-                        .to_string(),
-                );
-            }
-            if artifact_paths.is_empty() {
-                let _ = tokio::fs::remove_dir_all(&artifact_dir).await;
-            }
-            let changed = changed_files(&workspace, before);
-            let result = json!({
-                "status": status, "exit_code": exit_code, "execution_id": exec_id, "session_id": session_key,
-                "invocation_type": invocation_type, "interpreter": "python3", "start_time_ms": start_ms, "completion_time_ms": end_ms,
-                "duration_ms": end_ms.saturating_sub(start_ms), "timeout_seconds": timeout_secs, "stdout": stdout_preview, "stderr": stderr_preview,
-                "output_truncated": stdout_trunc || stderr_trunc, "stdout_truncated": stdout_trunc, "stderr_truncated": stderr_trunc,
-                "artifact_paths": artifact_paths, "files_created_or_modified": changed,
-                "resource_limits": {"memory_bytes": cfg.max_memory_bytes, "cpu_seconds": cfg.max_cpu_seconds, "processes": cfg.max_processes}
-            });
-            ok_json(result, status != "completed" || exit_code.unwrap_or(0) != 0)
         })
     }
 }
 
+async fn run_op(
+    v: serde_json::Value,
+    workspace: Arc<PathBuf>,
+    sandbox: Arc<Sandbox>,
+    cfg: PythonLabConfig,
+    jobs: Arc<Mutex<HashMap<String, Arc<Mutex<JobState>>>>>,
+    session_key: String,
+) -> Result<ToolResult, DomainError> {
+    let spec = match parse_run(&v, &workspace, &sandbox, &cfg) {
+        Ok(s) => s,
+        Err(e) => return tool_err(e.to_string()),
+    };
+    let exec_id = format!(
+        "py_{}_{:x}_{}",
+        std::process::id(),
+        now_ms(),
+        EXEC_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let start = now_ms();
+    let before = snapshot_files(&workspace);
+    let artifact_dir = workspace.join(".quecto/python_lab").join(&exec_id);
+    tokio::fs::create_dir_all(&artifact_dir)
+        .await
+        .map_err(ioerr)?;
+    let stdout_path = artifact_dir.join("stdout.txt");
+    let stderr_path = artifact_dir.join("stderr.txt");
+    if spec.background {
+        let job_id = format!("job_{}", exec_id);
+        let state = Arc::new(Mutex::new(JobState {
+            execution_id: exec_id.clone(),
+            status: "running".into(),
+            exit_code: None,
+            pid: None,
+            started_ms: start,
+            completed_ms: None,
+            stdout_path: stdout_path.clone(),
+            stderr_path: stderr_path.clone(),
+            max_output_bytes: spec.max_out,
+            result: None,
+            cancel_requested: false,
+        }));
+        {
+            let mut registry = jobs.lock().unwrap();
+            let running = registry
+                .values()
+                .filter(|j| j.lock().map(|s| s.status == "running").unwrap_or(false))
+                .count();
+            if running >= cfg.max_concurrent_jobs {
+                return ok_json(
+                    json!({"status":"rejected","message":"python_lab concurrent job limit reached","max_concurrent_jobs":cfg.max_concurrent_jobs}),
+                    true,
+                );
+            }
+            registry.insert(job_id.clone(), state.clone());
+        }
+        let spec_bg = spec.clone();
+        let exec_id_bg = exec_id.clone();
+        let session_key_bg = session_key.clone();
+        let cfg_bg = cfg.clone();
+        tokio::spawn(async move {
+            let result = run_child(
+                spec_bg.clone(),
+                &workspace,
+                &stdout_path,
+                &stderr_path,
+                Some(state.clone()),
+            )
+            .await;
+            let (final_status, exit_code, completed_ms, max_output_bytes) = {
+                let mut s = state.lock().unwrap();
+                let canceled = s.cancel_requested;
+                let (st, code) = match result {
+                    Ok((st, code)) => (st, code),
+                    Err(e) => (format!("failed: {e}"), None),
+                };
+                s.status = if canceled { "cancelled".into() } else { st };
+                s.exit_code = code;
+                s.completed_ms = Some(now_ms());
+                (
+                    s.status.clone(),
+                    s.exit_code,
+                    s.completed_ms.unwrap(),
+                    s.max_output_bytes,
+                )
+            };
+            let changed = changed_files(&workspace, before);
+            let res = build_result(ResultContext {
+                status: &final_status,
+                exit_code,
+                exec_id: &exec_id_bg,
+                session_key: &session_key_bg,
+                invocation_type: &spec_bg.invocation_type,
+                start,
+                end: completed_ms,
+                timeout: spec_bg.timeout_secs,
+                stdout_path: &stdout_path,
+                stderr_path: &stderr_path,
+                max_out: max_output_bytes,
+                changed,
+                cfg: &cfg_bg,
+            })
+            .await
+            .unwrap_or_else(|e| json!({"status":"failed","message":e.to_string()}));
+            if let Ok(mut s) = state.lock() {
+                s.result = Some(res);
+            }
+        });
+        return ok_json(
+            json!({"status":"running","job_id":job_id,"execution_id":exec_id,"session_id":session_key,"start_time_ms":start,"timeout_seconds":spec.timeout_secs}),
+            false,
+        );
+    }
+    let (status, code) =
+        run_child(spec.clone(), &workspace, &stdout_path, &stderr_path, None).await?;
+    let end = now_ms();
+    let changed = changed_files(&workspace, before);
+    let result = build_result(ResultContext {
+        status: &status,
+        exit_code: code,
+        exec_id: &exec_id,
+        session_key: &session_key,
+        invocation_type: &spec.invocation_type,
+        start,
+        end,
+        timeout: spec.timeout_secs,
+        stdout_path: &stdout_path,
+        stderr_path: &stderr_path,
+        max_out: spec.max_out,
+        changed,
+        cfg: &cfg,
+    })
+    .await?;
+    let is_err = status != "completed" || code.unwrap_or(0) != 0;
+    ok_json(result, is_err)
+}
+
+#[derive(Clone)]
+pub(crate) struct RunSpec {
+    pub(crate) invocation_type: String,
+    pub(crate) code: Option<String>,
+    pub(crate) script: Option<PathBuf>,
+    pub(crate) args: Vec<String>,
+    pub(crate) stdin: Option<String>,
+    pub(crate) timeout_secs: u64,
+    pub(crate) max_out: usize,
+    pub(crate) background: bool,
+    pub(crate) inherit_environment: bool,
+    pub(crate) max_memory_bytes: Option<u64>,
+    pub(crate) max_cpu_seconds: Option<u64>,
+    pub(crate) max_processes: Option<u32>,
+}
+fn parse_run(
+    v: &serde_json::Value,
+    workspace: &Path,
+    sandbox: &Sandbox,
+    cfg: &PythonLabConfig,
+) -> Result<RunSpec, DomainError> {
+    let code = v.get("code").and_then(|x| x.as_str()).map(str::to_string);
+    let path = v.get("path").and_then(|x| x.as_str());
+    if code.is_some() == path.is_some() {
+        return Err(DomainError::Other(
+            "exactly one of 'code' or 'path' is required".into(),
+        ));
+    }
+    let args = match v.get("args") {
+        None => vec![],
+        Some(a) => a
+            .as_array()
+            .ok_or_else(|| DomainError::Other("args must be an array of strings".into()))?
+            .iter()
+            .map(|i| {
+                i.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| DomainError::Other("args must be an array of strings".into()))
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    };
+    let timeout_secs = bounded_u64(
+        v,
+        "timeout_seconds",
+        cfg.default_timeout_seconds,
+        if v.get("background")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false)
+        {
+            cfg.max_background_seconds
+        } else {
+            cfg.max_foreground_seconds
+        },
+    )
+    .map_err(DomainError::Other)?;
+    let max_out = bounded_u64(
+        v,
+        "max_output_bytes",
+        cfg.default_max_output_bytes as u64,
+        cfg.max_output_bytes as u64,
+    )
+    .map_err(DomainError::Other)? as usize;
+    let script = if let Some(p) = path {
+        let p = workspace.join(p);
+        Some(
+            sandbox
+                .validate_path(&p.to_string_lossy())
+                .map_err(|e| DomainError::Security(e.to_string()))?,
+        )
+    } else {
+        None
+    };
+    Ok(RunSpec {
+        invocation_type: if code.is_some() { "inline" } else { "file" }.into(),
+        code,
+        script,
+        args,
+        stdin: v.get("stdin").and_then(|x| x.as_str()).map(str::to_string),
+        timeout_secs,
+        max_out,
+        background: v
+            .get("background")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
+        inherit_environment: cfg.inherit_environment,
+        max_memory_bytes: cfg.max_memory_bytes,
+        max_cpu_seconds: cfg.max_cpu_seconds,
+        max_processes: cfg.max_processes,
+    })
+}
+
+async fn status_op(
+    v: &serde_json::Value,
+    jobs: Arc<Mutex<HashMap<String, Arc<Mutex<JobState>>>>>,
+) -> Result<ToolResult, DomainError> {
+    let id = job_id(v)?;
+    let Some(job) = jobs.lock().unwrap().get(id).cloned() else {
+        return ok_json(json!({"status":"not_found","job_id":id}), true);
+    };
+    let s = job.lock().unwrap();
+    ok_json(
+        json!({"status":s.status,"job_id":id,"execution_id":s.execution_id,"exit_code":s.exit_code,"start_time_ms":s.started_ms,"completion_time_ms":s.completed_ms}),
+        s.status == "not_found",
+    )
+}
+async fn output_op(
+    v: &serde_json::Value,
+    workspace: Arc<PathBuf>,
+    jobs: Arc<Mutex<HashMap<String, Arc<Mutex<JobState>>>>>,
+) -> Result<ToolResult, DomainError> {
+    let id = job_id(v)?;
+    let offset = bounded_u64(v, "offset", 0, u64::MAX).map_err(DomainError::Other)? as usize;
+    let limit = bounded_u64(v, "limit", 200_000, 1_000_000).map_err(DomainError::Other)? as usize;
+    let Some(job) = jobs.lock().unwrap().get(id).cloned() else {
+        return ok_json(json!({"status":"not_found","job_id":id}), true);
+    };
+    let (status, outp, errp, result) = {
+        let s = job.lock().unwrap();
+        (
+            s.status.clone(),
+            s.stdout_path.clone(),
+            s.stderr_path.clone(),
+            s.result.clone(),
+        )
+    };
+    let stdout = read_slice(&outp, offset, limit).await?;
+    let stderr = read_slice(&errp, offset, limit).await?;
+    ok_json(
+        json!({"status":status,"job_id":id,"stdout":stdout.0,"stderr":stderr.0,"offset":offset,"limit":limit,"stdout_more":stdout.1,"stderr_more":stderr.1,"result":result,"artifact_paths":[rel(&workspace,&outp),rel(&workspace,&errp)]}),
+        false,
+    )
+}
+async fn cancel_op(
+    v: &serde_json::Value,
+    jobs: Arc<Mutex<HashMap<String, Arc<Mutex<JobState>>>>>,
+) -> Result<ToolResult, DomainError> {
+    let id = job_id(v)?;
+    let Some(job) = jobs.lock().unwrap().get(id).cloned() else {
+        return ok_json(json!({"status":"not_found","job_id":id}), true);
+    };
+    let mut s = job.lock().unwrap();
+    s.cancel_requested = true;
+    if let Some(pid) = s.pid {
+        kill_pid(pid);
+    }
+    s.status = "cancelled".into();
+    s.completed_ms.get_or_insert_with(now_ms);
+    ok_json(
+        json!({"status":"cancelled","job_id":id,"execution_id":s.execution_id}),
+        false,
+    )
+}
+fn job_id(v: &serde_json::Value) -> Result<&str, DomainError> {
+    v.get("job_id")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| DomainError::Other("job_id is required".into()))
+}
+
+struct ResultContext<'a> {
+    status: &'a str,
+    exit_code: Option<i32>,
+    exec_id: &'a str,
+    session_key: &'a str,
+    invocation_type: &'a str,
+    start: u128,
+    end: u128,
+    timeout: u64,
+    stdout_path: &'a Path,
+    stderr_path: &'a Path,
+    max_out: usize,
+    changed: Vec<String>,
+    cfg: &'a PythonLabConfig,
+}
+
+async fn build_result(ctx: ResultContext<'_>) -> Result<serde_json::Value, DomainError> {
+    let (stdout, st) = read_preview(ctx.stdout_path, ctx.max_out).await?;
+    let (stderr, et) = read_preview(ctx.stderr_path, ctx.max_out).await?;
+    let artifact_paths = [(st, ctx.stdout_path), (et, ctx.stderr_path)]
+        .into_iter()
+        .filter(|(t, _)| *t)
+        .map(|(_, p)| artifact_rel(p))
+        .collect::<Vec<_>>();
+    Ok(
+        json!({"status":ctx.status,"exit_code":ctx.exit_code,"execution_id":ctx.exec_id,"session_id":ctx.session_key,"invocation_type":ctx.invocation_type,"interpreter":"python3","interpreter_version":"python3","start_time_ms":ctx.start,"completion_time_ms":ctx.end,"duration_ms":ctx.end.saturating_sub(ctx.start),"timeout_seconds":ctx.timeout,"timeout_or_cancel_reason": if ctx.status=="timed_out" {"timeout"} else if ctx.status=="cancelled" {"cancelled"} else {""},"stdout":stdout,"stderr":stderr,"output_truncated":st||et,"stdout_truncated":st,"stderr_truncated":et,"artifact_paths":artifact_paths,"files_created_or_modified":ctx.changed,"resource_limits":{"memory_bytes":ctx.cfg.max_memory_bytes,"cpu_seconds":ctx.cfg.max_cpu_seconds,"processes":ctx.cfg.max_processes},"resource_usage":{}}),
+    )
+}
 fn tool_err(content: String) -> Result<ToolResult, DomainError> {
     Ok(ToolResult {
         content,
@@ -359,23 +543,18 @@ fn ok_json(v: serde_json::Value, is_error: bool) -> Result<ToolResult, DomainErr
     })
 }
 static EXEC_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
 }
-fn snapshot_files(root: &std::path::Path) -> std::collections::BTreeMap<String, SystemTime> {
-    let mut m = std::collections::BTreeMap::new();
+fn snapshot_files(root: &Path) -> BTreeMap<String, SystemTime> {
+    let mut m = BTreeMap::new();
     snapshot_rec(root, root, &mut m);
     m
 }
-fn snapshot_rec(
-    root: &std::path::Path,
-    dir: &std::path::Path,
-    m: &mut std::collections::BTreeMap<String, SystemTime>,
-) {
+fn snapshot_rec(root: &Path, dir: &Path, m: &mut BTreeMap<String, SystemTime>) {
     if let Ok(rd) = std::fs::read_dir(dir) {
         for e in rd.flatten() {
             let p = e.path();
@@ -392,33 +571,63 @@ fn snapshot_rec(
         }
     }
 }
-fn changed_files(
-    root: &std::path::Path,
-    before: std::collections::BTreeMap<String, SystemTime>,
-) -> Vec<String> {
+fn changed_files(root: &Path, before: BTreeMap<String, SystemTime>) -> Vec<String> {
     snapshot_files(root)
         .into_iter()
         .filter(|(p, t)| before.get(p).map(|b| b < t).unwrap_or(true))
         .map(|(p, _)| p)
         .collect()
 }
-async fn read_preview(path: &std::path::Path, max: usize) -> Result<(String, bool), DomainError> {
-    let metadata = tokio::fs::metadata(path)
-        .await
-        .map_err(|e| DomainError::Other(e.to_string()))?;
-    let truncated = metadata.len() as usize > max;
-    let mut file = tokio::fs::File::open(path)
-        .await
-        .map_err(|e| DomainError::Other(e.to_string()))?;
+async fn read_preview(path: &Path, max: usize) -> Result<(String, bool), DomainError> {
+    let md = tokio::fs::metadata(path).await.map_err(ioerr)?;
+    let trunc = md.len() as usize > max;
+    let mut f = tokio::fs::File::open(path).await.map_err(ioerr)?;
     let mut buf = vec![0; max];
-    let n = file
-        .read(&mut buf)
-        .await
-        .map_err(|e| DomainError::Other(e.to_string()))?;
+    let n = f.read(&mut buf).await.map_err(ioerr)?;
     buf.truncate(n);
-    Ok((String::from_utf8_lossy(&buf).to_string(), truncated))
+    Ok((String::from_utf8_lossy(&buf).to_string(), trunc))
 }
-
+async fn read_slice(
+    path: &Path,
+    offset: usize,
+    limit: usize,
+) -> Result<(String, bool), DomainError> {
+    use tokio::io::AsyncSeekExt;
+    let metadata = tokio::fs::metadata(path).await.map_err(ioerr)?;
+    let len = metadata.len();
+    if offset as u128 >= len as u128 {
+        return Ok((String::new(), false));
+    }
+    let mut file = tokio::fs::File::open(path).await.map_err(ioerr)?;
+    file.seek(std::io::SeekFrom::Start(offset as u64))
+        .await
+        .map_err(ioerr)?;
+    let to_read = limit.min((len - offset as u64) as usize);
+    let mut buf = vec![0; to_read];
+    let n = file.read(&mut buf).await.map_err(ioerr)?;
+    buf.truncate(n);
+    Ok((
+        String::from_utf8_lossy(&buf).to_string(),
+        (offset as u64).saturating_add(n as u64) < len,
+    ))
+}
+fn rel(workspace: &Path, p: &Path) -> String {
+    p.strip_prefix(workspace)
+        .unwrap_or(p)
+        .to_string_lossy()
+        .to_string()
+}
+fn artifact_rel(p: &Path) -> String {
+    let parts: Vec<_> = p
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().to_string())
+        .collect();
+    if let Some(i) = parts.iter().position(|x| x == ".quecto") {
+        parts[i..].join("/")
+    } else {
+        p.to_string_lossy().to_string()
+    }
+}
 fn bounded_u64(
     value: &serde_json::Value,
     key: &str,
@@ -432,4 +641,7 @@ fn bounded_u64(
             .map(|n| n.min(maximum))
             .ok_or_else(|| format!("{key} must be a non-negative integer")),
     }
+}
+fn ioerr(e: std::io::Error) -> DomainError {
+    DomainError::Other(e.to_string())
 }

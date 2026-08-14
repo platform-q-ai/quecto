@@ -68,8 +68,9 @@ async fn rejects_code_path_cardinality_and_path_escape() {
     );
     let escaped = tool(tmp.path())
         .execute(r#"{"op":"run","path":"../x.py"}"#)
-        .await;
-    assert!(escaped.is_err());
+        .await
+        .unwrap();
+    assert!(escaped.is_error);
 }
 
 #[tokio::test]
@@ -143,19 +144,37 @@ async fn rejects_malformed_args_and_limit_types() {
 }
 
 #[tokio::test]
-async fn deferred_operations_report_not_implemented() {
+async fn background_operations_start_report_output_and_cancel() {
     let tmp = tempfile::tempdir().unwrap();
-    for args in [
-        r#"{"op":"status","job_id":"j"}"#,
-        r#"{"op":"output","job_id":"j"}"#,
-        r#"{"op":"cancel","job_id":"j"}"#,
-        r#"{"op":"run","code":"print(1)","background":true}"#,
-    ] {
-        let result = tool(tmp.path()).execute(args).await.unwrap();
-        assert!(result.is_error);
-        let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
-        assert_eq!(v["status"], "not_implemented");
-    }
+    let lab = tool(tmp.path());
+    let started = lab
+        .execute(r#"{"op":"run","code":"import time; print('ready', flush=True); time.sleep(5)","background":true}"#)
+        .await
+        .unwrap();
+    assert!(!started.is_error, "{}", started.content);
+    let v: serde_json::Value = serde_json::from_str(&started.content).unwrap();
+    assert_eq!(v["status"], "running");
+    let job_id = v["job_id"].as_str().unwrap();
+    let status = lab
+        .execute(&format!(r#"{{"op":"status","job_id":"{}"}}"#, job_id))
+        .await
+        .unwrap();
+    assert!(status.content.contains("running"));
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let output = lab
+        .execute(&format!(
+            r#"{{"op":"output","job_id":"{}","limit":5}}"#,
+            job_id
+        ))
+        .await
+        .unwrap();
+    assert!(output.content.contains("stdout"));
+    let cancelled = lab
+        .execute(&format!(r#"{{"op":"cancel","job_id":"{}"}}"#, job_id))
+        .await
+        .unwrap();
+    assert!(!cancelled.is_error, "{}", cancelled.content);
+    assert!(cancelled.content.contains("cancelled"));
 }
 
 #[tokio::test]
@@ -346,4 +365,125 @@ fn python_lab_config_deserializes_partial_and_full_json_shapes() {
     assert_eq!(full.max_cpu_seconds, Some(11));
     assert_eq!(full.max_processes, None);
     assert_eq!(full.max_concurrent_jobs, 12);
+}
+
+#[tokio::test]
+async fn background_completion_retains_result_and_output_pages() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lab = tool(tmp.path());
+    let started = lab.execute(r#"{"op":"run","code":"import sys; print('abcdef'); sys.stderr.write('uvwxyz')","background":true,"max_output_bytes":4}"#).await.unwrap();
+    let v: serde_json::Value = serde_json::from_str(&started.content).unwrap();
+    let job_id = v["job_id"].as_str().unwrap();
+    for _ in 0..20 {
+        let status = lab
+            .execute(&format!(r#"{{"op":"status","job_id":"{}"}}"#, job_id))
+            .await
+            .unwrap();
+        if status.content.contains("completed") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let status = lab
+        .execute(&format!(r#"{{"op":"status","job_id":"{}"}}"#, job_id))
+        .await
+        .unwrap();
+    assert!(status.content.contains("completed"), "{}", status.content);
+    let page = lab
+        .execute(&format!(
+            r#"{{"op":"output","job_id":"{}","offset":2,"limit":3}}"#,
+            job_id
+        ))
+        .await
+        .unwrap();
+    let out: serde_json::Value = serde_json::from_str(&page.content).unwrap();
+    assert_eq!(out["stdout"], "cde");
+    assert_eq!(out["stdout_more"], true);
+    assert!(out["result"]["output_truncated"].as_bool().unwrap());
+}
+
+#[tokio::test]
+async fn concurrent_background_jobs_are_capped_until_cancelled() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lab = PythonLabTool::new(
+        Arc::new(tmp.path().to_path_buf()),
+        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), true)),
+        PythonLabConfig {
+            max_concurrent_jobs: 1,
+            default_timeout_seconds: 5,
+            ..Default::default()
+        },
+    );
+    let first = lab
+        .execute(r#"{"op":"run","code":"import time; time.sleep(5)","background":true}"#)
+        .await
+        .unwrap();
+    let first_v: serde_json::Value = serde_json::from_str(&first.content).unwrap();
+    let second = lab
+        .execute(r#"{"op":"run","code":"print(1)","background":true}"#)
+        .await
+        .unwrap();
+    assert!(second.is_error);
+    assert!(second.content.contains("concurrent job limit"));
+    let job_id = first_v["job_id"].as_str().unwrap();
+    lab.execute(&format!(r#"{{"op":"cancel","job_id":"{}"}}"#, job_id))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn default_environment_filters_sensitive_variables() {
+    let tmp = tempfile::tempdir().unwrap();
+    // SAFETY: this test mutates a unique environment key and removes it before returning.
+    unsafe { std::env::set_var("PYTHON_LAB_SECRET_SHOULD_NOT_LEAK", "secret-value") };
+    let result = tool(tmp.path())
+        .execute(r#"{"op":"run","code":"import os; print(os.environ.get('PYTHON_LAB_SECRET_SHOULD_NOT_LEAK', 'missing'))"}"#)
+        .await
+        .unwrap();
+    // SAFETY: paired cleanup for the unique key set above.
+    unsafe { std::env::remove_var("PYTHON_LAB_SECRET_SHOULD_NOT_LEAK") };
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(v["stdout"], "missing\n");
+}
+
+#[tokio::test]
+async fn absolute_and_symlink_script_escapes_are_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let outside_script = outside.path().join("outside.py");
+    std::fs::write(&outside_script, "print('outside')").unwrap();
+    let abs = tool(tmp.path())
+        .execute(&format!(
+            r#"{{"op":"run","path":"{}"}}"#,
+            outside_script.display()
+        ))
+        .await
+        .unwrap();
+    assert!(abs.is_error);
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&outside_script, tmp.path().join("link.py")).unwrap();
+        let sym = tool(tmp.path())
+            .execute(r#"{"op":"run","path":"link.py"}"#)
+            .await
+            .unwrap();
+        assert!(sym.is_error, "{}", sym.content);
+    }
+}
+
+#[tokio::test]
+async fn repeated_truncated_runs_use_distinct_artifacts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lab = tool(tmp.path());
+    let a = lab
+        .execute(r#"{"op":"run","code":"print('aaaaaaaaaaaaaaaa')","max_output_bytes":4}"#)
+        .await
+        .unwrap();
+    let b = lab
+        .execute(r#"{"op":"run","code":"print('bbbbbbbbbbbbbbbb')","max_output_bytes":4}"#)
+        .await
+        .unwrap();
+    let av: serde_json::Value = serde_json::from_str(&a.content).unwrap();
+    let bv: serde_json::Value = serde_json::from_str(&b.content).unwrap();
+    assert_ne!(av["artifact_paths"][0], bv["artifact_paths"][0]);
 }
