@@ -645,7 +645,10 @@ fn detached_and_dead_subagent_names_are_visually_distinct() {
 #[tokio::test]
 async fn sending_to_an_unattached_subagent_surfaces_a_visible_error() {
     let mut app = headless_app();
-    // Rehydrated roster entry with NO live feed (post-resume state).
+    // Rehydrated roster entry that is detached AND unreachable: no usable
+    // child socket exists, so attach-on-demand (#1466 round 2) has no route
+    // and the send must keep erroring. The detached-but-REACHABLE side is
+    // pinned in `app_fix_pass_1466_round2_tests` (live socket → delivered).
     app.update_subagent_bar(vec![subagent_info("w1", "detached")]);
     app.select_agent(Some("w1"));
     // Note: a feed channel may exist and even accept the enqueue — with a

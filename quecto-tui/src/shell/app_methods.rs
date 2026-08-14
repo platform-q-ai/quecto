@@ -34,6 +34,19 @@ impl App {
         self.notify("Unknown slash command", NotifyLevel::Warning);
     }
 
+    /// Ctrl+Z: leave the alternate screen, stop the process, and restore raw
+    /// mode + kitty protocol with a full repaint once resumed with `fg`.
+    pub(super) fn suspend_and_resume(&mut self) {
+        self.kitty.cleanup();
+        self.terminal.show_cursor();
+        crate::shell::signals::suspend();
+        // Resumed — re-enter raw mode.
+        self.terminal.enter_raw_mode();
+        self.terminal.hide_cursor();
+        self.kitty.query();
+        self.render_full();
+    }
+
     pub(super) fn show_help(&mut self) {
         // Slash commands first, keyboard shortcuts last: compose_frame follows the
         // chat tail, so Ctrl+T (and other shortcuts) stay in the viewport as the
@@ -67,6 +80,7 @@ impl App {
              \x20 Up/Down        Input history\n\
              \n\
              Tabs:\n\
+             \x20 Ctrl+N         Open a new tab\n\
              \x20 Ctrl+1-9       Focus tab N\n\
              \x20 Ctrl+PgUp/PgDn Cycle to previous/next tab\n\
              \x20 Click a block  Focus that tab (+ opens a new one)\n\
@@ -434,13 +448,11 @@ impl App {
         let bottom = self.compose_bottom(width);
         let bottom_height = bottom.len();
 
-        // ── Render top section (header + chat) ──────────────────────
-        // Header.
-        let version = env!("CARGO_PKG_VERSION");
-        lines.push(theme::dim(&format!(
-            "quecto-tui v{} — Enter send, Shift+Enter newline, /help for commands",
-            version
-        )));
+        // ── Render top section (spacer + chat) ──────────────────────
+        // The version/help header line is gone (#1466 round 2): a BLANK
+        // spacer keeps the tab bar / Master status breathing room and the
+        // frame geometry stays otherwise identical.
+        lines.push(String::new());
 
         // Sub-agent-first main pane (#820 / #1288 / #1309): title + optional
         // compact workflow progress framed by separator rules above the chat.

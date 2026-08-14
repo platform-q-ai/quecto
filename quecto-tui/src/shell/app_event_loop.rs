@@ -576,15 +576,7 @@ impl App {
                 return;
             }
             Key::Ctrl('z') => {
-                // Suspend (Ctrl+Z).
-                self.kitty.cleanup();
-                self.terminal.show_cursor();
-                crate::shell::signals::suspend();
-                // Resumed — re-enter raw mode.
-                self.terminal.enter_raw_mode();
-                self.terminal.hide_cursor();
-                self.kitty.query();
-                self.render_full();
+                self.suspend_and_resume();
                 return;
             }
             Key::Ctrl('l') => {
@@ -594,6 +586,14 @@ impl App {
             }
             Key::Ctrl('t') => {
                 self.open_tool_policy_modal();
+                return;
+            }
+            Key::Ctrl('n') => {
+                // New tab (#1466 round 2). Ctrl+T was the first-choice chord
+                // but is taken by the tool-policy selector above; Ctrl+N
+                // (0x0E) arrives unmodified in every terminal and tmux, and
+                // only Ctrl+SHIFT+N (a distinct key) is bound.
+                self.open_new_tab_announced();
                 return;
             }
             Key::Ctrl('o') => {

@@ -72,6 +72,12 @@ async fn multi_tab_frame_has_blank_spacer_after_tab_bar() {
         !lines.iter().any(|l| l.contains("quecto-tui v")),
         "no multi-tab frame line may contain the version header"
     );
+    assert_eq!(
+        lines.len(),
+        24,
+        "the multi-tab frame (tab bar + spacer) must also keep the terminal \
+         height — the geometry most likely to drift (round-2 review)"
+    );
 }
 
 // ── Item 2: Ctrl+N opens a new tab (Ctrl+T is taken by tool policy) ──────
@@ -140,30 +146,8 @@ fn hotkeys_text_documents_ctrl_n_as_new_tab_chord() {
 
 // ── Item 3: user sends to restored sub-agents attach on demand ───────────
 
-#[tokio::test]
-async fn user_send_to_live_restored_subagent_is_delivered_not_unattached() {
-    let mut app = headless_app();
-    // Post-resume state: the roster tracks a LIVE child (master-driven
-    // messaging works) but there is no direct child socket, so the focused
-    // feed is inspection-only. Round 1 made this send fail "unattached";
-    // round 2 requires the user-send path to attach/route like the
-    // master-driven path.
-    app.update_subagent_bar(vec![subagent_info("w1", "running")]);
-    app.select_agent(Some("w1"));
-    app.handle_submit("hello restored agent");
-
-    let has_user_entry = app
-        .active_session()
-        .chat
-        .entries()
-        .iter()
-        .any(|e| matches!(e, ChatEntry::User { text } if text == "hello restored agent"));
-    assert!(
-        has_user_entry,
-        "a user message to a LIVE restored sub-agent must be delivered and \
-         appear in its transcript (attach-on-demand), not be dropped"
-    );
-
+/// No delivery-failure Status line or toast for `app`'s active session.
+fn assert_no_delivery_failure(app: &App) {
     let status = app
         .active_session()
         .chat
@@ -179,9 +163,104 @@ async fn user_send_to_live_restored_subagent_is_delivered_not_unattached() {
     let failed = |s: &str| s.contains("not delivered");
     assert!(
         !failed(&status) && !failed(&last_note),
-        "no delivery-failure may surface for a live restored sub-agent; \
+        "no delivery-failure may surface for a reachable sub-agent; \
          status={status:?}, notification={last_note:?}"
     );
+}
+
+/// The user entry landed in the active (sub-agent) transcript.
+fn assert_user_entry(app: &App, text: &str) {
+    let has_user_entry = app
+        .active_session()
+        .chat
+        .entries()
+        .iter()
+        .any(|e| matches!(e, ChatEntry::User { text: t } if t == text));
+    assert!(
+        has_user_entry,
+        "the user message {text:?} must appear in the sub-agent transcript"
+    );
+}
+
+/// Await the wire-delivered command lines until the routed user message
+/// arrives (a `prompt` for an idle child, a `follow_up` when mid-turn).
+async fn expect_message_on_wire(cmd_rx: &mut tokio::sync::mpsc::Receiver<String>, message: &str) {
+    let deadline = std::time::Duration::from_secs(5);
+    tokio::time::timeout(deadline, async {
+        while let Some(line) = cmd_rx.recv().await {
+            let kind = super::tui_harness::child_command_type(&line);
+            if matches!(kind.as_deref(), Some("prompt" | "follow_up")) && line.contains(message) {
+                return;
+            }
+        }
+        panic!("child socket closed before the user message arrived");
+    })
+    .await
+    .expect("the routed user message must arrive on the child's live socket")
+}
+
+#[tokio::test]
+async fn user_send_to_live_restored_subagent_is_delivered_not_unattached() {
+    let mut app = headless_app();
+    // Post-resume field state: the restored child is focused BEFORE its live
+    // socket is known, so the focus-time feed is inspection-only …
+    app.update_subagent_bar(vec![subagent_info("w1", "running")]);
+    app.select_agent(Some("w1"));
+    assert!(
+        !app.subagent_feed_is_direct("w1"),
+        "precondition: focusing before the socket is known attaches an \
+         inspection-only feed"
+    );
+    // … then the child's live registry socket becomes known (master-driven
+    // messaging already works at this point), but the stale feed lingers.
+    let (socket, mut cmd_rx) = super::tui_harness::spawn_subagent_socket_with_commands("w1");
+    app.ac_mut()
+        .roster
+        .tracked
+        .get_mut("w1")
+        .expect("tracked w1")
+        .info
+        .socket_path = Some(socket.to_string_lossy().into_owned());
+
+    app.handle_submit("hello restored agent");
+
+    // The observable routing side effects (round-2 falsifiability review):
+    // the send attached a DIRECT feed and the prompt reached the child's
+    // socket — an echo-only reorder or an attach-code revert fails here.
+    assert!(
+        app.subagent_feed_is_direct("w1"),
+        "the user-send path must attach the direct feed on demand, like the \
+         master-driven roster-refresh path"
+    );
+    expect_message_on_wire(&mut cmd_rx, "hello restored agent").await;
+    assert_user_entry(&app, "hello restored agent");
+    assert_no_delivery_failure(&app);
+}
+
+/// Coverage-review boundary: restored sub-agents present as "detached" before
+/// any feed attach. Detached-but-REACHABLE (live registry socket) must attach
+/// on demand and deliver; only detached-and-unreachable keeps erroring (the
+/// round-1 test pins that side with no usable socket).
+#[tokio::test]
+async fn user_send_to_detached_but_reachable_subagent_is_delivered() {
+    let mut app = headless_app();
+    let (socket, mut cmd_rx) = super::tui_harness::spawn_subagent_socket_with_commands("w1");
+    app.update_subagent_bar(vec![super::tui_harness::subagent_with_socket(
+        "w1",
+        "detached",
+        None,
+        Some(socket),
+    )]);
+    app.select_agent(Some("w1"));
+    app.handle_submit("hello detached agent");
+
+    assert!(
+        app.subagent_feed_is_direct("w1"),
+        "a detached roster row with a live socket must carry a direct feed"
+    );
+    expect_message_on_wire(&mut cmd_rx, "hello detached agent").await;
+    assert_user_entry(&app, "hello detached agent");
+    assert_no_delivery_failure(&app);
 }
 
 /// Round-1 guarantee guard (expected green): genuinely dead sub-agents still

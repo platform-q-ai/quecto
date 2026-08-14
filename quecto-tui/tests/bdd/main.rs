@@ -359,6 +359,7 @@ mod tui_list_render_state_steps;
 mod tui_master_connection_feed_steps;
 mod tui_multi_tab_fix_pass_steps;
 mod tui_multi_tab_polish_steps;
+mod tui_multi_tab_round2_steps;
 mod tui_new_reset_context_steps;
 mod tui_paged_history_1094_steps;
 mod tui_paged_history_steps;

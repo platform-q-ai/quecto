@@ -362,5 +362,75 @@ impl TuiHarness {
     }
 }
 
+// ── #1466 round-2 fix-pass drivers/probes ────────────────────────────────
+
+impl TuiHarness {
+    /// Compose the full frame through the production path (ANSI intact).
+    pub fn frame_lines(&mut self) -> Vec<String> {
+        self.app.compose_frame()
+    }
+
+    /// The harness terminal's height in rows.
+    pub fn terminal_height(&self) -> usize {
+        self.app.terminal.height
+    }
+
+    /// Whether the tool-policy selector has been requested (its catalogue
+    /// fetch is in flight).
+    pub fn tool_policy_selector_requested(&self) -> bool {
+        self.app.tool_policy_modal_pending_catalogue_id.is_some()
+    }
+
+    /// Focus a running sub-agent restored by workspace resume: focused BEFORE
+    /// its live socket was known, whose socket then becomes reachable — the
+    /// #1466 round-2 field state behind "not attached" send failures.
+    pub fn focus_restored_running_subagent(&mut self, id: &str) {
+        self.track_subagent(id, "running");
+        self.app.select_agent(Some(id));
+        let socket = super::events::spawn_subagent_socket(id);
+        self.app
+            .ac_mut()
+            .roster
+            .tracked
+            .get_mut(id)
+            .expect("tracked sub-agent")
+            .info
+            .socket_path = Some(socket.to_string_lossy().into_owned());
+    }
+
+    /// Focus a sub-agent still marked detached whose registry socket is live.
+    pub fn focus_detached_reachable_subagent(&mut self, id: &str) {
+        let socket = super::events::spawn_subagent_socket(id);
+        self.app
+            .update_subagent_bar(vec![super::events::subagent_with_socket(
+                id,
+                "detached",
+                None,
+                Some(socket),
+            )]);
+        self.app.select_agent(Some(id));
+    }
+
+    /// Focus a dead sub-agent (no reachable socket).
+    pub fn focus_dead_subagent(&mut self, id: &str) {
+        self.track_subagent(id, "dead");
+        self.app.select_agent(Some(id));
+    }
+
+    /// User entries in the ACTIVE session's transcript.
+    pub fn active_user_entries(&self) -> Vec<String> {
+        self.app
+            .active_session()
+            .chat
+            .entries()
+            .iter()
+            .filter_map(|e| match e {
+                crate::components::chat::ChatEntry::User { text } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
 // Keep `App` referenced so the import stays honest if helpers shift.
 const _: fn(&App) = |_| {};
