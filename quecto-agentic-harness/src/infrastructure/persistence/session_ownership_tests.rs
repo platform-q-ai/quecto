@@ -184,3 +184,43 @@ fn concurrent_acquires_yield_exactly_one_owner() {
         "exactly one of N concurrent claimants may win the key"
     );
 }
+
+#[test]
+fn owner_description_never_claims_a_dead_process_is_live() {
+    // The refusal message used to assert "live process" for whatever pid the
+    // stamp happened to contain, including our own and long-dead ones.
+    assert_eq!(
+        describe_owner(Some(std::process::id())),
+        format!("this process ({})", std::process::id())
+    );
+    assert_eq!(describe_owner(None), "an unidentified process");
+
+    // A pid that cannot be running: pid 0 is never a userspace process here.
+    let dead = describe_owner(Some(0));
+    assert!(
+        dead.contains("no longer running"),
+        "a dead pid must not be reported as live: {dead}"
+    );
+}
+
+#[test]
+fn release_then_reclaim_succeeds_while_children_are_being_spawned() {
+    // Regression: a concurrent fork duplicates the lock descriptor, so a
+    // reclaim straight after release could transiently see the key as held.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let spawning = std::thread::spawn(|| {
+        for _ in 0..40 {
+            let _ = std::process::Command::new("true").status();
+        }
+    });
+    for _ in 0..15 {
+        let registry = SessionOwnershipRegistry::default();
+        registry
+            .claim(dir.path(), "churn-key")
+            .expect("claim must acquire the key");
+        registry.release("churn-key");
+        SessionOwnershipGuard::acquire(dir.path(), "churn-key")
+            .expect("release must relinquish the key even while forks are in flight");
+    }
+    spawning.join().expect("spawner thread");
+}

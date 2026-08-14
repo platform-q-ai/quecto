@@ -211,8 +211,19 @@ fn read_store(path: &Path) -> TrustStore {
         .unwrap_or_default()
 }
 
+/// The directory that must exist before writing `path`, or `None` when the
+/// path is a bare filename and no directory needs creating. Split out so the
+/// bare-filename case is testable without changing the process working
+/// directory, which is global and breaks tests running in parallel.
+fn store_parent_to_create(path: &Path) -> Option<&Path> {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => Some(parent),
+        _ => None,
+    }
+}
+
 fn write_store(path: &Path, store: &TrustStore) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
+    if let Some(parent) = store_parent_to_create(path) {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(path, serde_json::to_vec_pretty(store)?)

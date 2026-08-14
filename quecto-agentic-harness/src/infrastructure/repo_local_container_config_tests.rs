@@ -366,18 +366,22 @@ fn persistent_trust_home_and_xdg_less_process_does_not_read_cwd_repo_store() {
 
     let old_home = std::env::var_os("HOME");
     let old_xdg_state = std::env::var_os("XDG_STATE_HOME");
-    let old_cwd = std::env::current_dir().unwrap();
     // SAFETY: env_lock serializes environment mutation within these tests.
     unsafe {
         std::env::remove_var("HOME");
         std::env::remove_var("XDG_STATE_HOME");
     }
-    std::env::set_current_dir(repo.path()).unwrap();
 
-    let mut trust = PersistentRepoLocalContainerConfigTrust::read_only();
+    let mut trust = PersistentRepoLocalContainerConfigTrust::default();
+    // The stronger property, asserted directly: with no HOME and no
+    // XDG_STATE_HOME there is no trust store path at all, so no repo-local
+    // store can be consulted whatever the working directory happens to be.
+    // The previous version chdir-ed into the malicious repo to show the same
+    // thing, but the working directory is process-global and mutating it here
+    // corrupted unrelated tests running concurrently.
+    let store_path = trust.store_path.clone();
     let decision = trust.decide(&identity);
 
-    std::env::set_current_dir(old_cwd).unwrap();
     // SAFETY: env_lock serializes environment mutation within these tests.
     unsafe {
         match old_home {
@@ -390,6 +394,10 @@ fn persistent_trust_home_and_xdg_less_process_does_not_read_cwd_repo_store() {
         }
     }
 
+    assert_eq!(
+        store_path, None,
+        "a HOME-less, XDG-less process must resolve no trust store at all"
+    );
     assert_eq!(decision, TrustDecision::Denied);
 }
 
@@ -415,13 +423,22 @@ fn trust_store_invalid_json_is_treated_as_empty_and_parentless_write_succeeds() 
     std::fs::write(&invalid_store, "not json").unwrap();
     assert!(read_store(&invalid_store).approved.is_empty());
 
-    let cwd = std::env::current_dir().unwrap();
-    std::env::set_current_dir(store_dir.path()).unwrap();
-    let result = write_store(Path::new("trust-parentless.json"), &TrustStore::default());
-    std::env::set_current_dir(cwd).unwrap();
+    // A bare filename has an empty parent, which must not be passed to
+    // create_dir_all. Asserted directly rather than by chdir-ing into the temp
+    // dir: the working directory is process-global, so mutating it here breaks
+    // unrelated tests running concurrently.
+    assert_eq!(
+        store_parent_to_create(Path::new("trust-parentless.json")),
+        None
+    );
+    assert_eq!(
+        store_parent_to_create(Path::new("/a/b/trust.json")),
+        Some(Path::new("/a/b"))
+    );
 
-    result.unwrap();
-    assert!(store_dir.path().join("trust-parentless.json").exists());
+    let nested = store_dir.path().join("created/on/demand/trust.json");
+    write_store(&nested, &TrustStore::default()).unwrap();
+    assert!(nested.exists());
 }
 
 #[test]
