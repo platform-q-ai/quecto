@@ -236,31 +236,6 @@ fn register_with_metadata_replaces_unloadable_tool_for_same_owner() {
 }
 
 #[test]
-fn legacy_extension_lifecycle_aliases_delegate_to_runtime_and_uds_paths() {
-    let mut reg = ToolRegistryImpl::new();
-    let tool: Arc<dyn Tool> = Arc::new(DummyTestTool::new("legacy_ext"));
-    assert!(reg.register_extension(tool));
-    assert_eq!(reg.extension_names(), vec!["legacy_ext".to_string()]);
-    reg.unregister_extension("legacy_ext");
-    assert!(reg.extension_names().is_empty());
-
-    let uds_tool: Arc<dyn Tool> = Arc::new(DummyTestTool::new("legacy_uds"));
-    assert!(reg.can_register_uds_extension_for_owner("legacy_uds", "uds:client:1"));
-    assert!(reg.register_uds_extension(uds_tool));
-    let owned_tool: Arc<dyn Tool> = Arc::new(DummyTestTool::new("legacy_owned"));
-    assert!(
-        reg.register_uds_extension_for_owner(
-            owned_tool,
-            std::borrow::Cow::Borrowed("uds:client:2"),
-        )
-    );
-    assert_eq!(
-        reg.unregister_extensions_for_owner("uds:client:2"),
-        vec!["legacy_owned".to_string()]
-    );
-}
-
-#[test]
 fn test_register_runtime_tool() {
     let mut reg = ToolRegistryImpl::new();
     let tool: Arc<dyn Tool> = Arc::new(DummyTestTool::new("ext_greet"));

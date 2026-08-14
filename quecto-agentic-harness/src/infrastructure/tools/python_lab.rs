@@ -363,7 +363,12 @@ pub(crate) struct RunSpec {
     pub(crate) args: Vec<String>,
     pub(crate) stdin: Option<String>,
     pub(crate) timeout_secs: u64,
+    /// Cap on the preview echoed back inline in the tool result.
     pub(crate) max_out: usize,
+    /// Cap on what is written to the workspace artifact. Always the configured
+    /// hard maximum rather than the per-call preview cap, so the full output
+    /// stays recoverable after the inline preview is truncated.
+    pub(crate) artifact_max_bytes: usize,
     pub(crate) background: bool,
     pub(crate) inherit_environment: bool,
     pub(crate) max_memory_bytes: Option<u64>,
@@ -435,6 +440,7 @@ fn parse_run(
         stdin: v.get("stdin").and_then(|x| x.as_str()).map(str::to_string),
         timeout_secs,
         max_out,
+        artifact_max_bytes: cfg.max_output_bytes.max(max_out),
         background: v
             .get("background")
             .and_then(|x| x.as_bool())
@@ -550,9 +556,26 @@ async fn build_result(ctx: ResultContext<'_>) -> Result<serde_json::Value, Domai
         .filter(|(t, _)| *t)
         .map(|(_, p)| artifact_rel(p))
         .collect::<Vec<_>>();
+    // Per-process CPU and peak-RSS accounting would need wait4(2) rusage, which
+    // tokio::process reaps internally and does not expose. Those fields are
+    // reported as null rather than omitted so consumers can tell "not measured"
+    // apart from "measured as zero".
+    let resource_usage = json!({
+        "wall_clock_ms": ctx.end.saturating_sub(ctx.start),
+        "stdout_bytes": file_len(ctx.stdout_path).await,
+        "stderr_bytes": file_len(ctx.stderr_path).await,
+        "cpu_time_ms": serde_json::Value::Null,
+        "max_rss_bytes": serde_json::Value::Null,
+    });
     Ok(
-        json!({"status":ctx.status,"exit_code":ctx.exit_code,"execution_id":ctx.exec_id,"session_id":ctx.session_key,"invocation_type":ctx.invocation_type,"interpreter":"python3","interpreter_version":interpreter_version(),"start_time_ms":ctx.start,"completion_time_ms":ctx.end,"duration_ms":ctx.end.saturating_sub(ctx.start),"timeout_seconds":ctx.timeout,"timeout_or_cancel_reason": if ctx.status=="timed_out" {"timeout"} else if ctx.status=="cancelled" {"cancelled"} else {""},"stdout":stdout,"stderr":stderr,"output_truncated":st||et,"stdout_truncated":st,"stderr_truncated":et,"artifact_paths":artifact_paths,"files_created_or_modified":ctx.changed,"resource_limits":{"memory_bytes":ctx.cfg.max_memory_bytes,"cpu_seconds":ctx.cfg.max_cpu_seconds,"processes":ctx.cfg.max_processes},"resource_usage":{}}),
+        json!({"status":ctx.status,"exit_code":ctx.exit_code,"execution_id":ctx.exec_id,"session_id":ctx.session_key,"invocation_type":ctx.invocation_type,"interpreter":"python3","interpreter_version":interpreter_version(),"start_time_ms":ctx.start,"completion_time_ms":ctx.end,"duration_ms":ctx.end.saturating_sub(ctx.start),"timeout_seconds":ctx.timeout,"timeout_or_cancel_reason": if ctx.status=="timed_out" {"timeout"} else if ctx.status=="cancelled" {"cancelled"} else {""},"stdout":stdout,"stderr":stderr,"output_truncated":st||et,"stdout_truncated":st,"stderr_truncated":et,"artifact_paths":artifact_paths,"files_created_or_modified":ctx.changed,"resource_limits":{"memory_bytes":ctx.cfg.max_memory_bytes,"cpu_seconds":ctx.cfg.max_cpu_seconds,"processes":ctx.cfg.max_processes},"resource_usage":resource_usage}),
     )
+}
+async fn file_len(path: &Path) -> u64 {
+    tokio::fs::metadata(path)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0)
 }
 fn tool_err(content: String) -> Result<ToolResult, DomainError> {
     Ok(ToolResult {

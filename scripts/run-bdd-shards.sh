@@ -200,9 +200,6 @@ fi
 
 if [[ "$COVERAGE" == "1" ]]; then
     report_args=(report -p "$PACKAGE")
-    if [[ "$SUITE_NAME" == "non-real-bdd" ]]; then
-        report_args+=(--ignore-filename-regex '(python_lab|python_lab_process)')
-    fi
     if [[ -n "$COVERAGE_THRESHOLD" ]]; then
         report_args+=(--fail-under-functions "$COVERAGE_THRESHOLD")
     fi

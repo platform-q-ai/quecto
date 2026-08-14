@@ -43,7 +43,7 @@ pub(crate) async fn run_child(
     let mut child = cmd
         .spawn()
         .map_err(|e| DomainError::Other(format!("failed to start python3: {e}")))?;
-    let output_budget = Arc::new(AtomicUsize::new(spec.max_out));
+    let output_budget = Arc::new(AtomicUsize::new(spec.artifact_max_bytes));
     let stdout_task = child.stdout.take().map(|pipe| {
         tokio::spawn(copy_output(
             pipe,
@@ -171,22 +171,30 @@ pub(crate) fn kill_pid(pid: u32) {
 #[cfg(not(unix))]
 pub(crate) fn kill_pid(_pid: u32) {}
 
+/// The interpreter banner is stable for the lifetime of the process, so it is
+/// resolved once instead of forking `python3 --version` on every result build.
+static INTERPRETER_VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 pub(crate) fn interpreter_version() -> String {
-    std::process::Command::new("python3")
-        .arg("--version")
-        .output()
-        .ok()
-        .and_then(|out| {
-            let text = if out.stdout.is_empty() {
-                out.stderr
-            } else {
-                out.stdout
-            };
-            String::from_utf8(text).ok()
+    INTERPRETER_VERSION
+        .get_or_init(|| {
+            std::process::Command::new("python3")
+                .arg("--version")
+                .output()
+                .ok()
+                .and_then(|out| {
+                    let text = if out.stdout.is_empty() {
+                        out.stderr
+                    } else {
+                        out.stdout
+                    };
+                    String::from_utf8(text).ok()
+                })
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "python3".to_string())
         })
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "python3".to_string())
+        .clone()
 }
 
 #[cfg(unix)]

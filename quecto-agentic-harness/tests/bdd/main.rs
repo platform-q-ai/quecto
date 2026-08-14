@@ -270,6 +270,13 @@ impl std::ops::DerefMut for DebugEditor {
     }
 }
 
+pub struct DebugPythonLab(pub Arc<quecto::infrastructure::tools::python_lab::PythonLabTool>);
+impl std::fmt::Debug for DebugPythonLab {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<PythonLabTool>")
+    }
+}
+
 #[derive(Debug, Default, World)]
 pub struct QuectoWorld {
     /// #1460 shared-state hardening scenario state (sockets, cred lock, ownership).
@@ -664,6 +671,17 @@ pub struct QuectoWorld {
     pub grep_workspace: Option<PathBuf>,
     /// Result from grep tool execution
     pub grep_result: Option<quecto::domain::tool::ToolResult>,
+    // --- Python Lab BDD fields ---
+    /// Temp dir for the python lab workspace (kept alive)
+    pub _python_lab_temp_dir: Option<TempDir>,
+    /// Workspace path for python lab tests
+    pub python_lab_workspace: Option<PathBuf>,
+    /// Result from the most recent python lab tool execution
+    pub python_lab_result: Option<quecto::domain::tool::ToolResult>,
+    /// Scenario-scoped tool instance; owns the background job registry
+    pub python_lab_tool: Option<DebugPythonLab>,
+    /// Job id returned by the most recent background run
+    pub python_lab_job_id: Option<String>,
     // --- Find BDD fields ---
     /// Temp dir for find workspace (kept alive)
     pub _find_temp_dir: Option<TempDir>,
@@ -1344,6 +1362,7 @@ mod path_utils_steps;
 mod provider_auth_modes_steps;
 mod provider_steps;
 mod pruning_1072_steps;
+mod python_lab_steps;
 mod read_tool_steps;
 mod recall_tool_steps;
 mod release_profile_steps;

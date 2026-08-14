@@ -12,7 +12,7 @@ fn cleanup_script(log: &std::path::Path) -> std::path::PathBuf {
     std::fs::write(
         &script,
         format!(
-            "#!/bin/sh\necho \"$QUECTO_CONTAINER_ENVIRONMENT_ID\" >> '{}'\n",
+            "#!/usr/bin/env bash\necho \"$QUECTO_CONTAINER_ENVIRONMENT_ID\" >> '{}'\n",
             log.display()
         ),
     )

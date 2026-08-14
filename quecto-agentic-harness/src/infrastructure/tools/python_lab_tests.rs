@@ -85,9 +85,11 @@ async fn truncates_output_to_workspace_relative_artifact() {
     assert_eq!(v["stdout"], "abcd");
     let artifact = v["artifact_paths"][0].as_str().unwrap();
     assert!(!artifact.starts_with('/'));
+    // The artifact keeps the full output even though the inline preview was
+    // capped at max_output_bytes, so truncated output stays recoverable.
     assert_eq!(
         std::fs::read_to_string(tmp.path().join(artifact)).unwrap(),
-        "abcd"
+        "abcdefghijklmnop\n"
     );
 }
 
@@ -203,7 +205,7 @@ async fn stderr_truncation_uses_stderr_artifact() {
     assert!(artifact.ends_with("stderr.txt"));
     assert_eq!(
         std::fs::read_to_string(tmp.path().join(artifact)).unwrap(),
-        "abcd"
+        "abcdefghijklmnop"
     );
 }
 
@@ -388,8 +390,11 @@ async fn background_completion_retains_result_and_output_pages() {
         .await
         .unwrap();
     let out: serde_json::Value = serde_json::from_str(&page.content).unwrap();
-    assert_eq!(out["stdout"], "cd");
-    assert_eq!(out["stdout_more"], false);
+    // Paging reads the retained artifact, which holds the full output rather
+    // than the 4-byte inline preview.
+    assert_eq!(out["stdout"], "cde");
+    // "abcdef\n" is 7 bytes, so a 3-byte page from offset 2 leaves more to read.
+    assert_eq!(out["stdout_more"], true);
     assert!(out["result"]["output_truncated"].as_bool().unwrap());
 }
 
@@ -538,15 +543,18 @@ async fn cancelling_completed_background_job_preserves_terminal_status() {
 #[tokio::test]
 async fn foreground_output_artifact_is_hard_capped() {
     let tmp = tempfile::tempdir().unwrap();
+    // The per-call max_output_bytes caps only the inline preview. The artifact
+    // is capped by the configured hard maximum (32 bytes for this test tool),
+    // so output beyond that is dropped rather than filling the workspace.
     let result = tool(tmp.path())
-        .execute(r#"{"op":"run","code":"print('abcdefghijklmnop')","max_output_bytes":4}"#)
+        .execute(r#"{"op":"run","code":"print('a' * 500)","max_output_bytes":4}"#)
         .await
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
     let artifact = v["artifact_paths"][0].as_str().unwrap();
     assert_eq!(
         std::fs::metadata(tmp.path().join(artifact)).unwrap().len(),
-        4
+        32
     );
 }
 
@@ -621,7 +629,7 @@ async fn capped_stdout_is_drained_so_program_can_finish() {
 async fn max_output_bytes_is_shared_across_stdout_and_stderr_artifacts() {
     let tmp = tempfile::tempdir().unwrap();
     let result = tool(tmp.path())
-        .execute(r#"{"op":"run","code":"import sys; sys.stdout.write('abcd'); sys.stdout.flush(); sys.stderr.write('wxyz'); sys.stderr.flush()","max_output_bytes":4}"#)
+        .execute(r#"{"op":"run","code":"import sys; sys.stdout.write('a' * 40); sys.stdout.flush(); sys.stderr.write('w' * 40); sys.stderr.flush()","max_output_bytes":4}"#)
         .await
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
@@ -634,8 +642,9 @@ async fn max_output_bytes_is_shared_across_stdout_and_stderr_artifacts() {
         + std::fs::metadata(tmp.path().join(stderr_artifact))
             .unwrap()
             .len();
+    // Both streams draw on one shared budget sized by the configured hard cap.
     assert!(
-        total <= 4,
+        total <= 32,
         "total persisted bytes was {total}: {}",
         result.content
     );
