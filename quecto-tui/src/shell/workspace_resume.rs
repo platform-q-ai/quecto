@@ -39,10 +39,14 @@ impl super::App {
         let mut items: Vec<SelectItem> = workspaces
             .into_iter()
             .map(|ws| {
-                let snippets: Vec<&str> = ws
+                // Sanitize at read time too (PR #1485 review): manifests
+                // written before snippets were sanitized at persist time may
+                // still carry raw escape/control bytes.
+                let snippets: Vec<String> = ws
                     .tabs
                     .iter()
                     .filter_map(|t| t.summary.as_deref())
+                    .map(|s| crate::components::ansi::sanitize_control_truncated(s, usize::MAX).0)
                     .filter(|s| !s.trim().is_empty())
                     .collect();
                 let mut description = format!(

@@ -613,9 +613,17 @@ async fn spawn_and_attach_new_agent(
 /// Max characters persisted for a tab's `/resume` snippet (#1466 item 3).
 const TAB_SUMMARY_MAX_CHARS: usize = 60;
 
-/// First line of `text`, truncated to `max` chars behind an ellipsis.
+/// First line of `text`, sanitized of control/escape bytes and truncated to
+/// `max` chars behind an ellipsis.
+///
+/// Sanitization (PR #1485 review): pasted input can carry raw ESC/BEL bytes
+/// (OSC hyperlinks, SGR); the snippet is persisted to the manifest and later
+/// replayed verbatim into the /resume selector, so control bytes must never
+/// reach disk — mirroring how tab names are sanitized.
 fn snippet_of(text: &str, max: usize) -> String {
-    let line = text.lines().next().unwrap_or("").trim();
+    let raw = text.lines().next().unwrap_or("");
+    let (line, _) = crate::components::ansi::sanitize_control_truncated(raw, usize::MAX);
+    let line = line.trim();
     if line.chars().count() <= max {
         line.to_string()
     } else {

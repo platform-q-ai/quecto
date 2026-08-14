@@ -45,13 +45,16 @@ fn then_bar_number_blocks(world: &mut TuiWorld) {
     // Roles are falsifiable: the CYAN reverse-video block must be the ACTIVE
     // tab (1), the dim reverse-video block the background tab (2) — swapping
     // the styles must fail here.
+    // Styling is composed from the shared theme helpers (PR #1485 review),
+    // so the expectation composes the same helpers rather than raw bytes.
+    use quecto_tui::components::theme;
     assert!(
-        world.stdout.contains("\x1b[7;36m 1 "),
+        world.stdout.contains(&theme::reverse(&theme::cyan(" 1 "))),
         "the active tab (1) must be the reverse-video cyan block; bar={:?}",
         world.stdout
     );
     assert!(
-        world.stdout.contains("\x1b[7;2m 2 "),
+        world.stdout.contains(&theme::reverse(&theme::dim(" 2 "))),
         "the background tab (2) must be a reverse-video dim block; bar={:?}",
         world.stdout
     );

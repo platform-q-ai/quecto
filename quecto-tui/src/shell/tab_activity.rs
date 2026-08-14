@@ -18,13 +18,15 @@ pub(crate) enum TabBarHit {
 pub(crate) type TabBarHitRange = (std::ops::Range<usize>, TabBarHit);
 
 /// Solid-block styling (spike design): reverse video so the block follows the
-/// terminal theme. Active = cyan block; inactive = dim block.
+/// terminal theme. Active = cyan block; inactive = dim block. Composed from
+/// `components::theme` helpers (PR #1485 review) so a theme-wide change can
+/// never silently miss the tab bar.
 fn active_block(text: &str) -> String {
-    format!("\x1b[7;36m{text}\x1b[0m")
+    crate::components::theme::reverse(&crate::components::theme::cyan(text))
 }
 
 fn inactive_block(text: &str) -> String {
-    format!("\x1b[7;2m{text}\x1b[0m")
+    crate::components::theme::reverse(&crate::components::theme::dim(text))
 }
 
 impl App {

@@ -515,3 +515,19 @@ fn persist_gc_removes_dead_foreign_rows_and_their_orphan_manifests() {
     );
     assert!(loaded_m.get("w-new").is_some(), "own row must persist");
 }
+
+#[test]
+fn snippet_of_strips_control_and_escape_bytes() {
+    // Review finding (PR #1485): bracketed paste delivers ESC/BEL verbatim
+    // and the snippet is replayed raw into the /resume selector — sanitize
+    // at persist time like tab names do.
+    let s = super::snippet_of("evil\x1b]8;;file:///tmp/x\x07click me\x1b]8;;\x07 tail", 60);
+    assert!(
+        !s.contains('\x1b') && !s.contains('\x07'),
+        "persisted snippets must contain no escape/control bytes; got {s:?}"
+    );
+    assert!(
+        s.contains("evil") && s.contains("click me"),
+        "printable text must survive sanitization; got {s:?}"
+    );
+}

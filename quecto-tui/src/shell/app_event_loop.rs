@@ -96,6 +96,7 @@ impl App {
         match item {
             SourcedEvent::Tab(tab, ev) => {
                 let is_token = Self::is_token_event(&ev);
+                let was_running = self.tab_spinner_active(tab);
                 // Route to the owner tab (#1465). Unknown/foreign tabs are a
                 // no-op: no ghost state, no fallthrough onto the active slot.
                 let Some(paint) = self.with_routing_tab(tab, |app| {
@@ -108,6 +109,16 @@ impl App {
                 }) else {
                     return SourcedRender::Stream { is_token };
                 };
+                // Turn-state TRANSITIONS on a background tab must still
+                // paint once (PR #1485 review): after a turn ends,
+                // `needs_animation_tick` disarms, so a Silent demotion here
+                // would leave the bar's spinner frozen "running" forever.
+                // The gate still runs (unread dot semantics); only the paint
+                // decision is preserved for the transition frame.
+                if tab != self.active_tab && was_running != self.tab_spinner_active(tab) {
+                    let _ = self.background_render_gate(tab, paint);
+                    return paint;
+                }
                 self.background_render_gate(tab, paint)
             }
             SourcedEvent::Subagent(tab, agent_id, ev) => {
