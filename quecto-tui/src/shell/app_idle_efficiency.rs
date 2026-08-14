@@ -39,9 +39,11 @@ impl App {
         kitty_deadline: tokio::time::Instant,
     ) -> bool {
         let mut needs_render = false;
-        if let Some(spinner) = &mut self.ac_mut().spinner {
-            if spinner.tick() {
-                needs_render = true;
+        for conn in self.tabs.values_mut() {
+            if let Some(spinner) = &mut conn.spinner {
+                if spinner.tick() {
+                    needs_render = true;
+                }
             }
         }
         // GC expired notifications.

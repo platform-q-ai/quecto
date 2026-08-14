@@ -134,6 +134,32 @@ async fn needs_animation_tick_true_while_only_background_tab_busy() {
     );
 }
 
+#[tokio::test]
+async fn animation_tick_advances_background_tab_spinner_that_keeps_timer_armed() {
+    let mut app = two_tab_app();
+    let mut coalescer = super::app_event_loop::StreamRenderCoalescer::default();
+    route_and_render(&mut app, &mut coalescer, 1, Event::AgentStart);
+    let before = app
+        .conn_for(TabId(1))
+        .and_then(|c| c.spinner.as_ref())
+        .map(|s| s.frame_index())
+        .expect("background turn should own a spinner");
+    let mut fallback_done = true;
+
+    assert!(
+        app.service_animation_tick(&mut fallback_done, tokio::time::Instant::now()),
+        "a scheduled tick for a background spinner should repaint the tab bar"
+    );
+
+    assert_ne!(
+        app.conn_for(TabId(1))
+            .and_then(|c| c.spinner.as_ref())
+            .map(|s| s.frame_index()),
+        Some(before),
+        "background tab spinners must advance when they are what keeps the animation timer armed"
+    );
+}
+
 // ── Decision 4: spinner / unread-dot semantics ──
 
 #[tokio::test]
