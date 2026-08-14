@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 use crate::domain::error::DomainError;
@@ -44,11 +44,11 @@ pub(crate) async fn run_child(
     let stdout_task = child
         .stdout
         .take()
-        .map(|pipe| tokio::spawn(copy_output(pipe, stdout_path.to_path_buf())));
+        .map(|pipe| tokio::spawn(copy_output(pipe, stdout_path.to_path_buf(), spec.max_out)));
     let stderr_task = child
         .stderr
         .take()
-        .map(|pipe| tokio::spawn(copy_output(pipe, stderr_path.to_path_buf())));
+        .map(|pipe| tokio::spawn(copy_output(pipe, stderr_path.to_path_buf(), spec.max_out)));
     if let Some(st) = &state {
         if let Ok(mut s) = st.lock() {
             s.pid = child.id();
@@ -73,6 +73,7 @@ pub(crate) async fn run_child(
         Err(_) => {
             if let Some(pid) = child.id() {
                 kill_pid(pid);
+                kill_pid_tree_best_effort(pid);
             } else {
                 let _ = child.kill().await;
             }
@@ -80,23 +81,45 @@ pub(crate) async fn run_child(
             Ok(("timed_out".into(), None))
         }
     };
+    let drain_timeout = if matches!(outcome, Ok((ref st, _)) if st == "timed_out")
+        || state
+            .as_ref()
+            .and_then(|st| st.lock().ok().map(|s| s.cancel_requested))
+            .unwrap_or(false)
+    {
+        Duration::from_millis(500)
+    } else {
+        Duration::from_secs(5)
+    };
     if let Some(task) = stdout_task {
-        let _ = task.await;
+        let _ = tokio::time::timeout(drain_timeout, task).await;
     }
     if let Some(task) = stderr_task {
-        let _ = task.await;
+        let _ = tokio::time::timeout(drain_timeout, task).await;
     }
     outcome
 }
 
-async fn copy_output<R>(mut reader: R, path: PathBuf)
+async fn copy_output<R>(mut reader: R, path: PathBuf, max_bytes: usize)
 where
     R: tokio::io::AsyncRead + Unpin,
 {
     let Ok(mut out) = tokio::fs::File::create(path).await else {
         return;
     };
-    let _ = tokio::io::copy(&mut reader, &mut out).await;
+    let mut remaining = max_bytes;
+    let mut buf = [0_u8; 8192];
+    while remaining > 0 {
+        let cap = buf.len().min(remaining);
+        let n = match reader.read(&mut buf[..cap]).await {
+            Ok(0) | Err(_) => return,
+            Ok(n) => n,
+        };
+        if out.write_all(&buf[..n]).await.is_err() {
+            return;
+        }
+        remaining -= n;
+    }
 }
 
 #[cfg(unix)]
@@ -160,3 +183,23 @@ fn apply_child_limits(cmd: &mut Command, spec: &RunSpec) {
 
 #[cfg(not(unix))]
 fn apply_child_limits(_cmd: &mut Command, _spec: &RunSpec) {}
+
+#[cfg(unix)]
+pub(crate) fn kill_pid_tree_best_effort(pid: u32) {
+    let Ok(out) = std::process::Command::new("pgrep")
+        .arg("-P")
+        .arg(pid.to_string())
+        .output()
+    else {
+        return;
+    };
+    for child in String::from_utf8_lossy(&out.stdout).lines() {
+        if let Ok(child_pid) = child.trim().parse::<u32>() {
+            kill_pid_tree_best_effort(child_pid);
+            kill_pid(child_pid);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+pub(crate) fn kill_pid_tree_best_effort(_pid: u32) {}

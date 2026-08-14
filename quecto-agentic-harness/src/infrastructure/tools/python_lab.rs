@@ -11,7 +11,7 @@ use tokio::io::AsyncReadExt;
 
 #[path = "python_lab_process.rs"]
 mod python_lab_process;
-use python_lab_process::{kill_pid, run_child};
+use python_lab_process::{kill_pid, kill_pid_tree_best_effort, run_child};
 
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
@@ -135,6 +135,10 @@ pub(crate) struct JobState {
     pub(crate) max_output_bytes: usize,
     pub(crate) result: Option<serde_json::Value>,
     pub(crate) cancel_requested: bool,
+    pub(crate) session_id: String,
+    pub(crate) invocation_type: String,
+    pub(crate) timeout_seconds: u64,
+    pub(crate) resource_limits: serde_json::Value,
 }
 
 impl PythonLabTool {
@@ -157,6 +161,7 @@ impl Drop for PythonLabTool {
                     j.cancel_requested = true;
                     if let Some(pid) = j.pid {
                         kill_pid(pid);
+                        kill_pid_tree_best_effort(pid);
                     }
                 }
             }
@@ -246,12 +251,20 @@ async fn run_op(
             max_output_bytes: spec.max_out,
             result: None,
             cancel_requested: false,
+            session_id: session_key.clone(),
+            invocation_type: spec.invocation_type.clone(),
+            timeout_seconds: spec.timeout_secs,
+            resource_limits: json!({"memory_bytes":cfg.max_memory_bytes,"cpu_seconds":cfg.max_cpu_seconds,"processes":cfg.max_processes}),
         }));
         {
             let mut registry = jobs.lock().unwrap();
             let running = registry
                 .values()
-                .filter(|j| j.lock().map(|s| s.status == "running").unwrap_or(false))
+                .filter(|j| {
+                    j.lock()
+                        .map(|s| s.status == "running" || s.status == "cancelling")
+                        .unwrap_or(false)
+                })
                 .count();
             if running >= cfg.max_concurrent_jobs {
                 return ok_json(
@@ -443,7 +456,7 @@ async fn status_op(
     };
     let s = job.lock().unwrap();
     ok_json(
-        json!({"status":s.status,"job_id":id,"execution_id":s.execution_id,"exit_code":s.exit_code,"start_time_ms":s.started_ms,"completion_time_ms":s.completed_ms}),
+        json!({"status":s.status,"job_id":id,"execution_id":s.execution_id,"session_id":s.session_id,"invocation_type":s.invocation_type,"exit_code":s.exit_code,"start_time_ms":s.started_ms,"completion_time_ms":s.completed_ms,"duration_ms":s.completed_ms.unwrap_or_else(now_ms).saturating_sub(s.started_ms),"timeout_seconds":s.timeout_seconds,"timeout_or_cancel_reason": if s.status=="timed_out" {"timeout"} else if s.status=="cancelled" || s.status=="cancelling" {"cancelled"} else {""},"resource_limits":s.resource_limits}),
         s.status == "not_found",
     )
 }
@@ -458,10 +471,11 @@ async fn output_op(
     let Some(job) = jobs.lock().unwrap().get(id).cloned() else {
         return ok_json(json!({"status":"not_found","job_id":id}), true);
     };
-    let (status, outp, errp, result) = {
+    let (status, exit_code, outp, errp, result) = {
         let s = job.lock().unwrap();
         (
             s.status.clone(),
+            s.exit_code,
             s.stdout_path.clone(),
             s.stderr_path.clone(),
             s.result.clone(),
@@ -469,9 +483,11 @@ async fn output_op(
     };
     let stdout = read_slice(&outp, offset, limit).await?;
     let stderr = read_slice(&errp, offset, limit).await?;
+    let is_err = (status != "running" && status != "cancelling" && status != "completed")
+        || (status == "completed" && exit_code.unwrap_or(0) != 0);
     ok_json(
         json!({"status":status,"job_id":id,"stdout":stdout.0,"stderr":stderr.0,"offset":offset,"limit":limit,"stdout_more":stdout.1,"stderr_more":stderr.1,"result":result,"artifact_paths":[rel(&workspace,&outp),rel(&workspace,&errp)]}),
-        false,
+        is_err,
     )
 }
 async fn cancel_op(
@@ -492,11 +508,11 @@ async fn cancel_op(
     s.cancel_requested = true;
     if let Some(pid) = s.pid {
         kill_pid(pid);
+        kill_pid_tree_best_effort(pid);
     }
-    s.status = "cancelled".into();
-    s.completed_ms.get_or_insert_with(now_ms);
+    s.status = "cancelling".into();
     ok_json(
-        json!({"status":"cancelled","job_id":id,"execution_id":s.execution_id}),
+        json!({"status":"cancelling","job_id":id,"execution_id":s.execution_id}),
         false,
     )
 }
@@ -586,7 +602,7 @@ fn changed_files(root: &Path, before: BTreeMap<String, SystemTime>) -> Vec<Strin
 }
 async fn read_preview(path: &Path, max: usize) -> Result<(String, bool), DomainError> {
     let md = tokio::fs::metadata(path).await.map_err(ioerr)?;
-    let trunc = md.len() as usize > max;
+    let trunc = md.len() as usize >= max && max > 0;
     let mut f = tokio::fs::File::open(path).await.map_err(ioerr)?;
     let mut buf = vec![0; max];
     let n = f.read(&mut buf).await.map_err(ioerr)?;

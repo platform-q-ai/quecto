@@ -85,10 +85,9 @@ async fn truncates_output_to_workspace_relative_artifact() {
     assert_eq!(v["stdout"], "abcd");
     let artifact = v["artifact_paths"][0].as_str().unwrap();
     assert!(!artifact.starts_with('/'));
-    assert!(
-        std::fs::read_to_string(tmp.path().join(artifact))
-            .unwrap()
-            .contains("abcdefghijklmnop")
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join(artifact)).unwrap(),
+        "abcd"
     );
 }
 
@@ -174,7 +173,7 @@ async fn background_operations_start_report_output_and_cancel() {
         .await
         .unwrap();
     assert!(!cancelled.is_error, "{}", cancelled.content);
-    assert!(cancelled.content.contains("cancelled"));
+    assert!(cancelled.content.contains("cancelling"));
 }
 
 #[tokio::test]
@@ -202,10 +201,9 @@ async fn stderr_truncation_uses_stderr_artifact() {
     assert_eq!(v["stderr_truncated"], true);
     let artifact = v["artifact_paths"][0].as_str().unwrap();
     assert!(artifact.ends_with("stderr.txt"));
-    assert!(
-        std::fs::read_to_string(tmp.path().join(artifact))
-            .unwrap()
-            .contains("abcdefghijklmnop")
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join(artifact)).unwrap(),
+        "abcd"
     );
 }
 
@@ -397,8 +395,8 @@ async fn background_completion_retains_result_and_output_pages() {
         .await
         .unwrap();
     let out: serde_json::Value = serde_json::from_str(&page.content).unwrap();
-    assert_eq!(out["stdout"], "cde");
-    assert_eq!(out["stdout_more"], true);
+    assert_eq!(out["stdout"], "cd");
+    assert_eq!(out["stdout_more"], false);
     assert!(out["result"]["output_truncated"].as_bool().unwrap());
 }
 
@@ -542,4 +540,71 @@ async fn cancelling_completed_background_job_preserves_terminal_status() {
         .unwrap();
     assert!(!cancel.is_error, "{}", cancel.content);
     assert!(cancel.content.contains("completed"), "{}", cancel.content);
+}
+
+#[tokio::test]
+async fn foreground_output_artifact_is_hard_capped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let result = tool(tmp.path())
+        .execute(r#"{"op":"run","code":"print('abcdefghijklmnop')","max_output_bytes":4}"#)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    let artifact = v["artifact_paths"][0].as_str().unwrap();
+    assert_eq!(
+        std::fs::metadata(tmp.path().join(artifact)).unwrap().len(),
+        4
+    );
+}
+
+#[tokio::test]
+async fn background_status_includes_audit_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lab = tool(tmp.path());
+    lab.set_session_key("session-bg".to_string());
+    let started = lab
+        .execute(r#"{"op":"run","code":"import time; time.sleep(1)","background":true,"timeout_seconds":2}"#)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&started.content).unwrap();
+    let job_id = v["job_id"].as_str().unwrap();
+    let status = lab
+        .execute(&format!(r#"{{"op":"status","job_id":"{}"}}"#, job_id))
+        .await
+        .unwrap();
+    let s: serde_json::Value = serde_json::from_str(&status.content).unwrap();
+    assert_eq!(s["session_id"], "session-bg");
+    assert_eq!(s["invocation_type"], "inline");
+    assert_eq!(s["timeout_seconds"], 2);
+    assert!(s["resource_limits"].is_object());
+    let _ = lab
+        .execute(&format!(r#"{{"op":"cancel","job_id":"{}"}}"#, job_id))
+        .await;
+}
+
+#[tokio::test]
+async fn background_output_is_error_for_terminal_failure() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lab = tool(tmp.path());
+    let started = lab
+        .execute(r#"{"op":"run","code":"import sys; sys.exit(7)","background":true}"#)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&started.content).unwrap();
+    let job_id = v["job_id"].as_str().unwrap();
+    for _ in 0..20 {
+        let status = lab
+            .execute(&format!(r#"{{"op":"status","job_id":"{}"}}"#, job_id))
+            .await
+            .unwrap();
+        if status.content.contains("completed") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let output = lab
+        .execute(&format!(r#"{{"op":"output","job_id":"{}"}}"#, job_id))
+        .await
+        .unwrap();
+    assert!(output.is_error, "{}", output.content);
 }
