@@ -149,6 +149,12 @@ fn parse_csi(rest: &[u8]) -> Option<(Key, usize)> {
             b"3" => Key::Delete,
             b"5" => Key::PageUp,
             b"6" => Key::PageDown,
+            // Terminal-safe tab-cycle chords (#1466 fix pass item 2): window
+            // managers grab Alt/Ctrl+Tab, but Ctrl+PgUp/PgDn (tmux/browser
+            // convention, legacy xterm encoding CSI 5;5~ / CSI 6;5~) pass
+            // through untouched.
+            b"5;5" => Key::TabSwitchPrev,
+            b"6;5" => Key::TabSwitchNext,
             _ => {
                 parse_modify_other_keys(params).unwrap_or_else(|| Key::Unknown(rest[..=i].to_vec()))
             }
@@ -277,6 +283,10 @@ fn parse_kitty_key(params: &[u8]) -> Key {
         4 => Key::Left,
         5 => Key::Home,
         6 => Key::End,
+        // Ctrl+PgUp/PgDn tab-cycle chords (#1466 fix pass item 2): kitty
+        // encoding aliases the legacy CSI 5;5~ / CSI 6;5~ chords.
+        7 if ctrl => Key::TabSwitchPrev,
+        8 if ctrl => Key::TabSwitchNext,
         7 => Key::PageUp,
         8 => Key::PageDown,
         13 if shift => Key::ShiftEnter,

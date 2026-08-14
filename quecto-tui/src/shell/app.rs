@@ -600,6 +600,9 @@ mod app_events_1060_lifecycle_tests;
 #[path = "app_events_1060_tests.rs"]
 mod app_events_1060_tests;
 #[cfg(test)]
+#[path = "app_fix_pass_1466_tests.rs"]
+mod app_fix_pass_1466_tests;
+#[cfg(test)]
 #[path = "../workspace/app_git_tests.rs"]
 mod app_git_tests;
 #[cfg(test)]

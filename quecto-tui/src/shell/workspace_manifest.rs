@@ -23,6 +23,11 @@ pub struct WorkspaceTabEntry {
     pub tab_id: u32,
     pub session_key: Option<String>,
     pub name: Option<String>,
+    /// Human-recognizable conversation snippet for `/resume` (#1466 fix pass
+    /// item 3): the tab's last user message (or session title), so workspace
+    /// rows are identifiable by content rather than opaque labels.
+    #[serde(default)]
+    pub summary: Option<String>,
 }
 
 /// One workspace's durable tab set.

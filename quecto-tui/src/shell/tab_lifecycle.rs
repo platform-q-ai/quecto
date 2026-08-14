@@ -431,6 +431,13 @@ impl super::App {
                         .clone()
                         .or_else(|| state.pending_session_resume.clone()),
                     name: state.name.clone(),
+                    // #1466 fix pass item 3: persist the tab's last user
+                    // message so `/resume` rows are recognizable by content.
+                    summary: state
+                        .master_session
+                        .chat
+                        .last_user_text()
+                        .map(|t| snippet_of(t, TAB_SUMMARY_MAX_CHARS)),
                 })
             })
             .collect();
@@ -600,6 +607,20 @@ async fn spawn_and_attach_new_agent(
             result: Err(e),
             child_watch: None,
         },
+    }
+}
+
+/// Max characters persisted for a tab's `/resume` snippet (#1466 item 3).
+const TAB_SUMMARY_MAX_CHARS: usize = 60;
+
+/// First line of `text`, truncated to `max` chars behind an ellipsis.
+fn snippet_of(text: &str, max: usize) -> String {
+    let line = text.lines().next().unwrap_or("").trim();
+    if line.chars().count() <= max {
+        line.to_string()
+    } else {
+        let head: String = line.chars().take(max.saturating_sub(1)).collect();
+        format!("{head}…")
     }
 }
 

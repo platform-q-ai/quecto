@@ -48,6 +48,12 @@ fn manifest_path(world: &mut TuiWorld) -> std::path::PathBuf {
 fn given_second_background_tab(world: &mut TuiWorld) {
     with_harness(world, |h| {
         h.open_background_tab();
+    });
+}
+
+#[given("the first tab is focused")]
+fn given_first_tab_focused(world: &mut TuiWorld) {
+    with_harness(world, |h| {
         assert_eq!(h.active_tab_index(), 0, "focus must stay on the first tab");
     });
 }
@@ -61,15 +67,9 @@ fn when_tokens_stream_background(world: &mut TuiWorld, n: usize) {
 
 #[given(expr = "{int} tokens already streamed to the background tab")]
 fn given_tokens_already_streamed(world: &mut TuiWorld, n: usize) {
+    // The anti-tautology guard ("the dot really is set before the clear") is
+    // an explicit feature line: `And the background tab is marked unread`.
     stream_background_tokens(world, n);
-    // Guard: the clear-on-switch Then below is only meaningful if the dot is
-    // actually set first (anti-tautology, RED evidence lives here).
-    with_harness(world, |h| {
-        assert!(
-            h.tab_unread(1),
-            "precondition: streamed background output must set the unread dot"
-        );
-    });
 }
 
 #[then("no frame is painted for the background stream")]
@@ -99,6 +99,7 @@ fn then_no_frame_after_settle(world: &mut TuiWorld) {
     });
 }
 
+#[given("the background tab is marked unread")]
 #[then("the background tab is marked unread")]
 fn then_background_unread(world: &mut TuiWorld) {
     with_harness(world, |h| {
@@ -179,16 +180,6 @@ fn then_background_spinner(world: &mut TuiWorld) {
         assert!(
             h.tab_spinner(1),
             "a running background turn must show the tab spinner"
-        );
-    });
-}
-
-#[then("the TUI still requests animation ticks while only a background tab is busy")]
-fn then_animation_tick_any_tab(world: &mut TuiWorld) {
-    with_harness(world, |h| {
-        assert!(
-            h.animation_tick_needed(),
-            "needs_animation_tick must consider a busy background tab (#1466 scope 2)"
         );
     });
 }
@@ -278,8 +269,8 @@ fn given_orphaned_workspace(world: &mut TuiWorld) {
     TuiHarness::seed_workspace_manifest(&path, "orphan-ws-1", "Orphan", 1_755_000_000, false);
 }
 
-#[when("workspace garbage collection runs")]
-fn when_gc_runs(world: &mut TuiWorld) {
+#[given("workspace garbage collection has run")]
+fn given_gc_has_run(world: &mut TuiWorld) {
     let path = manifest_path(world);
     // The removed-id report itself is covered by unit tests
     // (`gc_orphaned_removes_workspaces_with_no_sessions_and_no_registry_rows`);
@@ -296,8 +287,10 @@ fn then_orphan_gone(world: &mut TuiWorld) {
     );
 }
 
-#[when("the kitty Ctrl+Tab sequence is pressed")]
-fn when_kitty_ctrl_tab(world: &mut TuiWorld) {
+#[when("the user presses Ctrl+Tab")]
+fn when_user_presses_ctrl_tab(world: &mut TuiWorld) {
+    // The kitty CSI-u encoding of Ctrl+Tab; the raw-bytes translation is an
+    // implementation detail that belongs here, not in the feature text.
     with_harness(world, |h| {
         h.press_raw(b"\x1b[9;5u");
     });

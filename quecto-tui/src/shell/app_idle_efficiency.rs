@@ -39,9 +39,15 @@ impl App {
         kitty_deadline: tokio::time::Instant,
     ) -> bool {
         let mut needs_render = false;
-        if let Some(spinner) = &mut self.ac_mut().spinner {
-            if spinner.tick() {
-                needs_render = true;
+        // Tick EVERY tab's spinner (#1466 fix pass item 6): a busy BACKGROUND
+        // tab must keep the tab-bar spinner animating. The resulting repaint
+        // is the bar-cadence tick only — background tokens still schedule no
+        // paints of their own (`background_render_gate`).
+        for state in self.tabs.values_mut() {
+            if let Some(spinner) = &mut state.spinner {
+                if spinner.tick() {
+                    needs_render = true;
+                }
             }
         }
         // GC expired notifications.

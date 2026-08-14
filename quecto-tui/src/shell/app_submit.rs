@@ -148,7 +148,22 @@ impl App {
         // targets THAT agent over its own connection and lands in its session,
         // not master's. When the selected child is already running, Enter queues
         // a follow-up behind the current turn; it does not interrupt/steer.
-        if self.ac().roster.active_agent_id.is_some() {
+        if let Some(agent_id) = self.ac().roster.active_agent_id.clone() {
+            // Never silently swallow a message to a non-live sub-agent
+            // (#1466 fix pass item 5): a feed channel can exist and accept
+            // the enqueue with nothing consuming it, so liveness is judged
+            // from the roster's #1461 state, not the channel.
+            let status = self
+                .ac()
+                .roster
+                .tracked
+                .get(&agent_id)
+                .map(|t| t.info.status.clone())
+                .unwrap_or_default();
+            if matches!(status.as_str(), "detached" | "dead" | "exited") {
+                self.note_subagent_undeliverable(&agent_id, &status);
+                return;
+            }
             let cmd = if self.active_subagent_running() {
                 Command::FollowUp {
                     id: None,
@@ -170,6 +185,10 @@ impl App {
                     .add_entry_follow_tail(ChatEntry::User {
                         text: text.to_string(),
                     });
+            } else {
+                // Failed route (no live sender / full channel): the user must
+                // see the message was not delivered (fix pass item 5).
+                self.note_subagent_undeliverable(&agent_id, "unattached");
             }
             return;
         }
@@ -216,6 +235,15 @@ impl App {
             return;
         }
         self.dispatch_master_user_text(text);
+    }
+
+    /// Surface an undeliverable sub-agent message (#1466 fix pass item 5):
+    /// a persistent Status line plus a toast, so the drop is never silent.
+    fn note_subagent_undeliverable(&mut self, agent_id: &str, status: &str) {
+        let text = format!("Message not delivered — sub-agent '{agent_id}' is {status}.");
+        self.active_chat_mut()
+            .add_entry(ChatEntry::Status { text: text.clone() });
+        self.notify(&text, crate::components::notification::NotifyLevel::Warning);
     }
 
     /// Send a master-session user message (Prompt or FollowUp) after connect.

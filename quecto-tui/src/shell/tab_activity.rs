@@ -4,6 +4,29 @@
 
 use super::*;
 
+/// Max rendered columns of a custom tab name in the bar (spike design).
+const TAB_NAME_MAX: usize = 16;
+
+/// What a click on a tab-bar column selects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TabBarHit {
+    Select(crate::shell::connection::TabId),
+    New,
+}
+
+/// A clickable region of the tab bar: absolute terminal columns → action.
+pub(crate) type TabBarHitRange = (std::ops::Range<usize>, TabBarHit);
+
+/// Solid-block styling (spike design): reverse video so the block follows the
+/// terminal theme. Active = cyan block; inactive = dim block.
+fn active_block(text: &str) -> String {
+    format!("\x1b[7;36m{text}\x1b[0m")
+}
+
+fn inactive_block(text: &str) -> String {
+    format!("\x1b[7;2m{text}\x1b[0m")
+}
+
 impl App {
     /// Demote a routed event's paint to [`SourcedRender::Silent`] when its
     /// owner tab is not the focused one (#1466 decision 3), marking the tab
@@ -41,21 +64,43 @@ impl App {
         }
         true
     }
-    /// Render the tab bar (#1466 decision 4/5): one line listing every open
-    /// tab as `N:name`, with the activity spinner while that tab's turn is in
-    /// flight and the unread dot when output arrived since it was last viewed.
-    /// `None` with a single tab, so single-tab frames stay byte-identical.
+    /// Render the tab bar (#1466 fix pass, spike design): herdr-style
+    /// reverse-video number blocks — active tab a cyan block, inactive tabs
+    /// dim blocks. Unnamed tabs render the bare 1-based number (` N `);
+    /// custom-named tabs render ` N:name ` with the name truncated to
+    /// [`TAB_NAME_MAX`] columns behind an ellipsis. The activity spinner /
+    /// unread dot render INSIDE the block. A trailing dim ` + ` new-tab
+    /// button ends the bar. `None` with a single tab, so single-tab frames
+    /// stay byte-identical.
     ///
     /// Overflow (#1466 decision 5): when the strip is wider than the terminal
     /// it scrolls so the ACTIVE tab stays visible — leading cells are dropped
     /// behind a `‹` marker and a trailing `›` marks clipped cells on the right.
     pub(super) fn render_tab_bar(&self, width: usize) -> Option<String> {
+        self.tab_bar_layout(width).map(|(line, _)| line)
+    }
+
+    /// Mouse hit ranges for the tab bar rendered at `width` body columns:
+    /// absolute terminal column ranges (past the optional left panel) mapping
+    /// to the tab (or new-tab button) a click there selects.
+    pub(crate) fn tab_bar_hit_ranges(&self, width: usize) -> Vec<TabBarHitRange> {
+        self.tab_bar_layout(width)
+            .map(|(_, hits)| hits)
+            .unwrap_or_default()
+    }
+
+    /// Shared layout for the bar line and its click hit ranges, so the two
+    /// can never disagree about geometry.
+    fn tab_bar_layout(&self, width: usize) -> Option<(String, Vec<TabBarHitRange>)> {
         use crate::components::theme::{self, SPINNER_FRAMES};
         let ids = self.ordered_tab_ids();
         if ids.len() < 2 || width == 0 {
             return None;
         }
-        let mut cells: Vec<(String, usize)> = Vec::with_capacity(ids.len());
+        let (panel_width, divider_width, _) = self.frame_split();
+        let body_start_col = panel_width + divider_width;
+        let mut cells: Vec<(String, usize, crate::shell::connection::TabId)> =
+            Vec::with_capacity(ids.len());
         let mut active_idx = 0;
         for (i, tab) in ids.iter().enumerate() {
             let conn = self.conn_for(*tab)?;
@@ -71,38 +116,117 @@ impl App {
             } else {
                 String::new()
             };
-            let text = format!(" {}:{}{} ", i + 1, conn.display_name(), indicator);
+            // Herdr-style block label: bare 1-based number unless the tab has
+            // a CUSTOM name — never a default ":Master" suffix.
+            let text = match conn.name.as_deref().filter(|n| !n.is_empty()) {
+                Some(name) => {
+                    // Truncate only past the cap: a name of exactly
+                    // TAB_NAME_MAX columns renders in full, no ellipsis.
+                    let shown = if crate::components::utils::visible_width(name) > TAB_NAME_MAX {
+                        crate::components::utils::sanitize_truncate_width_with_ellipsis(
+                            name,
+                            TAB_NAME_MAX,
+                            "…",
+                        )
+                    } else {
+                        name.to_string()
+                    };
+                    format!(" {}:{}{} ", i + 1, shown, indicator)
+                }
+                None => format!(" {}{} ", i + 1, indicator),
+            };
             let cell_width = crate::components::utils::visible_width(&text);
             let styled = if *tab == self.active_tab {
                 active_idx = i;
-                theme::accent(&text)
+                active_block(&text)
             } else {
-                theme::dim(&text)
+                inactive_block(&text)
             };
-            cells.push((styled, cell_width));
+            cells.push((styled, cell_width, *tab));
         }
-        // Scroll: drop leading cells until the active tab fits in the window.
+        // Reserve room for the trailing dim ` + ` new-tab button.
+        let plus_width = 3;
+        // Scroll: drop leading cells until the active tab (plus its gap and
+        // the ` + ` button) fits in the window.
+        let fits = |start: usize| {
+            let lead = 1 + usize::from(start > 0); // leading space (+ ‹)
+            let cell_cols: usize = cells[start..=active_idx].iter().map(|c| c.1 + 1).sum();
+            lead + cell_cols + plus_width <= width
+        };
         let mut start = 0;
-        while start < active_idx
-            && cells[start..=active_idx].iter().map(|c| c.1).sum::<usize>() + 1 > width
-        {
+        while start < active_idx && !fits(start) {
             start += 1;
         }
-        let mut line = String::new();
-        let mut used = 0;
+        let mut line = String::from(" ");
+        let mut used = 1;
+        let mut hits: Vec<TabBarHitRange> = Vec::new();
         if start > 0 {
             line.push_str(&theme::dim("‹"));
             used += 1;
         }
-        for (styled, cell_width) in &cells[start..] {
-            if used + cell_width > width {
+        let mut trailing_gap = false;
+        for (styled, cell_width, tab) in &cells[start..] {
+            if used + cell_width + plus_width + 1 > width {
+                // Clipped tail: the `›` marker takes the trailing gap's column.
+                if trailing_gap {
+                    line.pop();
+                    used -= 1;
+                }
                 line.push_str(&theme::dim("›"));
+                used += 1;
                 break;
             }
+            hits.push((
+                body_start_col + used..body_start_col + used + cell_width,
+                TabBarHit::Select(*tab),
+            ));
             line.push_str(styled);
             used += cell_width;
+            line.push(' ');
+            used += 1;
+            trailing_gap = true;
         }
-        Some(line)
+        hits.push((
+            body_start_col + used..body_start_col + used + plus_width,
+            TabBarHit::New,
+        ));
+        line.push_str(&theme::dim(" + "));
+        Some((line, hits))
+    }
+
+    /// Handle a mouse press on the tab-bar row (row 0 with 2+ tabs). Clicking
+    /// a tab's block focuses it; clicking the trailing ` + ` opens a live tab.
+    /// Returns whether the click was consumed.
+    pub(super) fn handle_tab_bar_click(&mut self, col: u16, row: u16) -> bool {
+        if row != 0 || !self.tab_bar_visible() {
+            return false;
+        }
+        let (_, _, width) = self.frame_split();
+        let col = col as usize;
+        let hit = self
+            .tab_bar_hit_ranges(width)
+            .into_iter()
+            .find(|(range, _)| range.contains(&col))
+            .map(|(_, hit)| hit);
+        match hit {
+            Some(TabBarHit::Select(tab)) => {
+                let _ = self.switch_tab(tab);
+            }
+            Some(TabBarHit::New) => {
+                let tab = self.open_live_tab(None);
+                self.notify(
+                    &format!("Opened tab {} (connecting…)", tab.0),
+                    crate::components::notification::NotifyLevel::Info,
+                );
+            }
+            None => return false,
+        }
+        true
+    }
+
+    /// Whether the tab bar renders at all (2+ tabs).
+    pub(crate) fn tab_bar_visible(&self) -> bool {
+        self.tabs.len() > 1
     }
 
     /// Spinner semantics (#1466 decision 4): a tab shows the spinner while its

@@ -306,6 +306,7 @@ fn labelled_ws(id: &str, label: &str, session_key: Option<&str>) -> WorkspaceMan
             tab_id: 0,
             session_key: session_key.map(str::to_string),
             name: None,
+            summary: None,
         }],
         updated_unix_s: 1_755_000_000,
     }
@@ -594,12 +595,20 @@ async fn single_tab_renders_no_tab_bar_and_frame_stays_unchanged() {
 }
 
 #[tokio::test]
-async fn tab_bar_renders_as_first_frame_line_with_ordinals_and_names() {
+async fn tab_bar_renders_as_first_frame_line_with_number_blocks() {
     let mut app = two_tab_app();
     let first = super::app_render_helpers::strip_ansi(&app.compose_frame()[0]);
+    // Fix pass #1485: unnamed tabs are bare ' N ' number blocks — no colon,
+    // no default name. The bar is the BODY segment (past any panel divider).
+    let bar = first.rsplit('│').next().unwrap_or(&first);
     assert!(
-        first.contains("1:") && first.contains("2:"),
-        "with 2+ tabs the first frame line must be the tab bar: {first:?}"
+        bar.contains(" 1 ") && bar.contains(" 2 "),
+        "with 2+ tabs the first frame line must be the tab bar's number \
+         blocks: {first:?}"
+    );
+    assert!(
+        !bar.contains(':'),
+        "unnamed tabs must not render a ':name' suffix: {first:?}"
     );
 }
 
@@ -657,22 +666,26 @@ async fn tab_bar_overflow_scrolls_to_keep_active_tab_visible() {
     assert!(app.switch_tab(TabId(8)));
     let bar = plain_tab_bar(&app, 20).expect("bar renders");
     assert!(
-        bar.contains("9:"),
-        "overflow must scroll so the active tab stays visible: {bar:?}"
+        bar.contains(" 9 "),
+        "overflow must scroll so the active tab's block stays visible: {bar:?}"
     );
     assert!(
-        bar.starts_with('‹'),
+        bar.trim_start().starts_with('‹'),
         "clipped leading tabs must be marked with ‹: {bar:?}"
     );
     // Focus the FIRST tab again: the head is visible, the tail is clipped.
     assert!(app.switch_tab(TabId::MASTER));
     let bar = plain_tab_bar(&app, 20).expect("bar renders");
     assert!(
-        bar.contains("1:") && !bar.starts_with('‹'),
+        bar.contains(" 1 ") && !bar.trim_start().starts_with('‹'),
         "with the first tab active the strip anchors left: {bar:?}"
     );
     assert!(
-        bar.ends_with('›'),
+        bar.contains('›'),
         "clipped trailing tabs must be marked with ›: {bar:?}"
+    );
+    assert!(
+        bar.trim_end().ends_with('+'),
+        "the new-tab button must survive overflow at the end of the bar: {bar:?}"
     );
 }

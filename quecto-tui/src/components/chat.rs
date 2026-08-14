@@ -432,6 +432,15 @@ impl Chat {
         height * (2 * RENDER_CACHE_RETAIN_VIEWPORTS + 1)
     }
 
+    /// Text of the most recent user message, if any — the `/resume` workspace
+    /// snippet source (#1466 fix pass item 3).
+    pub fn last_user_text(&self) -> Option<&str> {
+        self.entries.iter().rev().find_map(|entry| match entry {
+            ChatEntry::User { text } => Some(text.as_str()),
+            _ => None,
+        })
+    }
+
     /// Text of the last `Status` entry, if the last entry is one (tests/harness).
     #[cfg(any(test, feature = "test-harness"))]
     pub fn last_status_text(&self) -> Option<&str> {

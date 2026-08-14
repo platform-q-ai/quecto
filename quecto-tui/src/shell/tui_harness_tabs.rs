@@ -115,6 +115,7 @@ impl TuiHarness {
                 tab_id: 0,
                 session_key: with_session_key.then(|| "sess-1".to_string()),
                 name: None,
+                summary: None,
             }],
             updated_unix_s: last_active_unix_s,
         });
@@ -183,6 +184,181 @@ impl TuiHarness {
         if let Some(c) = self.app.conn_mut(TabId(tab)) {
             c.unread_output = true;
         }
+    }
+
+    // ── #1466 fix-pass accessors (PR #1485 regressions) ──────────────────
+
+    /// The rendered tab-bar line (empty when hidden).
+    pub fn tab_bar_line(&mut self, width: usize) -> String {
+        self.app.render_tab_bar(width).unwrap_or_default()
+    }
+
+    /// Left-click at absolute terminal cell (col, row) through the
+    /// production key path (press + release, no drag).
+    pub fn click(&mut self, col: u16, row: u16) -> &mut Self {
+        self.app.suppress_paint = true;
+        self.app
+            .handle_key(crate::shell::keys::Key::MousePress(col, row));
+        self.app
+            .handle_key(crate::shell::keys::Key::MouseRelease(col, row));
+        self
+    }
+
+    /// Number of open tabs.
+    pub fn tab_count(&self) -> usize {
+        self.app.tabs.len()
+    }
+
+    /// Click the midpoint of the RECORDED hit range for the `ordinal`-th
+    /// (1-based) tab block — no guessed columns.
+    pub fn click_tab_block(&mut self, ordinal: usize) -> &mut Self {
+        use super::super::tab_activity::TabBarHit;
+        let tab = self.app.ordered_tab_ids()[ordinal - 1];
+        let col = self
+            .hit_midpoint(|h| *h == TabBarHit::Select(tab))
+            .expect("tab block hit range recorded");
+        self.click(col, 0)
+    }
+
+    /// Click the midpoint of the recorded ` + ` new-tab button range.
+    pub fn click_new_tab_button(&mut self) -> &mut Self {
+        use super::super::tab_activity::TabBarHit;
+        let col = self
+            .hit_midpoint(|h| *h == TabBarHit::New)
+            .expect("new-tab hit range recorded");
+        self.click(col, 0)
+    }
+
+    /// Click one column past the LAST recorded hit range (bar dead space).
+    pub fn click_past_tab_bar(&mut self) -> &mut Self {
+        let (_, _, width) = self.app.frame_split();
+        let end = self
+            .app
+            .tab_bar_hit_ranges(width)
+            .iter()
+            .map(|(r, _)| r.end)
+            .max()
+            .expect("tab bar hit ranges recorded");
+        self.click((end + 2) as u16, 0)
+    }
+
+    fn hit_midpoint(
+        &self,
+        pred: impl Fn(&super::super::tab_activity::TabBarHit) -> bool,
+    ) -> Option<u16> {
+        let (_, _, width) = self.app.frame_split();
+        self.app
+            .tab_bar_hit_ranges(width)
+            .into_iter()
+            .find(|(_, hit)| pred(hit))
+            .map(|(range, _)| ((range.start + range.end) / 2) as u16)
+    }
+
+    /// Track a sub-agent roster entry with `status` on the active tab.
+    pub fn track_subagent(&mut self, id: &str, status: &str) -> &mut Self {
+        self.app
+            .update_subagent_bar(vec![crate::protocol::client::SubagentInfoEvent {
+                agent_uuid: None,
+                display_name: None,
+                agent_id: id.to_string(),
+                status: status.to_string(),
+                last_tool: None,
+                last_error: None,
+                pid: 0,
+                socket_path: None,
+                parent_id: None,
+                workflow: None,
+                read_only: false,
+                execution_backend: None,
+                environment: None,
+            }]);
+        self
+    }
+
+    /// The active session's most recent Status chat line, if any.
+    pub fn last_status_line(&self) -> Option<String> {
+        self.app
+            .active_session()
+            .chat
+            .last_status_text()
+            .map(str::to_string)
+    }
+
+    /// Number of raised notifications.
+    pub fn notification_count(&self) -> usize {
+        self.app.notifications.messages().len()
+    }
+
+    /// The most recent notification's message text, if any.
+    pub fn last_notification(&self) -> Option<String> {
+        self.app.notifications.messages().last().cloned()
+    }
+
+    /// Insert a SECOND disconnected background tab (id 2) — three tabs total,
+    /// so cycle-direction assertions are falsifiable.
+    pub fn open_second_background_tab(&mut self) -> &mut Self {
+        self.app.test_insert_disconnected_tab(2);
+        self
+    }
+
+    /// Current spinner frame index for `tab`'s master turn, if spinning.
+    pub fn tab_spinner_frame(&self, tab: u32) -> Option<usize> {
+        self.app
+            .conn_for(TabId(tab))
+            .and_then(|c| c.spinner.as_ref())
+            .map(|s| s.frame_index())
+    }
+
+    /// Apply a two-entry workspace manifest whose STORED tab ids (7/8) do not
+    /// exist in this fresh TUI (#1466 fix-pass item 4). Returns whether each
+    /// entry's session ended up carried by some tab (latched or resumed).
+    pub fn apply_manifest_with_stale_tab_ids(&mut self) -> (bool, bool) {
+        self.app.ac_mut().agent_connected = true;
+        let entry = |tab_id: u32, key: &str| WorkspaceTabEntry {
+            tab_id,
+            session_key: Some(key.to_string()),
+            name: None,
+            summary: None,
+        };
+        let manifest = App::test_workspace_manifest(
+            "ws-stale-ids",
+            vec![entry(7, "sess-a"), entry(8, "sess-b")],
+            0,
+        );
+        self.app.apply_workspace_manifest(&manifest);
+        let carries = |key: &str| {
+            self.app.tabs.values().any(|c| {
+                c.session_key.as_deref() == Some(key)
+                    || c.pending_session_resume.as_deref() == Some(key)
+            })
+        };
+        (carries("sess-a"), carries("sess-b"))
+    }
+
+    /// Seed one workspace row with full #1466 fix-pass metadata.
+    pub fn seed_workspace_row(
+        path: &std::path::Path,
+        workspace_id: &str,
+        label: &str,
+        last_active_unix_s: u64,
+        session_key: Option<&str>,
+        summary: Option<&str>,
+    ) {
+        let mut store = WorkspaceManifestStore::load(path);
+        store.upsert(WorkspaceManifest {
+            workspace_id: workspace_id.to_string(),
+            label: label.to_string(),
+            last_active_unix_s,
+            active_index: 0,
+            tabs: vec![WorkspaceTabEntry {
+                tab_id: 0,
+                session_key: session_key.map(str::to_string),
+                name: None,
+                summary: summary.map(str::to_string),
+            }],
+            updated_unix_s: last_active_unix_s,
+        });
+        store.store(path).expect("store manifest");
     }
 }
 

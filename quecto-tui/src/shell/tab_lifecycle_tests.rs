@@ -492,6 +492,7 @@ fn persist_gc_removes_dead_foreign_rows_and_their_orphan_manifests() {
             tab_id: 0,
             session_key: None,
             name: None,
+            summary: None,
         }],
         updated_unix_s: 1,
     });

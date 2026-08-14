@@ -24,11 +24,13 @@ fn store_load_round_trip() {
                 tab_id: 0,
                 session_key: Some("s0".into()),
                 name: Some("main".into()),
+                summary: None,
             },
             WorkspaceTabEntry {
                 tab_id: 1,
                 session_key: Some("s1".into()),
                 name: None,
+                summary: None,
             },
         ],
         1,
@@ -94,6 +96,7 @@ fn atomic_replace_leaves_readable_complete_document() {
             tab_id: 0,
             session_key: Some("k".into()),
             name: Some("n".into()),
+            summary: None,
         }],
         0,
     ));

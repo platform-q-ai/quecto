@@ -66,6 +66,13 @@ impl App {
              \x20 PageUp/Down    Scroll chat\n\
              \x20 Up/Down        Input history\n\
              \n\
+             Tabs:\n\
+             \x20 Ctrl+1-9       Focus tab N\n\
+             \x20 Ctrl+PgUp/PgDn Cycle to previous/next tab\n\
+             \x20 Click a block  Focus that tab (+ opens a new one)\n\
+             \x20 (Alt+1-9 and Alt/Ctrl+Tab also work when the window\n\
+             \x20 manager does not grab them)\n\
+             \n\
              Mouse / links:\n\
              \x20 Wheel          Scroll chat\n\
              \x20 Drag           Select text\n\
@@ -201,7 +208,10 @@ impl App {
         data: &serde_json::Value,
         manifest_path: &std::path::Path,
     ) {
-        let sessions = session_payloads::parse_resume_sessions(data);
+        let mut sessions = session_payloads::parse_resume_sessions(data);
+        // #1466 fix pass item 3: sessions, like workspaces, list most
+        // recently active first (unknown times sink to the bottom).
+        sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_unix_secs.unwrap_or(0)));
         let empty_hint = if sessions.is_empty() {
             if session_payloads::has_session_entries(data) {
                 Some("No resumable CLI sessions found.")

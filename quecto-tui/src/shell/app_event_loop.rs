@@ -615,15 +615,15 @@ impl App {
                 return;
             }
             Key::MousePress(col, row) => {
+                // Tab-bar clicks (#1466): a block focuses its tab; ` + ` opens one.
+                if self.handle_tab_bar_click(*col, *row) {
+                    return;
+                }
+                let (col, row) = (*col, *row);
+                let anchor = SelectionAnchor { col, row };
                 self.selection = Some(TextSelection {
-                    start: SelectionAnchor {
-                        col: *col,
-                        row: *row,
-                    },
-                    end: SelectionAnchor {
-                        col: *col,
-                        row: *row,
-                    },
+                    start: anchor,
+                    end: anchor,
                 });
                 return;
             }
