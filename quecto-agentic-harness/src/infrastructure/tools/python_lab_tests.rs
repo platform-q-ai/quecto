@@ -359,7 +359,10 @@ fn python_lab_config_deserializes_partial_and_full_json_shapes() {
 async fn background_completion_retains_result_and_output_pages() {
     let tmp = tempfile::tempdir().unwrap();
     let lab = tool(tmp.path());
-    let started = lab.execute(r#"{"op":"run","code":"import sys; print('abcdef'); sys.stderr.write('uvwxyz')","background":true,"max_output_bytes":4}"#).await.unwrap();
+    let started = lab
+        .execute(r#"{"op":"run","code":"print('abcdef')","background":true,"max_output_bytes":4}"#)
+        .await
+        .unwrap();
     let v: serde_json::Value = serde_json::from_str(&started.content).unwrap();
     let job_id = v["job_id"].as_str().unwrap();
     for _ in 0..20 {

@@ -17,6 +17,7 @@ pub(crate) async fn run_child(
     state: Option<Arc<Mutex<JobState>>>,
 ) -> Result<(String, Option<i32>), DomainError> {
     let mut cmd = Command::new("python3");
+    cmd.arg("-I");
     cmd.current_dir(workspace).kill_on_drop(true);
     if spec.inherit_environment {
         cmd.env("PYTHONNOUSERSITE", "1");
@@ -169,6 +170,24 @@ pub(crate) fn kill_pid(pid: u32) {
 
 #[cfg(not(unix))]
 pub(crate) fn kill_pid(_pid: u32) {}
+
+pub(crate) fn interpreter_version() -> String {
+    std::process::Command::new("python3")
+        .arg("--version")
+        .output()
+        .ok()
+        .and_then(|out| {
+            let text = if out.stdout.is_empty() {
+                out.stderr
+            } else {
+                out.stdout
+            };
+            String::from_utf8(text).ok()
+        })
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "python3".to_string())
+}
 
 #[cfg(unix)]
 fn apply_child_limits(cmd: &mut Command, spec: &RunSpec) {
