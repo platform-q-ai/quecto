@@ -10,13 +10,19 @@ impl App {
             // before their live socket is known, and the early-return here
             // used to pin them inspection-only forever, so user sends failed
             // "unattached" while master-driven messaging worked.
+            // Cheap flag first (PR #1485 review): a direct feed never needs the
+            // socket probe (symlink_metadata + canonicalize), which would
+            // otherwise run on every roster event for every warm sub-agent.
+            if !feed.inspection_only {
+                return;
+            }
             let socket_now_usable = self
                 .ac()
                 .roster
                 .tracked
                 .get(id)
                 .is_some_and(|t| usable_socket_path(t.info.socket_path.as_deref()));
-            if !(feed.inspection_only && socket_now_usable) {
+            if !socket_now_usable {
                 return;
             }
             if let Some(stale) = self.ac_mut().roster.feeds.remove(id) {

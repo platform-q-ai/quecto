@@ -208,15 +208,6 @@ async fn switching_to_a_tab_clears_its_unread_dot() {
 
 // ── Decision 2: retained-session cap becomes 30 per tab ──
 
-#[test]
-fn retained_session_cap_is_30() {
-    assert_eq!(
-        crate::agents::focus::MAX_RETAINED_SESSIONS,
-        30,
-        "MAX_RETAINED_SESSIONS must be 30 per tab (#1466 decision 2)"
-    );
-}
-
 #[tokio::test]
 async fn exactly_30_sessions_survive_with_no_eviction() {
     // At-limit boundary: an off-by-one that evicts AT 30 must fail here.

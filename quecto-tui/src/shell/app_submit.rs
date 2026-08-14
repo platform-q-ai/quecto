@@ -164,7 +164,7 @@ impl App {
                 .get(&agent_id)
                 .map(|t| t.info.status.clone())
                 .unwrap_or_default();
-            if matches!(status.as_str(), "dead" | "exited")
+            if crate::agents::roster::subagent_status_is_terminal(&status)
                 || (status == "detached" && !self.subagent_feed_is_direct(&agent_id))
             {
                 self.note_subagent_undeliverable(&agent_id, &status);

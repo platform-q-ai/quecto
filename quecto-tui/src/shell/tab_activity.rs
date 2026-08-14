@@ -223,13 +223,7 @@ impl App {
             Some(TabBarHit::Select(tab)) => {
                 let _ = self.switch_tab(tab);
             }
-            Some(TabBarHit::New) => {
-                let tab = self.open_live_tab(None);
-                self.notify(
-                    &format!("Opened tab {} (connecting…)", tab.0),
-                    crate::components::notification::NotifyLevel::Info,
-                );
-            }
+            Some(TabBarHit::New) => self.open_new_tab_announced(),
             None => return false,
         }
         true

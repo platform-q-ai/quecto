@@ -624,10 +624,16 @@ fn snippet_of(text: &str, max: usize) -> String {
     let raw = text.lines().next().unwrap_or("");
     let (line, _) = crate::components::ansi::sanitize_control_truncated(raw, usize::MAX);
     let line = line.trim();
-    if line.chars().count() <= max {
-        line.to_string()
+    // Truncate through the shared sanitizer's max_chars/truncated contract
+    // (PR #1485 review) instead of hand-rolling chars().take(): if the shared
+    // truncation rule ever tightens, persisted snippets follow it. The trim
+    // must happen before counting, so sanitize the trimmed line again.
+    let (kept, truncated) = crate::components::ansi::sanitize_control_truncated(line, max);
+    if !truncated {
+        kept
     } else {
-        let head: String = line.chars().take(max.saturating_sub(1)).collect();
+        let (head, _) =
+            crate::components::ansi::sanitize_control_truncated(line, max.saturating_sub(1));
         format!("{head}…")
     }
 }
