@@ -28,17 +28,43 @@ impl super::App {
         empty_status: Option<&str>,
     ) {
         let store = WorkspaceManifestStore::load(manifest_path);
-        let mut items: Vec<SelectItem> = store
-            .workspaces
-            .iter()
-            .map(|ws| SelectItem {
-                value: format!("{WORKSPACE_RESUME_PREFIX}{}", ws.workspace_id),
-                label: format!("workspace · {}", ws.workspace_id),
-                description: Some(format!(
-                    "{} tabs · active #{}",
+        let now = unix_now_s();
+        // #1466 fix pass item 3: most recently active first.
+        let mut workspaces: Vec<_> = store.workspaces.iter().collect();
+        workspaces.sort_by_key(|ws| std::cmp::Reverse(ws.last_active_or_updated_s()));
+        // #1466 decision 1 + fix pass item 3: list by human label, relative
+        // last-active time, and per-tab conversation snippets so rows are
+        // recognizable by content; the raw UUID stays in `value` for
+        // dispatch, never in the row text.
+        let mut items: Vec<SelectItem> = workspaces
+            .into_iter()
+            .map(|ws| {
+                // Sanitize at read time too (PR #1485 review): manifests
+                // written before snippets were sanitized at persist time may
+                // still carry raw escape/control bytes.
+                let snippets: Vec<String> = ws
+                    .tabs
+                    .iter()
+                    .filter_map(|t| t.summary.as_deref())
+                    .map(|s| crate::components::ansi::sanitize_control_truncated(s, usize::MAX).0)
+                    .filter(|s| !s.trim().is_empty())
+                    .collect();
+                let mut description = format!(
+                    "{} tabs · {}",
                     ws.tabs.len(),
-                    ws.active_index.saturating_add(1)
-                )),
+                    crate::shell::workspace_manifest::relative_age_label(
+                        now,
+                        ws.last_active_or_updated_s()
+                    )
+                );
+                if !snippets.is_empty() {
+                    description.push_str(&format!(" · {}", snippets.join(" | ")));
+                }
+                SelectItem {
+                    value: format!("{WORKSPACE_RESUME_PREFIX}{}", ws.workspace_id),
+                    label: format!("workspace · {}", ws.display_label()),
+                    description: Some(description),
+                }
             })
             .collect();
         items.extend(session_items);
@@ -117,7 +143,21 @@ impl super::App {
             return;
         }
 
-        // Ensure tab slots exist matching manifest order.
+        // Adopt the resumed workspace's identity: subsequent persists must
+        // update the existing row instead of forking a duplicate under the
+        // constructor-minted UUID (which would also strand the old row and
+        // discard its label).
+        self.workspace_id = manifest.workspace_id.clone();
+        if !manifest.label.trim().is_empty() {
+            self.workspace_label = manifest.label.clone();
+        }
+
+        // Ensure tab slots exist matching manifest order, recording the ACTUAL
+        // tab id each entry occupies: stored ids can be stale (a previous
+        // run's numbering), and entry 0 reuses the MASTER slot — the resume
+        // plan below must target the real slots, not the stored ids, or the
+        // first tab silently loses its session (#1466 fix pass item 4).
+        let mut entry_tabs: Vec<TabId> = Vec::with_capacity(manifest.tabs.len());
         for (idx, entry) in manifest.tabs.iter().enumerate() {
             let tab = TabId(entry.tab_id);
             if idx == 0 && !self.tabs.contains_key(&tab) {
@@ -126,8 +166,10 @@ impl super::App {
                 if let Some(state) = self.tabs.get_mut(&master) {
                     state.name = entry.name.clone();
                 }
+                entry_tabs.push(master);
                 continue;
             }
+            entry_tabs.push(tab);
             if !self.tabs.contains_key(&tab) {
                 let opened = self.open_placeholder_tab(entry.name.clone());
                 // open_placeholder allocates next id; if it doesn't match desired,
@@ -150,24 +192,27 @@ impl super::App {
             }
         }
 
-        // Focus stored active tab when present.
-        let active_tab_id = manifest
-            .tabs
+        // Focus stored active tab when present (mapped, not stored, id).
+        let active_tab_id = entry_tabs
             .get(manifest.active_index)
-            .map(|t| TabId(t.tab_id))
+            .copied()
             .filter(|t| self.tabs.contains_key(t))
             .unwrap_or(TabId::MASTER);
         let _ = self.switch_tab(active_tab_id);
 
-        // Queue per-tab session resumes without aborting on individual failure.
-        let resume_plan: Vec<(TabId, Option<String>)> = manifest
+        // Queue per-tab session resumes without aborting on individual
+        // failure — against the MAPPED slots (fix pass item 4). The STORED
+        // tab id rides along: registry rows were persisted under the previous
+        // run's numbering, so live-reattach lookups must use it.
+        let resume_plan: Vec<(TabId, u32, Option<String>)> = manifest
             .tabs
             .iter()
-            .map(|e| (TabId(e.tab_id), e.session_key.clone()))
+            .zip(entry_tabs.iter())
+            .map(|(e, tab)| (*tab, e.tab_id, e.session_key.clone()))
             .collect();
         let mut failures = 0usize;
         let mut resumed = 0usize;
-        for (tab, key) in resume_plan {
+        for (tab, stored_tab_id, key) in resume_plan {
             if !self.tabs.contains_key(&tab) {
                 failures += 1;
                 self.notify(
@@ -179,7 +224,8 @@ impl super::App {
             let _ = self.switch_tab(tab);
             match key {
                 Some(session) if !session.trim().is_empty() => {
-                    let live_socket = live_registry_socket_for_tab(registry_path, tab, &session);
+                    let live_socket =
+                        live_registry_socket_for_tab(registry_path, stored_tab_id, &session);
                     if let Some(socket) = live_socket {
                         // AC6: prefer the live detached owner even when this TUI
                         // already spawned a fresh connected master. Resuming into
@@ -285,6 +331,8 @@ impl super::App {
     ) -> WorkspaceManifest {
         WorkspaceManifest {
             workspace_id: workspace_id.into(),
+            label: String::new(),
+            last_active_unix_s: 0,
             active_index,
             tabs,
             updated_unix_s: unix_now_s(),
@@ -292,17 +340,19 @@ impl super::App {
     }
 }
 
-/// Live registry socket for `tab` / `session` if the process still owns it.
+/// Live registry socket for the STORED `tab_id` / `session` if the process
+/// still owns it. Registry rows carry the persisting run's tab numbering, so
+/// callers pass the manifest's stored id, not the mapped local slot.
 fn live_registry_socket_for_tab(
     registry_path: &std::path::Path,
-    tab: TabId,
+    tab_id: u32,
     session: &str,
 ) -> Option<std::path::PathBuf> {
     let reg = crate::shell::tab_registry::TabAgentRegistry::load(registry_path);
     let rec = reg
         .agents
         .iter()
-        .find(|a| a.tab_id == tab.0 && a.session_key.as_deref() == Some(session))?;
+        .find(|a| a.tab_id == tab_id && a.session_key.as_deref() == Some(session))?;
     if rec.socket_path.as_os_str().is_empty() {
         return None;
     }

@@ -67,6 +67,9 @@ pub(super) enum SourcedRender {
     Immediate,
     /// Stream render: token events coalesce, everything else paints now.
     Stream { is_token: bool },
+    /// No paint, no deferred wakeup (#1466): a background-tab event; state
+    /// (and the tab's unread dot) updated silently.
+    Silent,
 }
 
 impl App {
@@ -75,26 +78,25 @@ impl App {
     /// events (`SourcedEvent::Subagent`) through sub-agent routing, and the
     /// `SourcedEvent::Closed` sentinel runs the #1047 disconnect diagnosis path.
     ///
-    /// The `SourcedEvent::Closed` arm never awaits the child-exit diagnosis here
-    /// (#1462 scope 3): when the TUI owns the agent child, the bounded
+    /// The `SourcedEvent::Closed` arm never awaits the child-exit diagnosis
+    /// here (#1462 scope 3): when the TUI owns the agent child, the bounded
     /// #1047 waits run on a spawned task and complete through the
     /// disconnect-diagnosis select arm — a dying child cannot stall event
-    /// processing while other connections' events are queued.
-    /// Sync by design (#1462 scope 3): the "never blocks the select loop"
-    /// contract is checkable by signature — nothing here can await.
+    /// processing while other connections' events are queued. Sync by design:
+    /// "never blocks the select loop" is checkable by signature — no awaits.
     pub(super) fn route_sourced(
         &mut self,
         item: crate::shell::connection::SourcedEvent,
     ) -> SourcedRender {
         use crate::shell::connection::SourcedEvent;
-        // #1465: fan-in may carry any known tab; unknown tabs no-op in arms.
-        // Touch `.tab()` so the multipath helper stays live under deny(dead_code).
+        // #1465: fan-in may carry any known tab (unknown tabs no-op in arms);
+        // touching `.tab()` keeps the helper live under deny(dead_code).
         let _routed_tab = item.tab();
         match item {
             SourcedEvent::Tab(tab, ev) => {
                 let is_token = Self::is_token_event(&ev);
-                // Route to the owner tab (#1465). Unknown/foreign tabs are a
-                // no-op: no ghost state, no fallthrough onto the active slot.
+                let was_running = self.tab_spinner_active(tab);
+                // Route to the owner tab (#1465); unknown tabs no-op.
                 let Some(paint) = self.with_routing_tab(tab, |app| {
                     app.handle_event(ev);
                     if app.surface_dropped_oversized_events() {
@@ -105,15 +107,20 @@ impl App {
                 }) else {
                     return SourcedRender::Stream { is_token };
                 };
-                paint
+                self.background_render_gate(tab, paint, was_running)
             }
             SourcedEvent::Subagent(tab, agent_id, ev) => {
-                let is_token = Self::is_token_event(&ev);
                 // Direct child feeds belong to the tab that opened them.
-                let _ = self.with_routing_tab(tab, |app| {
+                let stream = SourcedRender::Stream {
+                    is_token: Self::is_token_event(&ev),
+                };
+                let was_running = self.tab_spinner_active(tab);
+                match self.with_routing_tab(tab, |app| {
                     app.route_subagent_event(&agent_id, ev);
-                });
-                SourcedRender::Stream { is_token }
+                }) {
+                    Some(()) => self.background_render_gate(tab, stream, was_running),
+                    None => stream,
+                }
             }
             SourcedEvent::Closed(tab) => {
                 // Owner-targeted disconnect (#1465 / #1047 via #1462).
@@ -133,6 +140,10 @@ impl App {
         match render {
             SourcedRender::Immediate => self.render_and_note(coalescer),
             SourcedRender::Stream { is_token } => self.render_stream_event(coalescer, is_token),
+            // Background-tab event (#1466 decision 3): the coalescer is left
+            // untouched, so an idle loop stays idle no matter how many
+            // background tabs are streaming.
+            SourcedRender::Silent => {}
         }
     }
 
@@ -565,15 +576,7 @@ impl App {
                 return;
             }
             Key::Ctrl('z') => {
-                // Suspend (Ctrl+Z).
-                self.kitty.cleanup();
-                self.terminal.show_cursor();
-                crate::shell::signals::suspend();
-                // Resumed — re-enter raw mode.
-                self.terminal.enter_raw_mode();
-                self.terminal.hide_cursor();
-                self.kitty.query();
-                self.render_full();
+                self.suspend_and_resume();
                 return;
             }
             Key::Ctrl('l') => {
@@ -583,6 +586,14 @@ impl App {
             }
             Key::Ctrl('t') => {
                 self.open_tool_policy_modal();
+                return;
+            }
+            Key::Ctrl('n') => {
+                // New tab (#1466 round 2). Ctrl+T was the first-choice chord
+                // but is taken by the tool-policy selector above; Ctrl+N
+                // (0x0E) arrives unmodified in every terminal and tmux, and
+                // only Ctrl+SHIFT+N (a distinct key) is bound.
+                self.open_new_tab_announced();
                 return;
             }
             Key::Ctrl('o') => {
@@ -605,15 +616,15 @@ impl App {
                 return;
             }
             Key::MousePress(col, row) => {
+                // Tab-bar clicks (#1466): a block focuses its tab; ` + ` opens one.
+                if self.handle_tab_bar_click(*col, *row) {
+                    return;
+                }
+                let (col, row) = (*col, *row);
+                let anchor = SelectionAnchor { col, row };
                 self.selection = Some(TextSelection {
-                    start: SelectionAnchor {
-                        col: *col,
-                        row: *row,
-                    },
-                    end: SelectionAnchor {
-                        col: *col,
-                        row: *row,
-                    },
+                    start: anchor,
+                    end: anchor,
                 });
                 return;
             }
@@ -676,6 +687,8 @@ impl App {
                 self.active_chat_mut().scroll_down(10);
                 return;
             }
+            // Tab-switch chords (#1466 decision 5) — see `handle_tab_switch_key`.
+            _ if self.handle_tab_switch_key(&key) => return,
             _ => {}
         }
 

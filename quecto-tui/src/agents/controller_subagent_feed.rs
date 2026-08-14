@@ -4,10 +4,42 @@ use crate::shell::socket_path::usable_socket_path;
 
 impl App {
     pub(super) fn ensure_synced_subagent_feed(&mut self, id: &str) {
-        if self.ac().roster.feeds.contains_key(id) {
-            return;
+        if let Some(feed) = self.ac().roster.feeds.get(id) {
+            // Upgrade a stale inspection-only feed once the child's socket has
+            // become usable (#1466 round 2): restored sub-agents are focused
+            // before their live socket is known, and the early-return here
+            // used to pin them inspection-only forever, so user sends failed
+            // "unattached" while master-driven messaging worked.
+            // Cheap flag first (PR #1485 review): a direct feed never needs the
+            // socket probe (symlink_metadata + canonicalize), which would
+            // otherwise run on every roster event for every warm sub-agent.
+            if !feed.inspection_only {
+                return;
+            }
+            let socket_now_usable = self
+                .ac()
+                .roster
+                .tracked
+                .get(id)
+                .is_some_and(|t| usable_socket_path(t.info.socket_path.as_deref()));
+            if !socket_now_usable {
+                return;
+            }
+            if let Some(stale) = self.ac_mut().roster.feeds.remove(id) {
+                stale.handle.abort();
+            }
         }
         self.open_subagent_feed(id, crate::agents::feed::FeedAuthority::WarmSync);
+    }
+
+    /// Whether `id` has a direct child-socket feed (not inspection-only) —
+    /// the precondition for delivering Prompt/FollowUp commands.
+    pub(super) fn subagent_feed_is_direct(&self, id: &str) -> bool {
+        self.ac()
+            .roster
+            .feeds
+            .get(id)
+            .is_some_and(|feed| !feed.inspection_only)
     }
 
     /// Open a root-routed inspection feed for `id`. The TUI no longer consumes

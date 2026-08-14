@@ -59,6 +59,10 @@ pub struct App {
     >,
     /// Which tab is focused for input, render, and active command send.
     active_tab: crate::shell::connection::TabId,
+    /// This TUI's workspace identity (#1466 decision 1): a UUID minted at
+    /// startup (never cwd-derived) plus its auto-generated human label.
+    pub(crate) workspace_id: String,
+    pub(crate) workspace_label: String,
     /// When set, `active_conn(_mut)` temporarily targets this tab so inbound
     /// `SourcedEvent` routing can mutate the owner without flipping focus.
     routing_tab_override: Option<crate::shell::connection::TabId>,
@@ -169,6 +173,8 @@ impl App {
                 tabs
             },
             active_tab: crate::shell::connection::TabId::MASTER,
+            workspace_id: crate::shell::workspace_manifest::generate_workspace_id(),
+            workspace_label: crate::shell::workspace_manifest::generate_workspace_label(),
             routing_tab_override: None,
             editor: Editor::new(),
             autocomplete: Autocomplete::new(builtin_commands().to_vec(), 8),
@@ -345,6 +351,8 @@ mod app_subagent_panel_rows;
 mod app_submit;
 #[path = "app_time.rs"]
 mod app_time;
+#[path = "tab_activity.rs"]
+mod tab_activity;
 #[path = "tab_lifecycle.rs"]
 mod tab_lifecycle;
 #[path = "workspace_resume.rs"]
@@ -592,6 +600,15 @@ mod app_events_1060_lifecycle_tests;
 #[path = "app_events_1060_tests.rs"]
 mod app_events_1060_tests;
 #[cfg(test)]
+#[path = "app_fix_pass_1466_round2_tests.rs"]
+mod app_fix_pass_1466_round2_tests;
+#[cfg(test)]
+#[path = "app_fix_pass_1466_tests.rs"]
+mod app_fix_pass_1466_tests;
+#[cfg(test)]
+#[path = "app_fix_pass_1485_review_tests.rs"]
+mod app_fix_pass_1485_review_tests;
+#[cfg(test)]
 #[path = "../workspace/app_git_tests.rs"]
 mod app_git_tests;
 #[cfg(test)]
@@ -606,6 +623,9 @@ mod app_live_inflight_1259_tests;
 #[cfg(test)]
 #[path = "app_methods_tests.rs"]
 mod app_methods_tests;
+#[cfg(test)]
+#[path = "app_multi_tab_polish_tests.rs"]
+mod app_multi_tab_polish_tests;
 #[cfg(test)]
 #[path = "../conversation/app_paged_history_review_tests.rs"]
 mod app_paged_history_review_tests;

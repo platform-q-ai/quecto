@@ -138,15 +138,15 @@ async fn retained_sessions_and_warm_feeds_evict_oldest_non_active_beyond_cap() {
     let mut h = super::tui_harness::TuiHarness::new().await;
     let app = h.app_mut();
     app.ac_mut().roster.active_agent_id = Some("agent-00".into());
-    for i in 0..17 {
+    for i in 0..31 {
         let id = format!("agent-{i:02}");
         let (feed, _rx) = feed_with_rx();
         app.ac_mut().roster.feeds.insert(id.clone(), feed);
         app.ensure_session(&id);
     }
 
-    assert_eq!(app.ac().roster.sessions.len(), 16);
-    assert_eq!(app.ac().roster.feeds.len(), 16);
+    assert_eq!(app.ac().roster.sessions.len(), 30);
+    assert_eq!(app.ac().roster.feeds.len(), 30);
     assert!(
         app.ac().roster.sessions.contains_key("agent-00"),
         "active session must be preserved even when it is oldest"
@@ -163,7 +163,7 @@ async fn retained_sessions_and_warm_feeds_evict_oldest_non_active_beyond_cap() {
         !app.ac().roster.feeds.contains_key("agent-01"),
         "evicting a retained session must also clean up its warm feed"
     );
-    assert!(app.ac().roster.sessions.contains_key("agent-16"));
+    assert!(app.ac().roster.sessions.contains_key("agent-30"));
 }
 
 #[test]

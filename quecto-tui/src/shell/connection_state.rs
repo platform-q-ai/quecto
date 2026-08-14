@@ -103,6 +103,9 @@ pub(crate) struct ConnectionState {
     /// This tab's agent tree: tracked children, their sessions and feeds
     /// (#1463 cluster 6); the panel focus/cursor half stays global.
     pub(crate) roster: crate::agents::view::ConnectionRoster,
+    /// Unread dot (#1466): any output arrived on this tab since it was last
+    /// viewed. Set by background-routed events, cleared on tab switch.
+    pub(crate) unread_output: bool,
 }
 
 impl ConnectionState {
@@ -146,6 +149,7 @@ impl ConnectionState {
             workflow: WorkflowFlow::default(),
             inference: app_inference::ConnInference::default(),
             roster: crate::agents::view::ConnectionRoster::new(),
+            unread_output: false,
         }
     }
 
