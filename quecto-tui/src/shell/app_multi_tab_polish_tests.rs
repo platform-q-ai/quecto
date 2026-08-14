@@ -588,9 +588,12 @@ async fn single_tab_renders_no_tab_bar_and_frame_stays_unchanged() {
         "a single tab must not render a tab bar"
     );
     let first = super::app_render_helpers::strip_ansi(&app.compose_frame()[0]);
-    assert!(
-        first.contains("quecto-tui v"),
-        "single-tab frames must stay byte-identical (header first): {first:?}"
+    let body = first.rsplit('│').next().unwrap_or(&first);
+    assert_eq!(
+        body.trim(),
+        "",
+        "single-tab frames start with the blank spacer that replaced the \
+         version header (round-2 item 1): {first:?}"
     );
 }
 
