@@ -65,12 +65,22 @@ fn pid_is_live(pid: u32) -> bool {
         return false;
     }
     // SAFETY: kill with signal 0 only performs existence/permission checking.
-    if unsafe { libc::kill(pid as i32, 0) } == 0 {
-        return true;
-    }
-    // EPERM means the process exists but is owned by another user — live, and
-    // exactly the case a shared sessions dir or a uid-mapped container hits.
-    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    let probe = unsafe { libc::kill(pid as i32, 0) };
+    let errno = (probe != 0)
+        .then(|| std::io::Error::last_os_error().raw_os_error())
+        .flatten();
+    kill_probe_means_live(probe, errno)
+}
+
+/// Whether a `kill(pid, 0)` probe says the process exists.
+///
+/// Split out so the EPERM case is testable without needing a process owned by
+/// another user: EPERM means the process is there but not ours to signal —
+/// live, and exactly what a shared sessions dir or a uid-mapped container hits.
+/// Only ESRCH (and anything else) means genuinely gone.
+#[cfg(unix)]
+fn kill_probe_means_live(probe: i32, errno: Option<i32>) -> bool {
+    probe == 0 || errno == Some(libc::EPERM)
 }
 
 #[cfg(not(unix))]

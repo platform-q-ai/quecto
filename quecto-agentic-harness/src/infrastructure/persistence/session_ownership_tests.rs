@@ -223,6 +223,22 @@ fn owner_description_is_honest_and_actionable() {
     assert!(describe_owner(None).contains("unidentified"));
 }
 
+#[test]
+fn a_process_owned_by_another_user_counts_as_live() {
+    // kill(pid, 0) fails with EPERM for a process this user may not signal. It
+    // exists, so treating any failure as "gone" would report a live owner as
+    // dead — the shared sessions dir / uid-mapped container case.
+    assert!(kill_probe_means_live(0, None), "signalled successfully");
+    assert!(
+        kill_probe_means_live(-1, Some(libc::EPERM)),
+        "EPERM means the process exists but is not ours to signal"
+    );
+    assert!(
+        !kill_probe_means_live(-1, Some(libc::ESRCH)),
+        "ESRCH is the only answer that means the process is gone"
+    );
+}
+
 /// A pid that is certainly alive and is not this process: our parent.
 fn other_live_pid() -> u32 {
     // SAFETY: getppid takes no arguments and cannot fail.
