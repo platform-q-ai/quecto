@@ -34,6 +34,19 @@ impl App {
         self.notify("Unknown slash command", NotifyLevel::Warning);
     }
 
+    /// Ctrl+Z: leave the alternate screen, stop the process, and restore raw
+    /// mode + kitty protocol with a full repaint once resumed with `fg`.
+    pub(super) fn suspend_and_resume(&mut self) {
+        self.kitty.cleanup();
+        self.terminal.show_cursor();
+        crate::shell::signals::suspend();
+        // Resumed — re-enter raw mode.
+        self.terminal.enter_raw_mode();
+        self.terminal.hide_cursor();
+        self.kitty.query();
+        self.render_full();
+    }
+
     pub(super) fn show_help(&mut self) {
         // Slash commands first, keyboard shortcuts last: compose_frame follows the
         // chat tail, so Ctrl+T (and other shortcuts) stay in the viewport as the
@@ -65,6 +78,14 @@ impl App {
              \x20 Ctrl+Z         Suspend (resume with fg)\n\
              \x20 PageUp/Down    Scroll chat\n\
              \x20 Up/Down        Input history\n\
+             \n\
+             Tabs:\n\
+             \x20 Ctrl+N         Open a new tab\n\
+             \x20 Ctrl+1-9       Focus tab N\n\
+             \x20 Ctrl+PgUp/PgDn Cycle to previous/next tab\n\
+             \x20 Click a block  Focus that tab (+ opens a new one)\n\
+             \x20 (Alt+1-9 and Alt/Ctrl+Tab also work when the window\n\
+             \x20 manager does not grab them)\n\
              \n\
              Mouse / links:\n\
              \x20 Wheel          Scroll chat\n\
@@ -201,7 +222,10 @@ impl App {
         data: &serde_json::Value,
         manifest_path: &std::path::Path,
     ) {
-        let sessions = session_payloads::parse_resume_sessions(data);
+        let mut sessions = session_payloads::parse_resume_sessions(data);
+        // #1466 fix pass item 3: sessions, like workspaces, list most
+        // recently active first (unknown times sink to the bottom).
+        sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_unix_secs.unwrap_or(0)));
         let empty_hint = if sessions.is_empty() {
             if session_payloads::has_session_entries(data) {
                 Some("No resumable CLI sessions found.")
@@ -414,17 +438,21 @@ impl App {
 
         let mut lines = Vec::new();
 
+        // Tab bar (#1466): only with 2+ tabs, so single-tab frames are
+        // byte-identical to the pre-tab layout.
+        if let Some(tab_bar) = self.render_tab_bar(width) {
+            lines.push(tab_bar);
+        }
+
         // ── Render bottom section first to know its height ──────────
         let bottom = self.compose_bottom(width);
         let bottom_height = bottom.len();
 
-        // ── Render top section (header + chat) ──────────────────────
-        // Header.
-        let version = env!("CARGO_PKG_VERSION");
-        lines.push(theme::dim(&format!(
-            "quecto-tui v{} — Enter send, Shift+Enter newline, /help for commands",
-            version
-        )));
+        // ── Render top section (spacer + chat) ──────────────────────
+        // The version/help header line is gone (#1466 round 2): a BLANK
+        // spacer keeps the tab bar / Master status breathing room and the
+        // frame geometry stays otherwise identical.
+        lines.push(String::new());
 
         // Sub-agent-first main pane (#820 / #1288 / #1309): title + optional
         // compact workflow progress framed by separator rules above the chat.

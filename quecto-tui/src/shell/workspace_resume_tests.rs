@@ -23,6 +23,7 @@ fn resume_selector_lists_workspaces_above_sessions() {
             tab_id: 0,
             session_key: Some("s0".into()),
             name: Some("main".into()),
+            summary: None,
         }],
         0,
     ));
@@ -62,11 +63,13 @@ fn apply_workspace_manifest_opens_tabs() {
                 tab_id: 0,
                 session_key: Some("live-sess".into()),
                 name: Some("one".into()),
+                summary: None,
             },
             WorkspaceTabEntry {
                 tab_id: 1,
                 session_key: Some("dead-sess".into()),
                 name: Some("two".into()),
+                summary: None,
             },
         ],
         1,
@@ -134,11 +137,13 @@ fn apply_workspace_manifest_queues_deferred_resume_for_disconnected_tabs() {
                 tab_id: 0,
                 session_key: Some("live-sess".into()),
                 name: Some("one".into()),
+                summary: None,
             },
             WorkspaceTabEntry {
                 tab_id: 1,
                 session_key: Some("dead-sess".into()),
                 name: Some("two".into()),
+                summary: None,
             },
         ],
         0,
@@ -172,11 +177,13 @@ fn apply_workspace_manifest_updates_transport_tab_id_in_production_path() {
                 tab_id: 0,
                 session_key: None,
                 name: Some("one".into()),
+                summary: None,
             },
             WorkspaceTabEntry {
                 tab_id: 7,
                 session_key: Some("s7".into()),
                 name: Some("seven".into()),
+                summary: None,
             },
         ],
         1,
@@ -225,6 +232,7 @@ fn apply_workspace_manifest_reattaches_live_registry_socket_on_connected_tab() {
             tab_id: 0,
             session_key: Some("cli:work".into()),
             name: Some("main".into()),
+            summary: None,
         }],
         0,
     );
@@ -286,5 +294,60 @@ fn resume_key_and_selector_latch_deferred_resume_while_disconnected() {
         b.ac().pending_session_resume.as_deref(),
         Some("plain-key"),
         "AC5: bare selector keys must also latch"
+    );
+}
+
+#[test]
+fn apply_workspace_manifest_adopts_workspace_identity_and_label() {
+    let mut a = app();
+    a.ac_mut().agent_connected = true;
+    let original_id = a.workspace_id.clone();
+    let mut manifest = App::test_workspace_manifest(
+        "ws-resumed",
+        vec![WorkspaceTabEntry {
+            tab_id: 0,
+            session_key: Some("sess".into()),
+            name: Some("one".into()),
+            summary: None,
+        }],
+        0,
+    );
+    manifest.label = "amber-brook".into();
+    a.apply_workspace_manifest(&manifest);
+    assert_ne!(
+        original_id, "ws-resumed",
+        "precondition: fresh UUID differs"
+    );
+    assert_eq!(
+        a.workspace_id, "ws-resumed",
+        "resume must adopt the manifest workspace id so later persists update \
+         the same row instead of forking a duplicate"
+    );
+    assert_eq!(
+        a.workspace_label, "amber-brook",
+        "resume must keep the stored label instead of a fresh random one"
+    );
+}
+
+#[test]
+fn apply_workspace_manifest_keeps_generated_label_when_stored_label_empty() {
+    let mut a = app();
+    a.ac_mut().agent_connected = true;
+    let generated = a.workspace_label.clone();
+    let manifest = App::test_workspace_manifest(
+        "ws-nolabel",
+        vec![WorkspaceTabEntry {
+            tab_id: 0,
+            session_key: Some("sess".into()),
+            name: None,
+            summary: None,
+        }],
+        0,
+    );
+    a.apply_workspace_manifest(&manifest);
+    assert_eq!(a.workspace_id, "ws-nolabel");
+    assert_eq!(
+        a.workspace_label, generated,
+        "an empty stored label must not blank the generated one"
     );
 }

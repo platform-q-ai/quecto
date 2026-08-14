@@ -454,3 +454,80 @@ fn failed_attach_clears_deferred_resume_so_prompts_are_not_queued_forever() {
         "prompt must not be latched as a connecting queue after attach failure"
     );
 }
+
+#[test]
+fn persist_gc_removes_dead_foreign_rows_and_their_orphan_manifests() {
+    use crate::shell::tab_registry::{TabAgentRecord, TabAgentStatus};
+    use crate::shell::workspace_manifest::{WorkspaceManifest, WorkspaceTabEntry};
+
+    let a = app();
+    let dir = tempfile::tempdir().unwrap();
+    let rpath = dir.path().join("registry.json");
+    let mpath = dir.path().join("manifest.json");
+
+    // A previous TUI instance (workspace "w-old") left a dead tab-0 row:
+    // no live socket, no session key. Matching on tab_id alone would flip
+    // it Live (tab 0 is open in every TUI) and retain it forever.
+    let mut preexisting = TabAgentRegistry::new();
+    preexisting.upsert(TabAgentRecord {
+        tab_id: 0,
+        pid: None,
+        socket_path: dir.path().join("gone.sock"),
+        session_key: None,
+        tab_name: None,
+        workspace_id: Some("w-old".into()),
+        updated_unix_s: 1,
+        status: TabAgentStatus::Live,
+    });
+    preexisting.store(&rpath).unwrap();
+
+    // Its session-less manifest row: only referenced through the dead row.
+    let mut store = WorkspaceManifestStore::load(&mpath);
+    store.upsert(WorkspaceManifest {
+        workspace_id: "w-old".into(),
+        label: "old".into(),
+        last_active_unix_s: 1,
+        active_index: 0,
+        tabs: vec![WorkspaceTabEntry {
+            tab_id: 0,
+            session_key: None,
+            name: None,
+            summary: None,
+        }],
+        updated_unix_s: 1,
+    });
+    store.store(&mpath).unwrap();
+
+    a.persist_durability_snapshot("w-new", &rpath, &mpath);
+
+    let loaded_r = TabAgentRegistry::load(&rpath);
+    assert!(
+        !loaded_r
+            .agents
+            .iter()
+            .any(|r| r.workspace_id.as_deref() == Some("w-old")),
+        "dead foreign tab-0 row must be GC'd, not kept via the open tab_id"
+    );
+    let loaded_m = WorkspaceManifestStore::load(&mpath);
+    assert!(
+        loaded_m.get("w-old").is_none(),
+        "orphan manifest must be pruned once its dead registry row is gone"
+    );
+    assert!(loaded_m.get("w-new").is_some(), "own row must persist");
+}
+
+#[test]
+fn snippet_of_strips_control_and_escape_bytes() {
+    // Review finding (PR #1485): bracketed paste delivers ESC/BEL verbatim
+    // and the snippet is replayed raw into the /resume selector — sanitize
+    // at persist time like tab names do.
+    let s = super::snippet_of("evil\x1b]8;;file:///tmp/x\x07click me\x1b]8;;\x07 tail", 60);
+    assert!(
+        !s.contains('\x1b') && !s.contains('\x07'),
+        "persisted snippets must contain no escape/control bytes; got {s:?}"
+    );
+    assert!(
+        s.contains("evil") && s.contains("click me"),
+        "printable text must survive sanitization; got {s:?}"
+    );
+}

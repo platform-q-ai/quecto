@@ -34,12 +34,7 @@ impl App {
                     return;
                 }
                 "/tab-new" => {
-                    // AC1/AC2: open a connecting tab and spawn a live persistent agent.
-                    let tab = self.open_live_tab(None);
-                    self.notify(
-                        &format!("Opened tab {} (connecting…)", tab.0),
-                        crate::components::notification::NotifyLevel::Info,
-                    );
+                    self.open_new_tab_announced();
                     return;
                 }
                 "/tab-close" => {
@@ -148,7 +143,33 @@ impl App {
         // targets THAT agent over its own connection and lands in its session,
         // not master's. When the selected child is already running, Enter queues
         // a follow-up behind the current turn; it does not interrupt/steer.
-        if self.ac().roster.active_agent_id.is_some() {
+        if let Some(agent_id) = self.ac().roster.active_agent_id.clone() {
+            // Attach-on-demand (#1466 round 2): a restored sub-agent may have
+            // been focused before its live socket was known, leaving a stale
+            // inspection-only feed that cannot carry a Prompt. Re-run the
+            // feed attach so a now-usable socket upgrades to a direct feed —
+            // the same attach the master-driven roster-refresh path performs.
+            self.ensure_synced_subagent_feed(&agent_id);
+            // Never silently swallow a message to a non-live sub-agent
+            // (#1466 fix pass item 5): a feed channel can exist and accept
+            // the enqueue with nothing consuming it, so liveness is judged
+            // from the roster's #1461 state, not the channel. "detached" is
+            // refused only while the child stays UNREACHABLE — a detached
+            // roster row whose registry socket is live just attached above
+            // and must deliver (#1466 round 2).
+            let status = self
+                .ac()
+                .roster
+                .tracked
+                .get(&agent_id)
+                .map(|t| t.info.status.clone())
+                .unwrap_or_default();
+            if crate::agents::roster::subagent_status_is_terminal(&status)
+                || (status == "detached" && !self.subagent_feed_is_direct(&agent_id))
+            {
+                self.note_subagent_undeliverable(&agent_id, &status);
+                return;
+            }
             let cmd = if self.active_subagent_running() {
                 Command::FollowUp {
                     id: None,
@@ -170,6 +191,10 @@ impl App {
                     .add_entry_follow_tail(ChatEntry::User {
                         text: text.to_string(),
                     });
+            } else {
+                // Failed route (no live sender / full channel): the user must
+                // see the message was not delivered (fix pass item 5).
+                self.note_subagent_undeliverable(&agent_id, "unattached");
             }
             return;
         }
@@ -216,6 +241,26 @@ impl App {
             return;
         }
         self.dispatch_master_user_text(text);
+    }
+
+    /// Open a connecting tab with a live persistent agent and announce it —
+    /// the ONE new-tab path shared by /tab-new, the clickable " + " button
+    /// and the Ctrl+N chord (#1466 round 2; AC1/AC2).
+    pub(super) fn open_new_tab_announced(&mut self) {
+        let tab = self.open_live_tab(None);
+        self.notify(
+            &format!("Opened tab {} (connecting…)", tab.0),
+            crate::components::notification::NotifyLevel::Info,
+        );
+    }
+
+    /// Surface an undeliverable sub-agent message (#1466 fix pass item 5):
+    /// a persistent Status line plus a toast, so the drop is never silent.
+    fn note_subagent_undeliverable(&mut self, agent_id: &str, status: &str) {
+        let text = format!("Message not delivered — sub-agent '{agent_id}' is {status}.");
+        self.active_chat_mut()
+            .add_entry(ChatEntry::Status { text: text.clone() });
+        self.notify(&text, crate::components::notification::NotifyLevel::Warning);
     }
 
     /// Send a master-session user message (Prompt or FollowUp) after connect.

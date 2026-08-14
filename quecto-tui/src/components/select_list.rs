@@ -41,7 +41,7 @@ impl SelectList {
         std::mem::replace(&mut self.result, SelectResult::Pending)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     pub fn items_for_tests(&self) -> &[SelectItem] {
         &self.items
     }

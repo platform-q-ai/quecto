@@ -40,6 +40,14 @@ pub(crate) fn subagent_status_is_active(status: &str) -> bool {
     matches!(status, "starting" | "running")
 }
 
+/// Whether a subagent status is terminal — the child process is gone and can
+/// never receive a send. The status vocabulary lives here beside
+/// [`subagent_status_is_active`] so callers don't string-match it themselves
+/// (PR #1485 review).
+pub(crate) fn subagent_status_is_terminal(status: &str) -> bool {
+    matches!(status, "dead" | "exited")
+}
+
 pub(crate) fn next_exited_subagent_gc_deadline<I: RosterInfo>(
     map: &BTreeMap<String, TrackedSubagent<I>>,
     grace: Duration,

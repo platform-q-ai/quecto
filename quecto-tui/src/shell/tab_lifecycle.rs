@@ -207,7 +207,10 @@ impl super::App {
             .filter(|t| self.tab_has_pending_attach(*t))
             .count();
         let _ = _pending;
-        self.persist_durability_snapshot("default", &reg, &man);
+        // #1466 decision 1: durability is keyed by this TUI's UUID identity,
+        // never a shared literal, so two TUIs can never clobber each other.
+        let workspace_id = self.workspace_id.clone();
+        self.persist_durability_snapshot(&workspace_id, &reg, &man);
     }
 
     /// Focus `tab` if present. Returns whether the switch happened.
@@ -226,6 +229,10 @@ impl super::App {
         }
         self.close_tab_switch_overlays();
         self.active_tab = tab;
+        // Viewing the tab consumes its unread dot (#1466 decision 4).
+        if let Some(c) = self.conn_mut(tab) {
+            c.unread_output = false;
+        }
         let restore = self
             .conn_for(tab)
             .map(|c| c.editor_draft.clone())
@@ -237,6 +244,19 @@ impl super::App {
         self.subagents.panel_nav.set_selected(0);
         self.sync_panel_selection_to_active();
         true
+    }
+
+    /// Focus the `ordinal`-th tab (1-based, tab-bar order). Ordinals past the
+    /// open tab count no-op (#1466 decision 5).
+    pub(crate) fn focus_tab_ordinal(&mut self, ordinal: usize) -> bool {
+        let Some(tab) = self
+            .ordered_tab_ids()
+            .get(ordinal.saturating_sub(1))
+            .copied()
+        else {
+            return false;
+        };
+        self.switch_tab(tab)
     }
 
     /// Cycle focus forward/back through sorted tab ids.
@@ -411,11 +431,26 @@ impl super::App {
                         .clone()
                         .or_else(|| state.pending_session_resume.clone()),
                     name: state.name.clone(),
+                    // #1466 fix pass item 3: persist the tab's last user
+                    // message so `/resume` rows are recognizable by content.
+                    summary: state
+                        .master_session
+                        .chat
+                        .last_user_text()
+                        .map(|t| snippet_of(t, TAB_SUMMARY_MAX_CHARS)),
                 })
             })
             .collect();
         WorkspaceManifest {
             workspace_id: workspace_id.to_string(),
+            // Own workspace: stamp our auto-generated label (#1466 decision 1).
+            // Foreign ids leave it empty; persist preserves the stored label.
+            label: if workspace_id == self.workspace_id {
+                self.workspace_label.clone()
+            } else {
+                String::new()
+            },
+            last_active_unix_s: unix_now_s(),
             active_index,
             tabs,
             updated_unix_s: unix_now_s(),
@@ -438,19 +473,36 @@ impl super::App {
             on_disk.upsert(rec);
         }
         let open: std::collections::HashSet<u32> = self.tabs.keys().map(|t| t.0).collect();
+        // A row is "ours" only when both the tab id is open AND the row's
+        // workspace matches: matching on tab_id alone would flip dead foreign
+        // rows Live (tab 0 is open in every TUI) and make them immortal,
+        // which in turn pins their session-less manifests past gc_orphaned.
+        let is_open_own = |rec: &crate::shell::tab_registry::TabAgentRecord| {
+            open.contains(&rec.tab_id) && rec.workspace_id.as_deref() == Some(workspace_id)
+        };
         on_disk.refresh_status(|rec| {
-            if open.contains(&rec.tab_id) {
+            if is_open_own(rec) {
                 true
             } else {
                 crate::shell::tab_registry::default_liveness_probe(rec)
             }
         });
         on_disk.gc_dead(|rec| {
-            open.contains(&rec.tab_id) || crate::shell::tab_registry::default_liveness_probe(rec)
+            is_open_own(rec) || crate::shell::tab_registry::default_liveness_probe(rec)
         });
         let _ = on_disk.store(registry_path);
         let mut store = WorkspaceManifestStore::load(manifest_path);
-        store.upsert(self.workspace_manifest_snapshot(workspace_id));
+        let mut manifest = self.workspace_manifest_snapshot(workspace_id);
+        // Preserve a stored (possibly renamed) label the snapshot doesn't know.
+        if manifest.label.trim().is_empty() {
+            if let Some(prev) = store.get(workspace_id) {
+                manifest.label = prev.label.clone();
+            }
+        }
+        store.upsert(manifest);
+        // Orphaned-workspace GC (#1466): rows with no resumable session key
+        // and no registry record are dead weight in `/resume` — drop them.
+        let _ = store.gc_orphaned(&on_disk);
         let _ = store.store(manifest_path);
     }
 }
@@ -555,6 +607,34 @@ async fn spawn_and_attach_new_agent(
             result: Err(e),
             child_watch: None,
         },
+    }
+}
+
+/// Max characters persisted for a tab's `/resume` snippet (#1466 item 3).
+const TAB_SUMMARY_MAX_CHARS: usize = 60;
+
+/// First line of `text`, sanitized of control/escape bytes and truncated to
+/// `max` chars behind an ellipsis.
+///
+/// Sanitization (PR #1485 review): pasted input can carry raw ESC/BEL bytes
+/// (OSC hyperlinks, SGR); the snippet is persisted to the manifest and later
+/// replayed verbatim into the /resume selector, so control bytes must never
+/// reach disk — mirroring how tab names are sanitized.
+fn snippet_of(text: &str, max: usize) -> String {
+    let raw = text.lines().next().unwrap_or("");
+    let (line, _) = crate::components::ansi::sanitize_control_truncated(raw, usize::MAX);
+    let line = line.trim();
+    // Truncate through the shared sanitizer's max_chars/truncated contract
+    // (PR #1485 review) instead of hand-rolling chars().take(): if the shared
+    // truncation rule ever tightens, persisted snippets follow it. The trim
+    // must happen before counting, so sanitize the trimmed line again.
+    let (kept, truncated) = crate::components::ansi::sanitize_control_truncated(line, max);
+    if !truncated {
+        kept
+    } else {
+        let (head, _) =
+            crate::components::ansi::sanitize_control_truncated(line, max.saturating_sub(1));
+        format!("{head}…")
     }
 }
 
