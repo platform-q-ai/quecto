@@ -30,7 +30,11 @@ impl App {
                     return;
                 }
                 "/new" => {
-                    self.reset_workspace();
+                    for watch in self.reset_workspace() {
+                        tokio::spawn(async move {
+                            watch.terminate().await;
+                        });
+                    }
                     return;
                 }
                 "/tab-new" => {

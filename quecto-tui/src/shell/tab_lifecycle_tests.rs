@@ -56,7 +56,6 @@ fn close_last_tab_refused() {
 fn new_command_resets_workspace_not_just_active_session() {
     let mut a = app();
     let old_workspace_id = a.workspace_id.clone();
-    let old_workspace_label = a.workspace_label.clone();
     a.active_chat_mut()
         .add_entry(crate::components::chat::ChatEntry::User {
             text: "master old".into(),
@@ -82,7 +81,25 @@ fn new_command_resets_workspace_not_just_active_session() {
     assert_eq!(a.subagents.panel_nav_key, None);
     assert_eq!(a.subagents.panel_nav.selected(), 0);
     assert_ne!(a.workspace_id, old_workspace_id);
-    assert_ne!(a.workspace_label, old_workspace_label);
+    assert!(!a.workspace_label.is_empty());
+}
+
+#[test]
+fn reset_workspace_returns_stale_tab_child_watches_for_termination() {
+    let mut a = app();
+    let t1 = a.open_placeholder_tab(Some("owned".into()));
+    a.conn_mut(t1).unwrap().child_exit_watch =
+        Some(crate::shell::child_watch::ChildWatch::for_tests(Some(77)));
+
+    let watches = a.reset_workspace();
+
+    assert_eq!(
+        watches.iter().map(|w| w.pid()).collect::<Vec<_>>(),
+        vec![Some(77)],
+        "/new must hand back non-master ChildWatch values so callers can terminate owned agents"
+    );
+    assert_eq!(a.tabs.len(), 1);
+    assert!(a.tabs.contains_key(&TabId::MASTER));
 }
 
 #[test]

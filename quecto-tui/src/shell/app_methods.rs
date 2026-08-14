@@ -662,13 +662,15 @@ impl App {
 
     /// Reset the workspace for `/new`: keep the master transport, drop stale
     /// workspace chrome/tabs, mint a fresh identity, then reset the master session.
-    pub(super) fn reset_workspace(&mut self) {
+    pub(super) fn reset_workspace(&mut self) -> Vec<crate::shell::child_watch::ChildWatch> {
         let mut master = self
             .tabs
             .remove(&crate::shell::connection::TabId::MASTER)
             .expect("workspace reset requires a master tab");
-        for (_, state) in self.tabs.drain() {
+        let mut watches = Vec::new();
+        for (_, mut state) in self.tabs.drain() {
             state.transport.abort_feed();
+            watches.extend(state.child_exit_watch.take());
         }
         master.name = None;
         master.session_key = None;
@@ -684,6 +686,7 @@ impl App {
         self.workspace_label = crate::shell::workspace_manifest::generate_workspace_label();
         self.reset_session("New session started");
         self.persist_default_durability();
+        watches
     }
 
     /// Reset the conversation — clears agent history, chat UI, and context display.
