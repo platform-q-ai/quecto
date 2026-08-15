@@ -2,11 +2,12 @@
 // Mirrors Quecto's path-utils.js — handles ~ expansion, absolute paths,
 // @ prefix stripping, Unicode space normalisation, and macOS filename fixups.
 //
-// # Security
+// # Path policy
 // `resolve_to_cwd` and `resolve_read_path` return a `PathBuf` that may point
-// outside the workspace (e.g. absolute paths, ~ expansion). Callers **must**
-// pass the result through `Sandbox::validate_path()` before any I/O.
-// The sandbox performs canonicalisation and workspace-boundary checks.
+// outside the workspace (e.g. absolute paths, ~ expansion). Callers should pass
+// the result through `Sandbox::validate_path()` before any I/O so all filesystem
+// tools share the same path hook. Agent entrypoints no longer enable workspace
+// confinement; explicit lower-level restricted sandboxes still can.
 //
 // # HOME not set
 // `expand_tilde` returns `PathBuf::from("~")` (a literal path component) when
@@ -40,8 +41,8 @@ pub fn home_dir() -> Option<&'static Path> {
 /// Returns the path unchanged (as `PathBuf::from(path)`) if it does not start
 /// with `~`, or if the home directory cannot be determined.
 ///
-/// The returned path may contain `..` traversal components — callers must
-/// still validate through `Sandbox::validate_path()`.
+/// The returned path may contain `..` traversal components. Callers should still
+/// route it through `Sandbox::validate_path()` for consistent tool path policy.
 pub fn expand_tilde(path: &str) -> PathBuf {
     if path == "~" {
         return home_dir()
@@ -101,9 +102,10 @@ pub fn normalize_unicode_spaces(s: &str) -> Cow<'_, str> {
 ///
 /// Used by: write, edit, bash (indirectly), grep, find, ls.
 ///
-/// # Security
-/// The returned path **must** be validated by `Sandbox::validate_path()`
-/// before any I/O — this function performs no sandbox checks.
+/// # Path policy
+/// The returned path should be routed through `Sandbox::validate_path()` before
+/// any I/O for consistency with other tools. This function performs no
+/// confinement checks.
 pub fn resolve_to_cwd(path: &str, cwd: &Path) -> PathBuf {
     // 1. Strip @ prefix
     let path = normalize_at_prefix(path);
@@ -135,10 +137,11 @@ pub fn resolve_to_cwd(path: &str, cwd: &Path) -> PathBuf {
 /// Returns the first variant that exists on disk, or the primary path
 /// if none exist.
 ///
-/// # Security
-/// The returned path **must** be validated by `Sandbox::validate_path()`
-/// before any I/O. Existence probing happens only on the primary-resolved
-/// path's parent directory, but `Sandbox` canonicalisation is still required.
+/// # Path policy
+/// The returned path should be routed through `Sandbox::validate_path()` before
+/// any I/O for consistency with other tools. Existence probing happens only on
+/// the primary-resolved path's parent directory; agent entrypoints perform no
+/// workspace confinement here.
 pub fn resolve_read_path(path: &str, cwd: &Path) -> PathBuf {
     let primary = resolve_to_cwd(path, cwd);
 

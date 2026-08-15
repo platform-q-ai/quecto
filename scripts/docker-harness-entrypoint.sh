@@ -92,7 +92,7 @@ export PATH="$QUECTO_INSTALL_ROOT/bin:$PATH"
 "${RUN_AS[@]}" env \
   PATH="$PATH" \
   QUECTO_AGENTS_DEFAULTS_WORKSPACE="$QUECTO_DEV_REPO_DIR" \
-  quecto agent --mode uds --no-sandbox --socket "$CONTAINER_SOCKET" --persist ${QUECTO_AGENT_ARGS:-} &
+  quecto agent --mode uds --socket "$CONTAINER_SOCKET" --persist ${QUECTO_AGENT_ARGS:-} &
 agent_pid=$!
 
 for _ in $(seq 1 "${QUECTO_SOCKET_TIMEOUT:-900}"); do

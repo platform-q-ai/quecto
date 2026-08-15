@@ -5,7 +5,7 @@ use tempfile::TempDir;
 fn test_tools() -> (Arc<PathBuf>, Arc<Sandbox>, TempDir) {
     let tmp = TempDir::new().unwrap();
     let workspace = Arc::new(tmp.path().to_path_buf());
-    let sandbox = Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), true));
+    let sandbox = Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), false));
     (workspace, sandbox, tmp)
 }
 
@@ -43,11 +43,17 @@ async fn test_ls_subdirectory() {
 }
 
 #[tokio::test]
-async fn test_ls_blocks_path_traversal() {
+async fn test_ls_allows_path_outside_workspace() {
     let (ws, sb, _tmp) = test_tools();
+    let outside = TempDir::new().unwrap();
+    std::fs::write(outside.path().join("outside.txt"), "ok").unwrap();
     let tool = LsTool::new(ws, sb);
-    let result = tool.execute(r#"{"path": "/etc"}"#).await;
-    assert!(result.is_err());
+    let result = tool
+        .execute(&format!(r#"{{"path": "{}"}}"#, outside.path().display()))
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    assert!(result.content.contains("outside.txt"));
 }
 
 // --- Quecto compatibility ---

@@ -407,6 +407,7 @@ fn test_cli_context_all_fields() {
         config_path: None,
         stdin_data: Some("input".to_string()),
         oauth_base_url: Some("http://oauth.local".to_string()),
+        cwd: Some(PathBuf::from("/tmp/test/workspace")),
     };
     assert_eq!(ctx.base_dir(), PathBuf::from("/tmp/test"));
     assert_eq!(ctx.stdin_data.as_deref(), Some("input"));
@@ -508,46 +509,6 @@ fn test_build_tokio_runtime_succeeds() {
     let result = rt.block_on(async { 42 });
     assert_eq!(result, 42);
 }
-
-// ===================================================================
-// --no-sandbox flag tests for REPL
-// ===================================================================
-
-#[test]
-fn test_parse_repl_flags_no_sandbox_defaults_false() {
-    let flags = parse_repl_flags(&[]).unwrap();
-    assert!(
-        !flags.no_sandbox,
-        "--no-sandbox should be false by default in REPL"
-    );
-}
-
-#[test]
-fn test_parse_repl_flags_no_sandbox_parsed() {
-    let args: Vec<String> = vec!["--no-sandbox".into()];
-    let flags = parse_repl_flags(&args).unwrap();
-    assert!(
-        flags.no_sandbox,
-        "--no-sandbox should be true when provided to REPL"
-    );
-}
-
-#[test]
-fn test_parse_repl_flags_no_sandbox_combined_with_session() {
-    let args: Vec<String> = vec![
-        "--no-sandbox".into(),
-        "-s".into(),
-        "chat1".into(),
-        "--model".into(),
-        "gpt-4".into(),
-    ];
-    let flags = parse_repl_flags(&args).unwrap();
-    assert!(flags.no_sandbox);
-    assert_eq!(flags.session_name.as_deref(), Some("chat1"));
-    assert_eq!(flags.model_override.as_deref(), Some("gpt-4"));
-}
-
-// --- Issue #300: --config flag ---
 
 #[test]
 fn test_config_flag_extracted_from_args() {

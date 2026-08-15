@@ -453,14 +453,8 @@ fn test_resolve_api_key_falls_back_when_no_cred() {
 // --- resolve_agent_workspace tests ---
 
 #[test]
-fn test_resolve_agent_workspace_sandbox() {
-    let result = resolve_agent_workspace("/home/user/workspace", false);
-    assert_eq!(result, std::path::PathBuf::from("/home/user/workspace"));
-}
-
-#[test]
-fn test_resolve_agent_workspace_no_sandbox_uses_cwd() {
-    let result = resolve_agent_workspace("/home/user/workspace", true);
+fn test_resolve_agent_workspace_uses_cwd() {
+    let result = resolve_agent_workspace("/home/user/workspace");
     let cwd = std::env::current_dir().unwrap();
     assert_eq!(result, cwd);
 }

@@ -22,9 +22,10 @@ enum SocketLiveness {
 /// network namespace would not appear here and could be misjudged dead —
 /// agents and reaper share the host namespace today.)
 fn probe_socket_liveness(path: &std::path::Path) -> SocketLiveness {
-    let Ok(table) = std::fs::read_to_string("/proc/net/unix") else {
+    let Ok(table) = std::fs::read("/proc/net/unix") else {
         return SocketLiveness::Unknown;
     };
+    let table = String::from_utf8_lossy(&table);
     let target = path.to_string_lossy();
     let live = table.lines().skip(1).any(|line| {
         // The path is the trailing field; require the preceding space so a

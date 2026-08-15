@@ -458,12 +458,11 @@ async fn format_grep_output(a: GrepFormatArgs<'_>) -> String {
     };
 
     for m in &capped {
-        // Validate each file path from rg JSON against the sandbox.
-        // rg runs inside the validated search path, but a symlink inside the workspace
-        // could resolve to a path outside it. sandbox.validate_path() catches this.
+        // Route each rg-reported file path through the shared path hook before
+        // reading context. Agent entrypoints no longer enable workspace
+        // confinement, but keeping this call preserves one policy chokepoint.
         let path_str = m.file_path.to_string_lossy();
         if a.sandbox.validate_path(&path_str).is_err() {
-            // Skip files that violate the workspace boundary (symlink traversal etc.)
             continue;
         }
         if !format_match_block(m, &mut file_cache, &cfg, &mut state) {

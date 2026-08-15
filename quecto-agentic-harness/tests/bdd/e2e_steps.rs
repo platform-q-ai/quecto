@@ -7,6 +7,8 @@ use super::*;
 fn given_temp_base_directory(world: &mut QuectoWorld) {
     let td = TempDir::new().expect("failed to create temp dir");
     world.cli_context.base_dir = Some(td.path().to_path_buf());
+    world.cli_context.cwd = Some(td.path().join("workspace"));
+    std::fs::create_dir_all(td.path().join("workspace")).expect("create workspace cwd");
     world._temp_dir = Some(td);
 }
 
@@ -1240,37 +1242,6 @@ fn when_run_agent_effort(world: &mut QuectoWorld, effort: String, message: Strin
     world.stderr = output.stderr;
 }
 
-#[when(expr = "I run quecto agent --no-sandbox -m {string}")]
-fn when_run_agent_no_sandbox(world: &mut QuectoWorld, message: String) {
-    let args = vec![
-        "quecto".to_string(),
-        "agent".to_string(),
-        "--no-sandbox".to_string(),
-        "-m".to_string(),
-        message,
-    ];
-    let output = cli::run_with_output(args, &world.cli_context);
-    world.exit_code = output.exit_code;
-    world.stdout = output.stdout;
-    world.stderr = output.stderr;
-}
-
-#[when(expr = "I run quecto agent --no-sandbox --no-session -m {string}")]
-fn when_run_agent_no_sandbox_no_session(world: &mut QuectoWorld, message: String) {
-    let args = vec![
-        "quecto".to_string(),
-        "agent".to_string(),
-        "--no-sandbox".to_string(),
-        "--no-session".to_string(),
-        "-m".to_string(),
-        message,
-    ];
-    let output = cli::run_with_output(args, &world.cli_context);
-    world.exit_code = output.exit_code;
-    world.stdout = output.stdout;
-    world.stderr = output.stderr;
-}
-
 #[when("I run quecto help")]
 fn when_run_quecto_help(world: &mut QuectoWorld) {
     let args = vec!["quecto".to_string(), "help".to_string()];
@@ -2287,6 +2258,10 @@ fn spawn_quecto_subprocess_with_stdin(
     // "I set QUECTO_BASE_DIR" step) and the child inherits it.
     if let Some(ref base) = world.cli_context.base_dir {
         cmd.env("QUECTO_BASE_DIR", base.to_string_lossy().as_ref());
+    }
+    if let Some(ref cwd) = world.cli_context.cwd {
+        std::fs::create_dir_all(cwd).expect("create subprocess cwd");
+        cmd.current_dir(cwd);
     }
 
     let mut child = cmd.spawn().expect("spawn quecto subprocess");

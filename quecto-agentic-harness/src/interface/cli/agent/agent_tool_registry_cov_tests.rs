@@ -11,7 +11,6 @@ fn flags() -> AgentFlags {
         max_iterations: None,
         max_time: None,
         uds_mode: false,
-        no_sandbox: false,
         socket_path: None,
         persist: false,
         disabled_tools: Vec::new(),
@@ -25,6 +24,7 @@ fn flags() -> AgentFlags {
         spawned: false,
         parent_identity_override: None,
         session_key_override: None,
+        cwd_override: None,
     }
 }
 
@@ -45,12 +45,11 @@ fn resolve_agent_model_falls_back_to_config_default() {
 }
 
 #[test]
-fn build_tool_registry_warns_when_sandbox_disabled_and_uses_empty_session_for_no_session() {
+fn build_tool_registry_uses_empty_session_for_no_session() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = Config::default();
     let http = reqwest::Client::new();
     let mut flags = flags();
-    flags.no_sandbox = true;
     flags.no_session = true;
     let mut stderr = String::new();
 
@@ -67,10 +66,7 @@ fn build_tool_registry_warns_when_sandbox_disabled_and_uses_empty_session_for_no
     })
     .unwrap();
 
-    assert!(
-        stderr.contains("--no-sandbox is active"),
-        "stderr: {stderr}"
-    );
+    assert!(stderr.is_empty(), "stderr: {stderr}");
     assert_eq!(built.session_key, "");
     assert_eq!(built.model, config.agents.defaults.model);
     assert!(built.notification_rx.is_some());

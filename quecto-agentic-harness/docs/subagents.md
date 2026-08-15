@@ -159,7 +159,7 @@ and continue when the note arrives; do not invent a same-turn wait.
 
 ### Safety for delegated work
 
-- Children inherit the parent's sandbox posture, credentials, and tools. Do not
+- Children inherit the parent's credentials and tool policy. Do not
   broaden a child's practical authority beyond the user's intent.
 - `read_only: true` disables and hides the `write` and `edit` tools from the
   child's model-visible tool definitions but is **not a hard sandbox** because
@@ -178,7 +178,6 @@ process in UDS mode (`--mode uds --persist`). The child process:
 
 - Uses the same quecto binary (`std::env::current_exe()`)
 - Inherits the parent's `QUECTO_BASE_DIR` (config, credentials, sessions)
-- Inherits the parent's sandbox posture (`--no-sandbox`)
 - Gets its own hidden session identity minted per spawn; `agent_id` remains the display label used by parent tools for live subagents
 - Listens on a Unix domain socket for commands
 - Runs in the background — the parent is **not blocked**
@@ -277,9 +276,8 @@ but not mutate the repo:
 **Caveat — this is not a hard sandbox.** Disabling `write`/`edit` stops those
 tools from appearing in model-visible definitions and from executing, but a child can still mutate via `bash` (e.g. `sed`, `>` redirects). Reviewers keep `bash`/`read`/`grep`/`find`/`agent_cmd` precisely so
 they can fetch a diff and post comments; treat `read_only` as a guard against
-accidental writes, not an isolation boundary. For stronger guarantees use a
-workspace/sandbox posture. For a top-level agent, the CLI equivalent is
-`--disable-tool` (repeatable; see the README).
+accidental writes, not an isolation boundary. For stronger guarantees use container/OS isolation. For a top-level agent,
+the CLI equivalent for hiding tools is `--disable-tool` (repeatable; see the README).
 
 **Example:**
 
@@ -542,18 +540,6 @@ Agent IDs must contain only alphanumeric characters, hyphens, and underscores
 
 The same validation is applied in both `spawn` and `agent_cmd`.
 
-## Sandbox inheritance
-
-The child inherits the parent's security posture:
-
-| Parent flag | Child behavior |
-|------------|---------------|
-| `--no-sandbox` active | Child gets `--no-sandbox` (unrestricted file access) |
-| `--no-sandbox` not set | Child uses default workspace restriction from config |
-
-This ensures consistent security boundaries across the agent hierarchy. A
-child agent cannot escalate its own privileges beyond what the parent has.
-
 ## Agent ID allowlists
 
 The spawn tool supports an allowlist of permitted agent IDs. When configured:
@@ -697,7 +683,7 @@ Parent Agent Process
    are visible to the child.
 
 6. **Grandchildren**: A child agent can itself call `spawn`, creating a tree
-   of processes. Each level inherits the same sandbox/network posture.
+   of processes. Each level inherits the same runtime environment and tool policy posture.
 
 ## Practical patterns
 

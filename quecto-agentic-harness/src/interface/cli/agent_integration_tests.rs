@@ -58,7 +58,6 @@ fn test_flags(msg: Option<&str>, session: Option<&str>, sys: Option<&str>) -> Ag
         max_iterations: None,
         max_time: None,
         uds_mode: false,
-        no_sandbox: false,
         socket_path: None,
         persist: false,
         disabled_tools: vec![],
@@ -72,6 +71,7 @@ fn test_flags(msg: Option<&str>, session: Option<&str>, sys: Option<&str>) -> Ag
         spawned: false,
         parent_identity_override: None,
         session_key_override: None,
+        cwd_override: None,
     }
 }
 

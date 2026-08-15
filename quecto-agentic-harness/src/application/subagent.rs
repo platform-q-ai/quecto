@@ -1,4 +1,4 @@
-// Subagent application logic: context construction and workspace inheritance.
+// Subagent application logic: context construction and legacy config propagation.
 
 use crate::domain::message::Message;
 pub use crate::domain::subagent::{SubagentConfig, validate_agent_id};
@@ -11,7 +11,7 @@ pub struct SubagentContext {
     pub task: String,
     /// Conversation history (starts empty — independent from parent).
     pub messages: Vec<Message>,
-    /// Whether workspace restriction is inherited from parent.
+    /// Legacy compatibility flag propagated from the parent; it no longer enables agent filesystem confinement.
     pub restrict_to_workspace: bool,
 }
 

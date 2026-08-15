@@ -144,7 +144,6 @@ fn forwards_existing_flags_alongside_model() {
         "--workflow",
         "--workflow-guards",
         "--workflow-spec",
-        "--no-sandbox",
         "--spawned",
     ] {
         assert!(

@@ -1,12 +1,12 @@
 @done
-Feature: Sandbox Hardening
+Feature: Command Policy Hardening
   As a system administrator
-  I want the security sandbox to prevent sophisticated attack vectors
-  So that even a compromised agent cannot escape its confinement
+  I want command allowlists and denylists to prevent bypasses
+  So that dangerous commands remain blocked
 
-  # --- Symlink escape prevention ---
+  # --- Legacy symlink path behavior ---
 
-  Scenario: Symlink pointing outside workspace is blocked
+  Scenario: Explicit restricted sandbox blocks symlink pointing outside workspace
     Given a sandboxed workspace at a temporary directory
     And restrict_to_workspace is true
     And a symlink "link.txt" in the workspace pointing to "/etc/passwd"
@@ -14,7 +14,7 @@ Feature: Sandbox Hardening
     Then the validation should be an error
     And the error should mention "outside working dir"
 
-  Scenario: Nested symlink chain escaping workspace is blocked
+  Scenario: Explicit restricted sandbox blocks nested symlink chain escaping workspace
     Given a sandboxed workspace at a temporary directory
     And restrict_to_workspace is true
     And a symlink "step1" in the workspace pointing to "/tmp"

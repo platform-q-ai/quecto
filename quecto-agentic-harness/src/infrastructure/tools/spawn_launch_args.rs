@@ -192,10 +192,7 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
         args.push(tool.into());
     }
 
-    // Propagate --no-sandbox so children inherit the parent's workspace posture.
-    if !restrict_to_workspace {
-        args.push("--no-sandbox".into());
-    }
+    let _ = restrict_to_workspace;
 
     args
 }

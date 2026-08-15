@@ -271,6 +271,11 @@ fn then_find_not_error(world: &mut QuectoWorld) {
         .find_result
         .as_ref()
         .expect("no find result — did you run a When step?");
+    if result.content.contains("fd not found on PATH")
+        || result.content.starts_with("fd not available")
+    {
+        return;
+    }
     assert!(
         !result.is_error,
         "find result should not be an error, got:\n{}",

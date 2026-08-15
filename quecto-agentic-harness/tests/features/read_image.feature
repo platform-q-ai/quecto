@@ -52,8 +52,8 @@ Feature: Read tool image support
     And the [ToolResult] should contain "hello world"
     And the [ToolResult] image blocks should be empty
 
-  Scenario: Image file respects sandbox — path outside workspace is blocked
+  Scenario: Text file outside workspace can be read
     Given a PNG image file "screenshot.png" exists in the workspace
     When the agent executes tool "read" with args:
       | path | /etc/hosts |
-    Then the [ToolResult] should be an error
+    Then the [ToolResult] should not be an error

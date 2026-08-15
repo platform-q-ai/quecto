@@ -46,7 +46,7 @@ Feature: Find Tool
     Then the find result should be an error
     And the find result should contain "fd"
 
-  Scenario: Search path outside workspace is blocked
+  Scenario: Explicit restricted find fixture blocks search path outside workspace
     When I find files matching "*.conf" outside workspace in path "/etc"
     Then the find result should be an error
 

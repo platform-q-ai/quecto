@@ -16,7 +16,6 @@ fn test_repl_flags_default() {
         session_name: None,
         system_prompt: None,
         model_override: None,
-        no_sandbox: false,
     };
     assert!(flags.session_name.is_none());
     assert!(flags.system_prompt.is_none());
@@ -29,7 +28,6 @@ fn test_repl_flags_with_values() {
         session_name: Some("mysession".to_string()),
         system_prompt: Some("You are helpful".to_string()),
         model_override: Some("gpt-5-mini".to_string()),
-        no_sandbox: false,
     };
     assert_eq!(flags.session_name.as_deref(), Some("mysession"));
     assert_eq!(flags.system_prompt.as_deref(), Some("You are helpful"));
@@ -92,7 +90,6 @@ fn test_build_system_prompt_no_user_prompt() {
         session_name: None,
         system_prompt: None,
         model_override: None,
-        no_sandbox: false,
     };
     let provider = make_stub_provider();
     let ctx = ReplContext {
@@ -101,6 +98,7 @@ fn test_build_system_prompt_no_user_prompt() {
         provider,
         config: &config,
         flags: &flags,
+        cwd_override: None,
         progress_callback: None,
     };
     let result = build_system_prompt(&ctx);
@@ -121,7 +119,6 @@ fn test_build_system_prompt_with_user_prompt() {
         session_name: None,
         system_prompt: Some("Be helpful".to_string()),
         model_override: None,
-        no_sandbox: false,
     };
     let provider = make_stub_provider();
     let ctx = ReplContext {
@@ -130,6 +127,7 @@ fn test_build_system_prompt_with_user_prompt() {
         provider,
         config: &config,
         flags: &flags,
+        cwd_override: None,
         progress_callback: None,
     };
     let result = build_system_prompt(&ctx);

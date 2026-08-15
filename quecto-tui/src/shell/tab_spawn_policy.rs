@@ -7,7 +7,6 @@ use super::cli::CliFlags;
 /// Parent TUI CLI policy inherited by secondary tab agent spawns.
 #[derive(Debug, Clone)]
 pub(crate) struct TabSpawnPolicy {
-    pub(crate) no_sandbox: bool,
     pub(crate) workflow: bool,
     pub(crate) workflow_guards: bool,
     pub(crate) workflow_disabled: bool,
@@ -22,7 +21,6 @@ pub(crate) struct TabSpawnPolicy {
 impl Default for TabSpawnPolicy {
     fn default() -> Self {
         Self {
-            no_sandbox: false,
             workflow: false,
             workflow_guards: false,
             workflow_disabled: false,
@@ -37,7 +35,6 @@ impl Default for TabSpawnPolicy {
 impl TabSpawnPolicy {
     pub(crate) fn from_flags(flags: &CliFlags) -> Self {
         Self {
-            no_sandbox: flags.no_sandbox,
             workflow: flags.workflow,
             workflow_guards: flags.workflow_guards,
             workflow_disabled: flags.workflow_disabled,
@@ -58,7 +55,6 @@ pub(crate) fn tab_spawn_flags_from_policy(
 ) -> CliFlags {
     CliFlags {
         socket_path: None,
-        no_sandbox: policy.no_sandbox,
         workflow: policy.workflow,
         workflow_guards: policy.workflow_guards,
         workflow_disabled: policy.workflow_disabled,

@@ -171,7 +171,7 @@ The `docs` tool is Quecto's operating manual (list with no name). Start here (`q
 
 ## Safety
 
-- Children inherit the parent's sandbox posture, credentials, and tools. Do not broaden a child's practical authority beyond the user's intent.
+- Children inherit the parent's credentials and tool policy. Do not broaden a child's practical authority beyond the user's intent.
 - `read_only: true` disables and hides the `write` and `edit` tools from the child's model-visible definitions but is not a hard sandbox because the child retains `bash`. Explicitly prohibit mutation and verify the workspace diff after read-only children finish before trusting that they made no changes.
 - Never print secrets. Have children use configured local tools without echoing credentials.
 - Avoid redundant agents, but use parallelism across genuinely distinct workstreams when it provides value.

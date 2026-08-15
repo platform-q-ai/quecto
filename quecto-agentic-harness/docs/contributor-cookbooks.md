@@ -66,7 +66,7 @@ Do not run live provider lanes unless the task explicitly requires them.
 **Common pitfalls:**
 
 - Do not let infrastructure tools import application/interface modules.
-- Do not bypass `Sandbox::validate_path` for filesystem access.
+- Keep filesystem access flowing through `Sandbox::validate_path` as the shared path hook.
 - Keep `bash`-like behaviour explicit: command execution is not a filesystem
   sandbox.
 
