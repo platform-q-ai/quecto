@@ -12,6 +12,10 @@
 //!   fake a live owner;
 //! - acquisition is a single atomic `try_lock`, so two concurrent claimants
 //!   can never both win (no read-remove-recreate reclaim window);
+//! - releasing unlocks explicitly instead of just closing the descriptor: the
+//!   lock belongs to the open file description, so a child forked anywhere in
+//!   this process holds a duplicate until it `exec`s, and closing alone would
+//!   leave a released key locked for that window;
 //! - the stamp file itself is never unlinked — unlinking would let a claimant
 //!   lock an orphaned inode while a third process recreates the path, ending
 //!   with two "owners". A left-over unlocked stamp is inert.
@@ -29,6 +33,59 @@ pub fn ownership_stamp_path(sessions_dir: &Path, key: &str) -> PathBuf {
         "{}.owner",
         super::filename::sanitize_session_key(key)
     ))
+}
+
+/// What to tell the user about a refused claim. The lock itself is the truth —
+/// reaching here means it is held. The stamp only hints at by whom, and can name
+/// a process that has since exited or a recycled pid, so the wording never
+/// presents it as more than a hint and never advises closing a process that is
+/// not running.
+fn describe_owner(owner: Option<u32>) -> String {
+    match owner {
+        Some(pid) if pid == std::process::id() => format!(
+            "this process already holds it (pid {pid}); \
+             release the existing claim before re-claiming"
+        ),
+        Some(pid) if pid_is_live(pid) => {
+            format!("process {pid} holds it — close that agent or pick another session")
+        }
+        Some(pid) => format!(
+            "it is held, but the stamp names pid {pid}, which is not running; \
+             another process claimed it without stamping yet"
+        ),
+        None => "it is held by an unidentified process".to_string(),
+    }
+}
+
+#[cfg(unix)]
+fn pid_is_live(pid: u32) -> bool {
+    // kill(0, ..) targets the caller's own process group rather than a process,
+    // so it would report pid 0 as live. A stamp can only hold a real pid.
+    if pid == 0 {
+        return false;
+    }
+    // SAFETY: kill with signal 0 only performs existence/permission checking.
+    let probe = unsafe { libc::kill(pid as i32, 0) };
+    let errno = (probe != 0)
+        .then(|| std::io::Error::last_os_error().raw_os_error())
+        .flatten();
+    kill_probe_means_live(probe, errno)
+}
+
+/// Whether a `kill(pid, 0)` probe says the process exists.
+///
+/// Split out so the EPERM case is testable without needing a process owned by
+/// another user: EPERM means the process is there but not ours to signal —
+/// live, and exactly what a shared sessions dir or a uid-mapped container hits.
+/// Only ESRCH (and anything else) means genuinely gone.
+#[cfg(unix)]
+fn kill_probe_means_live(probe: i32, errno: Option<i32>) -> bool {
+    probe == 0 || errno == Some(libc::EPERM)
+}
+
+#[cfg(not(unix))]
+fn pid_is_live(_pid: u32) -> bool {
+    true
 }
 
 /// Open (creating if needed, mode 0600) the stamp file for `key`.
@@ -84,13 +141,11 @@ impl SessionOwnershipGuard {
                 // Diagnostic only: the owner wrote its pid after locking.
                 let owner = std::fs::read_to_string(&stamp_path)
                     .ok()
-                    .and_then(|s| s.trim().parse::<u32>().ok())
-                    .map(|pid| pid.to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
+                    .and_then(|s| s.trim().parse::<u32>().ok());
+                let owner = describe_owner(owner);
                 return Err(DomainError::Session(format!(
-                    "session key '{key}' is owned by live process {owner} \
-                     (stamp {}): refusing a second writer — close the \
-                     owning agent or pick another session",
+                    "session key '{key}' is locked, refusing a second writer: \
+                     {owner} (stamp {})",
                     stamp_path.display()
                 )));
             }
@@ -120,6 +175,18 @@ impl SessionOwnershipGuard {
     /// The stamp file backing this claim.
     pub fn stamp_path(&self) -> &Path {
         &self.stamp_path
+    }
+}
+
+impl Drop for SessionOwnershipGuard {
+    #[expect(clippy::incompatible_msrv)]
+    fn drop(&mut self) {
+        // Release explicitly rather than relying on the descriptor closing. The
+        // lock belongs to the open file description, so a child forked anywhere
+        // in this process holds a duplicate until it reaches exec; closing only
+        // our copy would leave the key locked in the meantime, and a legitimate
+        // reclaim would be refused. Unlocking releases it for every duplicate.
+        let _ = self._lock_file.unlock();
     }
 }
 
