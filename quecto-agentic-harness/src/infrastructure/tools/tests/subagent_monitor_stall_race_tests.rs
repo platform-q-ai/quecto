@@ -436,3 +436,124 @@ async fn descendant_identity_session_key_forms_suppress_parent_stall() {
             .stalled_armed
     );
 }
+
+#[tokio::test]
+async fn retained_stall_retry_is_suppressed_when_direct_descendant_becomes_active() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    insert_entry(&registry, "child");
+    insert_entry(&registry, "other");
+    let (tx, mut rx) = retain_saturated_stall(&registry);
+    {
+        let mut guard = registry.lock().unwrap();
+        let child = guard.get_mut("child").unwrap();
+        child.parent_id = Some("worker".into());
+        child.status = SubagentStatus::Running;
+    }
+    rx.try_recv().expect("free channel capacity");
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "other",
+        &serde_json::json!({"type":"tool_execution_start","toolName":"read"}),
+    );
+    assert_no_stall_delivered(&mut rx).await;
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .get("worker")
+            .unwrap()
+            .pending_stall
+            .is_some()
+    );
+
+    {
+        let mut guard = registry.lock().unwrap();
+        guard.get_mut("child").unwrap().status = SubagentStatus::Idle;
+    }
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"workflow_idle","reason":"exhausted"}),
+    );
+    assert!(matches!(
+        rx.try_recv().unwrap().notification,
+        SubagentNotification::Stalled { .. }
+    ));
+}
+
+#[tokio::test]
+async fn retained_stall_retry_is_suppressed_when_transitive_descendant_becomes_active() {
+    let registry = new_registry();
+    for id in ["worker", "child", "grandchild", "other"] {
+        insert_entry(&registry, id);
+    }
+    let (tx, mut rx) = retain_saturated_stall(&registry);
+    {
+        let mut guard = registry.lock().unwrap();
+        guard.get_mut("child").unwrap().parent_id = Some("worker".into());
+        let grandchild = guard.get_mut("grandchild").unwrap();
+        grandchild.parent_id = Some("child".into());
+        grandchild.status = SubagentStatus::Running;
+    }
+    rx.try_recv().expect("free channel capacity");
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "other",
+        &serde_json::json!({"type":"tool_execution_start","toolName":"read"}),
+    );
+    assert_no_stall_delivered(&mut rx).await;
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .get("worker")
+            .unwrap()
+            .pending_stall
+            .is_some()
+    );
+
+    {
+        let mut guard = registry.lock().unwrap();
+        guard.get_mut("child").unwrap().status = SubagentStatus::Idle;
+        guard.get_mut("grandchild").unwrap().status = SubagentStatus::Idle;
+    }
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "worker",
+        &serde_json::json!({"type":"workflow_idle","reason":"exhausted"}),
+    );
+    assert!(matches!(
+        rx.try_recv().unwrap().notification,
+        SubagentNotification::Stalled { .. }
+    ));
+}
+
+#[tokio::test]
+async fn unrelated_activity_does_not_suppress_retained_genuine_stall_retry() {
+    let registry = new_registry();
+    insert_entry(&registry, "worker");
+    insert_entry(&registry, "unrelated");
+    let (tx, mut rx) = retain_saturated_stall(&registry);
+    registry
+        .lock()
+        .unwrap()
+        .get_mut("unrelated")
+        .unwrap()
+        .status = SubagentStatus::Running;
+    rx.try_recv().expect("free channel capacity");
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "unrelated",
+        &serde_json::json!({"type":"tool_execution_start","toolName":"read"}),
+    );
+    assert!(matches!(
+        rx.try_recv().unwrap().notification,
+        SubagentNotification::Stalled { .. }
+    ));
+}

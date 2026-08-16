@@ -1,6 +1,6 @@
 use super::subagent_registry::{
     NotificationTx, SequencedSubagentNotification, SubagentRegistry, WorkflowSnapshot,
-    effective_status,
+    effective_status, has_active_descendant_for_agent_locked,
 };
 
 /// Send a stall alert, retaining it as a retryable pending stall on the
@@ -70,15 +70,29 @@ fn claim_pending_stall(
     expected: &SequencedSubagentNotification,
 ) -> bool {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    {
+        let Some(entry) = entries.get(agent_id) else {
+            return false;
+        };
+        if entry.pending_stall.as_ref() != Some(expected) || entry.run_error.is_some() {
+            return false;
+        }
+        let Some(workflow) = entry.workflow.as_ref() else {
+            return false;
+        };
+        if entry.stalled_armed || !matches!(workflow.mode.as_str(), "active" | "selecting_template")
+        {
+            return false;
+        }
+        if has_active_descendant_for_agent_locked(&entries, agent_id) {
+            return false;
+        }
+    }
     let Some(entry) = entries.get_mut(agent_id) else {
         return false;
     };
-    if entry.pending_stall.as_ref() == Some(expected) {
-        entry.pending_stall = None;
-        true
-    } else {
-        false
-    }
+    entry.pending_stall = None;
+    true
 }
 
 /// Retry every retained stall alert, whichever agent it belongs to. The
