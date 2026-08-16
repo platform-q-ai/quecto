@@ -550,7 +550,7 @@ fn cmd_repl_with_progress<R: std::io::BufRead, W: std::io::Write>(
 fn is_repl_leading_flag(arg: &str) -> bool {
     matches!(
         arg,
-        "--no-sandbox" | "-s" | "--session" | "--system" | "--model" | "--config"
+        "-s" | "--session" | "--system" | "--model" | "--config"
     )
 }
 
@@ -598,10 +598,6 @@ fn parse_repl_flags(args: &[String]) -> Result<ReplFlags, String> {
                     return Err("--config requires a path".to_string());
                 }
                 i += 2;
-            }
-            "--no-sandbox" => {
-                // Deprecated compatibility no-op; sandbox mode has been removed.
-                i += 1;
             }
             other if other.starts_with("--") || other.starts_with('-') => {
                 return Err(format!("unknown flag '{other}'"));

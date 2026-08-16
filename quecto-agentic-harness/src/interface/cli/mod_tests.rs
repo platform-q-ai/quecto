@@ -217,10 +217,13 @@ fn test_parse_repl_flags_model_missing_value() {
 }
 
 #[test]
-fn test_parse_repl_flags_no_sandbox_is_deprecated_noop() {
+fn test_parse_repl_flags_no_sandbox_is_rejected() {
     let args: Vec<String> = vec!["--no-sandbox".into(), "--model".into(), "gpt-4o".into()];
-    let flags = parse_repl_flags(&args).unwrap();
-    assert_eq!(flags.model_override.as_deref(), Some("gpt-4o"));
+    let result = parse_repl_flags(&args);
+    match result {
+        Err(msg) => assert!(msg.contains("unknown flag '--no-sandbox'"), "got: {msg}"),
+        Ok(_) => panic!("expected error"),
+    }
 }
 
 #[test]
@@ -358,24 +361,16 @@ fn test_run_with_output_empty_args() {
 }
 
 #[test]
-fn test_run_with_output_repl_leading_no_sandbox_enters_repl() {
+fn test_run_with_output_repl_leading_no_sandbox_is_rejected() {
     let tmp = tempfile::TempDir::new().unwrap();
-    std::fs::write(
-        tmp.path().join("config.json"),
-        r#"{"providers":{"openai":{"api_key":"sk-test"}},"agents":{"defaults":{"model":"openai/gpt-5.2"}}}"#,
-    )
-    .unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         ..Default::default()
     };
     let out = run_with_output(vec!["quecto".into(), "--no-sandbox".into()], &ctx);
-    assert_eq!(
-        out.exit_code, 0,
-        "stdout: {}, stderr: {}",
-        out.stdout, out.stderr
-    );
-    assert!(!out.stderr.contains("Unknown command"), "{}", out.stderr);
+    assert_ne!(out.exit_code, 0);
+    assert!(out.stderr.contains("Unknown command"), "{}", out.stderr);
+    assert!(out.stderr.contains("--no-sandbox"), "{}", out.stderr);
 }
 
 #[test]

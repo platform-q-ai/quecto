@@ -107,12 +107,10 @@ fn mode_missing_value_returns_none() {
 }
 
 #[test]
-fn legacy_no_sandbox_is_accepted_as_noop_warning() {
+fn removed_no_sandbox_is_rejected() {
     let mut e = String::new();
-    let f = parse_agent_flags(&argv(&["--no-sandbox", "-m", "hi"]), &mut e).unwrap();
-    assert_eq!(f.message.as_deref(), Some("hi"));
-    assert!(e.contains("--no-sandbox"), "stderr={e}");
-    assert!(e.contains("ignored"), "stderr={e}");
+    assert!(parse_agent_flags(&argv(&["--no-sandbox", "-m", "hi"]), &mut e).is_none());
+    assert!(e.contains("unknown flag '--no-sandbox'"), "stderr={e}");
 }
 
 #[test]

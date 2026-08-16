@@ -141,12 +141,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                     Some(flag_private::parse_snapshot_path(args, i, stderr)?);
                 i += 2;
             }
-            "--no-sandbox" => {
-                stderr.push_str(
-                    "agent: WARNING: --no-sandbox is deprecated and ignored; filesystem sandbox mode has been removed\n",
-                );
-                i += 1;
-            }
             "--network" => {
                 stderr.push_str(
                     "agent: WARNING: --network is deprecated and ignored; network isolation flag has been removed\n",
