@@ -417,6 +417,9 @@ const MAX_WORKFLOW_NUDGES: usize = 128;
 #[cfg(test)]
 static BEFORE_WORKFLOW_NUDGE_INJECTION_TEST_HOOK: std::sync::Mutex<Option<Box<dyn Fn() + Send>>> =
     std::sync::Mutex::new(None);
+#[cfg(test)]
+static BEFORE_GUARDED_TURN_ADMISSION_TEST_HOOK: std::sync::Mutex<Option<Box<dyn Fn() + Send>>> =
+    std::sync::Mutex::new(None);
 
 #[cfg(test)]
 fn run_before_workflow_nudge_injection_test_hook() {
@@ -432,6 +435,22 @@ fn run_before_workflow_nudge_injection_test_hook() {
 #[cfg(test)]
 pub(super) fn set_before_workflow_nudge_injection_test_hook(hook: Box<dyn Fn() + Send>) {
     *BEFORE_WORKFLOW_NUDGE_INJECTION_TEST_HOOK.lock().unwrap() = Some(hook);
+}
+
+#[cfg(test)]
+fn run_before_guarded_turn_admission_test_hook() {
+    if let Some(hook) = BEFORE_GUARDED_TURN_ADMISSION_TEST_HOOK
+        .lock()
+        .unwrap()
+        .take()
+    {
+        hook();
+    }
+}
+
+#[cfg(test)]
+pub(super) fn set_before_guarded_turn_admission_test_hook(hook: Box<dyn Fn() + Send>) {
+    *BEFORE_GUARDED_TURN_ADMISSION_TEST_HOOK.lock().unwrap() = Some(hook);
 }
 
 pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
@@ -514,9 +533,10 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
         // the nudge wording.
         {
             let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828
-            run_drained_message(
+            run_drained_message_guarded(
                 ctx,
                 Message::user(nudge.into_message(no_progress_turns > 0)),
+                TurnAdmissionGuard::NoActiveWorkflowDescendant,
             )
             .await;
         }
@@ -603,7 +623,28 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
 /// Callers own the busy flag (#828); this helper does not touch it, because
 /// [`BusyGuard`](super::uds_multi::BusyGuard) is a plain set/clear flag and
 /// nesting one per message would clear it while an outer scope is still busy.
+#[derive(Clone, Copy)]
+enum TurnAdmissionGuard {
+    None,
+    NoActiveWorkflowDescendant,
+}
+
 async fn run_drained_message(ctx: &mut DispatchCtx<'_>, msg: Message) {
+    run_drained_message_guarded(ctx, msg, TurnAdmissionGuard::None).await;
+}
+
+async fn run_drained_message_guarded(
+    ctx: &mut DispatchCtx<'_>,
+    msg: Message,
+    guard: TurnAdmissionGuard,
+) {
+    #[cfg(test)]
+    run_before_guarded_turn_admission_test_hook();
+    if matches!(guard, TurnAdmissionGuard::NoActiveWorkflowDescendant)
+        && has_active_workflow_descendant(ctx)
+    {
+        return;
+    }
     let Some(rx) = arm_cancel(&ctx.cancel_handle) else {
         emit_pre_cancelled(ctx).await; // Stale abort (#483).
         return;

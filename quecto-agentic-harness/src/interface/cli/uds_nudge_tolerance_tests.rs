@@ -513,3 +513,35 @@ async fn selected_nudge_runs_when_unrelated_child_becomes_active_before_injectio
         "unrelated activity must not suppress workflow nudges"
     );
 }
+
+#[tokio::test]
+#[serial_test::serial(workflow_nudge_injection_hook)]
+async fn selected_nudge_is_cancelled_when_child_becomes_active_after_final_recheck_before_turn_admission()
+ {
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+
+    let mut env = Env::with_progress_script(vec![]);
+    let reg = new_registry();
+    env.inner.subagent_registry = Some(reg.clone());
+    super::set_before_guarded_turn_admission_test_hook(Box::new(move || {
+        let mut child = SubagentEntry::new("/tmp/post-recheck-child.sock".into(), 1);
+        child.status = SubagentStatus::Starting;
+        child.parent_id = Some("test".to_string());
+        reg.lock()
+            .unwrap()
+            .insert("post-recheck-child".to_string(), child);
+    }));
+
+    {
+        let mut ctx = env.ctx();
+        super::drain_pending_and_nudge(&mut ctx).await;
+    }
+
+    assert_eq!(
+        env.calls(),
+        0,
+        "descendant activity after the final snapshot recheck but before turn admission must cancel the nudge"
+    );
+}
