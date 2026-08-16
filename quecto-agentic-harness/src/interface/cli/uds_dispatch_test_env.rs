@@ -92,6 +92,8 @@ pub(super) struct DispatchTestEnv {
     /// context, mirroring the real dispatch loop's single owned receiver.
     pub(super) notification_rx:
         Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
+    pub(super) subagent_registry:
+        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 }
 
 impl DispatchTestEnv {
@@ -114,6 +116,7 @@ impl DispatchTestEnv {
             workflow,
             turn_control: std::sync::Arc::default(),
             notification_rx: None,
+            subagent_registry: None,
         }
     }
 
@@ -167,7 +170,7 @@ impl DispatchTestEnv {
             client_tool_registry: crate::interface::cli::uds_ext_protocol::new_client_tool_registry(
             ),
             current_client_id: 0,
-            subagent_registry: None,
+            subagent_registry: self.subagent_registry.clone(),
             notification_rx: self.notification_rx.take(),
             workflow_state: Some(self.workflow.clone()),
             workflow_config: Some(WorkflowConfig::default()),

@@ -14,7 +14,9 @@ use super::uds_session::{
 };
 #[cfg(test)]
 use super::uds_socket::bind_secure_socket;
-use super::uds_workflow_nudge::{workflow_nudge_message, workflow_progress_fingerprint};
+use super::uds_workflow_nudge::{
+    has_active_workflow_descendant, workflow_nudge_message, workflow_progress_fingerprint,
+};
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::message::Message;
 #[cfg(test)]
@@ -412,6 +414,26 @@ fn arm_prompt_cancel(
 const MAX_WORKFLOW_NUDGES: usize = 128;
 
 /// Drain pending messages, then inject core workflow nudges while progress is advancing (#562).
+#[cfg(test)]
+static BEFORE_WORKFLOW_NUDGE_INJECTION_TEST_HOOK: std::sync::Mutex<Option<Box<dyn Fn() + Send>>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+fn run_before_workflow_nudge_injection_test_hook() {
+    if let Some(hook) = BEFORE_WORKFLOW_NUDGE_INJECTION_TEST_HOOK
+        .lock()
+        .unwrap()
+        .take()
+    {
+        hook();
+    }
+}
+
+#[cfg(test)]
+pub(super) fn set_before_workflow_nudge_injection_test_hook(hook: Box<dyn Fn() + Send>) {
+    *BEFORE_WORKFLOW_NUDGE_INJECTION_TEST_HOOK.lock().unwrap() = Some(hook);
+}
+
 pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
     // #895: abort = full stop. A pending abort (set by the reader before this
     // command's handler runs) suppresses workflow auto-continue and discards
@@ -470,6 +492,15 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
             break;
         };
         let auto_continue = nudge.is_auto_continue();
+        // The nudge-selection descendant check is only a snapshot. Re-check the
+        // same harness-level identity/descendant predicate immediately before
+        // injection so a child that becomes starting/running between selection
+        // and model execution cancels this auto turn instead of racing it.
+        #[cfg(test)]
+        run_before_workflow_nudge_injection_test_hook();
+        if has_active_workflow_descendant(ctx) {
+            break;
+        }
         // A stalled previous nudged turn switches the auto-continue path to
         // its corrective wording: literal instruction-following models (e.g.
         // GPT-5.6) reply to the standard nudge with a bare status message and
