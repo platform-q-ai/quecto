@@ -36,6 +36,7 @@ fn take_stalled_snapshot_consumes_latch_and_honors_terminal_guards() {
         steps_total: 3,
     });
     entry.stalled_armed = true;
+    entry.status = crate::infrastructure::tools::subagent_registry::SubagentStatus::Idle;
     registry.lock().unwrap().insert("bot".into(), entry);
 
     let snap = take_stalled_snapshot(&registry, "bot").unwrap();
@@ -67,6 +68,13 @@ fn completion_armed_is_one_shot() {
 async fn retry_pending_stalls_claims_and_resends_retained_alerts() {
     let registry = new_registry();
     let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 1);
+    entry.workflow = Some(WorkflowSnapshot {
+        mode: "active".into(),
+        steps_completed: 1,
+        steps_total: 2,
+    });
+    entry.stalled_armed = false;
+    entry.status = crate::infrastructure::tools::subagent_registry::SubagentStatus::Idle;
     entry.pending_stall = Some(note(7));
     registry.lock().unwrap().insert("bot".into(), entry);
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
@@ -85,6 +93,7 @@ async fn classify_workflow_idle_only_sends_exhausted_stalls() {
         steps_total: 0,
     });
     entry.stalled_armed = true;
+    entry.status = crate::infrastructure::tools::subagent_registry::SubagentStatus::Idle;
     registry.lock().unwrap().insert("bot".into(), entry);
     let (tx, mut rx) = tokio::sync::mpsc::channel(2);
     classify_workflow_idle_stall(
@@ -133,6 +142,12 @@ async fn stall_delivery_retains_on_full_channel_and_retry_no_tx_is_noop() {
 fn claim_pending_stall_rejects_mismatch_and_missing_agent() {
     let registry = new_registry();
     let mut entry = SubagentEntry::new("/tmp/bot.sock".into(), 1);
+    entry.workflow = Some(WorkflowSnapshot {
+        mode: "active".into(),
+        steps_completed: 1,
+        steps_total: 2,
+    });
+    entry.stalled_armed = false;
     entry.pending_stall = Some(note(7));
     registry.lock().unwrap().insert("bot".into(), entry);
 
@@ -160,6 +175,7 @@ fn stall_helpers_recover_from_poisoned_registry_lock() {
         steps_total: 2,
     });
     entry.stalled_armed = true;
+    entry.status = crate::infrastructure::tools::subagent_registry::SubagentStatus::Idle;
     entry.pending_stall = Some(note(9));
     registry.lock().unwrap().insert("bot".into(), entry);
     poison_registry(&registry);
@@ -238,4 +254,39 @@ fn take_stalled_snapshot_none_for_missing_no_workflow_complete_and_unknown_modes
         registry.lock().unwrap().insert(mode.into(), entry);
         assert!(take_stalled_snapshot(&registry, mode).is_none(), "{mode}");
     }
+}
+
+#[test]
+fn claim_pending_stall_with_active_descendant_returns_without_lock_reentry_deadlock() {
+    let registry = new_registry();
+    let mut parent = SubagentEntry::new("/tmp/parent.sock".into(), 1);
+    parent.workflow = Some(WorkflowSnapshot {
+        mode: "active".into(),
+        steps_completed: 1,
+        steps_total: 2,
+    });
+    parent.stalled_armed = false;
+    parent.status = crate::infrastructure::tools::subagent_registry::SubagentStatus::Idle;
+    parent.pending_stall = Some(note(7));
+    let mut child = SubagentEntry::new("/tmp/child.sock".into(), 2);
+    child.parent_id = Some("bot".into());
+    child.status = crate::infrastructure::tools::subagent_registry::SubagentStatus::Running;
+    {
+        let mut guard = registry.lock().unwrap();
+        guard.insert("bot".into(), parent);
+        guard.insert("child".into(), child);
+    }
+
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let cloned = registry.clone();
+    std::thread::spawn(move || {
+        done_tx
+            .send(claim_pending_stall(&cloned, "bot", &note(7)))
+            .unwrap();
+    });
+    let claimed = done_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("claim_pending_stall must not deadlock while checking descendants");
+    assert!(!claimed, "active descendants suppress retained stale stall");
+    assert!(registry.lock().unwrap()["bot"].pending_stall.is_some());
 }

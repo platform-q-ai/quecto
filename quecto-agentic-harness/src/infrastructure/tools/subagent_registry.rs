@@ -1,11 +1,10 @@
+use crate::domain::ids::AgentUuid;
+use crate::domain::session::SubagentLiveness;
+use crate::domain::subagent::{DisplayNameResolutionEntry, resolve_live_display_name};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-
-use crate::domain::ids::AgentUuid;
-use crate::domain::session::SubagentLiveness;
-use crate::domain::subagent::{DisplayNameResolutionEntry, resolve_live_display_name};
 
 use super::process_tree::ProcessOwner;
 #[cfg(test)]
@@ -211,9 +210,7 @@ pub type SubagentRegistry = Arc<Mutex<HashMap<String, SubagentEntry>>>;
 pub fn new_registry() -> SubagentRegistry {
     Arc::new(Mutex::new(HashMap::new()))
 }
-
-/// Effective harness-level status: an agent's own active status wins; otherwise
-/// active direct or transitive descendants make the ancestor effectively running.
+/// Effective status: own activity wins; otherwise active descendants make it running.
 pub fn effective_status(
     entries: &HashMap<String, SubagentEntry>,
     agent_id: &str,
@@ -234,17 +231,24 @@ pub fn has_active_descendant_for_agent(
 ) -> bool {
     let Some(reg) = registry else { return false };
     let guard = reg.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(entry) = guard.get(agent_id) else {
-        return guard.iter().any(|(candidate_id, candidate)| {
+    has_active_descendant_for_agent_locked(&guard, agent_id)
+}
+/// Check activity while the caller holds the registry lock, allowing workflow
+/// turn admission and child registration to share one critical section.
+pub fn has_active_descendant_for_agent_locked(
+    entries: &HashMap<String, SubagentEntry>,
+    agent_id: &str,
+) -> bool {
+    let Some(entry) = entries.get(agent_id) else {
+        return entries.iter().any(|(candidate_id, candidate)| {
             candidate.parent_id.as_deref() == Some(agent_id)
-                && effective_status(&guard, candidate_id)
+                && effective_status(entries, candidate_id)
                     .unwrap_or_else(|| candidate.status.clone())
                     .is_active()
         });
     };
-    has_active_descendant(&guard, agent_id, entry)
+    has_active_descendant(entries, agent_id, entry)
 }
-
 fn has_active_descendant(
     entries: &HashMap<String, SubagentEntry>,
     agent_id: &str,

@@ -1,5 +1,6 @@
 use super::subagent_registry::{
     NotificationTx, SequencedSubagentNotification, SubagentRegistry, WorkflowSnapshot,
+    effective_status, has_active_descendant_for_agent_locked,
 };
 
 /// Send a stall alert, retaining it as a retryable pending stall on the
@@ -69,15 +70,24 @@ fn claim_pending_stall(
     expected: &SequencedSubagentNotification,
 ) -> bool {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(entry) = entries.get_mut(agent_id) else {
-        return false;
+    let should_claim = {
+        let Some(entry) = entries.get(agent_id) else {
+            return false;
+        };
+        entry.pending_stall.as_ref() == Some(expected)
+            && entry.run_error.is_none()
+            && entry.workflow.as_ref().is_some_and(|workflow| {
+                matches!(workflow.mode.as_str(), "active" | "selecting_template")
+            })
+            && !entry.stalled_armed
+            && !has_active_descendant_for_agent_locked(&entries, agent_id)
     };
-    if entry.pending_stall.as_ref() == Some(expected) {
-        entry.pending_stall = None;
-        true
-    } else {
-        false
+    if !should_claim {
+        return false;
     }
+    entries
+        .get_mut(agent_id)
+        .is_some_and(|entry| entry.pending_stall.take().is_some())
 }
 
 /// Retry every retained stall alert, whichever agent it belongs to. The
@@ -112,20 +122,30 @@ pub(super) fn take_stalled_snapshot(
     agent_id: &str,
 ) -> Option<WorkflowSnapshot> {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    {
+        let entry = entries.get(agent_id)?;
+        // #1082 review: a run that terminated with a run-level error has already
+        // produced (or will produce) an `Errored` outcome — classifying it as a
+        // stall too would deliver contradictory lifecycle verdicts for the same
+        // run. `run_error` is cleared on the next `agent_start`, which re-arms
+        // stall classification for the new run.
+        if entry.run_error.is_some() {
+            return None;
+        }
+        let workflow = entry.workflow.as_ref()?;
+        if !entry.stalled_armed
+            || !matches!(workflow.mode.as_str(), "active" | "selecting_template")
+        {
+            return None;
+        }
+        let own_status = entry.status.clone();
+        let effective = effective_status(&entries, agent_id)?;
+        if effective.is_active() || (!own_status.is_active() && effective != own_status) {
+            return None;
+        }
+    }
     let entry = entries.get_mut(agent_id)?;
-    // #1082 review: a run that terminated with a run-level error has already
-    // produced (or will produce) an `Errored` outcome — classifying it as a
-    // stall too would deliver contradictory lifecycle verdicts for the same
-    // run. `run_error` is cleared on the next `agent_start`, which re-arms
-    // stall classification for the new run.
-    if entry.run_error.is_some() {
-        return None;
-    }
-    let workflow = entry.workflow.as_ref()?;
-    if !entry.stalled_armed || !matches!(workflow.mode.as_str(), "active" | "selecting_template") {
-        return None;
-    }
-    let snapshot = workflow.clone();
+    let snapshot = entry.workflow.as_ref()?.clone();
     entry.stalled_armed = false;
     Some(snapshot)
 }
