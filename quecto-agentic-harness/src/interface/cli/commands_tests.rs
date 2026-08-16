@@ -51,6 +51,55 @@ fn test_status_shows_summary() {
 }
 
 #[test]
+fn test_status_respects_global_config_flag() {
+    let base = tempfile::TempDir::new().unwrap();
+    let custom_dir = tempfile::TempDir::new().unwrap();
+    let custom_config = custom_dir.path().join("custom.json");
+    std::fs::write(
+        &custom_config,
+        r#"{"agents":{"defaults":{"model":"custom/status-model"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        base.path().join("config.json"),
+        r#"{"agents":{"defaults":{"model":"base/status-model"}}}"#,
+    )
+    .unwrap();
+    let ctx = CliContext {
+        base_dir: Some(base.path().to_path_buf()),
+        ..Default::default()
+    };
+
+    let out = run_with_output(
+        vec![
+            "quecto".into(),
+            "--config".into(),
+            custom_config.display().to_string(),
+            "status".into(),
+        ],
+        &ctx,
+    );
+
+    assert_eq!(out.exit_code, 0, "stderr: {}", out.stderr);
+    assert!(
+        out.stdout
+            .contains(&format!("Config:    {}", custom_config.display())),
+        "stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("custom/status-model"),
+        "stdout: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("base/status-model"),
+        "stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn test_status_no_config_uses_defaults() {
     // Zero-config: status with no config file succeeds on defaults.
     let tmp = tempfile::TempDir::new().unwrap();

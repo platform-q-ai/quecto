@@ -2,15 +2,21 @@ use super::*;
 
 #[test]
 fn leading_config_dispatches_to_following_agent_subcommand() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let config_path = tmp.path().join("config.json");
+    let base = tempfile::TempDir::new().unwrap();
+    let custom = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        base.path().join("config.json"),
+        r#"{"providers":{"openai":{"api_key":"sk-base"}}}"#,
+    )
+    .unwrap();
+    let config_path = custom.path().join("custom.json");
     std::fs::write(
         &config_path,
         r#"{"providers":{"openai":{"api_key":""}},"agents":{"defaults":{"model":"openai/gpt-5.2"}}}"#,
     )
     .unwrap();
     let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
+        base_dir: Some(base.path().to_path_buf()),
         ..Default::default()
     };
 

@@ -2,8 +2,7 @@ use super::CliContext;
 use crate::infrastructure::config::Config;
 
 pub(crate) fn cmd_status(ctx: &CliContext, stdout: &mut String, stderr: &mut String) -> i32 {
-    let base = ctx.base_dir();
-    let config_path = base.join("config.json");
+    let config_path = ctx.config_path();
 
     stdout.push_str("quecto Status\n");
     stdout.push_str(&format!("  Config:    {}\n", config_path.display()));
