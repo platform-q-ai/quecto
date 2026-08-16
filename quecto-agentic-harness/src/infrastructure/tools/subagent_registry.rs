@@ -228,10 +228,21 @@ pub fn effective_status(
     }
 }
 
-pub fn has_any_active_agent(registry: &Option<SubagentRegistry>) -> bool {
+pub fn has_active_descendant_for_agent(
+    registry: &Option<SubagentRegistry>,
+    agent_id: &str,
+) -> bool {
     let Some(reg) = registry else { return false };
     let guard = reg.lock().unwrap_or_else(|e| e.into_inner());
-    guard.values().any(|entry| entry.status.is_active())
+    let Some(entry) = guard.get(agent_id) else {
+        return guard.iter().any(|(candidate_id, candidate)| {
+            candidate.parent_id.as_deref() == Some(agent_id)
+                && effective_status(&guard, candidate_id)
+                    .unwrap_or_else(|| candidate.status.clone())
+                    .is_active()
+        });
+    };
+    has_active_descendant(&guard, agent_id, entry)
 }
 
 fn has_active_descendant(

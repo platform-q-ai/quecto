@@ -36,14 +36,24 @@ impl WorkflowNudge {
     }
 }
 
+fn current_agent_identity(session_key: &str) -> &str {
+    session_key.strip_prefix("cli:").unwrap_or_else(|| {
+        session_key
+            .rsplit_once(':')
+            .map_or(session_key, |(_, name)| name)
+    })
+}
+
 /// The next workflow nudge, if auto-continue or completion nudging is
 /// enabled and the engine still has something to say.
 pub(super) fn workflow_nudge_message(ctx: &DispatchCtx<'_>) -> Option<WorkflowNudge> {
     let (Some(ws), Some(_)) = (&ctx.workflow_state, &ctx.workflow_config) else {
         return None;
     };
-    if crate::infrastructure::tools::subagent_registry::has_any_active_agent(&ctx.subagent_registry)
-    {
+    if crate::infrastructure::tools::subagent_registry::has_active_descendant_for_agent(
+        &ctx.subagent_registry,
+        current_agent_identity(ctx.session_key),
+    ) {
         return None;
     }
     let Ok(engine) = ws.lock() else { return None };
