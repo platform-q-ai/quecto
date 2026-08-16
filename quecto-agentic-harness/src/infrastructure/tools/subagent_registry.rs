@@ -219,7 +219,9 @@ pub fn effective_status(
     agent_id: &str,
 ) -> Option<SubagentStatus> {
     let entry = entries.get(agent_id)?;
-    if entry.status.is_active() || has_active_descendant(entries, agent_id, entry) {
+    if entry.status.is_active() {
+        Some(entry.status.clone())
+    } else if has_active_descendant(entries, agent_id, entry) {
         Some(SubagentStatus::Running)
     } else {
         Some(entry.status.clone())
@@ -240,7 +242,7 @@ fn has_active_descendant(
     let mut visited = std::collections::HashSet::new();
     has_active_descendant_inner(
         entries,
-        descendant_parent_ids(agent_id, entry),
+        descendant_parent_ids(entries, agent_id, entry),
         &mut visited,
     )
 }
@@ -259,21 +261,40 @@ fn has_active_descendant_inner(
                 && (child.status.is_active()
                     || has_active_descendant_inner(
                         entries,
-                        descendant_parent_ids(child_id, child),
+                        descendant_parent_ids(entries, child_id, child),
                         visited,
                     ))
         })
     })
 }
 
-fn descendant_parent_ids(agent_id: &str, entry: &SubagentEntry) -> Vec<String> {
+fn descendant_parent_ids(
+    entries: &HashMap<String, SubagentEntry>,
+    agent_id: &str,
+    entry: &SubagentEntry,
+) -> Vec<String> {
     let mut ids = vec![agent_id.to_string(), entry.agent_uuid.to_string()];
-    if !entry.display_name.is_empty() {
+    if is_unambiguous_display_name(entries, agent_id, entry) {
         ids.push(entry.display_name.clone());
     }
     ids.sort();
     ids.dedup();
     ids
+}
+
+fn is_unambiguous_display_name(
+    entries: &HashMap<String, SubagentEntry>,
+    agent_id: &str,
+    entry: &SubagentEntry,
+) -> bool {
+    !entry.display_name.is_empty()
+        && entries
+            .iter()
+            .filter(|(other_id, other)| {
+                other_id.as_str() != agent_id && other.display_name == entry.display_name
+            })
+            .count()
+            == 0
 }
 
 /// Maximum wall-clock time to wait for a forwarded sub-agent UDS response on the

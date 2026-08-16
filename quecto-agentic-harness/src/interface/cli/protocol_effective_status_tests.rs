@@ -21,6 +21,66 @@ fn build_subagent_info_list_reports_idle_parent_with_running_direct_child_as_run
 }
 
 #[test]
+fn build_subagent_info_list_preserves_own_starting_status() {
+    use super::build_subagent_info_list;
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+    let reg = new_registry();
+    {
+        let mut guard = reg.lock().unwrap();
+        let mut entry = SubagentEntry::new("/tmp/starting.sock".into(), 1);
+        entry.status = SubagentStatus::Starting;
+        guard.insert("starting".to_string(), entry);
+    }
+    let list = build_subagent_info_list(&Some(reg));
+    let info = list
+        .iter()
+        .find(|info| info.agent_id == "starting")
+        .unwrap();
+    assert_eq!(info.status, "starting");
+}
+
+#[test]
+fn build_subagent_info_list_does_not_roll_up_ambiguous_display_name_parent_id() {
+    use super::build_subagent_info_list;
+    use crate::domain::ids::AgentUuid;
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+    let reg = new_registry();
+    {
+        let mut guard = reg.lock().unwrap();
+        let first_uuid = AgentUuid::mint();
+        let mut first = SubagentEntry::with_identity(
+            first_uuid.clone(),
+            "dup".to_string(),
+            "/tmp/first.sock".into(),
+            1,
+        );
+        first.status = SubagentStatus::Idle;
+        guard.insert(first_uuid.to_string(), first);
+        let second_uuid = AgentUuid::mint();
+        let mut second = SubagentEntry::with_identity(
+            second_uuid.clone(),
+            "dup".to_string(),
+            "/tmp/second.sock".into(),
+            2,
+        );
+        second.status = SubagentStatus::Idle;
+        guard.insert(second_uuid.to_string(), second);
+        let mut child = SubagentEntry::new("/tmp/child.sock".into(), 3);
+        child.status = SubagentStatus::Running;
+        child.parent_id = Some("dup".to_string());
+        guard.insert("child".to_string(), child);
+    }
+    let list = build_subagent_info_list(&Some(reg));
+    let duplicate_parents: Vec<_> = list.iter().filter(|info| info.agent_id == "dup").collect();
+    assert_eq!(duplicate_parents.len(), 2);
+    assert!(duplicate_parents.iter().all(|info| info.status == "idle"));
+}
+
+#[test]
 fn build_subagent_info_list_rolls_up_child_using_parent_display_name_when_parent_key_is_uuid() {
     use super::build_subagent_info_list;
     use crate::domain::ids::AgentUuid;
