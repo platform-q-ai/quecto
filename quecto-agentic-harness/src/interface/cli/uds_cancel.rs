@@ -328,11 +328,19 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             state.start_run();
         }
     }
-    sink.emit(&AgentEvent::AgentStart).await;
-    sink.emit(&AgentEvent::TurnStart).await;
-
+    // Commit the prompt synchronously before the first await. Workflow-nudge
+    // admission polls this future once while holding the subagent registry lock;
+    // this push is therefore the linearization point between an admitted nudge
+    // and concurrent child registration, independent of writer back-pressure.
     let prompt_id = message.id();
     messages.push(message);
+    // Bound guarded admission to the synchronous commit above. `yield_now()`
+    // guarantees the admission poll returns before event I/O, provider work, or
+    // tools can run while the subagent registry mutex is held.
+    tokio::task::yield_now().await;
+
+    sink.emit(&AgentEvent::AgentStart).await;
+    sink.emit(&AgentEvent::TurnStart).await;
     if let Some(state) = &execution_state {
         if let Ok(mut state) = state.lock() {
             let visible_count = user_visible_messages(messages, system_prompt).len();

@@ -23,6 +23,7 @@ use crate::domain::message::Message;
 use crate::domain::message::Role;
 use crate::domain::session::{Session, SessionStore};
 use crate::domain::workflow::WorkflowRunPersisted;
+use futures::FutureExt;
 type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
 >;
@@ -640,30 +641,59 @@ async fn run_drained_message_guarded(
 ) {
     #[cfg(test)]
     run_before_guarded_turn_admission_test_hook();
-    if matches!(guard, TurnAdmissionGuard::NoActiveWorkflowDescendant)
-        && has_active_workflow_descendant(ctx)
-    {
-        return;
-    }
     let Some(rx) = arm_cancel(&ctx.cancel_handle) else {
         emit_pre_cancelled(ctx).await; // Stale abort (#483).
         return;
     };
-    let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout, &ctx.wire_mode);
-    run_agent_message(PromptRun {
-        agent: ctx.agent,
-        messages: ctx.messages,
-        conversation_snapshot: Some(ctx.conversation_snapshot.clone()),
-        execution_state: Some(ctx.execution_state.clone()),
-        session: ctx.session,
-        sink: &mut sink,
-        message: msg,
-        system_prompt: ctx.system_prompt,
-        cancel_rx: rx,
-        notification_rx: &mut ctx.notification_rx,
-        subagent_registry: &ctx.subagent_registry,
-    })
-    .await;
+    {
+        let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout, &ctx.wire_mode);
+        let run = run_agent_message(PromptRun {
+            agent: ctx.agent,
+            messages: ctx.messages,
+            conversation_snapshot: Some(ctx.conversation_snapshot.clone()),
+            execution_state: Some(ctx.execution_state.clone()),
+            session: ctx.session,
+            sink: &mut sink,
+            message: msg,
+            system_prompt: ctx.system_prompt,
+            cancel_rx: rx,
+            notification_rx: &mut ctx.notification_rx,
+            subagent_registry: &ctx.subagent_registry,
+        });
+        tokio::pin!(run);
+
+        // Polling the future once admits the turn: all synchronous setup before its
+        // first await happens while the registry is locked, so child registration
+        // cannot slip between the final descendant check and turn start. The lock is
+        // released before awaiting the rest of the model/tool execution; a nudge may
+        // therefore spawn children normally without deadlocking the registry.
+        let admitted = if matches!(guard, TurnAdmissionGuard::NoActiveWorkflowDescendant) {
+            let identity =
+                crate::infrastructure::tools::subagent_identity::parent_identity_from_session_key(
+                    ctx.session_key.as_str(),
+                );
+            if let (Some(identity), Some(registry)) = (identity, &ctx.subagent_registry) {
+                let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+                if crate::infrastructure::tools::subagent_registry::has_active_descendant_for_agent_locked(
+                &entries, identity,
+            ) {
+                drop(entries);
+                disarm_cancel(&ctx.cancel_handle);
+                return;
+            }
+                let result = run.as_mut().now_or_never();
+                drop(entries);
+                result
+            } else {
+                run.as_mut().now_or_never()
+            }
+        } else {
+            run.as_mut().now_or_never()
+        };
+        if admitted.is_none() {
+            run.as_mut().await;
+        }
+    }
     disarm_cancel(&ctx.cancel_handle);
     // #1072: drained runs (steer follow-ups, workflow auto-continue,
     // coalesced sub-agent notes) can prune too. Their dirty latch is
