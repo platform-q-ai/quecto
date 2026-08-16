@@ -251,6 +251,37 @@ fn extract_config_flag(args: &[String]) -> Option<PathBuf> {
     None
 }
 
+fn strip_global_config_flag(args: &[String]) -> Vec<String> {
+    const VALUE_FLAGS: &[&str] = &[
+        "-m",
+        "--message",
+        "-s",
+        "--session",
+        "--system",
+        "--model",
+        "--max-iterations",
+        "--max-time",
+        "--mode",
+        "--socket",
+        "--disable-tool",
+    ];
+    let mut stripped = Vec::with_capacity(args.len());
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--config" && i + 1 < args.len() {
+            i += 2;
+        } else if VALUE_FLAGS.contains(&args[i].as_str()) && i + 1 < args.len() {
+            stripped.push(args[i].clone());
+            stripped.push(args[i + 1].clone());
+            i += 2;
+        } else {
+            stripped.push(args[i].clone());
+            i += 1;
+        }
+    }
+    stripped
+}
+
 /// Run the CLI with the given args, printing to real stdout/stderr.
 /// Returns the exit code.
 pub fn run(args: Vec<String>) -> i32 {
@@ -296,6 +327,7 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
     } else {
         ctx
     };
+    let args = strip_global_config_flag(&args);
     let mut stdout = String::new();
     let mut stderr = String::new();
 
@@ -677,6 +709,10 @@ fn help_text(out: &mut String) {
     out.push_str("  help        Show this help\n");
     out.push_str("  version     Show version information\n");
 }
+
+#[cfg(test)]
+#[path = "leading_config_dispatch_tests.rs"]
+mod leading_config_dispatch_tests;
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]
