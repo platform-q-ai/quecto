@@ -153,6 +153,34 @@ fn test_status_both_providers_configured() {
 }
 
 #[test]
+fn test_status_explicit_missing_config_fails() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let missing_config = tmp.path().join("missing.json");
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+
+    let out = run_with_output(
+        vec![
+            "quecto".into(),
+            "--config".into(),
+            missing_config.display().to_string(),
+            "status".into(),
+        ],
+        &ctx,
+    );
+
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stderr
+            .contains(&format!("config not found: {}", missing_config.display())),
+        "stderr: {}",
+        out.stderr
+    );
+}
+
+#[test]
 fn test_status_invalid_config_fails() {
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(tmp.path().join("config.json"), "{ not valid json ").unwrap();
