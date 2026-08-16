@@ -338,9 +338,11 @@ fn workflow_nudge_message_resumes_after_descendants_stop_being_active() {
         let mut guard = reg.lock().unwrap();
         let mut child = SubagentEntry::new("/tmp/child.sock".into(), 1);
         child.status = SubagentStatus::Error;
+        child.parent_id = Some("test".to_string());
         guard.insert("child".to_string(), child);
         let mut exited = SubagentEntry::new("/tmp/exited.sock".into(), 2);
         exited.status = SubagentStatus::Exited;
+        exited.parent_id = Some("child".to_string());
         guard.insert("exited".to_string(), exited);
     }
     let mut ctx = env.ctx();
