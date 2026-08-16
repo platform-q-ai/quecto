@@ -36,26 +36,25 @@ impl WorkflowNudge {
     }
 }
 
-fn current_agent_identity(session_key: &str) -> &str {
-    if session_key.starts_with(crate::domain::session::USER_CHAT_PREFIX) {
-        return session_key;
-    }
-    session_key.strip_prefix("cli:").unwrap_or_else(|| {
-        session_key
-            .rsplit_once(':')
-            .map_or(session_key, |(_, name)| name)
-    })
-}
-
 /// The next workflow nudge, if auto-continue or completion nudging is
 /// enabled and the engine still has something to say.
 pub(super) fn workflow_nudge_message(ctx: &DispatchCtx<'_>) -> Option<WorkflowNudge> {
     let (Some(ws), Some(_)) = (&ctx.workflow_state, &ctx.workflow_config) else {
         return None;
     };
+    let session_key = ctx.session_key.as_str();
+    let current_identity = if session_key.starts_with(crate::domain::session::USER_CHAT_PREFIX) {
+        session_key
+    } else {
+        session_key.strip_prefix("cli:").unwrap_or_else(|| {
+            session_key
+                .rsplit_once(':')
+                .map_or(session_key, |(_, name)| name)
+        })
+    };
     if crate::infrastructure::tools::subagent_registry::has_active_descendant_for_agent(
         &ctx.subagent_registry,
-        current_agent_identity(ctx.session_key),
+        current_identity,
     ) {
         return None;
     }

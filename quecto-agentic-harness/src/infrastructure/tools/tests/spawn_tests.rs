@@ -311,6 +311,61 @@ fn sample_config(task: Option<&str>) -> crate::domain::subagent::SubagentConfig 
     }
 }
 
+#[tokio::test]
+async fn spawned_parent_id_tracks_cli_session_name_changes() {
+    use crate::domain::tool::Tool;
+
+    let tool = SpawnTool::new(vec![], true).with_event_forwarding(None, Some("old".to_string()));
+    tool.set_session_key("cli:new-name".to_string());
+    let _ = tool
+        .execute(r#"{"task":"work","agent_id":"child-cli"}"#)
+        .await
+        .unwrap();
+    let registry = tool.registry().lock().unwrap();
+    let entry = registry
+        .values()
+        .find(|entry| entry.display_name == "child-cli")
+        .expect("spawned entry should exist");
+    assert_eq!(entry.parent_id.as_deref(), Some("new-name"));
+}
+
+#[tokio::test]
+async fn spawned_parent_id_tracks_colon_session_name_changes() {
+    use crate::domain::tool::Tool;
+
+    let tool = SpawnTool::new(vec![], true).with_event_forwarding(None, Some("old".to_string()));
+    tool.set_session_key("kind:new-name".to_string());
+    let _ = tool
+        .execute(r#"{"task":"work","agent_id":"child-colon"}"#)
+        .await
+        .unwrap();
+    let registry = tool.registry().lock().unwrap();
+    let entry = registry
+        .values()
+        .find(|entry| entry.display_name == "child-colon")
+        .expect("spawned entry should exist");
+    assert_eq!(entry.parent_id.as_deref(), Some("new-name"));
+}
+
+#[tokio::test]
+async fn spawned_parent_id_tracks_session_key_changes() {
+    use crate::domain::tool::Tool;
+
+    let tool =
+        SpawnTool::new(vec![], true).with_event_forwarding(None, Some("chat-old".to_string()));
+    tool.set_session_key("chat-new".to_string());
+    let _ = tool
+        .execute(r#"{"task":"work","agent_id":"child-after-new"}"#)
+        .await
+        .unwrap();
+    let registry = tool.registry().lock().unwrap();
+    let entry = registry
+        .values()
+        .find(|entry| entry.display_name == "child-after-new")
+        .expect("spawned entry should exist");
+    assert_eq!(entry.parent_id.as_deref(), Some("chat-new"));
+}
+
 #[test]
 fn initial_entry_taskless_is_idle() {
     // Shared builder used by production after socket ready (#1049).

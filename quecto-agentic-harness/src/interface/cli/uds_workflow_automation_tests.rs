@@ -149,6 +149,58 @@ fn workflow_nudge_message_scopes_generated_unnamed_sessions_independently() {
 }
 
 #[test]
+fn workflow_nudge_message_after_new_uses_new_generated_session_identity() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+    let mut env = DispatchTestEnv::with_selected_feature();
+    let reg = new_registry();
+    {
+        let mut guard = reg.lock().unwrap();
+        let mut child = SubagentEntry::new("/tmp/after-new-child.sock".into(), 8);
+        child.status = SubagentStatus::Running;
+        child.parent_id = Some("chat-after-new".to_string());
+        guard.insert("child-after-new".to_string(), child);
+    }
+    env.session_key = "chat-before-new".to_string();
+    let mut old_ctx = env.ctx();
+    old_ctx.subagent_registry = Some(reg.clone());
+    assert!(super::workflow_nudge_message(&old_ctx).is_some());
+    drop(old_ctx);
+
+    env.session_key = "chat-after-new".to_string();
+    let mut new_ctx = env.ctx();
+    new_ctx.subagent_registry = Some(reg);
+    assert!(super::workflow_nudge_message(&new_ctx).is_none());
+}
+
+#[test]
+fn workflow_nudge_message_after_resume_uses_resumed_session_identity() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+    let mut env = DispatchTestEnv::with_selected_feature();
+    let reg = new_registry();
+    {
+        let mut guard = reg.lock().unwrap();
+        let mut child = SubagentEntry::new("/tmp/after-resume-child.sock".into(), 9);
+        child.status = SubagentStatus::Running;
+        child.parent_id = Some("chat-resumed".to_string());
+        guard.insert("child-after-resume".to_string(), child);
+    }
+    env.session_key = "chat-before-resume".to_string();
+    let mut old_ctx = env.ctx();
+    old_ctx.subagent_registry = Some(reg.clone());
+    assert!(super::workflow_nudge_message(&old_ctx).is_some());
+    drop(old_ctx);
+
+    env.session_key = "chat-resumed".to_string();
+    let mut resumed_ctx = env.ctx();
+    resumed_ctx.subagent_registry = Some(reg);
+    assert!(super::workflow_nudge_message(&resumed_ctx).is_none());
+}
+
+#[test]
 fn workflow_nudge_message_is_suppressed_for_default_unnamed_parent_child() {
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
