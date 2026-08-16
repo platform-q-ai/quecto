@@ -217,6 +217,13 @@ fn test_parse_repl_flags_model_missing_value() {
 }
 
 #[test]
+fn test_parse_repl_flags_no_sandbox_is_deprecated_noop() {
+    let args: Vec<String> = vec!["--no-sandbox".into(), "--model".into(), "gpt-4o".into()];
+    let flags = parse_repl_flags(&args).unwrap();
+    assert_eq!(flags.model_override.as_deref(), Some("gpt-4o"));
+}
+
+#[test]
 fn test_parse_repl_flags_unknown_flag() {
     let args: Vec<String> = vec!["--foobar".into()];
     let result = parse_repl_flags(&args);

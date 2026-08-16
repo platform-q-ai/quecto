@@ -588,6 +588,10 @@ fn parse_repl_flags(args: &[String]) -> Result<ReplFlags, String> {
                 }
                 i += 2;
             }
+            "--no-sandbox" => {
+                // Deprecated compatibility no-op; sandbox mode has been removed.
+                i += 1;
+            }
             other if other.starts_with("--") || other.starts_with('-') => {
                 return Err(format!("unknown flag '{other}'"));
             }
