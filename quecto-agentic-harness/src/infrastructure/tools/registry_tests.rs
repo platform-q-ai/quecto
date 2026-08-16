@@ -333,6 +333,23 @@ impl Tool for DummyTestTool {
     }
 }
 
+#[test]
+fn legacy_extension_compatibility_methods_are_directly_covered() {
+    let mut reg = ToolRegistryImpl::new();
+    let tool: Arc<dyn Tool> = Arc::new(DummyTestTool::new("compat_tool"));
+
+    assert!(reg.register_extension(tool));
+    assert_eq!(reg.extension_names(), vec!["compat_tool".to_string()]);
+    assert!(reg.can_register_uds_extension_for_owner("other_tool", "owner-a"));
+    assert!(reg.disable_tool_by_spawn_restriction("compat_tool"));
+
+    let descriptor = reg.descriptor("compat_tool").expect("descriptor");
+    assert_eq!(descriptor.availability, ToolAvailability::Disabled);
+
+    reg.unregister_extension("compat_tool");
+    assert!(reg.extension_names().is_empty());
+}
+
 // --- #402: remove() method ---
 
 #[test]
