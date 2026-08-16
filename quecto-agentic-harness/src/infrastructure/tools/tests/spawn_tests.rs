@@ -312,6 +312,43 @@ fn sample_config(task: Option<&str>) -> crate::domain::subagent::SubagentConfig 
 }
 
 #[tokio::test]
+async fn spawned_parent_id_ignores_empty_session_key_refresh() {
+    use crate::domain::tool::Tool;
+
+    let tool = SpawnTool::new(vec![], true)
+        .with_event_forwarding(None, Some("existing-parent".to_string()));
+    tool.set_session_key(String::new());
+    let _ = tool
+        .execute(r#"{"task":"work","agent_id":"child-empty-refresh"}"#)
+        .await
+        .unwrap();
+    let registry = tool.registry().lock().unwrap();
+    let entry = registry
+        .values()
+        .find(|entry| entry.display_name == "child-empty-refresh")
+        .expect("spawned entry should exist");
+    assert_eq!(entry.parent_id.as_deref(), Some("existing-parent"));
+}
+
+#[tokio::test]
+async fn spawned_parent_id_tracks_raw_session_key_changes() {
+    use crate::domain::tool::Tool;
+
+    let tool = SpawnTool::new(vec![], true).with_event_forwarding(None, Some("old".to_string()));
+    tool.set_session_key("raw-session".to_string());
+    let _ = tool
+        .execute(r#"{"task":"work","agent_id":"child-raw"}"#)
+        .await
+        .unwrap();
+    let registry = tool.registry().lock().unwrap();
+    let entry = registry
+        .values()
+        .find(|entry| entry.display_name == "child-raw")
+        .expect("spawned entry should exist");
+    assert_eq!(entry.parent_id.as_deref(), Some("raw-session"));
+}
+
+#[tokio::test]
 async fn spawned_parent_id_tracks_cli_session_name_changes() {
     use crate::domain::tool::Tool;
 

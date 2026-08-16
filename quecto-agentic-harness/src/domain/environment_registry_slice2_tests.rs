@@ -110,6 +110,22 @@ fn stopped_environments_stay_listed_and_refs_are_never_reused() {
 }
 
 #[test]
+fn member_and_kill_operations_report_unknown_environment_refs() {
+    let reg = EnvironmentRegistry::new();
+
+    let add_err = reg.add_member("C404", "agent").unwrap_err();
+    assert!(matches!(add_err, EnvironmentLookupError::Unknown(ref env_ref) if env_ref == "C404"));
+
+    let remove_err = reg.remove_member("C404", "agent").unwrap_err();
+    assert!(
+        matches!(remove_err, EnvironmentLookupError::Unknown(ref env_ref) if env_ref == "C404")
+    );
+
+    let kill_err = reg.begin_kill("C404").unwrap_err();
+    assert!(matches!(kill_err, EnvironmentLookupError::Unknown(ref env_ref) if env_ref == "C404"));
+}
+
+#[test]
 fn members_are_recorded_in_join_order_without_duplicates() {
     let reg = EnvironmentRegistry::new();
     let env_ref = commit_env(&reg, None);

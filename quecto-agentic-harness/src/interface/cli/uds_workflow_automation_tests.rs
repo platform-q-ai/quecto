@@ -222,6 +222,48 @@ fn workflow_nudge_message_is_suppressed_for_default_unnamed_parent_child() {
 }
 
 #[test]
+fn workflow_nudge_message_scopes_non_cli_colon_session_to_suffix_identity() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+    let mut env = DispatchTestEnv::with_selected_feature();
+    let reg = new_registry();
+    {
+        let mut guard = reg.lock().unwrap();
+        let mut child = SubagentEntry::new("/tmp/non-cli-colon-child.sock".into(), 10);
+        child.status = SubagentStatus::Running;
+        child.parent_id = Some("resumed-name".to_string());
+        guard.insert("child-non-cli-colon".to_string(), child);
+    }
+    env.session_key = "uds:resumed-name".to_string();
+    let mut ctx = env.ctx();
+    ctx.subagent_registry = Some(reg);
+
+    assert!(super::workflow_nudge_message(&ctx).is_none());
+}
+
+#[test]
+fn workflow_nudge_message_scopes_raw_session_without_prefix() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+    let mut env = DispatchTestEnv::with_selected_feature();
+    let reg = new_registry();
+    {
+        let mut guard = reg.lock().unwrap();
+        let mut child = SubagentEntry::new("/tmp/raw-session-child.sock".into(), 11);
+        child.status = SubagentStatus::Running;
+        child.parent_id = Some("raw-session".to_string());
+        guard.insert("child-raw-session".to_string(), child);
+    }
+    env.session_key = "raw-session".to_string();
+    let mut ctx = env.ctx();
+    ctx.subagent_registry = Some(reg);
+
+    assert!(super::workflow_nudge_message(&ctx).is_none());
+}
+
+#[test]
 fn workflow_nudge_message_is_not_suppressed_by_unrelated_active_agent() {
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,

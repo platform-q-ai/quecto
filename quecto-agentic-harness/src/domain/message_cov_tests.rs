@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn message_constructors_cover_user_assistant_and_tool_roles() {
+    let user = Message::user("hello");
+    assert_eq!(user.role, Role::User);
+    assert_eq!(user.content, "hello");
+
+    let tool_call = ToolCall {
+        id: "call-1".to_string(),
+        name: "bash".to_string(),
+        arguments: "{}".to_string(),
+    };
+    let assistant = Message::assistant("using tool", vec![tool_call]);
+    assert_eq!(assistant.role, Role::Assistant);
+    assert_eq!(assistant.tool_calls.len(), 1);
+    assert_eq!(assistant.tool_calls[0].id, "call-1");
+
+    let tool = Message::tool("call-1".to_string(), "done".to_string());
+    assert_eq!(tool.role, Role::Tool);
+    assert_eq!(tool.tool_call_id.as_deref(), Some("call-1"));
+    assert_eq!(tool.content, "done");
+}
+
+#[test]
 fn cost_info_total_cost_usd_uses_total_micro_usd() {
     let cost = CostInfo {
         input_cost_micro_usd: 100_000,

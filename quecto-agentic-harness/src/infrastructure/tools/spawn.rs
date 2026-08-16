@@ -469,20 +469,11 @@ pub(super) async fn send_initial_prompt_to_socket(
 
 impl Tool for SpawnTool {
     fn set_session_key(&self, session_key: String) {
-        let parent_identity = if session_key.starts_with(crate::domain::session::USER_CHAT_PREFIX) {
-            session_key
-        } else {
-            session_key
-                .strip_prefix("cli:")
-                .unwrap_or_else(|| {
-                    session_key
-                        .rsplit_once(':')
-                        .map_or(session_key.as_str(), |(_, name)| name)
-                })
-                .to_string()
-        };
-        if !parent_identity.is_empty() {
-            *self.parent_id.lock().unwrap_or_else(|e| e.into_inner()) = Some(parent_identity);
+        if let Some(parent_identity) =
+            super::subagent_identity::parent_identity_from_session_key(&session_key)
+        {
+            *self.parent_id.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some(parent_identity.to_string());
         }
     }
 
