@@ -140,7 +140,7 @@ pub struct SpawnTool {
     pub(super) notify_tx: Option<NotificationTx>,
     pub(super) broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     /// child events (PRD Stage B).
-    pub(super) parent_id: Option<String>,
+    pub(super) parent_id: Arc<Mutex<Option<String>>>,
     pub(super) inherited_tool_policy: super::spawn_inherited_policy::InheritedToolPolicyState,
     /// Session-scoped script-managed environment registry (ADR-0021: built
     /// once at composition and injected).
@@ -166,7 +166,7 @@ impl SpawnTool {
             registry: Arc::new(Mutex::new(HashMap::new())),
             notify_tx: None,
             broadcast_tx: None,
-            parent_id: None,
+            parent_id: Arc::new(Mutex::new(None)),
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
             environment_registry: EnvironmentRegistry::new(),
             parent_config_path: None,
@@ -188,7 +188,7 @@ impl SpawnTool {
             registry: Arc::new(Mutex::new(HashMap::new())),
             notify_tx: None,
             broadcast_tx: None,
-            parent_id: None,
+            parent_id: Arc::new(Mutex::new(None)),
             inherited_tool_policy: super::spawn_inherited_policy::new_state(),
             environment_registry: EnvironmentRegistry::new(),
             parent_config_path: None,
@@ -249,7 +249,7 @@ impl SpawnTool {
         parent_id: Option<String>,
     ) -> Self {
         self.broadcast_tx = broadcast_tx;
-        self.parent_id = parent_id;
+        *self.parent_id.lock().unwrap_or_else(|e| e.into_inner()) = parent_id;
         self
     }
 
@@ -468,6 +468,15 @@ pub(super) async fn send_initial_prompt_to_socket(
 }
 
 impl Tool for SpawnTool {
+    fn set_session_key(&self, session_key: String) {
+        if let Some(parent_identity) =
+            super::subagent_identity::parent_identity_from_session_key(&session_key)
+        {
+            *self.parent_id.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some(parent_identity.to_string());
+        }
+    }
+
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "spawn".into(),
@@ -536,7 +545,11 @@ impl Tool for SpawnTool {
                             display_name: session_name.to_string(),
                             socket_path: child_socket_path(Path::new("/stub"), &agent_uuid),
                             pid: 0,
-                            parent_id: self.parent_id.clone(),
+                            parent_id: self
+                                .parent_id
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .clone(),
                             config: &config,
                             exit_signal_tx: None,
                             cleanup_environment_id: None,

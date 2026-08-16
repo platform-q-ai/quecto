@@ -415,6 +415,8 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
     };
     let ctx = CliContext::default();
     let mut stderr = String::new();
@@ -445,6 +447,8 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
     };
     flags.persist = true;
     stderr.clear();

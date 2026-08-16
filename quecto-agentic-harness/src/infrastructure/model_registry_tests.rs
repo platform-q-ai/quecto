@@ -535,6 +535,20 @@ fn max_tokens_for_returns_none_when_model_omits_max_tokens() {
 }
 
 #[test]
+fn model_record_qualified_id_and_registry_fallback_limits_are_covered() {
+    let registry = ModelRegistry::builtin();
+    let model = registry
+        .find("anthropic-api", "claude-sonnet-5")
+        .expect("builtin model");
+    assert_eq!(model.qualified_id(), "anthropic-api/claude-sonnet-5");
+
+    let tmp = tempfile::tempdir().unwrap();
+    let (cap, window) = ModelRegistry::model_limits_from_base_dir(tmp.path(), "not-qualified");
+    assert_eq!(cap, None);
+    assert_eq!(window, None);
+}
+
+#[test]
 fn model_limits_from_base_dir_reads_output_cap_from_models_json() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(

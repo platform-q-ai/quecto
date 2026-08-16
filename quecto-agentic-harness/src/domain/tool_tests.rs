@@ -151,6 +151,40 @@ fn tool_result_and_image_block_construct() {
 }
 
 #[test]
+fn tool_policy_mutation_constructors_cover_enable_disable_and_scope() {
+    let enable = ToolPolicyMutation::enable("spawn", "allow children");
+    assert_eq!(enable.name, "spawn");
+    assert_eq!(enable.availability, ToolAvailability::Enabled);
+    assert_eq!(enable.scope, ProfileAvailabilityScope::Both);
+    assert_eq!(enable.reason, "allow children");
+
+    let disable = ToolPolicyMutation::disable("spawn", "pause children");
+    assert_eq!(disable.availability, ToolAvailability::Disabled);
+    assert_eq!(disable.scope, ProfileAvailabilityScope::None);
+
+    let parent_only =
+        ToolPolicyMutation::set_scope("spawn", ProfileAvailabilityScope::Parent, "parent only");
+    assert_eq!(parent_only.availability, ToolAvailability::Enabled);
+    assert_eq!(parent_only.scope, ProfileAvailabilityScope::Parent);
+}
+
+#[test]
+fn tool_policy_request_constructors_cover_patch_and_replace() {
+    let mutation = ToolPolicyMutation::disable("spawn", "off");
+    let patch = ToolPolicyRequest::patch(vec![mutation.clone()]);
+    assert_eq!(patch.operation, ToolPolicyOperation::Patch);
+    assert_eq!(patch.mutations, vec![mutation.clone()]);
+    assert_eq!(patch.unlisted_scope, None);
+
+    let replace = ToolPolicyRequest::replace(vec![mutation], ProfileAvailabilityScope::Child);
+    assert_eq!(replace.operation, ToolPolicyOperation::Replace);
+    assert_eq!(
+        replace.unlisted_scope,
+        Some(ProfileAvailabilityScope::Child)
+    );
+}
+
+#[test]
 fn tool_policy_mutation_result_wire_uses_camel_case_fields_and_status() {
     // set_tool_policy ack and tool_policy_changed results serialize the domain
     // structs directly — field names and status must match protocol camelCase.

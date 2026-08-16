@@ -212,6 +212,102 @@ pub fn new_registry() -> SubagentRegistry {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
+/// Effective harness-level status: an agent's own active status wins; otherwise
+/// active direct or transitive descendants make the ancestor effectively running.
+pub fn effective_status(
+    entries: &HashMap<String, SubagentEntry>,
+    agent_id: &str,
+) -> Option<SubagentStatus> {
+    let entry = entries.get(agent_id)?;
+    if entry.status.is_active() {
+        Some(entry.status.clone())
+    } else if has_active_descendant(entries, agent_id, entry) {
+        Some(SubagentStatus::Running)
+    } else {
+        Some(entry.status.clone())
+    }
+}
+
+pub fn has_active_descendant_for_agent(
+    registry: &Option<SubagentRegistry>,
+    agent_id: &str,
+) -> bool {
+    let Some(reg) = registry else { return false };
+    let guard = reg.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(entry) = guard.get(agent_id) else {
+        return guard.iter().any(|(candidate_id, candidate)| {
+            candidate.parent_id.as_deref() == Some(agent_id)
+                && effective_status(&guard, candidate_id)
+                    .unwrap_or_else(|| candidate.status.clone())
+                    .is_active()
+        });
+    };
+    has_active_descendant(&guard, agent_id, entry)
+}
+
+fn has_active_descendant(
+    entries: &HashMap<String, SubagentEntry>,
+    agent_id: &str,
+    entry: &SubagentEntry,
+) -> bool {
+    let mut visited = std::collections::HashSet::new();
+    has_active_descendant_inner(
+        entries,
+        descendant_parent_ids(entries, agent_id, entry),
+        &mut visited,
+    )
+}
+
+fn has_active_descendant_inner(
+    entries: &HashMap<String, SubagentEntry>,
+    parent_ids: Vec<String>,
+    visited: &mut std::collections::HashSet<String>,
+) -> bool {
+    parent_ids.into_iter().any(|parent_id| {
+        if !visited.insert(parent_id.clone()) {
+            return false;
+        }
+        entries.iter().any(|(child_id, child)| {
+            child.parent_id.as_deref() == Some(parent_id.as_str())
+                && (child.status.is_active()
+                    || has_active_descendant_inner(
+                        entries,
+                        descendant_parent_ids(entries, child_id, child),
+                        visited,
+                    ))
+        })
+    })
+}
+
+fn descendant_parent_ids(
+    entries: &HashMap<String, SubagentEntry>,
+    agent_id: &str,
+    entry: &SubagentEntry,
+) -> Vec<String> {
+    let mut ids = vec![agent_id.to_string(), entry.agent_uuid.to_string()];
+    if is_unambiguous_display_name(entries, agent_id, entry) {
+        ids.push(entry.display_name.clone());
+    }
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+fn is_unambiguous_display_name(
+    entries: &HashMap<String, SubagentEntry>,
+    agent_id: &str,
+    entry: &SubagentEntry,
+) -> bool {
+    !entry.display_name.is_empty()
+        && entries
+            .iter()
+            .filter(|(other_id, other)| {
+                other_id.as_str() != agent_id && other.display_name == entry.display_name
+            })
+            .count()
+            == 0
+}
+
 /// Maximum wall-clock time to wait for a forwarded sub-agent UDS response on the
 /// `agent_cmd` path (a tool call that may legitimately wait on a long operation).
 const SUBAGENT_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);

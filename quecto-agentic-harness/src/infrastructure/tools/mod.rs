@@ -45,6 +45,7 @@ mod subagent_cleanup;
 #[cfg(test)]
 mod subagent_cleanup_tests;
 pub mod subagent_environment_wire;
+pub mod subagent_identity;
 mod subagent_lifecycle;
 pub mod subagent_monitor;
 mod subagent_monitor_canonical;

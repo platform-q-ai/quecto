@@ -144,7 +144,12 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 socket_path,
                 config,
                 effective_config: effective_config.as_deref(),
-                parent_id: self.tool.parent_id.as_deref(),
+                parent_id: self
+                    .tool
+                    .parent_id
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_deref(),
                 restrict_to_workspace: self.tool.restrict_to_workspace,
                 workflow_spec_path: workflow_spec_path.as_deref(),
                 inherited_tool_policy_path: inherited_tool_policy_path.as_deref(),
@@ -323,7 +328,12 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 display_name: identity.session_name.clone(),
                 socket_path: runtime.socket_path.clone(),
                 pid: runtime.pid,
-                parent_id: self.tool.parent_id.clone(),
+                parent_id: self
+                    .tool
+                    .parent_id
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone(),
                 config,
                 exit_signal_tx: Some(exit_tx.clone()),
                 cleanup_environment_id,
@@ -378,7 +388,11 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 self.tool.registry.clone(),
                 self.tool.notify_tx.clone(),
                 self.tool.broadcast_tx.clone(),
-                self.tool.parent_id.clone(),
+                self.tool
+                    .parent_id
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone(),
             );
             let proxy_bridge = prepared.proxy_bridge.take().map(|bridge| {
                 let (socket, handle) = bridge.into_parts();

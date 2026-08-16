@@ -43,6 +43,8 @@ fn test_build_agent_from_config_clamps_effective_max_tokens_to_registry_cap() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");

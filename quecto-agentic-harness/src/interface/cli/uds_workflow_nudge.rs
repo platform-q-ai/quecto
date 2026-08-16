@@ -42,6 +42,17 @@ pub(super) fn workflow_nudge_message(ctx: &DispatchCtx<'_>) -> Option<WorkflowNu
     let (Some(ws), Some(_)) = (&ctx.workflow_state, &ctx.workflow_config) else {
         return None;
     };
+    if crate::infrastructure::tools::subagent_identity::parent_identity_from_session_key(
+        ctx.session_key.as_str(),
+    )
+    .is_some_and(|current_identity| {
+        crate::infrastructure::tools::subagent_registry::has_active_descendant_for_agent(
+            &ctx.subagent_registry,
+            current_identity,
+        )
+    }) {
+        return None;
+    }
     let Ok(engine) = ws.lock() else { return None };
     // The engine owns all nudge policy (kept live by the UDS automation
     // control via `set_automation`): `auto_continue_nudge` gates active-step

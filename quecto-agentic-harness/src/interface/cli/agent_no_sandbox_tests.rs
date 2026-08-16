@@ -110,6 +110,8 @@ fn test_build_agent_no_sandbox_emits_warning() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
     };
 
     let mut stderr = String::new();
@@ -193,6 +195,8 @@ fn test_build_agent_with_sandbox_enabled_no_warning() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
     };
 
     let mut stderr = String::new();

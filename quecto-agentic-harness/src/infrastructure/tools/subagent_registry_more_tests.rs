@@ -120,6 +120,116 @@ fn effective_display_name_uses_display_only_for_uuid_keyed_entries() {
 }
 
 #[test]
+fn active_descendant_for_agent_covers_missing_parent_fallback_and_none_registry() {
+    assert!(!has_active_descendant_for_agent(&None, "parent"));
+
+    let reg = new_registry();
+    {
+        let mut entries = reg.lock().unwrap();
+        let mut child = SubagentEntry::new("/tmp/child.sock".into(), 1);
+        child.status = SubagentStatus::Idle;
+        child.parent_id = Some("parent".to_string());
+        entries.insert("child".to_string(), child);
+    }
+    assert!(!has_active_descendant_for_agent(
+        &Some(reg.clone()),
+        "parent"
+    ));
+
+    reg.lock().unwrap().get_mut("child").unwrap().status = SubagentStatus::Running;
+    assert!(has_active_descendant_for_agent(&Some(reg), "parent"));
+}
+
+#[test]
+fn validate_agent_id_format_covers_valid_length_and_character_errors() {
+    assert!(validate_agent_id_format("agent_1-ok").is_ok());
+    assert_eq!(
+        validate_agent_id_format("").unwrap_err(),
+        "agent_id must be 1-64 characters"
+    );
+    assert_eq!(
+        validate_agent_id_format(&"a".repeat(65)).unwrap_err(),
+        "agent_id must be 1-64 characters"
+    );
+    assert_eq!(
+        validate_agent_id_format("bad.name").unwrap_err(),
+        "agent_id must use only [a-zA-Z0-9_-]"
+    );
+}
+
+#[test]
+fn exited_notification_without_reason_uses_generic_message() {
+    let exited = SubagentNotification::Exited {
+        agent_id: "bot".into(),
+        reason: None,
+    };
+    assert_eq!(exited.to_message(), "Agent 'bot' exited unexpectedly");
+}
+
+#[test]
+fn sequenced_non_completion_notifications_are_not_completion() {
+    let exited = SequencedSubagentNotification::new(
+        9,
+        SubagentNotification::Exited {
+            agent_id: "bot".into(),
+            reason: None,
+        },
+    );
+    assert!(!exited.is_completion());
+    assert_eq!(exited.dedupe_key(), ("bot".to_string(), 9));
+}
+
+#[test]
+fn lookup_subagent_socket_covers_success_non_live_and_non_connectable() {
+    let reg = new_registry();
+    {
+        let mut entries = reg.lock().unwrap();
+        let mut live = SubagentEntry::with_identity(
+            AgentUuid::from("uuid-live-socket".to_string()),
+            "live".to_string(),
+            "/tmp/live.sock".into(),
+            1,
+        );
+        live.status = SubagentStatus::Idle;
+        entries.insert("uuid-live-socket".to_string(), live);
+
+        let mut detached = SubagentEntry::with_identity(
+            AgentUuid::from("uuid-detached".to_string()),
+            "detached".to_string(),
+            "/tmp/detached.sock".into(),
+            2,
+        );
+        detached.status = SubagentStatus::Idle;
+        detached.persisted_liveness = SubagentLiveness::Detached;
+        entries.insert("uuid-detached".to_string(), detached);
+
+        let mut empty_socket = SubagentEntry::with_identity(
+            AgentUuid::from("uuid-empty-socket".to_string()),
+            "uuid-empty-socket".to_string(),
+            std::path::PathBuf::new(),
+            3,
+        );
+        empty_socket.status = SubagentStatus::Idle;
+        entries.insert("uuid-empty-socket".to_string(), empty_socket);
+    }
+
+    assert_eq!(
+        lookup_subagent_socket(&reg, "live").unwrap(),
+        std::path::PathBuf::from("/tmp/live.sock")
+    );
+    let detached_err = lookup_subagent_socket(&reg, "detached").unwrap_err();
+    assert!(
+        detached_err.contains("not command-targetable")
+            || detached_err.contains("no live subagent")
+    );
+    let empty_err = lookup_subagent_socket(&reg, "uuid-empty-socket").unwrap_err();
+    assert!(
+        empty_err.contains("no ancestor-connectable socket"),
+        "{empty_err}"
+    );
+}
+
+#[test]
 fn registry_lookup_and_request_id_helpers_cover_success_and_fallbacks() {
     let mut entries = std::collections::HashMap::new();
     let mut entry = SubagentEntry::with_identity(
