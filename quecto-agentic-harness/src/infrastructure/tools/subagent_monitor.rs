@@ -85,9 +85,14 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             entry.updated_at = Instant::now();
         }
         "tool_execution_end" => {
-            // Recoverable tool errors are child-local. They should not poison
-            // the parent-facing run status/error fields; only terminal
-            // run-level failures (`agent_error`) do that.
+            // Recoverable tool errors should not poison parent-facing run status.
+            entry.updated_at = Instant::now();
+        }
+        "workflow_idle" => {
+            if entry.run_error.is_none() {
+                entry.status =
+                    apply_lifecycle_event(&mut entry.lifecycle, SubagentLifecycleEvent::RunEnded);
+            }
             entry.updated_at = Instant::now();
         }
         "workflow_state" => {

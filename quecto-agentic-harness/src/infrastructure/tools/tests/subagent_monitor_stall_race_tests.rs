@@ -215,3 +215,224 @@ async fn retained_stall_is_invalidated_by_child_exit_before_capacity_frees() {
     );
     assert_no_stall_delivered(&mut rx).await;
 }
+
+#[tokio::test]
+async fn exhausted_idle_while_direct_descendant_active_preserves_stall_latch() {
+    let registry = new_registry();
+    insert_entry(&registry, "parent");
+    insert_entry(&registry, "child");
+    {
+        let mut guard = registry.lock().unwrap();
+        guard.get_mut("parent").unwrap().workflow = Some(
+            crate::infrastructure::tools::subagent_registry::WorkflowSnapshot {
+                mode: "active".into(),
+                steps_completed: 2,
+                steps_total: 5,
+            },
+        );
+        let child = guard.get_mut("child").unwrap();
+        child.parent_id = Some("parent".into());
+        child.status = SubagentStatus::Running;
+    }
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "parent",
+        &serde_json::json!({"type":"workflow_idle","reason":"exhausted"}),
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "active descendant means no stall note"
+    );
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .get("parent")
+            .unwrap()
+            .stalled_armed,
+        "latch must remain armed while runtime is effectively active"
+    );
+}
+
+#[tokio::test]
+async fn exhausted_idle_while_transitive_descendant_active_preserves_stall_latch_then_later_stalls()
+{
+    let registry = new_registry();
+    for id in ["parent", "child", "grandchild"] {
+        insert_entry(&registry, id);
+    }
+    {
+        let mut guard = registry.lock().unwrap();
+        guard.get_mut("parent").unwrap().workflow = Some(
+            crate::infrastructure::tools::subagent_registry::WorkflowSnapshot {
+                mode: "active".into(),
+                steps_completed: 2,
+                steps_total: 5,
+            },
+        );
+        guard.get_mut("child").unwrap().parent_id = Some("parent".into());
+        let grandchild = guard.get_mut("grandchild").unwrap();
+        grandchild.parent_id = Some("child".into());
+        grandchild.status = SubagentStatus::Running;
+    }
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "parent",
+        &serde_json::json!({"type":"workflow_idle","reason":"exhausted"}),
+    );
+    assert!(rx.try_recv().is_err());
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .get("parent")
+            .unwrap()
+            .stalled_armed
+    );
+    {
+        let mut guard = registry.lock().unwrap();
+        guard.get_mut("child").unwrap().status = SubagentStatus::Idle;
+        guard.get_mut("grandchild").unwrap().status = SubagentStatus::Idle;
+    }
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "parent",
+        &serde_json::json!({"type":"workflow_idle","reason":"exhausted"}),
+    );
+    assert!(matches!(
+        rx.try_recv().unwrap().notification,
+        SubagentNotification::Stalled { .. }
+    ));
+}
+
+#[tokio::test]
+async fn terminal_completion_and_resumed_progress_do_not_create_stale_stall_after_active_descendant()
+ {
+    let registry = new_registry();
+    insert_entry(&registry, "parent");
+    insert_entry(&registry, "child");
+    {
+        let mut guard = registry.lock().unwrap();
+        guard.get_mut("parent").unwrap().workflow = Some(
+            crate::infrastructure::tools::subagent_registry::WorkflowSnapshot {
+                mode: "active".into(),
+                steps_completed: 2,
+                steps_total: 5,
+            },
+        );
+        let child = guard.get_mut("child").unwrap();
+        child.parent_id = Some("parent".into());
+        child.status = SubagentStatus::Running;
+    }
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "parent",
+        &serde_json::json!({"type":"workflow_idle","reason":"exhausted"}),
+    );
+    registry.lock().unwrap().get_mut("child").unwrap().status = SubagentStatus::Idle;
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "parent",
+        &serde_json::json!({"type":"workflow_state","mode":"complete","progress":{"done":5,"total":5}}),
+    );
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "parent",
+        &serde_json::json!({"type":"workflow_idle","reason":"completed"}),
+    );
+    assert!(
+        !std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|n| matches!(n.notification, SubagentNotification::Stalled { .. }))
+    );
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "parent",
+        &serde_json::json!({"type":"workflow_state","mode":"active","progress":{"done":3,"total":5}}),
+    );
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .get("parent")
+            .unwrap()
+            .stalled_armed
+    );
+}
+
+#[tokio::test]
+async fn unrelated_active_agent_does_not_suppress_genuine_stall() {
+    let registry = new_registry();
+    insert_entry(&registry, "parent");
+    insert_entry(&registry, "unrelated");
+    {
+        let mut guard = registry.lock().unwrap();
+        guard.get_mut("parent").unwrap().workflow = Some(
+            crate::infrastructure::tools::subagent_registry::WorkflowSnapshot {
+                mode: "active".into(),
+                steps_completed: 1,
+                steps_total: 2,
+            },
+        );
+        guard.get_mut("unrelated").unwrap().status = SubagentStatus::Running;
+    }
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "parent",
+        &serde_json::json!({"type":"workflow_idle","reason":"exhausted"}),
+    );
+    assert!(matches!(
+        rx.try_recv().unwrap().notification,
+        SubagentNotification::Stalled { .. }
+    ));
+}
+
+#[tokio::test]
+async fn descendant_identity_session_key_forms_suppress_parent_stall() {
+    let registry = new_registry();
+    insert_entry(&registry, "uuid-parent");
+    insert_entry(&registry, "child");
+    {
+        let mut guard = registry.lock().unwrap();
+        let parent = guard.get_mut("uuid-parent").unwrap();
+        parent.display_name = "display-parent".into();
+        parent.workflow = Some(
+            crate::infrastructure::tools::subagent_registry::WorkflowSnapshot {
+                mode: "active".into(),
+                steps_completed: 1,
+                steps_total: 2,
+            },
+        );
+        let parent_uuid = parent.agent_uuid.to_string();
+        let child = guard.get_mut("child").unwrap();
+        child.parent_id = Some(parent_uuid);
+        child.status = SubagentStatus::Running;
+    }
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    apply_and_notify(
+        &registry,
+        Some(&tx),
+        "uuid-parent",
+        &serde_json::json!({"type":"workflow_idle","reason":"exhausted"}),
+    );
+    assert!(rx.try_recv().is_err());
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .get("uuid-parent")
+            .unwrap()
+            .stalled_armed
+    );
+}
