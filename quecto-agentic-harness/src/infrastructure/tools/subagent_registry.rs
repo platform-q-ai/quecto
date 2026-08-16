@@ -219,7 +219,7 @@ pub fn effective_status(
     agent_id: &str,
 ) -> Option<SubagentStatus> {
     let entry = entries.get(agent_id)?;
-    if entry.status.is_active() || has_active_descendant(entries, agent_id) {
+    if entry.status.is_active() || has_active_descendant(entries, agent_id, entry) {
         Some(SubagentStatus::Running)
     } else {
         Some(entry.status.clone())
@@ -232,23 +232,48 @@ pub fn has_any_active_agent(registry: &Option<SubagentRegistry>) -> bool {
     guard.values().any(|entry| entry.status.is_active())
 }
 
-fn has_active_descendant(entries: &HashMap<String, SubagentEntry>, agent_id: &str) -> bool {
+fn has_active_descendant(
+    entries: &HashMap<String, SubagentEntry>,
+    agent_id: &str,
+    entry: &SubagentEntry,
+) -> bool {
     let mut visited = std::collections::HashSet::new();
-    has_active_descendant_inner(entries, agent_id, &mut visited)
+    has_active_descendant_inner(
+        entries,
+        descendant_parent_ids(agent_id, entry),
+        &mut visited,
+    )
 }
 
 fn has_active_descendant_inner(
     entries: &HashMap<String, SubagentEntry>,
-    agent_id: &str,
+    parent_ids: Vec<String>,
     visited: &mut std::collections::HashSet<String>,
 ) -> bool {
-    if !visited.insert(agent_id.to_string()) {
-        return false;
-    }
-    entries.iter().any(|(child_id, child)| {
-        child.parent_id.as_deref() == Some(agent_id)
-            && (child.status.is_active() || has_active_descendant_inner(entries, child_id, visited))
+    parent_ids.into_iter().any(|parent_id| {
+        if !visited.insert(parent_id.clone()) {
+            return false;
+        }
+        entries.iter().any(|(child_id, child)| {
+            child.parent_id.as_deref() == Some(parent_id.as_str())
+                && (child.status.is_active()
+                    || has_active_descendant_inner(
+                        entries,
+                        descendant_parent_ids(child_id, child),
+                        visited,
+                    ))
+        })
     })
+}
+
+fn descendant_parent_ids(agent_id: &str, entry: &SubagentEntry) -> Vec<String> {
+    let mut ids = vec![agent_id.to_string(), entry.agent_uuid.to_string()];
+    if !entry.display_name.is_empty() {
+        ids.push(entry.display_name.clone());
+    }
+    ids.sort();
+    ids.dedup();
+    ids
 }
 
 /// Maximum wall-clock time to wait for a forwarded sub-agent UDS response on the
