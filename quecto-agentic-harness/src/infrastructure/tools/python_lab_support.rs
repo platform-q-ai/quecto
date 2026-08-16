@@ -88,9 +88,16 @@ pub(crate) fn is_reserved_artifact_path(workspace: &Path, path: &Path) -> bool {
     } else {
         workspace.join(path)
     };
-    let effective = lexical_normalize(&effective);
-    let reserved = lexical_normalize(&workspace.join(".quecto/python_lab"));
-    effective.starts_with(reserved)
+    let reserved = workspace.join(".quecto/python_lab");
+
+    let resolved_effective = effective
+        .canonicalize()
+        .unwrap_or_else(|_| lexical_normalize(&effective));
+    let resolved_reserved = reserved
+        .canonicalize()
+        .unwrap_or_else(|_| lexical_normalize(&reserved));
+
+    resolved_effective.starts_with(resolved_reserved)
 }
 pub(crate) fn changed_files(root: &Path, before: BTreeMap<String, SystemTime>) -> Vec<String> {
     snapshot_files(root)
