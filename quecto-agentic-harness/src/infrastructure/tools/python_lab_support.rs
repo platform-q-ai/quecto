@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::io::AsyncReadExt;
@@ -66,6 +66,31 @@ pub(crate) fn snapshot_files(root: &Path) -> BTreeMap<String, SystemTime> {
 pub(crate) fn is_reserved_artifact_rel(rel: &Path) -> bool {
     let mut parts = rel.components().map(|c| c.as_os_str());
     parts.next().is_some_and(|c| c == ".quecto") && parts.next().is_some_and(|c| c == "python_lab")
+}
+
+pub(crate) fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            _ => out.push(component.as_os_str()),
+        }
+    }
+    out
+}
+
+pub(crate) fn is_reserved_artifact_path(workspace: &Path, path: &Path) -> bool {
+    let effective = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        workspace.join(path)
+    };
+    let effective = lexical_normalize(&effective);
+    let reserved = lexical_normalize(&workspace.join(".quecto/python_lab"));
+    effective.starts_with(reserved)
 }
 pub(crate) fn changed_files(root: &Path, before: BTreeMap<String, SystemTime>) -> Vec<String> {
     snapshot_files(root)

@@ -498,6 +498,43 @@ async fn script_paths_inside_the_artifact_directory_are_rejected() {
 }
 
 #[tokio::test]
+async fn absolute_script_paths_inside_the_artifact_directory_are_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let planted = tmp.path().join(".quecto/python_lab/planted.py");
+    std::fs::create_dir_all(planted.parent().unwrap()).unwrap();
+    std::fs::write(&planted, "print('should not run')").unwrap();
+    let payload = format!(
+        r#"{{"op":"run","path":{}}}"#,
+        serde_json::to_string(&planted.to_string_lossy()).unwrap()
+    );
+    let result = tool(tmp.path()).execute(&payload).await.unwrap();
+    assert!(result.is_error, "{}", result.content);
+    assert!(
+        result.content.contains("security violation"),
+        "{}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn traversal_script_paths_inside_the_artifact_directory_are_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let planted = tmp.path().join(".quecto/python_lab/planted.py");
+    std::fs::create_dir_all(planted.parent().unwrap()).unwrap();
+    std::fs::write(&planted, "print('should not run')").unwrap();
+    let result = tool(tmp.path())
+        .execute(r#"{"op":"run","path":"safe/../.quecto/python_lab/planted.py"}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error, "{}", result.content);
+    assert!(
+        result.content.contains("security violation"),
+        "{}",
+        result.content
+    );
+}
+
+#[tokio::test]
 async fn preview_larger_than_one_read_is_returned_whole() {
     // tokio caps a single read at 2 MiB; a lone read() would silently return a
     // short preview while reporting output_truncated: false.

@@ -358,6 +358,27 @@ fn test_run_with_output_empty_args() {
 }
 
 #[test]
+fn test_run_with_output_repl_leading_no_sandbox_enters_repl() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers":{"openai":{"api_key":"sk-test"}},"agents":{"defaults":{"model":"openai/gpt-5.2"}}}"#,
+    )
+    .unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let out = run_with_output(vec!["quecto".into(), "--no-sandbox".into()], &ctx);
+    assert_eq!(
+        out.exit_code, 0,
+        "stdout: {}, stderr: {}",
+        out.stdout, out.stderr
+    );
+    assert!(!out.stderr.contains("Unknown command"), "{}", out.stderr);
+}
+
+#[test]
 fn test_run_with_output_empty_args_with_provider_exits_clean() {
     // No subcommand + a usable config (provider + default model) → REPL mode;
     // with empty stdin it hits EOF immediately and exits cleanly (0). Hermetic

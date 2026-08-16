@@ -305,6 +305,10 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
         return run_repl_with_output(ctx, &[], &[], false);
     }
 
+    if is_repl_leading_flag(args[1].as_str()) {
+        return run_repl_with_output(ctx, &args[1..], &[], false);
+    }
+
     let exit_code = {
         match args[1].as_str() {
             "agent" => agent::cmd_agent(ctx, &args[2..], &mut stdout, &mut stderr),
@@ -543,6 +547,13 @@ fn cmd_repl_with_progress<R: std::io::BufRead, W: std::io::Write>(
 }
 
 /// Parse REPL-specific flags from args (session, system, model).
+fn is_repl_leading_flag(arg: &str) -> bool {
+    matches!(
+        arg,
+        "--no-sandbox" | "-s" | "--session" | "--system" | "--model" | "--config"
+    )
+}
+
 fn parse_repl_flags(args: &[String]) -> Result<ReplFlags, String> {
     let mut session_name: Option<String> = None;
     let mut system_prompt: Option<String> = None;

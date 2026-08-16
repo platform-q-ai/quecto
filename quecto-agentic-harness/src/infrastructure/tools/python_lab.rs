@@ -517,7 +517,7 @@ fn parse_run(
     let script = if let Some(p) = path {
         // The tool's own artifact tree is off limits as a script source, so a
         // program cannot stage code inside another execution's directory.
-        if is_reserved_artifact_rel(Path::new(p)) {
+        if is_reserved_artifact_path(workspace, Path::new(p)) {
             return Err(DomainError::Security(
                 ".quecto/python_lab is reserved for python_lab artifacts".into(),
             ));
