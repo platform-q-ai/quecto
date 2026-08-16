@@ -28,6 +28,8 @@ fn flags_for_wiring_test() -> AgentFlags {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
     }
 }
 

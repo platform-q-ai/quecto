@@ -184,6 +184,8 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         inherited_tool_policy: None,
         parent_id,
         spawned,
+        parent_identity_override: None,
+        session_key_override: None,
     };
     flags = validate_agent_flags(flags, stderr)?;
 
@@ -568,7 +570,7 @@ fn resolve_uds_session_key(ephemeral: bool, session_name: Option<&str>) -> Strin
     }
 }
 
-fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i32 {
+fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -> i32 {
     // Early validation for user-supplied --socket paths: check length before
     // doing any I/O (config load, agent build).  Auto-generated paths are
     // always short, so we only gate on explicitly provided paths here.
@@ -581,6 +583,13 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     }
     if flags.persist {
         stderr.push_str("WARNING: --persist keeps the agent alive indefinitely. Shutdown via SIGTERM/SIGINT only.\n");
+    }
+
+    let ephemeral = flags.no_session || flags.session_name.as_deref() == Some("-");
+    let session_key = resolve_uds_session_key(ephemeral, flags.session_name.as_deref());
+    if flags.session_name.is_none() && !ephemeral && flags.parent_identity_override.is_none() {
+        flags.parent_identity_override = Some(session_key.clone());
+        flags.session_key_override = Some(session_key.clone());
     }
 
     let base_dir = ctx.base_dir();
@@ -611,8 +620,6 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     // Enable incremental streaming so the UDS layer emits token events.
     agent.set_streaming(true);
 
-    let ephemeral = flags.no_session || flags.session_name.as_deref() == Some("-");
-    let session_key = resolve_uds_session_key(ephemeral, flags.session_name.as_deref());
     agent.set_session_key(session_key.clone());
 
     // Keep durable audit logging tied to explicit workflow-driven mode. Normal UDS

@@ -83,19 +83,24 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         max_capture_bytes: exec_settings,
         ..crate::infrastructure::tools::bash::ExecOptions::default()
     };
-    let parent_session_name = (!flags.no_session && flags.session_name.as_deref() != Some("-"))
-        .then(|| {
-            flags
-                .session_name
-                .clone()
-                .unwrap_or_else(|| "default".to_string())
-        });
-    let session_key = if flags.no_session || flags.session_name.as_deref() == Some("-") {
-        String::new()
+    let parent_session_name = if flags.no_session || flags.session_name.as_deref() == Some("-") {
+        None
     } else {
-        let name = parent_session_name.as_deref().unwrap_or("default");
-        Session::build_key("cli", name)
+        flags
+            .parent_identity_override
+            .clone()
+            .or_else(|| flags.session_name.clone())
+            .or_else(|| flags.session_key_override.clone())
+            .or_else(|| Some("default".to_string()))
     };
+    let session_key = flags.session_key_override.clone().unwrap_or_else(|| {
+        if flags.no_session || flags.session_name.as_deref() == Some("-") {
+            String::new()
+        } else {
+            let name = flags.session_name.as_deref().unwrap_or("default");
+            Session::build_key("cli", name)
+        }
+    });
     let entrypoint = if flags.uds_mode {
         crate::interface::shared::ToolEntrypoint::UdsAgent
     } else {

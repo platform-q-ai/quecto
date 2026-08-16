@@ -122,6 +122,33 @@ fn workflow_nudge_message_waits_for_selected_template() {
 }
 
 #[test]
+fn workflow_nudge_message_scopes_generated_unnamed_sessions_independently() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+    let mut env = DispatchTestEnv::with_selected_feature();
+    let reg = new_registry();
+    {
+        let mut guard = reg.lock().unwrap();
+        let mut child = SubagentEntry::new("/tmp/session-a-child.sock".into(), 7);
+        child.status = SubagentStatus::Running;
+        child.parent_id = Some("chat-session-a".to_string());
+        guard.insert("child".to_string(), child);
+    }
+
+    env.session_key = "chat-session-a".to_string();
+    let mut ctx_a = env.ctx();
+    ctx_a.subagent_registry = Some(reg.clone());
+    assert!(super::workflow_nudge_message(&ctx_a).is_none());
+    drop(ctx_a);
+
+    env.session_key = "chat-session-b".to_string();
+    let mut ctx_b = env.ctx();
+    ctx_b.subagent_registry = Some(reg);
+    assert!(super::workflow_nudge_message(&ctx_b).is_some());
+}
+
+#[test]
 fn workflow_nudge_message_is_suppressed_for_default_unnamed_parent_child() {
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
@@ -132,7 +159,7 @@ fn workflow_nudge_message_is_suppressed_for_default_unnamed_parent_child() {
         let mut guard = reg.lock().unwrap();
         let mut child = SubagentEntry::new("/tmp/default-child.sock".into(), 7);
         child.status = SubagentStatus::Running;
-        child.parent_id = Some("default".to_string());
+        child.parent_id = Some("chat-12345".to_string());
         guard.insert("child".to_string(), child);
     }
     env.session_key = "chat-12345".to_string();

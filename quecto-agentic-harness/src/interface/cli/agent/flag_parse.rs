@@ -30,6 +30,14 @@ pub(crate) struct AgentFlags {
     /// minimal child system prompt and parent-only docs filtering. Never inferred
     /// from `--parent-id`, session naming, env, or UDS mode (#1319).
     pub(crate) spawned: bool,
+    /// Stable identity used by children to stamp `parent_id` and by workflow
+    /// nudge scoping to find this agent's descendant tree. Defaults from the
+    /// explicit session name; UDS unnamed generated-chat sessions override it
+    /// with their unique chat key to avoid cross-session collisions.
+    pub(crate) parent_identity_override: Option<String>,
+    /// Pre-resolved runtime session key for UDS generated-chat sessions, so the
+    /// tool registry and dispatch loop agree before tools are constructed.
+    pub(crate) session_key_override: Option<String>,
 }
 
 /// Return `args[i+1]` or push `err_msg` to stderr and return `None`.

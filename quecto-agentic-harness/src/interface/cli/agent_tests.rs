@@ -429,6 +429,8 @@ fn test_build_agent_from_config_no_config_file() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -479,6 +481,8 @@ fn test_build_agent_from_config_explicit_missing_errors() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
     };
     let mut stderr = String::new();
     // An explicit --config (config_explicit = true) pointing at a missing file
@@ -514,6 +518,8 @@ fn test_build_agent_from_config_invalid_json() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -551,6 +557,8 @@ fn test_build_agent_from_config_no_providers() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -588,6 +596,8 @@ fn test_build_agent_from_config_with_model_override() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
