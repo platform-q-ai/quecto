@@ -121,6 +121,70 @@ fn workflow_nudge_message_waits_for_selected_template() {
     assert!(nudge.into_message(false).contains("Workflow incomplete"));
 }
 
+#[test]
+fn workflow_nudge_message_is_suppressed_while_direct_child_active() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+    let mut env = DispatchTestEnv::with_selected_feature();
+    let reg = new_registry();
+    {
+        let mut guard = reg.lock().unwrap();
+        let mut child = SubagentEntry::new("/tmp/child.sock".into(), 1);
+        child.status = SubagentStatus::Running;
+        guard.insert("child".to_string(), child);
+    }
+    let mut ctx = env.ctx();
+    ctx.subagent_registry = Some(reg);
+
+    assert!(super::workflow_nudge_message(&ctx).is_none());
+}
+
+#[test]
+fn workflow_nudge_message_is_suppressed_while_transitive_descendant_active() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+    let mut env = DispatchTestEnv::with_selected_feature();
+    let reg = new_registry();
+    {
+        let mut guard = reg.lock().unwrap();
+        let mut child = SubagentEntry::new("/tmp/child.sock".into(), 1);
+        child.status = SubagentStatus::Idle;
+        guard.insert("child".to_string(), child);
+        let mut grandchild = SubagentEntry::new("/tmp/grandchild.sock".into(), 2);
+        grandchild.status = SubagentStatus::Starting;
+        grandchild.parent_id = Some("child".to_string());
+        guard.insert("grandchild".to_string(), grandchild);
+    }
+    let mut ctx = env.ctx();
+    ctx.subagent_registry = Some(reg);
+
+    assert!(super::workflow_nudge_message(&ctx).is_none());
+}
+
+#[test]
+fn workflow_nudge_message_resumes_after_descendants_stop_being_active() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+    let mut env = DispatchTestEnv::with_selected_feature();
+    let reg = new_registry();
+    {
+        let mut guard = reg.lock().unwrap();
+        let mut child = SubagentEntry::new("/tmp/child.sock".into(), 1);
+        child.status = SubagentStatus::Error;
+        guard.insert("child".to_string(), child);
+        let mut exited = SubagentEntry::new("/tmp/exited.sock".into(), 2);
+        exited.status = SubagentStatus::Exited;
+        guard.insert("exited".to_string(), exited);
+    }
+    let mut ctx = env.ctx();
+    ctx.subagent_registry = Some(reg);
+
+    assert!(super::workflow_nudge_message(&ctx).is_some());
+}
+
 #[tokio::test]
 async fn drain_refreshes_busy_state_snapshot_per_turn() {
     // #899: a busy workflow child inspected mid-workflow must see CURRENT state,

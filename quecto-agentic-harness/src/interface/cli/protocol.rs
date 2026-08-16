@@ -322,7 +322,12 @@ pub fn build_subagent_info_list(
                     agent_id: display_name.clone(),
                     agent_uuid: Some(entry.agent_uuid.to_string()),
                     display_name: Some(display_name),
-                    status: entry.status.to_wire_str().to_string(),
+                    status: crate::infrastructure::tools::subagent_registry::effective_status(
+                        &guard, id,
+                    )
+                    .unwrap_or_else(|| entry.status.clone())
+                    .to_wire_str()
+                    .to_string(),
                     liveness: Some(match entry.persisted_liveness {
                         crate::domain::session::SubagentLiveness::Live => "live".to_string(),
                         crate::domain::session::SubagentLiveness::Detached => {
@@ -502,3 +507,7 @@ mod protocol_1060_tests;
 #[cfg(test)]
 #[path = "protocol_environment_tests.rs"]
 mod protocol_environment_tests;
+
+#[cfg(test)]
+#[path = "protocol_effective_status_tests.rs"]
+mod protocol_effective_status_tests;

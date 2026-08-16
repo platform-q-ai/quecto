@@ -212,6 +212,45 @@ pub fn new_registry() -> SubagentRegistry {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
+/// Effective harness-level status: an agent's own active status wins; otherwise
+/// active direct or transitive descendants make the ancestor effectively running.
+pub fn effective_status(
+    entries: &HashMap<String, SubagentEntry>,
+    agent_id: &str,
+) -> Option<SubagentStatus> {
+    let entry = entries.get(agent_id)?;
+    if entry.status.is_active() || has_active_descendant(entries, agent_id) {
+        Some(SubagentStatus::Running)
+    } else {
+        Some(entry.status.clone())
+    }
+}
+
+pub fn has_any_active_agent(registry: &Option<SubagentRegistry>) -> bool {
+    let Some(reg) = registry else { return false };
+    let guard = reg.lock().unwrap_or_else(|e| e.into_inner());
+    guard.values().any(|entry| entry.status.is_active())
+}
+
+fn has_active_descendant(entries: &HashMap<String, SubagentEntry>, agent_id: &str) -> bool {
+    let mut visited = std::collections::HashSet::new();
+    has_active_descendant_inner(entries, agent_id, &mut visited)
+}
+
+fn has_active_descendant_inner(
+    entries: &HashMap<String, SubagentEntry>,
+    agent_id: &str,
+    visited: &mut std::collections::HashSet<String>,
+) -> bool {
+    if !visited.insert(agent_id.to_string()) {
+        return false;
+    }
+    entries.iter().any(|(child_id, child)| {
+        child.parent_id.as_deref() == Some(agent_id)
+            && (child.status.is_active() || has_active_descendant_inner(entries, child_id, visited))
+    })
+}
+
 /// Maximum wall-clock time to wait for a forwarded sub-agent UDS response on the
 /// `agent_cmd` path (a tool call that may legitimately wait on a long operation).
 const SUBAGENT_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
