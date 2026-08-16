@@ -83,10 +83,17 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         max_capture_bytes: exec_settings,
         ..crate::infrastructure::tools::bash::ExecOptions::default()
     };
+    let parent_session_name = (!flags.no_session && flags.session_name.as_deref() != Some("-"))
+        .then(|| {
+            flags
+                .session_name
+                .clone()
+                .unwrap_or_else(|| "default".to_string())
+        });
     let session_key = if flags.no_session || flags.session_name.as_deref() == Some("-") {
         String::new()
     } else {
-        let name = flags.session_name.as_deref().unwrap_or("default");
+        let name = parent_session_name.as_deref().unwrap_or("default");
         Session::build_key("cli", name)
     };
     let entrypoint = if flags.uds_mode {
@@ -110,7 +117,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             session_key,
             spawned: flags.spawned,
             restrict_to_workspace,
-            parent_session_name: flags.session_name.clone(),
+            parent_session_name: parent_session_name.clone(),
             parent_config_path: Some(config_path.to_path_buf()),
             disabled_tools: &flags.disabled_tools,
             inherited_tool_policy: flags.inherited_tool_policy.clone(),
@@ -119,7 +126,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
                 workflow_guards: flags.workflow_guards,
                 workflow_spec_path: flags.workflow_spec_path.as_deref(),
                 broadcast_tx,
-                emitter_agent_id: flags.session_name.clone(),
+                emitter_agent_id: parent_session_name,
                 emitter_parent_id: flags.parent_id.clone(),
                 cwd,
                 home_dir,

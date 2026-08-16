@@ -122,6 +122,27 @@ fn workflow_nudge_message_waits_for_selected_template() {
 }
 
 #[test]
+fn workflow_nudge_message_is_suppressed_for_default_unnamed_parent_child() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+    let mut env = DispatchTestEnv::with_selected_feature();
+    let reg = new_registry();
+    {
+        let mut guard = reg.lock().unwrap();
+        let mut child = SubagentEntry::new("/tmp/default-child.sock".into(), 7);
+        child.status = SubagentStatus::Running;
+        child.parent_id = Some("default".to_string());
+        guard.insert("child".to_string(), child);
+    }
+    env.session_key = "chat-12345".to_string();
+    let mut ctx = env.ctx();
+    ctx.subagent_registry = Some(reg);
+
+    assert!(super::workflow_nudge_message(&ctx).is_none());
+}
+
+#[test]
 fn workflow_nudge_message_is_not_suppressed_by_unrelated_active_agent() {
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,

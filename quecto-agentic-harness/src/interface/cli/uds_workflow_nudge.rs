@@ -37,6 +37,9 @@ impl WorkflowNudge {
 }
 
 fn current_agent_identity(session_key: &str) -> &str {
+    if session_key.starts_with(crate::domain::session::USER_CHAT_PREFIX) {
+        return "default";
+    }
     session_key.strip_prefix("cli:").unwrap_or_else(|| {
         session_key
             .rsplit_once(':')
