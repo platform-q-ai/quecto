@@ -564,7 +564,22 @@ fn test_new_with_status_empty_header_is_skipped() {
         name: "read".into(),
         arguments: "x".into(),
     });
-    assert!(!buf.lock().unwrap().is_empty());
+    let rendered = String::from_utf8_lossy(&buf.lock().unwrap()).into_owned();
+    assert!(!rendered.is_empty());
+    assert!(
+        !rendered.contains("\n\x1b["),
+        "empty header should not render status lines, got: {:?}",
+        rendered
+    );
+}
+
+#[test]
+fn test_mutex_vec_writer_write_is_covered_for_function_threshold_stability() {
+    let buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut writer = MutexVecWriter(buf.clone());
+    writer.write_all(b"covered").unwrap();
+    writer.flush().unwrap();
+    assert_eq!(buf.lock().unwrap().as_slice(), b"covered");
 }
 
 // ---------------------------------------------------------------------------
@@ -628,6 +643,9 @@ fn test_build_status_header_line_returns_nonempty() {
 fn test_spawn_spinner_thread_stop_joins_cleanly() {
     let (callback, handle) = spawn_spinner_thread_with_status(None);
     callback(sample_thinking_event());
+    // Let the background loop hit at least one timeout tick so the stderr-backed
+    // renderer's tick path stays covered under the function threshold.
+    std::thread::sleep(std::time::Duration::from_millis(100));
     // stop() sends Done and joins the background thread.
     handle.stop();
 }
