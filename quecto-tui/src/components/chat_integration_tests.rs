@@ -315,6 +315,7 @@ fn seed_history(chat: &mut Chat) {
     });
     chat.add_entry(ChatEntry::Assistant {
         text: "first answer with several words".into(),
+        thinking: Vec::new(),
         streaming: false,
     });
     chat.start_tool("t1".into(), "bash".into(), r#"{"command":"ls -la"}"#.into());

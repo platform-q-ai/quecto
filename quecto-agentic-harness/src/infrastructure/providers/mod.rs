@@ -1,6 +1,8 @@
 pub mod anthropic;
 pub mod codex;
 pub mod openai;
+#[cfg(test)]
+mod openai_compatible_thinking_tests;
 pub mod openai_endpoint_router;
 pub mod refreshable;
 pub mod retry;

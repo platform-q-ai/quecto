@@ -1,5 +1,5 @@
 use super::{HISTORY_MESSAGE_SUMMARY_PREVIEW_BYTES, HISTORY_PAGE_JSON_BUDGET, messages_page_json};
-use crate::domain::message::{Message, ToolCall};
+use crate::domain::message::{Message, ThinkingBlock, ToolCall};
 
 fn message_content<'a>(message: &'a serde_json::Value, field: &str) -> &'a str {
     message
@@ -78,6 +78,43 @@ fn get_messages_summarises_an_oversized_message_and_keeps_the_page_bounded() {
             .is_some(),
         "bounded page with omitted older history should carry a before cursor: {page}"
     );
+}
+
+#[test]
+fn oversized_history_summary_includes_display_safe_visible_thinking_when_it_fits() {
+    let mut msg = Message::assistant(
+        "oversized-output".repeat(HISTORY_PAGE_JSON_BUDGET / 8),
+        vec![],
+    );
+    msg.thinking_blocks.push(ThinkingBlock::Normal {
+        thinking: "visible reasoning".into(),
+        signature: "PRIVATE_SIGNATURE".into(),
+    });
+
+    let page = messages_page_json(&[msg], 1, None);
+    let summary = &page_messages(&page)[0];
+    assert_eq!(summary["collapsed"].as_bool(), Some(true));
+    assert_eq!(summary["visibleThinking"][0]["text"], "visible reasoning");
+    assert!(!summary.to_string().contains("PRIVATE_SIGNATURE"));
+}
+
+#[test]
+fn oversized_history_summary_truncates_visible_thinking_when_it_cannot_fit() {
+    let mut msg = Message::assistant(
+        "oversized-output".repeat(HISTORY_PAGE_JSON_BUDGET / 8),
+        vec![],
+    );
+    msg.thinking_blocks.push(ThinkingBlock::Normal {
+        thinking: "x".repeat(HISTORY_PAGE_JSON_BUDGET),
+        signature: "PRIVATE_SIGNATURE".into(),
+    });
+
+    let page = messages_page_json(&[msg], 1, None);
+    let summary = &page_messages(&page)[0];
+    assert_eq!(summary["collapsed"].as_bool(), Some(true));
+    assert_eq!(summary["visibleThinking"].as_array().map(Vec::len), Some(0));
+    assert_eq!(summary["visibleThinkingTruncated"].as_bool(), Some(true));
+    assert!(!summary.to_string().contains("PRIVATE_SIGNATURE"));
 }
 
 #[test]

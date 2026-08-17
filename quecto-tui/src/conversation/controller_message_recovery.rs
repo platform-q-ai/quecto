@@ -293,9 +293,16 @@ pub(crate) fn recovered_chat_entries(
                         duration_ms: None,
                     });
                 }
-                if !content.is_empty() {
+                let thinking: Vec<_> = message
+                    .visible_thinking()
+                    .iter()
+                    .map(|thinking| thinking.text().to_string())
+                    .filter(|text| !text.is_empty())
+                    .collect();
+                if !content.is_empty() || !thinking.is_empty() {
                     entries.push(ChatEntry::Assistant {
                         text: content.to_string(),
+                        thinking,
                         streaming: false,
                     });
                 }
@@ -352,6 +359,7 @@ mod recovery_cov_tests {
             .chat
             .add_entry(ChatEntry::Assistant {
                 text: "previous complete answer".to_string(),
+                thinking: Vec::new(),
                 streaming: false,
             });
         app.ac_mut().master_session.active_turn_start =
@@ -379,6 +387,7 @@ mod recovery_cov_tests {
             .chat
             .add_entry(ChatEntry::Assistant {
                 text: "previous complete answer".to_string(),
+                thinking: Vec::new(),
                 streaming: false,
             });
         app.ac_mut().master_session.active_turn_start =
@@ -388,6 +397,7 @@ mod recovery_cov_tests {
             .chat
             .add_entry(ChatEntry::Assistant {
                 text: "current complete answer".to_string(),
+                thinking: Vec::new(),
                 streaming: false,
             });
 
@@ -466,7 +476,9 @@ mod recovery_cov_tests {
             other => panic!("expected standalone tool entry, got {other:?}"),
         }
         match &entries[1] {
-            ChatEntry::Assistant { text, streaming } => {
+            ChatEntry::Assistant {
+                text, streaming, ..
+            } => {
                 assert_eq!(text, "visible answer");
                 assert!(!streaming);
             }

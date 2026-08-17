@@ -39,6 +39,7 @@ pub enum ResumedChatMessage {
     },
     Assistant {
         text: String,
+        thinking: Vec<String>,
         id: Option<String>,
         stub: bool,
         content_len: Option<usize>,
@@ -194,9 +195,11 @@ fn parse_assistant_resume_messages(
     content_len: Option<usize>,
 ) -> Vec<ResumedChatMessage> {
     let mut resumed = Vec::new();
-    if !content.is_empty() {
+    let thinking = visible_thinking_texts(message);
+    if !content.is_empty() || !thinking.is_empty() {
         resumed.push(ResumedChatMessage::Assistant {
             text: content,
+            thinking,
             id,
             stub,
             content_len,
@@ -212,6 +215,29 @@ fn parse_assistant_resume_messages(
             .filter_map(parse_tool_call_resume_message),
     );
     resumed
+}
+
+#[derive(Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct VisibleThinkingResume {
+    #[serde(alias = "visible_thinking")]
+    visible_thinking: Vec<VisibleThinkingResumeBlock>,
+}
+
+#[derive(Default, serde::Deserialize)]
+#[serde(default)]
+struct VisibleThinkingResumeBlock {
+    text: String,
+}
+
+fn visible_thinking_texts(message: &serde_json::Value) -> Vec<String> {
+    serde_json::from_value::<VisibleThinkingResume>(message.clone())
+        .unwrap_or_default()
+        .visible_thinking
+        .into_iter()
+        .map(|block| block.text)
+        .filter(|text| !text.is_empty())
+        .collect()
 }
 
 fn parse_tool_call_resume_message(call: &serde_json::Value) -> Option<ResumedChatMessage> {

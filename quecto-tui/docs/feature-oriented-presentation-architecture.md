@@ -264,6 +264,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `agents/controller_subagents.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/feed.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/focus.rs` | `agents` (relocated, #1257 Phase 4) |
+| `agents/history_entry.rs` | `agents` shared recovered-history chat-entry mapping (#1231) |
 | `agents/ledger.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/mod.rs` | `agents` (relocated, #1257 Phase 4) |
 | `agents/roster.rs` | `agents` pure roster/lifecycle policy (#1222; relocated, #1257 Phase 4) |
@@ -345,6 +346,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_selection.rs` | `shell` focus/selection routing (relocated, #1257 Phase 6) |
 | `shell/app_stdin.rs` | `shell` stdin coordination (relocated, #1257 Phase 6) |
 | `shell/app_submit.rs` | `shell` submit/prompt coordination (relocated, #1257 Phase 6) |
+| `shell/app_thinking.rs` | `shell` thinking visibility preference routing (#1231) |
 | `shell/app_time.rs` | `shell` wall-clock formatting helpers (line-count split from `app_methods.rs`, #1470 review) |
 | `shell/child_watch.rs` | `shell` runtime supervision (relocated, #1257 Phase 1) |
 | `shell/cli.rs` | `shell` CLI entry (relocated, #1257 Phase 1) |
@@ -365,6 +367,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/workspace_resume.rs` | `shell` workspace-aware /resume restore (#1465 P4) |
 | `shell/stdin_buffer.rs` | `shell` stdin adapter/policy (relocated, #1257 Phase 6) |
 | `shell/terminal.rs` | `shell` terminal adapter (relocated, #1257 Phase 1) |
+| `shell/thinking_prefs.rs` | `shell` thinking visibility preference persistence (#1231) |
 | `shell/tool_policy.rs` | `shell` live tool/profile policy modal controller (#1334 PR 4) |
 | `shell/tui_harness.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/tui_harness_layout.rs` | `shell` harness layout probes split for line budget (#1465) |

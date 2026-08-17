@@ -36,16 +36,23 @@ fn tool_calls_json(msg: &Message) -> serde_json::Value {
 }
 
 fn message_to_json_with_content(msg: &Message, content: &str) -> serde_json::Value {
-    serde_json::json!({
+    let visible_thinking = super::super::visible_thinking::blocks_to_json(&msg.thinking_blocks);
+    let mut value = serde_json::json!({
         "id": msg.id().to_string(),
         "role": super::role_wire_name(&msg.role),
         "content": content,
         "toolCalls": tool_calls_json(msg),
+        "visibleThinking": visible_thinking,
         "toolCallId": msg.tool_call_id,
         "toolName": msg.tool_name,
         "isError": msg.is_error,
         "collapsed": msg.is_collapsed,
-    })
+    });
+    if !data_fits_frame(&value, None) {
+        value["visibleThinking"] = serde_json::json!([]);
+        value["visibleThinkingTruncated"] = serde_json::json!(true);
+    }
+    value
 }
 
 fn one_char_end(s: &str, start: usize) -> usize {

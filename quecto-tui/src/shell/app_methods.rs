@@ -48,9 +48,6 @@ impl App {
     }
 
     pub(super) fn show_help(&mut self) {
-        // Slash commands first, keyboard shortcuts last: compose_frame follows the
-        // chat tail, so Ctrl+T (and other shortcuts) stay in the viewport as the
-        // slash list grows (#1465 /tab-* entries).
         let mut text = String::from("Slash commands:");
         // Derive the slash-command listing from the single source of truth so it
         // can never drift from the autocomplete set or the dispatch handler.
@@ -72,6 +69,7 @@ impl App {
              \x20 Ctrl+D         Exit\n\
              \x20 Ctrl+L         Open model selector\n\
              \x20 Ctrl+T         Open tool policy selector\n\
+             \x20 Ctrl+Y         Show/hide model thinking\n\
              \x20 Ctrl+O         Toggle tool output expansion\n\
              \x20 Ctrl+Shift+A   Toggle workflow auto-continue\n\
              \x20 Ctrl+Shift+N   Toggle workflow completion nudge\n\
@@ -299,7 +297,7 @@ impl App {
 
     // ── Notifications ─────────────────────────────────────────────────
 
-    pub(super) fn notify(&mut self, message: &str, level: NotifyLevel) {
+    pub(crate) fn notify(&mut self, message: &str, level: NotifyLevel) {
         self.notifications.push(Notification::new(message, level));
     }
 

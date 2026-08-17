@@ -5,6 +5,7 @@
 
 pub(crate) mod feed;
 pub(crate) mod focus;
+mod history_entry;
 pub(crate) mod ledger;
 pub(crate) mod roster;
 pub(crate) mod runtime;

@@ -709,3 +709,33 @@ fn render_tool_long_header_is_bounded_with_truncation_hint() {
         "{lines:?}"
     );
 }
+
+#[test]
+fn assistant_thinking_renders_hides_and_restores_without_mutating_entry() {
+    let mut chat = Chat::new();
+    chat.entries.push(ChatEntry::Assistant {
+        text: "answer".into(),
+        thinking: vec!["secret reasoning".into()],
+        streaming: false,
+    });
+    chat.render_cache.push(None);
+
+    let visible = chat.render(80).join("\n");
+    assert!(visible.contains("Thinking:"));
+    assert!(visible.contains("secret reasoning"));
+    assert!(visible.contains("answer"));
+
+    chat.set_thinking_visible(false);
+    let hidden = chat.render(80).join("\n");
+    assert!(hidden.contains("Thinking:"));
+    assert!(hidden.contains("Thinking..."));
+    assert!(!hidden.contains("secret reasoning"));
+    assert!(matches!(
+        &chat.entries[0],
+        ChatEntry::Assistant { thinking, .. } if thinking == &vec!["secret reasoning".to_string()]
+    ));
+
+    chat.set_thinking_visible(true);
+    let restored = chat.render(80).join("\n");
+    assert!(restored.contains("secret reasoning"));
+}

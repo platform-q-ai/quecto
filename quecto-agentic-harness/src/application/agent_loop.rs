@@ -445,8 +445,8 @@ impl AgentLoopImpl {
     ) -> AgentResult {
         let text = response.content.unwrap_or_default();
         let mut assistant_message = Message::assistant(text.clone(), vec![]);
-        // Stamp + spill at creation: the loop returns right after this, so no
-        // later pruning pass could file the final reply (#1046).
+        assistant_message.thinking_blocks = response.thinking_blocks;
+        // Stamp + spill now; loop returns before any later pruning pass (#1046).
         assistant_message.turn = Some(end.current_turn);
         self.spill_conversation_message(&mut assistant_message)
             .await;
@@ -498,6 +498,10 @@ impl AgentLoopImpl {
                 StreamEvent::TextDelta(t) => {
                     emitted_event = true;
                     self.notify(|| AgentProgressEvent::Token(t));
+                }
+                StreamEvent::ThinkingDelta(t) => {
+                    emitted_event = true;
+                    self.notify(|| AgentProgressEvent::ThinkingDelta(t));
                 }
                 StreamEvent::Done(response) => {
                     if is_empty_streamed_response(&response) {
@@ -735,6 +739,12 @@ mod swap_tests;
 #[cfg(test)]
 #[path = "agent_loop_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "agent_loop_text_thinking_tests.rs"]
+mod text_thinking_tests;
+#[cfg(test)]
+#[path = "agent_loop_thinking_tests.rs"]
+mod thinking_tests;
 #[cfg(test)]
 #[path = "agent_loop_turn_tests.rs"]
 mod turn_tests;

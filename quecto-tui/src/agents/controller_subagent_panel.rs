@@ -76,7 +76,7 @@ impl App {
     }
 
     /// The chat buffer for the active session (master or selected sub-agent).
-    pub(super) fn active_chat_mut(&mut self) -> &mut Chat {
+    pub(crate) fn active_chat_mut(&mut self) -> &mut Chat {
         &mut self.active_session_mut().chat
     }
 

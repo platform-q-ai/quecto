@@ -204,6 +204,9 @@ pub enum Event {
         #[serde(rename = "messageRefs", default)]
         message_refs: Vec<String>,
     },
+    Thinking {
+        text: String,
+    },
     Token {
         token: String,
     },

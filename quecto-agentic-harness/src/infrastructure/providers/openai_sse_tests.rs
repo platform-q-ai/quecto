@@ -26,6 +26,41 @@ async fn handler_emits_text_delta_and_done_response() {
 }
 
 #[tokio::test]
+async fn handler_emits_and_persists_reasoning_delta_before_answer_token() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    let mut handler = OpenAiSseHandler::new();
+
+    let outcome = handler
+        .process_line(
+            r#"data: {"choices":[{"delta":{"reasoning_content":"visible reasoning"}}]}"#,
+            &tx,
+        )
+        .await;
+    assert!(matches!(outcome, SseLineOutcome::Continue));
+    match rx.recv().await.unwrap() {
+        StreamEvent::ThinkingDelta(text) => assert_eq!(text, "visible reasoning"),
+        other => panic!("unexpected event: {other:?}"),
+    }
+
+    handler
+        .process_line(r#"data: {"choices":[{"delta":{"content":"answer"}}]}"#, &tx)
+        .await;
+    match rx.recv().await.unwrap() {
+        StreamEvent::TextDelta(text) => assert_eq!(text, "answer"),
+        other => panic!("unexpected event: {other:?}"),
+    }
+
+    handler.process_line("data: [DONE]", &tx).await;
+    match rx.recv().await.unwrap() {
+        StreamEvent::Done(response) => {
+            assert_eq!(response.content.as_deref(), Some("answer"));
+            assert_eq!(response.thinking_blocks.len(), 1);
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn handler_ignores_non_data_and_malformed_json_then_finishes_on_eof() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(2);
     let mut handler = OpenAiSseHandler::new();

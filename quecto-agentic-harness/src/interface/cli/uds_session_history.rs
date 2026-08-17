@@ -106,7 +106,8 @@ pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Val
         })
         .collect();
 
-    serde_json::json!({
+    let visible_thinking = super::super::visible_thinking::blocks_to_json(&msg.thinking_blocks);
+    let mut summary = serde_json::json!({
         "id": msg.id().to_string(),
         "role": role_wire_name(&msg.role),
         "content": preview,
@@ -117,13 +118,22 @@ pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Val
             "argumentsLength": call.arguments.len(),
             "truncated": true,
         })).collect::<Vec<_>>(),
+        "visibleThinking": visible_thinking,
         "toolCallId": msg.tool_call_id,
         "toolName": msg.tool_name,
         "isError": msg.is_error,
         "collapsed": true,
         "truncated": true,
         "contentLength": msg.content.len(),
-    })
+    });
+    if serde_json::to_vec(&summary)
+        .map(|bytes| bytes.len() > HISTORY_PAGE_JSON_BUDGET)
+        .unwrap_or(true)
+    {
+        summary["visibleThinking"] = serde_json::json!([]);
+        summary["visibleThinkingTruncated"] = serde_json::json!(true);
+    }
+    summary
 }
 
 #[cfg(test)]

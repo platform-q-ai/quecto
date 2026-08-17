@@ -5,7 +5,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
+use crate::domain::message::{LlmResponse, Role, ThinkingBlock, ToolCall, UsageInfo};
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 
 struct AbortOnDrop<T> {
@@ -195,7 +195,7 @@ impl OpenAiProvider {
     }
 
     /// Parse the OpenAI response JSON into our domain LlmResponse.
-    fn parse_response(body: &serde_json::Value) -> Result<LlmResponse, DomainError> {
+    pub(super) fn parse_response(body: &serde_json::Value) -> Result<LlmResponse, DomainError> {
         let choices = body["choices"]
             .as_array()
             .ok_or_else(|| DomainError::Provider("missing choices in response".to_string()))?;
@@ -239,14 +239,28 @@ impl OpenAiProvider {
                 ..u
             });
 
+        let thinking_blocks = supported_reasoning_fields(message)
+            .map(|thinking| ThinkingBlock::Normal {
+                thinking: thinking.to_string(),
+                signature: String::new(),
+            })
+            .collect();
+
         Ok(LlmResponse {
             content,
             tool_calls,
             usage,
             stop_reason: None,
-            thinking_blocks: vec![],
+            thinking_blocks,
         })
     }
+}
+
+pub(crate) fn supported_reasoning_fields(value: &serde_json::Value) -> impl Iterator<Item = &str> {
+    ["reasoning_content", "reasoning", "thinking"]
+        .into_iter()
+        .filter_map(|field| value[field].as_str())
+        .filter(|thinking| !thinking.is_empty())
 }
 
 impl OpenAiProvider {

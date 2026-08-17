@@ -22,11 +22,16 @@ impl App {
                 )),
                 ResumedChatMessage::Assistant {
                     text,
+                    thinking,
                     id,
                     stub,
                     content_len,
-                } => entries.push(Self::history_entry(
+                } => entries.push(Self::history_entry_with_thinking(
                     crate::components::ansi::sanitize_control_keep_newlines(&text),
+                    thinking
+                        .into_iter()
+                        .map(|text| crate::components::ansi::sanitize_control_keep_newlines(&text))
+                        .collect(),
                     id,
                     stub,
                     false,

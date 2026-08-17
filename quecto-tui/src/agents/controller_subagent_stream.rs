@@ -392,6 +392,7 @@ impl App {
         tool_counts: Option<(&mut usize, &mut usize)>,
     ) {
         match ev {
+            Event::Thinking { text } => chat.append_thinking(text),
             Event::Token { token } => chat.append_token(token),
             Event::AgentEnd { .. } | Event::TurnEnd { .. } => chat.finalize_assistant(),
             Event::ToolExecutionStart {
@@ -574,32 +575,6 @@ impl App {
                 steps_completed: bar.done,
                 steps_total: bar.total,
             });
-        }
-    }
-
-    /// Map a backfilled/resumed history message to a chat entry: a ladder-demoted
-    /// message carrying a stable id becomes a recallable [`ChatEntry::Stub`];
-    /// anything else renders as a plain user/assistant line (#1061). Shared by the
-    /// sub-agent/master backfill and the resume path so both recall identically.
-    pub(super) fn history_entry(
-        text: String,
-        id: Option<String>,
-        stub: bool,
-        is_user: bool,
-        content_len: Option<usize>,
-    ) -> ChatEntry {
-        match (stub, id) {
-            (true, Some(id)) => ChatEntry::Stub {
-                id,
-                is_user,
-                text,
-                content_len,
-            },
-            _ if is_user => ChatEntry::User { text },
-            _ => ChatEntry::Assistant {
-                text,
-                streaming: false,
-            },
         }
     }
 

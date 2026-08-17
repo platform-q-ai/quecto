@@ -1,5 +1,5 @@
 use super::{LONG_REQUEST_ID_REGRESSION_LEN, message_to_json_range_for_response};
-use crate::domain::message::{Message, ToolCall};
+use crate::domain::message::{Message, ThinkingBlock, ToolCall};
 use crate::interface::cli::protocol::AgentEvent;
 
 /// #1103 review: range fitting must include the actual response id, not a fixed
@@ -25,6 +25,20 @@ fn ranged_get_message_accounts_for_long_request_id() {
         "long request id should shrink the page, not return an empty page for simple content"
     );
     assert_eq!(data["hasMoreContent"].as_bool(), Some(true));
+}
+
+#[test]
+fn ranged_get_message_includes_display_safe_visible_thinking() {
+    let mut msg = Message::assistant("answer", vec![]);
+    msg.thinking_blocks.push(ThinkingBlock::Normal {
+        thinking: "visible reasoning".into(),
+        signature: "PRIVATE_SIGNATURE".into(),
+    });
+
+    let data = message_to_json_range_for_response(&msg, Some(0), Some(3), Some("range"));
+    assert_eq!(data["content"], "ans");
+    assert_eq!(data["visibleThinking"][0]["text"], "visible reasoning");
+    assert!(!data.to_string().contains("PRIVATE_SIGNATURE"));
 }
 
 #[test]

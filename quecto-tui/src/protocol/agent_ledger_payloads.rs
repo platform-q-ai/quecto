@@ -46,6 +46,7 @@ pub struct LedgerMessage {
     content: Lenient<Option<String>>,
     #[serde(alias = "tool_calls")]
     tool_calls: Lenient<Vec<LedgerToolCall>>,
+    visible_thinking: Lenient<Vec<VisibleThinking>>,
     #[serde(alias = "tool_call_id")]
     tool_call_id: Lenient<Option<String>>,
     #[serde(alias = "tool_name")]
@@ -71,6 +72,10 @@ impl LedgerMessage {
         &self.tool_calls.0
     }
 
+    pub fn visible_thinking(&self) -> &[VisibleThinking] {
+        &self.visible_thinking.0
+    }
+
     pub fn tool_call_id(&self) -> &str {
         self.tool_call_id.0.as_deref().unwrap_or("")
     }
@@ -81,6 +86,18 @@ impl LedgerMessage {
 
     pub fn is_error(&self) -> bool {
         self.is_error.0
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct VisibleThinking {
+    text: Lenient<Option<String>>,
+}
+
+impl VisibleThinking {
+    pub fn text(&self) -> &str {
+        self.text.0.as_deref().unwrap_or("")
     }
 }
 

@@ -1191,13 +1191,15 @@ const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] = &[
 /// this as they migrate behind typed mappers. Never raise it.
 /// (#1257 Phase 5: raised only by genuine new mapper sites absorbed from
 /// feature/view — net feature-view burn-down is required when raising.)
-const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 137;
+/// #1231 adds one typed protocol mapper extraction site for recovered `visibleThinking`
+/// (137 → 138); keep future work burning this down behind typed DTOs.
+const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 138;
 /// Measured with direct deserialization, key, indexed-value, and accessor-chain parsing all counted.
-const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 137;
+const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 138;
 /// Current combined feature/view + protocol ceiling. This prevents moving
 /// sites between buckets (and adjusting their individual seeds) from hiding
 /// growth in the total raw-JSON inventory; keep it exact when re-baselining.
-const TUI_RAW_JSON_COMBINED_CEILING: usize = 142;
+const TUI_RAW_JSON_COMBINED_CEILING: usize = 143;
 
 /// Seed: production feature/view *usages* of `protocol::client` wire DTOs.
 /// Lower this as call sites migrate behind mappers. Never raise it.
@@ -1241,7 +1243,10 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// `track_subagent` in `shell/tui_harness_tabs.rs` seeds one roster entry
 /// via `SubagentInfoEvent` — harness seam usage, not feature/view growth
 /// (151 → 152).
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 152;
+/// #1231 adds additive thinking protocol handling at the TUI event/recovery seams:
+/// live `Event::Thinking` routing and recovered `VisibleThinking` DTO mapping
+/// (152 → 154).
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 154;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///

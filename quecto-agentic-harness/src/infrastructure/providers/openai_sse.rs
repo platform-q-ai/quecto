@@ -3,17 +3,21 @@
 //! Extracted from `openai.rs` to keep both files under the 750-line limit.
 //! Uses the shared SSE pump from [`sse_common`].
 
-use crate::domain::message::{LlmResponse, ToolCall, UsageInfo};
+use crate::domain::message::{LlmResponse, ThinkingBlock, ToolCall, UsageInfo};
 use crate::domain::provider::StreamEvent;
 use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome, pump_sse};
 
 use super::OpenAiProvider;
-use super::openai_sse_parser::{MAX_OPENAI_SSE_CONTENT_BYTES, append_with_limit};
+use super::openai_sse_parser::{
+    MAX_OPENAI_SSE_CONTENT_BYTES, MAX_OPENAI_SSE_REASONING_BYTES, append_with_limit,
+};
 
 /// SSE line handler for OpenAI chat completions.
 pub(crate) struct OpenAiSseHandler {
     content: String,
     tool_calls: Vec<ToolCall>,
+    thinking_blocks: Vec<ThinkingBlock>,
+    thinking_bytes: usize,
     usage: Option<UsageInfo>,
     /// Reused sink for `apply_delta`'s content extraction (which we ignore
     /// here, since content is accumulated into `content` directly).
@@ -25,6 +29,8 @@ impl OpenAiSseHandler {
         Self {
             content: String::new(),
             tool_calls: Vec::new(),
+            thinking_blocks: Vec::new(),
+            thinking_bytes: 0,
             usage: None,
             delta_scratch: String::new(),
         }
@@ -41,7 +47,7 @@ impl OpenAiSseHandler {
             tool_calls: std::mem::take(&mut self.tool_calls),
             usage: self.usage.take(),
             stop_reason: None,
-            thinking_blocks: vec![],
+            thinking_blocks: std::mem::take(&mut self.thinking_blocks),
         }
     }
 }
@@ -74,6 +80,27 @@ impl SseHandler for OpenAiSseHandler {
                 // allocating a fresh `String` per delta.
                 for choice in choices {
                     let delta = choice.get("delta").unwrap_or(&serde_json::Value::Null);
+                    for thinking in
+                        crate::infrastructure::providers::openai::supported_reasoning_fields(delta)
+                    {
+                        let next_len = self.thinking_bytes.saturating_add(thinking.len());
+                        if next_len > MAX_OPENAI_SSE_REASONING_BYTES {
+                            let _ = tx
+                                .send(StreamEvent::Error(format!(
+                                    "OpenAI SSE reasoning exceeds {MAX_OPENAI_SSE_REASONING_BYTES} byte limit"
+                                )))
+                                .await;
+                            return SseLineOutcome::Done;
+                        }
+                        self.thinking_bytes = next_len;
+                        self.thinking_blocks.push(ThinkingBlock::Normal {
+                            thinking: thinking.to_string(),
+                            signature: String::new(),
+                        });
+                        let _ = tx
+                            .send(StreamEvent::ThinkingDelta(thinking.to_string()))
+                            .await;
+                    }
                     if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
                         if let Err(err) = append_with_limit(
                             &mut self.content,

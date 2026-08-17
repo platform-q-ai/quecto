@@ -20,6 +20,7 @@ mod uds_control_forward;
 mod uds_delete_all_subagents;
 mod uds_execution_state;
 mod uds_progress_forward;
+mod visible_thinking;
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn live_execution_state_for_events(

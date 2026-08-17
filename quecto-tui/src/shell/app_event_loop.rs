@@ -589,11 +589,11 @@ impl App {
                 return;
             }
             Key::Ctrl('n') => {
-                // New tab (#1466 round 2). Ctrl+T was the first-choice chord
-                // but is taken by the tool-policy selector above; Ctrl+N
-                // (0x0E) arrives unmodified in every terminal and tmux, and
-                // only Ctrl+SHIFT+N (a distinct key) is bound.
                 self.open_new_tab_announced();
+                return;
+            }
+            Key::Ctrl('y') => {
+                self.toggle_thinking_visibility();
                 return;
             }
             Key::Ctrl('o') => {

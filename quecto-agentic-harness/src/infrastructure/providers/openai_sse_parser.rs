@@ -6,7 +6,7 @@
 use crate::domain::error::DomainError;
 use crate::domain::message::ToolCall;
 #[cfg(test)]
-use crate::domain::message::{LlmResponse, UsageInfo};
+use crate::domain::message::{LlmResponse, ThinkingBlock, UsageInfo};
 
 /// Maximum number of tool calls allowed in a single streaming response.
 const MAX_TOOL_CALLS: usize = 128;
@@ -24,6 +24,11 @@ pub(crate) const MAX_OPENAI_SSE_CONTENT_BYTES: usize = 8 * 1024 * 1024;
 /// adversarial tool-call argument accumulator from growing without bound.
 pub(crate) const MAX_OPENAI_SSE_TOOL_ARGUMENT_BYTES: usize = 2 * 1024 * 1024;
 
+/// Maximum accumulated display-safe reasoning bytes for one OpenAI-compatible
+/// SSE response. Lower than the content cap because thinking is rendered live by
+/// default and should remain a bounded summary, not an unbounded transcript.
+pub(crate) const MAX_OPENAI_SSE_REASONING_BYTES: usize = 256 * 1024;
+
 /// Parse an SSE text stream into an assembled `LlmResponse`.
 ///
 /// Captures content deltas, tool-call deltas, and the final `usage` chunk
@@ -32,6 +37,8 @@ pub(crate) const MAX_OPENAI_SSE_TOOL_ARGUMENT_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> {
     let mut content = String::new();
     let mut tool_calls: Vec<ToolCall> = Vec::new();
+    let mut thinking_blocks: Vec<ThinkingBlock> = Vec::new();
+    let mut thinking_bytes = 0usize;
     let mut usage: Option<UsageInfo> = None;
 
     for line in raw.lines() {
@@ -46,11 +53,22 @@ pub(crate) fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> 
 
         if let Some(choices) = chunk.get("choices").and_then(|v| v.as_array()) {
             for choice in choices {
-                apply_delta(
-                    choice.get("delta").unwrap_or(&serde_json::Value::Null),
-                    &mut content,
-                    &mut tool_calls,
-                )?;
+                let delta = choice.get("delta").unwrap_or(&serde_json::Value::Null);
+                for thinking in
+                    crate::infrastructure::providers::openai::supported_reasoning_fields(delta)
+                {
+                    thinking_bytes = thinking_bytes.saturating_add(thinking.len());
+                    if thinking_bytes > MAX_OPENAI_SSE_REASONING_BYTES {
+                        return Err(DomainError::Provider(format!(
+                            "OpenAI SSE reasoning exceeds {MAX_OPENAI_SSE_REASONING_BYTES} byte limit"
+                        )));
+                    }
+                    thinking_blocks.push(ThinkingBlock::Normal {
+                        thinking: thinking.to_string(),
+                        signature: String::new(),
+                    });
+                }
+                apply_delta(delta, &mut content, &mut tool_calls)?;
             }
         }
 
@@ -72,7 +90,7 @@ pub(crate) fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> 
         tool_calls,
         usage,
         stop_reason: None,
-        thinking_blocks: vec![],
+        thinking_blocks,
     })
 }
 

@@ -69,6 +69,24 @@ fn parse_sse_content_accepts_exact_limit_and_rejects_over_limit() {
     assert!(err.contains("assistant content exceeds"));
 }
 
+fn reasoning_sse(fragment: &str) -> String {
+    format!(
+        "data: {{\"choices\":[{{\"delta\":{{\"reasoning_content\":{}}}}}]}}\n",
+        serde_json::to_string(fragment).unwrap()
+    )
+}
+
+#[test]
+fn parse_sse_reasoning_accepts_exact_limit_and_rejects_over_limit() {
+    let exact = "a".repeat(MAX_OPENAI_SSE_REASONING_BYTES);
+    let response = parse_sse_response(&reasoning_sse(&exact)).unwrap();
+    assert_eq!(response.thinking_blocks.len(), 1);
+
+    let over = format!("{}{}", reasoning_sse(&exact), reasoning_sse("b"));
+    let err = parse_sse_response(&over).unwrap_err().to_string();
+    assert!(err.contains("OpenAI SSE reasoning exceeds"));
+}
+
 fn tool_args_sse(fragment: &str) -> String {
     format!(
         "data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{{\"index\":0,\"id\":\"c\",\"function\":{{\"name\":\"bash\",\"arguments\":{}}}}}]}}}}]}}\n",

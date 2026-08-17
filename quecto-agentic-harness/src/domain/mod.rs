@@ -18,6 +18,8 @@ pub mod session;
 pub mod subagent;
 pub mod subagent_launch;
 pub mod text;
+#[cfg(test)]
+mod thinking_visibility_tests;
 pub mod tool;
 pub mod tool_descriptor;
 pub mod tool_id;

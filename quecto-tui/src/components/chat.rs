@@ -20,6 +20,7 @@ pub enum ChatEntry {
     },
     Assistant {
         text: String,
+        thinking: Vec<String>,
         /// Whether this message is still being streamed.
         streaming: bool,
     },
@@ -57,6 +58,7 @@ struct CachedLineSlice {
 struct CachedEntryRender {
     width: usize,
     tool_expanded: bool,
+    thinking_visible: bool,
     line_count: usize,
     lines: Option<CachedLineSlice>,
 }
@@ -80,6 +82,8 @@ pub struct Chat {
     combined_width: Option<usize>,
     /// Tool-expand state the offset table was built for.
     combined_tool_expanded: bool,
+    /// Thinking visibility state the offset table was built for.
+    combined_thinking_visible: bool,
     /// Test/harness-only counters proving the incremental cache avoids
     /// redundant work.
     #[cfg(any(test, feature = "test-harness"))]
@@ -96,6 +100,8 @@ pub struct Chat {
     viewport_height: Option<usize>,
     /// Global tool expand state (toggled by Ctrl+O).
     pub tool_expanded: bool,
+    /// Display preference: show or hide model thinking text without deleting it.
+    pub thinking_visible: bool,
     /// Entries removed ahead of the current window by retention since the last
     /// owner reconciliation. Controllers use this to keep turn indices stable.
     retention_front_trimmed: usize,
@@ -142,6 +148,7 @@ impl Chat {
             combined_offsets: Vec::new(),
             combined_width: None,
             combined_tool_expanded: false,
+            combined_thinking_visible: true,
             #[cfg(any(test, feature = "test-harness"))]
             entry_builds: 0,
             #[cfg(any(test, feature = "test-harness"))]
@@ -151,6 +158,7 @@ impl Chat {
             last_render_line_count: 0,
             viewport_height: None,
             tool_expanded: false,
+            thinking_visible: true,
             retention_front_trimmed: 0,
             retention_front_inserted: 0,
         }
@@ -169,7 +177,10 @@ impl Chat {
 
     /// Append streaming token to the last assistant message, or create one.
     pub fn append_token(&mut self, token: &str) {
-        if let Some(ChatEntry::Assistant { text, streaming }) = self.entries.last_mut() {
+        if let Some(ChatEntry::Assistant {
+            text, streaming, ..
+        }) = self.entries.last_mut()
+        {
             if *streaming {
                 text.push_str(token);
                 if let Some(cache) = self.render_cache.last_mut() {
@@ -180,6 +191,31 @@ impl Chat {
         }
         self.entries.push(ChatEntry::Assistant {
             text: token.to_string(),
+            thinking: Vec::new(),
+            streaming: true,
+        });
+        self.render_cache.push(None);
+        self.enforce_retention_tail();
+    }
+
+    /// Append display-safe thinking to the last streaming assistant message, or create one.
+    pub fn append_thinking(&mut self, text: &str) {
+        if let Some(ChatEntry::Assistant {
+            thinking,
+            streaming,
+            ..
+        }) = self.entries.last_mut()
+            && *streaming
+        {
+            thinking.push(text.to_string());
+            if let Some(cache) = self.render_cache.last_mut() {
+                *cache = None;
+            }
+            return;
+        }
+        self.entries.push(ChatEntry::Assistant {
+            text: String::new(),
+            thinking: vec![text.to_string()],
             streaming: true,
         });
         self.render_cache.push(None);
@@ -274,6 +310,19 @@ impl Chat {
     pub fn toggle_tool_expand(&mut self) {
         self.tool_expanded = !self.tool_expanded;
         self.render_cache.fill(None);
+    }
+
+    pub fn set_thinking_visible(&mut self, visible: bool) {
+        if self.thinking_visible != visible {
+            self.thinking_visible = visible;
+            self.render_cache.fill(None);
+        }
+    }
+
+    pub fn toggle_thinking_visible(&mut self) -> bool {
+        let visible = !self.thinking_visible;
+        self.set_thinking_visible(visible);
+        visible
     }
 
     pub fn clear(&mut self) {
@@ -403,6 +452,7 @@ impl Chat {
             combined_offsets: _, // per-entry line counts, O(entries) usize
             combined_width: _,
             combined_tool_expanded: _,
+            combined_thinking_visible: _,
             entry_builds: _,
             combined_extends: _,
             scroll_offset: _,
@@ -410,6 +460,7 @@ impl Chat {
             last_render_line_count: _,
             viewport_height: _,
             tool_expanded: _,
+            thinking_visible: _,
             retention_front_trimmed: _,
             retention_front_inserted: _,
         } = self;
@@ -452,7 +503,12 @@ impl Chat {
 }
 
 impl Chat {
-    fn render_entry(entry: &ChatEntry, width: usize, tool_expanded: bool) -> Vec<String> {
+    fn render_entry(
+        entry: &ChatEntry,
+        width: usize,
+        tool_expanded: bool,
+        thinking_visible: bool,
+    ) -> Vec<String> {
         let mut lines = Vec::new();
         match entry {
             ChatEntry::User { text } => {
@@ -471,11 +527,30 @@ impl Chat {
                     }
                 }
             }
-            ChatEntry::Assistant { text, streaming } => {
-                if text.is_empty() && *streaming {
+            ChatEntry::Assistant {
+                text,
+                thinking,
+                streaming,
+            } => {
+                if text.is_empty() && thinking.is_empty() && *streaming {
                     return lines;
                 }
                 lines.push(String::new());
+                if !thinking.is_empty() {
+                    lines.push(theme::dim("Thinking:"));
+                    if thinking_visible {
+                        for thought in thinking {
+                            for line in wrap_text(thought, width) {
+                                lines.push(truncate_to_width(&theme::dim(&line), width, None));
+                            }
+                        }
+                    } else {
+                        lines.push(truncate_to_width(&theme::dim("Thinking..."), width, None));
+                    }
+                    if !text.is_empty() {
+                        lines.push(String::new());
+                    }
+                }
                 let mut md = Markdown::new(text, 0);
                 let md_lines = md.render(width);
                 if md_lines.is_empty() {
@@ -529,10 +604,11 @@ impl Chat {
                 } else {
                     ChatEntry::Assistant {
                         text: text.clone(),
+                        thinking: Vec::new(),
                         streaming: false,
                     }
                 };
-                return Self::render_entry(&proxy, width, tool_expanded);
+                return Self::render_entry(&proxy, width, tool_expanded, thinking_visible);
             }
         }
         lines

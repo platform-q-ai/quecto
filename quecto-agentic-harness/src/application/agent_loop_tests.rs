@@ -48,13 +48,13 @@ impl MockProvider {
 }
 
 #[derive(Debug)]
-struct MockStreamingProvider {
+pub(super) struct MockStreamingProvider {
     responses: Mutex<Vec<Vec<crate::domain::provider::StreamEvent>>>,
     request_count: Mutex<usize>,
 }
 
 impl MockStreamingProvider {
-    fn new(responses: Vec<Vec<crate::domain::provider::StreamEvent>>) -> Self {
+    pub(super) fn new(responses: Vec<Vec<crate::domain::provider::StreamEvent>>) -> Self {
         Self {
             responses: Mutex::new(responses),
             request_count: Mutex::new(0),
@@ -638,6 +638,7 @@ mod clamp_max_tokens_tests;
 mod context_tokens_tests;
 #[path = "agent_loop_progress_tests.rs"]
 mod progress_tests;
+
 #[path = "agent_loop_931_tests.rs"]
 mod retry_malformed_tests;
 

@@ -1,6 +1,28 @@
 use super::*;
 
 #[tokio::test]
+async fn test_forward_progress_event_emits_thinking_distinct_from_token() {
+    use crate::domain::agent::AgentProgressEvent;
+    use crate::interface::cli::uds_cancel::forward_progress_event;
+
+    let mut buf = Vec::new();
+    forward_progress_event(
+        AgentProgressEvent::ThinkingDelta("visible reasoning".to_string()),
+        &mut buf,
+    )
+    .await;
+
+    let output = String::from_utf8(buf).unwrap();
+    let v: serde_json::Value = serde_json::from_str(output.lines().next().unwrap()).unwrap();
+    assert_eq!(v["type"], "thinking");
+    assert_eq!(v["text"], "visible reasoning");
+    assert!(
+        v.get("token").is_none(),
+        "thinking must not masquerade as token: {output}"
+    );
+}
+
+#[tokio::test]
 async fn test_forward_progress_event_emits_tool_started_with_tool_call_id() {
     use crate::domain::agent::AgentProgressEvent;
     use crate::interface::cli::uds_cancel::forward_progress_event;

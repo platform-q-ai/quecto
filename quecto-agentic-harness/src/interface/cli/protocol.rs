@@ -58,6 +58,8 @@ pub enum AgentEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<WorkflowIdleReason>,
     },
+    /// An incremental display-safe thinking token from the LLM during streaming.
+    Thinking { text: String },
     /// An incremental text token from the LLM during streaming.
     Token { token: String },
     /// A new LLM call begins.

@@ -80,11 +80,48 @@ fn parse_resumed_messages_keeps_only_displayable_chat_messages() {
             },
             ResumedChatMessage::Assistant {
                 text: "world".to_string(),
+                thinking: Vec::new(),
                 id: Some("a1".to_string()),
                 stub: true,
                 content_len: Some(42),
             },
         ]
+    );
+}
+
+#[test]
+fn parse_resumed_messages_preserves_visible_thinking() {
+    let messages = parse_resumed_messages(&json!({
+        "messages": [{"role":"assistant","content":"answer","id":"a1","visibleThinking":[{"text":"reasoning"}]}]
+    }))
+    .expect("valid messages array should parse");
+    assert_eq!(
+        messages,
+        vec![ResumedChatMessage::Assistant {
+            text: "answer".to_string(),
+            thinking: vec!["reasoning".to_string()],
+            id: Some("a1".to_string()),
+            stub: false,
+            content_len: None,
+        }]
+    );
+}
+
+#[test]
+fn parse_resumed_messages_keeps_thinking_only_assistant_messages() {
+    let messages = parse_resumed_messages(&json!({
+        "messages": [{"role":"assistant","content":"","id":"a1","visibleThinking":[{"text":"reasoning"}]}]
+    }))
+    .expect("valid messages array should parse");
+    assert_eq!(
+        messages,
+        vec![ResumedChatMessage::Assistant {
+            text: String::new(),
+            thinking: vec!["reasoning".to_string()],
+            id: Some("a1".to_string()),
+            stub: false,
+            content_len: None,
+        }]
     );
 }
 
@@ -134,6 +171,7 @@ fn parse_resumed_messages_preserves_tool_calls_and_results() {
             },
             ResumedChatMessage::Assistant {
                 text: "after tool".to_string(),
+                thinking: Vec::new(),
                 id: None,
                 stub: false,
                 content_len: None,
@@ -198,6 +236,7 @@ fn parse_resumed_messages_keeps_assistant_text_before_tool_calls() {
         vec![
             ResumedChatMessage::Assistant {
                 text: "I will inspect it".to_string(),
+                thinking: Vec::new(),
                 id: None,
                 stub: false,
                 content_len: None,

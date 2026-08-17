@@ -5,6 +5,7 @@
 //! process, child watch) that touch the OS.
 
 pub mod app;
+mod app_thinking;
 pub(crate) mod atomic_file;
 pub mod child_watch;
 pub mod cli;
@@ -18,6 +19,7 @@ pub mod stdin_buffer;
 pub(crate) mod tab_registry;
 pub(crate) mod tab_spawn_policy;
 pub mod terminal;
+pub(crate) mod thinking_prefs;
 /// Shared test-only `tracing` warn-capture apparatus (#1112 review): used by
 /// the client defence unit tests and the workspace `bdd` target.
 #[cfg(any(test, feature = "test-harness"))]

@@ -1,6 +1,7 @@
 impl Component for Chat {
     fn render(&mut self, width: usize) -> Vec<String> {
         let tool_expanded = self.tool_expanded;
+        let thinking_visible = self.thinking_visible;
         if self.render_cache.len() != self.entries.len() {
             self.render_cache.resize(self.entries.len(), None);
         }
@@ -9,14 +10,17 @@ impl Component for Chat {
         // tool-expand change invalidates everything; otherwise the first entry
         // whose per-entry cache is stale (e.g. the streaming tail, or a tool
         // entry completed in the middle) marks where re-extension begins.
-        let dims_changed =
-            self.combined_width != Some(width) || self.combined_tool_expanded != tool_expanded;
+        let dims_changed = self.combined_width != Some(width)
+            || self.combined_tool_expanded != tool_expanded
+            || self.combined_thinking_visible != thinking_visible;
 
         let mut first_dirty = self.entries.len();
         for idx in 0..self.entries.len() {
             let fresh = matches!(
                 &self.render_cache[idx],
-                Some(c) if c.width == width && c.tool_expanded == tool_expanded
+                Some(c) if c.width == width
+                    && c.tool_expanded == tool_expanded
+                    && c.thinking_visible == thinking_visible
             );
             if !fresh {
                 first_dirty = idx;
@@ -39,10 +43,17 @@ impl Component for Chat {
         for idx in rebuild_from..self.entries.len() {
             let fresh = matches!(
                 &self.render_cache[idx],
-                Some(c) if c.width == width && c.tool_expanded == tool_expanded
+                Some(c) if c.width == width
+                    && c.tool_expanded == tool_expanded
+                    && c.thinking_visible == thinking_visible
             );
             if !fresh {
-                let lines = Self::render_entry(&self.entries[idx], width, tool_expanded);
+                let lines = Self::render_entry(
+                    &self.entries[idx],
+                    width,
+                    tool_expanded,
+                    thinking_visible,
+                );
                 let line_count = lines.len();
                 // A dims change rebuilds every entry; materializing all rendered
                 // lines at once would transiently recreate the full-transcript
@@ -58,6 +69,7 @@ impl Component for Chat {
                 self.render_cache[idx] = Some(CachedEntryRender {
                     width,
                     tool_expanded,
+                    thinking_visible,
                     line_count,
                     lines,
                 });
@@ -82,6 +94,7 @@ impl Component for Chat {
 
         self.combined_width = Some(width);
         self.combined_tool_expanded = tool_expanded;
+        self.combined_thinking_visible = thinking_visible;
 
         // If the user is scrolled into history, keep the visible viewport anchored
         // while new streaming/tool lines are appended below it. A fixed
@@ -191,6 +204,7 @@ impl Chat {
             Some(c)
                 if c.width == width
                     && c.tool_expanded == tool_expanded
+                    && c.thinking_visible == self.thinking_visible
                     && c.lines.as_ref().is_some_and(|slice| {
                         span.start >= slice.start && span.end <= slice.start + slice.lines.len()
                     })
@@ -199,7 +213,12 @@ impl Chat {
             return;
         }
 
-        let mut lines = Self::render_entry(&self.entries[idx], width, tool_expanded);
+        let mut lines = Self::render_entry(
+            &self.entries[idx],
+            width,
+            tool_expanded,
+            self.thinking_visible,
+        );
         let line_count = lines.len();
         let bounded_start = span.start.saturating_sub(margin).min(line_count);
         let bounded_end = span
@@ -211,6 +230,7 @@ impl Chat {
         self.render_cache[idx] = Some(CachedEntryRender {
             width,
             tool_expanded,
+            thinking_visible: self.thinking_visible,
             line_count,
             lines: Some(CachedLineSlice {
                 start: bounded_start,

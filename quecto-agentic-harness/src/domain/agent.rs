@@ -54,6 +54,8 @@ pub enum AgentProgressEvent {
         /// Whether the tool returned an error.
         is_error: bool,
     },
+    /// An incremental display-safe thinking token arrived from the LLM during streaming.
+    ThinkingDelta(String),
     /// An incremental text token arrived from the LLM during streaming.
     Token(String),
     /// One agent turn completed: the messages appended during that turn

@@ -26,6 +26,10 @@ impl App {
                 self.ac_mut().master_session.footer.set_pwd_path(&root);
                 self.apply_git_branch(app_git::read_git_branch_from(&root));
             }
+            Event::Thinking { text } => {
+                self.ac_mut().master_session.chat.append_thinking(&text);
+                self.reconcile_master_retention_trim();
+            }
             Event::Token { token } => {
                 self.ac_mut().master_session.chat.append_token(&token);
                 self.reconcile_master_retention_trim();

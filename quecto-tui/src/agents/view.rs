@@ -80,8 +80,9 @@ pub(crate) fn ledger_entry_to_chat_entry(
     use crate::components::chat::ChatEntry;
     match entry {
         LedgerEntry::User { text } => ChatEntry::User { text },
-        LedgerEntry::Assistant { text } => ChatEntry::Assistant {
+        LedgerEntry::Assistant { text, thinking } => ChatEntry::Assistant {
             text,
+            thinking,
             streaming: false,
         },
         LedgerEntry::ToolExecution {
@@ -249,9 +250,14 @@ impl SessionView {
     /// Build a session around a pre-configured footer — used for both sub-agent
     /// and master (#828) sessions, so all are constructed identically.
     pub(crate) fn with_footer(footer: Footer) -> Self {
+        let thinking_visible = crate::shell::thinking_prefs::load_thinking_preferences().visible;
+        let mut chat = Chat::new();
+        chat.set_thinking_visible(thinking_visible);
+        let mut live_inflight = Chat::new();
+        live_inflight.set_thinking_visible(thinking_visible);
         Self {
-            chat: Chat::new(),
-            live_inflight: Chat::new(),
+            chat,
+            live_inflight,
             workflow_bar: workflow_bar::WorkflowBarState::default(),
             running: false,
             footer,
