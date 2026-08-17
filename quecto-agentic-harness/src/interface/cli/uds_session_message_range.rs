@@ -72,11 +72,6 @@ fn ranged_value(
     let mut value = message_to_json_with_content(msg, &msg.content[start..end]);
     if !data_fits_frame(&value, request_id) && start == end {
         value["thinking"] = serde_json::Value::Array(Vec::new());
-        while !data_fits_frame(&value, request_id)
-            && value["toolCalls"].as_array().is_some_and(|a| !a.is_empty())
-        {
-            value["toolCalls"] = serde_json::Value::Array(Vec::new());
-        }
     }
     value["offset"] = serde_json::json!(start);
     value["nextOffset"] = serde_json::json!(end);
