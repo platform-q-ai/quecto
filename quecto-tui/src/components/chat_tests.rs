@@ -406,6 +406,7 @@ fn scroll_offset_not_artificially_clamped() {
         .join("\n");
     chat.add_entry(ChatEntry::Assistant {
         text: long_text,
+        thinking: Vec::new(),
         streaming: false,
     });
     chat.scroll_up(50);
@@ -432,6 +433,7 @@ fn render_cache_reuses_unchanged_assistant_entry() {
     let mut chat = Chat::new();
     chat.add_entry(ChatEntry::Assistant {
         text: "# Cached\n\nunchanged markdown".to_string(),
+        thinking: Vec::new(),
         streaming: false,
     });
 
@@ -647,6 +649,7 @@ fn render_is_stable_across_repeated_calls() {
     });
     chat.add_entry(ChatEntry::Assistant {
         text: "world".into(),
+        thinking: Vec::new(),
         streaming: false,
     });
     let first = chat.render(80); // cache miss

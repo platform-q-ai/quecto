@@ -303,6 +303,7 @@ fn builtin_commands_have_stable_order_and_names() {
             "resume",
             "model",
             "effort",
+            "thinking",
             "workflow",
             "workflow-auto",
             "workflow-nudge",

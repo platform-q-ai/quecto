@@ -188,7 +188,7 @@ fn duplicate_ids_within_one_sync_delta_keep_first_position_and_latest_content() 
         matches!(
             entries.as_slice(),
             [
-                crate::agents::ledger::LedgerEntry::Assistant { text: first },
+                crate::agents::ledger::LedgerEntry::Assistant { text: first, .. },
                 crate::agents::ledger::LedgerEntry::User { text: second }
             ] if first == "new" && second == "between"
         ),
@@ -335,7 +335,7 @@ async fn unfocused_authoritative_ledger_projection_suppresses_legacy_live_child_
 
     let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
-        matches!(entries, [ChatEntry::Assistant { text, streaming: false }] if text == "from ledger"),
+        matches!(entries, [ChatEntry::Assistant { text, streaming: false, .. }] if text == "from ledger"),
         "once sync is authoritative for an unfocused child, legacy live tokens must not duplicate the ledger transcript: {entries:?}"
     );
 }
@@ -371,7 +371,7 @@ async fn focused_authoritative_ledger_projection_suppresses_stale_live_child_tok
 
     let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
-        matches!(entries, [ChatEntry::Assistant { text, streaming: false }] if text == "from ledger"),
+        matches!(entries, [ChatEntry::Assistant { text, streaming: false, .. }] if text == "from ledger"),
         "focused authoritative ledger projection must suppress stale live tokens after caught-up sync: {entries:?}"
     );
 }
@@ -410,7 +410,7 @@ async fn focused_authoritative_child_turn_end_finalizes_after_focus_switch() {
 
     let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
-        matches!(entries, [ChatEntry::User { text, .. }, ChatEntry::Assistant { text: live, streaming: false }] if text == "initial task" && live == "live work"),
+        matches!(entries, [ChatEntry::User { text, .. }, ChatEntry::Assistant { text: live, streaming: false, .. }] if text == "initial task" && live == "live work"),
         "turn end must finalize existing focused live output even if focus moved away before ledger reconciliation: {entries:?}"
     );
 }
@@ -447,7 +447,7 @@ async fn focused_authoritative_child_renders_live_tokens_until_ledger_reconciles
 
     let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
-        matches!(entries, [ChatEntry::User { text, .. }, ChatEntry::Assistant { text: live, streaming: true }] if text == "initial task" && live == "live work"),
+        matches!(entries, [ChatEntry::User { text, .. }, ChatEntry::Assistant { text: live, streaming: true, .. }] if text == "initial task" && live == "live work"),
         "focused busy child must render live output before turn commit: {entries:?}"
     );
 
@@ -465,7 +465,7 @@ async fn focused_authoritative_child_renders_live_tokens_until_ledger_reconciles
 
     let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
-        matches!(entries, [ChatEntry::User { text, .. }, ChatEntry::Assistant { text: committed, streaming: false }] if text == "initial task" && committed == "committed work"),
+        matches!(entries, [ChatEntry::User { text, .. }, ChatEntry::Assistant { text: committed, streaming: false, .. }] if text == "initial task" && committed == "committed work"),
         "ledger reconciliation must replace the focused live projection without duplication: {entries:?}"
     );
 }

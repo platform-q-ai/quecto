@@ -501,7 +501,16 @@ async fn dispatch_sse_event(
     match event_type {
         "message_start" => acc.handle_message_start(chunk),
         "content_block_start" => {
+            let is_redacted_thinking =
+                chunk["content_block"]["type"].as_str() == Some("redacted_thinking");
             acc.handle_block_start(chunk);
+            if is_redacted_thinking {
+                let _ = tx
+                    .send(StreamEvent::ThinkingDelta(
+                        "[redacted thinking]".to_string(),
+                    ))
+                    .await;
+            }
             emit_tool_call_start(acc, tx).await;
         }
         "content_block_delta" => {

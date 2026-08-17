@@ -30,6 +30,10 @@ impl App {
                 self.ac_mut().master_session.chat.append_token(&token);
                 self.reconcile_master_retention_trim();
             }
+            Event::Thinking { text } => {
+                self.ac_mut().master_session.chat.append_thinking(&text);
+                self.reconcile_master_retention_trim();
+            }
             Event::TurnStart => {}
             Event::TurnEnd { message } => self.handle_turn_end(message),
             Event::ToolExecutionStart {

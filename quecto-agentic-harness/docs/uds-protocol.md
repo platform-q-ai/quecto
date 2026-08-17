@@ -70,8 +70,9 @@ Send a user message to the agent. This is the primary command — it triggers an
 
 1. `agent_start` — run begins
 2. `turn_start` — LLM call begins
-3. `token` (zero or more) — incremental streaming tokens
-4. `tool_execution_start` / `tool_execution_end` (if tools are called)
+3. `token` (zero or more) — incremental answer-text streaming tokens
+4. `thinking` (zero or more) — display-safe model reasoning/thinking deltas, separate from answer text
+5. `tool_execution_start` / `tool_execution_end` (if tools are called)
 5. `turn_end` — LLM call completed, includes assistant message
 6. `agent_end` — run finished; carries `messageRefs` for this run (legacy `messages` is empty after #1060)
 7. `response` with `command: "prompt"` and `success: true`
@@ -432,6 +433,7 @@ Each message contains:
 | `toolName` | string \| null | For `tool` messages: name of the tool that produced this result |
 | `isError` | boolean | Whether a `tool` message carries an error result |
 | `collapsed` | boolean | `true` when the context ladder demoted this message to a stub — recall the full body on demand via `get_message` with this `id` (#1061) |
+| `thinking` | array | Optional assistant-only display-safe thinking blocks, omitted when absent. Text blocks use `{ "kind": "text", "text": "..." }`; redacted/private provider blocks use `{ "kind": "redacted" }` and never expose signatures, encrypted reasoning, or redacted payload bytes. `content` remains answer-only. |
 
 ---
 
@@ -844,6 +846,14 @@ Incremental text token from the LLM during streaming. Tokens arrive in real time
 
 ```json
 {"type":"token","token":"Hello"}
+```
+
+### `thinking`
+
+Display-safe model thinking/reasoning text from the LLM during streaming. Thinking is additive protocol data and is never part of answer `token` text. Providers may also expose redacted/private thinking metadata internally; UDS only carries visible text deltas and recovered messages only carry display-safe thinking blocks/placeholders.
+
+```json
+{"type":"thinking","text":"I should compare the alternatives."}
 ```
 
 ### `turn_start`

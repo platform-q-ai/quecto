@@ -6,7 +6,7 @@
 //! mpsc channel.
 
 use super::*;
-use crate::domain::message::StopReason;
+use crate::domain::message::{StopReason, ToolCall};
 use crate::domain::tool::ToolDefinition;
 
 fn req<'a>(
@@ -262,7 +262,7 @@ fn parse_response_missing_output_is_error() {
 }
 
 #[test]
-fn parse_response_skips_reasoning_items() {
+fn parse_response_persists_reasoning_summary_as_thinking() {
     let body = serde_json::json!({
         "output": [
             { "type": "reasoning", "summary": "thinking" },
@@ -272,6 +272,7 @@ fn parse_response_skips_reasoning_items() {
     let resp = CodexProvider::parse_response(&body).unwrap();
     assert_eq!(resp.content.unwrap(), "Done");
     assert!(resp.usage.is_none());
+    assert_eq!(resp.thinking_blocks.len(), 1);
 }
 
 // --- parse_response: multiple output_text parts accumulate (Some(c) arm) ---
@@ -291,6 +292,18 @@ fn parse_response_concatenates_multiple_output_text_parts() {
     let resp = CodexProvider::parse_response(&body).unwrap();
     assert_eq!(resp.content.unwrap(), "Hello world");
     assert!(resp.tool_calls.is_empty());
+}
+
+#[test]
+fn parse_sse_reasoning_summary_persists_without_answer_text() {
+    let sse = r#"data: {"type":"response.reasoning_summary_text.delta","delta":"step one"}
+data: {"type":"response.reasoning.summary_text.delta","delta":" and two"}
+data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":8,"output_tokens":2}}}
+data: [DONE]
+"#;
+    let resp = CodexProvider::parse_sse_response(sse).unwrap();
+    assert!(resp.content.is_none());
+    assert_eq!(resp.thinking_blocks.len(), 1);
 }
 
 // --- parse_sse_response: non-`data:` lines are skipped ---

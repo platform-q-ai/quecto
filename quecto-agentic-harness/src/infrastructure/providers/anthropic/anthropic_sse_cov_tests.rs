@@ -262,6 +262,19 @@ async fn dispatch_content_block_start_emits_tool_call_start() {
 }
 
 #[tokio::test]
+async fn dispatch_redacted_thinking_start_emits_live_placeholder_without_data() {
+    let (tx, mut rx) = channel();
+    let mut acc = SseAccumulator::default();
+    let chunk = serde_json::json!({"content_block": {"type": "redacted_thinking", "data": "opaque-private"}});
+    let done = dispatch_sse_event("content_block_start", &chunk, &mut acc, &tx).await;
+    assert!(!done);
+    let events = drain(&mut rx);
+    assert!(
+        matches!(events.first(), Some(StreamEvent::ThinkingDelta(t)) if t == "[redacted thinking]")
+    );
+}
+
+#[tokio::test]
 async fn dispatch_content_block_delta_emits_text_and_accumulates() {
     let (tx, mut rx) = channel();
     let mut acc = SseAccumulator::default();

@@ -11,7 +11,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message, Role, StopReason, ToolCall};
+use crate::domain::message::{LlmResponse, Message, Role};
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 
 #[path = "codex_sse_state.rs"]
@@ -334,6 +334,7 @@ impl CodexProvider {
 
         let mut content: Option<String> = None;
         let mut tool_calls = Vec::new();
+        let mut reasoning = String::new();
 
         for item in output {
             match item["type"].as_str() {
@@ -356,13 +357,16 @@ impl CodexProvider {
                     let call_id = item["call_id"].as_str().unwrap_or_default().to_string();
                     let name = item["name"].as_str().unwrap_or_default().to_string();
                     let arguments = item["arguments"].as_str().unwrap_or_default().to_string();
-                    tool_calls.push(ToolCall {
+                    tool_calls.push(crate::domain::message::ToolCall {
                         id: call_id,
                         name,
                         arguments,
                     });
                 }
-                _ => {} // Skip reasoning, etc.
+                Some("reasoning") => {
+                    codex_sse_state::append_reasoning_summary(item, &mut reasoning)
+                }
+                _ => {}
             }
         }
 
@@ -370,12 +374,21 @@ impl CodexProvider {
             .as_object()
             .map(crate::infrastructure::providers::usage::parse_codex_usage);
 
+        let thinking_blocks = if reasoning.is_empty() {
+            Vec::new()
+        } else {
+            vec![crate::domain::message::ThinkingBlock::Normal {
+                thinking: reasoning,
+                signature: String::new(),
+            }]
+        };
+
         Ok(LlmResponse {
             content,
             tool_calls,
             usage,
             stop_reason: None,
-            thinking_blocks: vec![],
+            thinking_blocks,
         })
     }
 
@@ -511,78 +524,6 @@ impl CodexProvider {
     #[cfg(any(test, feature = "test-support"))]
     pub fn parse_sse_response_public(raw: &str) -> Result<LlmResponse, DomainError> {
         Self::parse_sse_response(raw)
-    }
-}
-
-/// Accumulator for assembling Responses API SSE events into a response.
-///
-/// The Responses API emits `output_index` values that reflect the position
-/// of each item in the full output array, which may include reasoning items
-/// that are not tracked in our dense `tool_calls` vector. We maintain a
-/// `HashMap<usize, usize>` mapping `output_index → tool_calls index` so
-/// that `response.function_call_arguments.delta` events are routed to the
-/// correct tool call regardless of intervening non-tool output items.
-impl SseAccumulator {
-    fn handle_event(&mut self, event: &serde_json::Value) {
-        match event["type"].as_str() {
-            Some("response.output_text.delta") => {
-                if let Some(delta) = event["delta"].as_str() {
-                    self.content.push_str(delta);
-                }
-            }
-            // Documented Responses refusal events (#1230): surface refusal
-            // text as content with StopReason::Refusal, never an empty turn.
-            Some("response.refusal.delta") => {
-                if let Some(delta) = event["delta"].as_str() {
-                    self.content.push_str(delta);
-                }
-                self.stop_reason = Some(StopReason::Refusal);
-            }
-            Some("response.refusal.done") => {
-                match event["refusal"].as_str() {
-                    Some(refusal) if self.content.is_empty() => self.content.push_str(refusal),
-                    _ => {}
-                }
-                self.stop_reason = Some(StopReason::Refusal);
-            }
-            Some("response.output_item.added") => self.handle_item_added(event),
-            Some("response.function_call_arguments.delta") => {
-                if let Some(delta) = event["delta"].as_str() {
-                    let output_idx = event["output_index"].as_u64().unwrap_or(0) as usize;
-                    if let Some(&tc_idx) = self.output_index_to_tool.get(&output_idx) {
-                        if let Some(tc) = self.tool_calls.get_mut(tc_idx) {
-                            tc.arguments.push_str(delta);
-                        }
-                    }
-                }
-            }
-            Some("response.completed") => {
-                if let Some(resp) = event.get("response") {
-                    self.usage = resp["usage"]
-                        .as_object()
-                        .map(crate::infrastructure::providers::usage::parse_codex_usage);
-                    if let Some(status) = resp["status"].as_str() {
-                        self.stop_reason = Some(Self::parse_response_status(status));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_item_added(&mut self, event: &serde_json::Value) {
-        if let Some(item) = event.get("item") {
-            if item["type"].as_str() == Some("function_call") {
-                let output_idx = event["output_index"].as_u64().unwrap_or(0) as usize;
-                let tc_idx = self.tool_calls.len();
-                self.output_index_to_tool.insert(output_idx, tc_idx);
-                self.tool_calls.push(ToolCall {
-                    id: item["call_id"].as_str().unwrap_or_default().to_string(),
-                    name: item["name"].as_str().unwrap_or_default().to_string(),
-                    arguments: String::new(),
-                });
-            }
-        }
     }
 }
 

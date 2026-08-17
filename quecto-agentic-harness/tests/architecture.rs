@@ -1241,7 +1241,10 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// `track_subagent` in `shell/tui_harness_tabs.rs` seeds one roster entry
 /// via `SubagentInfoEvent` — harness seam usage, not feature/view growth
 /// (151 → 152).
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 152;
+/// #1231 adds two protocol `Event::Thinking` routing arms in the same TUI
+/// shell/subagent seams where answer `Token` events are already handled —
+/// additive stream event usage, not feature/view DTO spread (152 → 154).
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 154;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///

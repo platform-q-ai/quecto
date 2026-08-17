@@ -393,6 +393,7 @@ impl App {
     ) {
         match ev {
             Event::Token { token } => chat.append_token(token),
+            Event::Thinking { text } => chat.append_thinking(text),
             Event::AgentEnd { .. } | Event::TurnEnd { .. } => chat.finalize_assistant(),
             Event::ToolExecutionStart {
                 tool_call_id,
@@ -598,6 +599,7 @@ impl App {
             _ if is_user => ChatEntry::User { text },
             _ => ChatEntry::Assistant {
                 text,
+                thinking: Vec::new(),
                 streaming: false,
             },
         }

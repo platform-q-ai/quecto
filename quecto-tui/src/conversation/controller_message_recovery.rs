@@ -39,17 +39,19 @@ impl App {
         let tools_this_turn = self.ac().master_session.tools_this_turn;
         let target_end = self.ac().master_session.chat.entry_count();
         let target_start = self.ac().master_session.active_turn_start.min(target_end);
-        let needs_recovery = TurnOutcome::forced_without_text(refs, open_tool_calls) || {
-            let assistant_text = self.latest_assistant_text_in_range(target_start, target_end);
-            TurnOutcome {
-                refs,
-                assistant_text: &assistant_text,
-                tools_this_turn,
-                open_tool_calls,
-                expected_content_len,
-            }
-            .needs_recovery()
-        };
+        let needs_recovery = self.range_has_assistant_thinking(target_start, target_end)
+            || TurnOutcome::forced_without_text(refs, open_tool_calls)
+            || {
+                let assistant_text = self.latest_assistant_text_in_range(target_start, target_end);
+                TurnOutcome {
+                    refs,
+                    assistant_text: &assistant_text,
+                    tools_this_turn,
+                    open_tool_calls,
+                    expected_content_len,
+                }
+                .needs_recovery()
+            };
         if !needs_recovery {
             return;
         }
@@ -107,6 +109,16 @@ impl App {
                 limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
             });
         }
+    }
+
+    fn range_has_assistant_thinking(&self, start: usize, end: usize) -> bool {
+        let entries = self.ac().master_session.chat.entries();
+        entries[start.min(entries.len())..end.min(entries.len())]
+            .iter()
+            .any(|entry| match entry {
+                ChatEntry::Assistant { thinking, .. } => !thinking.is_empty(),
+                _ => false,
+            })
     }
 
     fn latest_assistant_text_in_range(&self, start: usize, end: usize) -> String {
@@ -293,9 +305,11 @@ pub(crate) fn recovered_chat_entries(
                         duration_ms: None,
                     });
                 }
-                if !content.is_empty() {
+                let thinking = message.thinking();
+                if !content.is_empty() || !thinking.is_empty() {
                     entries.push(ChatEntry::Assistant {
                         text: content.to_string(),
+                        thinking,
                         streaming: false,
                     });
                 }
@@ -352,6 +366,7 @@ mod recovery_cov_tests {
             .chat
             .add_entry(ChatEntry::Assistant {
                 text: "previous complete answer".to_string(),
+                thinking: Vec::new(),
                 streaming: false,
             });
         app.ac_mut().master_session.active_turn_start =
@@ -379,6 +394,7 @@ mod recovery_cov_tests {
             .chat
             .add_entry(ChatEntry::Assistant {
                 text: "previous complete answer".to_string(),
+                thinking: Vec::new(),
                 streaming: false,
             });
         app.ac_mut().master_session.active_turn_start =
@@ -388,6 +404,7 @@ mod recovery_cov_tests {
             .chat
             .add_entry(ChatEntry::Assistant {
                 text: "current complete answer".to_string(),
+                thinking: Vec::new(),
                 streaming: false,
             });
 
@@ -466,7 +483,9 @@ mod recovery_cov_tests {
             other => panic!("expected standalone tool entry, got {other:?}"),
         }
         match &entries[1] {
-            ChatEntry::Assistant { text, streaming } => {
+            ChatEntry::Assistant {
+                text, streaming, ..
+            } => {
                 assert_eq!(text, "visible answer");
                 assert!(!streaming);
             }

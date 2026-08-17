@@ -60,6 +60,8 @@ pub enum AgentEvent {
     },
     /// An incremental text token from the LLM during streaming.
     Token { token: String },
+    /// A display-safe model thinking/reasoning delta from the LLM during streaming.
+    Thinking { text: String },
     /// A new LLM call begins.
     TurnStart,
     /// LLM call completed.

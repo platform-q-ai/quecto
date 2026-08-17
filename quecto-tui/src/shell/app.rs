@@ -158,7 +158,9 @@ impl App {
             tab_event_tx.clone(),
         );
 
-        Self {
+        let thinking_visible = thinking_preferences::load_thinking_visible();
+
+        let mut app = Self {
             terminal,
             renderer: DiffRenderer::new(std::io::stdout()),
             tabs: {
@@ -205,7 +207,9 @@ impl App {
             tab_attach_rx,
             next_attach_generation: 1,
             tab_spawn_policy: None,
-        }
+        };
+        app.set_thinking_visibility(thinking_visible);
+        app
     }
 
     pub(super) fn apply_git_branch(&mut self, branch: Option<String>) -> bool {
@@ -349,12 +353,16 @@ mod app_subagent_panel;
 mod app_subagent_panel_rows;
 #[path = "app_submit.rs"]
 mod app_submit;
+#[path = "app_thinking_visibility.rs"]
+mod app_thinking_visibility;
 #[path = "app_time.rs"]
 mod app_time;
 #[path = "tab_activity.rs"]
 mod tab_activity;
 #[path = "tab_lifecycle.rs"]
 mod tab_lifecycle;
+#[path = "thinking_preferences.rs"]
+mod thinking_preferences;
 #[path = "workspace_resume.rs"]
 mod workspace_resume;
 use crate::agents::roster::{

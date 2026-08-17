@@ -80,8 +80,9 @@ pub(crate) fn ledger_entry_to_chat_entry(
     use crate::components::chat::ChatEntry;
     match entry {
         LedgerEntry::User { text } => ChatEntry::User { text },
-        LedgerEntry::Assistant { text } => ChatEntry::Assistant {
+        LedgerEntry::Assistant { text, thinking } => ChatEntry::Assistant {
             text,
+            thinking,
             streaming: false,
         },
         LedgerEntry::ToolExecution {

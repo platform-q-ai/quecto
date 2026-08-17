@@ -52,6 +52,7 @@ pub struct LedgerMessage {
     tool_name: Lenient<Option<String>>,
     #[serde(alias = "is_error")]
     is_error: Lenient<bool>,
+    thinking: Lenient<Vec<LedgerThinkingBlock>>,
 }
 
 impl LedgerMessage {
@@ -82,6 +83,25 @@ impl LedgerMessage {
     pub fn is_error(&self) -> bool {
         self.is_error.0
     }
+
+    pub fn thinking(&self) -> Vec<String> {
+        self.thinking
+            .0
+            .iter()
+            .filter_map(|block| match block.kind.as_deref() {
+                Some("text") => block.text.clone(),
+                Some("redacted") => Some("[redacted thinking]".to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct LedgerThinkingBlock {
+    kind: Option<String>,
+    text: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]

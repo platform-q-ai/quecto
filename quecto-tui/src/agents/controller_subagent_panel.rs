@@ -67,10 +67,14 @@ impl App {
             // common already-exists render path allocates nothing extra (#827 perf).
             let git_branch = self.workspace.git_branch.clone();
             Self::remember_session(&mut self.ac_mut().roster.session_order, &id);
-            self.ac_mut()
-                .roster
-                .sessions
-                .insert(id.clone(), SessionView::new(git_branch));
+            let mut session = SessionView::new(git_branch);
+            session
+                .chat
+                .set_show_thinking(self.ac().master_session.chat.show_thinking());
+            session
+                .live_inflight
+                .set_show_thinking(self.ac().master_session.chat.show_thinking());
+            self.ac_mut().roster.sessions.insert(id.clone(), session);
         }
         self.ac_mut().roster.sessions.get_mut(&id).unwrap()
     }
@@ -248,10 +252,17 @@ impl App {
     pub(super) fn ensure_session(&mut self, id: &str) {
         if !self.ac().roster.sessions.contains_key(id) {
             let git_branch = self.workspace.git_branch.clone();
+            let mut session = SessionView::new(git_branch);
+            session
+                .chat
+                .set_show_thinking(self.ac().master_session.chat.show_thinking());
+            session
+                .live_inflight
+                .set_show_thinking(self.ac().master_session.chat.show_thinking());
             self.ac_mut()
                 .roster
                 .sessions
-                .insert(id.to_string(), SessionView::new(git_branch));
+                .insert(id.to_string(), session);
             Self::remember_session(&mut self.ac_mut().roster.session_order, id);
             self.evict_retained_sessions();
         }
