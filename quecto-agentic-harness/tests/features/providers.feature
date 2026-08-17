@@ -674,10 +674,10 @@ Feature: LLM Providers
     When I build the Anthropic assistant [message]
     Then the content blocks should include a redacted_thinking block with data "opaque_data_abc"
 
-  Scenario: Thinking block with empty signature falls back to plain text
+  Scenario: Thinking block with empty signature is not replayed as answer text
     Given an assistant [message] with a normal thinking block "some reasoning" and signature ""
     When I build the Anthropic assistant [message]
-    Then the content blocks should include a text block with "some reasoning" instead of thinking
+    Then the content blocks should not include provider thinking text "some reasoning"
 
   # #437-6: signature_delta SSE handling
   Scenario: SSE signature_delta events accumulate the thinking block signature
