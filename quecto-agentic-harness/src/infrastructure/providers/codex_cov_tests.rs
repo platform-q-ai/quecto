@@ -352,6 +352,21 @@ data: {"type":"response.completed","response":{"status":"completed"}}
 }
 
 #[test]
+fn parse_sse_dedupes_streamed_reasoning_with_done_summary_whitespace_variation() {
+    let sse = r#"data: {"type":"response.reasoning_summary_text.delta","delta":"same"}
+data: {"type":"response.output_item.done","item":{"type":"reasoning","summary":[{"text":"same\n"}]}}
+data: {"type":"response.completed","response":{"status":"completed"}}
+"#;
+    let resp = CodexProvider::parse_sse_response(sse).unwrap();
+    match &resp.thinking_blocks[0] {
+        crate::domain::message::ThinkingBlock::Normal { thinking, .. } => {
+            assert_eq!(thinking, "same");
+        }
+        other => panic!("unexpected thinking block: {other:?}"),
+    }
+}
+
+#[test]
 fn parse_sse_preserves_later_non_streamed_reasoning_after_streamed_reasoning() {
     let sse = r#"data: {"type":"response.reasoning_summary_text.delta","delta":"first"}
 data: {"type":"response.output_item.done","item":{"type":"reasoning","summary":"first"}}

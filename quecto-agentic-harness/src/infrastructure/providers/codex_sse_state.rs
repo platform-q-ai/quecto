@@ -34,6 +34,16 @@ fn collect_reasoning_summary(item: &Value) -> String {
     collected
 }
 
+fn normalized_reasoning_suffix(text: &str) -> &str {
+    text.trim_end_matches(char::is_whitespace)
+}
+
+fn reasoning_ends_with_summary(reasoning: &str, summary: &str) -> bool {
+    let normalized_summary = normalized_reasoning_suffix(summary);
+    !normalized_summary.is_empty()
+        && normalized_reasoning_suffix(reasoning).ends_with(normalized_summary)
+}
+
 #[cfg(test)]
 pub(super) fn append_reasoning_summary(item: &Value, reasoning: &mut String) {
     reasoning.push_str(&collect_reasoning_summary(item));
@@ -106,7 +116,9 @@ impl SseAccumulator {
                     .filter(|i| i["type"].as_str() == Some("reasoning"))
                 {
                     let summary = collect_reasoning_summary(item);
-                    if !summary.is_empty() && !self.reasoning.ends_with(&summary) {
+                    if !summary.is_empty()
+                        && !reasoning_ends_with_summary(&self.reasoning, &summary)
+                    {
                         self.reasoning.push_str(&summary);
                     }
                 }
