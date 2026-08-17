@@ -42,7 +42,10 @@ fn thinking_renders_as_italic_bordered_text_without_label() {
         .expect("thinking line");
     assert_eq!(strip_ansi(thinking), "│ Planning the answer");
     assert!(thinking.contains("\x1b[3m"), "thinking should be italic");
-    assert!(!render_plain(&mut chat, 80).contains("thinking:"));
+    assert!(thinking.contains("\x1b[38;2;128;128;128m"));
+    let plain = render_plain(&mut chat, 80);
+    assert!(plain.contains("│ Planning the answer\n\nAnswer"));
+    assert!(!plain.contains("thinking:"));
 }
 
 #[test]

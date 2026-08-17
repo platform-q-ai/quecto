@@ -549,9 +549,15 @@ impl Chat {
                         } else {
                             for line in &wrapped {
                                 let text = truncate_to_width(line, inner_width, None);
-                                lines.push(format!("│ {}", theme::italic(&text)));
+                                lines.push(format!(
+                                    "│ {}",
+                                    theme::italic(&theme::tool_output(&text))
+                                ));
                             }
                         }
+                    }
+                    if !thinking.is_empty() {
+                        lines.push(String::new());
                     }
                 }
                 let mut md = Markdown::new(text, 0);
