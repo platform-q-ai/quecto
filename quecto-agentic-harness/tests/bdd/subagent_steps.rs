@@ -20,27 +20,6 @@ fn given_subagent_spawn_request(world: &mut QuectoWorld, task: String) {
         container: quecto::domain::subagent::ContainerSelection::Local,
         task: Some(task),
         agent_id: None,
-        restrict_to_workspace: false,
-        system: None,
-        config_path: None,
-        workflow: false,
-        workflow_guards: false,
-        workflow_spec: None,
-        model: None,
-        effort: None,
-        disable_tools: Vec::new(),
-        read_only: false,
-    });
-}
-
-#[given(expr = "a parent agent config with restrict_to_workspace {word}")]
-fn given_parent_config_restrict(world: &mut QuectoWorld, value: String) {
-    let restrict = value == "true";
-    world.subagent_config = Some(SubagentConfig {
-        container: quecto::domain::subagent::ContainerSelection::Local,
-        task: Some("test task".to_string()),
-        agent_id: None,
-        restrict_to_workspace: restrict,
         system: None,
         config_path: None,
         workflow: false,
@@ -109,20 +88,6 @@ fn then_subagent_empty_history(world: &mut QuectoWorld) {
     );
 }
 
-#[then(expr = "the subagent should also have restrict_to_workspace {word}")]
-fn then_subagent_restrict(world: &mut QuectoWorld, expected: String) {
-    let ctx = world
-        .subagent_context
-        .as_ref()
-        .expect("subagent context not created");
-    let expected_bool = expected == "true";
-    assert_eq!(
-        ctx.restrict_to_workspace, expected_bool,
-        "expected restrict_to_workspace {}, got {}",
-        expected_bool, ctx.restrict_to_workspace
-    );
-}
-
 #[then("the validation should succeed")]
 fn then_validation_succeeds(world: &mut QuectoWorld) {
     let result = world
@@ -155,7 +120,6 @@ fn given_subagent_named_exited(world: &mut QuectoWorld, name: String) {
     world.subagent_context = Some(SubagentContext {
         task: "".into(),
         messages: vec![Message::user("previous context")],
-        restrict_to_workspace: false,
     });
 }
 
@@ -207,7 +171,6 @@ fn when_parent_spawns_named(world: &mut QuectoWorld, name: String) {
             world.subagent_context = Some(SubagentContext {
                 task: "".into(),
                 messages: Vec::new(),
-                restrict_to_workspace: false,
             });
         }
         Err(err) => {

@@ -8,7 +8,7 @@ use super::python_lab::{PythonLabConfig, PythonLabTool};
 fn tool(dir: &std::path::Path) -> PythonLabTool {
     PythonLabTool::new(
         Arc::new(dir.to_path_buf()),
-        Arc::new(Sandbox::new(Some(dir.to_path_buf()), true)),
+        Arc::new(Sandbox::new(Some(dir.to_path_buf()))),
         PythonLabConfig {
             default_timeout_seconds: 1,
             max_foreground_seconds: 2,
@@ -263,7 +263,7 @@ async fn inherit_environment_can_be_enabled() {
     let tmp = tempfile::tempdir().unwrap();
     let lab = PythonLabTool::new(
         Arc::new(tmp.path().to_path_buf()),
-        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), true)),
+        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()))),
         PythonLabConfig {
             inherit_environment: true,
             default_max_output_bytes: 32,
@@ -562,7 +562,7 @@ async fn preview_larger_than_one_read_is_returned_whole() {
     let tmp = tempfile::tempdir().unwrap();
     let lab = PythonLabTool::new(
         Arc::new(tmp.path().to_path_buf()),
-        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), true)),
+        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()))),
         PythonLabConfig {
             default_timeout_seconds: 30,
             default_max_output_bytes: 8_000_000,

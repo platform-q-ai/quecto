@@ -167,7 +167,7 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
         quecto::infrastructure::tools::subagent_registry::new_notification_channel();
     let (broadcast_tx, broadcast_rx) = tokio::sync::broadcast::channel::<String>(64);
     world.spawn_tool = Some(
-        SpawnTool::with_base_dir(vec![], true, base.clone())
+        SpawnTool::with_base_dir(vec![], base.clone())
             .with_socket_dir(base.join("sockets"))
             .with_registry(subagent_registry_for_spawn)
             .with_notify_tx(notify_tx)

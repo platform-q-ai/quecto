@@ -16,7 +16,6 @@ fn when_exec_bash_with_shell(world: &mut QuectoWorld, command: String, shell: St
         .expect("tool workspace not set");
     let sandbox = Arc::new(quecto::infrastructure::security::sandbox::Sandbox::new(
         Some(ws.clone()),
-        false,
     ));
     let tool = ExecTool::with_options(Arc::new(ws.clone()), sandbox, ExecOptions::default());
 
@@ -40,7 +39,6 @@ fn when_exec_bash_with_prefix(world: &mut QuectoWorld, prefix: String, command: 
         .expect("tool workspace not set");
     let sandbox = Arc::new(quecto::infrastructure::security::sandbox::Sandbox::new(
         Some(ws.clone()),
-        false,
     ));
     let opts = ExecOptions {
         command_prefix: Some(prefix),

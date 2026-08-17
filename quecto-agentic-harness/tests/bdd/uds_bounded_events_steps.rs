@@ -1528,10 +1528,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
         ProviderReloadInputs::new(config_path, base.to_path_buf(), env_overrides, http_client);
     let workspace = std::path::PathBuf::from(config.workspace_path());
     let model = config.agents.defaults.model.clone();
-    let sandbox = Sandbox::new(
-        Some(workspace.clone()),
-        config.agents.defaults.restrict_to_workspace,
-    );
+    let sandbox = Sandbox::new(Some(workspace.clone()));
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
     let mut registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
         workspace,

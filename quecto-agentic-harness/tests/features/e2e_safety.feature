@@ -7,7 +7,6 @@ Feature: End-to-End Safety and Limits
   Background:
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    And restrict_to_workspace is enabled in the config
 
   # --- Filesystem access and command safety through CLI ---
 

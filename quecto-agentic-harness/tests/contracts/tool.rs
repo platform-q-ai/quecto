@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 fn read_tool(workspace: PathBuf) -> Arc<dyn Tool> {
-    let sandbox = Arc::new(Sandbox::new(Some(workspace.clone()), true));
+    let sandbox = Arc::new(Sandbox::new(Some(workspace.clone())));
     Arc::new(ReadTool::new(Arc::new(workspace), sandbox))
 }
 

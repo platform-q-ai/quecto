@@ -83,7 +83,7 @@ fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
     );
     let provider = build_agent_provider(&config, base_dir, &reqwest::Client::new()).unwrap();
     let workspace = PathBuf::from(config.workspace_path());
-    let sandbox = Sandbox::new(Some(workspace.clone()), true);
+    let sandbox = Sandbox::new(Some(workspace.clone()));
     let registry = crate::infrastructure::extensions::native::build_official_tool_registry(
         workspace,
         sandbox,
@@ -483,7 +483,7 @@ fn test_run_with_deadline_completes_before_timeout() {
     );
     let provider = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
     let workspace = PathBuf::from(config.workspace_path());
-    let sandbox = Sandbox::new(Some(workspace.clone()), true);
+    let sandbox = Sandbox::new(Some(workspace.clone()));
     let registry = crate::infrastructure::extensions::native::build_official_tool_registry(
         workspace,
         sandbox,

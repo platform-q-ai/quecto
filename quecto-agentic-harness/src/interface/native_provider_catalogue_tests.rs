@@ -22,7 +22,6 @@ fn bundled_native_registration_preserves_provider_ids() {
             parent_config_path: None,
             base_dir: tmp.path().to_path_buf(),
             socket_dir: tmp.path().to_path_buf(),
-            restrict_to_workspace: true,
             broadcast_tx: None,
             parent_session_name: None,
             inherited_tool_policy: None,

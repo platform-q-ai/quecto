@@ -2,7 +2,7 @@ use super::*;
 use tempfile::TempDir;
 
 fn sandbox_for(path: &std::path::Path) -> Sandbox {
-    Sandbox::new(Some(path.to_path_buf()), false)
+    Sandbox::new(Some(path.to_path_buf()))
 }
 
 #[test]

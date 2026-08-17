@@ -118,7 +118,6 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             exec_options,
             session_key,
             spawned: flags.spawned,
-            restrict_to_workspace: false,
             parent_session_name: parent_session_name.clone(),
             parent_config_path: Some(config_path.to_path_buf()),
             disabled_tools: &flags.disabled_tools,

@@ -21,7 +21,7 @@ fn sandboxed_tools() -> (tempfile::TempDir, Arc<PathBuf>, Arc<Sandbox>) {
     // across concurrent and repeated runs.
     let dir = tempfile::tempdir().expect("tempdir");
     let workspace = Arc::new(dir.path().to_path_buf());
-    let sandbox = Arc::new(Sandbox::new(Some((*workspace).clone()), false));
+    let sandbox = Arc::new(Sandbox::new(Some((*workspace).clone())));
     (dir, workspace, sandbox)
 }
 
@@ -63,7 +63,7 @@ fn concrete_tools_without_session_state_accept_default_set_session_key() {
         Box::new(DocsTool::new()),
         Box::new(FindTool::new(workspace.clone(), sandbox.clone())),
         Box::new(GrepTool::new(workspace, sandbox)),
-        Box::new(SpawnTool::new(vec!["child".to_string()], true)),
+        Box::new(SpawnTool::new(vec!["child".to_string()])),
         Box::new(AgentCmdTool::new(AgentCmdTool::new_registry())),
         Box::new(WebFetchTool::with_client(reqwest::Client::new(), 1)),
     ];

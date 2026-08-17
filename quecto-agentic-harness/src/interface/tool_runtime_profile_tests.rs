@@ -13,8 +13,7 @@ fn runtime(
     let config = crate::infrastructure::config::Config::default();
     let client = reqwest::Client::new();
     let workspace = tmp.path().to_path_buf();
-    let sandbox =
-        crate::infrastructure::security::sandbox::Sandbox::new(Some(workspace.clone()), true);
+    let sandbox = crate::infrastructure::security::sandbox::Sandbox::new(Some(workspace.clone()));
     let mut stderr = String::new();
 
     build_tool_runtime(ToolRuntimeBuildArgs {
@@ -28,7 +27,6 @@ fn runtime(
         exec_options: crate::infrastructure::tools::bash::ExecOptions::default(),
         session_key: "profile-test".to_string(),
         spawned,
-        restrict_to_workspace: true,
         parent_session_name: None,
         parent_config_path: None,
         disabled_tools,

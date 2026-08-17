@@ -4,28 +4,23 @@ Feature: Command Policy Hardening
   I want command allowlists and denylists to prevent bypasses
   So that dangerous commands remain blocked
 
-  # --- Legacy symlink path behavior ---
+  # --- Symlink path behavior: validate_path is not a jail ---
 
-  Scenario: Explicit restricted sandbox blocks symlink pointing outside workspace
+  Scenario: Symlink pointing outside workspace is allowed
     Given a sandboxed workspace at a temporary directory
-    And restrict_to_workspace is true
-    And a symlink "link.txt" in the workspace pointing to "/etc/passwd"
+        And a symlink "link.txt" in the workspace pointing to "/etc/passwd"
     When the agent tries to validate path "link.txt" resolved against the workspace
-    Then the validation should be an error
-    And the error should mention "outside working dir"
+    Then the validation should be ok
 
-  Scenario: Explicit restricted sandbox blocks nested symlink chain escaping workspace
+  Scenario: Nested symlink chain escaping workspace is allowed
     Given a sandboxed workspace at a temporary directory
-    And restrict_to_workspace is true
-    And a symlink "step1" in the workspace pointing to "/tmp"
+        And a symlink "step1" in the workspace pointing to "/tmp"
     When the agent tries to validate path "step1/some-file.txt" resolved against the workspace
-    Then the validation should be an error
-    And the error should mention "outside working dir"
+    Then the validation should be ok
 
   Scenario: Symlink pointing within workspace is allowed
     Given a sandboxed workspace at a temporary directory
-    And restrict_to_workspace is true
-    And a file "real.txt" exists in the workspace
+        And a file "real.txt" exists in the workspace
     And a symlink "link.txt" in the workspace pointing to "real.txt"
     When the agent tries to validate path "link.txt" resolved against the workspace
     Then the validation should be ok

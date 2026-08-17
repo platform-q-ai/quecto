@@ -5,7 +5,7 @@ use tempfile::TempDir;
 fn test_tools() -> (Arc<PathBuf>, Arc<Sandbox>, TempDir) {
     let tmp = TempDir::new().unwrap();
     let workspace = Arc::new(tmp.path().to_path_buf());
-    let sandbox = Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), false));
+    let sandbox = Arc::new(Sandbox::new(Some(tmp.path().to_path_buf())));
     (workspace, sandbox, tmp)
 }
 

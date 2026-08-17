@@ -141,7 +141,6 @@ fn config(task: Option<&str>) -> SubagentConfig {
         task: task.map(str::to_string),
         container: ContainerSelection::Local,
         agent_id: Some("contract-child".into()),
-        restrict_to_workspace: false,
         system: None,
         config_path: None,
         workflow: false,
@@ -209,8 +208,7 @@ PY
 "#;
 
     fn tool(dir: &Path) -> SpawnTool {
-        SpawnTool::with_base_dir(Vec::new(), false, dir.to_path_buf())
-            .with_socket_dir(dir.to_path_buf())
+        SpawnTool::with_base_dir(Vec::new(), dir.to_path_buf()).with_socket_dir(dir.to_path_buf())
     }
 
     fn config(container: ContainerSelection, config_path: Option<PathBuf>) -> SubagentConfig {
@@ -218,7 +216,6 @@ PY
             task: None,
             container,
             agent_id: Some("contract-adapter-child".into()),
-            restrict_to_workspace: false,
             system: None,
             config_path,
             workflow: false,

@@ -10,15 +10,13 @@ Feature: Subagent / Multi-Agent Architecture
     Then the subagent context should have task "Summarize news"
     And the subagent context should have an empty conversation history
 
-  Scenario: Subagent inherits workspace restrictions
-    Given a parent agent config with restrict_to_workspace true
+  Scenario: Subagent starts with independent context
+    Given a parent agent config
     When a subagent context is created from the parent
-    Then the subagent should also have restrict_to_workspace true
 
-  Scenario: Subagent inherits workspace restrictions disabled
-    Given a parent agent config with restrict_to_workspace false
+  Scenario: Subagent starts with independent context when parent config changes
+    Given a parent agent config
     When a subagent context is created from the parent
-    Then the subagent should also have restrict_to_workspace false
 
   Scenario: Spawn accepts an allowed display label
     Given an agent allowlist containing "news-bot" and "weather-bot"

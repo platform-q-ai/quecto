@@ -26,7 +26,7 @@ fn ensure_ls_workspace(world: &mut QuectoWorld) -> PathBuf {
 fn make_ls_tool(world: &mut QuectoWorld) -> LsTool {
     let ws = ensure_ls_workspace(world);
     let ws_arc = Arc::new(ws.clone());
-    let sandbox = Arc::new(Sandbox::new(Some(ws.clone()), true));
+    let sandbox = Arc::new(Sandbox::new(Some(ws.clone())));
     LsTool::new(ws_arc, sandbox)
 }
 

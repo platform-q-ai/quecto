@@ -6,8 +6,7 @@
 // `resolve_to_cwd` and `resolve_read_path` return a `PathBuf` that may point
 // outside the workspace (e.g. absolute paths, ~ expansion). Callers should pass
 // the result through `Sandbox::validate_path()` before any I/O so all filesystem
-// tools share the same path hook. Agent entrypoints no longer enable workspace
-// confinement; explicit lower-level restricted sandboxes still can.
+// tools share the same path hook. `validate_path` is not a filesystem jail.
 //
 // # HOME not set
 // `expand_tilde` returns `PathBuf::from("~")` (a literal path component) when
