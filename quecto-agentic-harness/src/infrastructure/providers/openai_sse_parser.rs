@@ -24,9 +24,6 @@ pub(crate) const MAX_OPENAI_SSE_CONTENT_BYTES: usize = 8 * 1024 * 1024;
 /// adversarial tool-call argument accumulator from growing without bound.
 pub(crate) const MAX_OPENAI_SSE_TOOL_ARGUMENT_BYTES: usize = 2 * 1024 * 1024;
 
-/// Maximum accumulated display-safe reasoning bytes for one response.
-#[cfg(test)]
-pub(crate) use crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES as MAX_OPENAI_SSE_REASONING_BYTES;
 pub(crate) use crate::infrastructure::providers::sse_limits::append_with_limit;
 
 /// Parse an SSE text stream into an assembled `LlmResponse`.

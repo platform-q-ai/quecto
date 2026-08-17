@@ -454,15 +454,11 @@ impl AnthropicProvider {
                     if thinking.is_empty() {
                         continue;
                     }
-                    if append_visible_thinking(
+                    append_visible_thinking(
                         &mut thinking_budget,
                         thinking,
                         "Anthropic non-stream thinking",
-                    )
-                    .is_err()
-                    {
-                        continue;
-                    }
+                    )?;
                     thinking_blocks.push(ThinkingBlock::Normal {
                         thinking: thinking.to_string(),
                         signature: block["signature"].as_str().unwrap_or_default().to_string(),

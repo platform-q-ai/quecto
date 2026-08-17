@@ -70,18 +70,21 @@ fn parse_response_preserves_non_stream_reasoning_fields() {
 }
 
 #[test]
-fn parse_response_drops_oversized_non_stream_reasoning_fields() {
+fn parse_response_rejects_oversized_non_stream_reasoning_fields() {
     let body = serde_json::json!({
         "choices": [{
             "message": {
                 "role": "assistant",
                 "content": "final",
-                "reasoning": "r".repeat(crate::infrastructure::providers::openai::openai_sse_parser::MAX_OPENAI_SSE_REASONING_BYTES + 1)
+                "reasoning": "r".repeat(crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES + 1)
             }
         }]
     });
-    let resp = OpenAiProvider::parse_response(&body).unwrap();
-    assert!(resp.thinking_blocks.is_empty());
+    let err = OpenAiProvider::parse_response(&body).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("OpenAI non-stream reasoning visible thinking exceeds")
+    );
 }
 
 #[tokio::test]

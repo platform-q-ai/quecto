@@ -212,15 +212,15 @@ impl OpenAiProvider {
             .or_else(|| message.get("reasoning_content"))
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
-            .and_then(|thinking| {
+            .map(|thinking| {
                 let mut capped = String::new();
-                append_visible_thinking(&mut capped, thinking, "OpenAI non-stream reasoning")
-                    .ok()?;
-                Some(vec![crate::domain::message::ThinkingBlock::Normal {
+                append_visible_thinking(&mut capped, thinking, "OpenAI non-stream reasoning")?;
+                Ok(vec![crate::domain::message::ThinkingBlock::Normal {
                     thinking: capped,
                     signature: String::new(),
                 }])
             })
+            .transpose()?
             .unwrap_or_default();
 
         let mut tool_calls = Vec::new();

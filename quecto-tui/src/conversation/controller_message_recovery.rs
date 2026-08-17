@@ -13,10 +13,11 @@ pub(crate) struct PendingMessageRecovery {
 }
 
 /// A turn awaiting rebuild from its refs. The atomicity invariant lives in
-/// `conversation::turn_recovery`; this alias binds it to the raw response payloads
-/// the shell composition layer buffers.
-pub(crate) type MessageRecoveryBatch =
-    crate::conversation::turn_recovery::RecoveryBatch<serde_json::Value>;
+/// `conversation::turn_recovery`; this alias binds it to typed recovered
+/// messages after protocol-layer page projection.
+pub(crate) type MessageRecoveryBatch = crate::conversation::turn_recovery::RecoveryBatch<
+    crate::protocol::presentation_payloads::RecoveredMessagePayload,
+>;
 
 impl App {
     /// Both `turn_end` and `agent_end` may carry the same refs; skip message ids
@@ -272,17 +273,12 @@ impl App {
             });
             return;
         }
-        let mut data = data;
-        data["content"] = serde_json::Value::String(accumulated);
-        if !thinking.is_empty() {
-            data["thinking"] = serde_json::json!(
-                thinking
-                    .iter()
-                    .map(crate::protocol::agent_ledger_payloads::RecoveredThinkingBlock::to_wire)
-                    .collect::<Vec<_>>()
+        let recovered =
+            crate::protocol::presentation_payloads::RecoveredMessagePayload::from_complete_page(
+                &data,
+                accumulated,
+                thinking,
             );
-        }
-        data["hasMoreContent"] = serde_json::Value::Bool(false);
         let Some(batch) = self
             .ac_mut()
             .message_recovery_batches
@@ -290,7 +286,7 @@ impl App {
         else {
             return;
         };
-        batch.responses.insert(pending.message_id, data);
+        batch.responses.insert(pending.message_id, recovered);
         if !batch.is_complete() {
             return;
         }
@@ -328,9 +324,26 @@ impl App {
     }
 }
 
+pub(crate) trait RecoveredMessageView {
+    fn recovered_message(&self) -> crate::protocol::agent_ledger_payloads::LedgerMessage;
+}
+
+impl RecoveredMessageView for crate::protocol::presentation_payloads::RecoveredMessagePayload {
+    fn recovered_message(&self) -> crate::protocol::agent_ledger_payloads::LedgerMessage {
+        self.message().clone()
+    }
+}
+
+#[cfg(test)]
+impl RecoveredMessageView for serde_json::Value {
+    fn recovered_message(&self) -> crate::protocol::agent_ledger_payloads::LedgerMessage {
+        crate::protocol::presentation_payloads::recovered_message(self)
+    }
+}
+
 pub(crate) fn recovered_chat_entries(
     refs: &[String],
-    responses: &std::collections::HashMap<String, serde_json::Value>,
+    responses: &std::collections::HashMap<String, impl RecoveredMessageView>,
 ) -> Vec<crate::components::chat::ChatEntry> {
     use crate::components::chat::ChatEntry;
     let mut entries = Vec::new();
@@ -339,7 +352,7 @@ pub(crate) fn recovered_chat_entries(
     // Ordering is the domain's rule, not this function's: walk in ref order,
     // never arrival order.
     for data in crate::conversation::turn_recovery::ordered_by_refs(refs, responses) {
-        let message = crate::protocol::presentation_payloads::recovered_message(data);
+        let message = data.recovered_message();
         let role = message.role();
         let content = message.content();
         match role {
@@ -497,37 +510,57 @@ mod recovery_cov_tests {
         let responses = std::collections::HashMap::from([
             (
                 "suppressed-start".to_string(),
-                serde_json::json!({
-                    "role": "assistant",
-                    "toolCalls": [{"id": "spawn-1", "name": "spawn", "arguments": {"task": "secret"}}]
-                }),
+                crate::protocol::presentation_payloads::RecoveredMessagePayload::from_complete_page(
+                    &serde_json::json!({
+                        "role": "assistant",
+                        "toolCalls": [{"id": "spawn-1", "name": "spawn", "arguments": {"task": "secret"}}]
+                    }),
+                    String::new(),
+                    Vec::new(),
+                ),
             ),
             (
                 "suppressed-result".to_string(),
-                serde_json::json!({
-                    "role": "tool",
-                    "toolCallId": "spawn-1",
-                    "toolName": "spawn",
-                    "content": "hidden search result"
-                }),
+                crate::protocol::presentation_payloads::RecoveredMessagePayload::from_complete_page(
+                    &serde_json::json!({
+                        "role": "tool",
+                        "toolCallId": "spawn-1",
+                        "toolName": "spawn",
+                        "content": "hidden search result"
+                    }),
+                    String::new(),
+                    Vec::new(),
+                ),
             ),
             (
                 "standalone-tool".to_string(),
-                serde_json::json!({
-                    "role": "tool",
-                    "toolCallId": "call-2",
-                    "tool_name": "bash",
-                    "content": "boom",
-                    "isError": true
-                }),
+                crate::protocol::presentation_payloads::RecoveredMessagePayload::from_complete_page(
+                    &serde_json::json!({
+                        "role": "tool",
+                        "toolCallId": "call-2",
+                        "tool_name": "bash",
+                        "content": "boom",
+                        "isError": true
+                    }),
+                    String::new(),
+                    Vec::new(),
+                ),
             ),
             (
                 "assistant-text".to_string(),
-                serde_json::json!({"role": "assistant", "content": "visible answer"}),
+                crate::protocol::presentation_payloads::RecoveredMessagePayload::from_complete_page(
+                    &serde_json::json!({"role": "assistant", "content": "visible answer"}),
+                    String::new(),
+                    Vec::new(),
+                ),
             ),
             (
                 "unknown".to_string(),
-                serde_json::json!({"role": "system", "content": "ignored"}),
+                crate::protocol::presentation_payloads::RecoveredMessagePayload::from_complete_page(
+                    &serde_json::json!({"role": "system", "content": "ignored"}),
+                    String::new(),
+                    Vec::new(),
+                ),
             ),
         ]);
 

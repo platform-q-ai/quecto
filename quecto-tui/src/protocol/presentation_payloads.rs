@@ -11,6 +11,43 @@ pub fn recovered_message(value: &Value) -> crate::protocol::agent_ledger_payload
     serde_json::from_value(value.clone()).unwrap_or_default()
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecoveredMessagePayload {
+    message: crate::protocol::agent_ledger_payloads::LedgerMessage,
+}
+
+impl RecoveredMessagePayload {
+    pub fn from_complete_page(
+        page: &Value,
+        content: String,
+        thinking: Vec<crate::protocol::agent_ledger_payloads::RecoveredThinkingBlock>,
+    ) -> Self {
+        let mut projected = page.clone();
+        let content = if content.is_empty() {
+            string_field(page, "content").unwrap_or(content)
+        } else {
+            content
+        };
+        projected["content"] = Value::String(content);
+        if !thinking.is_empty() {
+            projected["thinking"] = Value::Array(
+                thinking
+                    .iter()
+                    .map(crate::protocol::agent_ledger_payloads::RecoveredThinkingBlock::to_wire)
+                    .collect(),
+            );
+        }
+        projected["hasMoreContent"] = Value::Bool(false);
+        Self {
+            message: recovered_message(&projected),
+        }
+    }
+
+    pub fn message(&self) -> &crate::protocol::agent_ledger_payloads::LedgerMessage {
+        &self.message
+    }
+}
+
 /// Parse a `get_subagents` response at the protocol boundary.
 pub fn subagents(value: &Value) -> Vec<crate::protocol::client::SubagentInfoEvent> {
     value

@@ -47,3 +47,18 @@ fn test_parse_response_keeps_redacted_thinking_placeholder() {
         other => panic!("expected redacted thinking block, got {other:?}"),
     }
 }
+
+#[test]
+fn test_parse_response_rejects_oversized_non_stream_thinking() {
+    let body = serde_json::json!({
+        "content": [
+            {"type": "thinking", "thinking": "t".repeat(crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES + 1)},
+            {"type": "text", "text": "answer"}
+        ]
+    });
+    let err = AnthropicProvider::parse_response(&body, false, &[]).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Anthropic non-stream thinking visible thinking exceeds")
+    );
+}
