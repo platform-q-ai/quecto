@@ -27,6 +27,25 @@ fn render_plain(chat: &mut Chat, width: usize) -> String {
 }
 
 #[test]
+fn thinking_renders_as_italic_bordered_text_without_label() {
+    let mut chat = Chat::new();
+    chat.add_entry(ChatEntry::Assistant {
+        text: "Answer".into(),
+        thinking: vec!["Planning the answer".into()],
+        streaming: false,
+    });
+
+    let lines = chat.render(80);
+    let thinking = lines
+        .iter()
+        .find(|line| strip_ansi(line).contains("Planning the answer"))
+        .expect("thinking line");
+    assert_eq!(strip_ansi(thinking), "│ Planning the answer");
+    assert!(thinking.contains("\x1b[3m"), "thinking should be italic");
+    assert!(!render_plain(&mut chat, 80).contains("thinking:"));
+}
+
+#[test]
 fn empty_chat_renders_empty() {
     let mut chat = Chat::new();
     assert!(chat.render(80).is_empty());

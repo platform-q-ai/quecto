@@ -541,23 +541,15 @@ impl Chat {
                     lines.push(theme::dim("thinking hidden"));
                 }
                 if show_thinking {
+                    let inner_width = width.saturating_sub(2);
                     for block in thinking {
-                        let label = theme::dim("thinking: ");
-                        let wrapped = wrap_text(block, width.saturating_sub(10));
+                        let wrapped = wrap_text(block, inner_width);
                         if wrapped.is_empty() {
-                            lines.push(label.clone());
+                            lines.push("│ ".to_string());
                         } else {
-                            for (i, line) in wrapped.iter().enumerate() {
-                                let prefix = if i == 0 {
-                                    label.clone()
-                                } else {
-                                    theme::dim("          ")
-                                };
-                                lines.push(truncate_to_width(
-                                    &format!("{}{}", prefix, theme::dim(line)),
-                                    width,
-                                    None,
-                                ));
+                            for line in &wrapped {
+                                let text = truncate_to_width(line, inner_width, None);
+                                lines.push(format!("│ {}", theme::italic(&text)));
                             }
                         }
                     }
