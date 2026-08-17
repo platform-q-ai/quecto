@@ -351,6 +351,22 @@ data: {"type":"response.completed","response":{"status":"completed"}}
     }
 }
 
+#[test]
+fn parse_sse_preserves_later_non_streamed_reasoning_after_streamed_reasoning() {
+    let sse = r#"data: {"type":"response.reasoning_summary_text.delta","delta":"first"}
+data: {"type":"response.output_item.done","item":{"type":"reasoning","summary":"first"}}
+data: {"type":"response.output_item.done","item":{"type":"reasoning","summary":" second"}}
+data: {"type":"response.completed","response":{"status":"completed"}}
+"#;
+    let resp = CodexProvider::parse_sse_response(sse).unwrap();
+    match &resp.thinking_blocks[0] {
+        crate::domain::message::ThinkingBlock::Normal { thinking, .. } => {
+            assert_eq!(thinking, "first second");
+        }
+        other => panic!("unexpected thinking block: {other:?}"),
+    }
+}
+
 // --- parse_sse_response: non-`data:` lines are skipped ---
 
 #[test]

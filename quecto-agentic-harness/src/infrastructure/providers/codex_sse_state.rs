@@ -11,26 +11,32 @@ pub(super) struct SseAccumulator {
     pub(super) usage: Option<UsageInfo>,
     pub(super) stop_reason: Option<StopReason>,
     pub(super) reasoning: String,
-    streamed_reasoning: bool,
 }
 
-pub(super) fn append_reasoning_summary(item: &Value, reasoning: &mut String) {
+fn collect_reasoning_summary(item: &Value) -> String {
+    let mut collected = String::new();
     if let Some(summary) = item.get("summary") {
         match summary {
-            Value::String(text) => reasoning.push_str(text),
+            Value::String(text) => collected.push_str(text),
             Value::Array(parts) => {
                 for part in parts {
                     if let Some(text) = part
                         .as_str()
                         .or_else(|| part.get("text").and_then(|v| v.as_str()))
                     {
-                        reasoning.push_str(text);
+                        collected.push_str(text);
                     }
                 }
             }
             _ => {}
         }
     }
+    collected
+}
+
+#[cfg(test)]
+pub(super) fn append_reasoning_summary(item: &Value, reasoning: &mut String) {
+    reasoning.push_str(&collect_reasoning_summary(item));
 }
 
 impl SseAccumulator {
@@ -92,16 +98,16 @@ impl SseAccumulator {
             | Some("response.reasoning.summary_text.delta") => {
                 if let Some(delta) = event["delta"].as_str() {
                     self.reasoning.push_str(delta);
-                    self.streamed_reasoning = true;
                 }
             }
             Some("response.output_item.done") => {
-                if !self.streamed_reasoning {
-                    if let Some(item) = event
-                        .get("item")
-                        .filter(|i| i["type"].as_str() == Some("reasoning"))
-                    {
-                        append_reasoning_summary(item, &mut self.reasoning);
+                if let Some(item) = event
+                    .get("item")
+                    .filter(|i| i["type"].as_str() == Some("reasoning"))
+                {
+                    let summary = collect_reasoning_summary(item);
+                    if !summary.is_empty() && !self.reasoning.ends_with(&summary) {
+                        self.reasoning.push_str(&summary);
                     }
                 }
             }
