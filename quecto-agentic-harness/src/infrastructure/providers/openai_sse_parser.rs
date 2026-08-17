@@ -25,7 +25,9 @@ pub(crate) const MAX_OPENAI_SSE_CONTENT_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_OPENAI_SSE_TOOL_ARGUMENT_BYTES: usize = 2 * 1024 * 1024;
 
 /// Maximum accumulated display-safe reasoning bytes for one response.
+#[cfg(test)]
 pub(crate) use crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES as MAX_OPENAI_SSE_REASONING_BYTES;
+pub(crate) use crate::infrastructure::providers::sse_limits::append_with_limit;
 
 /// Parse an SSE text stream into an assembled `LlmResponse`.
 ///
@@ -122,24 +124,6 @@ pub(crate) fn apply_delta(
             }
         }
     }
-    Ok(())
-}
-
-pub(crate) fn append_with_limit(
-    target: &mut String,
-    fragment: &str,
-    limit: usize,
-    label: &str,
-) -> Result<(), DomainError> {
-    let new_len = target.len().checked_add(fragment.len()).ok_or_else(|| {
-        DomainError::Provider(format!("OpenAI SSE {label} exceeds {limit} byte limit"))
-    })?;
-    if new_len > limit {
-        return Err(DomainError::Provider(format!(
-            "OpenAI SSE {label} exceeds {limit} byte limit"
-        )));
-    }
-    target.push_str(fragment);
     Ok(())
 }
 

@@ -308,12 +308,14 @@ fn test_sse_signature_delta_accumulates_signature() {
     // Thinking delta
     acc.handle_block_delta(
         &serde_json::json!({"delta": {"type": "thinking_delta", "thinking": "reasoning"}}),
-    );
+    )
+    .unwrap();
 
     // Signature delta
     acc.handle_block_delta(
         &serde_json::json!({"delta": {"type": "signature_delta", "signature": "sig_abc"}}),
-    );
+    )
+    .unwrap();
 
     // Stop block
     acc.handle_block_stop();

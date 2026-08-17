@@ -139,7 +139,8 @@ fn block_start_unknown_type_ignored() {
 #[test]
 fn block_delta_unknown_type_ignored() {
     let mut acc = SseAccumulator::default();
-    acc.handle_block_delta(&serde_json::json!({"delta": {"type": "mystery"}}));
+    acc.handle_block_delta(&serde_json::json!({"delta": {"type": "mystery"}}))
+        .unwrap();
     // Nothing accumulated; into_response yields no content.
     assert!(acc.into_response().content.is_none());
 }
@@ -150,7 +151,8 @@ fn block_stop_normal_thinking_with_only_signature() {
     acc.handle_block_start(&serde_json::json!({"content_block": {"type": "thinking"}}));
     acc.handle_block_delta(
         &serde_json::json!({"delta": {"type": "signature_delta", "signature": "s"}}),
-    );
+    )
+    .unwrap();
     acc.handle_block_stop();
     // Whitespace-only thinking but non-empty signature => block kept.
     assert_eq!(acc.thinking_blocks().len(), 1);
@@ -162,7 +164,8 @@ fn block_stop_empty_thinking_dropped() {
     acc.handle_block_start(&serde_json::json!({"content_block": {"type": "thinking"}}));
     acc.handle_block_delta(
         &serde_json::json!({"delta": {"type": "thinking_delta", "thinking": "   "}}),
-    );
+    )
+    .unwrap();
     acc.handle_block_stop();
     assert!(acc.thinking_blocks().is_empty());
 }
@@ -294,7 +297,8 @@ async fn dispatch_content_block_stop_emits_tool_call_end() {
     );
     acc.handle_block_delta(
         &serde_json::json!({"delta": {"type": "input_json_delta", "partial_json": "{}"}}),
-    );
+    )
+    .unwrap();
     assert!(
         !dispatch_sse_event(
             "content_block_stop",
@@ -517,22 +521,27 @@ fn parse_sse_response_empty_max_tokens_stop_preserves_stop_reason() {
 
 #[test]
 fn thinking_and_signature_accumulation_are_capped() {
-    let oversized = "x".repeat(
-        crate::infrastructure::providers::openai::openai_sse_parser::MAX_OPENAI_SSE_REASONING_BYTES
-            + 1,
-    );
+    let oversized = "x".repeat(crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES + 1);
+
+    let mut acc = SseAccumulator::default();
+    acc.handle_block_start(&serde_json::json!({"content_block": {"type": "thinking"}}));
+    let err = acc
+        .handle_block_delta(
+            &serde_json::json!({"delta": {"type": "thinking_delta", "thinking": oversized}}),
+        )
+        .unwrap_err();
+    assert!(err.to_string().contains("visible thinking exceeds"));
+
     let mut acc = SseAccumulator::default();
     acc.handle_block_start(&serde_json::json!({"content_block": {"type": "thinking"}}));
     acc.handle_block_delta(
-        &serde_json::json!({"delta": {"type": "thinking_delta", "thinking": oversized}}),
-    );
-    acc.handle_block_delta(
         &serde_json::json!({"delta": {"type": "signature_delta", "signature": oversized}}),
-    );
+    )
+    .unwrap();
     acc.handle_block_stop();
     assert!(
         acc.thinking_blocks().is_empty(),
-        "oversized thinking/signature deltas must not be accumulated or persisted"
+        "oversized signature deltas are not persisted without thinking text"
     );
 }
 
@@ -540,8 +549,7 @@ fn thinking_and_signature_accumulation_are_capped() {
 async fn anthropic_live_thinking_uses_aggregate_cap() {
     use crate::domain::provider::StreamEvent;
 
-    let cap =
-        crate::infrastructure::providers::openai::openai_sse_parser::MAX_OPENAI_SSE_REASONING_BYTES;
+    let cap = crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES;
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     let mut acc = SseAccumulator::default();
     acc.handle_block_start(&serde_json::json!({"content_block": {"type": "thinking"}}));
@@ -558,7 +566,7 @@ async fn anthropic_live_thinking_uses_aggregate_cap() {
         .await
     );
     assert!(
-        !dispatch_sse_event(
+        dispatch_sse_event(
             "content_block_delta",
             &serde_json::json!({"delta": {"type": "thinking_delta", "thinking": overflow}}),
             &mut acc,
@@ -569,8 +577,11 @@ async fn anthropic_live_thinking_uses_aggregate_cap() {
     drop(tx);
 
     let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
-    assert_eq!(events.len(), 1, "overflow delta must not be emitted live");
+    assert_eq!(events.len(), 2, "overflow delta emits provider error");
     assert!(matches!(&events[0], StreamEvent::ThinkingDelta(text) if text.len() == cap));
+    assert!(
+        matches!(&events[1], StreamEvent::Error(text) if text.contains("visible thinking exceeds"))
+    );
     acc.handle_block_stop();
     assert_eq!(
         acc.thinking_blocks().len(),

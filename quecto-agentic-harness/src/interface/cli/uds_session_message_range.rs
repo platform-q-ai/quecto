@@ -1,7 +1,5 @@
 use crate::domain::message::Message;
-use crate::domain::visible_thinking::{
-    VisibleThinkingBlocksView, visible_thinking_len, visible_thinking_page,
-};
+use crate::domain::visible_thinking::{visible_thinking_len, visible_thinking_page};
 use crate::interface::cli::protocol::AgentEvent;
 
 #[cfg(test)]
@@ -54,8 +52,8 @@ fn message_to_json_with_content_and_thinking(
         "collapsed": msg.is_collapsed,
     });
     if include_thinking && !msg.thinking_blocks.is_empty() {
-        value["thinking"] = serde_json::to_value(VisibleThinkingBlocksView(&msg.thinking_blocks))
-            .expect("visible thinking serializes");
+        value["thinking"] =
+            super::uds_visible_thinking_wire::visible_thinking_blocks_json(&msg.thinking_blocks);
     }
     value
 }
@@ -90,9 +88,9 @@ fn add_bounded_thinking_page(
 
     let start = start.min(thinking_len);
     let mut end = thinking_len;
-    value["thinking"] =
-        serde_json::to_value(visible_thinking_page(&msg.thinking_blocks, start, end))
-            .expect("visible thinking page serializes");
+    value["thinking"] = super::uds_visible_thinking_wire::visible_thinking_page_json(
+        visible_thinking_page(&msg.thinking_blocks, start, end),
+    );
     if data_fits_frame(value, request_id) {
         value["thinkingOffset"] = serde_json::json!(start);
         value["nextThinkingOffset"] = serde_json::json!(end);
@@ -107,9 +105,9 @@ fn add_bounded_thinking_page(
         if end == start && start < thinking_len {
             end = (start + 1).min(thinking_len);
         }
-        value["thinking"] =
-            serde_json::to_value(visible_thinking_page(&msg.thinking_blocks, start, end))
-                .expect("visible thinking page serializes");
+        value["thinking"] = super::uds_visible_thinking_wire::visible_thinking_page_json(
+            visible_thinking_page(&msg.thinking_blocks, start, end),
+        );
         value["thinkingOffset"] = serde_json::json!(start);
         value["nextThinkingOffset"] = serde_json::json!(end);
         value["thinkingLength"] = serde_json::json!(thinking_len);
