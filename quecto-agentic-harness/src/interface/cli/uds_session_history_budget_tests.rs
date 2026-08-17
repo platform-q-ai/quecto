@@ -253,3 +253,45 @@ fn collapsed_history_summary_bounds_oversized_visible_thinking() {
     );
     assert!(!serde_json::to_string(summary).unwrap().contains("private"));
 }
+
+#[test]
+fn collapsed_history_summary_bounds_many_visible_thinking_blocks() {
+    use crate::domain::message::{Message, ThinkingBlock};
+    let mut msg = Message::assistant("x".repeat(super::HISTORY_PAGE_JSON_BUDGET), vec![]);
+    for idx in 0..(super::HISTORY_PAGE_JSON_BUDGET / 64) {
+        msg.thinking_blocks.push(ThinkingBlock::Normal {
+            thinking: format!("block-{idx}-{}", "visible reasoning ".repeat(64)),
+            signature: "private".into(),
+        });
+    }
+
+    let page = messages_page_json(&[msg], 1, None);
+    let encoded = serde_json::to_vec(&page).expect("history page serializes");
+    let summary = &page_messages(&page)[0];
+
+    assert!(
+        encoded.len() <= HISTORY_PAGE_JSON_BUDGET,
+        "collapsed summary with many thinking blocks should stay within budget: {} > {}; page={page}",
+        encoded.len(),
+        HISTORY_PAGE_JSON_BUDGET
+    );
+    assert_eq!(summary["collapsed"], true);
+    let thinking = summary["thinking"]
+        .as_array()
+        .expect("bounded summary should retain a thinking array");
+    assert!(
+        !thinking.is_empty(),
+        "bounded summary should preserve at least one visible thinking preview: {summary}"
+    );
+    assert!(
+        thinking.len() < super::HISTORY_PAGE_JSON_BUDGET / 64,
+        "bounded summary should cap the number of thinking blocks: {summary}"
+    );
+    assert!(
+        thinking
+            .iter()
+            .any(|block| block["truncated"].as_bool() == Some(true)),
+        "bounded summary should mark omitted/truncated thinking: {summary}"
+    );
+    assert!(!serde_json::to_string(summary).unwrap().contains("private"));
+}

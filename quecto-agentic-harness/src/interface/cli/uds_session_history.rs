@@ -98,27 +98,48 @@ fn byte_preview(s: &str, max_bytes: usize) -> String {
         .collect()
 }
 
-fn thinking_summary_json(msg: &Message) -> serde_json::Value {
-    serde_json::Value::Array(
-        msg.thinking_blocks
-            .iter()
-            .map(|block| match block {
-                ThinkingBlock::Normal { thinking, .. } => {
-                    let preview = byte_preview(thinking, HISTORY_THINKING_SUMMARY_PREVIEW_BYTES);
-                    let mut value = serde_json::json!({
-                        "kind": "text",
-                        "text": preview,
-                    });
-                    if value["text"].as_str().map(str::len).unwrap_or(0) < thinking.len() {
-                        value["truncated"] = serde_json::json!(true);
-                        value["textLength"] = serde_json::json!(thinking.len());
-                    }
-                    value
+fn thinking_summary_json(msg: &Message, max_encoded_bytes: usize) -> serde_json::Value {
+    let mut values = Vec::new();
+    let mut used = 2usize;
+    let mut omitted = 0usize;
+    for block in &msg.thinking_blocks {
+        let value = match block {
+            ThinkingBlock::Normal { thinking, .. } => {
+                let preview = byte_preview(thinking, HISTORY_THINKING_SUMMARY_PREVIEW_BYTES);
+                let mut value = serde_json::json!({
+                    "kind": "text",
+                    "text": preview,
+                });
+                if value["text"].as_str().map(str::len).unwrap_or(0) < thinking.len() {
+                    value["truncated"] = serde_json::json!(true);
+                    value["textLength"] = serde_json::json!(thinking.len());
                 }
-                ThinkingBlock::Redacted { .. } => serde_json::json!({ "kind": "redacted" }),
-            })
-            .collect(),
-    )
+                value
+            }
+            ThinkingBlock::Redacted { .. } => serde_json::json!({ "kind": "redacted" }),
+        };
+        let value_len = serde_json::to_vec(&value)
+            .map(|v| v.len())
+            .unwrap_or(usize::MAX);
+        let next_len = used
+            .saturating_add(value_len)
+            .saturating_add(!values.is_empty() as usize);
+        if next_len > max_encoded_bytes && !values.is_empty() {
+            omitted += 1;
+            continue;
+        }
+        used = next_len;
+        values.push(value);
+    }
+    if omitted > 0 {
+        values.push(serde_json::json!({
+            "kind": "text",
+            "text": "",
+            "truncated": true,
+            "omittedBlocks": omitted,
+        }));
+    }
+    serde_json::Value::Array(values)
 }
 
 pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Value {
@@ -151,7 +172,40 @@ pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Val
         "contentLength": msg.content.len(),
     });
     if !msg.thinking_blocks.is_empty() {
-        summary["thinking"] = thinking_summary_json(msg);
+        let base_size = serde_json::to_vec(&summary)
+            .map(|v| v.len())
+            .unwrap_or(usize::MAX);
+        let thinking_budget = HISTORY_PAGE_JSON_BUDGET.saturating_sub(base_size + 64);
+        summary["thinking"] = thinking_summary_json(msg, thinking_budget);
+    }
+    while serde_json::to_vec(&summary)
+        .map(|v| v.len() > HISTORY_PAGE_JSON_BUDGET)
+        .unwrap_or(true)
+    {
+        let Some(thinking) = summary["thinking"].as_array_mut() else {
+            break;
+        };
+        if thinking.len() <= 1 {
+            break;
+        }
+        let removed = thinking.pop().unwrap();
+        let omitted = removed
+            .get("omittedBlocks")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(1) as usize;
+        if let Some(last) = thinking.last_mut() {
+            if last.get("omittedBlocks").is_some() {
+                let current = last["omittedBlocks"].as_u64().unwrap_or(0) as usize;
+                last["omittedBlocks"] = serde_json::json!(current + omitted);
+            } else {
+                thinking.push(serde_json::json!({
+                    "kind": "text",
+                    "text": "",
+                    "truncated": true,
+                    "omittedBlocks": omitted,
+                }));
+            }
+        }
     }
     summary
 }
