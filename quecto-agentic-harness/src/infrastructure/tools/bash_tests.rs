@@ -463,7 +463,7 @@ async fn test_await_stream_output_some() {
     let handle = tokio::spawn(async { ("captured".to_string(), false) });
     let (s, t) = super::await_stream_output(Some(handle)).await;
     assert_eq!(s, "captured");
-    assert!(t);
+    assert!(!t);
 }
 
 #[tokio::test]

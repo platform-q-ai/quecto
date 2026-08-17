@@ -7,15 +7,13 @@ use quecto::infrastructure::tools::agent_cmd::AgentCmdTool;
 // --- Given ---
 
 #[given(expr = "a SpawnTool with allowlist {string}")]
-fn given_spawn_tool_with_allowlist(world: &mut QuectoWorld, allowlist: String, restrict: String) {
+fn given_spawn_tool_with_allowlist(world: &mut QuectoWorld, allowlist: String) {
     let agents: Vec<String> = allowlist.split(',').map(|s| s.trim().to_string()).collect();
-    let _ = restrict;
     world.spawn_tool = Some(SpawnTool::new(agents));
 }
 
 #[given(expr = "a SpawnTool with empty allowlist")]
-fn given_spawn_tool_empty_allowlist(world: &mut QuectoWorld, restrict: String) {
-    let _ = restrict;
+fn given_spawn_tool_empty_allowlist(world: &mut QuectoWorld) {
     world.spawn_tool = Some(SpawnTool::new(vec![]));
 }
 
