@@ -8,7 +8,7 @@ use super::*;
 fn given_sandboxed_workspace_temp(world: &mut QuectoWorld) {
     let td = TempDir::new().expect("failed to create temp dir");
     let ws = td.path().to_path_buf();
-    world.sandbox = Some(Sandbox::new(Some(ws.clone()), true));
+    world.sandbox = Some(Sandbox::new(Some(ws.clone())));
     world.tool_workspace = Some(ws);
     world._extra_temp_dirs.push(td);
 }
@@ -65,7 +65,7 @@ fn given_workspace_at(world: &mut QuectoWorld, path: String) {
 
 #[given("the agent has no command allowlist configured")]
 fn given_agent_no_allowlist(world: &mut QuectoWorld) {
-    let sb = Sandbox::new(world.tool_workspace.clone(), false);
+    let sb = Sandbox::new(world.tool_workspace.clone());
     world.sandbox = Some(sb);
 }
 
@@ -82,8 +82,7 @@ fn given_agent_command_allowlist(world: &mut QuectoWorld, allowlist: String) {
             .filter(|s| !s.is_empty())
             .collect()
     };
-    let sb =
-        Sandbox::new(world.tool_workspace.clone(), false).with_command_allowlist(Some(commands));
+    let sb = Sandbox::new(world.tool_workspace.clone()).with_command_allowlist(Some(commands));
     world.sandbox = Some(sb);
 }
 
@@ -134,13 +133,13 @@ fn given_sandbox_with_allowlist(world: &mut QuectoWorld, allowlist: String) {
     } else {
         allowlist.split(',').map(|s| s.trim().to_string()).collect()
     };
-    let sb = Sandbox::new(None, false).with_command_allowlist(Some(commands));
+    let sb = Sandbox::new(None).with_command_allowlist(Some(commands));
     world.sandbox = Some(sb);
 }
 
 #[given("a sandbox without a command allowlist")]
 fn given_sandbox_without_allowlist(world: &mut QuectoWorld) {
-    let sb = Sandbox::new(None, false);
+    let sb = Sandbox::new(None);
     // command_allowlist defaults to None
     world.sandbox = Some(sb);
 }
@@ -151,7 +150,7 @@ fn given_sandbox_without_allowlist(world: &mut QuectoWorld) {
 fn given_exec_tool_with_timeout(world: &mut QuectoWorld, timeout: u64) {
     let td = TempDir::new().expect("failed to create temp dir");
     let ws = td.path().to_path_buf();
-    let sandbox = Sandbox::new(Some(ws.clone()), false);
+    let sandbox = Sandbox::new(Some(ws.clone()));
     let tool = ExecTool::with_timeout(
         Arc::new(ws.clone()),
         Arc::new(sandbox),
@@ -166,7 +165,7 @@ fn given_exec_tool_with_timeout(world: &mut QuectoWorld, timeout: u64) {
 fn given_exec_tool_no_timeout(world: &mut QuectoWorld) {
     let td = TempDir::new().expect("failed to create temp dir");
     let ws = td.path().to_path_buf();
-    let sandbox = Sandbox::new(Some(ws.clone()), false);
+    let sandbox = Sandbox::new(Some(ws.clone()));
     let tool = ExecTool::new(Arc::new(ws.clone()), Arc::new(sandbox));
     world.exec_tool = Some(Arc::new(tool));
     world.tool_workspace = Some(ws);
@@ -249,7 +248,7 @@ fn then_exec_tool_no_timeout(world: &mut QuectoWorld) {
 fn given_exec_tool_in_sandbox(world: &mut QuectoWorld) {
     let td = TempDir::new().expect("failed to create temp dir");
     let ws = td.path().to_path_buf();
-    let sandbox = Sandbox::new(Some(ws.clone()), false);
+    let sandbox = Sandbox::new(Some(ws.clone()));
     let tool = ExecTool::new(Arc::new(ws.clone()), Arc::new(sandbox));
     world.exec_tool = Some(Arc::new(tool));
     world.tool_workspace = Some(ws);

@@ -5,10 +5,8 @@ use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 #[tokio::test]
 async fn dispatch_register_tools_rejects_disabled_core_shadow() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let sandbox = crate::infrastructure::security::sandbox::Sandbox::new(
-        Some(tmp.path().to_path_buf()),
-        true,
-    );
+    let sandbox =
+        crate::infrastructure::security::sandbox::Sandbox::new(Some(tmp.path().to_path_buf()));
     let mut registry = crate::infrastructure::extensions::native::build_official_tool_registry(
         tmp.path().to_path_buf(),
         sandbox,

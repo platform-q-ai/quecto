@@ -7,18 +7,7 @@ use super::*;
 #[given(expr = "a sandboxed workspace at {string}")]
 fn given_sandboxed_workspace(world: &mut QuectoWorld, path: String) {
     let ws = PathBuf::from(&path);
-    // Default to restrict_to_workspace = true; can be overridden by next step
-    world.sandbox = Some(Sandbox::new(Some(ws), true));
-}
-
-#[given(expr = "restrict_to_workspace is {word}")]
-fn given_restrict_to_workspace(world: &mut QuectoWorld, value: String) {
-    let restrict = value == "true";
-    if let Some(ref mut sb) = world.sandbox {
-        sb.restrict_to_workspace = restrict;
-    } else {
-        world.sandbox = Some(Sandbox::new(None, restrict));
-    }
+    world.sandbox = Some(Sandbox::new(Some(ws)));
 }
 
 #[when(expr = "the agent tries to validate path {string}")]
@@ -33,7 +22,7 @@ fn when_validate_path(world: &mut QuectoWorld, path: String) {
 
 #[when(expr = "the agent tries to validate command {string}")]
 fn when_validate_command(world: &mut QuectoWorld, command: String) {
-    let default_sb = Sandbox::new(None, false);
+    let default_sb = Sandbox::new(None);
     let sb = world.sandbox.as_ref().unwrap_or(&default_sb);
     world.validation_result = Some(sb.validate_command(&command).map_err(|e| e.to_string()));
 }

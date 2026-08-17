@@ -298,7 +298,6 @@ pub fn run_repl<R: BufRead, W: Write>(
             exec_options,
             session_key,
             spawned: false,
-            restrict_to_workspace: false,
             parent_session_name: ctx.flags.session_name.clone(),
             parent_config_path: Some(ctx.config_path.to_path_buf()),
             disabled_tools: &[],

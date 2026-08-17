@@ -581,18 +581,6 @@ fn then_config_should_have_temperature(world: &mut QuectoWorld, expected: f32) {
     );
 }
 
-#[then(expr = "the config should have restrict_to_workspace {word}")]
-fn then_config_should_have_restrict(world: &mut QuectoWorld, expected: String) {
-    let config_path = base_path(world).join("config.json");
-    let config = Config::load(config_path.to_str().unwrap()).expect("load config");
-    let expected_bool = expected == "true";
-    assert_eq!(
-        config.agents.defaults.restrict_to_workspace, expected_bool,
-        "expected restrict_to_workspace {}, got {}",
-        expected_bool, config.agents.defaults.restrict_to_workspace
-    );
-}
-
 // ===========================================================================
 // Config steps for CLI/Observability scenarios (restored from deleted voice_steps.rs)
 // ===========================================================================

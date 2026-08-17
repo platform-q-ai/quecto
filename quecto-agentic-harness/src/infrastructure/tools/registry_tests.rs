@@ -7,7 +7,7 @@ use tempfile::TempDir;
 
 pub(crate) fn test_registry() -> (ToolRegistryImpl, TempDir) {
     let tmp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), true);
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
     let reg = crate::infrastructure::extensions::native::build_official_tool_registry(
         tmp.path().to_path_buf(),
         sandbox,
@@ -426,7 +426,7 @@ fn test_remove_all_batch() {
 #[test]
 fn test_rebuild_definitions_no_duplicates_after_re_register() {
     let tmp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), true);
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
     let mut reg = crate::infrastructure::extensions::native::build_official_tool_registry(
         tmp.path().to_path_buf(),
         sandbox.clone(),

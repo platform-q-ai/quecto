@@ -6,17 +6,15 @@ use quecto::infrastructure::tools::agent_cmd::AgentCmdTool;
 
 // --- Given ---
 
-#[given(expr = "a SpawnTool with allowlist {string} and restrict_to_workspace {word}")]
-fn given_spawn_tool_with_allowlist(world: &mut QuectoWorld, allowlist: String, restrict: String) {
+#[given(expr = "a SpawnTool with allowlist {string}")]
+fn given_spawn_tool_with_allowlist(world: &mut QuectoWorld, allowlist: String) {
     let agents: Vec<String> = allowlist.split(',').map(|s| s.trim().to_string()).collect();
-    let restrict = restrict == "true";
-    world.spawn_tool = Some(SpawnTool::new(agents, restrict));
+    world.spawn_tool = Some(SpawnTool::new(agents));
 }
 
-#[given(expr = "a SpawnTool with empty allowlist and restrict_to_workspace {word}")]
-fn given_spawn_tool_empty_allowlist(world: &mut QuectoWorld, restrict: String) {
-    let restrict = restrict == "true";
-    world.spawn_tool = Some(SpawnTool::new(vec![], restrict));
+#[given(expr = "a SpawnTool with empty allowlist")]
+fn given_spawn_tool_empty_allowlist(world: &mut QuectoWorld) {
+    world.spawn_tool = Some(SpawnTool::new(vec![]));
 }
 
 #[given(expr = "a SpawnTool with empty allowlist, parent id {string}, and a broadcast listener")]
@@ -26,7 +24,7 @@ fn given_spawn_tool_empty_allowlist_parent_and_broadcast(
 ) {
     let (tx, rx) = tokio::sync::broadcast::channel::<String>(8);
     world.spawn_tool =
-        Some(SpawnTool::new(vec![], true).with_event_forwarding(Some(tx), Some(parent_id)));
+        Some(SpawnTool::new(vec![]).with_event_forwarding(Some(tx), Some(parent_id)));
     // Keep assertions deterministic without keeping a runtime alive across steps:
     // execute() sends the immediate-visibility event synchronously enough that it
     // is queued for this receiver before execute() returns.
@@ -36,11 +34,7 @@ fn given_spawn_tool_empty_allowlist_parent_and_broadcast(
 
 #[given(expr = "a SpawnTool created with base_dir {string}")]
 fn given_spawn_tool_with_base_dir(world: &mut QuectoWorld, base_dir: String) {
-    world.spawn_tool = Some(SpawnTool::with_base_dir(
-        vec![],
-        true,
-        PathBuf::from(base_dir),
-    ));
+    world.spawn_tool = Some(SpawnTool::with_base_dir(vec![], PathBuf::from(base_dir)));
 }
 
 // --- When ---
@@ -127,18 +121,6 @@ fn then_has_system_prompt(world: &mut QuectoWorld, expected: String) {
 #[then("the parsed config should have no system prompt")]
 fn then_no_system_prompt(world: &mut QuectoWorld) {
     let result = world.spawn_result.as_ref().expect("no spawn result");
-    assert!(
-        !result.is_error,
-        "expected success, got error: {}",
-        result.content
-    );
-}
-
-#[then(expr = "the parsed config should have restrict_to_workspace {word}")]
-fn then_restrict_to_workspace(world: &mut QuectoWorld, _expected: String) {
-    let result = world.spawn_result.as_ref().expect("no spawn result");
-    // Stub mode no longer echoes restrict_to_workspace — successful parse
-    // with the correct constructor (which sets the field) is sufficient.
     assert!(
         !result.is_error,
         "expected success, got error: {}",
@@ -675,7 +657,7 @@ pub(crate) fn given_live_spawn_agent_cmd_mock_child(world: &mut QuectoWorld) {
     let socket_dir = base.join("sockets");
     std::fs::create_dir_all(&socket_dir).expect("create socket dir");
     world.spawn_tool = Some(
-        SpawnTool::with_base_dir(vec![], true, base.clone())
+        SpawnTool::with_base_dir(vec![], base.clone())
             .with_socket_dir(socket_dir)
             .with_registry(registry.clone()),
     );
@@ -761,7 +743,7 @@ fn rebuild_spawn_tool_with_parent_config(world: &mut QuectoWorld, parent_config:
         .clone()
         .expect("registry from live spawn setup");
     world.spawn_tool = Some(
-        SpawnTool::with_base_dir(vec![], true, base.clone())
+        SpawnTool::with_base_dir(vec![], base.clone())
             .with_socket_dir(base.join("sockets"))
             .with_registry(registry)
             .with_parent_config_path(Some(parent_config)),

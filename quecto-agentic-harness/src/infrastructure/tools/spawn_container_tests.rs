@@ -106,7 +106,6 @@ fn base_config(container: ContainerSelection) -> SubagentConfig {
         container,
         task: None,
         agent_id: None,
-        restrict_to_workspace: true,
         system: None,
         config_path: None,
         workflow: false,

@@ -14,10 +14,7 @@ fn test_headless_agent_registry_includes_spawn_tool() {
     let workspace = tmp.path().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
 
-    let sandbox = Sandbox::new(
-        Some(workspace.clone()),
-        config.agents.defaults.restrict_to_workspace,
-    );
+    let sandbox = Sandbox::new(Some(workspace.clone()));
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
     let mut registry = crate::infrastructure::extensions::native::build_official_tool_registry(
         workspace.clone(),
@@ -32,11 +29,7 @@ fn test_headless_agent_registry_includes_spawn_tool() {
     // not in stub mode and will actually launch subagents.
     use crate::infrastructure::tools::spawn::SpawnTool;
     use std::sync::Arc;
-    let spawn = SpawnTool::with_base_dir(
-        vec![],
-        config.agents.defaults.restrict_to_workspace,
-        tmp.path().to_path_buf(),
-    );
+    let spawn = SpawnTool::with_base_dir(vec![], tmp.path().to_path_buf());
 
     // Assert the constructed tool has a real base_dir (not stub mode).
     let debug_str = format!("{:?}", spawn);

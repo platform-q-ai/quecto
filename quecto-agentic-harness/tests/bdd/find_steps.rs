@@ -44,7 +44,7 @@ fn given_find_git_workspace(world: &mut QuectoWorld) {
 fn make_find_tool(world: &mut QuectoWorld) -> FindTool {
     let ws = ensure_find_workspace(world);
     let ws_arc = Arc::new(ws.clone());
-    let sandbox = Arc::new(Sandbox::new(Some(ws.clone()), true));
+    let sandbox = Arc::new(Sandbox::new(Some(ws.clone())));
     FindTool::new(ws_arc, sandbox)
 }
 
@@ -194,7 +194,7 @@ fn when_find_with_float_limit(world: &mut QuectoWorld, pattern: String, limit: f
 fn when_find_missing_binary(world: &mut QuectoWorld, pattern: String) {
     let ws = ensure_find_workspace(world);
     let ws_arc = Arc::new(ws.clone());
-    let sandbox = Arc::new(Sandbox::new(Some(ws.clone()), true));
+    let sandbox = Arc::new(Sandbox::new(Some(ws.clone())));
     let tool = FindTool::with_fd_binary(
         ws_arc,
         sandbox,
@@ -299,7 +299,7 @@ fn then_find_is_error(world: &mut QuectoWorld) {
 #[then("the find tool description should support path-segment glob patterns")]
 fn then_find_description_supports_path_segments(world: &mut QuectoWorld) {
     let ws = ensure_find_workspace(world);
-    let sandbox = Arc::new(Sandbox::new(Some(ws.clone()), true));
+    let sandbox = Arc::new(Sandbox::new(Some(ws.clone())));
     let tool = FindTool::new(Arc::new(ws), sandbox);
     let def = tool.definition();
     // The description should document that path-segment patterns like src/*.rs work.

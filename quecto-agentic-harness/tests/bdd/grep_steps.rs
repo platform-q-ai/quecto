@@ -24,8 +24,8 @@ fn ensure_grep_workspace(world: &mut QuectoWorld) -> PathBuf {
 fn make_grep_tool(world: &mut QuectoWorld) -> GrepTool {
     let ws = ensure_grep_workspace(world);
     let ws_arc = Arc::new(ws.clone());
-    // restrict_to_workspace: true — sandbox enforces workspace containment
-    let sandbox = Arc::new(Sandbox::new(Some(ws.clone()), true));
+    // validate_path is not a filesystem jail.
+    let sandbox = Arc::new(Sandbox::new(Some(ws.clone())));
     GrepTool::new(ws_arc, sandbox)
 }
 
@@ -143,7 +143,7 @@ fn when_grep_context(world: &mut QuectoWorld, pattern: String, context: u64) {
 fn when_grep_missing_binary(world: &mut QuectoWorld, pattern: String) {
     let ws = ensure_grep_workspace(world);
     let ws_arc = Arc::new(ws.clone());
-    let sandbox = Arc::new(Sandbox::new(Some(ws.clone()), true));
+    let sandbox = Arc::new(Sandbox::new(Some(ws.clone())));
     let tool = GrepTool::with_rg_binary(
         ws_arc,
         sandbox,

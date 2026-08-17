@@ -67,8 +67,6 @@ pub struct SubagentConfig {
     /// Optional user-facing display label (`agent_id` on the compatibility wire).
     /// This is not durable identity and must not key persistence or sockets.
     pub agent_id: Option<String>,
-    /// Whether the subagent should restrict to workspace.
-    pub restrict_to_workspace: bool,
     /// Optional system prompt for the subagent.
     pub system: Option<String>,
     /// Optional config file path to forward as `--config <path>`.

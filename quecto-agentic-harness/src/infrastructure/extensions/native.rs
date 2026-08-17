@@ -173,7 +173,6 @@ pub fn build_session_tool_extensions(deps: SessionToolDeps) -> Vec<Arc<dyn Exten
 pub struct AgentControlToolDeps {
     pub base_dir: PathBuf,
     pub socket_dir: PathBuf,
-    pub restrict_to_workspace: bool,
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     pub parent_session_name: Option<String>,
     pub inherited_tool_policy:
@@ -195,14 +194,11 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
     let (notification_tx, notification_rx) = tokio::sync::mpsc::channel(64);
     let environment_registry = crate::domain::environment_registry::EnvironmentRegistry::new();
 
-    let mut spawn = crate::infrastructure::tools::spawn::SpawnTool::with_base_dir(
-        Vec::new(),
-        deps.restrict_to_workspace,
-        deps.base_dir,
-    )
-    .with_socket_dir(deps.socket_dir)
-    .with_environment_registry(environment_registry.clone())
-    .with_parent_config_path(deps.parent_config_path);
+    let mut spawn =
+        crate::infrastructure::tools::spawn::SpawnTool::with_base_dir(Vec::new(), deps.base_dir)
+            .with_socket_dir(deps.socket_dir)
+            .with_environment_registry(environment_registry.clone())
+            .with_parent_config_path(deps.parent_config_path);
     if let Some(snapshot) = deps.inherited_tool_policy {
         spawn = spawn.with_inherited_tool_policy(snapshot);
     }

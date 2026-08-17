@@ -45,7 +45,6 @@ fn container_config_roster(parent_config_path: Option<&Path>, checkout: &Path) -
         task: None,
         container: crate::domain::subagent::ContainerSelection::Local,
         agent_id: None,
-        restrict_to_workspace: true,
         system: None,
         config_path: Some(path.to_path_buf()),
         workflow: false,
@@ -129,8 +128,6 @@ fn validate_config_path(s: &str) -> Result<PathBuf, String> {
 pub struct SpawnTool {
     /// Allowlist of agent IDs that can be spawned.
     pub(super) allowed_agents: Vec<String>,
-    /// Legacy compatibility flag propagated to child config; it no longer enables agent filesystem confinement.
-    pub(super) restrict_to_workspace: bool,
     /// Base directory for the child agent process.
     pub(super) base_dir: PathBuf,
     /// Directory for UDS sockets (e.g. `$XDG_RUNTIME_DIR` or temp).
@@ -157,10 +154,9 @@ pub struct SpawnTool {
 }
 
 impl SpawnTool {
-    pub fn new(allowed_agents: Vec<String>, restrict_to_workspace: bool) -> Self {
+    pub fn new(allowed_agents: Vec<String>) -> Self {
         Self {
             allowed_agents,
-            restrict_to_workspace,
             base_dir: PathBuf::new(),
             socket_dir: PathBuf::new(),
             registry: Arc::new(Mutex::new(HashMap::new())),
@@ -175,14 +171,9 @@ impl SpawnTool {
     }
 
     /// Create with a base directory for subprocess spawning.
-    pub fn with_base_dir(
-        allowed_agents: Vec<String>,
-        restrict_to_workspace: bool,
-        base_dir: PathBuf,
-    ) -> Self {
+    pub fn with_base_dir(allowed_agents: Vec<String>, base_dir: PathBuf) -> Self {
         Self {
             allowed_agents,
-            restrict_to_workspace,
             base_dir,
             socket_dir: PathBuf::new(),
             registry: Arc::new(Mutex::new(HashMap::new())),
@@ -362,7 +353,6 @@ impl SpawnTool {
             task,
             container,
             agent_id,
-            restrict_to_workspace: self.restrict_to_workspace,
             system,
             config_path,
             workflow,

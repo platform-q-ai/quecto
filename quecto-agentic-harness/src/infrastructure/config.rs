@@ -65,10 +65,10 @@ pub struct AgentDefaults {
     pub temperature: f32,
     #[serde(default = "default_max_tool_iterations")]
     pub max_tool_iterations: u32,
-    /// Deprecated compatibility field. Filesystem workspace restriction was removed;
-    /// this value is accepted during config deserialization but ignored.
-    #[serde(default = "default_false")]
-    pub restrict_to_workspace: bool,
+    /// Deprecated compatibility key. Filesystem workspace restriction was removed;
+    /// old configs may still contain this key, but it is ignored.
+    #[serde(default, rename = "restrict_to_workspace", skip_serializing)]
+    pub _deprecated_restrict_to_workspace: Option<bool>,
     #[serde(default = "default_exec_max_capture_bytes")]
     pub exec_max_capture_bytes: usize,
     #[serde(default = "default_max_session_messages")]
@@ -108,7 +108,7 @@ impl Default for AgentDefaults {
             max_tokens: default_max_tokens(),
             temperature: default_temperature(),
             max_tool_iterations: default_max_tool_iterations(),
-            restrict_to_workspace: false,
+            _deprecated_restrict_to_workspace: None,
             exec_max_capture_bytes: default_exec_max_capture_bytes(),
             max_session_messages: default_max_session_messages(),
             context_collapse_after_tool_calls: default_context_collapse_after_tool_calls(),
@@ -302,9 +302,6 @@ fn default_max_context_tokens() -> usize {
     // `default_context_collapse_after_tool_calls`) and the hard-drop
     // window dropping oldest non-pinned messages once we breach it.
     200_000
-}
-fn default_false() -> bool {
-    false
 }
 fn default_max_results() -> u32 {
     5
@@ -702,6 +699,9 @@ impl std::error::Error for ConfigError {}
 #[path = "config_effort_1066_tests.rs"]
 mod effort_1066_tests;
 
+#[cfg(test)]
+#[path = "config_1495_tests.rs"]
+mod config_1495_tests;
 #[cfg(test)]
 #[path = "config_container_slice2_tests.rs"]
 mod container_slice2_tests;

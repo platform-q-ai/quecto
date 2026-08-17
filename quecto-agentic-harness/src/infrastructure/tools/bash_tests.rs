@@ -1,16 +1,16 @@
 use super::*;
 use tempfile::TempDir;
 
-fn test_exec(restrict: bool) -> (ExecTool, TempDir) {
+fn test_exec() -> (ExecTool, TempDir) {
     let tmp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), restrict);
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
     let tool = ExecTool::new(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox));
     (tool, tmp)
 }
 
 #[tokio::test]
 async fn test_exec_echo() {
-    let (tool, _tmp) = test_exec(false);
+    let (tool, _tmp) = test_exec();
     let result = tool.execute(r#"{"command": "echo hello"}"#).await.unwrap();
     assert!(!result.is_error);
     assert!(result.content.contains("hello"));
@@ -18,14 +18,14 @@ async fn test_exec_echo() {
 
 #[tokio::test]
 async fn test_exec_dangerous_command_blocked() {
-    let (tool, _tmp) = test_exec(false);
+    let (tool, _tmp) = test_exec();
     let result = tool.execute(r#"{"command": "rm -rf /"}"#).await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_exec_missing_command_arg() {
-    let (tool, _tmp) = test_exec(false);
+    let (tool, _tmp) = test_exec();
     let result = tool.execute(r#"{}"#).await.unwrap();
     assert!(
         result.is_error,
@@ -42,7 +42,7 @@ async fn test_exec_missing_command_arg() {
 #[tokio::test]
 async fn test_exec_timeout_kills_long_command() {
     let tmp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
     let tool = ExecTool::with_timeout(
         Arc::new(tmp.path().to_path_buf()),
         Arc::new(sandbox),
@@ -57,7 +57,7 @@ async fn test_exec_timeout_kills_long_command() {
 #[tokio::test]
 async fn test_exec_inherits_quecto_env_vars() {
     let tmp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
     let tool = ExecTool::new(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox));
 
     let mut env_vars = HashMap::new();
@@ -75,7 +75,7 @@ async fn test_exec_inherits_quecto_env_vars() {
 
 #[tokio::test]
 async fn test_exec_per_invocation_timeout_kills_slow_command() {
-    let (tool, _tmp) = test_exec(false);
+    let (tool, _tmp) = test_exec();
     // Pass timeout=1 in JSON args — should kill sleep 10
     let result = tool
         .execute(r#"{"command": "sleep 10", "timeout": 1}"#)
@@ -95,7 +95,7 @@ async fn test_exec_per_invocation_timeout_kills_slow_command() {
 #[tokio::test]
 async fn test_exec_per_invocation_timeout_capped_at_max() {
     let tmp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
     // Configure tool with max 5s timeout
     let opts = ExecOptions {
         timeout: Duration::from_secs(5),
@@ -116,7 +116,7 @@ async fn test_exec_per_invocation_timeout_capped_at_max() {
 #[tokio::test]
 async fn test_exec_command_prefix_prepended() {
     let tmp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
     let opts = ExecOptions {
         command_prefix: Some("export MY_PREFIX_VAR=hello".to_string()),
         ..ExecOptions::default()
@@ -138,7 +138,7 @@ async fn test_exec_command_prefix_prepended() {
 
 #[tokio::test]
 async fn test_exec_shell_detection_uses_shell_env() {
-    let (tool, _tmp) = test_exec(false);
+    let (tool, _tmp) = test_exec();
     // Set SHELL to /bin/sh and verify the shell is spawned (not an arbitrary binary).
     // $0 in the spawned shell prints the shell executable name.
     let mut env_overrides = HashMap::new();
@@ -200,7 +200,7 @@ fn test_exec_truncation_line_notice_uses_truncate_tail() {
 
 #[tokio::test]
 async fn test_exec_empty_object_returns_actionable_error() {
-    let (tool, _tmp) = test_exec(false);
+    let (tool, _tmp) = test_exec();
     let result = tool.execute("{}").await.unwrap();
     assert!(result.is_error, "expected error, got: {}", result.content);
     assert!(
@@ -217,7 +217,7 @@ async fn test_exec_empty_object_returns_actionable_error() {
 
 #[test]
 fn test_exec_description_includes_example() {
-    let (tool, _tmp) = test_exec(false);
+    let (tool, _tmp) = test_exec();
     let def = tool.definition();
     assert!(
         def.description.contains("Example"),
@@ -460,10 +460,10 @@ async fn test_await_stream_output_none() {
 
 #[tokio::test]
 async fn test_await_stream_output_some() {
-    let handle = tokio::spawn(async { ("captured".to_string(), true) });
+    let handle = tokio::spawn(async { ("captured".to_string(), false) });
     let (s, t) = super::await_stream_output(Some(handle)).await;
     assert_eq!(s, "captured");
-    assert!(t);
+    assert!(!t);
 }
 
 #[tokio::test]
@@ -595,7 +595,7 @@ async fn test_collect_output_combined_streams_preserve_separator_at_boundary() {
 
 #[tokio::test]
 async fn test_exec_invalid_json_returns_error_result() {
-    let (tool, _tmp) = test_exec(false);
+    let (tool, _tmp) = test_exec();
     let result = tool.execute("{ not valid json").await.unwrap();
     assert!(
         result.is_error,
@@ -614,7 +614,7 @@ async fn test_exec_invalid_json_returns_error_result() {
 #[test]
 fn test_exec_tool_timeout_getter_and_debug() {
     let tmp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
     let tool = ExecTool::with_timeout(
         Arc::new(tmp.path().to_path_buf()),
         Arc::new(sandbox),
@@ -643,7 +643,7 @@ fn test_exec_options_default_and_clone() {
 /// reach the `touch`, proving the long bash did not survive the cancel.
 #[tokio::test]
 async fn test_exec_drop_kills_child_process_group() {
-    let (tool, tmp) = test_exec(false);
+    let (tool, tmp) = test_exec();
     let marker = tmp.path().join("survived-abort.marker");
     let cmd = format!(
         r#"{{"command": "sleep 3 && touch '{}'"}}"#,
@@ -675,7 +675,7 @@ async fn test_exec_drop_kills_child_process_group() {
 /// above which the leader kill alone already defeats.
 #[tokio::test]
 async fn test_exec_drop_kills_whole_process_group() {
-    let (tool, tmp) = test_exec(false);
+    let (tool, tmp) = test_exec();
     let marker = tmp.path().join("survived-group-abort.marker");
     // `( ... ) &` backgrounds a subshell in the leader's process group while the
     // leader stays alive on its own `sleep` (keeping the future pending until we

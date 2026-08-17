@@ -10,7 +10,6 @@ fn base_config() -> SubagentConfig {
         container: crate::domain::subagent::ContainerSelection::Local,
         task: None,
         agent_id: Some("w1".into()),
-        restrict_to_workspace: true,
         system: None,
         config_path: None,
         workflow: false,
@@ -30,7 +29,6 @@ fn spec<'a>(config: &'a SubagentConfig) -> ChildLaunchSpec<'a> {
         config,
         effective_config: None,
         parent_id: None,
-        restrict_to_workspace: true,
         workflow_spec_path: None,
         inherited_tool_policy_path: None,
     }
@@ -130,7 +128,6 @@ fn forwards_existing_flags_alongside_model() {
         config: &cfg,
         effective_config: Some(Path::new("/cfg.json")),
         parent_id: Some("parent-7"),
-        restrict_to_workspace: false,
         workflow_spec_path: Some(Path::new("/run/spec.json")),
         inherited_tool_policy_path: None,
     };
@@ -205,7 +202,6 @@ fn child_session_flag_uses_uuid_key_not_display_label() {
         config: &cfg,
         effective_config: None,
         parent_id: None,
-        restrict_to_workspace: true,
         workflow_spec_path: None,
         inherited_tool_policy_path: None,
     };

@@ -150,7 +150,6 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .as_deref(),
-                restrict_to_workspace: self.tool.restrict_to_workspace,
                 workflow_spec_path: workflow_spec_path.as_deref(),
                 inherited_tool_policy_path: inherited_tool_policy_path.as_deref(),
             },

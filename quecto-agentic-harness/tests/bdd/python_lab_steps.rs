@@ -40,7 +40,7 @@ fn ensure_workspace(world: &mut QuectoWorld) -> PathBuf {
 fn tool(world: &mut QuectoWorld) -> Arc<PythonLabTool> {
     let ws = ensure_workspace(world);
     if world.python_lab_tool.is_none() {
-        let sandbox = Arc::new(Sandbox::new(Some(ws.clone()), false));
+        let sandbox = Arc::new(Sandbox::new(Some(ws.clone())));
         let tool = PythonLabTool::new(Arc::new(ws), sandbox, PythonLabConfig::default());
         tool.set_session_key("bdd-python-lab".into());
         world.python_lab_tool = Some(DebugPythonLab(Arc::new(tool)));

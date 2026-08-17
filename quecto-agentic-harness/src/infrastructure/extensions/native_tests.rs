@@ -233,10 +233,8 @@ fn has_tool(exts: &[Arc<dyn Extension>], name: &str) -> bool {
 #[test]
 fn build_official_tool_extensions_lists_core_workspace_tools() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let sandbox = crate::infrastructure::security::sandbox::Sandbox::new(
-        Some(tmp.path().to_path_buf()),
-        true,
-    );
+    let sandbox =
+        crate::infrastructure::security::sandbox::Sandbox::new(Some(tmp.path().to_path_buf()));
     let exts = build_official_tool_extensions(OfficialToolDeps {
         workspace: tmp.path().to_path_buf(),
         sandbox,
@@ -285,7 +283,6 @@ fn build_agent_control_tool_extensions_supplies_spawn_and_agent_cmd() {
         parent_config_path: None,
         base_dir: tmp.path().to_path_buf(),
         socket_dir: tmp.path().to_path_buf(),
-        restrict_to_workspace: true,
         broadcast_tx: None,
         parent_session_name: Some("parent".into()),
         inherited_tool_policy: None,
@@ -326,7 +323,7 @@ fn register_bundled_native_tools_marks_official_not_extension_tracked() {
     use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
     let tmp = tempfile::TempDir::new().unwrap();
-    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), true);
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
     let mut registry = ToolRegistryImpl::new();
     register_bundled_native_tools(
         &mut registry,

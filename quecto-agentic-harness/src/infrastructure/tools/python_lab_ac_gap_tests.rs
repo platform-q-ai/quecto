@@ -8,7 +8,7 @@ use super::python_lab::{PythonLabConfig, PythonLabTool};
 fn tool(dir: &std::path::Path) -> PythonLabTool {
     PythonLabTool::new(
         Arc::new(dir.to_path_buf()),
-        Arc::new(Sandbox::new(Some(dir.to_path_buf()), true)),
+        Arc::new(Sandbox::new(Some(dir.to_path_buf()))),
         PythonLabConfig {
             default_timeout_seconds: 1,
             max_foreground_seconds: 2,
@@ -80,7 +80,7 @@ async fn drop_terminates_background_job_process() {
     let tmp = tempfile::tempdir().unwrap();
     let lab = PythonLabTool::new(
         Arc::new(tmp.path().to_path_buf()),
-        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), true)),
+        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()))),
         PythonLabConfig {
             default_timeout_seconds: 30,
             max_processes: None,
@@ -119,7 +119,7 @@ async fn memory_cpu_and_process_rlimits_are_enforced() {
     let tmp = tempfile::tempdir().unwrap();
     let mem_lab = PythonLabTool::new(
         Arc::new(tmp.path().to_path_buf()),
-        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), true)),
+        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()))),
         PythonLabConfig {
             max_memory_bytes: Some(64 * 1024 * 1024),
             default_timeout_seconds: 5,
@@ -139,7 +139,7 @@ async fn memory_cpu_and_process_rlimits_are_enforced() {
 
     let cpu_lab = PythonLabTool::new(
         Arc::new(tmp.path().to_path_buf()),
-        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), true)),
+        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()))),
         PythonLabConfig {
             max_cpu_seconds: Some(1),
             default_timeout_seconds: 5,

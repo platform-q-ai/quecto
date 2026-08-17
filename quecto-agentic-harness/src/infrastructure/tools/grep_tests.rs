@@ -4,7 +4,7 @@ use tempfile::TempDir;
 fn test_grep() -> (GrepTool, Arc<PathBuf>, TempDir) {
     let tmp = TempDir::new().unwrap();
     let ws = Arc::new(tmp.path().to_path_buf());
-    let sandbox = Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), false));
+    let sandbox = Arc::new(Sandbox::new(Some(tmp.path().to_path_buf())));
     let tool = GrepTool::new(ws.clone(), sandbox);
     (tool, ws, tmp)
 }
@@ -14,7 +14,7 @@ fn test_format_grep_output_empty() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt.block_on(format_grep_output(GrepFormatArgs {
         json_output: "",
-        sandbox: &Sandbox::new(None, false),
+        sandbox: &Sandbox::new(None),
         workspace: &PathBuf::from("/ws"),
         match_limit: 100,
         context_lines: 0,
@@ -34,7 +34,7 @@ fn test_format_grep_output_basic() {
     let json_patched = json.replace("/ws", &ws.path().to_string_lossy());
     let result = rt.block_on(format_grep_output(GrepFormatArgs {
         json_output: &json_patched,
-        sandbox: &Sandbox::new(None, false),
+        sandbox: &Sandbox::new(None),
         workspace: ws.path(),
         match_limit: 100,
         context_lines: 0,
@@ -63,7 +63,7 @@ fn test_format_grep_output_match_limit() {
     let json = json_lines.join("\n");
     let result = rt.block_on(format_grep_output(GrepFormatArgs {
         json_output: &json,
-        sandbox: &Sandbox::new(None, false),
+        sandbox: &Sandbox::new(None),
         workspace: ws.path(),
         match_limit: 5,
         context_lines: 0,

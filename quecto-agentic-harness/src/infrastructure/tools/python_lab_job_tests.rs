@@ -8,7 +8,7 @@ use super::python_lab::{PythonLabConfig, PythonLabTool};
 fn tool(dir: &std::path::Path) -> PythonLabTool {
     PythonLabTool::new(
         Arc::new(dir.to_path_buf()),
-        Arc::new(Sandbox::new(Some(dir.to_path_buf()), false)),
+        Arc::new(Sandbox::new(Some(dir.to_path_buf()))),
         PythonLabConfig {
             default_timeout_seconds: 1,
             max_foreground_seconds: 2,
@@ -165,7 +165,7 @@ async fn concurrent_background_jobs_are_capped_until_cancelled() {
     let tmp = tempfile::tempdir().unwrap();
     let lab = PythonLabTool::new(
         Arc::new(tmp.path().to_path_buf()),
-        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), false)),
+        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()))),
         PythonLabConfig {
             max_concurrent_jobs: 1,
             default_timeout_seconds: 5,
