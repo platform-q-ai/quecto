@@ -36,7 +36,11 @@ fn tool_calls_json(msg: &Message) -> serde_json::Value {
     )
 }
 
-fn message_to_json_with_content(msg: &Message, content: &str) -> serde_json::Value {
+fn message_to_json_with_content_and_thinking(
+    msg: &Message,
+    content: &str,
+    include_thinking: bool,
+) -> serde_json::Value {
     let mut value = serde_json::json!({
         "id": msg.id().to_string(),
         "role": super::role_wire_name(&msg.role),
@@ -47,11 +51,15 @@ fn message_to_json_with_content(msg: &Message, content: &str) -> serde_json::Val
         "isError": msg.is_error,
         "collapsed": msg.is_collapsed,
     });
-    if !msg.thinking_blocks.is_empty() {
+    if include_thinking && !msg.thinking_blocks.is_empty() {
         value["thinking"] = serde_json::to_value(VisibleThinkingBlocksView(&msg.thinking_blocks))
             .expect("visible thinking serializes");
     }
     value
+}
+
+fn message_to_json_with_content(msg: &Message, content: &str) -> serde_json::Value {
+    message_to_json_with_content_and_thinking(msg, content, true)
 }
 
 fn one_char_end(s: &str, start: usize) -> usize {
@@ -70,8 +78,8 @@ fn ranged_value(
     request_id: Option<&str>,
 ) -> serde_json::Value {
     let mut value = message_to_json_with_content(msg, &msg.content[start..end]);
-    if !data_fits_frame(&value, request_id) && start == end {
-        value["thinking"] = serde_json::Value::Array(Vec::new());
+    if !data_fits_frame(&value, request_id) {
+        value = message_to_json_with_content_and_thinking(msg, &msg.content[start..end], false);
     }
     value["offset"] = serde_json::json!(start);
     value["nextOffset"] = serde_json::json!(end);
@@ -186,7 +194,10 @@ pub fn message_to_json_range_for_response(
     request_id: Option<&str>,
 ) -> serde_json::Value {
     if offset.is_none() && limit.is_none() {
-        return super::message_to_json(msg);
+        let value = super::message_to_json(msg);
+        if data_fits_frame(&value, request_id) {
+            return value;
+        }
     }
 
     let content_len = msg.content.len();

@@ -536,15 +536,39 @@ fn thinking_and_signature_accumulation_are_capped() {
     );
 }
 
-#[test]
-fn oversized_thinking_delta_does_not_emit_live_event() {
-    let oversized = "x".repeat(
-        crate::infrastructure::providers::openai::openai_sse_parser::MAX_OPENAI_SSE_REASONING_BYTES
-            + 1,
-    );
-    let delta = serde_json::json!({"type": "thinking_delta", "thinking": oversized});
+#[tokio::test]
+async fn anthropic_live_thinking_uses_aggregate_cap() {
+    use crate::domain::provider::StreamEvent;
+
+    let cap =
+        crate::infrastructure::providers::openai::openai_sse_parser::MAX_OPENAI_SSE_REASONING_BYTES;
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    let mut acc = SseAccumulator::default();
+    acc.handle_block_start(&serde_json::json!({"content_block": {"type": "thinking"}}));
+
+    let first = "x".repeat(cap);
+    let overflow = "y";
     assert!(
-        stream_event_from_delta(&delta).is_none(),
-        "oversized live thinking delta must not bypass the accumulator cap"
+        !dispatch_sse_event(
+            "content_block_delta",
+            &serde_json::json!({"delta": {"type": "thinking_delta", "thinking": first}}),
+            &mut acc,
+            &tx,
+        )
+        .await
     );
+    assert!(
+        !dispatch_sse_event(
+            "content_block_delta",
+            &serde_json::json!({"delta": {"type": "thinking_delta", "thinking": overflow}}),
+            &mut acc,
+            &tx,
+        )
+        .await
+    );
+    drop(tx);
+
+    let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+    assert_eq!(events.len(), 1, "overflow delta must not be emitted live");
+    assert!(matches!(&events[0], StreamEvent::ThinkingDelta(text) if text.len() == cap));
 }

@@ -108,3 +108,36 @@ fn ranged_get_message_with_huge_thinking_fits_protocol_frame() {
         crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET
     );
 }
+
+#[test]
+fn unranged_get_message_with_huge_thinking_falls_back_to_bounded_page() {
+    use crate::domain::message::ThinkingBlock;
+
+    let mut msg = Message::assistant("answer".repeat(1024), vec![]);
+    msg.thinking_blocks.push(ThinkingBlock::Normal {
+        thinking: "r".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET),
+        signature: "private".into(),
+    });
+
+    let data = message_to_json_range_for_response(&msg, None, None, Some("recover"));
+    let line = AgentEvent::ok(Some("recover"), "get_message", Some(data.clone())).to_json_line();
+
+    assert!(line.len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
+    assert!(data["nextOffset"].as_u64().unwrap() > data["offset"].as_u64().unwrap());
+}
+
+#[test]
+fn ranged_get_message_with_huge_thinking_still_makes_progress() {
+    use crate::domain::message::ThinkingBlock;
+
+    let mut msg = Message::assistant("abcdef", vec![]);
+    msg.thinking_blocks.push(ThinkingBlock::Normal {
+        thinking: "r".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET),
+        signature: "private".into(),
+    });
+
+    let data = message_to_json_range_for_response(&msg, Some(0), Some(6), Some("recover"));
+
+    assert!(data["nextOffset"].as_u64().unwrap() > 0);
+    assert_ne!(data["hasMoreContent"].as_bool(), Some(true));
+}

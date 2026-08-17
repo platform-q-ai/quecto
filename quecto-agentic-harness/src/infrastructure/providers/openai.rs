@@ -7,6 +7,9 @@ use std::task::{Context, Poll};
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+use crate::infrastructure::providers::openai::openai_sse_parser::{
+    MAX_OPENAI_SSE_REASONING_BYTES, append_with_limit,
+};
 
 struct AbortOnDrop<T> {
     handle: Option<tokio::task::JoinHandle<T>>,
@@ -211,11 +214,19 @@ impl OpenAiProvider {
             .or_else(|| message.get("reasoning_content"))
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
-            .map(|thinking| {
-                vec![crate::domain::message::ThinkingBlock::Normal {
-                    thinking: thinking.to_string(),
+            .and_then(|thinking| {
+                let mut capped = String::new();
+                append_with_limit(
+                    &mut capped,
+                    thinking,
+                    MAX_OPENAI_SSE_REASONING_BYTES,
+                    "OpenAI non-stream reasoning",
+                )
+                .ok()?;
+                Some(vec![crate::domain::message::ThinkingBlock::Normal {
+                    thinking: capped,
                     signature: String::new(),
-                }]
+                }])
             })
             .unwrap_or_default();
 

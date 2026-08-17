@@ -69,6 +69,21 @@ fn parse_response_preserves_non_stream_reasoning_fields() {
     }
 }
 
+#[test]
+fn parse_response_drops_oversized_non_stream_reasoning_fields() {
+    let body = serde_json::json!({
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": "final",
+                "reasoning": "r".repeat(crate::infrastructure::providers::openai::openai_sse_parser::MAX_OPENAI_SSE_REASONING_BYTES + 1)
+            }
+        }]
+    });
+    let resp = OpenAiProvider::parse_response(&body).unwrap();
+    assert!(resp.thinking_blocks.is_empty());
+}
+
 #[tokio::test]
 async fn test_chat_text_response() {
     let server = MockServer::start().await;

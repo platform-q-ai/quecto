@@ -98,6 +98,7 @@ impl SseAccumulator {
     }
 
     pub(super) fn handle_block_delta(&mut self, chunk: &serde_json::Value) {
+        let _ = self.try_stream_event_from_block_delta(chunk);
         let delta = &chunk["delta"];
         match delta["type"].as_str() {
             Some("text_delta") => {
@@ -251,9 +252,37 @@ impl SseAccumulator {
     pub(super) fn thinking_blocks(&self) -> &[ThinkingBlock] {
         &self.thinking_blocks
     }
+
+    pub(super) fn try_stream_event_from_block_delta(
+        &mut self,
+        chunk: &serde_json::Value,
+    ) -> Option<StreamEvent> {
+        let delta = &chunk["delta"];
+        match delta["type"].as_str() {
+            Some("text_delta") => delta["text"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(|s| StreamEvent::TextDelta(s.to_string())),
+            Some("thinking_delta") => {
+                let thinking = delta["thinking"].as_str().filter(|s| !s.is_empty())?;
+                if self.current_thinking.len().saturating_add(thinking.len())
+                    > MAX_OPENAI_SSE_REASONING_BYTES
+                {
+                    return None;
+                }
+                Some(StreamEvent::ThinkingDelta(thinking.to_string()))
+            }
+            Some("input_json_delta") => delta["partial_json"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(|s| StreamEvent::ToolCallDelta(s.to_string())),
+            _ => None,
+        }
+    }
 }
 
 /// Emit a [`StreamEvent`] for a single `content_block_delta` SSE event.
+#[cfg(test)]
 pub(super) fn stream_event_from_delta(delta: &serde_json::Value) -> Option<StreamEvent> {
     match delta["type"].as_str() {
         Some("text_delta") => {
@@ -530,7 +559,7 @@ async fn dispatch_sse_event(
             emit_tool_call_start(acc, tx).await;
         }
         "content_block_delta" => {
-            if let Some(ev) = stream_event_from_delta(&chunk["delta"]) {
+            if let Some(ev) = acc.try_stream_event_from_block_delta(chunk) {
                 let _ = tx.send(ev).await;
             }
             acc.handle_block_delta(chunk);
