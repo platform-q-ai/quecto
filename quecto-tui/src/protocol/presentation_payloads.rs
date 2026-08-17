@@ -114,6 +114,21 @@ pub fn response_identity(value: &Value) -> (Option<String>, Option<String>) {
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct RecoveredThinkingPage {
+    pub blocks: Vec<crate::protocol::agent_ledger_payloads::RecoveredThinkingBlock>,
+    pub has_more: bool,
+    pub next_offset: Option<usize>,
+}
+
+pub fn recovered_thinking_page(value: &Value) -> RecoveredThinkingPage {
+    RecoveredThinkingPage {
+        blocks: recovered_message(value).thinking_blocks(),
+        has_more: bool_field(value, "hasMoreThinking").unwrap_or(false),
+        next_offset: u64_field(value, "nextThinkingOffset").and_then(|n| usize::try_from(n).ok()),
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ToolDisplayArgs<'a> {
     pub command: Option<&'a str>,
     pub path: Option<&'a str>,

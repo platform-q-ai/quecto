@@ -167,10 +167,9 @@ impl App {
             self.abandon_recovery_batch(&pending.batch_id);
             return;
         }
+        let thinking_page = crate::protocol::presentation_payloads::recovered_thinking_page(&data);
         let mut thinking = pending.thinking;
-        for page in
-            crate::protocol::presentation_payloads::recovered_message(&data).thinking_blocks()
-        {
+        for page in thinking_page.blocks {
             match (thinking.last_mut(), &page) {
                 (
                     Some(crate::protocol::agent_ledger_payloads::RecoveredThinkingBlock::Text {
@@ -189,14 +188,8 @@ impl App {
             pending.content_len,
         )
         .apply(&data);
-        let has_more_thinking = data
-            .get("hasMoreThinking")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
-        let next_thinking_offset = data
-            .get("nextThinkingOffset")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|n| usize::try_from(n).ok());
+        let has_more_thinking = thinking_page.has_more;
+        let next_thinking_offset = thinking_page.next_offset;
         let accumulated = match update {
             Ok(crate::protocol::range_accumulator::RangeUpdate::Continue {
                 content,
