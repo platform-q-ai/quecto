@@ -364,7 +364,7 @@ impl CodexProvider {
                     });
                 }
                 Some("reasoning") => {
-                    codex_sse_state::append_reasoning_summary(item, &mut reasoning)
+                    codex_sse_state::append_reasoning_summary(item, &mut reasoning)?;
                 }
                 _ => {}
             }
@@ -411,7 +411,7 @@ impl CodexProvider {
                 if let Some(error) = Self::format_stream_failure(&event) {
                     return Err(DomainError::Provider(error));
                 }
-                acc.handle_event(&event);
+                acc.handle_event(&event)?;
                 if event["type"].as_str() == Some("response.completed") {
                     saw_terminal = true;
                     break;
@@ -682,7 +682,11 @@ impl SseHandler for CodexSseHandler {
                 Some("response.reasoning_summary_text.delta")
                     | Some("response.reasoning.summary_text.delta")
             ) {
-                self.acc.handle_event(&event);
+                if let Err(err) = self.acc.handle_event(&event) {
+                    self.saw_terminal = true;
+                    let _ = tx.send(StreamEvent::Error(err.to_string())).await;
+                    return SseLineOutcome::Done;
+                }
             }
             if event["type"].as_str() == Some("response.completed") {
                 self.saw_terminal = true;

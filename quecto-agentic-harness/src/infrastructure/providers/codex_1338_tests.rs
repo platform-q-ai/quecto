@@ -54,9 +54,13 @@ fn codex_sse_caps_reasoning_delta_accumulation() {
     let exact = "a".repeat(8 * 1024 * 1024);
     acc.handle_event(
         &serde_json::json!({"type":"response.reasoning_summary_text.delta","delta": exact}),
-    );
-    acc.handle_event(
-        &serde_json::json!({"type":"response.reasoning_summary_text.delta","delta":"b"}),
-    );
+    )
+    .unwrap();
+    let err = acc
+        .handle_event(
+            &serde_json::json!({"type":"response.reasoning_summary_text.delta","delta":"b"}),
+        )
+        .unwrap_err();
+    assert!(err.to_string().contains("Codex SSE reasoning"));
     assert_eq!(acc.reasoning.len(), 8 * 1024 * 1024);
 }

@@ -46,8 +46,11 @@ fn reasoning_ends_with_summary(reasoning: &str, summary: &str) -> bool {
 }
 
 #[cfg(test)]
-pub(super) fn append_reasoning_summary(item: &Value, reasoning: &mut String) {
-    let _ = append_reasoning_with_limit(reasoning, &collect_reasoning_summary(item));
+pub(super) fn append_reasoning_summary(
+    item: &Value,
+    reasoning: &mut String,
+) -> Result<(), crate::domain::error::DomainError> {
+    append_reasoning_with_limit(reasoning, &collect_reasoning_summary(item))
 }
 
 pub(super) fn append_reasoning_with_limit(
@@ -103,7 +106,10 @@ impl SseAccumulator {
 /// that `response.function_call_arguments.delta` events are routed to the
 /// correct tool call regardless of intervening non-tool output items.
 impl SseAccumulator {
-    pub(super) fn handle_event(&mut self, event: &serde_json::Value) {
+    pub(super) fn handle_event(
+        &mut self,
+        event: &serde_json::Value,
+    ) -> Result<(), crate::domain::error::DomainError> {
         match event["type"].as_str() {
             Some("response.output_text.delta") => {
                 if let Some(delta) = event["delta"].as_str() {
@@ -115,7 +121,7 @@ impl SseAccumulator {
             Some("response.reasoning_summary_text.delta")
             | Some("response.reasoning.summary_text.delta") => {
                 if let Some(delta) = event["delta"].as_str() {
-                    let _ = append_reasoning_with_limit(&mut self.reasoning, delta);
+                    append_reasoning_with_limit(&mut self.reasoning, delta)?;
                 }
             }
             Some("response.output_item.done") => {
@@ -127,7 +133,7 @@ impl SseAccumulator {
                     if !summary.is_empty()
                         && !reasoning_ends_with_summary(&self.reasoning, &summary)
                     {
-                        let _ = append_reasoning_with_limit(&mut self.reasoning, &summary);
+                        append_reasoning_with_limit(&mut self.reasoning, &summary)?;
                     }
                 }
             }
@@ -167,6 +173,7 @@ impl SseAccumulator {
             }
             _ => {}
         }
+        Ok(())
     }
 
     fn handle_item_added(&mut self, event: &serde_json::Value) {
