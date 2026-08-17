@@ -89,6 +89,70 @@ fn ranged_get_message_preserves_visible_thinking_for_recovery() {
 }
 
 #[test]
+fn ranged_get_message_with_huge_thinking_returns_recoverable_thinking_page() {
+    use crate::domain::message::ThinkingBlock;
+
+    let visible = "r".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
+    let mut msg = Message::assistant("answer".repeat(1024), vec![]);
+    msg.thinking_blocks.push(ThinkingBlock::Normal {
+        thinking: visible.clone(),
+        signature: "private".into(),
+    });
+
+    let data = message_to_json_range_for_response(&msg, Some(0), Some(64), Some("recover"));
+    let line = AgentEvent::ok(Some("recover"), "get_message", Some(data.clone())).to_json_line();
+
+    assert!(
+        line.len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET,
+        "thinking page must fit protocol frame"
+    );
+    let thinking = data["thinking"][0]["text"]
+        .as_str()
+        .expect("oversized visible thinking must be recoverable as a bounded page");
+    assert!(!thinking.is_empty(), "thinking page should make progress");
+    assert!(visible.starts_with(thinking));
+    assert_eq!(data["thinkingOffset"], 0);
+    assert!(data["nextThinkingOffset"].as_u64().unwrap() > 0);
+    assert_eq!(data["thinkingLength"], visible.len());
+    assert_eq!(data["hasMoreThinking"], true);
+    assert!(!serde_json::to_string(&data).unwrap().contains("private"));
+}
+
+#[test]
+fn ranged_get_message_reassembles_oversized_visible_thinking() {
+    use crate::domain::message::ThinkingBlock;
+
+    let visible = "λ".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
+    let mut msg = Message::assistant("answer".repeat(1024), vec![]);
+    msg.thinking_blocks.push(ThinkingBlock::Normal {
+        thinking: visible.clone(),
+        signature: "private".into(),
+    });
+
+    let mut offset = 0usize;
+    let mut recovered = String::new();
+    loop {
+        let data =
+            message_to_json_range_for_response(&msg, Some(offset), Some(64), Some("recover"));
+        let line =
+            AgentEvent::ok(Some("recover"), "get_message", Some(data.clone())).to_json_line();
+        assert!(line.len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
+        recovered.push_str(data["thinking"][0]["text"].as_str().expect("thinking page"));
+        if data["hasMoreThinking"] == false {
+            break;
+        }
+        let next = data["nextThinkingOffset"].as_u64().unwrap() as usize;
+        assert!(
+            next > data["thinkingOffset"].as_u64().unwrap() as usize,
+            "thinking paging must make progress"
+        );
+        offset = next;
+    }
+
+    assert_eq!(recovered, visible);
+}
+
+#[test]
 fn ranged_get_message_with_huge_thinking_fits_protocol_frame() {
     use crate::domain::message::ThinkingBlock;
 
