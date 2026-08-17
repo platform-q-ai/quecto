@@ -1061,6 +1061,8 @@ fn ensure_temp_dir(world: &mut QuectoWorld) {
     if world._temp_dir.is_none() {
         let td = TempDir::new().expect("failed to create temp dir");
         world.cli_context.base_dir = Some(td.path().to_path_buf());
+        world.cli_context.cwd = Some(td.path().join("workspace"));
+        std::fs::create_dir_all(td.path().join("workspace")).expect("create workspace cwd");
         world._temp_dir = Some(td);
     }
 }

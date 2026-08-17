@@ -364,7 +364,6 @@ fn repl_open_refuses_live_foreign_owner_but_ephemeral_skips_claim() {
         session_name: Some("owned".to_string()),
         system_prompt: None,
         model_override: None,
-        no_sandbox: false,
     };
     let ctx = ReplContext {
         base_dir: tmp.path(),
@@ -372,6 +371,7 @@ fn repl_open_refuses_live_foreign_owner_but_ephemeral_skips_claim() {
         provider: make_stub_provider(),
         config: &config,
         flags: &flags,
+        cwd_override: None,
         progress_callback: None,
     };
     let mut output = Vec::new();

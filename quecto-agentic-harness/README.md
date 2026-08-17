@@ -79,7 +79,6 @@ Useful `quecto-tui` flags:
 | `--no-workflow` | Disable workflow tool/state/prompt for the spawned agent |
 | `--system <prompt>` | Pass a custom system prompt to the spawned agent |
 | `--config <path>` | Use an alternate quecto config file when spawning the agent |
-| `--no-sandbox` | Spawn the agent with filesystem sandboxing disabled |
 
 Handy TUI controls: `Shift+Enter` or `Alt+Enter` inserts a newline, `Escape`
 aborts the active run (or clears the editor when idle), `Ctrl+C` clears the
@@ -139,7 +138,7 @@ Depends only on `domain/`. Orchestration logic, no I/O.
 | `agent_loop.rs` | Core LLM-tool loop: send → execute tools → repeat. Traces `tool_name`, `duration_ms`, `is_error`. Progress callbacks for REPL spinner. Supports incremental streaming via `chat_stream_incremental()`. Passes configured `effort` level through to every `ChatRequest` |
 | `context_pruning.rs` | Token estimation, pinned spill manifest, tool-call-count tool-result collapse, conversation-message collapse (`context_collapse_after_messages`, default 50), and the demotion-ladder ceiling (stub, then drop; `pin_recent_turns = 2` tail is never demoted). Current config defaults: `max_context_tokens = 200000`, `context_collapse_after_tool_calls = 50`, `context_collapse_after_messages = 50`; set a collapse knob to `4294967295` (`u32::MAX`) to disable it |
 | `reload.rs` | `/reload` use case: strips stale tool history via `strip_tool_history()`, clears spill index, coordinates `SessionStore` + `ContextSpillStore` |
-| `subagent.rs` | `SubagentContext` — child agent contexts with inherited sandbox |
+| `subagent.rs` | `SubagentContext` — child agent contexts with inherited tool policy |
 
 ### infrastructure/ — Concrete adapters
 Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
@@ -150,14 +149,14 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 | `providers/` | `OpenAiProvider` (SSE streaming via `openai_sse`), `AnthropicProvider` (SSE streaming via `anthropic_sse`, extended thinking support with `signature_delta` capture, auto-enables adaptive thinking for 4.6 models, effort default `low` for 4.6 models, OAuth identity for tokens — system prompt prefix + tool name remapping + beta headers, `interleaved-thinking` + `fine-grained-tool-streaming` betas, thinking block replay in multi-turn via `ThinkingBlock`, `claude_code.rs` for tool name canonical casing), `CodexProvider` (Responses API, SSE, `prompt_cache_key`, orphan pair repair), `RefreshableProvider` (OAuth 401 → auto-refresh → retry), `FallbackProvider` (cooldown + error classification + `provider/model` routing syntax). URL validation: https required for non-loopback (override with `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS=1`) |
 | `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native exec), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `spawn.rs` (background UDS-mode subagent spawning), `agent_cmd.rs` (send commands to spawned UDS agents — `steer`, `follow_up`, `abort`, `get_state`), `web_search.rs` (Brave+DDG), `web_fetch.rs` (URL fetch with HTML stripping, per-host SSRF allowlist for tests), `recall.rs` (spill retrieval), `docs.rs` (`DocsTool` — quecto's capability docs embedded via `include_str!`, served by the `docs` tool from any directory), `workflow_tool.rs` (`WorkflowTool` thin façade over `WorkflowEngine`, available by default in UDS unless `--no-workflow`; `WorkflowGuard` template-aware `ToolGuard` impl — mutating actions emit `workflow_state` events, guard registration gated by `--workflow-guards`), `path_utils.rs`, `truncate.rs`, `command_match.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
 | `persistence/` | `FileSessionStore` (round-trips all Message fields including `thinking_blocks` for multi-turn thinking replay), `FileContextSpillStore` (JSONL append-only) |
-| `security/` | `Sandbox` — workspace path validation + command filtering |
+| `security/` | `Sandbox` — shared filesystem path hook + command filtering |
 | `extensions/` | `ExtensionRegistry` (register extensions, aggregate tools + system prompt snippets), `NativeExtension` (compiled-in config-gated tools, e.g. `web_search`, `web_fetch`), `UdsExtensionTool` (routes tool execution to connected UDS clients via mpsc/oneshot channels). See [Extensions guide](docs/extensions.md) |
 | `auth/` | `CredentialStore` (file-based, `AuthMethod::Token`/`OAuth`), `oauth.rs` (browser + device code flows, Anthropic OAuth, OpenAI account ID extraction from JWT) |
 | `logging.rs` | `redact_api_keys()` — pattern-based secret redaction |
 
 ### Tool isolation
 
-**Filesystem tools** (`read`, `write`, `edit`, `ls`): `Sandbox::validate_path` — canonicalises the path, follows symlinks at every component, and rejects anything outside `canonical_workspace`. Called before any I/O.
+**Filesystem tools** (`read`, `write`, `edit`, `ls`): call `Sandbox::validate_path` as a shared path hook before I/O. It no longer confines paths to the workspace; filesystem tools can access any path the Quecto process user can access.
 
 **bash** (exec only): commands run natively as the invoking user, with the workspace as the working directory but **no filesystem confinement** — unlike the filesystem tools, `bash` is *not* restricted to the workspace and can read any path the user can (e.g. `~/.ssh`, `~/.aws`, `/etc/passwd`) and reach the network. `Sandbox::validate_command` rejects a denylist of obviously-destructive commands, but this is a **best-effort speed-bump, not a security boundary** (trivially bypassed via shell escapes, `base64`, env indirection). There are **no in-process resource limits** (memory/PID/CPU/wall-time are unbounded). Real isolation is delegated to the deployment — see [Security](#security).
 
@@ -168,8 +167,8 @@ Manual arg parsing (no clap). Entry point: `cli::run(args) -> i32`.
 
 | Command | Description |
 |---|---|
-| `quecto` | Interactive REPL (`-s` session, `--system` prompt, `--model` override, `--no-sandbox`; global `--config <path>`) with live progress spinner |
-| `quecto agent -m <msg>` | Headless one-shot (`-s`, `--no-session`, `--system`, `--model`, `--max-iterations`, `--max-time`, `--effort`, `--disable-tool`, `--no-sandbox`; global `--config <path>`) |
+| `quecto` | Interactive REPL (`-s` session, `--system` prompt, `--model` override; global `--config <path>`) with live progress spinner |
+| `quecto agent -m <msg>` | Headless one-shot (`-s`, `--no-session`, `--system`, `--model`, `--max-iterations`, `--max-time`, `--effort`, `--disable-tool`; global `--config <path>`) |
 | `quecto agent --mode uds` | Persistent UDS event bus: multi-client length-prefixed JSON protocol over Unix domain socket (`--socket <path>` for explicit path, auto-generated otherwise; `--persist`, `--workflow`, `--workflow-guards`, `--no-workflow` supported) |
 | `quecto status` | Config summary, provider availability |
 | `quecto auth login\|logout\|status` | Credential management (token/OAuth/device-code) |
@@ -220,7 +219,6 @@ The REPL reads input line by line, sends each to the LLM agent, prints the respo
 | `-s` / `--session` | Session name for persistence. Default: `repl:repl_default`. Use `-` for ephemeral |
 | `--system` | System prompt prepended to each turn (not persisted) |
 | `--model` | Override the default model from config |
-| `--no-sandbox` | Disable workspace path restriction (DANGEROUS) |
 | `--config <path>` | Override config file path (global option) |
 
 REPL commands:
@@ -248,7 +246,6 @@ quecto agent -m "Write a Python script that generates primes"
 | `-m` / `--message` | Yes (one-shot) | The message to send |
 | `-s` / `--session` | No | Session name for persistence. Omit for `cli:default`. Use `-` for ephemeral |
 | `--no-session` | No | Ephemeral mode — nothing saved or loaded (mutually exclusive with `-s`) |
-| `--no-sandbox` | No | Disable workspace path restriction (DANGEROUS) |
 | `--system` | No | System prompt prepended to conversation |
 | `--model` | No | Override model. Accepts bare id (`gpt-5.3-codex`) or provider-qualified (`openai/gpt-4o`). Default: `gpt-5.5` |
 | `--max-iterations` | No | Max tool call rounds before stopping |
@@ -428,7 +425,6 @@ Config file: `~/.quecto/config.json`
       "max_session_messages": 200,
       "context_collapse_after_tool_calls": 50,
       "max_context_tokens": 300000,
-      "restrict_to_workspace": true,
       "effort": "low"
     }
   },
@@ -593,7 +589,7 @@ To use an OAuth-backed registry provider, first run `quecto auth login openai` o
 
 - `bash` commands run natively in the workspace via the user's shell. The shell is read from `$SHELL` and validated against an allowlist of known system shells (defaults to `/bin/sh`).
 - exec child processes clear the ambient environment and then explicitly receive the current process environment (or test-provided overrides).
-- `Sandbox::validate_command` rejects a denylist of destructive commands (e.g. `rm -rf /`, recursive `chown root`) before execution; this stays active unless `--no-sandbox` is passed.
+- `Sandbox::validate_command` rejects a denylist of destructive commands (e.g. `rm -rf /`, recursive `chown root`) before execution.
 - There is no built-in process/network/resource isolation. For untrusted workloads, run Quecto inside a container (or other OS-level sandbox), which bounds filesystem, network, and resource access for the whole process.
 
 ### Python Lab limits (`tools.python_lab`)
@@ -617,7 +613,7 @@ Runtime policy:
 
 - **Interpreter** — `python3` resolved from `PATH`, started with `-I` (isolated mode) directly via argv. No shell is involved, so arguments are never word-split or expanded.
 - **Working directory** — the agent's workspace. Files a program writes persist for the lifetime of the task and are reported back in `files_created_or_modified`.
-- **Path validation** — a `path` argument is resolved against the workspace and checked by the same sandbox validator the filesystem tools use, so traversal and symlink escapes are rejected. The validator's documented TOCTOU limitation applies.
+- **Path handling** — a `path` argument is joined to the workspace before execution. Because filesystem sandbox mode has been removed, `Sandbox::validate_path` no longer rejects traversal, absolute paths, or symlink escapes for agent entrypoints; file-mode `python_lab` can execute any script path the Quecto process user can read, except the reserved `.quecto/python_lab` artifact tree.
 - **Output** — the inline result carries a preview capped at `max_output_bytes` for the call; the complete output is written to `.quecto/python_lab/<execution_id>/{stdout,stderr}.txt` and listed in `artifact_paths` when the preview was truncated. Output beyond the configured `max_output_bytes` hard cap is dropped and flagged. That cap applies per stream, so an execution can retain up to twice it in total.
 - **Artifact retention** — every execution leaves a `.quecto/python_lab/<execution_id>/` directory. The 32 most recent are kept and older ones are deleted as new runs start; a directory belonging to a job that has not finished is never removed. Paging a job's output re-reads these files, so `output` also reports `artifacts_modified` if their size no longer matches what was captured at completion.
 - **Resource limits** — memory, CPU, and process limits are applied with `setrlimit` in the child before `exec`, on Unix only. On non-Unix platforms these keys are accepted but not enforced. Two caveats worth knowing: `max_processes` maps to `RLIMIT_NPROC`, which the kernel counts **per user**, not per process — so it is only meaningful as the default `1` (block subprocess creation entirely), it is silently ineffective when the harness runs as root, and any larger value will behave unpredictably on a busy machine. `max_memory_bytes` maps to `RLIMIT_AS`, which bounds virtual address space rather than resident memory; CPython reserves far more address space than it resides, so set it generously or a program will fail to start at all.
@@ -673,11 +669,11 @@ Filesystem tools (`read`, `write`, `edit`, `ls`) run on async `tokio::fs` adapte
 
 ## Security
 
-Quecto provides **in-process guardrails for the filesystem tools only**; real isolation is the deployment's job (run it in a container). Understand the split before exposing it to untrusted input:
+Quecto provides limited in-process policy checks, not isolation; real isolation is the deployment's job (run it in a container). Understand the split before exposing it to untrusted input:
 
-- **Workspace restriction (filesystem tools)**: When `restrict_to_workspace` is `true` (default), `read`/`write`/`edit`/`ls` are confined to the workspace. Symlinks pointing outside are blocked; path traversal (`../`) is caught.
+- **Filesystem tools are not confined**: `read`/`write`/`edit`/`ls` can access any path the Quecto process user can access. Real isolation must come from the deployment/container.
 - **`bash` is NOT confined**: the exec tool runs commands natively as the invoking user. Its working directory is the workspace, but it can read any path the user can (`~/.ssh`, `~/.aws`, cloud/`git` credentials, `/etc/passwd`) and reach the network. It has **no resource limits** (memory/PID/CPU/wall-time are unbounded). The `Sandbox::validate_command` denylist (`rm -rf /`, `mkfs`, `dd`, fork bombs, `curl|sh`, …) is a **best-effort speed-bump, not a security boundary** — trivially bypassed via shell escapes/`base64`/env indirection. Do not rely on it to contain untrusted commands.
-- **`python_lab` executes arbitrary code, with limits but no isolation**: it runs `python3` directly (never through a shell), starts from a cleared environment so host credentials in the Quecto process environment are not visible to the program, applies `setrlimit` memory/CPU/process caps, and defaults to `max_processes: 1` so a program cannot spawn subprocesses. Its `path` argument is confined to the workspace by the sandbox validator. It is **not** a security boundary: a program can still read any file the user can via absolute paths, and it inherits the process's network access. Treat it like `bash` for threat-modelling purposes and rely on the container for real isolation.
+- **`python_lab` executes arbitrary code, with limits but no isolation**: it runs `python3` directly (never through a shell), starts from a cleared environment so host credentials in the Quecto process environment are not visible to the program, applies `setrlimit` memory/CPU/process caps, and defaults to `max_processes: 1` so a program cannot spawn subprocesses. Its `path` argument is not confined by the sandbox validator. It is **not** a security boundary: a program can still read any file the user can via absolute paths, and it inherits the process's network access. Treat it like `bash` for threat-modelling purposes and rely on the container for real isolation.
 - **Isolation is the container's responsibility**: to run untrusted workloads safely, run Quecto in a container that is **non-root**, with **minimal/read-only mounts** (so `bash` can't read host secrets), **cgroup resource limits** (`--memory`, `--pids-limit`, `--cpus`), and a **network policy** (drop egress unless needed). A default `docker run` enforces none of these. (Old config files' `tools.exec` isolation/nsjail keys are now ignored.)
 - **Environment handling**: `bash` children are launched with `env_clear()` and then receive the current process environment (or explicit test overrides). Do not place secrets in the Quecto process environment if the agent should not be able to read them with shell commands.
 - **Secret redaction**: Log/status output redacts OpenAI/Anthropic (`sk-*`), Groq (`gsk_*`/`gsk-*`), and Telegram bot token values.

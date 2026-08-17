@@ -65,19 +65,16 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
         cwd,
         home_dir,
     } = args;
-    let workspace = crate::interface::shared::resolve_agent_workspace(
-        &config.workspace_path(),
-        flags.no_sandbox,
-    );
+    let workspace = if let Some(cwd) = flags.cwd_override.as_ref() {
+        cwd.clone()
+    } else {
+        crate::interface::shared::resolve_agent_workspace(&config.workspace_path())
+    };
     let model = resolve_agent_model(
         flags.model_override.as_deref(),
         &config.agents.defaults.model,
     );
-    let restrict_to_workspace = !flags.no_sandbox && config.agents.defaults.restrict_to_workspace;
-    if flags.no_sandbox {
-        stderr.push_str("WARNING: --no-sandbox is active — workspace path restriction disabled\n");
-    }
-    let sandbox = Sandbox::for_agent_workspace(config, workspace.clone(), flags.no_sandbox);
+    let sandbox = Sandbox::for_agent_workspace(config, workspace.clone());
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(config);
     let exec_options = crate::infrastructure::tools::bash::ExecOptions {
         max_capture_bytes: exec_settings,
@@ -121,7 +118,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             exec_options,
             session_key,
             spawned: flags.spawned,
-            restrict_to_workspace,
+            restrict_to_workspace: false,
             parent_session_name: parent_session_name.clone(),
             parent_config_path: Some(config_path.to_path_buf()),
             disabled_tools: &flags.disabled_tools,

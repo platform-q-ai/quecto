@@ -30,7 +30,7 @@ fn test_deserialize_empty_uses_defaults() {
     assert!((config.agents.defaults.temperature - 0.7).abs() < f32::EPSILON);
     assert_eq!(config.agents.defaults.workspace, "~/.quecto/workspace");
     assert_eq!(config.agents.defaults.max_tool_iterations, 999_999);
-    assert!(config.agents.defaults.restrict_to_workspace);
+    assert!(!config.agents.defaults.restrict_to_workspace);
 }
 
 #[test]
@@ -73,8 +73,8 @@ fn test_deserialize_legacy_exec_fields_ignored() {
             }
         }"#;
     let config: Config = serde_json::from_str(json).unwrap();
-    // Sandbox confinement is independent and still defaults on.
-    assert!(config.agents.defaults.restrict_to_workspace);
+    // Legacy filesystem confinement config defaults off and is ignored.
+    assert!(!config.agents.defaults.restrict_to_workspace);
 }
 
 fn workflow_config_with_steps(steps: &str) -> String {

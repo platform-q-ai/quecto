@@ -7,7 +7,7 @@ use super::*;
 fn given_tool_workspace(world: &mut QuectoWorld) {
     let td = TempDir::new().expect("failed to create temp dir");
     let ws = td.path().to_path_buf();
-    let sandbox = Sandbox::new(Some(ws.clone()), true);
+    let sandbox = Sandbox::new(Some(ws.clone()), false);
     let registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
         ws.clone(),
         sandbox,

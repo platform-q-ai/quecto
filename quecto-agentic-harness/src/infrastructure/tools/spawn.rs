@@ -129,7 +129,7 @@ fn validate_config_path(s: &str) -> Result<PathBuf, String> {
 pub struct SpawnTool {
     /// Allowlist of agent IDs that can be spawned.
     pub(super) allowed_agents: Vec<String>,
-    /// Whether workspace restriction should be inherited.
+    /// Legacy compatibility flag propagated to child config; it no longer enables agent filesystem confinement.
     pub(super) restrict_to_workspace: bool,
     /// Base directory for the child agent process.
     pub(super) base_dir: PathBuf,

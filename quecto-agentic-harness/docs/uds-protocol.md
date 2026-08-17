@@ -1218,7 +1218,6 @@ All flags for `quecto agent` that affect UDS mode:
 | `--model <model>` | Override default model from config |
 | `--max-iterations <n>` | Max tool call rounds per prompt |
 | `--max-time <secs>` | Wall-clock timeout for the entire agent |
-| `--no-sandbox` | Disable workspace path restriction (DANGEROUS) |
 | `--persist` | Keep agent alive after all clients disconnect |
 | `--effort <level>` | Reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`). Provider vocabulary still applies at request time. Overrides config and env var |
 | `--workflow` | Start workflow-driven prompt injection immediately |

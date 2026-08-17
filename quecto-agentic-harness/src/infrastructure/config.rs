@@ -65,7 +65,9 @@ pub struct AgentDefaults {
     pub temperature: f32,
     #[serde(default = "default_max_tool_iterations")]
     pub max_tool_iterations: u32,
-    #[serde(default = "default_true")]
+    /// Deprecated compatibility field. Filesystem workspace restriction was removed;
+    /// this value is accepted during config deserialization but ignored.
+    #[serde(default = "default_false")]
     pub restrict_to_workspace: bool,
     #[serde(default = "default_exec_max_capture_bytes")]
     pub exec_max_capture_bytes: usize,
@@ -92,8 +94,8 @@ pub struct AgentDefaults {
     #[serde(default)]
     pub effort: Option<String>,
     /// Optional command allowlist. When set, only commands whose first token
-    /// is in this list are permitted by the sandbox. When `None`, the sandbox
-    /// falls back to the dangerous-command denylist only.
+    /// is permitted by command policy. When `None`, command policy falls
+    /// back to the dangerous-command denylist only.
     #[serde(default)]
     pub command_allowlist: Option<Vec<String>>,
 }
@@ -106,7 +108,7 @@ impl Default for AgentDefaults {
             max_tokens: default_max_tokens(),
             temperature: default_temperature(),
             max_tool_iterations: default_max_tool_iterations(),
-            restrict_to_workspace: true,
+            restrict_to_workspace: false,
             exec_max_capture_bytes: default_exec_max_capture_bytes(),
             max_session_messages: default_max_session_messages(),
             context_collapse_after_tool_calls: default_context_collapse_after_tool_calls(),
@@ -301,8 +303,8 @@ fn default_max_context_tokens() -> usize {
     // window dropping oldest non-pinned messages once we breach it.
     200_000
 }
-fn default_true() -> bool {
-    true
+fn default_false() -> bool {
+    false
 }
 fn default_max_results() -> u32 {
     5

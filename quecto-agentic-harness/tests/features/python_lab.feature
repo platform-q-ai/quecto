@@ -45,9 +45,10 @@ Feature: Python Lab Tool
     When I run python lab inline code "open('created.txt','w').write('x')"
     Then the python lab result should list "created.txt" as modified
 
-  Scenario: Paths cannot escape the workspace
+  Scenario: Missing outside workspace script reports interpreter error
     When I run python lab file "../outside.py"
-    Then the python lab result should be a sandbox rejection
+    Then the python lab result should be an error
+    And the python lab result should contain "can't open file"
 
   Scenario: The artifact directory is reserved against script execution
     When I run python lab file ".quecto/python_lab/planted.py"

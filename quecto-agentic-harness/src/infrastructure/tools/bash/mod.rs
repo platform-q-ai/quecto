@@ -2,8 +2,8 @@
 //
 // Commands run natively (via the user's shell) in the configured workspace.
 // Isolation is delegated to the deployment (e.g. running Quecto in a
-// container); the in-process `Sandbox` still confines file/command access and
-// can be disabled with `--no-sandbox`.
+// container); the in-process command policy still blocks configured dangerous
+// commands before execution.
 
 use std::collections::HashMap;
 use std::future::Future;

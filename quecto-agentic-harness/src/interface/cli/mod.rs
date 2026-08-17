@@ -197,6 +197,8 @@ pub struct CliContext {
     pub stdin_data: Option<String>,
     /// Override OAuth base URL for testing (e.g. wiremock URI).
     pub oauth_base_url: Option<String>,
+    /// Override process current working directory for hermetic tests.
+    pub cwd: Option<PathBuf>,
 }
 
 impl CliContext {
@@ -249,6 +251,37 @@ fn extract_config_flag(args: &[String]) -> Option<PathBuf> {
     None
 }
 
+fn strip_global_config_flag(args: &[String]) -> Vec<String> {
+    const VALUE_FLAGS: &[&str] = &[
+        "-m",
+        "--message",
+        "-s",
+        "--session",
+        "--system",
+        "--model",
+        "--max-iterations",
+        "--max-time",
+        "--mode",
+        "--socket",
+        "--disable-tool",
+    ];
+    let mut stripped = Vec::with_capacity(args.len());
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--config" && i + 1 < args.len() {
+            i += 2;
+        } else if VALUE_FLAGS.contains(&args[i].as_str()) && i + 1 < args.len() {
+            stripped.push(args[i].clone());
+            stripped.push(args[i + 1].clone());
+            i += 2;
+        } else {
+            stripped.push(args[i].clone());
+            i += 1;
+        }
+    }
+    stripped
+}
+
 /// Run the CLI with the given args, printing to real stdout/stderr.
 /// Returns the exit code.
 pub fn run(args: Vec<String>) -> i32 {
@@ -294,6 +327,7 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
     } else {
         ctx
     };
+    let args = strip_global_config_flag(&args);
     let mut stdout = String::new();
     let mut stderr = String::new();
 
@@ -301,6 +335,10 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
         // No args → REPL mode. Delegate to run_repl_with_output with empty input
         // so the REPL exits immediately on EOF (consistent with piped empty input).
         return run_repl_with_output(ctx, &[], &[], false);
+    }
+
+    if is_repl_leading_flag(args[1].as_str()) {
+        return run_repl_with_output(ctx, &args[1..], &[], false);
     }
 
     let exit_code = {
@@ -534,17 +572,24 @@ fn cmd_repl_with_progress<R: std::io::BufRead, W: std::io::Write>(
         provider,
         config: &config,
         flags: &flags,
+        cwd_override: ctx.cwd.as_deref(),
         progress_callback,
     };
     super::repl::run_repl(io.reader, io.writer, io.is_tty, &repl_ctx)
 }
 
 /// Parse REPL-specific flags from args (session, system, model).
+fn is_repl_leading_flag(arg: &str) -> bool {
+    matches!(
+        arg,
+        "-s" | "--session" | "--system" | "--model" | "--config"
+    )
+}
+
 fn parse_repl_flags(args: &[String]) -> Result<ReplFlags, String> {
     let mut session_name: Option<String> = None;
     let mut system_prompt: Option<String> = None;
     let mut model_override: Option<String> = None;
-    let mut no_sandbox = false;
     let mut i = 0;
 
     while i < args.len() {
@@ -579,10 +624,6 @@ fn parse_repl_flags(args: &[String]) -> Result<ReplFlags, String> {
                     return Err("--model requires a value".to_string());
                 }
             }
-            "--no-sandbox" => {
-                no_sandbox = true;
-                i += 1;
-            }
             "--config" => {
                 // Consumed globally by CliContext, but skip the value here.
                 if i + 1 >= args.len() {
@@ -603,7 +644,6 @@ fn parse_repl_flags(args: &[String]) -> Result<ReplFlags, String> {
         session_name,
         system_prompt,
         model_override,
-        no_sandbox,
     })
 }
 
@@ -638,7 +678,7 @@ fn help_text(out: &mut String) {
     ));
     out.push_str("\nUsage: quecto [command]\n");
     out.push_str("\nWhen run with no arguments, quecto enters interactive REPL mode.\n");
-    out.push_str("  REPL options: -s <name>, --system <p>, --model <m>, --no-sandbox\n");
+    out.push_str("  REPL options: -s <name>, --system <p>, --model <m>\n");
     out.push_str("\nGlobal options:\n");
     out.push_str(
         "  --config <path>  Override config file path (default: <base_dir>/config.json)\n",
@@ -647,9 +687,6 @@ fn help_text(out: &mut String) {
     out.push_str("  agent       Run a one-shot agent session (-m required)\n");
     out.push_str("              Options: -s <name>  Named session (default: \"default\")\n");
     out.push_str("                       --no-session  Ephemeral mode — nothing saved or loaded\n");
-    out.push_str(
-        "                       --no-sandbox  Disable workspace path restriction (DANGEROUS)\n",
-    );
     out.push_str("                       --model <m>   Override model\n");
     out.push_str("                       --system <p>  System prompt\n");
     out.push_str("                       --max-iterations <n>  Max tool iterations\n");
@@ -672,6 +709,10 @@ fn help_text(out: &mut String) {
     out.push_str("  help        Show this help\n");
     out.push_str("  version     Show version information\n");
 }
+
+#[cfg(test)]
+#[path = "leading_config_dispatch_tests.rs"]
+mod leading_config_dispatch_tests;
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]

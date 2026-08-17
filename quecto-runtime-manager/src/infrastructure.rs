@@ -528,8 +528,6 @@ pub async fn start_runtime(
         "agent".to_string(),
         "--mode".to_string(),
         "uds".to_string(),
-        "--no-sandbox".to_string(),
-        "--network".to_string(),
         "--socket".to_string(),
         socket_path.to_string_lossy().to_string(),
         "--session".to_string(),
@@ -543,6 +541,7 @@ pub async fn start_runtime(
 
     let agent = Command::new("quecto")
         .args(agent_args)
+        .current_dir(&workspace)
         .env("QUECTO_BASE_DIR", &base_dir)
         .env("QUECTO_AGENTS_DEFAULTS_WORKSPACE", &workspace)
         .spawn()?;

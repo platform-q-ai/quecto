@@ -5,16 +5,23 @@ use tempfile::TempDir;
 fn test_tools() -> (Arc<PathBuf>, Arc<Sandbox>, TempDir) {
     let tmp = TempDir::new().unwrap();
     let workspace = Arc::new(tmp.path().to_path_buf());
-    let sandbox = Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), true));
+    let sandbox = Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), false));
     (workspace, sandbox, tmp)
 }
 
 #[tokio::test]
-async fn test_read_file_outside_workspace_blocked() {
+async fn test_read_file_outside_workspace_allowed() {
     let (ws, sb, _tmp) = test_tools();
+    let outside = TempDir::new().unwrap();
+    let file = outside.path().join("outside.txt");
+    std::fs::write(&file, "outside").unwrap();
     let tool = ReadTool::new(ws, sb);
-    let result = tool.execute(r#"{"path": "/etc/passwd"}"#).await;
-    assert!(result.is_err());
+    let result = tool
+        .execute(&format!(r#"{{"path": "{}"}}"#, file.display()))
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    assert!(result.content.contains("outside"));
 }
 
 #[tokio::test]

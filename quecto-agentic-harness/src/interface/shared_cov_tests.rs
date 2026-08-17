@@ -161,7 +161,6 @@ async fn build_official_tool_registry_registers_common_bundled_native_surface() 
     let sandbox = crate::infrastructure::security::sandbox::Sandbox::for_agent_workspace(
         &config,
         tmp.path().to_path_buf(),
-        false,
     );
     let mut registry = build_official_tool_registry(
         tmp.path().to_path_buf(),
@@ -461,7 +460,6 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
         let sandbox = crate::infrastructure::security::sandbox::Sandbox::for_agent_workspace(
             &config,
             tmp.path().to_path_buf(),
-            false,
         );
         let mut stderr = String::new();
         crate::interface::shared::build_tool_runtime(
@@ -548,7 +546,6 @@ fn shared_tool_runtime_builder_repl_uses_same_pipeline_with_policy_selected_surf
     let sandbox = crate::infrastructure::security::sandbox::Sandbox::for_agent_workspace(
         &config,
         tmp.path().to_path_buf(),
-        false,
     );
     let mut stderr = String::new();
     let built = crate::interface::shared::build_tool_runtime(

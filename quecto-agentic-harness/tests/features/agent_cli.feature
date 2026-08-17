@@ -88,30 +88,6 @@ Feature: Agent CLI — Headless One-Shot Mode
     Then the exit code should be 0
     And stdout should contain "--no-session"
 
-  # --- Issue #0: --no-sandbox flag ---
-
-  Scenario: --no-sandbox flag is accepted and disables workspace restriction
-    Given a temp base directory
-    And a config file with an OpenAI provider pointing at a mock server
-    And the mock LLM returns a text response "sandbox disabled"
-    When I run quecto agent --no-sandbox -m "hello"
-    Then the exit code should be 0
-    And stdout should contain "sandbox disabled"
-
-  Scenario: --no-sandbox flag parses correctly alongside other flags
-    Given a temp base directory
-    And a config file with an OpenAI provider pointing at a mock server
-    And the mock LLM returns a text response "ok"
-    When I run quecto agent --no-sandbox --no-session -m "hello"
-    Then the exit code should be 0
-    And stdout should contain "ok"
-
-  Scenario: --no-sandbox flag is documented in help
-    Given a temp base directory
-    When I run quecto help
-    Then the exit code should be 0
-    And stdout should contain "--no-sandbox"
-
   # --- Issue #300: --config flag ---
 
   Scenario: --config flag loads config from custom path

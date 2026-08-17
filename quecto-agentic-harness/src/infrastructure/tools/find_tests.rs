@@ -5,7 +5,7 @@ use tempfile::TempDir;
 fn test_find() -> (FindTool, Arc<PathBuf>, TempDir) {
     let tmp = TempDir::new().unwrap();
     let ws = Arc::new(tmp.path().to_path_buf());
-    let sandbox = Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), true));
+    let sandbox = Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), false));
     let tool = FindTool::new(ws.clone(), sandbox);
     (tool, ws, tmp)
 }
@@ -178,12 +178,22 @@ async fn test_find_no_matches() {
 }
 
 #[tokio::test]
-async fn test_find_outside_workspace_blocked() {
+async fn test_find_outside_workspace_allowed() {
+    if !fd_available() {
+        return;
+    }
     let (tool, _ws, _tmp) = test_find();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("outside.conf"), "ok").unwrap();
     let result = tool
-        .execute(r#"{"pattern": "*.conf", "path": "/etc"}"#)
-        .await;
-    assert!(result.is_err() || result.unwrap().is_error);
+        .execute(&format!(
+            r#"{{"pattern": "*.conf", "path": "{}"}}"#,
+            outside.path().display()
+        ))
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    assert!(result.content.contains("outside.conf"));
 }
 
 // --- Actionable missing-parameter error ---
@@ -546,7 +556,7 @@ async fn test_find_respects_nested_gitignore_in_git_workspace() {
 fn test_with_fd_binary_constructor_sets_override() {
     let tmp = TempDir::new().unwrap();
     let ws = Arc::new(tmp.path().to_path_buf());
-    let sandbox = Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), true));
+    let sandbox = Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), false));
     let tool = FindTool::with_fd_binary(ws, sandbox, "/custom/fd".to_string());
     assert_eq!(tool.fd_binary.as_deref(), Some("/custom/fd"));
 }

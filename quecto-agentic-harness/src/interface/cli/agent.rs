@@ -38,7 +38,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut max_iterations: Option<u32> = None;
     let mut max_time: Option<u64> = None;
     let mut uds_mode = false;
-    let mut no_sandbox = false;
     let mut socket_path: Option<std::path::PathBuf> = None;
     let mut persist = false;
     let mut disabled_tools: Vec<String> = Vec::new();
@@ -54,11 +53,10 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
 
     while i < args.len() {
         match args[i].as_str() {
-            f @ ("--no-session" | "--no-sandbox" | "--persist" | "--workflow"
-            | "--workflow-guards" | "--spawned") => {
+            f @ ("--no-session" | "--persist" | "--workflow" | "--workflow-guards"
+            | "--spawned") => {
                 *match f {
                     "--no-session" => &mut no_session,
-                    "--no-sandbox" => &mut no_sandbox,
                     "--persist" => &mut persist,
                     "--workflow" => &mut workflow,
                     "--spawned" => &mut spawned,
@@ -143,6 +141,16 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                     Some(flag_private::parse_snapshot_path(args, i, stderr)?);
                 i += 2;
             }
+            "--network" => {
+                stderr.push_str(
+                    "agent: WARNING: --network is deprecated and ignored; network isolation flag has been removed\n",
+                );
+                i += 1;
+            }
+            other if other.starts_with("--") || other.starts_with('-') => {
+                stderr.push_str(&format!("agent: unknown flag '{other}'\n"));
+                return None;
+            }
             _ => {
                 i += 1;
             }
@@ -172,7 +180,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         max_iterations,
         max_time,
         uds_mode,
-        no_sandbox,
         socket_path,
         persist,
         disabled_tools,
@@ -186,6 +193,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         spawned,
         parent_identity_override: None,
         session_key_override: None,
+        cwd_override: None,
     };
     flags = validate_agent_flags(flags, stderr)?;
 
@@ -227,6 +235,7 @@ pub(crate) fn cmd_agent(
         Some(f) => f,
         None => return 1,
     };
+    flags.cwd_override = ctx.cwd.clone();
 
     // ── UDS mode ──────────────────────────────────────────────────────────────
     if flags.uds_mode {
@@ -718,9 +727,6 @@ mod integration_tests;
 #[cfg(test)]
 #[path = "agent_926_tests.rs"]
 mod issue_926_tests;
-#[cfg(test)]
-#[path = "agent_no_sandbox_tests.rs"]
-mod no_sandbox_tests;
 #[cfg(test)]
 #[path = "agent_no_session_tests.rs"]
 mod no_session_tests;

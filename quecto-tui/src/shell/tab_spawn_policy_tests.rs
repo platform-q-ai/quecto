@@ -5,7 +5,6 @@ use crate::shell::cli::{build_agent_args, parse_flags};
 fn tab_spawn_flags_inherit_parent_policy() {
     let parent = parse_flags(&[
         "quecto-tui".into(),
-        "--no-sandbox".into(),
         "--workflow".into(),
         "--workflow-guards".into(),
         "--config".into(),
@@ -17,7 +16,6 @@ fn tab_spawn_flags_inherit_parent_policy() {
     ]);
     let policy = TabSpawnPolicy::from_flags(&parent);
     let flags = tab_spawn_flags_from_policy(&policy, Some("sess".into()));
-    assert!(flags.no_sandbox, "F8: inherit --no-sandbox");
     assert!(flags.workflow, "F8: inherit --workflow");
     assert!(flags.workflow_guards, "F8: inherit --workflow-guards");
     assert_eq!(
@@ -38,5 +36,4 @@ fn tab_spawn_flags_inherit_parent_policy() {
 fn tab_spawn_flags_default_persist_without_parent() {
     let flags = tab_spawn_flags(None);
     assert!(flags.persist);
-    assert!(!flags.no_sandbox);
 }

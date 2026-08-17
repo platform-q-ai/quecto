@@ -14,7 +14,6 @@ use super::socket_path::{canonical_allowed_socket_roots, canonicalize_socket_roo
 /// Parsed CLI flags for quecto-tui.
 pub(crate) struct CliFlags {
     pub(crate) socket_path: Option<PathBuf>,
-    pub(crate) no_sandbox: bool,
     pub(crate) workflow: bool,
     pub(crate) workflow_guards: bool,
     pub(crate) workflow_disabled: bool,
@@ -50,7 +49,6 @@ pub fn run(args: Vec<String>) -> i32 {
 pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
     let mut flags = CliFlags {
         socket_path: None,
-        no_sandbox: false,
         workflow: false,
         workflow_guards: false,
         workflow_disabled: false,
@@ -95,10 +93,6 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
                     }
                 }
                 i += 2;
-            }
-            "--no-sandbox" => {
-                flags.no_sandbox = true;
-                i += 1;
             }
             "--persist" => {
                 flags.persist = true;
@@ -303,9 +297,6 @@ async fn run_tui(flags: CliFlags) -> i32 {
 /// Build the `quecto agent` argv used for an owned TUI child process.
 pub(crate) fn build_agent_args(flags: &CliFlags) -> Vec<String> {
     let mut args = vec!["agent".to_string(), "--mode".to_string(), "uds".to_string()];
-    if flags.no_sandbox {
-        args.push("--no-sandbox".to_string());
-    }
     if flags.persist {
         args.push("--persist".to_string());
     }

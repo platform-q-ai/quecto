@@ -13,24 +13,18 @@ fn test_path_inside_workspace_allowed() {
 }
 
 #[test]
-fn test_path_outside_workspace_blocked() {
+fn test_path_outside_workspace_blocked_when_restriction_explicitly_enabled() {
     let sb = sandbox("/tmp/quecto-test", true);
-    let result = sb.validate_path("/etc/passwd");
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("outside working dir"),
-        "error should mention 'outside working dir'"
-    );
+    assert!(matches!(
+        sb.validate_path("/etc/passwd"),
+        Err(SandboxError::OutsideWorkspace(_, _))
+    ));
 }
 
 #[test]
-fn test_path_traversal_blocked() {
+fn test_path_traversal_blocked_when_restriction_explicitly_enabled() {
     let sb = sandbox("/tmp/quecto-test", true);
-    let result = sb.validate_path("/tmp/quecto-test/../evil.txt");
-    assert!(result.is_err());
+    assert!(sb.validate_path("/tmp/quecto-test/../evil.txt").is_err());
 }
 
 #[test]
@@ -101,12 +95,6 @@ fn test_subdirectory_path_allowed() {
 }
 
 #[test]
-fn test_resolve_path_normalizes_dotdot() {
-    let resolved = resolve_path(Path::new("/a/b/../c"));
-    assert_eq!(resolved, PathBuf::from("/a/c"));
-}
-
-#[test]
 fn test_normalize_command_for_denylist_trims_trailing_space() {
     let s = normalize_command_for_denylist("rm -rf / ; ");
     assert!(!s.ends_with(' '));
@@ -117,12 +105,6 @@ fn test_normalize_command_for_denylist_trims_trailing_space() {
 fn test_extract_all_command_tokens_whitespace_only_breaks() {
     let tokens = extract_all_command_tokens("   ");
     assert!(tokens.is_empty());
-}
-
-#[test]
-fn test_resolve_path_cur_dir_is_ignored() {
-    let resolved = resolve_path(Path::new("./a/b"));
-    assert_eq!(resolved, PathBuf::from("a/b"));
 }
 
 #[test]
@@ -139,11 +121,12 @@ fn test_error_display_formats() {
 }
 
 #[test]
-fn test_validate_path_no_workspace() {
+fn test_validate_path_no_workspace_errors_when_restriction_explicitly_enabled() {
     let sb = Sandbox::new(None, true);
-    let result = sb.validate_path("/tmp/foo.txt");
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("no workspace"));
+    assert!(matches!(
+        sb.validate_path("/tmp/foo.txt"),
+        Err(SandboxError::NoWorkspace)
+    ));
 }
 
 #[test]
@@ -186,7 +169,7 @@ fn test_normalize_command_for_denylist_non_ascii_case() {
 }
 
 #[test]
-fn test_symlink_outside_workspace_blocked() {
+fn test_symlink_outside_workspace_blocked_when_restriction_explicitly_enabled() {
     let tmp = TempDir::new().unwrap();
     let ws = tmp.path().to_path_buf();
     let sb = Sandbox::new(Some(ws.clone()), true);
@@ -197,13 +180,7 @@ fn test_symlink_outside_workspace_blocked() {
     std::os::unix::fs::symlink("/etc/passwd", &link).unwrap();
 
     let result = sb.validate_path(link.to_str().unwrap());
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("outside working dir")
-    );
+    assert!(matches!(result, Err(SandboxError::OutsideWorkspace(_, _))));
 }
 
 #[test]
@@ -224,7 +201,7 @@ fn test_symlink_inside_workspace_allowed() {
 }
 
 #[test]
-fn test_nested_symlink_chain_blocked() {
+fn test_nested_symlink_chain_blocked_when_restriction_explicitly_enabled() {
     let tmp = TempDir::new().unwrap();
     let ws = tmp.path().to_path_buf();
     let sb = Sandbox::new(Some(ws.clone()), true);
@@ -237,13 +214,7 @@ fn test_nested_symlink_chain_blocked() {
     // Trying to access step1/some-file.txt should be blocked
     let target = ws.join("step1/some-file.txt");
     let result = sb.validate_path(target.to_str().unwrap());
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("outside working dir")
-    );
+    assert!(matches!(result, Err(SandboxError::OutsideWorkspace(_, _))));
 }
 
 // --- Sandbox hardening: allowlist tests ---
@@ -281,7 +252,7 @@ fn test_with_command_allowlist_builder() {
 }
 
 #[test]
-fn test_for_agent_workspace_reads_allowlist_and_no_sandbox() {
+fn test_for_agent_workspace_reads_allowlist() {
     let config: Config = serde_json::from_str(
         r#"{
         "agents": {
@@ -292,15 +263,15 @@ fn test_for_agent_workspace_reads_allowlist_and_no_sandbox() {
     }"#,
     )
     .unwrap();
-    let sb = Sandbox::for_agent_workspace(&config, PathBuf::from("/tmp/ws"), false);
+    let sb = Sandbox::for_agent_workspace(&config, PathBuf::from("/tmp/ws"));
     assert!(sb.validate_command("echo hi").is_ok());
     assert!(sb.validate_command("curl evil.com").is_err());
 }
 
 #[test]
-fn test_for_agent_workspace_no_sandbox_disables_path_restriction() {
+fn test_for_agent_workspace_disables_path_restriction() {
     let config: Config = serde_json::from_str("{}").unwrap();
-    let sb = Sandbox::for_agent_workspace(&config, PathBuf::from("/tmp/ws"), true);
+    let sb = Sandbox::for_agent_workspace(&config, PathBuf::from("/tmp/ws"));
     assert!(!sb.restrict_to_workspace);
 }
 
@@ -373,31 +344,24 @@ fn test_with_allowlist_constructor_and_clone() {
 }
 
 #[test]
-fn validate_path_resolves_textually_when_workspace_does_not_exist() {
-    // A workspace that has not been created yet must still produce a meaningful
-    // prefix check rather than silently allowing everything.
+fn validate_path_blocks_siblings_when_workspace_does_not_exist_and_restricted() {
     let base = tempfile::tempdir().expect("tempdir");
     let missing_workspace = base.path().join("not-created-yet");
     let sandbox = Sandbox::new(Some(missing_workspace.clone()), true);
 
-    let inside = sandbox
-        .validate_path(missing_workspace.join("file.txt").to_str().expect("utf-8"))
-        .expect("a path under the (absent) workspace is allowed");
-    assert!(inside.starts_with(&missing_workspace));
-
-    let err = sandbox
-        .validate_path(base.path().join("elsewhere.txt").to_str().expect("utf-8"))
-        .expect_err("a sibling of the absent workspace must be rejected");
     assert!(
-        matches!(err, SandboxError::OutsideWorkspace(_, _)),
-        "expected OutsideWorkspace, got: {err:?}"
+        sandbox
+            .validate_path(missing_workspace.join("file.txt").to_str().expect("utf-8"))
+            .is_ok()
     );
+    assert!(matches!(
+        sandbox.validate_path(base.path().join("elsewhere.txt").to_str().expect("utf-8")),
+        Err(SandboxError::OutsideWorkspace(_, _))
+    ));
 }
 
 #[test]
-fn validate_path_rejects_symlink_escaping_an_existing_workspace() {
-    // The canonicalizing branch: a symlink inside the workspace pointing out of
-    // it must be resolved and refused, not accepted on its textual path.
+fn validate_path_blocks_symlink_escaping_an_existing_workspace_when_restricted() {
     let base = tempfile::tempdir().expect("tempdir");
     let workspace = base.path().join("ws");
     std::fs::create_dir(&workspace).expect("create workspace");
@@ -411,11 +375,8 @@ fn validate_path_rejects_symlink_escaping_an_existing_workspace() {
     return;
 
     let sandbox = Sandbox::new(Some(workspace), true);
-    let err = sandbox
-        .validate_path(link.to_str().expect("utf-8"))
-        .expect_err("symlink escaping the workspace must be rejected");
-    assert!(
-        matches!(err, SandboxError::OutsideWorkspace(_, _)),
-        "expected OutsideWorkspace after symlink resolution, got: {err:?}"
-    );
+    assert!(matches!(
+        sandbox.validate_path(link.to_str().expect("utf-8")),
+        Err(SandboxError::OutsideWorkspace(_, _))
+    ));
 }

@@ -72,7 +72,7 @@ Feature: Grep Tool
     Then the grep result should be an error
     And the grep result should contain "rg"
 
-  Scenario: Pattern search outside workspace is blocked
+  Scenario: Explicit restricted grep fixture blocks pattern search outside workspace
     When I grep for pattern "root" in path "/etc"
     Then the grep result should be an error
 

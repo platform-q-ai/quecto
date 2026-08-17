@@ -11,7 +11,6 @@ pub(crate) struct AgentFlags {
     pub(crate) max_iterations: Option<u32>,
     pub(crate) max_time: Option<u64>,
     pub(crate) uds_mode: bool,
-    pub(crate) no_sandbox: bool,
     pub(crate) socket_path: Option<std::path::PathBuf>,
     pub(crate) persist: bool,
     pub(crate) disabled_tools: Vec<String>,
@@ -38,6 +37,8 @@ pub(crate) struct AgentFlags {
     /// Pre-resolved runtime session key for UDS generated-chat sessions, so the
     /// tool registry and dispatch loop agree before tools are constructed.
     pub(crate) session_key_override: Option<String>,
+    /// Test-only effective cwd override supplied by CliContext.
+    pub(crate) cwd_override: Option<std::path::PathBuf>,
 }
 
 /// Return `args[i+1]` or push `err_msg` to stderr and return `None`.

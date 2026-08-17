@@ -152,7 +152,7 @@ if [ -n "${QUECTO_WORKFLOW_CONFIG_JSON:-}" ]; then
 else
   cp /home/appuser/.quecto/config.json "$QUECTO_RUNTIME_CONFIG_PATH"
 fi
-exec quecto agent --config "$QUECTO_RUNTIME_CONFIG_PATH" --mode uds --no-sandbox --network --workflow --workflow-guards --socket /shared/quecto.sock --session "$QUECTO_SESSION_NAME" --persist --system "$(cat /etc/quecto/workflow-agent-system-prompt.txt)"
+exec quecto agent --config "$QUECTO_RUNTIME_CONFIG_PATH" --mode uds --workflow --workflow-guards --socket /shared/quecto.sock --session "$QUECTO_SESSION_NAME" --persist --system "$(cat /etc/quecto/workflow-agent-system-prompt.txt)"
 "#
 }
 

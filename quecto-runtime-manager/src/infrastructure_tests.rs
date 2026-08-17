@@ -216,6 +216,22 @@ fn runtime_bootstrap_verifies_toolchain_database_and_project_dependencies_before
 }
 
 #[test]
+fn runtime_bootstrap_keeps_agent_in_requested_workdir_and_omits_removed_flags() {
+    let bootstrap = runtime_bootstrap_command();
+    assert!(bootstrap.contains(
+        "cd \"$QUECTO_WORKDIR\"
+setup_project_dependencies"
+    ));
+    assert!(!bootstrap.contains("cd /workspace"));
+    assert!(!bootstrap.contains("--network"));
+    assert!(!bootstrap.contains("--no-sandbox"));
+    assert!(
+        bootstrap.find("cd \"$QUECTO_WORKDIR\"").unwrap()
+            < bootstrap.find("exec quecto agent").unwrap()
+    );
+}
+
+#[test]
 fn runtime_target_url_preserves_query_string_for_incremental_audit_polling() {
     assert_eq!(
         runtime_target_url(
