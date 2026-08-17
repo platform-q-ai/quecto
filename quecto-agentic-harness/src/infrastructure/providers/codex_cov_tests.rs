@@ -659,7 +659,7 @@ fn oauth_and_api_key_bodies_differ_only_by_max_output_tokens_1236() {
 }
 
 #[tokio::test]
-async fn codex_live_reasoning_delta_respects_accumulator_cap() {
+async fn codex_stream_rejects_over_limit_reasoning_with_error() {
     use crate::domain::provider::StreamEvent;
     use crate::infrastructure::providers::openai::openai_sse_parser::MAX_OPENAI_SSE_REASONING_BYTES;
     use crate::infrastructure::providers::sse_common::SseHandler;
@@ -672,30 +672,15 @@ async fn codex_live_reasoning_delta_respects_accumulator_cap() {
         serde_json::json!({"type":"response.reasoning_summary_text.delta","delta":delta})
     );
 
-    handler.process_line(&line, &tx).await;
-    handler
-        .process_line(
-            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}",
-            &tx,
-        )
-        .await;
-    drop(tx);
+    let outcome = handler.process_line(&line, &tx).await;
+    assert!(matches!(outcome, SseLineOutcome::Done));
 
-    while let Some(event) = rx.recv().await {
-        match event {
-            StreamEvent::ThinkingDelta(delta) => panic!(
-                "over-cap live reasoning delta must not bypass the accumulator cap ({} bytes)",
-                delta.len()
-            ),
-            StreamEvent::Done(resp) => {
-                assert!(
-                    resp.thinking_blocks.is_empty(),
-                    "over-cap live reasoning must not be persisted"
-                );
-                return;
-            }
-            _ => {}
-        }
+    match rx.recv().await.unwrap() {
+        StreamEvent::Error(err) => assert!(err.contains("Codex SSE reasoning")),
+        other => panic!("unexpected event: {other:?}"),
     }
-    panic!("missing done event");
+    assert!(
+        rx.try_recv().is_err(),
+        "oversized reasoning must stop the stream"
+    );
 }
