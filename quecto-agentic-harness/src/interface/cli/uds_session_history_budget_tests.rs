@@ -216,3 +216,40 @@ fn collapsed_history_summary_preserves_visible_thinking() {
     assert_eq!(summary["thinking"][0]["text"], "visible reasoning");
     assert!(!serde_json::to_string(&summary).unwrap().contains("private"));
 }
+
+#[test]
+fn collapsed_history_summary_bounds_oversized_visible_thinking() {
+    use crate::domain::message::{Message, ThinkingBlock};
+    let huge_reasoning = "visible reasoning ".repeat(super::HISTORY_PAGE_JSON_BUDGET / 4);
+    let mut msg = Message::assistant("x".repeat(super::HISTORY_PAGE_JSON_BUDGET), vec![]);
+    msg.thinking_blocks.push(ThinkingBlock::Normal {
+        thinking: huge_reasoning.clone(),
+        signature: "private".into(),
+    });
+
+    let page = messages_page_json(&[msg], 1, None);
+    let encoded = serde_json::to_vec(&page).expect("history page serializes");
+    let summary = &page_messages(&page)[0];
+
+    assert!(
+        encoded.len() <= HISTORY_PAGE_JSON_BUDGET,
+        "collapsed summary with reasoning should stay within budget: {} > {}; page={page}",
+        encoded.len(),
+        HISTORY_PAGE_JSON_BUDGET
+    );
+    assert_eq!(summary["collapsed"], true);
+    assert_eq!(summary["thinking"][0]["kind"], "text");
+    let text = summary["thinking"][0]["text"]
+        .as_str()
+        .expect("thinking text should remain visible");
+    assert!(
+        !text.is_empty() && text.len() < huge_reasoning.len(),
+        "oversized visible thinking should be previewed, not emitted in full"
+    );
+    assert_eq!(summary["thinking"][0]["truncated"], true);
+    assert_eq!(
+        summary["thinking"][0]["textLength"].as_u64(),
+        Some(huge_reasoning.len() as u64)
+    );
+    assert!(!serde_json::to_string(summary).unwrap().contains("private"));
+}

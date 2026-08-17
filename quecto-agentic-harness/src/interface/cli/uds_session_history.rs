@@ -1,7 +1,6 @@
 use crate::domain::ids::MessageId;
-use crate::domain::message::Message;
+use crate::domain::message::{Message, ThinkingBlock};
 
-use super::super::uds_thinking_view::VisibleThinkingBlocksView;
 use super::{message_to_json, role_wire_name};
 
 pub(crate) use super::super::protocol::HISTORY_PAGE_SIZE;
@@ -9,6 +8,7 @@ pub(crate) use super::super::protocol::HISTORY_PAGE_SIZE;
 pub(crate) const HISTORY_PAGE_JSON_BUDGET: usize =
     crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET / 2;
 pub(super) const HISTORY_MESSAGE_SUMMARY_PREVIEW_BYTES: usize = 2048;
+pub(super) const HISTORY_THINKING_SUMMARY_PREVIEW_BYTES: usize = 2048;
 
 /// Locate a message by its stable wire id (a stringified UUID). Parses the id
 /// ONCE and compares typed UUIDs instead of allocating a `to_string` per
@@ -84,6 +84,43 @@ pub fn messages_page_json(
     messages_page_json_for_id(messages, count, before.as_ref())
 }
 
+fn byte_preview(s: &str, max_bytes: usize) -> String {
+    s.chars()
+        .scan(0usize, |used, ch| {
+            let next = *used + ch.len_utf8();
+            if next > max_bytes {
+                None
+            } else {
+                *used = next;
+                Some(ch)
+            }
+        })
+        .collect()
+}
+
+fn thinking_summary_json(msg: &Message) -> serde_json::Value {
+    serde_json::Value::Array(
+        msg.thinking_blocks
+            .iter()
+            .map(|block| match block {
+                ThinkingBlock::Normal { thinking, .. } => {
+                    let preview = byte_preview(thinking, HISTORY_THINKING_SUMMARY_PREVIEW_BYTES);
+                    let mut value = serde_json::json!({
+                        "kind": "text",
+                        "text": preview,
+                    });
+                    if value["text"].as_str().map(str::len).unwrap_or(0) < thinking.len() {
+                        value["truncated"] = serde_json::json!(true);
+                        value["textLength"] = serde_json::json!(thinking.len());
+                    }
+                    value
+                }
+                ThinkingBlock::Redacted { .. } => serde_json::json!({ "kind": "redacted" }),
+            })
+            .collect(),
+    )
+}
+
 pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Value {
     let full = message_to_json(msg);
     let full_size = serde_json::to_vec(&full)
@@ -93,19 +130,7 @@ pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Val
         return full;
     }
 
-    let preview: String = msg
-        .content
-        .chars()
-        .scan(0usize, |used, ch| {
-            let next = *used + ch.len_utf8();
-            if next > HISTORY_MESSAGE_SUMMARY_PREVIEW_BYTES {
-                None
-            } else {
-                *used = next;
-                Some(ch)
-            }
-        })
-        .collect();
+    let preview = byte_preview(&msg.content, HISTORY_MESSAGE_SUMMARY_PREVIEW_BYTES);
 
     let mut summary = serde_json::json!({
         "id": msg.id().to_string(),
@@ -126,8 +151,7 @@ pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Val
         "contentLength": msg.content.len(),
     });
     if !msg.thinking_blocks.is_empty() {
-        summary["thinking"] = serde_json::to_value(VisibleThinkingBlocksView(&msg.thinking_blocks))
-            .expect("visible thinking serializes");
+        summary["thinking"] = thinking_summary_json(msg);
     }
     summary
 }
