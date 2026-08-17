@@ -73,8 +73,8 @@ Feature: Grep Tool
     And the grep result should contain "rg"
 
   Scenario: Grep fixture allows pattern search outside workspace
-    When I grep for pattern "root" in path "/etc"
-    Then the grep result should be an error
+    When I grep for pattern "root" in path "/etc/ssl/openssl.cnf"
+    Then the grep result should not be an error
 
   @done
   Scenario: Context lines use file cache (Quecto compatibility — file-N- format)

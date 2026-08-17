@@ -16,9 +16,18 @@ fn bdd_child_session_key(agent_uuid: &AgentUuid) -> String {
 
 #[given(expr = "a subagent spawn request with task {string}")]
 fn given_subagent_spawn_request(world: &mut QuectoWorld, task: String) {
-    world.subagent_config = Some(SubagentConfig {
+    world.subagent_config = Some(test_subagent_config(Some(task)));
+}
+
+#[given("a parent agent config")]
+fn given_parent_agent_config(world: &mut QuectoWorld) {
+    world.subagent_config = Some(test_subagent_config(Some("parent task".to_string())));
+}
+
+fn test_subagent_config(task: Option<String>) -> SubagentConfig {
+    SubagentConfig {
         container: quecto::domain::subagent::ContainerSelection::Local,
-        task: Some(task),
+        task,
         agent_id: None,
         system: None,
         config_path: None,
@@ -29,7 +38,7 @@ fn given_subagent_spawn_request(world: &mut QuectoWorld, task: String) {
         effort: None,
         disable_tools: Vec::new(),
         read_only: false,
-    });
+    }
 }
 
 #[given(expr = "an agent allowlist containing {string} and {string}")]
