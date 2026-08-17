@@ -657,3 +657,45 @@ fn oauth_and_api_key_bodies_differ_only_by_max_output_tokens_1236() {
          ChatGPT Codex backend and the standard Responses API"
     );
 }
+
+#[tokio::test]
+async fn codex_live_reasoning_delta_respects_accumulator_cap() {
+    use crate::domain::provider::StreamEvent;
+    use crate::infrastructure::providers::openai::openai_sse_parser::MAX_OPENAI_SSE_REASONING_BYTES;
+    use crate::infrastructure::providers::sse_common::SseHandler;
+
+    let mut handler = CodexSseHandler::new();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    let delta = "r".repeat(MAX_OPENAI_SSE_REASONING_BYTES + 1);
+    let line = format!(
+        "data: {}",
+        serde_json::json!({"type":"response.reasoning_summary_text.delta","delta":delta})
+    );
+
+    handler.process_line(&line, &tx).await;
+    handler
+        .process_line(
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}",
+            &tx,
+        )
+        .await;
+    drop(tx);
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            StreamEvent::ThinkingDelta(delta) => panic!(
+                "over-cap live reasoning delta must not bypass the accumulator cap ({} bytes)",
+                delta.len()
+            ),
+            StreamEvent::Done(resp) => {
+                assert!(
+                    resp.thinking_blocks.is_empty(),
+                    "over-cap live reasoning must not be persisted"
+                );
+                return;
+            }
+            _ => {}
+        }
+    }
+    panic!("missing done event");
+}

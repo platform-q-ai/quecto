@@ -52,7 +52,7 @@ pub(super) fn append_reasoning_summary(item: &Value, reasoning: &mut String) {
     let _ = append_reasoning_with_limit(reasoning, &collect_reasoning_summary(item));
 }
 
-fn append_reasoning_with_limit(
+pub(super) fn append_reasoning_with_limit(
     reasoning: &mut String,
     text: &str,
 ) -> Result<(), crate::domain::error::DomainError> {

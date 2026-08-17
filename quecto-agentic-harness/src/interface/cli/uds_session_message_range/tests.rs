@@ -87,3 +87,24 @@ fn ranged_get_message_preserves_visible_thinking_for_recovery() {
     assert_eq!(data["thinking"][0]["text"], "visible reasoning");
     assert!(!serde_json::to_string(&data).unwrap().contains("private"));
 }
+
+#[test]
+fn ranged_get_message_with_huge_thinking_fits_protocol_frame() {
+    use crate::domain::message::ThinkingBlock;
+
+    let mut msg = Message::assistant("answer".repeat(1024), vec![]);
+    msg.thinking_blocks.push(ThinkingBlock::Normal {
+        thinking: "r".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET),
+        signature: "private".into(),
+    });
+
+    let data = message_to_json_range_for_response(&msg, Some(0), None, Some("recover"));
+    let line = AgentEvent::ok(Some("recover"), "get_message", Some(data)).to_json_line();
+
+    assert!(
+        line.len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET,
+        "ranged get_message must include thinking in its frame-budget fit: {} > {}",
+        line.len(),
+        crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET
+    );
+}

@@ -199,3 +199,20 @@ fn get_messages_keeps_small_messages_complete_and_unstubbed() {
         "small messages should not be represented as recovery summaries: {page}"
     );
 }
+
+#[test]
+fn collapsed_history_summary_preserves_visible_thinking() {
+    use crate::domain::message::{Message, ThinkingBlock};
+    let mut msg = Message::assistant("x".repeat(super::HISTORY_PAGE_JSON_BUDGET), vec![]);
+    msg.thinking_blocks.push(ThinkingBlock::Normal {
+        thinking: "visible reasoning".into(),
+        signature: "private".into(),
+    });
+
+    let summary = super::message_to_json_for_history_page(&msg);
+
+    assert_eq!(summary["collapsed"], true);
+    assert_eq!(summary["thinking"][0]["kind"], "text");
+    assert_eq!(summary["thinking"][0]["text"], "visible reasoning");
+    assert!(!serde_json::to_string(&summary).unwrap().contains("private"));
+}

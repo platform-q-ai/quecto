@@ -1,6 +1,7 @@
 use crate::domain::ids::MessageId;
 use crate::domain::message::Message;
 
+use super::super::uds_thinking_view::VisibleThinkingBlocksView;
 use super::{message_to_json, role_wire_name};
 
 pub(crate) use super::super::protocol::HISTORY_PAGE_SIZE;
@@ -106,7 +107,7 @@ pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Val
         })
         .collect();
 
-    serde_json::json!({
+    let mut summary = serde_json::json!({
         "id": msg.id().to_string(),
         "role": role_wire_name(&msg.role),
         "content": preview,
@@ -123,7 +124,12 @@ pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Val
         "collapsed": true,
         "truncated": true,
         "contentLength": msg.content.len(),
-    })
+    });
+    if !msg.thinking_blocks.is_empty() {
+        summary["thinking"] = serde_json::to_value(VisibleThinkingBlocksView(&msg.thinking_blocks))
+            .expect("visible thinking serializes");
+    }
+    summary
 }
 
 #[cfg(test)]

@@ -62,8 +62,22 @@ fn one_char_end(s: &str, start: usize) -> usize {
         .unwrap_or(s.len())
 }
 
-fn ranged_value(msg: &Message, start: usize, end: usize, content_len: usize) -> serde_json::Value {
+fn ranged_value(
+    msg: &Message,
+    start: usize,
+    end: usize,
+    content_len: usize,
+    request_id: Option<&str>,
+) -> serde_json::Value {
     let mut value = message_to_json_with_content(msg, &msg.content[start..end]);
+    if !data_fits_frame(&value, request_id) && start == end {
+        value["thinking"] = serde_json::Value::Array(Vec::new());
+        while !data_fits_frame(&value, request_id)
+            && value["toolCalls"].as_array().is_some_and(|a| !a.is_empty())
+        {
+            value["toolCalls"] = serde_json::Value::Array(Vec::new());
+        }
+    }
     value["offset"] = serde_json::json!(start);
     value["nextOffset"] = serde_json::json!(end);
     value["contentLength"] = serde_json::json!(content_len);
@@ -87,7 +101,12 @@ fn bounded_range_end(
     if end == start && start < content_len {
         end = one_char_end(&msg.content, start);
     }
-    while end > start && !data_fits_frame(&ranged_value(msg, start, end, content_len), request_id) {
+    while end > start
+        && !data_fits_frame(
+            &ranged_value(msg, start, end, content_len, request_id),
+            request_id,
+        )
+    {
         let midpoint = start + (end - start) / 2;
         end = nearest_char_boundary_at_or_before(&msg.content, midpoint);
         if end == start {
@@ -95,10 +114,12 @@ fn bounded_range_end(
             break;
         }
     }
-    if end > start && !data_fits_frame(&ranged_value(msg, start, end, content_len), request_id) {
-        // Metadata/tool-call overhead alone is too large for a success response.
-        // Return an empty page rather than pretending progress is frame-safe; the
-        // outer response guard will emit the explicit frame-limit error.
+    if end > start
+        && !data_fits_frame(
+            &ranged_value(msg, start, end, content_len, request_id),
+            request_id,
+        )
+    {
         start
     } else {
         end
@@ -179,5 +200,5 @@ pub fn message_to_json_range_for_response(
     let requested = limit.unwrap_or(remaining).min(remaining);
     let requested_end = start.saturating_add(requested).min(content_len);
     let end = bounded_range_end(msg, start, requested_end, content_len, request_id);
-    ranged_value(msg, start, end, content_len)
+    ranged_value(msg, start, end, content_len, request_id)
 }
