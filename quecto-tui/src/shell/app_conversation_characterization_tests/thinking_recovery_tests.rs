@@ -162,3 +162,55 @@ async fn recovery_keeps_redacted_thinking_placeholders() {
                 && thinking == &["λx".to_string(), "[redacted thinking]".to_string(), "y".to_string()]
     )));
 }
+
+#[tokio::test]
+async fn recovery_without_persisted_thinking_preserves_live_thinking() {
+    let mut h = TuiHarness::new().await;
+    let batch_id = "batch-live-thinking".to_string();
+    let request_id = "req-live-thinking".to_string();
+    let message_id = "msg-live-thinking".to_string();
+    h.app_mut()
+        .ac_mut()
+        .master_session
+        .chat
+        .append_thinking("live plan");
+    h.app_mut()
+        .ac_mut()
+        .master_session
+        .chat
+        .append_token("answer");
+    h.app_mut().ac_mut().message_recovery_batches.insert(
+        batch_id.clone(),
+        MessageRecoveryBatch::new(vec![message_id.clone()], 0, 1, None),
+    );
+    h.app_mut().ac_mut().pending_message_recovery.insert(
+        request_id.clone(),
+        PendingMessageRecovery {
+            message_id: message_id.clone(),
+            batch_id,
+            agent_id: None,
+            content: String::new(),
+            offset: 0,
+            content_len: None,
+            thinking: Vec::new(),
+            thinking_offset: 0,
+        },
+    );
+
+    h.app_mut().handle_get_message_recovery(
+        Some(&request_id),
+        true,
+        Some(serde_json::json!({
+            "id": message_id,
+            "role": "assistant",
+            "content": "answer",
+            "hasMoreContent": false
+        })),
+    );
+
+    assert!(matches!(
+        h.app_mut().ac().master_session.chat.entries().last(),
+        Some(ChatEntry::Assistant { text, thinking, .. })
+            if text == "answer" && thinking == &["live plan"]
+    ));
+}

@@ -295,9 +295,31 @@ impl App {
             .message_recovery_batches
             .remove(&pending.batch_id)
             .unwrap();
-        let entries = recovered_chat_entries(&batch.refs, &batch.responses);
+        let mut entries = recovered_chat_entries(&batch.refs, &batch.responses);
         match &batch.agent_id {
             None => {
+                // Some providers stream display-safe thinking but omit it from the
+                // persisted recovery response. Never let end-of-turn recovery erase
+                // thinking the operator already saw live.
+                let live_thinking = self.ac().master_session.chat.entries()
+                    [batch.target_start..batch.target_end]
+                    .iter()
+                    .rev()
+                    .find_map(|entry| match entry {
+                        ChatEntry::Assistant { thinking, .. } if !thinking.is_empty() => {
+                            Some(thinking.clone())
+                        }
+                        _ => None,
+                    });
+                if let Some(live_thinking) = live_thinking
+                    && let Some(ChatEntry::Assistant { thinking, .. }) = entries
+                        .iter_mut()
+                        .rev()
+                        .find(|entry| matches!(entry, ChatEntry::Assistant { .. }))
+                    && thinking.is_empty()
+                {
+                    *thinking = live_thinking;
+                }
                 self.ac_mut().master_session.chat.replace_range(
                     batch.target_start,
                     batch.target_end,
