@@ -8,6 +8,7 @@ pub(crate) struct PendingMessageRecovery {
     pub(crate) content: String,
     pub(crate) offset: usize,
     pub(crate) content_len: Option<usize>,
+    pub(crate) thinking_offset: usize,
 }
 
 /// A turn awaiting rebuild from its refs. The atomicity invariant lives in
@@ -98,6 +99,7 @@ impl App {
                         .then_some(expected_content_len)
                         .flatten()
                         .and_then(|n| usize::try_from(n).ok()),
+                    thinking_offset: 0,
                 },
             );
             self.send_command(Command::GetMessage {
@@ -106,6 +108,7 @@ impl App {
                 agent_id: None,
                 tool_call_id: None,
                 offset: Some(0),
+                thinking_offset: Some(0),
                 limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
             });
         }
@@ -168,6 +171,14 @@ impl App {
             pending.content_len,
         )
         .apply(&data);
+        let has_more_thinking = data
+            .get("hasMoreThinking")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let next_thinking_offset = data
+            .get("nextThinkingOffset")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok());
         let accumulated = match update {
             Ok(crate::protocol::range_accumulator::RangeUpdate::Continue {
                 content,
@@ -191,6 +202,7 @@ impl App {
                         content,
                         offset: next_offset,
                         content_len,
+                        thinking_offset: pending.thinking_offset,
                     },
                 );
                 self.send_command(Command::GetMessage {
@@ -199,6 +211,7 @@ impl App {
                     agent_id,
                     tool_call_id: None,
                     offset: Some(next_offset),
+                    thinking_offset: Some(pending.thinking_offset),
                     limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
                 });
                 return;
@@ -209,6 +222,42 @@ impl App {
                 return;
             }
         };
+        if has_more_thinking {
+            let Some(next_thinking_offset) = next_thinking_offset else {
+                self.abandon_recovery_batch(&pending.batch_id);
+                return;
+            };
+            let req_id = format!(
+                "{}msg-recovery-{}",
+                self.ac().id_namespace(),
+                super::app_events::uuid_like()
+            );
+            let message_id = pending.message_id;
+            let batch_id = pending.batch_id;
+            let agent_id = pending.agent_id;
+            self.ac_mut().pending_message_recovery.insert(
+                req_id.clone(),
+                PendingMessageRecovery {
+                    message_id: message_id.clone(),
+                    batch_id,
+                    agent_id: agent_id.clone(),
+                    content: accumulated,
+                    offset: pending.offset,
+                    content_len: pending.content_len,
+                    thinking_offset: next_thinking_offset,
+                },
+            );
+            self.send_command(Command::GetMessage {
+                id: Some(req_id),
+                message_id,
+                agent_id,
+                tool_call_id: None,
+                offset: Some(pending.offset),
+                thinking_offset: Some(next_thinking_offset),
+                limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
+            });
+            return;
+        }
         let mut data = data;
         data["content"] = serde_json::Value::String(accumulated);
         data["hasMoreContent"] = serde_json::Value::Bool(false);

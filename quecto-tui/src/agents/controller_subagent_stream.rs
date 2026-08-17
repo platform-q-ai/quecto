@@ -508,6 +508,7 @@ impl App {
                         .then_some(expected_content_len)
                         .flatten()
                         .and_then(|n| usize::try_from(n).ok()),
+                    thinking_offset: 0,
                 },
             );
             // Route via the MASTER connection; it forwards by child id and the
@@ -518,6 +519,7 @@ impl App {
                 agent_id: Some(agent_id.to_string()),
                 tool_call_id: None,
                 offset: Some(0),
+                thinking_offset: Some(0),
                 limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
             });
         }
@@ -743,7 +745,6 @@ impl App {
         )
     }
 }
-
 /// Maximum number of sub-agent names listed verbatim in a coalesced completion
 /// summary line before the remainder collapses to a `(+M more)` tail (#900).
 const COALESCE_NAME_CAP: usize = 10;

@@ -663,6 +663,7 @@ impl App {
                     agent_id: None,
                     tool_call_id: None,
                     offset: Some(next_offset),
+                    thinking_offset: None,
                     limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
                 });
                 return;

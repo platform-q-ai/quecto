@@ -443,6 +443,7 @@ fn issue_1060_busy_reader_parses_only_un_targeted_get_message() {
             message_id: "m1".into(),
             tool_call_id: None,
             offset: None,
+            thinking_offset: None,
             limit: None
         })
     );

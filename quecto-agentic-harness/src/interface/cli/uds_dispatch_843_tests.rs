@@ -538,6 +538,7 @@ async fn forward_get_message_preserves_id_and_range_on_child_wire() {
             message_id: crate::domain::ids::MessageId::from("m1"),
             tool_call_id: Some(crate::domain::ids::ToolCallId::from("call-large")),
             offset: Some(4096),
+            thinking_offset: None,
             limit: Some(8192),
         },
     )
@@ -571,6 +572,7 @@ async fn forward_get_message_no_registry_is_error_event() {
             message_id: crate::domain::ids::MessageId::from("m1"),
             tool_call_id: None,
             offset: None,
+            thinking_offset: None,
             limit: None,
         },
     )
@@ -596,6 +598,7 @@ async fn forward_get_message_unknown_agent_is_error_event() {
             message_id: crate::domain::ids::MessageId::from("m1"),
             tool_call_id: None,
             offset: None,
+            thinking_offset: None,
             limit: None,
         },
     )

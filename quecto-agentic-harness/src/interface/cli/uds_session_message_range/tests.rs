@@ -11,7 +11,7 @@ fn ranged_get_message_accounts_for_long_request_id() {
     let msg = Message::assistant(body, vec![]);
     let request_id = "r".repeat(LONG_REQUEST_ID_REGRESSION_LEN);
 
-    let data = message_to_json_range_for_response(&msg, Some(0), None, Some(&request_id));
+    let data = message_to_json_range_for_response(&msg, Some(0), None, None, Some(&request_id));
     let line = AgentEvent::ok(Some(&request_id), "get_message", Some(data.clone())).to_json_line();
 
     assert!(
@@ -80,7 +80,7 @@ fn ranged_get_message_preserves_visible_thinking_for_recovery() {
         signature: "private".into(),
     });
 
-    let data = message_to_json_range_for_response(&msg, Some(0), Some(1024), Some("recover"));
+    let data = message_to_json_range_for_response(&msg, Some(0), None, Some(1024), Some("recover"));
 
     assert_eq!(data["content"], "answer");
     assert_eq!(data["thinking"][0]["kind"], "text");
@@ -99,7 +99,7 @@ fn ranged_get_message_with_huge_thinking_returns_recoverable_thinking_page() {
         signature: "private".into(),
     });
 
-    let data = message_to_json_range_for_response(&msg, Some(0), Some(64), Some("recover"));
+    let data = message_to_json_range_for_response(&msg, Some(0), None, Some(64), Some("recover"));
     let line = AgentEvent::ok(Some("recover"), "get_message", Some(data.clone())).to_json_line();
 
     assert!(
@@ -132,8 +132,13 @@ fn ranged_get_message_reassembles_oversized_visible_thinking() {
     let mut offset = 0usize;
     let mut recovered = String::new();
     loop {
-        let data =
-            message_to_json_range_for_response(&msg, Some(offset), Some(64), Some("recover"));
+        let data = message_to_json_range_for_response(
+            &msg,
+            Some(0),
+            Some(offset),
+            Some(64),
+            Some("recover"),
+        );
         let line =
             AgentEvent::ok(Some("recover"), "get_message", Some(data.clone())).to_json_line();
         assert!(line.len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
@@ -162,7 +167,7 @@ fn ranged_get_message_with_huge_thinking_fits_protocol_frame() {
         signature: "private".into(),
     });
 
-    let data = message_to_json_range_for_response(&msg, Some(0), None, Some("recover"));
+    let data = message_to_json_range_for_response(&msg, Some(0), None, None, Some("recover"));
     let line = AgentEvent::ok(Some("recover"), "get_message", Some(data)).to_json_line();
 
     assert!(
@@ -183,7 +188,7 @@ fn unranged_get_message_with_huge_thinking_falls_back_to_bounded_page() {
         signature: "private".into(),
     });
 
-    let data = message_to_json_range_for_response(&msg, None, None, Some("recover"));
+    let data = message_to_json_range_for_response(&msg, None, None, None, Some("recover"));
     let line = AgentEvent::ok(Some("recover"), "get_message", Some(data.clone())).to_json_line();
 
     assert!(line.len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
@@ -200,7 +205,7 @@ fn ranged_get_message_with_huge_thinking_still_makes_progress() {
         signature: "private".into(),
     });
 
-    let data = message_to_json_range_for_response(&msg, Some(0), Some(6), Some("recover"));
+    let data = message_to_json_range_for_response(&msg, Some(0), None, Some(6), Some("recover"));
 
     assert!(data["nextOffset"].as_u64().unwrap() > 0);
     assert_ne!(data["hasMoreContent"].as_bool(), Some(true));

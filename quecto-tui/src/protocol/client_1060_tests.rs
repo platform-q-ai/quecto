@@ -152,6 +152,7 @@ fn get_message_command_is_available_for_on_demand_lookup() {
             agent_id: None,
             tool_call_id: None,
             offset: None,
+            thinking_offset: None,
             limit: None,
         },
         Command::GetSessionStats { id: None },

@@ -208,7 +208,7 @@ pub fn message_to_json_range(
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> serde_json::Value {
-    message_to_json_range_for_response(msg, offset, limit, None)
+    message_to_json_range_for_response(msg, offset, None, limit, None)
 }
 
 pub fn tool_call_arguments_to_json_range_for_response(
@@ -261,10 +261,11 @@ pub fn tool_call_arguments_to_json_range_for_response(
 pub fn message_to_json_range_for_response(
     msg: &Message,
     offset: Option<usize>,
+    thinking_offset: Option<usize>,
     limit: Option<usize>,
     request_id: Option<&str>,
 ) -> serde_json::Value {
-    if offset.is_none() && limit.is_none() {
+    if offset.is_none() && thinking_offset.is_none() && limit.is_none() {
         let value = super::message_to_json(msg);
         if data_fits_frame(&value, request_id) {
             return value;
@@ -282,7 +283,7 @@ pub fn message_to_json_range_for_response(
         start,
         end,
         content_len,
-        offset.unwrap_or(0),
+        thinking_offset.unwrap_or_else(|| offset.unwrap_or(0)),
         request_id,
     )
 }

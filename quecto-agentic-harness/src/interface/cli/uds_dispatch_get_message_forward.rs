@@ -6,6 +6,7 @@ pub(super) struct ForwardGetMessage {
     pub(super) message_id: MessageId,
     pub(super) tool_call_id: Option<ToolCallId>,
     pub(super) offset: Option<usize>,
+    pub(super) thinking_offset: Option<usize>,
     pub(super) limit: Option<usize>,
 }
 
@@ -38,6 +39,9 @@ pub(super) async fn forward_subagent_get_message(
     }
     if let Some(offset) = req.offset {
         cmd["offset"] = serde_json::json!(offset);
+    }
+    if let Some(thinking_offset) = req.thinking_offset {
+        cmd["thinkingOffset"] = serde_json::json!(thinking_offset);
     }
     if let Some(limit) = req.limit {
         cmd["limit"] = serde_json::json!(limit);

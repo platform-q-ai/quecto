@@ -14,7 +14,7 @@ fn message_to_json_range_returns_full_message_without_range_args() {
 #[test]
 fn message_to_json_range_clamps_to_utf8_boundaries() {
     let msg = Message::user("aé日z");
-    let json = message_to_json_range_for_response(&msg, Some(2), Some(4), Some("req"));
+    let json = message_to_json_range_for_response(&msg, Some(2), None, Some(4), Some("req"));
 
     assert_eq!(json["offset"], 1);
     assert_eq!(json["content"], "é");
