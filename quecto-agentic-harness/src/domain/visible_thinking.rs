@@ -12,7 +12,7 @@ pub fn append_visible_thinking(
     append_visible_thinking_with_limit(target, fragment, MAX_VISIBLE_THINKING_BYTES, label)
 }
 
-pub fn append_visible_thinking_with_limit(
+fn append_visible_thinking_with_limit(
     target: &mut String,
     fragment: &str,
     limit: usize,
