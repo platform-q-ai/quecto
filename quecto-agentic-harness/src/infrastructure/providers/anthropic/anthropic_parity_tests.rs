@@ -269,7 +269,7 @@ fn test_assistant_message_with_redacted_thinking_block() {
 }
 
 #[test]
-fn test_thinking_block_empty_signature_falls_back_to_text() {
+fn test_thinking_block_empty_signature_is_not_replayed_as_text() {
     use crate::domain::message::ThinkingBlock;
     let mut msg = Message::assistant("response text", vec![]);
     msg.thinking_blocks.push(ThinkingBlock::Normal {
@@ -278,16 +278,20 @@ fn test_thinking_block_empty_signature_falls_back_to_text() {
     });
     let json = AnthropicProvider::build_assistant_message(&msg, false);
     let content = json["content"].as_array().unwrap();
-    // Should be a text block, not a thinking block
     assert!(
         content.iter().all(|b| b["type"] != "thinking"),
-        "should NOT have thinking block"
+        "unsigned thinking must not be replayed as Anthropic thinking"
     );
-    let text_blocks: Vec<_> = content.iter().filter(|b| b["type"] == "text").collect();
     assert!(
-        text_blocks
+        content
             .iter()
-            .any(|b| b["text"].as_str().unwrap() == "some reasoning")
+            .all(|b| b["text"].as_str() != Some("some reasoning")),
+        "unsigned provider thinking must not be replayed as assistant answer text"
+    );
+    assert!(
+        content
+            .iter()
+            .any(|b| b["type"] == "text" && b["text"] == "response text")
     );
 }
 

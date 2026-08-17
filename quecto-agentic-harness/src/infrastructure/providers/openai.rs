@@ -206,6 +206,18 @@ impl OpenAiProvider {
 
         let message = &choice["message"];
         let content = message["content"].as_str().map(|s| s.to_string());
+        let thinking_blocks = message
+            .get("reasoning")
+            .or_else(|| message.get("reasoning_content"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|thinking| {
+                vec![crate::domain::message::ThinkingBlock::Normal {
+                    thinking: thinking.to_string(),
+                    signature: String::new(),
+                }]
+            })
+            .unwrap_or_default();
 
         let mut tool_calls = Vec::new();
         if let Some(tcs) = message["tool_calls"].as_array() {
@@ -244,7 +256,7 @@ impl OpenAiProvider {
             tool_calls,
             usage,
             stop_reason: None,
-            thinking_blocks: vec![],
+            thinking_blocks,
         })
     }
 }

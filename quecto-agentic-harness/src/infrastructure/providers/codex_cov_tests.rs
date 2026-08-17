@@ -306,6 +306,51 @@ data: [DONE]
     assert_eq!(resp.thinking_blocks.len(), 1);
 }
 
+#[tokio::test]
+async fn codex_stream_emits_reasoning_summary_deltas_live() {
+    use crate::domain::provider::StreamEvent;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/stream"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"data: {"type":"response.reasoning_summary_text.delta","delta":"think"}
+data: {"type":"response.output_text.delta","delta":"answer"}
+data: {"type":"response.completed","response":{"status":"completed"}}
+"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/stream", server.uri()))
+        .send()
+        .await
+        .unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    CodexProvider::pump_sse_response_for_test(response, tx).await;
+
+    assert!(matches!(rx.recv().await.unwrap(), StreamEvent::ThinkingDelta(t) if t == "think"));
+    assert!(matches!(rx.recv().await.unwrap(), StreamEvent::TextDelta(t) if t == "answer"));
+}
+
+#[test]
+fn parse_sse_does_not_duplicate_streamed_reasoning_when_done_repeats_summary() {
+    let sse = r#"data: {"type":"response.reasoning_summary_text.delta","delta":"same"}
+data: {"type":"response.output_item.done","item":{"type":"reasoning","summary":"same"}}
+data: {"type":"response.completed","response":{"status":"completed"}}
+"#;
+    let resp = CodexProvider::parse_sse_response(sse).unwrap();
+    match &resp.thinking_blocks[0] {
+        crate::domain::message::ThinkingBlock::Normal { thinking, .. } => {
+            assert_eq!(thinking, "same");
+        }
+        other => panic!("unexpected thinking block: {other:?}"),
+    }
+}
+
 // --- parse_sse_response: non-`data:` lines are skipped ---
 
 #[test]

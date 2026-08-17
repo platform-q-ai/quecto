@@ -520,6 +520,15 @@ impl CodexProvider {
         super::sse_common::pump_sse(&mut response, &tx, &mut handler).await;
     }
 
+    #[cfg(test)]
+    pub(crate) async fn pump_sse_response_for_test(
+        mut response: reqwest::Response,
+        tx: tokio::sync::mpsc::Sender<StreamEvent>,
+    ) {
+        let mut handler = CodexSseHandler::new();
+        super::sse_common::pump_sse(&mut response, &tx, &mut handler).await;
+    }
+
     /// Public accessor for `parse_sse_response` (for BDD/integration tests).
     #[cfg(any(test, feature = "test-support"))]
     pub fn parse_sse_response_public(raw: &str) -> Result<LlmResponse, DomainError> {
@@ -646,10 +655,19 @@ impl SseHandler for CodexSseHandler {
                 let _ = tx.send(StreamEvent::Error(error)).await;
                 return SseLineOutcome::Done;
             }
-            if event["type"].as_str() == Some("response.output_text.delta") {
-                if let Some(delta) = event["delta"].as_str() {
-                    let _ = tx.send(StreamEvent::TextDelta(delta.to_string())).await;
+            match event["type"].as_str() {
+                Some("response.output_text.delta") => {
+                    if let Some(delta) = event["delta"].as_str() {
+                        let _ = tx.send(StreamEvent::TextDelta(delta.to_string())).await;
+                    }
                 }
+                Some("response.reasoning_summary_text.delta")
+                | Some("response.reasoning.summary_text.delta") => {
+                    if let Some(delta) = event["delta"].as_str() {
+                        let _ = tx.send(StreamEvent::ThinkingDelta(delta.to_string())).await;
+                    }
+                }
+                _ => {}
             }
             self.acc.handle_event(&event);
             if event["type"].as_str() == Some("response.completed") {

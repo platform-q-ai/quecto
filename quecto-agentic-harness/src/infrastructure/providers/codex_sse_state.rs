@@ -11,6 +11,7 @@ pub(super) struct SseAccumulator {
     pub(super) usage: Option<UsageInfo>,
     pub(super) stop_reason: Option<StopReason>,
     pub(super) reasoning: String,
+    streamed_reasoning: bool,
 }
 
 pub(super) fn append_reasoning_summary(item: &Value, reasoning: &mut String) {
@@ -91,14 +92,17 @@ impl SseAccumulator {
             | Some("response.reasoning.summary_text.delta") => {
                 if let Some(delta) = event["delta"].as_str() {
                     self.reasoning.push_str(delta);
+                    self.streamed_reasoning = true;
                 }
             }
             Some("response.output_item.done") => {
-                if let Some(item) = event
-                    .get("item")
-                    .filter(|i| i["type"].as_str() == Some("reasoning"))
-                {
-                    append_reasoning_summary(item, &mut self.reasoning);
+                if !self.streamed_reasoning {
+                    if let Some(item) = event
+                        .get("item")
+                        .filter(|i| i["type"].as_str() == Some("reasoning"))
+                    {
+                        append_reasoning_summary(item, &mut self.reasoning);
+                    }
                 }
             }
             Some("response.refusal.delta") => {
