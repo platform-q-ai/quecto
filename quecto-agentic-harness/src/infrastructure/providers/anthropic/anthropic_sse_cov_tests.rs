@@ -534,15 +534,12 @@ fn thinking_and_signature_accumulation_are_capped() {
 
     let mut acc = SseAccumulator::default();
     acc.handle_block_start(&serde_json::json!({"content_block": {"type": "thinking"}}));
-    acc.handle_block_delta(
-        &serde_json::json!({"delta": {"type": "signature_delta", "signature": oversized}}),
-    )
-    .unwrap();
-    acc.handle_block_stop();
-    assert!(
-        acc.thinking_blocks().is_empty(),
-        "oversized signature deltas are not persisted without thinking text"
-    );
+    let err = acc
+        .handle_block_delta(
+            &serde_json::json!({"delta": {"type": "signature_delta", "signature": oversized}}),
+        )
+        .unwrap_err();
+    assert!(err.to_string().contains("thinking signature exceeds"));
 }
 
 #[tokio::test]

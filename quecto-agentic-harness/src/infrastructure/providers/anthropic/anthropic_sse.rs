@@ -124,12 +124,12 @@ impl SseAccumulator {
             Some("signature_delta") => {
                 // #437-6: Capture thinking block signature for multi-turn replay.
                 if let Some(sig) = delta["signature"].as_str() {
-                    let _ = append_with_limit(
+                    append_with_limit(
                         &mut self.current_thinking_signature,
                         sig,
                         MAX_VISIBLE_THINKING_BYTES,
                         "Anthropic SSE thinking signature",
-                    );
+                    )?;
                 }
             }
             _ => {}
