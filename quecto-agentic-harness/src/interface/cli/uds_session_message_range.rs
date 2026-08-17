@@ -1,5 +1,6 @@
 use crate::domain::message::Message;
 use crate::interface::cli::protocol::AgentEvent;
+use crate::interface::cli::uds_thinking_view::VisibleThinkingBlocksView;
 
 #[cfg(test)]
 #[path = "uds_session_message_range/tests.rs"]
@@ -36,7 +37,7 @@ fn tool_calls_json(msg: &Message) -> serde_json::Value {
 }
 
 fn message_to_json_with_content(msg: &Message, content: &str) -> serde_json::Value {
-    serde_json::json!({
+    let mut value = serde_json::json!({
         "id": msg.id().to_string(),
         "role": super::role_wire_name(&msg.role),
         "content": content,
@@ -45,7 +46,12 @@ fn message_to_json_with_content(msg: &Message, content: &str) -> serde_json::Val
         "toolName": msg.tool_name,
         "isError": msg.is_error,
         "collapsed": msg.is_collapsed,
-    })
+    });
+    if !msg.thinking_blocks.is_empty() {
+        value["thinking"] = serde_json::to_value(VisibleThinkingBlocksView(&msg.thinking_blocks))
+            .expect("visible thinking serializes");
+    }
+    value
 }
 
 fn one_char_end(s: &str, start: usize) -> usize {

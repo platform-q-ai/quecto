@@ -24,6 +24,9 @@ pub(crate) const MAX_OPENAI_SSE_CONTENT_BYTES: usize = 8 * 1024 * 1024;
 /// adversarial tool-call argument accumulator from growing without bound.
 pub(crate) const MAX_OPENAI_SSE_TOOL_ARGUMENT_BYTES: usize = 2 * 1024 * 1024;
 
+/// Maximum accumulated display-safe reasoning bytes for one streaming response.
+pub(crate) const MAX_OPENAI_SSE_REASONING_BYTES: usize = MAX_OPENAI_SSE_CONTENT_BYTES;
+
 /// Parse an SSE text stream into an assembled `LlmResponse`.
 ///
 /// Captures content deltas, tool-call deltas, and the final `usage` chunk

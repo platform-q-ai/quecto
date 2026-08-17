@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
 use crate::domain::message::{LlmResponse, StopReason, ThinkingBlock, ToolCall, UsageInfo};
+use crate::infrastructure::providers::openai::openai_sse_parser::{
+    MAX_OPENAI_SSE_REASONING_BYTES, append_with_limit,
+};
 use serde_json::Value;
 
 #[derive(Default)]
@@ -46,7 +49,14 @@ fn reasoning_ends_with_summary(reasoning: &str, summary: &str) -> bool {
 
 #[cfg(test)]
 pub(super) fn append_reasoning_summary(item: &Value, reasoning: &mut String) {
-    reasoning.push_str(&collect_reasoning_summary(item));
+    let _ = append_reasoning_with_limit(reasoning, &collect_reasoning_summary(item));
+}
+
+fn append_reasoning_with_limit(
+    reasoning: &mut String,
+    text: &str,
+) -> Result<(), crate::domain::error::DomainError> {
+    append_with_limit(reasoning, text, MAX_OPENAI_SSE_REASONING_BYTES, "reasoning")
 }
 
 impl SseAccumulator {
@@ -107,7 +117,7 @@ impl SseAccumulator {
             Some("response.reasoning_summary_text.delta")
             | Some("response.reasoning.summary_text.delta") => {
                 if let Some(delta) = event["delta"].as_str() {
-                    self.reasoning.push_str(delta);
+                    let _ = append_reasoning_with_limit(&mut self.reasoning, delta);
                 }
             }
             Some("response.output_item.done") => {
@@ -119,7 +129,7 @@ impl SseAccumulator {
                     if !summary.is_empty()
                         && !reasoning_ends_with_summary(&self.reasoning, &summary)
                     {
-                        self.reasoning.push_str(&summary);
+                        let _ = append_reasoning_with_limit(&mut self.reasoning, &summary);
                     }
                 }
             }

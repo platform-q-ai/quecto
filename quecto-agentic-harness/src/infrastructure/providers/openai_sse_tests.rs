@@ -154,3 +154,29 @@ async fn handler_rejects_over_limit_tool_arguments_without_done() {
         other => panic!("unexpected event: {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn handler_rejects_over_limit_reasoning_without_done() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    let mut handler = OpenAiSseHandler::new();
+    let exact = "a".repeat(MAX_OPENAI_SSE_CONTENT_BYTES);
+    handler
+        .process_line(
+            &format!(
+                "data: {{\"choices\":[{{\"delta\":{{\"reasoning\":{}}}}}]}}",
+                serde_json::to_string(&exact).unwrap()
+            ),
+            &tx,
+        )
+        .await;
+    let _ = rx.recv().await;
+    let outcome = handler
+        .process_line(r#"data: {"choices":[{"delta":{"reasoning":"b"}}]}"#, &tx)
+        .await;
+    assert!(matches!(outcome, SseLineOutcome::Done));
+    match rx.recv().await.unwrap() {
+        StreamEvent::Error(err) => assert!(err.contains("reasoning")),
+        other => panic!("unexpected event: {other:?}"),
+    }
+    assert!(rx.try_recv().is_err());
+}

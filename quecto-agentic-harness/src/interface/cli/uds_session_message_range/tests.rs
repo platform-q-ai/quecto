@@ -69,3 +69,21 @@ fn tool_call_argument_range_reassembles_utf8_payload_with_bounded_frames() {
 
     assert_eq!(recovered, arguments);
 }
+
+#[test]
+fn ranged_get_message_preserves_visible_thinking_for_recovery() {
+    use crate::domain::message::ThinkingBlock;
+
+    let mut msg = Message::assistant("answer", vec![]);
+    msg.thinking_blocks.push(ThinkingBlock::Normal {
+        thinking: "visible reasoning".into(),
+        signature: "private".into(),
+    });
+
+    let data = message_to_json_range_for_response(&msg, Some(0), Some(1024), Some("recover"));
+
+    assert_eq!(data["content"], "answer");
+    assert_eq!(data["thinking"][0]["kind"], "text");
+    assert_eq!(data["thinking"][0]["text"], "visible reasoning");
+    assert!(!serde_json::to_string(&data).unwrap().contains("private"));
+}
