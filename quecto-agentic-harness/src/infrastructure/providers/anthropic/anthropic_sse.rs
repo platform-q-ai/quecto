@@ -6,6 +6,9 @@
 use crate::domain::message::{LlmResponse, StopReason, ThinkingBlock, ToolCall, UsageInfo};
 use crate::domain::provider::StreamEvent;
 use crate::domain::tool::ToolDefinition;
+use crate::infrastructure::providers::openai::openai_sse_parser::{
+    MAX_OPENAI_SSE_REASONING_BYTES, append_with_limit,
+};
 
 /// Accumulates Anthropic SSE events into a final [`LlmResponse`].
 #[derive(Default)]
@@ -109,13 +112,23 @@ impl SseAccumulator {
             }
             Some("thinking_delta") => {
                 if let Some(thinking) = delta["thinking"].as_str() {
-                    self.current_thinking.push_str(thinking);
+                    let _ = append_with_limit(
+                        &mut self.current_thinking,
+                        thinking,
+                        MAX_OPENAI_SSE_REASONING_BYTES,
+                        "Anthropic SSE thinking",
+                    );
                 }
             }
             Some("signature_delta") => {
                 // #437-6: Capture thinking block signature for multi-turn replay.
                 if let Some(sig) = delta["signature"].as_str() {
-                    self.current_thinking_signature.push_str(sig);
+                    let _ = append_with_limit(
+                        &mut self.current_thinking_signature,
+                        sig,
+                        MAX_OPENAI_SSE_REASONING_BYTES,
+                        "Anthropic SSE thinking signature",
+                    );
                 }
             }
             _ => {}
@@ -249,6 +262,9 @@ pub(super) fn stream_event_from_delta(delta: &serde_json::Value) -> Option<Strea
         }
         Some("thinking_delta") => {
             let thinking = delta["thinking"].as_str().filter(|s| !s.is_empty())?;
+            if thinking.len() > MAX_OPENAI_SSE_REASONING_BYTES {
+                return None;
+            }
             Some(StreamEvent::ThinkingDelta(thinking.to_string()))
         }
         Some("input_json_delta") => {

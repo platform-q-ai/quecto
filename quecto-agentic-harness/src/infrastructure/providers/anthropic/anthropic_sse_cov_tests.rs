@@ -514,3 +514,37 @@ fn parse_sse_response_empty_max_tokens_stop_preserves_stop_reason() {
         Some(crate::domain::message::StopReason::MaxTokens)
     );
 }
+
+#[test]
+fn thinking_and_signature_accumulation_are_capped() {
+    let oversized = "x".repeat(
+        crate::infrastructure::providers::openai::openai_sse_parser::MAX_OPENAI_SSE_REASONING_BYTES
+            + 1,
+    );
+    let mut acc = SseAccumulator::default();
+    acc.handle_block_start(&serde_json::json!({"content_block": {"type": "thinking"}}));
+    acc.handle_block_delta(
+        &serde_json::json!({"delta": {"type": "thinking_delta", "thinking": oversized}}),
+    );
+    acc.handle_block_delta(
+        &serde_json::json!({"delta": {"type": "signature_delta", "signature": oversized}}),
+    );
+    acc.handle_block_stop();
+    assert!(
+        acc.thinking_blocks().is_empty(),
+        "oversized thinking/signature deltas must not be accumulated or persisted"
+    );
+}
+
+#[test]
+fn oversized_thinking_delta_does_not_emit_live_event() {
+    let oversized = "x".repeat(
+        crate::infrastructure::providers::openai::openai_sse_parser::MAX_OPENAI_SSE_REASONING_BYTES
+            + 1,
+    );
+    let delta = serde_json::json!({"type": "thinking_delta", "thinking": oversized});
+    assert!(
+        stream_event_from_delta(&delta).is_none(),
+        "oversized live thinking delta must not bypass the accumulator cap"
+    );
+}
