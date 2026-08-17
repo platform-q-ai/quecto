@@ -581,7 +581,7 @@ mod app_bottom_spacing_tests;
 #[path = "app_clipboard_tests.rs"]
 mod app_clipboard_tests;
 #[cfg(test)]
-#[path = "app_conversation_characterization_tests.rs"]
+#[path = "app_conversation_characterization_tests/mod.rs"]
 mod app_conversation_characterization_tests;
 #[cfg(test)]
 #[path = "app_cov_tests.rs"]

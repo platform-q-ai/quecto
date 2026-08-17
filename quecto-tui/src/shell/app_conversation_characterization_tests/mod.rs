@@ -698,3 +698,6 @@ async fn a_trimmed_page_advertising_more_history_stays_open_to_later_snapshots()
         "an unlatched trimmed prefix must accept a later snapshot:\n{frame}"
     );
 }
+
+#[cfg(test)]
+mod thinking_recovery_tests;

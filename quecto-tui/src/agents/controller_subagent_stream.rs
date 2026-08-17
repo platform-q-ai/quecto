@@ -508,6 +508,7 @@ impl App {
                         .then_some(expected_content_len)
                         .flatten()
                         .and_then(|n| usize::try_from(n).ok()),
+                    thinking: String::new(),
                     thinking_offset: 0,
                 },
             );
@@ -524,7 +525,6 @@ impl App {
             });
         }
     }
-
     /// Seed a just-selected sub-agent's main-pane `workflow_bar` from the
     /// registry snapshot (`subagent_local[id].info.workflow`) the left-panel
     /// cells already render, so the bar appears on select without waiting for a

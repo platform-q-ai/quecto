@@ -8,6 +8,7 @@ pub(crate) struct PendingMessageRecovery {
     pub(crate) content: String,
     pub(crate) offset: usize,
     pub(crate) content_len: Option<usize>,
+    pub(crate) thinking: String,
     pub(crate) thinking_offset: usize,
 }
 
@@ -99,6 +100,7 @@ impl App {
                         .then_some(expected_content_len)
                         .flatten()
                         .and_then(|n| usize::try_from(n).ok()),
+                    thinking: String::new(),
                     thinking_offset: 0,
                 },
             );
@@ -165,6 +167,10 @@ impl App {
             self.abandon_recovery_batch(&pending.batch_id);
             return;
         }
+        let mut thinking = pending.thinking;
+        for page in crate::protocol::presentation_payloads::recovered_message(&data).thinking() {
+            thinking.push_str(&page);
+        }
         let update = crate::protocol::range_accumulator::RangeAccumulator::new_with_expected_len(
             pending.content,
             pending.offset,
@@ -202,7 +208,8 @@ impl App {
                         content,
                         offset: next_offset,
                         content_len,
-                        thinking_offset: pending.thinking_offset,
+                        thinking,
+                        thinking_offset: next_thinking_offset.unwrap_or(pending.thinking_offset),
                     },
                 );
                 self.send_command(Command::GetMessage {
@@ -211,7 +218,7 @@ impl App {
                     agent_id,
                     tool_call_id: None,
                     offset: Some(next_offset),
-                    thinking_offset: Some(pending.thinking_offset),
+                    thinking_offset: Some(next_thinking_offset.unwrap_or(pending.thinking_offset)),
                     limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
                 });
                 return;
@@ -244,6 +251,7 @@ impl App {
                     content: accumulated,
                     offset: pending.offset,
                     content_len: pending.content_len,
+                    thinking,
                     thinking_offset: next_thinking_offset,
                 },
             );
@@ -260,6 +268,9 @@ impl App {
         }
         let mut data = data;
         data["content"] = serde_json::Value::String(accumulated);
+        if !thinking.is_empty() {
+            data["thinking"] = serde_json::json!([{ "kind": "text", "text": thinking }]);
+        }
         data["hasMoreContent"] = serde_json::Value::Bool(false);
         let Some(batch) = self
             .ac_mut()
