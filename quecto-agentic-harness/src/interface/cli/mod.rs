@@ -148,7 +148,6 @@ mod uds_snapshots;
 mod uds_socket;
 #[cfg(test)]
 mod uds_thinking_1231_tests;
-mod uds_thinking_view;
 mod uds_tool_intercept;
 pub mod uds_wire;
 mod uds_workflow_nudge;

@@ -1,6 +1,8 @@
 use crate::domain::message::Message;
+use crate::domain::visible_thinking::{
+    VisibleThinkingBlocksView, visible_thinking_len, visible_thinking_page,
+};
 use crate::interface::cli::protocol::AgentEvent;
-use crate::interface::cli::uds_thinking_view::VisibleThinkingBlocksView;
 
 #[cfg(test)]
 #[path = "uds_session_message_range/tests.rs"]
@@ -66,75 +68,61 @@ fn one_char_end(s: &str, start: usize) -> usize {
         .unwrap_or(s.len())
 }
 
-fn visible_thinking_text(msg: &Message) -> String {
-    use crate::domain::message::ThinkingBlock;
-
-    let mut out = String::new();
-    for block in &msg.thinking_blocks {
-        if let ThinkingBlock::Normal { thinking, .. } = block {
-            out.push_str(thinking);
-        }
-    }
-    out
+fn clear_thinking_page(value: &mut serde_json::Value) {
+    let object = value.as_object_mut().expect("object");
+    object.remove("thinking");
+    object.remove("thinkingOffset");
+    object.remove("nextThinkingOffset");
+    object.remove("thinkingLength");
+    object.remove("hasMoreThinking");
 }
 
 fn add_bounded_thinking_page(
     value: &mut serde_json::Value,
-    thinking: &str,
+    msg: &Message,
     start: usize,
     request_id: Option<&str>,
 ) {
-    if thinking.is_empty() || start >= thinking.len() {
+    let thinking_len = visible_thinking_len(&msg.thinking_blocks);
+    if thinking_len == 0 || start >= thinking_len {
         return;
     }
 
-    let start = nearest_char_boundary_at_or_before(thinking, start);
-    let mut end = thinking.len();
-    value["thinking"] = serde_json::json!([{ "kind": "text", "text": &thinking[start..end] }]);
+    let start = start.min(thinking_len);
+    let mut end = thinking_len;
+    value["thinking"] =
+        serde_json::to_value(visible_thinking_page(&msg.thinking_blocks, start, end))
+            .expect("visible thinking page serializes");
     if data_fits_frame(value, request_id) {
         value["thinkingOffset"] = serde_json::json!(start);
         value["nextThinkingOffset"] = serde_json::json!(end);
-        value["thinkingLength"] = serde_json::json!(thinking.len());
-        value["hasMoreThinking"] = serde_json::json!(end < thinking.len());
+        value["thinkingLength"] = serde_json::json!(thinking_len);
+        value["hasMoreThinking"] = serde_json::json!(end < thinking_len);
         return;
     }
 
     while end > start {
         let midpoint = start + (end - start) / 2;
-        end = nearest_char_boundary_at_or_before(thinking, midpoint);
-        if end == start && start < thinking.len() {
-            end = one_char_end(thinking, start);
+        end = midpoint;
+        if end == start && start < thinking_len {
+            end = (start + 1).min(thinking_len);
         }
-        value["thinking"] = serde_json::json!([{ "kind": "text", "text": &thinking[start..end] }]);
+        value["thinking"] =
+            serde_json::to_value(visible_thinking_page(&msg.thinking_blocks, start, end))
+                .expect("visible thinking page serializes");
         value["thinkingOffset"] = serde_json::json!(start);
         value["nextThinkingOffset"] = serde_json::json!(end);
-        value["thinkingLength"] = serde_json::json!(thinking.len());
-        value["hasMoreThinking"] = serde_json::json!(end < thinking.len());
+        value["thinkingLength"] = serde_json::json!(thinking_len);
+        value["hasMoreThinking"] = serde_json::json!(end < thinking_len);
         if data_fits_frame(value, request_id) {
             return;
         }
-        if end <= 1 {
+        if end <= start + 1 {
             break;
         }
     }
 
-    value.as_object_mut().expect("object").remove("thinking");
-    value
-        .as_object_mut()
-        .expect("object")
-        .remove("thinkingOffset");
-    value
-        .as_object_mut()
-        .expect("object")
-        .remove("nextThinkingOffset");
-    value
-        .as_object_mut()
-        .expect("object")
-        .remove("thinkingLength");
-    value
-        .as_object_mut()
-        .expect("object")
-        .remove("hasMoreThinking");
+    clear_thinking_page(value);
 }
 
 fn ranged_value(
@@ -146,12 +134,7 @@ fn ranged_value(
     request_id: Option<&str>,
 ) -> serde_json::Value {
     let mut value = message_to_json_with_content_and_thinking(msg, &msg.content[start..end], false);
-    add_bounded_thinking_page(
-        &mut value,
-        &visible_thinking_text(msg),
-        thinking_start,
-        request_id,
-    );
+    add_bounded_thinking_page(&mut value, msg, thinking_start, request_id);
     value["offset"] = serde_json::json!(start);
     value["nextOffset"] = serde_json::json!(end);
     value["contentLength"] = serde_json::json!(content_len);

@@ -6,6 +6,7 @@
 use crate::domain::message::{LlmResponse, StopReason, ThinkingBlock, ToolCall, UsageInfo};
 use crate::domain::provider::StreamEvent;
 use crate::domain::tool::ToolDefinition;
+use crate::domain::visible_thinking::append_visible_thinking;
 use crate::infrastructure::providers::openai::openai_sse_parser::{
     MAX_OPENAI_SSE_REASONING_BYTES, append_with_limit,
 };
@@ -98,7 +99,6 @@ impl SseAccumulator {
     }
 
     pub(super) fn handle_block_delta(&mut self, chunk: &serde_json::Value) {
-        let _ = self.try_stream_event_from_block_delta(chunk);
         let delta = &chunk["delta"];
         match delta["type"].as_str() {
             Some("text_delta") => {
@@ -113,10 +113,9 @@ impl SseAccumulator {
             }
             Some("thinking_delta") => {
                 if let Some(thinking) = delta["thinking"].as_str() {
-                    let _ = append_with_limit(
+                    let _ = append_visible_thinking(
                         &mut self.current_thinking,
                         thinking,
-                        MAX_OPENAI_SSE_REASONING_BYTES,
                         "Anthropic SSE thinking",
                     );
                 }
@@ -265,8 +264,12 @@ impl SseAccumulator {
                 .map(|s| StreamEvent::TextDelta(s.to_string())),
             Some("thinking_delta") => {
                 let thinking = delta["thinking"].as_str().filter(|s| !s.is_empty())?;
-                if self.current_thinking.len().saturating_add(thinking.len())
-                    > MAX_OPENAI_SSE_REASONING_BYTES
+                if append_visible_thinking(
+                    &mut self.current_thinking,
+                    thinking,
+                    "Anthropic SSE thinking",
+                )
+                .is_err()
                 {
                     return None;
                 }
@@ -291,7 +294,8 @@ pub(super) fn stream_event_from_delta(delta: &serde_json::Value) -> Option<Strea
         }
         Some("thinking_delta") => {
             let thinking = delta["thinking"].as_str().filter(|s| !s.is_empty())?;
-            if thinking.len() > MAX_OPENAI_SSE_REASONING_BYTES {
+            let mut capped = String::new();
+            if append_visible_thinking(&mut capped, thinking, "Anthropic SSE thinking").is_err() {
                 return None;
             }
             Some(StreamEvent::ThinkingDelta(thinking.to_string()))

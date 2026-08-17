@@ -4,7 +4,7 @@ use crate::domain::agent::AgentResult;
 use crate::domain::message::{Message, Role};
 
 use super::protocol::{SessionState, SessionStats, TokenStats};
-use super::uds_thinking_view::VisibleThinkingBlocksView;
+use crate::domain::visible_thinking::VisibleThinkingBlocksView;
 
 // ─── Session state tracker ────────────────────────────────────────────────────
 

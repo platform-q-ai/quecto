@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
 use crate::domain::message::{LlmResponse, StopReason, ThinkingBlock, ToolCall, UsageInfo};
-use crate::infrastructure::providers::openai::openai_sse_parser::{
-    MAX_OPENAI_SSE_REASONING_BYTES, append_with_limit,
-};
+use crate::domain::visible_thinking::append_visible_thinking;
 use serde_json::Value;
 
 #[derive(Default)]
@@ -56,7 +54,7 @@ pub(super) fn append_reasoning_with_limit(
     reasoning: &mut String,
     text: &str,
 ) -> Result<(), crate::domain::error::DomainError> {
-    append_with_limit(reasoning, text, MAX_OPENAI_SSE_REASONING_BYTES, "reasoning")
+    append_visible_thinking(reasoning, text, "Codex SSE reasoning")
 }
 
 impl SseAccumulator {

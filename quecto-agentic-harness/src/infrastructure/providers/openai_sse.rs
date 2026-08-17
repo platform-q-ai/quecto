@@ -8,9 +8,8 @@ use crate::domain::provider::StreamEvent;
 use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome, pump_sse};
 
 use super::OpenAiProvider;
-use super::openai_sse_parser::{
-    MAX_OPENAI_SSE_CONTENT_BYTES, MAX_OPENAI_SSE_REASONING_BYTES, append_with_limit,
-};
+use super::openai_sse_parser::{MAX_OPENAI_SSE_CONTENT_BYTES, append_with_limit};
+use crate::domain::visible_thinking::append_visible_thinking;
 
 /// SSE line handler for OpenAI chat completions.
 pub(crate) struct OpenAiSseHandler {
@@ -91,11 +90,10 @@ impl SseHandler for OpenAiSseHandler {
                         .or_else(|| delta.get("reasoning_content"))
                         .and_then(|v| v.as_str())
                     {
-                        if let Err(err) = append_with_limit(
+                        if let Err(err) = append_visible_thinking(
                             &mut self.reasoning,
                             text,
-                            MAX_OPENAI_SSE_REASONING_BYTES,
-                            "reasoning",
+                            "OpenAI SSE reasoning",
                         ) {
                             let _ = tx.send(StreamEvent::Error(err.to_string())).await;
                             return SseLineOutcome::Done;

@@ -128,6 +128,9 @@ fn ranged_get_message_reassembles_oversized_visible_thinking() {
         thinking: visible.clone(),
         signature: "private".into(),
     });
+    msg.thinking_blocks.push(ThinkingBlock::Redacted {
+        data: "secret-redacted-blob".into(),
+    });
 
     let mut offset = 0usize;
     let mut recovered = String::new();
@@ -142,7 +145,19 @@ fn ranged_get_message_reassembles_oversized_visible_thinking() {
         let line =
             AgentEvent::ok(Some("recover"), "get_message", Some(data.clone())).to_json_line();
         assert!(line.len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
-        recovered.push_str(data["thinking"][0]["text"].as_str().expect("thinking page"));
+        assert_eq!(data["thinkingOffset"].as_u64(), Some(offset as u64));
+        assert!(
+            !serde_json::to_string(&data)
+                .unwrap()
+                .contains("secret-redacted-blob")
+        );
+        for block in data["thinking"].as_array().expect("thinking blocks") {
+            match block["kind"].as_str() {
+                Some("text") => recovered.push_str(block["text"].as_str().expect("thinking page")),
+                Some("redacted") => recovered.push_str("[redacted]"),
+                other => panic!("unexpected thinking kind: {other:?}"),
+            }
+        }
         if data["hasMoreThinking"] == false {
             break;
         }
@@ -154,7 +169,61 @@ fn ranged_get_message_reassembles_oversized_visible_thinking() {
         offset = next;
     }
 
-    assert_eq!(recovered, visible);
+    assert_eq!(recovered, format!("{visible}[redacted]"));
+    assert!(!recovered.contains("secret-redacted-blob"));
+}
+
+#[test]
+fn ranged_get_message_pages_redacted_placeholder_boundaries() {
+    use crate::domain::message::ThinkingBlock;
+
+    let mut msg = Message::assistant("answer", vec![]);
+    msg.thinking_blocks.push(ThinkingBlock::Normal {
+        thinking: "λx".into(),
+        signature: "private".into(),
+    });
+    msg.thinking_blocks.push(ThinkingBlock::Redacted {
+        data: "secret-redacted-blob".into(),
+    });
+    msg.thinking_blocks.push(ThinkingBlock::Normal {
+        thinking: "tail".into(),
+        signature: "private2".into(),
+    });
+
+    let redacted = message_to_json_range_for_response(
+        &msg,
+        Some(0),
+        Some("λx".len()),
+        Some(1),
+        Some("recover"),
+    );
+    assert_eq!(redacted["thinkingOffset"].as_u64(), Some("λx".len() as u64));
+    assert!(redacted["nextThinkingOffset"].as_u64().unwrap() > "λx".len() as u64);
+    assert_eq!(redacted["thinking"][0]["kind"], "redacted");
+    assert!(
+        !serde_json::to_string(&redacted)
+            .unwrap()
+            .contains("secret-redacted-blob")
+    );
+
+    let after = message_to_json_range_for_response(
+        &msg,
+        Some(0),
+        Some("λx".len() + 1),
+        Some(4),
+        Some("recover"),
+    );
+    assert_eq!(after["thinking"][0]["kind"], "text");
+    assert_eq!(after["thinking"][0]["text"], "tail");
+
+    let beyond = message_to_json_range_for_response(
+        &msg,
+        Some(0),
+        Some("λx".len() + 1 + "tail".len()),
+        Some(4),
+        Some("recover"),
+    );
+    assert!(beyond.get("thinking").is_none());
 }
 
 #[test]
@@ -208,5 +277,5 @@ fn ranged_get_message_with_huge_thinking_still_makes_progress() {
     let data = message_to_json_range_for_response(&msg, Some(0), None, Some(6), Some("recover"));
 
     assert!(data["nextOffset"].as_u64().unwrap() > 0);
-    assert_ne!(data["hasMoreContent"].as_bool(), Some(true));
+    assert_eq!(data["hasMoreContent"].as_bool(), Some(false));
 }
