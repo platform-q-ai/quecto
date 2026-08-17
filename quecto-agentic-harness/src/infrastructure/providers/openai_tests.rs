@@ -43,6 +43,50 @@ fn test_openai_provider_custom_base() {
     assert_eq!(provider.api_base, "http://localhost:8080");
 }
 
+#[test]
+fn parse_response_preserves_non_stream_reasoning_fields() {
+    let body = serde_json::json!({
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": "final",
+                "reasoning": "visible thought",
+                "reasoning_content": "ignored fallback"
+            }
+        }]
+    });
+    let resp = OpenAiProvider::parse_response(&body).unwrap();
+    assert_eq!(resp.content.as_deref(), Some("final"));
+    match &resp.thinking_blocks[0] {
+        crate::domain::message::ThinkingBlock::Normal {
+            thinking,
+            signature,
+        } => {
+            assert_eq!(thinking, "visible thought");
+            assert!(signature.is_empty());
+        }
+        other => panic!("unexpected thinking block: {other:?}"),
+    }
+}
+
+#[test]
+fn parse_response_rejects_oversized_non_stream_reasoning_fields() {
+    let body = serde_json::json!({
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": "final",
+                "reasoning": "r".repeat(crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES + 1)
+            }
+        }]
+    });
+    let err = OpenAiProvider::parse_response(&body).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("OpenAI non-stream reasoning visible thinking exceeds")
+    );
+}
+
 #[tokio::test]
 async fn test_chat_text_response() {
     let server = MockServer::start().await;

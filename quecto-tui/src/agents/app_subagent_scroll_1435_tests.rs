@@ -21,6 +21,7 @@ fn selected_session_ledger_projection_preserves_scrolled_history_viewport() {
     let mut updated = ledger_lines(30);
     updated.push(LedgerEntry::Assistant {
         text: "new live ledger content".into(),
+        thinking: Vec::new(),
     });
     session.project_ledger_with_live(updated, false, false);
     let after = session.chat.render(80);

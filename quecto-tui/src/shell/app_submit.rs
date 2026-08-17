@@ -113,6 +113,10 @@ impl App {
                     }
                     return;
                 }
+                "/thinking" => {
+                    self.toggle_thinking_visibility();
+                    return;
+                }
                 _ if trimmed.starts_with("/effort") => {
                     let arg = trimmed["/effort".len()..].trim();
                     self.handle_effort_command(arg);

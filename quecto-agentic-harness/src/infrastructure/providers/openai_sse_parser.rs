@@ -24,6 +24,8 @@ pub(crate) const MAX_OPENAI_SSE_CONTENT_BYTES: usize = 8 * 1024 * 1024;
 /// adversarial tool-call argument accumulator from growing without bound.
 pub(crate) const MAX_OPENAI_SSE_TOOL_ARGUMENT_BYTES: usize = 2 * 1024 * 1024;
 
+pub(crate) use crate::infrastructure::providers::sse_limits::append_with_limit;
+
 /// Parse an SSE text stream into an assembled `LlmResponse`.
 ///
 /// Captures content deltas, tool-call deltas, and the final `usage` chunk
@@ -119,24 +121,6 @@ pub(crate) fn apply_delta(
             }
         }
     }
-    Ok(())
-}
-
-pub(crate) fn append_with_limit(
-    target: &mut String,
-    fragment: &str,
-    limit: usize,
-    label: &str,
-) -> Result<(), DomainError> {
-    let new_len = target.len().checked_add(fragment.len()).ok_or_else(|| {
-        DomainError::Provider(format!("OpenAI SSE {label} exceeds {limit} byte limit"))
-    })?;
-    if new_len > limit {
-        return Err(DomainError::Provider(format!(
-            "OpenAI SSE {label} exceeds {limit} byte limit"
-        )));
-    }
-    target.push_str(fragment);
     Ok(())
 }
 

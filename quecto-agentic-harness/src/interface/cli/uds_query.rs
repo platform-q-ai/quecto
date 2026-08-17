@@ -26,6 +26,7 @@ pub(super) struct GetMessageLookup<'ctx, 'data> {
     pub(super) message_id: MessageId,
     pub(super) tool_call_id: Option<ToolCallId>,
     pub(super) offset: Option<usize>,
+    pub(super) thinking_offset: Option<usize>,
     pub(super) limit: Option<usize>,
     pub(super) request_id: Option<CommandId>,
     pub(super) ctx: &'ctx DispatchCtx<'data>,
@@ -46,6 +47,7 @@ pub(super) fn get_message_response_data(
         None => Some(super::uds_session::message_to_json_range_for_response(
             message,
             req.offset,
+            req.thinking_offset,
             req.limit,
             req.request_id.as_ref().map(CommandId::as_str),
         )),
@@ -135,12 +137,14 @@ pub(super) fn query_response_data(
             message_id,
             tool_call_id,
             offset,
+            thinking_offset,
             limit,
             ..
         } => get_message_response_data(GetMessageLookup {
             message_id: MessageId::from(message_id.as_str()),
             tool_call_id: tool_call_id.as_deref().map(ToolCallId::from),
             offset: *offset,
+            thinking_offset: *thinking_offset,
             limit: *limit,
             request_id: id.as_deref().map(CommandId::from),
             ctx,

@@ -393,6 +393,7 @@ impl App {
     ) {
         match ev {
             Event::Token { token } => chat.append_token(token),
+            Event::Thinking { text } => chat.append_thinking(text),
             Event::AgentEnd { .. } | Event::TurnEnd { .. } => chat.finalize_assistant(),
             Event::ToolExecutionStart {
                 tool_call_id,
@@ -507,6 +508,8 @@ impl App {
                         .then_some(expected_content_len)
                         .flatten()
                         .and_then(|n| usize::try_from(n).ok()),
+                    thinking: Vec::new(),
+                    thinking_offset: 0,
                 },
             );
             // Route via the MASTER connection; it forwards by child id and the
@@ -517,11 +520,11 @@ impl App {
                 agent_id: Some(agent_id.to_string()),
                 tool_call_id: None,
                 offset: Some(0),
+                thinking_offset: Some(0),
                 limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
             });
         }
     }
-
     /// Seed a just-selected sub-agent's main-pane `workflow_bar` from the
     /// registry snapshot (`subagent_local[id].info.workflow`) the left-panel
     /// cells already render, so the bar appears on select without waiting for a
@@ -598,6 +601,7 @@ impl App {
             _ if is_user => ChatEntry::User { text },
             _ => ChatEntry::Assistant {
                 text,
+                thinking: Vec::new(),
                 streaming: false,
             },
         }
@@ -741,7 +745,6 @@ impl App {
         )
     }
 }
-
 /// Maximum number of sub-agent names listed verbatim in a coalesced completion
 /// summary line before the remainder collapses to a `(+M more)` tail (#900).
 const COALESCE_NAME_CAP: usize = 10;

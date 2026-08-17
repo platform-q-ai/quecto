@@ -98,6 +98,7 @@ pub(super) async fn try_forward_subagent_targeted_command(
         agent_id: Some(agent_id),
         tool_call_id,
         offset,
+        thinking_offset,
         limit,
         id,
     } = cmd
@@ -112,6 +113,7 @@ pub(super) async fn try_forward_subagent_targeted_command(
                 message_id: MessageId::from(message_id.as_str()),
                 tool_call_id: tool_call_id.as_deref().map(ToolCallId::from),
                 offset: *offset,
+                thinking_offset: *thinking_offset,
                 limit: *limit,
             },
         )

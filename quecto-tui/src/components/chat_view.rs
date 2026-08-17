@@ -42,7 +42,7 @@ impl Component for Chat {
                 Some(c) if c.width == width && c.tool_expanded == tool_expanded
             );
             if !fresh {
-                let lines = Self::render_entry(&self.entries[idx], width, tool_expanded);
+                let lines = Self::render_entry(&self.entries[idx], width, tool_expanded, self.show_thinking);
                 let line_count = lines.len();
                 // A dims change rebuilds every entry; materializing all rendered
                 // lines at once would transiently recreate the full-transcript
@@ -199,7 +199,7 @@ impl Chat {
             return;
         }
 
-        let mut lines = Self::render_entry(&self.entries[idx], width, tool_expanded);
+        let mut lines = Self::render_entry(&self.entries[idx], width, tool_expanded, self.show_thinking);
         let line_count = lines.len();
         let bounded_start = span.start.saturating_sub(margin).min(line_count);
         let bounded_end = span

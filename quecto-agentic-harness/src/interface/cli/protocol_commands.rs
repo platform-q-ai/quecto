@@ -231,6 +231,13 @@ pub enum AgentCommand {
         /// Byte offset for ranged content or tool-call argument recovery (#1094/#1107).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         offset: Option<usize>,
+        /// Independent byte offset for ranged visible-thinking recovery (#1231).
+        #[serde(
+            rename = "thinkingOffset",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        thinking_offset: Option<usize>,
         /// Maximum bytes of content to return for ranged recovery (#1094).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<usize>,

@@ -91,7 +91,7 @@ async fn focus_mid_turn_backfills_inflight_live_prefix_before_streaming_continue
             entries,
             [
                 ChatEntry::User { text, .. },
-                ChatEntry::Assistant { text: live, streaming: true }
+                            ChatEntry::Assistant { text: live, streaming: true, .. }
             ] if text == "initial task" && live == "prefix-a prefix-b"
         ),
         "focus mid-turn must show committed history plus the full in-flight live prefix: {entries:?}"
@@ -110,7 +110,7 @@ async fn focus_mid_turn_backfills_inflight_live_prefix_before_streaming_continue
             entries,
             [
                 ChatEntry::User { text, .. },
-                ChatEntry::Assistant { text: live, streaming: true }
+                            ChatEntry::Assistant { text: live, streaming: true, .. }
             ] if text == "initial task" && live == "prefix-a prefix-b suffix"
         ),
         "post-focus live tokens must append to the retained in-flight prefix: {entries:?}"
@@ -182,7 +182,7 @@ async fn refocus_mid_turn_preserves_inflight_transcript_across_ledger_reproject(
             entries,
             [
                 ChatEntry::User { text, .. },
-                ChatEntry::Assistant { text: live, streaming: true }
+                            ChatEntry::Assistant { text: live, streaming: true, .. }
             ] if text == "initial task" && live == "live work while away"
         ),
         "refocus + ledger re-project mid-turn must keep the full in-flight transcript: {entries:?}"
@@ -200,7 +200,7 @@ async fn refocus_mid_turn_preserves_inflight_transcript_across_ledger_reproject(
             entries,
             [
                 ChatEntry::User { text, .. },
-                ChatEntry::Assistant { text: live, streaming: true }
+                            ChatEntry::Assistant { text: live, streaming: true, .. }
             ] if text == "initial task" && live == "live work while away after refocus"
         ),
         "streaming must resume on the retained in-flight transcript after refocus: {entries:?}"
@@ -260,7 +260,7 @@ async fn mid_turn_higher_rev_sync_keeps_uncommitted_live_tail() {
             entries,
             [
                 ChatEntry::User { text, .. },
-                ChatEntry::Assistant { text: live, streaming: true }
+                            ChatEntry::Assistant { text: live, streaming: true, .. }
             ] if text == "initial task" && live == "live ahead of ledger"
         ),
         "mid-turn higher-rev sync without assistant must keep live tail: {entries:?}"
@@ -307,7 +307,7 @@ async fn pre_authority_live_events_retained_across_first_sync() {
             entries,
             [
                 ChatEntry::User { text, .. },
-                ChatEntry::Assistant { text: live, streaming: true }
+                            ChatEntry::Assistant { text: live, streaming: true, .. }
             ] if text == "initial task" && live == "before first sync"
         ),
         "pre-authority live tokens must survive first sync and attach on focus: {entries:?}"
@@ -433,9 +433,9 @@ async fn later_turn_user_rev_advance_keeps_current_live_tail() {
             entries,
             [
                 ChatEntry::User { text: first, .. },
-                ChatEntry::Assistant { text: prior, streaming: false },
+                            ChatEntry::Assistant { text: prior, streaming: false, .. },
                 ChatEntry::User { text: second, .. },
-                ChatEntry::Assistant { text: live, streaming: true }
+                            ChatEntry::Assistant { text: live, streaming: true, .. }
             ] if first == "first task"
                 && prior == "first answer"
                 && second == "second task"
@@ -502,7 +502,7 @@ async fn inflight_live_buffer_reconciles_without_duplication_at_turn_end() {
             entries,
             [
                 ChatEntry::User { text, .. },
-                ChatEntry::Assistant { text: committed, streaming: false }
+                            ChatEntry::Assistant { text: committed, streaming: false, .. }
             ] if text == "initial task" && committed == "committed work"
         ),
         "turn-end ledger reconciliation must replace the in-flight live buffer exactly once: {entries:?}"

@@ -49,6 +49,7 @@ pub(crate) fn with_inspection_agent_id(cmd: &Command, agent_id: &str, ns: &str) 
             message_id,
             tool_call_id,
             offset,
+            thinking_offset,
             limit,
             ..
         } => Command::GetMessage {
@@ -57,6 +58,7 @@ pub(crate) fn with_inspection_agent_id(cmd: &Command, agent_id: &str, ns: &str) 
             agent_id: routed_agent_id,
             tool_call_id,
             offset,
+            thinking_offset,
             limit,
         },
         Command::Sync {

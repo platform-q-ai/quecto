@@ -499,6 +499,10 @@ impl AgentLoopImpl {
                     emitted_event = true;
                     self.notify(|| AgentProgressEvent::Token(t));
                 }
+                StreamEvent::ThinkingDelta(t) => {
+                    emitted_event = true;
+                    self.notify(|| AgentProgressEvent::ThinkingDelta(t));
+                }
                 StreamEvent::Done(response) => {
                     if is_empty_streamed_response(&response) {
                         return Err(StreamProviderError {

@@ -7,6 +7,7 @@ use std::task::{Context, Poll};
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+use crate::domain::visible_thinking::append_visible_thinking;
 
 struct AbortOnDrop<T> {
     handle: Option<tokio::task::JoinHandle<T>>,
@@ -206,6 +207,21 @@ impl OpenAiProvider {
 
         let message = &choice["message"];
         let content = message["content"].as_str().map(|s| s.to_string());
+        let thinking_blocks = message
+            .get("reasoning")
+            .or_else(|| message.get("reasoning_content"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|thinking| {
+                let mut capped = String::new();
+                append_visible_thinking(&mut capped, thinking, "OpenAI non-stream reasoning")?;
+                Ok(vec![crate::domain::message::ThinkingBlock::Normal {
+                    thinking: capped,
+                    signature: String::new(),
+                }])
+            })
+            .transpose()?
+            .unwrap_or_default();
 
         let mut tool_calls = Vec::new();
         if let Some(tcs) = message["tool_calls"].as_array() {
@@ -244,7 +260,7 @@ impl OpenAiProvider {
             tool_calls,
             usage,
             stop_reason: None,
-            thinking_blocks: vec![],
+            thinking_blocks,
         })
     }
 }
@@ -446,7 +462,7 @@ impl LlmProvider for OpenAiProvider {
 #[path = "openai_sse.rs"]
 pub(super) mod openai_sse;
 #[path = "openai_sse_parser.rs"]
-mod openai_sse_parser;
+pub(crate) mod openai_sse_parser;
 
 #[cfg(test)]
 #[path = "openai_cov_tests.rs"]

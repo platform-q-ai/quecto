@@ -44,7 +44,7 @@ fn synced_tool_calls_and_results_render_as_tool_cards() {
     assert!(
         matches!(&entries[0], LedgerEntry::ToolExecution { tool_call_id, tool_name, result: Some(result), is_error, .. } if tool_call_id == "tc1" && tool_name == "bash" && result == "hi\n" && !is_error)
     );
-    assert!(matches!(&entries[1], LedgerEntry::Assistant { text } if text == "done"));
+    assert!(matches!(&entries[1], LedgerEntry::Assistant { text, .. } if text == "done"));
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn continuation_upserts_stub_by_id() {
         vec![json!({"id":"m1","role":"assistant","content":"complete"})],
         false,
     ));
-    assert!(matches!(&entries[0], LedgerEntry::Assistant { text } if text == "complete"));
+    assert!(matches!(&entries[0], LedgerEntry::Assistant { text, .. } if text == "complete"));
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn one_malformed_message_does_not_discard_the_whole_sync_delta() {
     assert!(
         entries
             .iter()
-            .any(|e| matches!(e, LedgerEntry::Assistant { text } if text == "text")),
+            .any(|e| matches!(e, LedgerEntry::Assistant { text, .. } if text == "text")),
         "a message with a malformed toolCalls field still renders its content: {entries:?}"
     );
     assert!(

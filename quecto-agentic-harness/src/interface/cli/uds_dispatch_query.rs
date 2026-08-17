@@ -53,6 +53,7 @@ pub(super) async fn dispatch_fieldless_command(
         message_id,
         tool_call_id,
         offset,
+        thinking_offset,
         limit,
         ..
     } = cmd
@@ -74,7 +75,11 @@ pub(super) async fn dispatch_fieldless_command(
             }
             None => Some(
                 super::super::uds_session::message_to_json_range_for_response(
-                    &msg, *offset, *limit, id,
+                    &msg,
+                    *offset,
+                    *thinking_offset,
+                    *limit,
+                    id,
                 ),
             ),
         });
@@ -83,6 +88,7 @@ pub(super) async fn dispatch_fieldless_command(
                 message_id: MessageId::from(message_id.as_str()),
                 tool_call_id: tool_call_id.as_deref().map(ToolCallId::from),
                 offset: *offset,
+                thinking_offset: *thinking_offset,
                 limit: *limit,
                 request_id: id.map(CommandId::from),
                 ctx,

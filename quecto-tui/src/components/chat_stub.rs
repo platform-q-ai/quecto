@@ -72,6 +72,7 @@ impl Chat {
                     } else {
                         ChatEntry::Assistant {
                             text: full_text.to_string(),
+                            thinking: Vec::new(),
                             streaming: false,
                         }
                     };

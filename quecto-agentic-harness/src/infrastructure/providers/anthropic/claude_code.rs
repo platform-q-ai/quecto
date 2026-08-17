@@ -84,11 +84,10 @@ pub(super) fn build_assistant_message(
                     continue;
                 }
                 if signature.is_empty() {
-                    // Missing signature → convert to plain text.
-                    content_blocks.push(serde_json::json!({
-                        "type": "text",
-                        "text": sanitize_surrogates(thinking),
-                    }));
+                    // Provider-visible thinking from non-Anthropic backends is
+                    // stored unsigned; never replay it to Anthropic as either
+                    // thinking or assistant answer text.
+                    continue;
                 } else {
                     content_blocks.push(serde_json::json!({
                         "type": "thinking",

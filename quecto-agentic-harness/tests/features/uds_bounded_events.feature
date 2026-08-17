@@ -174,7 +174,10 @@ Feature: End-of-turn events reference messages instead of re-carrying full conte
     And the response fragments should reassemble the full message content
     And the UDS client connection should remain open
 
-  @done @issue-1094 @adr-0008-part2 @multi-client @persist
+  # Same seed as the idle sibling: CI shard load can time out waiting for
+  # agent_end while writing the oversized prior turn. Filter: @ci-flaky +
+  # GITHUB_ACTIONS in bdd/main.rs.
+  @done @ci-flaky @issue-1094 @adr-0008-part2 @multi-client @persist
   Scenario: An oversized prior message is recoverable while a later turn is in flight
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server

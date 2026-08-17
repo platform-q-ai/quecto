@@ -95,6 +95,8 @@ pub enum Command {
         tool_call_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         offset: Option<usize>,
+        #[serde(rename = "thinkingOffset", skip_serializing_if = "Option::is_none")]
+        thinking_offset: Option<usize>,
         #[serde(skip_serializing_if = "Option::is_none")]
         limit: Option<usize>,
     },
@@ -206,6 +208,9 @@ pub enum Event {
     },
     Token {
         token: String,
+    },
+    Thinking {
+        text: String,
     },
     TurnStart,
     TurnEnd {
@@ -329,7 +334,6 @@ pub enum Event {
 pub use crate::protocol::subagent_payloads::{
     SubagentEnvironmentInfo, SubagentInfoEvent, SubagentWorkflow,
 };
-
 // ─── Result text extraction ───────────────────────────────────────────────────
 /// Extract the first text content from a tool result JSON value.
 ///
@@ -394,7 +398,6 @@ impl Command {
     pub fn with_inspection_agent_id(&self, agent_id: &str, ns: &str) -> Option<Self> {
         super::inspection_routing::with_inspection_agent_id(self, agent_id, ns)
     }
-
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Prompt { .. } => "prompt",

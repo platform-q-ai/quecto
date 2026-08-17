@@ -6,6 +6,7 @@ pub mod refreshable;
 pub mod retry;
 pub mod router;
 pub mod sse_common;
+pub(crate) mod sse_limits;
 pub mod usage;
 
 #[cfg(test)]

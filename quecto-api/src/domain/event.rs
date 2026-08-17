@@ -21,6 +21,9 @@ pub enum AgentEvent {
     Token {
         token: String,
     },
+    Thinking {
+        text: String,
+    },
     TurnStart,
     TurnEnd {
         message: serde_json::Value,

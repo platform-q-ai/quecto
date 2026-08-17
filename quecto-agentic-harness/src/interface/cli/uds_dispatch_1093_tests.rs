@@ -444,6 +444,7 @@ async fn get_message_metadata_too_large_returns_error_and_keeps_connection_usabl
         agent_id: None,
         tool_call_id: None,
         offset: Some(0),
+        thinking_offset: None,
         limit: Some(1),
     };
 
@@ -501,6 +502,7 @@ async fn get_message_idle_recalls_full_content_for_collapsed_live_message() {
         agent_id: None,
         tool_call_id: None,
         offset: None,
+        thinking_offset: None,
         limit: None,
     };
 
@@ -549,6 +551,7 @@ async fn get_message_busy_recalls_full_content_for_collapsed_snapshot_message() 
             message_id: message_id.clone(),
             tool_call_id: None,
             offset: None,
+            thinking_offset: None,
             limit: None,
         },
         &snapshot,
@@ -583,6 +586,7 @@ async fn get_message_busy_recalls_full_content_for_collapsed_snapshot_message() 
             message_id,
             tool_call_id: None,
             offset: None,
+            thinking_offset: None,
             limit: None,
         },
         &snapshot,
@@ -617,6 +621,7 @@ async fn assert_idle_stub_fallback(spill_id: &str, store: Arc<MemSpillStore>) {
         agent_id: None,
         tool_call_id: None,
         offset: None,
+        thinking_offset: None,
         limit: None,
     };
 
@@ -671,7 +676,6 @@ async fn get_message_uses_the_snapshot_session_key_for_spill_recall() {
         "the store fake is session-aware and must observe the resumed key"
     );
 }
-
 #[tokio::test]
 async fn resume_session_atomically_switches_the_snapshot_spill_namespace() {
     let spill_id = "turn1:msg:assistant";
@@ -694,7 +698,6 @@ async fn resume_session_atomically_switches_the_snapshot_spill_namespace() {
         let ctx = fx.ctx(None);
         ctx.conversation_snapshot.clone()
     };
-
     {
         let (tx, _rx) = tokio::sync::broadcast::channel(8);
         let mut ctx = fx.ctx(Some(tx));
@@ -709,7 +712,6 @@ async fn resume_session_atomically_switches_the_snapshot_spill_namespace() {
             .await
         );
     }
-
     let message_id = snapshot
         .read()
         .await
@@ -730,12 +732,10 @@ async fn resume_session_atomically_switches_the_snapshot_spill_namespace() {
         "resume must publish the loaded history with its new key in one update"
     );
 }
-
 #[tokio::test]
 async fn get_message_idle_keeps_collapsed_stub_when_spill_entry_is_missing() {
     assert_idle_stub_fallback("missing-spill-entry", Arc::new(MemSpillStore::default())).await;
 }
-
 #[tokio::test]
 async fn get_message_idle_keeps_collapsed_stub_when_spill_recall_errors() {
     assert_idle_stub_fallback(

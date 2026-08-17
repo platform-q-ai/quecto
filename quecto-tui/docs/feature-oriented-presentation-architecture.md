@@ -332,6 +332,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `sessions/mod.rs` | `sessions` (relocated, #1257 Phase 5) |
 | `shell/app.rs` | `shell` composition root (relocated, #1257 Phase 6) |
 | `shell/app_commands.rs` | `shell` top-level command routing (relocated, #1257 Phase 6) |
+| `shell/app_conversation_characterization_tests/mod.rs` | `shell` conversation characterization test module split for line budget (#1231) |
 | `shell/app_disconnect.rs` | `shell` runtime/disconnect coordination (relocated, #1257 Phase 6) |
 | `shell/app_event_loop.rs` | `shell` event loop (relocated, #1257 Phase 6) |
 | `shell/app_events.rs` | `shell` top-level event routing (relocated, #1257 Phase 6) |
@@ -345,6 +346,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_selection.rs` | `shell` focus/selection routing (relocated, #1257 Phase 6) |
 | `shell/app_stdin.rs` | `shell` stdin coordination (relocated, #1257 Phase 6) |
 | `shell/app_submit.rs` | `shell` submit/prompt coordination (relocated, #1257 Phase 6) |
+| `shell/app_thinking_visibility.rs` | `shell` model-thinking visibility preference controller (#1231) |
 | `shell/app_time.rs` | `shell` wall-clock formatting helpers (line-count split from `app_methods.rs`, #1470 review) |
 | `shell/child_watch.rs` | `shell` runtime supervision (relocated, #1257 Phase 1) |
 | `shell/cli.rs` | `shell` CLI entry (relocated, #1257 Phase 1) |
@@ -365,6 +367,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/workspace_resume.rs` | `shell` workspace-aware /resume restore (#1465 P4) |
 | `shell/stdin_buffer.rs` | `shell` stdin adapter/policy (relocated, #1257 Phase 6) |
 | `shell/terminal.rs` | `shell` terminal adapter (relocated, #1257 Phase 1) |
+| `shell/thinking_preferences.rs` | `shell` durable model-thinking visibility preference storage (#1231) |
 | `shell/tool_policy.rs` | `shell` live tool/profile policy modal controller (#1334 PR 4) |
 | `shell/tui_harness.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/tui_harness_layout.rs` | `shell` harness layout probes split for line budget (#1465) |

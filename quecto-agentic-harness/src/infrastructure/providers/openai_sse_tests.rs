@@ -26,6 +26,36 @@ async fn handler_emits_text_delta_and_done_response() {
 }
 
 #[tokio::test]
+async fn handler_emits_explicit_reasoning_as_thinking_without_token_leakage() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    let mut handler = OpenAiSseHandler::new();
+
+    let outcome = handler
+        .process_line(
+            r#"data: {"choices":[{"delta":{"reasoning":"visible rationale","content":"answer"}}]}"#,
+            &tx,
+        )
+        .await;
+    assert!(matches!(outcome, SseLineOutcome::Continue));
+    match rx.recv().await.unwrap() {
+        StreamEvent::ThinkingDelta(text) => assert_eq!(text, "visible rationale"),
+        other => panic!("unexpected event: {other:?}"),
+    }
+    match rx.recv().await.unwrap() {
+        StreamEvent::TextDelta(text) => assert_eq!(text, "answer"),
+        other => panic!("unexpected event: {other:?}"),
+    }
+    handler.on_eof(&tx).await;
+    match rx.recv().await.unwrap() {
+        StreamEvent::Done(response) => {
+            assert_eq!(response.content.as_deref(), Some("answer"));
+            assert_eq!(response.thinking_blocks.len(), 1);
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn handler_ignores_non_data_and_malformed_json_then_finishes_on_eof() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(2);
     let mut handler = OpenAiSseHandler::new();
@@ -123,4 +153,30 @@ async fn handler_rejects_over_limit_tool_arguments_without_done() {
         StreamEvent::Error(err) => assert!(err.contains("tool-call arguments exceeds")),
         other => panic!("unexpected event: {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn handler_rejects_over_limit_reasoning_without_done() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    let mut handler = OpenAiSseHandler::new();
+    let exact = "a".repeat(MAX_OPENAI_SSE_CONTENT_BYTES);
+    handler
+        .process_line(
+            &format!(
+                "data: {{\"choices\":[{{\"delta\":{{\"reasoning\":{}}}}}]}}",
+                serde_json::to_string(&exact).unwrap()
+            ),
+            &tx,
+        )
+        .await;
+    let _ = rx.recv().await;
+    let outcome = handler
+        .process_line(r#"data: {"choices":[{"delta":{"reasoning":"b"}}]}"#, &tx)
+        .await;
+    assert!(matches!(outcome, SseLineOutcome::Done));
+    match rx.recv().await.unwrap() {
+        StreamEvent::Error(err) => assert!(err.contains("reasoning")),
+        other => panic!("unexpected event: {other:?}"),
+    }
+    assert!(rx.try_recv().is_err());
 }

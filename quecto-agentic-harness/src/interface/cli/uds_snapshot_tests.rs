@@ -6,7 +6,7 @@
 //! pre-turn history by the accept loop even while the dispatch loop holds
 //! `messages` mutably for the whole turn (`agent.process(messages)`).
 
-use crate::domain::message::Message;
+use crate::domain::message::{Message, ThinkingBlock};
 use crate::interface::cli::protocol::SessionState;
 use crate::interface::cli::uds_multi::{
     BusyFlag, BusyGuard, ConversationSnapshot, build_get_messages_line, build_get_state_line,
@@ -83,6 +83,26 @@ fn ledger_is_byte_bounded_and_evicts_oldest() {
 /// so a flood of tiny/empty/tool-metadata messages — which add little content
 /// but real per-entry cost (id copies + struct clones) — cannot grow it without
 /// bound even though the byte budget is far from full.
+#[test]
+fn ledger_counts_thinking_blocks_against_byte_budget() {
+    let make_msg = || {
+        let mut msg = Message::assistant("ok", vec![]);
+        msg.thinking_blocks.push(ThinkingBlock::Normal {
+            thinking: "r".repeat(6 * 1024 * 1024),
+            signature: "sig".into(),
+        });
+        msg
+    };
+    let msgs: Vec<Message> = (0..4).map(|_| make_msg()).collect();
+    let ids: Vec<String> = msgs.iter().map(|m| m.id().to_string()).collect();
+
+    let mut snap = ConversationSnapshotData::default();
+    snap.record_full(&msgs);
+
+    assert!(snap.resolve(&ids[0]).is_none());
+    assert!(snap.resolve(ids.last().unwrap()).is_some());
+}
+
 #[test]
 fn ledger_is_entry_bounded_for_tiny_messages() {
     use crate::interface::cli::uds_snapshots::LEDGER_MAX_ENTRIES;

@@ -208,6 +208,7 @@ impl<W: Write + Send> ProgressRenderer<W> {
                 self.current_line = None;
             }
             AgentProgressEvent::Token(_)
+            | AgentProgressEvent::ThinkingDelta(_)
             | AgentProgressEvent::TurnCompleted { .. }
             | AgentProgressEvent::ConversationChanged { .. }
             | AgentProgressEvent::ToolCatalogueChanged { .. }

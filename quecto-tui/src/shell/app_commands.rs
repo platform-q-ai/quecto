@@ -73,6 +73,10 @@ static BUILTIN_COMMANDS: LazyLock<Vec<SlashCommand>> = LazyLock::new(|| {
             description: "Switch reasoning effort".into(),
         },
         SlashCommand {
+            name: "thinking".into(),
+            description: "Toggle model thinking visibility".into(),
+        },
+        SlashCommand {
             name: "workflow".into(),
             description: "Show workflow status and hotkeys".into(),
         },

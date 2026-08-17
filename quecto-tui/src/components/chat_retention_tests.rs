@@ -75,7 +75,7 @@ fn chat_1196_streaming_survives_eviction_pressure() {
     chat.append_token(" text");
     chat.finalize_assistant();
     assert!(chat.entry_count() <= CHAT_RETAINED_ENTRY_CAP);
-    assert_eq!(chat.entries().iter().filter(|e| matches!(e, ChatEntry::Assistant { text, streaming: false } if text == "stream text")).count(), 1);
+    assert_eq!(chat.entries().iter().filter(|e| matches!(e, ChatEntry::Assistant { text, streaming: false, .. } if text == "stream text")).count(), 1);
 }
 
 #[test]

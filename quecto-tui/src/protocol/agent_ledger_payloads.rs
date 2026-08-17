@@ -52,6 +52,7 @@ pub struct LedgerMessage {
     tool_name: Lenient<Option<String>>,
     #[serde(alias = "is_error")]
     is_error: Lenient<bool>,
+    thinking: Lenient<Vec<LedgerThinkingBlock>>,
 }
 
 impl LedgerMessage {
@@ -82,6 +83,52 @@ impl LedgerMessage {
     pub fn is_error(&self) -> bool {
         self.is_error.0
     }
+
+    pub fn thinking(&self) -> Vec<String> {
+        self.thinking_blocks()
+            .into_iter()
+            .map(|block| match block {
+                RecoveredThinkingBlock::Text { text } => text,
+                RecoveredThinkingBlock::Redacted => "[redacted thinking]".to_string(),
+            })
+            .collect()
+    }
+
+    pub fn thinking_blocks(&self) -> Vec<RecoveredThinkingBlock> {
+        self.thinking
+            .0
+            .iter()
+            .filter_map(|block| match block.kind.as_deref() {
+                Some("text") => Some(RecoveredThinkingBlock::Text {
+                    text: block.text.clone().unwrap_or_default(),
+                }),
+                Some("redacted") => Some(RecoveredThinkingBlock::Redacted),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecoveredThinkingBlock {
+    Text { text: String },
+    Redacted,
+}
+
+impl RecoveredThinkingBlock {
+    pub fn to_wire(&self) -> serde_json::Value {
+        match self {
+            Self::Text { text } => serde_json::json!({ "kind": "text", "text": text }),
+            Self::Redacted => serde_json::json!({ "kind": "redacted" }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct LedgerThinkingBlock {
+    kind: Option<String>,
+    text: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]

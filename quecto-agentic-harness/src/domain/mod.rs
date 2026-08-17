@@ -21,4 +21,5 @@ pub mod text;
 pub mod tool;
 pub mod tool_descriptor;
 pub mod tool_id;
+pub mod visible_thinking;
 pub mod workflow;

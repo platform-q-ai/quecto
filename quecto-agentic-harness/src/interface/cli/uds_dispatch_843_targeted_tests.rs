@@ -64,6 +64,7 @@ async fn dispatch_agent_targeted_get_message_forwards_to_child_before_parent_his
             agent_id: Some("worker".into()),
             tool_call_id: None,
             offset: Some(1),
+            thinking_offset: None,
             limit: Some(4),
         };
         assert!(!dispatch_command(cmd, &mut ctx).await);
@@ -169,6 +170,7 @@ async fn forward_get_message_propagates_child_failure() {
             message_id: crate::domain::ids::MessageId::from("child-missing"),
             tool_call_id: None,
             offset: None,
+            thinking_offset: None,
             limit: None,
         },
     )
@@ -200,6 +202,7 @@ async fn forward_get_message_rejects_wrong_command_child_response() {
             message_id: crate::domain::ids::MessageId::from("m1"),
             tool_call_id: None,
             offset: None,
+            thinking_offset: None,
             limit: None,
         },
     )
@@ -231,6 +234,7 @@ async fn forward_get_message_rejects_missing_data_child_response() {
             message_id: crate::domain::ids::MessageId::from("m1"),
             tool_call_id: None,
             offset: None,
+            thinking_offset: None,
             limit: None,
         },
     )
@@ -259,6 +263,7 @@ async fn forward_get_message_rejects_malformed_child_response() {
             message_id: crate::domain::ids::MessageId::from("m1"),
             tool_call_id: None,
             offset: None,
+            thinking_offset: None,
             limit: None,
         },
     )

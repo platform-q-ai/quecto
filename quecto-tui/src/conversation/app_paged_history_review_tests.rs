@@ -427,6 +427,7 @@ async fn wholesale_replacement_with_stale_prefix_keeps_later_live_entries() {
         .chat
         .add_entry(ChatEntry::Assistant {
             text: "post replacement live entry".into(),
+            thinking: Vec::new(),
             streaming: false,
         });
 

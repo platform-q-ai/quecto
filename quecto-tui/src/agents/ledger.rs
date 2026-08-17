@@ -11,6 +11,7 @@ pub(crate) enum LedgerEntry {
     },
     Assistant {
         text: String,
+        thinking: Vec<String>,
     },
     ToolExecution {
         tool_call_id: String,
@@ -134,9 +135,11 @@ fn ledger_entries(refs: &[String], responses: &HashMap<String, LedgerMessage>) -
                         is_error: false,
                     });
                 }
-                if !content.is_empty() {
+                let thinking = message.thinking();
+                if !content.is_empty() || !thinking.is_empty() {
                     entries.push(LedgerEntry::Assistant {
                         text: content.to_string(),
+                        thinking,
                     });
                 }
             }

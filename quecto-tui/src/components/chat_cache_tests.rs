@@ -88,6 +88,7 @@ fn large_entry_retains_only_nearby_rendered_lines() {
         .join("\n");
     chat.add_entry(ChatEntry::Assistant {
         text: long_message,
+        thinking: Vec::new(),
         streaming: false,
     });
     chat.set_viewport_height(8);
@@ -230,6 +231,7 @@ fn scrolling_within_a_tall_entry_reuses_the_margin_instead_of_rerendering() {
         .join("\n");
     chat.add_entry(ChatEntry::Assistant {
         text: long_message,
+        thinking: Vec::new(),
         streaming: false,
     });
     let height = 8;
@@ -370,6 +372,7 @@ fn replace_history_prefix_supersedes_partial_without_disturbing_live_tail() {
     });
     chat.add_entry(ChatEntry::Assistant {
         text: "partial reply".into(),
+        thinking: Vec::new(),
         streaming: false,
     });
     chat.append_token("LIVE_TAIL");
@@ -384,6 +387,7 @@ fn replace_history_prefix_supersedes_partial_without_disturbing_live_tail() {
             },
             ChatEntry::Assistant {
                 text: "oldest reply".into(),
+                thinking: Vec::new(),
                 streaming: false,
             },
             ChatEntry::User {
@@ -391,6 +395,7 @@ fn replace_history_prefix_supersedes_partial_without_disturbing_live_tail() {
             },
             ChatEntry::Assistant {
                 text: "partial reply".into(),
+                thinking: Vec::new(),
                 streaming: false,
             },
         ],

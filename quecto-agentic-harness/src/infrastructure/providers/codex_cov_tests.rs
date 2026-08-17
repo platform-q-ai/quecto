@@ -6,7 +6,7 @@
 //! mpsc channel.
 
 use super::*;
-use crate::domain::message::StopReason;
+use crate::domain::message::{StopReason, ToolCall};
 use crate::domain::tool::ToolDefinition;
 
 fn req<'a>(
@@ -136,7 +136,8 @@ fn accumulator_delta_for_unknown_output_index_is_ignored() {
         "type": "response.function_call_arguments.delta",
         "output_index": 9,
         "delta": "ignored",
-    }));
+    }))
+    .unwrap();
     let resp = acc.into_response();
     assert!(resp.tool_calls.is_empty());
     assert!(resp.content.is_none());
@@ -145,7 +146,8 @@ fn accumulator_delta_for_unknown_output_index_is_ignored() {
 #[test]
 fn accumulator_completed_without_response_field_leaves_usage_none() {
     let mut acc = SseAccumulator::default();
-    acc.handle_event(&serde_json::json!({ "type": "response.completed" }));
+    acc.handle_event(&serde_json::json!({ "type": "response.completed" }))
+        .unwrap();
     assert!(acc.into_response().usage.is_none());
 }
 
@@ -156,7 +158,8 @@ fn accumulator_item_added_non_function_call_is_skipped() {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": { "type": "reasoning" },
-    }));
+    }))
+    .unwrap();
     assert!(acc.into_response().tool_calls.is_empty());
 }
 
@@ -166,13 +169,16 @@ fn accumulator_refusal_events_surface_text_and_refusal_stop_reason() {
     let mut acc = SseAccumulator::default();
     acc.handle_event(&serde_json::json!({
         "type": "response.refusal.delta", "delta": "I can't "
-    }));
+    }))
+    .unwrap();
     acc.handle_event(&serde_json::json!({
         "type": "response.refusal.delta", "delta": "help with that."
-    }));
+    }))
+    .unwrap();
     acc.handle_event(&serde_json::json!({
         "type": "response.refusal.done", "refusal": "I can't help with that."
-    }));
+    }))
+    .unwrap();
     let resp = acc.into_response();
     assert_eq!(resp.content.as_deref(), Some("I can't help with that."));
     assert_eq!(resp.stop_reason, Some(StopReason::Refusal));
@@ -183,7 +189,8 @@ fn accumulator_refusal_done_alone_populates_content() {
     let mut acc = SseAccumulator::default();
     acc.handle_event(&serde_json::json!({
         "type": "response.refusal.done", "refusal": "Declined."
-    }));
+    }))
+    .unwrap();
     let resp = acc.into_response();
     assert_eq!(resp.content.as_deref(), Some("Declined."));
     assert_eq!(resp.stop_reason, Some(StopReason::Refusal));
@@ -192,7 +199,8 @@ fn accumulator_refusal_done_alone_populates_content() {
 #[test]
 fn accumulator_unknown_event_type_is_ignored() {
     let mut acc = SseAccumulator::default();
-    acc.handle_event(&serde_json::json!({ "type": "response.created" }));
+    acc.handle_event(&serde_json::json!({ "type": "response.created" }))
+        .unwrap();
     let resp = acc.into_response();
     assert!(resp.content.is_none() && resp.tool_calls.is_empty());
 }
@@ -262,7 +270,7 @@ fn parse_response_missing_output_is_error() {
 }
 
 #[test]
-fn parse_response_skips_reasoning_items() {
+fn parse_response_persists_reasoning_summary_as_thinking() {
     let body = serde_json::json!({
         "output": [
             { "type": "reasoning", "summary": "thinking" },
@@ -272,6 +280,18 @@ fn parse_response_skips_reasoning_items() {
     let resp = CodexProvider::parse_response(&body).unwrap();
     assert_eq!(resp.content.unwrap(), "Done");
     assert!(resp.usage.is_none());
+    assert_eq!(resp.thinking_blocks.len(), 1);
+}
+
+#[test]
+fn parse_response_rejects_over_limit_reasoning_summary() {
+    let summary = "r".repeat(crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES + 1);
+    let body = serde_json::json!({
+        "output": [{ "type": "reasoning", "summary": summary }]
+    });
+
+    let err = CodexProvider::parse_response(&body).unwrap_err();
+    assert!(err.to_string().contains("Codex SSE reasoning"));
 }
 
 // --- parse_response: multiple output_text parts accumulate (Some(c) arm) ---
@@ -291,6 +311,106 @@ fn parse_response_concatenates_multiple_output_text_parts() {
     let resp = CodexProvider::parse_response(&body).unwrap();
     assert_eq!(resp.content.unwrap(), "Hello world");
     assert!(resp.tool_calls.is_empty());
+}
+
+#[test]
+fn parse_sse_reasoning_summary_persists_without_answer_text() {
+    let sse = r#"data: {"type":"response.reasoning_summary_text.delta","delta":"step one"}
+data: {"type":"response.reasoning.summary_text.delta","delta":" and two"}
+data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":8,"output_tokens":2}}}
+data: [DONE]
+"#;
+    let resp = CodexProvider::parse_sse_response(sse).unwrap();
+    assert!(resp.content.is_none());
+    assert_eq!(resp.thinking_blocks.len(), 1);
+}
+
+#[tokio::test]
+async fn codex_stream_emits_reasoning_summary_deltas_live() {
+    use crate::domain::provider::StreamEvent;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/stream"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"data: {"type":"response.reasoning_summary_text.delta","delta":"think"}
+data: {"type":"response.output_text.delta","delta":"answer"}
+data: {"type":"response.completed","response":{"status":"completed"}}
+"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/stream", server.uri()))
+        .send()
+        .await
+        .unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    CodexProvider::pump_sse_response_for_test(response, tx).await;
+
+    assert!(matches!(rx.recv().await.unwrap(), StreamEvent::ThinkingDelta(t) if t == "think"));
+    assert!(matches!(rx.recv().await.unwrap(), StreamEvent::TextDelta(t) if t == "answer"));
+}
+
+#[test]
+fn parse_sse_does_not_duplicate_streamed_reasoning_when_done_repeats_summary() {
+    let sse = r#"data: {"type":"response.reasoning_summary_text.delta","delta":"same"}
+data: {"type":"response.output_item.done","item":{"type":"reasoning","summary":"same"}}
+data: {"type":"response.completed","response":{"status":"completed"}}
+"#;
+    let resp = CodexProvider::parse_sse_response(sse).unwrap();
+    match &resp.thinking_blocks[0] {
+        crate::domain::message::ThinkingBlock::Normal { thinking, .. } => {
+            assert_eq!(thinking, "same");
+        }
+        other => panic!("unexpected thinking block: {other:?}"),
+    }
+}
+
+#[test]
+fn parse_sse_dedupes_streamed_reasoning_with_done_summary_whitespace_variation() {
+    let sse = r#"data: {"type":"response.reasoning_summary_text.delta","delta":"same"}
+data: {"type":"response.output_item.done","item":{"type":"reasoning","summary":[{"text":"same\n"}]}}
+data: {"type":"response.completed","response":{"status":"completed"}}
+"#;
+    let resp = CodexProvider::parse_sse_response(sse).unwrap();
+    match &resp.thinking_blocks[0] {
+        crate::domain::message::ThinkingBlock::Normal { thinking, .. } => {
+            assert_eq!(thinking, "same");
+        }
+        other => panic!("unexpected thinking block: {other:?}"),
+    }
+}
+
+#[test]
+fn parse_sse_rejects_over_limit_output_item_done_reasoning() {
+    let summary = "r".repeat(crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES + 1);
+    let sse = format!(
+        "data: {}\ndata: {{\"type\":\"response.completed\",\"response\":{{\"status\":\"completed\"}}}}\n",
+        serde_json::json!({"type":"response.output_item.done","item":{"type":"reasoning","summary":summary}})
+    );
+
+    let err = CodexProvider::parse_sse_response(&sse).unwrap_err();
+    assert!(err.to_string().contains("Codex SSE reasoning"));
+}
+
+#[test]
+fn parse_sse_preserves_later_non_streamed_reasoning_after_streamed_reasoning() {
+    let sse = r#"data: {"type":"response.reasoning_summary_text.delta","delta":"first"}
+data: {"type":"response.output_item.done","item":{"type":"reasoning","summary":"first"}}
+data: {"type":"response.output_item.done","item":{"type":"reasoning","summary":" second"}}
+data: {"type":"response.completed","response":{"status":"completed"}}
+"#;
+    let resp = CodexProvider::parse_sse_response(sse).unwrap();
+    match &resp.thinking_blocks[0] {
+        crate::domain::message::ThinkingBlock::Normal { thinking, .. } => {
+            assert_eq!(thinking, "first second");
+        }
+        other => panic!("unexpected thinking block: {other:?}"),
+    }
 }
 
 // --- parse_sse_response: non-`data:` lines are skipped ---
@@ -337,7 +457,8 @@ fn accumulator_item_added_without_item_field_is_ignored() {
     acc.handle_event(&serde_json::json!({
         "type": "response.output_item.added",
         "output_index": 0,
-    }));
+    }))
+    .unwrap();
     assert!(acc.into_response().tool_calls.is_empty());
 }
 
@@ -566,5 +687,32 @@ fn oauth_and_api_key_bodies_differ_only_by_max_output_tokens_1236() {
         oauth, api_key,
         "max_output_tokens is the ONLY field that may differ between the \
          ChatGPT Codex backend and the standard Responses API"
+    );
+}
+
+#[tokio::test]
+async fn codex_stream_rejects_over_limit_reasoning_with_error() {
+    use crate::domain::provider::StreamEvent;
+    use crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES;
+    use crate::infrastructure::providers::sse_common::SseHandler;
+
+    let mut handler = CodexSseHandler::new();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    let delta = "r".repeat(MAX_VISIBLE_THINKING_BYTES + 1);
+    let line = format!(
+        "data: {}",
+        serde_json::json!({"type":"response.reasoning_summary_text.delta","delta":delta})
+    );
+
+    let outcome = handler.process_line(&line, &tx).await;
+    assert!(matches!(outcome, SseLineOutcome::Done));
+
+    match rx.recv().await.unwrap() {
+        StreamEvent::Error(err) => assert!(err.contains("Codex SSE reasoning")),
+        other => panic!("unexpected event: {other:?}"),
+    }
+    assert!(
+        rx.try_recv().is_err(),
+        "oversized reasoning must stop the stream"
     );
 }
