@@ -307,7 +307,7 @@ async fn tool_end_uuid_rekey_migrates_child_recovery_state() {
             content: String::new(),
             offset: 0,
             content_len: None,
-            thinking: String::new(),
+            thinking: Vec::new(),
             thinking_offset: 0,
         },
     );

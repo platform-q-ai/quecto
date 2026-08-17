@@ -8,7 +8,7 @@ pub(crate) struct PendingMessageRecovery {
     pub(crate) content: String,
     pub(crate) offset: usize,
     pub(crate) content_len: Option<usize>,
-    pub(crate) thinking: String,
+    pub(crate) thinking: Vec<crate::protocol::agent_ledger_payloads::RecoveredThinkingBlock>,
     pub(crate) thinking_offset: usize,
 }
 
@@ -100,7 +100,7 @@ impl App {
                         .then_some(expected_content_len)
                         .flatten()
                         .and_then(|n| usize::try_from(n).ok()),
-                    thinking: String::new(),
+                    thinking: Vec::new(),
                     thinking_offset: 0,
                 },
             );
@@ -168,8 +168,20 @@ impl App {
             return;
         }
         let mut thinking = pending.thinking;
-        for page in crate::protocol::presentation_payloads::recovered_message(&data).thinking() {
-            thinking.push_str(&page);
+        for page in
+            crate::protocol::presentation_payloads::recovered_message(&data).thinking_blocks()
+        {
+            match (thinking.last_mut(), &page) {
+                (
+                    Some(crate::protocol::agent_ledger_payloads::RecoveredThinkingBlock::Text {
+                        text,
+                    }),
+                    crate::protocol::agent_ledger_payloads::RecoveredThinkingBlock::Text {
+                        text: more,
+                    },
+                ) => text.push_str(more),
+                _ => thinking.push(page),
+            }
         }
         let update = crate::protocol::range_accumulator::RangeAccumulator::new_with_expected_len(
             pending.content,
@@ -242,6 +254,7 @@ impl App {
             let message_id = pending.message_id;
             let batch_id = pending.batch_id;
             let agent_id = pending.agent_id;
+            let content_offset = accumulated.len();
             self.ac_mut().pending_message_recovery.insert(
                 req_id.clone(),
                 PendingMessageRecovery {
@@ -249,8 +262,8 @@ impl App {
                     batch_id,
                     agent_id: agent_id.clone(),
                     content: accumulated,
-                    offset: pending.offset,
-                    content_len: pending.content_len,
+                    offset: content_offset,
+                    content_len: Some(content_offset),
                     thinking,
                     thinking_offset: next_thinking_offset,
                 },
@@ -260,7 +273,7 @@ impl App {
                 message_id,
                 agent_id,
                 tool_call_id: None,
-                offset: Some(pending.offset),
+                offset: Some(content_offset),
                 thinking_offset: Some(next_thinking_offset),
                 limit: Some(super::app_paged_history::GET_MESSAGE_PAGE_BYTES),
             });
@@ -269,7 +282,12 @@ impl App {
         let mut data = data;
         data["content"] = serde_json::Value::String(accumulated);
         if !thinking.is_empty() {
-            data["thinking"] = serde_json::json!([{ "kind": "text", "text": thinking }]);
+            data["thinking"] = serde_json::json!(
+                thinking
+                    .iter()
+                    .map(crate::protocol::agent_ledger_payloads::RecoveredThinkingBlock::to_wire)
+                    .collect::<Vec<_>>()
+            );
         }
         data["hasMoreContent"] = serde_json::Value::Bool(false);
         let Some(batch) = self

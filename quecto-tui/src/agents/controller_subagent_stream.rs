@@ -508,7 +508,7 @@ impl App {
                         .then_some(expected_content_len)
                         .flatten()
                         .and_then(|n| usize::try_from(n).ok()),
-                    thinking: String::new(),
+                    thinking: Vec::new(),
                     thinking_offset: 0,
                 },
             );

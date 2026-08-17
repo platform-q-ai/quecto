@@ -264,13 +264,11 @@ impl SseAccumulator {
                 .map(|s| StreamEvent::TextDelta(s.to_string())),
             Some("thinking_delta") => {
                 let thinking = delta["thinking"].as_str().filter(|s| !s.is_empty())?;
-                if append_visible_thinking(
-                    &mut self.current_thinking,
-                    thinking,
-                    "Anthropic SSE thinking",
-                )
-                .is_err()
-                {
+                // Budget-check only. Persistence happens in `handle_block_delta`
+                // so live + persist share one append.
+                let remaining = crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES
+                    .saturating_sub(self.current_thinking.len());
+                if thinking.len() > remaining {
                     return None;
                 }
                 Some(StreamEvent::ThinkingDelta(thinking.to_string()))

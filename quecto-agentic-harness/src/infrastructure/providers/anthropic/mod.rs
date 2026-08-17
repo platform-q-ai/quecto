@@ -10,8 +10,9 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message, Role, StopReason, ToolCall};
+use crate::domain::message::{LlmResponse, Message, Role, StopReason, ThinkingBlock, ToolCall};
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+use crate::domain::visible_thinking::append_visible_thinking;
 use claude_code::{CLAUDE_CODE_VERSION, sanitize_surrogates, to_claude_code_name};
 
 pub(super) mod anthropic_sse;
@@ -438,6 +439,8 @@ impl AnthropicProvider {
 
         let mut text_parts: Vec<String> = Vec::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
+        let mut thinking_blocks: Vec<ThinkingBlock> = Vec::new();
+        let mut thinking_budget = String::new();
 
         for block in content_blocks {
             match block["type"].as_str() {
@@ -445,6 +448,30 @@ impl AnthropicProvider {
                     if let Some(t) = block["text"].as_str() {
                         text_parts.push(t.to_string());
                     }
+                }
+                Some("thinking") => {
+                    let thinking = block["thinking"].as_str().unwrap_or_default();
+                    if thinking.is_empty() {
+                        continue;
+                    }
+                    if append_visible_thinking(
+                        &mut thinking_budget,
+                        thinking,
+                        "Anthropic non-stream thinking",
+                    )
+                    .is_err()
+                    {
+                        continue;
+                    }
+                    thinking_blocks.push(ThinkingBlock::Normal {
+                        thinking: thinking.to_string(),
+                        signature: block["signature"].as_str().unwrap_or_default().to_string(),
+                    });
+                }
+                Some("redacted_thinking") => {
+                    thinking_blocks.push(ThinkingBlock::Redacted {
+                        data: block["data"].as_str().unwrap_or_default().to_string(),
+                    });
                 }
                 Some("tool_use") => {
                     let id = block["id"].as_str().unwrap_or_default().to_string();
@@ -482,7 +509,7 @@ impl AnthropicProvider {
             tool_calls,
             usage,
             stop_reason,
-            thinking_blocks: vec![],
+            thinking_blocks,
         })
     }
 }

@@ -571,4 +571,51 @@ async fn anthropic_live_thinking_uses_aggregate_cap() {
     let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
     assert_eq!(events.len(), 1, "overflow delta must not be emitted live");
     assert!(matches!(&events[0], StreamEvent::ThinkingDelta(text) if text.len() == cap));
+    acc.handle_block_stop();
+    assert_eq!(
+        acc.thinking_blocks().len(),
+        1,
+        "live and persist must share one append"
+    );
+    match &acc.thinking_blocks()[0] {
+        crate::domain::message::ThinkingBlock::Normal { thinking, .. } => {
+            assert_eq!(
+                thinking.len(),
+                cap,
+                "persisted thinking must not be doubled"
+            );
+        }
+        other => panic!("expected normal thinking block, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn anthropic_live_thinking_persists_once() {
+    use crate::domain::provider::StreamEvent;
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    let mut acc = SseAccumulator::default();
+    acc.handle_block_start(&serde_json::json!({"content_block": {"type": "thinking"}}));
+    assert!(
+        !dispatch_sse_event(
+            "content_block_delta",
+            &serde_json::json!({"delta": {"type": "thinking_delta", "thinking": "Let me think"}}),
+            &mut acc,
+            &tx,
+        )
+        .await
+    );
+    drop(tx);
+    let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+    assert!(matches!(
+        &events[..],
+        [StreamEvent::ThinkingDelta(text)] if text == "Let me think"
+    ));
+    acc.handle_block_stop();
+    match &acc.thinking_blocks()[0] {
+        crate::domain::message::ThinkingBlock::Normal { thinking, .. } => {
+            assert_eq!(thinking, "Let me think");
+        }
+        other => panic!("expected single persisted thinking block, got {other:?}"),
+    }
 }
