@@ -73,3 +73,36 @@ fn generation_uses_activity_generation_even_when_projection_fields_do_not_change
         "activity generation change must not be hidden as unchanged: {data}"
     );
 }
+
+#[test]
+fn streaming_generation_includes_live_workflow_revision_overlay() {
+    let mut prior = state_with_execution(7, "advancing");
+    prior.generation = 7;
+    prior.workflow = Some(serde_json::json!({
+        "activeTemplate": { "id": "bugfix" },
+        "currentStep": { "index": 0, "key": "red", "label": "RED", "phase": "test", "done": false }
+    }));
+
+    let mut later = prior.clone();
+    later.generation = 9;
+    later.workflow = Some(serde_json::json!({
+        "activeTemplate": { "id": "bugfix" },
+        "currentStep": { "index": 1, "key": "green", "label": "GREEN", "phase": "fix", "done": false }
+    }));
+
+    let data = slim_state_response_data(
+        &later,
+        Some(
+            slim_state_projection(&prior)["generation"]
+                .as_u64()
+                .unwrap(),
+        ),
+    );
+
+    assert_eq!(data["generation"], 9);
+    assert_eq!(data["workflow"]["currentStep"]["key"], "green");
+    assert!(
+        data.get("unchanged").is_none(),
+        "streaming workflow-only changes must bump the emitted cursor: {data}"
+    );
+}

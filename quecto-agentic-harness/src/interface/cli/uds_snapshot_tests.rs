@@ -8,6 +8,7 @@
 
 use crate::domain::message::{Message, ThinkingBlock};
 use crate::interface::cli::protocol::SessionState;
+use crate::interface::cli::uds_execution_state::{ExecutionSnapshot, ProgressSummary, ToolSummary};
 use crate::interface::cli::uds_multi::{
     BusyFlag, BusyGuard, ConversationSnapshot, build_get_messages_line, build_get_state_line,
 };
@@ -619,7 +620,19 @@ fn busy_get_state_reflects_live_workflow_progress_mid_turn() {
     let mut frozen_wf = serde_json::to_value(engine.snapshot(true)).unwrap();
     frozen_wf["automation"] = serde_json::json!({"autoContinue": true, "completionNudge": false});
     let state = SessionState {
-        execution: None,
+        execution: Some(ExecutionSnapshot {
+            phase: "streaming".into(),
+            activity_generation: 1,
+            last_activity_at: "now".into(),
+            last_activity_seconds_ago: 0,
+            current_tool: None,
+            tools: ToolSummary::default(),
+            progress: ProgressSummary {
+                state: "advancing".into(),
+                reason: "agent is streaming".into(),
+                ..Default::default()
+            },
+        }),
         model: "m".into(),
         generation: 1,
         is_streaming: true,

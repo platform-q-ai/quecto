@@ -65,7 +65,17 @@ fn activity_generation(state: &SessionState) -> u64 {
         .execution
         .as_ref()
         .filter(|_| state.is_streaming)
-        .map(|execution| execution.activity_generation)
+        .map(|execution| {
+            // Live/busy snapshots use the streaming activity cursor as their
+            // base, then fold slim-visible workflow revisions into
+            // `state.generation` before projection. Preserve that combined
+            // cursor so `since` observes workflow-only changes even when no
+            // new execution activity was emitted.
+            execution.activity_generation
+                + state
+                    .generation
+                    .saturating_sub(execution.activity_generation)
+        })
         .unwrap_or(state.generation)
 }
 
