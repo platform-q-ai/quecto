@@ -504,11 +504,13 @@ impl Chat {
 }
 
 impl Chat {
+    const THINKING_STYLE: &str = "\x1b[3m\x1b[38;2;128;128;128m";
+
     fn style_thinking_text(text: &str) -> String {
-        const THINKING_STYLE: &str = "\x1b[3m\x1b[38;2;128;128;128m";
         format!(
-            "{THINKING_STYLE}{}\x1b[0m",
-            text.replace("\x1b[0m", &format!("\x1b[0m{THINKING_STYLE}"))
+            "{}{}\x1b[0m",
+            Self::THINKING_STYLE,
+            text.replace("\x1b[0m", &format!("\x1b[0m{}", Self::THINKING_STYLE))
         )
     }
 
@@ -571,7 +573,9 @@ impl Chat {
                 if text.is_empty() && thinking.is_empty() && *streaming {
                     return lines;
                 }
-                lines.push(String::new());
+                if !show_thinking || thinking.is_empty() {
+                    lines.push(String::new());
+                }
                 if !thinking.is_empty() && !show_thinking {
                     lines.push(theme::dim("thinking hidden"));
                 }
@@ -579,19 +583,21 @@ impl Chat {
                     for block in thinking {
                         lines.extend(Self::render_thinking_block(block, width));
                     }
-                    if !thinking.is_empty() {
+                    if !thinking.is_empty() && !text.is_empty() {
                         lines.push(String::new());
                     }
                 }
-                let mut md = Markdown::new(text, 0);
-                let md_lines = md.render(width);
-                if md_lines.is_empty() {
-                    let wrapped = wrap_text(text, width);
-                    for line in &wrapped {
-                        lines.push(truncate_to_width(line, width, None));
+                if !text.is_empty() {
+                    let mut md = Markdown::new(text, 0);
+                    let md_lines = md.render(width);
+                    if md_lines.is_empty() {
+                        let wrapped = wrap_text(text, width);
+                        for line in &wrapped {
+                            lines.push(truncate_to_width(line, width, None));
+                        }
+                    } else {
+                        lines.extend(md_lines);
                     }
-                } else {
-                    lines.extend(md_lines);
                 }
                 if *streaming {
                     if let Some(l) = lines.last_mut() {
@@ -681,3 +687,6 @@ mod tests;
 #[cfg(test)]
 #[path = "chat_thinking_markdown_tests.rs"]
 mod thinking_markdown_tests;
+#[cfg(test)]
+#[path = "chat_thinking_spacing_1506_tests.rs"]
+mod thinking_spacing_1506_tests;
