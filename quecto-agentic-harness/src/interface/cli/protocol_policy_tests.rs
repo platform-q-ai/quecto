@@ -12,6 +12,7 @@ fn set_tool_policy_command_deserializes_scope_and_mode() {
             mode,
             operation,
             unlisted_scope,
+            persist: _,
         } => {
             assert_eq!(id.as_deref(), Some("p1"));
             assert_eq!(mode, ToolPolicyApplyModeCommand::AtNextTurnBoundary);

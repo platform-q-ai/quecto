@@ -147,6 +147,9 @@ pub enum AgentCommand {
         operation: ToolPolicyOperationCommand,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         unlisted_scope: Option<ProfileAvailabilityScope>,
+        /// Persist successful choices to tools.policy in the active config.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        persist: bool,
     },
     /// Force a provider/model config reload.
     Reload {

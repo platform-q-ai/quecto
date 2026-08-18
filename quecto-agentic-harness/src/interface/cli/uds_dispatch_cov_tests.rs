@@ -169,6 +169,9 @@ pub(super) struct Fixture {
     /// Injected system prompt mirrored into `DispatchCtx::system_prompt`.
     /// Default `""` keeps existing callers free of live/durable skew.
     pub(super) system_prompt: String,
+    pub(super) provider_reload_inputs:
+        Option<crate::interface::cli::provider_reload::ProviderReloadInputs>,
+    pub(super) provider_reload: Option<crate::interface::cli::provider_reload::ProviderReload>,
 }
 
 impl Fixture {
@@ -188,6 +191,8 @@ impl Fixture {
             ephemeral: false,
             last_persisted_message_index: 0,
             system_prompt: String::new(),
+            provider_reload_inputs: None,
+            provider_reload: None,
         }
     }
 
@@ -232,8 +237,8 @@ impl Fixture {
             notification_rx: None,
             workflow_state: None,
             workflow_config: None,
-            provider_reload: None,
-            provider_reload_inputs: None,
+            provider_reload: self.provider_reload.as_mut(),
+            provider_reload_inputs: self.provider_reload_inputs.as_ref(),
             last_persisted_message_index: self.last_persisted_message_index,
             durable_prefix_dirty: false,
         }

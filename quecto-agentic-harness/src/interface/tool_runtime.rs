@@ -280,6 +280,14 @@ pub(crate) fn build_tool_runtime(
         }
     }
 
+    let persisted_unknown = registry.apply_persisted_tool_policy(&config.tools.policy);
+    for stable_id in &persisted_unknown {
+        stderr.push_str(&format!(
+            "WARNING: tools.policy: no registered tool with stable id '{}'\n",
+            stable_id
+        ));
+    }
+
     // Apply explicit startup restrictions after every startup provider has had a
     // chance to register, so descriptors remain available while model-visible
     // definitions and execution follow policy.

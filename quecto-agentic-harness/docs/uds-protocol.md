@@ -617,7 +617,7 @@ Rewind conversation history to a selected user-message boundary. Prefer stable `
 
 ### `reload`
 
-Force a provider/model config reload (runtime registry + config watch surfaces).
+Force a runtime config reload (provider/model registry plus config watch surfaces). Reload also reparses and reapplies `tools.policy.entries` from config as the persisted tool-policy baseline and clears live-only AgentLoop tool-policy overlays, so a client that edited or removed `tools.policy` can send `reload` to make the live catalogue reflect the durable config rather than stale session-only policy.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -681,7 +681,7 @@ Returns an empty `tools` array only when no tools are registered in the process.
 
 ### `set_tool_policy`
 
-Mutate the live tool-policy overlay used by subsequent model-visible tool catalogues. The command is backward compatible: omitting `operation` keeps legacy patch semantics.
+Mutate the tool-policy overlay used by subsequent model-visible tool catalogues. By default the mutation is live-session-only. Set `persist: true` to also store successful choices in the active config; immediate requests write when they apply, and queued `atNextTurnBoundary` requests write when the boundary drains. The command is backward compatible: omitting `operation` keeps legacy patch semantics.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -691,6 +691,7 @@ Mutate the live tool-policy overlay used by subsequent model-visible tool catalo
 | `mode` | `"immediateIfIdle"` \| `"atNextTurnBoundary"` | no | Defaults to `"immediateIfIdle"`. Timing is unchanged by `operation`: if the agent is busy, immediate requests queue for the next boundary. |
 | `operation` | `"patch"` \| `"replace"` | no | Defaults to `"patch"`. Patch changes only listed tools. Replace treats `mutations` as the complete desired profile and applies `unlistedScope` to every currently registered, unlisted tool. |
 | `unlistedScope` | scope string | required when `operation` is `"replace"` | Closed-world scope for registered tools not listed in `mutations`. |
+| `persist` | boolean | no | Defaults to `false`. When `true`, successful reconciled choices are written to `tools.policy.entries`: immediately for applied immediate requests, or at drain time for queued `atNextTurnBoundary` requests. |
 
 `replace` reconciliation reports public per-tool statuses for listed and unlisted current catalogue entries (`applied`, `alreadyInState`, `blockedByRestriction`, or `unknownTool`). Known entries report the resolved catalogue `name`; when the caller supplied a different identifier such as a stable `toolId`, results include `requestedIdentifier` for audit/display. Listed unknown/removed tools remain reported as `unknownTool`; stable-id-shaped identifiers are resolved only as stable ids and do not fall through to current tool names. Registered but unlisted tools are reconciled with `unlistedScope`. Restriction ceilings still prevent widening even in replace mode.
 
