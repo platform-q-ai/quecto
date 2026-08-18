@@ -196,6 +196,24 @@ pub struct ToolsConfig {
     pub web: WebToolConfig,
     #[serde(default)]
     pub python_lab: crate::infrastructure::tools::python_lab::PythonLabToolConfig,
+    /// Durable catalogue-backed user policy preferences, keyed by stable tool id.
+    #[serde(default)]
+    pub policy: ToolPolicyConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolPolicyConfig {
+    /// Stable tool id -> persisted profile availability scope. Unknown/removed
+    /// ids are preserved on load/save and ignored until a matching tool exists.
+    #[serde(default)]
+    pub entries: HashMap<String, ToolPolicyEntryConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolPolicyEntryConfig {
+    pub scope: crate::domain::tool_descriptor::ProfileAvailabilityScope,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

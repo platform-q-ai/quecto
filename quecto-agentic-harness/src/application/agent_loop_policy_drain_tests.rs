@@ -8,6 +8,56 @@ use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 use std::sync::Arc;
 
 #[test]
+fn queued_persist_failure_emits_failure_policy_changed_event() {
+    let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let events_cb = events.clone();
+    agent.set_progress_callback(Some(Arc::new(move |event| {
+        events_cb.lock().unwrap().push(event);
+    })));
+    agent.set_tool_policy_persistence(Some(Arc::new(|_| Err("disk full".to_string()))));
+
+    let request = ToolPolicyRequest::patch(vec![ToolPolicyMutation::set_scope(
+        "alpha",
+        ProfileAvailabilityScope::None,
+        "queue disable",
+    )]);
+    let mut queued_request = request.clone();
+    queued_request.persist = true;
+    agent.queue_tool_policy_request(queued_request);
+
+    let reconciliation = agent
+        .drain_tool_policy_mutations_at_boundary()
+        .expect("queued policy drains even when persistence fails");
+    assert_eq!(
+        reconciliation.results[0].status,
+        ToolPolicyMutationStatus::PersistenceFailed
+    );
+    assert!(
+        reconciliation.results[0].reason.contains("disk full"),
+        "persist error should be visible on the drain reconciliation path"
+    );
+    let events = events.lock().unwrap();
+    let changed = events.iter().find_map(|event| match event {
+        crate::domain::agent::AgentProgressEvent::ToolPolicyChanged { reconciliation, .. } => {
+            Some(reconciliation)
+        }
+        _ => None,
+    });
+    let event_reconciliation =
+        changed.expect("failed queued persistence emits an observable tool_policy_changed event");
+    assert_eq!(
+        event_reconciliation.results[0].status,
+        ToolPolicyMutationStatus::PersistenceFailed,
+        "failed queued persistence must emit a failure-looking event, not a success-looking one"
+    );
+    assert!(
+        event_reconciliation.results[0].reason.contains("disk full"),
+        "event should carry the persistence error"
+    );
+}
+
+#[test]
 fn queued_drain_keeps_registry_catalogue_and_event_after_consistent() {
     let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
     let events = Arc::new(std::sync::Mutex::new(Vec::new()));

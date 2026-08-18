@@ -75,6 +75,7 @@ pub enum AgentCommand {
         mode: ToolPolicyApplyModePayload,
         operation: ToolPolicyOperationPayload,
         unlisted_scope: Option<ToolPolicyScopePayload>,
+        persist: bool,
     },
 }
 

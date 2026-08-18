@@ -14,6 +14,7 @@ use crate::domain::tool::{
 use crate::domain::tool_descriptor::{
     ProfileAvailabilityScope, ToolCatalogueEntry, ToolDescriptor,
 };
+use crate::infrastructure::config::{ToolPolicyConfig, ToolPolicyEntryConfig};
 
 impl ToolCatalog for ToolRegistryImpl {
     fn definitions(&self) -> &[ToolDefinition] {
@@ -115,6 +116,62 @@ impl RuntimeToolLifecycleRegistry for ToolRegistryImpl {
 }
 
 impl crate::domain::tool::ToolPolicyMutator for ToolRegistryImpl {
+    fn record_persisted_tool_policy_results(&mut self, reconciliation: &ToolPolicyReconciliation) {
+        use crate::domain::tool::ToolPolicyMutationStatus;
+        for result in &reconciliation.results {
+            if !matches!(
+                result.status,
+                ToolPolicyMutationStatus::Applied | ToolPolicyMutationStatus::AlreadyInState
+            ) {
+                continue;
+            }
+            let Some(metadata) = self.metadata.get_mut(result.name.as_ref() as &str) else {
+                continue;
+            };
+            metadata.configured_enabled = Some(result.requested_scope.is_enabled());
+            metadata.configured_scope = Some(result.requested_scope);
+            let stable_id = metadata
+                .identity_for_name(result.name.as_ref())
+                .stable_id
+                .into_owned();
+            self.persisted_policy_scopes
+                .insert(stable_id, result.requested_scope);
+        }
+    }
+
+    fn rollback_tool_policy_results(&mut self, reconciliation: &ToolPolicyReconciliation) {
+        use crate::domain::tool::ToolPolicyMutationStatus;
+        let mut changed = false;
+        for result in reconciliation.results.iter().filter(|result| {
+            matches!(
+                result.status,
+                ToolPolicyMutationStatus::Applied | ToolPolicyMutationStatus::AlreadyInState
+            )
+        }) {
+            if let Some(before) = result.before.as_ref() {
+                changed |= self.replace_profile_scope(&result.name, before.profile_scope);
+            }
+        }
+        if changed {
+            self.refresh_spawn_inherited_child_policy_snapshot();
+        }
+    }
+
+    fn apply_persisted_tool_policy_entries(
+        &mut self,
+        entries: &std::collections::HashMap<String, ProfileAvailabilityScope>,
+    ) -> Vec<String> {
+        let policy = ToolPolicyConfig {
+            entries: entries
+                .iter()
+                .map(|(stable_id, scope)| {
+                    (stable_id.clone(), ToolPolicyEntryConfig { scope: *scope })
+                })
+                .collect(),
+        };
+        self.apply_persisted_tool_policy(&policy)
+    }
+
     fn apply_tool_policy_mutations(
         &mut self,
         mutations: &[ToolPolicyMutation],

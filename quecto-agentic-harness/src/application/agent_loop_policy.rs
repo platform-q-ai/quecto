@@ -72,6 +72,12 @@ impl ToolPolicyState {
         }
     }
 
+    fn clear_runtime_overlays(&mut self) {
+        self.disabled_tools.clear();
+        self.enabled_tools.clear();
+        self.scopes.clear();
+    }
+
     pub(super) fn apply_to_catalogue_entry(&self, entry: &mut ToolCatalogueEntry) {
         let name = entry.name.as_ref();
         let scope = self.scopes.get(name).copied().or_else(|| {
@@ -114,6 +120,21 @@ impl ToolPolicyState {
 }
 
 impl AgentLoopImpl {
+    pub fn apply_persisted_tool_policy_entries(
+        &mut self,
+        entries: &std::collections::HashMap<String, ProfileAvailabilityScope>,
+    ) -> Vec<String> {
+        let unknown = self
+            .tool_registry
+            .apply_persisted_tool_policy_entries(entries);
+        self.tool_policy_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear_runtime_overlays();
+        self.refresh_spawn_inherited_child_policy_snapshot();
+        unknown
+    }
+
     pub fn tool_catalogue_entries(
         &self,
     ) -> Vec<crate::domain::tool_descriptor::ToolCatalogueEntry> {
@@ -180,7 +201,7 @@ impl AgentLoopImpl {
         });
     }
 
-    pub(super) fn refresh_spawn_inherited_child_policy_snapshot(&self) {
+    pub(crate) fn refresh_spawn_inherited_child_policy_snapshot(&self) {
         let mut snapshot = BTreeMap::new();
         for tool in self.tool_catalogue_entries() {
             let name = tool.name.into_owned();
@@ -219,6 +240,13 @@ impl AgentLoopImpl {
         self.turn_in_flight.store(false, Ordering::SeqCst);
     }
 
+    pub fn set_tool_policy_persistence(
+        &mut self,
+        persistence: Option<super::agent_loop::ToolPolicyPersistence>,
+    ) {
+        self.tool_policy_persistence = persistence;
+    }
+
     pub fn request_tool_policy_mutation(
         &mut self,
         mutations: &[ToolPolicyMutation],
@@ -248,17 +276,27 @@ impl AgentLoopImpl {
             self.queue_tool_policy_request(request);
             return None;
         }
-        let reconciliation = match request.operation {
-            crate::domain::tool::ToolPolicyOperation::Patch => self
-                .tool_registry
-                .apply_tool_policy_mutations(&request.mutations, mode),
-            crate::domain::tool::ToolPolicyOperation::Replace => {
-                self.tool_registry.apply_tool_policy_request(&request, mode)
-            }
+        let mut reconciliation = self.tool_registry.apply_tool_policy_request(&request, mode);
+        let persist_error = if request.persist {
+            self.tool_policy_persistence
+                .as_ref()
+                .and_then(|persist| persist(&reconciliation).err())
+        } else {
+            None
         };
-        self.record_applied_tool_policy_overlay(&reconciliation);
-        self.refresh_spawn_inherited_child_policy_snapshot();
-        self.notify_tool_policy_changed(&reconciliation, "immediate");
+        if let Some(error) = persist_error {
+            self.tool_registry
+                .rollback_tool_policy_results(&reconciliation);
+            self.mark_tool_policy_persistence_failed(&mut reconciliation, &error);
+        } else {
+            self.record_applied_tool_policy_overlay(&reconciliation);
+            if request.persist && self.tool_policy_persistence.is_some() {
+                self.tool_registry
+                    .record_persisted_tool_policy_results(&reconciliation);
+            }
+            self.refresh_spawn_inherited_child_policy_snapshot();
+            self.notify_tool_policy_changed(&reconciliation, "immediate");
+        }
         Some(reconciliation)
     }
 
@@ -270,6 +308,25 @@ impl AgentLoopImpl {
         for result in &reconciliation.results {
             if result.status == ToolPolicyMutationStatus::Applied {
                 policy.record_applied(result.name.as_ref(), result.requested_scope);
+            }
+        }
+    }
+
+    fn mark_tool_policy_persistence_failed(
+        &self,
+        reconciliation: &mut ToolPolicyReconciliation,
+        error: &str,
+    ) {
+        for result in &mut reconciliation.results {
+            if matches!(
+                result.status,
+                ToolPolicyMutationStatus::Applied | ToolPolicyMutationStatus::AlreadyInState
+            ) {
+                result.status = ToolPolicyMutationStatus::PersistenceFailed;
+                result.reason = format!(
+                    "{}; persisted tool policy update failed: {}",
+                    result.reason, error
+                );
             }
         }
     }
@@ -316,21 +373,29 @@ impl AgentLoopImpl {
             if combined.correlation_id.is_none() {
                 combined.correlation_id = request.correlation_id.clone();
             }
-            let reconciliation = match request.operation {
-                crate::domain::tool::ToolPolicyOperation::Patch => {
-                    let mut reconciliation = self.tool_registry.apply_tool_policy_mutations(
-                        &request.mutations,
-                        ToolPolicyApplyMode::AtNextTurnBoundary,
-                    );
-                    reconciliation.correlation_id = request.correlation_id.clone();
-                    reconciliation
-                }
-                crate::domain::tool::ToolPolicyOperation::Replace => self
-                    .tool_registry
-                    .apply_tool_policy_request(&request, ToolPolicyApplyMode::AtNextTurnBoundary),
+            let mut reconciliation = self
+                .tool_registry
+                .apply_tool_policy_request(&request, ToolPolicyApplyMode::AtNextTurnBoundary);
+            let persist_error = if request.persist {
+                self.tool_policy_persistence
+                    .as_ref()
+                    .and_then(|persist| persist(&reconciliation).err())
+            } else {
+                None
             };
-            self.record_applied_tool_policy_overlay(&reconciliation);
-            self.notify_tool_policy_changed(&reconciliation, "turn_boundary");
+            if let Some(error) = persist_error {
+                self.tool_registry
+                    .rollback_tool_policy_results(&reconciliation);
+                self.mark_tool_policy_persistence_failed(&mut reconciliation, &error);
+                self.notify_tool_policy_changed(&reconciliation, "turn_boundary");
+            } else {
+                self.record_applied_tool_policy_overlay(&reconciliation);
+                if request.persist && self.tool_policy_persistence.is_some() {
+                    self.tool_registry
+                        .record_persisted_tool_policy_results(&reconciliation);
+                }
+                self.notify_tool_policy_changed(&reconciliation, "turn_boundary");
+            }
             combined.results.extend(reconciliation.results);
         }
         self.refresh_spawn_inherited_child_policy_snapshot();

@@ -1,6 +1,5 @@
 // ToolRegistry: holds all Tool implementations, provides lookup by name.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -37,6 +36,7 @@ pub struct ToolRegistryImpl {
     pub(super) denied_policy_ids: std::collections::HashSet<String>,
     pub(super) inherited_policy_scopes: HashMap<String, ProfileAvailabilityScope>,
     pub(super) inherited_policy_default_scope: Option<ProfileAvailabilityScope>,
+    pub(super) persisted_policy_scopes: HashMap<String, ProfileAvailabilityScope>,
 }
 
 impl std::fmt::Debug for ToolRegistryImpl {
@@ -73,6 +73,7 @@ impl ToolRegistryImpl {
             denied_policy_ids: std::collections::HashSet::new(),
             inherited_policy_scopes: HashMap::new(),
             inherited_policy_default_scope: None,
+            persisted_policy_scopes: HashMap::new(),
         }
     }
 
@@ -230,6 +231,7 @@ impl ToolRegistryImpl {
             }
             Err(ToolIdResolveError::Unknown(_)) => unreachable!("register does not resolve ids"),
         }
+        self.apply_retained_persisted_policy(&name, &mut metadata);
         if let Some(scope) = self
             .inherited_scope_for(&name, &metadata)
             .or(self.inherited_policy_default_scope)
@@ -315,45 +317,6 @@ impl ToolRegistryImpl {
         names
     }
 
-    /// Compatibility name for the legacy extension lifecycle API.
-    pub fn extension_names(&self) -> Vec<String> {
-        self.runtime_tool_names()
-    }
-
-    /// Compatibility name for the legacy extension lifecycle API.
-    pub fn register_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
-        self.register_runtime_tool(tool)
-    }
-
-    /// Compatibility name for the legacy UDS lifecycle API.
-    pub fn register_uds_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
-        self.register_uds_tool(tool)
-    }
-
-    /// Compatibility name for the legacy UDS lifecycle API.
-    pub fn can_register_uds_extension_for_owner(&self, name: &str, owner: &str) -> bool {
-        self.can_register_uds_tool_for_owner(name, owner)
-    }
-
-    /// Compatibility name for the legacy UDS lifecycle API.
-    pub fn register_uds_extension_for_owner(
-        &mut self,
-        tool: Arc<dyn Tool>,
-        owner: Cow<'static, str>,
-    ) -> bool {
-        self.register_uds_tool_for_owner(tool, owner)
-    }
-
-    /// Compatibility name for the legacy extension lifecycle API.
-    pub fn unregister_extension(&mut self, name: &str) {
-        self.unregister_runtime_tool(name)
-    }
-
-    /// Compatibility name for the legacy extension lifecycle API.
-    pub fn unregister_extensions_for_owner(&mut self, owner: &str) -> Vec<String> {
-        self.unregister_runtime_tools_for_owner(owner)
-    }
-
     /// Return descriptors for all registered tools.
     pub fn descriptors(&self) -> Vec<ToolDescriptor> {
         let mut descriptors: Vec<ToolDescriptor> = self
@@ -403,10 +366,12 @@ impl ToolRegistryImpl {
     pub(super) fn effective_scope(metadata: &ToolRegistration) -> ProfileAvailabilityScope {
         let runtime = ProfileAvailabilityScope::from_enabled(metadata.availability.is_enabled());
         let default = ProfileAvailabilityScope::from_enabled(metadata.default_enabled);
-        let configured = metadata
-            .configured_enabled
-            .map(ProfileAvailabilityScope::from_enabled)
-            .unwrap_or(ProfileAvailabilityScope::Both);
+        let configured = metadata.configured_scope.unwrap_or_else(|| {
+            metadata
+                .configured_enabled
+                .map(ProfileAvailabilityScope::from_enabled)
+                .unwrap_or(ProfileAvailabilityScope::Both)
+        });
         let session = metadata
             .session_enabled
             .map(ProfileAvailabilityScope::from_enabled)
@@ -423,33 +388,6 @@ impl ToolRegistryImpl {
             .intersection(session)
             .intersection(inherited)
             .intersection(profile)
-    }
-
-    fn restriction_ceiling(&self, entry: &ToolCatalogueEntry) -> ProfileAvailabilityScope {
-        let default = ProfileAvailabilityScope::from_enabled(entry.default_enabled);
-        let configured = entry
-            .configured_enabled
-            .map(ProfileAvailabilityScope::from_enabled)
-            .unwrap_or(ProfileAvailabilityScope::Both);
-        let session = entry
-            .session_enabled
-            .map(ProfileAvailabilityScope::from_enabled)
-            .unwrap_or(ProfileAvailabilityScope::Both);
-        let restriction = if entry.explicit_restriction.is_some() {
-            ProfileAvailabilityScope::None
-        } else {
-            ProfileAvailabilityScope::Both
-        };
-        let inherited = self
-            .metadata
-            .get(entry.name.as_ref())
-            .and_then(|m| m.inherited_scope)
-            .unwrap_or(ProfileAvailabilityScope::Both);
-        default
-            .intersection(configured)
-            .intersection(session)
-            .intersection(inherited)
-            .intersection(restriction)
     }
 
     pub fn apply_tool_policy_mutations(
@@ -502,7 +440,18 @@ impl ToolRegistryImpl {
                     if entry
                         .profile_scope
                         .unwrap_or(ProfileAvailabilityScope::Both)
-                        == mutation.scope =>
+                        == mutation.scope
+                        && self.metadata.get(&resolved_name).is_some_and(|metadata| {
+                            let configured_scope = metadata.configured_scope;
+                            if !request.persist {
+                                return configured_scope
+                                    .is_none_or(|configured| configured == mutation.scope);
+                            }
+                            let stable_id = metadata.identity_for_name(&resolved_name).stable_id;
+                            configured_scope == Some(mutation.scope)
+                                && self.persisted_policy_scopes.get(stable_id.as_ref())
+                                    == Some(&mutation.scope)
+                        }) =>
                 {
                     ToolPolicyMutationStatus::AlreadyInState
                 }
@@ -578,6 +527,14 @@ impl ToolRegistryImpl {
     }
 
     fn set_profile_scope(&mut self, name: &str, scope: ProfileAvailabilityScope) -> bool {
+        self.replace_profile_scope(name, Some(scope))
+    }
+
+    pub(super) fn replace_profile_scope(
+        &mut self,
+        name: &str,
+        scope: Option<ProfileAvailabilityScope>,
+    ) -> bool {
         if !self.tools.contains_key(name) {
             return false;
         }
@@ -585,12 +542,14 @@ impl ToolRegistryImpl {
             .metadata
             .entry(name.to_string())
             .or_insert_with(ToolRegistration::official_native);
-        if metadata.profile_scope == Some(scope) {
+        if metadata.profile_scope == scope {
             return true;
         }
-        metadata.profile_scope = Some(scope);
-        metadata.profile_enabled = Some(scope != ProfileAvailabilityScope::None);
-        metadata.availability = ToolAvailability::from(scope);
+        metadata.profile_scope = scope;
+        metadata.profile_enabled = scope.map(|scope| scope != ProfileAvailabilityScope::None);
+        metadata.availability = scope
+            .map(ToolAvailability::from)
+            .unwrap_or(ToolAvailability::Enabled);
         self.rebuild_definitions();
         true
     }
@@ -738,9 +697,13 @@ mod catalogue_tests;
 #[cfg(test)]
 #[path = "inherited_tool_policy_tests.rs"]
 mod inherited_tool_policy_tests;
+#[path = "registry_persistence.rs"]
+mod registry_persistence;
+#[path = "registry_policy_ceiling.rs"]
+mod registry_policy_ceiling;
 #[cfg(test)]
-#[path = "registry_policy_tests.rs"]
-mod policy_tests;
+#[path = "registry_policy_tests/mod.rs"]
+mod registry_policy_tests;
 #[cfg(test)]
 #[path = "registry_stable_id_tests.rs"]
 mod stable_id_tests;

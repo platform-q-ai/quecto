@@ -27,6 +27,7 @@ mod registration_tests;
 pub mod registry;
 mod registry_catalogue;
 mod registry_inherited_policy;
+mod registry_lifecycle_compat;
 mod registry_tool_ids;
 mod registry_uds;
 pub mod spawn;

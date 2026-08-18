@@ -286,6 +286,8 @@ struct SetToolPolicyRequest {
     operation: ToolPolicyOperationPayload,
     #[serde(default)]
     unlisted_scope: Option<ToolPolicyScopePayload>,
+    #[serde(default)]
+    persist: bool,
 }
 
 async fn set_tool_policy_handler<G: AgentGateway>(
@@ -298,6 +300,7 @@ async fn set_tool_policy_handler<G: AgentGateway>(
         body.mode,
         body.operation,
         body.unlisted_scope,
+        body.persist,
     )
     .await
     {

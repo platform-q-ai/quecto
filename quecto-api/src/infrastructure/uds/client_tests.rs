@@ -101,6 +101,7 @@ fn control_commands_serialize_to_wire() {
             mode: crate::application::ports::agent_gateway::ToolPolicyApplyModePayload::AtNextTurnBoundary,
             operation: crate::application::ports::agent_gateway::ToolPolicyOperationPayload::Patch,
             unlisted_scope: None,
+        persist: false,
         },
         "p1",
     );

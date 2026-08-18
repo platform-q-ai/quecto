@@ -163,6 +163,7 @@ async fn set_tool_policy_handler_success_and_validation() {
             mode: ToolPolicyApplyModePayload::ImmediateIfIdle,
             operation: ToolPolicyOperationPayload::Patch,
             unlisted_scope: None,
+            persist: false,
         }),
     )
     .await
@@ -176,6 +177,7 @@ async fn set_tool_policy_handler_success_and_validation() {
             mode: ToolPolicyApplyModePayload::ImmediateIfIdle,
             operation: ToolPolicyOperationPayload::Patch,
             unlisted_scope: None,
+            persist: false,
         }),
     )
     .await

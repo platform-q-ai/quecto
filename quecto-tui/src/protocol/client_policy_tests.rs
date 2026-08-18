@@ -13,6 +13,7 @@ fn tool_policy_command_and_catalogue_events_round_trip() {
         mode: ToolPolicyApplyMode::ImmediateIfIdle,
         operation: ToolPolicyOperation::Patch,
         unlisted_scope: None,
+        persist: false,
     };
     let json = serde_json::to_string(&cmd).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();

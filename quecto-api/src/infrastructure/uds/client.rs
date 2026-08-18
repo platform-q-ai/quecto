@@ -331,6 +331,7 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
             mode,
             operation,
             unlisted_scope,
+            persist,
         } => {
             let mut obj = serde_json::json!({"type": "set_tool_policy", "id": id, "mutations": mutations, "mode": mode});
             if operation
@@ -340,6 +341,9 @@ fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
             }
             if let Some(scope) = unlisted_scope {
                 obj["unlistedScope"] = serde_json::to_value(scope).unwrap();
+            }
+            if persist {
+                obj["persist"] = serde_json::Value::Bool(true);
             }
             obj
         }

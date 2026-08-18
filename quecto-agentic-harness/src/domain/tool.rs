@@ -255,6 +255,7 @@ pub struct ToolPolicyRequest {
     pub mutations: Vec<ToolPolicyMutation>,
     pub unlisted_scope: Option<ProfileAvailabilityScope>,
     pub correlation_id: Option<String>,
+    pub persist: bool,
 }
 
 impl ToolPolicyRequest {
@@ -264,6 +265,7 @@ impl ToolPolicyRequest {
             mutations,
             unlisted_scope: None,
             correlation_id: None,
+            persist: false,
         }
     }
 
@@ -276,6 +278,7 @@ impl ToolPolicyRequest {
             mutations,
             unlisted_scope: Some(unlisted_scope),
             correlation_id: None,
+            persist: false,
         }
     }
 }
@@ -287,6 +290,7 @@ pub enum ToolPolicyMutationStatus {
     AlreadyInState,
     UnknownTool,
     BlockedByRestriction,
+    PersistenceFailed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -314,6 +318,40 @@ pub struct ToolPolicyReconciliation {
 
 /// Port: live runtime policy mutation for registered tools.
 pub trait ToolPolicyMutator: Send + Sync {
+    fn record_persisted_tool_policy_results(&mut self, _reconciliation: &ToolPolicyReconciliation) {
+    }
+
+    fn apply_persisted_tool_policy_entries(
+        &mut self,
+        _entries: &std::collections::HashMap<String, ProfileAvailabilityScope>,
+    ) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn rollback_tool_policy_results(&mut self, reconciliation: &ToolPolicyReconciliation) {
+        let mutations = reconciliation
+            .results
+            .iter()
+            .filter(|result| {
+                matches!(
+                    result.status,
+                    ToolPolicyMutationStatus::Applied | ToolPolicyMutationStatus::AlreadyInState
+                )
+            })
+            .filter_map(|result| {
+                let before = result.before.as_ref()?;
+                Some(ToolPolicyMutation::set_scope(
+                    result.name.clone(),
+                    before.effective_scope,
+                    "rollback failed persisted tool policy update",
+                ))
+            })
+            .collect::<Vec<_>>();
+        if !mutations.is_empty() {
+            let _ = self.apply_tool_policy_mutations(&mutations, reconciliation.mode);
+        }
+    }
+
     fn apply_tool_policy_mutations(
         &mut self,
         mutations: &[ToolPolicyMutation],
