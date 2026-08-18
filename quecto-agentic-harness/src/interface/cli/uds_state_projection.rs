@@ -56,27 +56,33 @@ pub(crate) fn slim_state_projection(state: &SessionState) -> serde_json::Value {
     if let Some(workflow) = state.workflow.as_ref().and_then(slim_workflow) {
         data["workflow"] = workflow;
     }
-    data["generation"] = serde_json::json!(activity_generation(state));
+    data["generation"] = serde_json::json!(VisibleStateGeneration::from_state(state).get());
     data
 }
 
-fn activity_generation(state: &SessionState) -> u64 {
-    state
-        .execution
-        .as_ref()
-        .filter(|_| state.is_streaming)
-        .map(|execution| {
-            // Live/busy snapshots use the streaming activity cursor as their
-            // base, then add the slim-visible session/workflow overlay carried
-            // in `state.generation`. These counters are independent; adding
-            // the overlay (rather than subtracting from the activity counter)
-            // keeps workflow-only revisions visible even after execution
-            // activity has advanced far ahead of the session/workflow counter.
-            execution
-                .activity_generation
-                .saturating_add(state.generation)
-        })
-        .unwrap_or(state.generation)
+pub(crate) struct VisibleStateGeneration(u64);
+
+impl VisibleStateGeneration {
+    pub(crate) fn fold_workflow_revision(state: &mut SessionState, workflow_revision: u64) {
+        state.generation = state.generation.saturating_add(workflow_revision);
+    }
+
+    fn from_state(state: &SessionState) -> Self {
+        // The public get_state cursor is one visible-state generation. Session,
+        // workflow, and execution internals may maintain separate revisions,
+        // but the slim projection owns their aggregation so callers never see a
+        // phase-dependent cursor that can drop when streaming ends.
+        let execution_generation = state
+            .execution
+            .as_ref()
+            .map(|execution| execution.activity_generation)
+            .unwrap_or(0);
+        Self(state.generation.saturating_add(execution_generation))
+    }
+
+    fn get(self) -> u64 {
+        self.0
+    }
 }
 
 pub(crate) fn slim_state_response_data(

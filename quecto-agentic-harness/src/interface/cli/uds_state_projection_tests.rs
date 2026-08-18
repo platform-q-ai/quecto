@@ -45,15 +45,15 @@ fn progress_uses_state_key_not_verdict() {
 }
 
 #[test]
-fn idle_generation_uses_session_cursor_even_when_execution_snapshot_exists() {
+fn idle_generation_retains_execution_cursor_after_streaming_finishes() {
     let mut state = state_with_execution(8, "quiet");
     state.is_streaming = false;
     state.generation = 3;
     let data = slim_state_response_data(&state, Some(8));
-    assert_eq!(data["generation"], 3);
+    assert_eq!(data["generation"], 11);
     assert!(
         data.get("unchanged").is_none(),
-        "idle get_state must compare since against session generation, not stale execution: {data}"
+        "idle get_state must keep the same aggregated visible cursor shape after streaming finishes: {data}"
     );
 }
 
@@ -145,6 +145,25 @@ fn streaming_workflow_overlay_advances_cursor_when_activity_generation_is_ahead(
     assert!(
         data.get("unchanged").is_none(),
         "changed workflow step must not collapse to unchanged under the prior cursor: {data}"
+    );
+}
+
+#[test]
+fn generation_does_not_regress_when_streaming_snapshot_becomes_idle() {
+    let mut streaming = state_with_execution(100, "advancing");
+    streaming.generation = 3;
+    let streaming_generation = slim_state_projection(&streaming)["generation"]
+        .as_u64()
+        .unwrap();
+
+    let mut idle = streaming.clone();
+    idle.is_streaming = false;
+    idle.generation = 4;
+    let idle_generation = slim_state_projection(&idle)["generation"].as_u64().unwrap();
+
+    assert!(
+        idle_generation > streaming_generation,
+        "visible get_state generation must be monotonic across streaming->idle: streaming={streaming_generation}, idle={idle_generation}"
     );
 }
 

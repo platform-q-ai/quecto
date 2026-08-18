@@ -719,7 +719,10 @@ pub(crate) fn build_get_state_line_live(
                 live["automation"] = auto;
             }
             state.workflow = Some(live);
-            state.generation = state.generation.saturating_add(engine.revision());
+            super::uds_state_projection::VisibleStateGeneration::fold_workflow_revision(
+                &mut state,
+                engine.revision(),
+            );
         }
     }
     let data = super::uds_state_projection::slim_state_projection(&state);

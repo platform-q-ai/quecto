@@ -88,7 +88,10 @@ pub(super) fn query_response_data(
                 ctx.agent.max_context_tokens(),
                 ctx.agent.effort().map(|l| l.as_str().to_string()),
             );
-            state.generation = state.generation.saturating_add(workflow_revision);
+            super::uds_state_projection::VisibleStateGeneration::fold_workflow_revision(
+                &mut state,
+                workflow_revision,
+            );
             if let Ok(mut execution) = ctx.execution_state.lock() {
                 if ctx.session.is_streaming() {
                     state.message_count = execution.message_count();
