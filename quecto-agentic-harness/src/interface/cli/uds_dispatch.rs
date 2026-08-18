@@ -18,7 +18,8 @@ use super::uds_dispatch_session::{handle_new_session, handle_resume_session, han
 use super::{AgentCommand, AgentEvent};
 use super::{DispatchCtx, emit_event_to_broadcast_or_writer};
 use crate::domain::tool::{
-    ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyOperation, ToolPolicyRequest,
+    ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyOperation, ToolPolicyReconciliation,
+    ToolPolicyRequest,
 };
 use crate::interface::cli::protocol::{
     ToolPolicyApplyModeCommand, ToolPolicyMutationCommand, ToolPolicyOperationCommand,
@@ -106,6 +107,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             mode,
             operation,
             unlisted_scope,
+            persist,
             ..
         } => {
             handle_set_tool_policy(
@@ -117,6 +119,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
                     mode,
                     operation,
                     unlisted_scope,
+                    persist,
                 },
             )
             .await
@@ -159,6 +162,7 @@ pub(super) struct SetToolPolicyCommandParts {
     pub(super) mode: ToolPolicyApplyModeCommand,
     pub(super) operation: ToolPolicyOperationCommand,
     pub(super) unlisted_scope: Option<crate::domain::tool_descriptor::ProfileAvailabilityScope>,
+    pub(super) persist: bool,
 }
 
 pub(super) async fn handle_set_tool_policy(
@@ -172,6 +176,7 @@ pub(super) async fn handle_set_tool_policy(
         mode,
         operation,
         unlisted_scope,
+        persist,
     } = command;
     let mut domain_mutations = Vec::with_capacity(mutations.len());
     for mutation in mutations {
@@ -215,7 +220,20 @@ pub(super) async fn handle_set_tool_policy(
     };
     let reconciliation = ctx.agent.request_tool_policy(request, apply_mode);
     let data = match reconciliation {
-        Some(reconciliation) => serde_json::to_value(&reconciliation).unwrap_or_default(),
+        Some(reconciliation) => {
+            if persist {
+                if let Some(inputs) = ctx.provider_reload_inputs {
+                    if let Err(err) =
+                        persist_tool_policy_results(&inputs.config_path, &reconciliation)
+                    {
+                        let ev = AgentEvent::err(id, type_name, &err);
+                        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+                        return false;
+                    }
+                }
+            }
+            serde_json::to_value(&reconciliation).unwrap_or_default()
+        }
         None => serde_json::json!({
             "mode": "atNextTurnBoundary",
             "queued": true,
@@ -225,6 +243,43 @@ pub(super) async fn handle_set_tool_policy(
     let ev = AgentEvent::ok(id, type_name, Some(data));
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
+}
+
+fn persist_tool_policy_results(
+    config_path: &std::path::Path,
+    reconciliation: &ToolPolicyReconciliation,
+) -> Result<(), String> {
+    use crate::domain::tool::ToolPolicyMutationStatus;
+    use crate::infrastructure::config::{Config, ToolPolicyEntryConfig};
+    // Persist only user preferences already present on disk. Do not use
+    // load_with_env here: environment overrides may contain secrets and must
+    // not be serialized back into the durable config file.
+    let mut config = Config::load(config_path.to_str().unwrap_or(""))
+        .map_err(|e| format!("failed to load config for tool policy persistence: {e}"))?;
+    for result in &reconciliation.results {
+        if matches!(
+            result.status,
+            ToolPolicyMutationStatus::Applied | ToolPolicyMutationStatus::AlreadyInState
+        ) {
+            if let Some(after) = &result.after {
+                config.tools.policy.entries.insert(
+                    after.stable_id.to_string(),
+                    ToolPolicyEntryConfig {
+                        scope: result.requested_scope,
+                    },
+                );
+            }
+        }
+    }
+    let parent = config_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("failed to create config directory: {e}"))?;
+    let json = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("failed to serialize config: {e}"))?;
+    std::fs::write(config_path, format!("{json}\n"))
+        .map_err(|e| format!("failed to write config: {e}"))
 }
 
 pub(super) async fn handle_steer(

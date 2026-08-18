@@ -50,6 +50,7 @@ async fn dispatch_set_tool_policy_applies_and_catalogue_reflects_scope() {
         mode: ToolPolicyApplyModeCommand::ImmediateIfIdle,
         operation: crate::interface::cli::protocol::ToolPolicyOperationCommand::Patch,
         unlisted_scope: None,
+        persist: false,
     };
     {
         let mut ctx = fx.ctx();
@@ -94,6 +95,7 @@ async fn dispatch_set_tool_policy_prefers_tool_id_when_name_also_present() {
         mode: ToolPolicyApplyModeCommand::ImmediateIfIdle,
         operation: crate::interface::cli::protocol::ToolPolicyOperationCommand::Patch,
         unlisted_scope: None,
+        persist: false,
     };
     {
         let mut ctx = fx.ctx();
@@ -140,6 +142,7 @@ async fn dispatch_set_tool_policy_tool_id_only_still_applies() {
         mode: ToolPolicyApplyModeCommand::ImmediateIfIdle,
         operation: crate::interface::cli::protocol::ToolPolicyOperationCommand::Patch,
         unlisted_scope: None,
+        persist: false,
     };
     {
         let mut ctx = fx.ctx();

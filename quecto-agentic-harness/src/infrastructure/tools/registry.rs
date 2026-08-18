@@ -403,10 +403,12 @@ impl ToolRegistryImpl {
     pub(super) fn effective_scope(metadata: &ToolRegistration) -> ProfileAvailabilityScope {
         let runtime = ProfileAvailabilityScope::from_enabled(metadata.availability.is_enabled());
         let default = ProfileAvailabilityScope::from_enabled(metadata.default_enabled);
-        let configured = metadata
-            .configured_enabled
-            .map(ProfileAvailabilityScope::from_enabled)
-            .unwrap_or(ProfileAvailabilityScope::Both);
+        let configured = metadata.configured_scope.unwrap_or_else(|| {
+            metadata
+                .configured_enabled
+                .map(ProfileAvailabilityScope::from_enabled)
+                .unwrap_or(ProfileAvailabilityScope::Both)
+        });
         let session = metadata
             .session_enabled
             .map(ProfileAvailabilityScope::from_enabled)
@@ -423,33 +425,6 @@ impl ToolRegistryImpl {
             .intersection(session)
             .intersection(inherited)
             .intersection(profile)
-    }
-
-    fn restriction_ceiling(&self, entry: &ToolCatalogueEntry) -> ProfileAvailabilityScope {
-        let default = ProfileAvailabilityScope::from_enabled(entry.default_enabled);
-        let configured = entry
-            .configured_enabled
-            .map(ProfileAvailabilityScope::from_enabled)
-            .unwrap_or(ProfileAvailabilityScope::Both);
-        let session = entry
-            .session_enabled
-            .map(ProfileAvailabilityScope::from_enabled)
-            .unwrap_or(ProfileAvailabilityScope::Both);
-        let restriction = if entry.explicit_restriction.is_some() {
-            ProfileAvailabilityScope::None
-        } else {
-            ProfileAvailabilityScope::Both
-        };
-        let inherited = self
-            .metadata
-            .get(entry.name.as_ref())
-            .and_then(|m| m.inherited_scope)
-            .unwrap_or(ProfileAvailabilityScope::Both);
-        default
-            .intersection(configured)
-            .intersection(session)
-            .intersection(inherited)
-            .intersection(restriction)
     }
 
     pub fn apply_tool_policy_mutations(
@@ -738,9 +713,13 @@ mod catalogue_tests;
 #[cfg(test)]
 #[path = "inherited_tool_policy_tests.rs"]
 mod inherited_tool_policy_tests;
+#[path = "registry_persistence.rs"]
+mod registry_persistence;
+#[path = "registry_policy_ceiling.rs"]
+mod registry_policy_ceiling;
 #[cfg(test)]
-#[path = "registry_policy_tests.rs"]
-mod policy_tests;
+#[path = "registry_policy_tests/mod.rs"]
+mod registry_policy_tests;
 #[cfg(test)]
 #[path = "registry_stable_id_tests.rs"]
 mod stable_id_tests;

@@ -1,3 +1,4 @@
+use super::ToolRegistryImpl;
 use super::tests::{DummyTestTool, test_registry};
 use crate::domain::tool::{
     Tool, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus, ToolPolicyRequest,
@@ -5,7 +6,6 @@ use crate::domain::tool::{
 };
 use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolRestrictionReason};
 use std::sync::Arc;
-
 #[test]
 fn policy_mutation_reports_deterministic_outcomes_and_snapshots() {
     let (mut reg, _tmp) = test_registry();

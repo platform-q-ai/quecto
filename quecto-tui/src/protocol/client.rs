@@ -19,10 +19,7 @@ use std::path::Path;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
-/// Maximum line size from the agent — derived from the shared protocol cap
-/// (`quecto_line_io::PROTOCOL_LINE_CAP_BYTES`, 8 MiB) so the harness emitter
-/// and this reader can never disagree (#1047 review).
-///
+/// Maximum line size from the agent, derived from the shared protocol cap.
 /// Public so out-of-crate tests (the harness BDD suite) can build boundary
 /// frames against the real cap instead of a duplicated literal.
 pub const MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
@@ -117,6 +114,8 @@ pub enum Command {
         operation: ToolPolicyOperation,
         #[serde(skip_serializing_if = "Option::is_none")]
         unlisted_scope: Option<ToolScope>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        persist: bool,
     },
     ListModels {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -711,7 +710,7 @@ impl Client {
         Self {
             cmd_tx,
             event_rx,
-            dropped_oversized: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            dropped_oversized: Default::default(),
             speaks_frames: true,
         }
     }

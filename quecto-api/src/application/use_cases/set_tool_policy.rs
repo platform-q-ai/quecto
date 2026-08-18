@@ -12,6 +12,7 @@ pub async fn execute(
     mode: ToolPolicyApplyModePayload,
     operation: ToolPolicyOperationPayload,
     unlisted_scope: Option<ToolPolicyScopePayload>,
+    persist: bool,
 ) -> Result<AgentEvent, ApiError> {
     if !gateway.is_connected() {
         return Err(ApiError::AgentNotConnected);
@@ -40,6 +41,7 @@ pub async fn execute(
             mode,
             operation,
             unlisted_scope,
+            persist,
         })
         .await
 }

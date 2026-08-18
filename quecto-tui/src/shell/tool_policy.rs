@@ -118,6 +118,7 @@ impl App {
                     mode: ToolPolicyApplyMode::ImmediateIfIdle,
                     operation: ToolPolicyOperation::Replace,
                     unlisted_scope: Some(ToolScope::None),
+                    persist: true,
                 });
             }
             SelectableItemModalResult::Dismissed => {
