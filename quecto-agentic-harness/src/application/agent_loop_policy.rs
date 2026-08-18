@@ -387,6 +387,7 @@ impl AgentLoopImpl {
                 self.tool_registry
                     .rollback_tool_policy_results(&reconciliation);
                 self.mark_tool_policy_persistence_failed(&mut reconciliation, &error);
+                self.notify_tool_policy_changed(&reconciliation, "turn_boundary");
             } else {
                 self.record_applied_tool_policy_overlay(&reconciliation);
                 if request.persist && self.tool_policy_persistence.is_some() {

@@ -618,7 +618,7 @@ Rewind conversation history to a selected user-message boundary. Prefer stable `
 
 ### `reload`
 
-Force a provider/model config reload (runtime registry + config watch surfaces).
+Force a runtime config reload (provider/model registry plus config watch surfaces). Reload also reparses and reapplies `tools.policy.entries` from config as the persisted tool-policy baseline and clears live-only AgentLoop tool-policy overlays, so a client that edited or removed `tools.policy` can send `reload` to make the live catalogue reflect the durable config rather than stale session-only policy.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
