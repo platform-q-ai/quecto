@@ -349,6 +349,7 @@ impl AgentSession {
     ) -> SessionState {
         SessionState {
             model: self.model.clone(),
+            generation: 1,
             is_streaming: self.streaming,
             session_key: self.session_key.clone(),
             message_count,

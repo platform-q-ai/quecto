@@ -146,6 +146,7 @@ mod uds_reload;
 pub mod uds_session;
 mod uds_snapshots;
 mod uds_socket;
+mod uds_state_projection;
 #[cfg(test)]
 mod uds_thinking_1231_tests;
 mod uds_tool_intercept;

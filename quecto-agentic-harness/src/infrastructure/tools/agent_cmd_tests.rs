@@ -140,14 +140,20 @@ fn test_parse_get_messages_before_cursor_reaches_child_command() {
 }
 
 #[test]
-fn test_agent_cmd_schema_declares_before_cursor() {
+fn test_agent_cmd_schema_declares_before_and_since_cursors() {
     let def = empty_tool().definition();
     let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
     assert_eq!(schema["properties"]["before"]["type"], "string");
-    let description = schema["properties"]["before"]["description"].as_str();
+    let before_description = schema["properties"]["before"]["description"].as_str();
     assert!(
-        description.is_some_and(|d| d.contains("older page")),
+        before_description.is_some_and(|d| d.contains("older page")),
         "schema must explain the cursor pages older history: {schema}"
+    );
+    assert_eq!(schema["properties"]["since"]["type"], "integer");
+    let since_description = schema["properties"]["since"]["description"].as_str();
+    assert!(
+        since_description.is_some_and(|d| d.contains("get_state") && d.contains("unchanged")),
+        "schema must explain get_state since cursor: {schema}"
     );
 }
 

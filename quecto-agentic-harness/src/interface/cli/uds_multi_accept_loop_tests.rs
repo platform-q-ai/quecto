@@ -51,6 +51,7 @@ fn make_args(
         state_snapshot: Arc::new(tokio::sync::RwLock::new(SessionState {
             execution: None,
             model: "mock-model".into(),
+            generation: 1,
             is_streaming: true,
             session_key: "cli:test".into(),
             message_count: 0,

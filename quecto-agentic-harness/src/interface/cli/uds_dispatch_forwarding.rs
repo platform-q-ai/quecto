@@ -21,6 +21,7 @@ pub(super) async fn try_forward_subagent_targeted_command(
     if let AgentCommand::GetState {
         agent_id: Some(agent_id),
         id,
+        since,
     } = cmd
     {
         let tn = cmd.type_name();
@@ -29,6 +30,7 @@ pub(super) async fn try_forward_subagent_targeted_command(
             id.as_deref().map(CommandId::from),
             tn,
             AgentId::from(agent_id.as_str()),
+            *since,
         )
         .await;
         super::emit_response_or_frame_limit_error(ctx, id.as_deref(), tn, ev).await;
@@ -132,6 +134,7 @@ pub(super) async fn forward_subagent_get_state(
     id: Option<CommandId>,
     tn: &str,
     agent_id: AgentId,
+    since: Option<u64>,
 ) -> AgentEvent {
     use crate::infrastructure::tools::subagent_registry::{
         INSPECTOR_RESPONSE_TIMEOUT, send_subagent_uds_command_with_timeout,
@@ -145,6 +148,9 @@ pub(super) async fn forward_subagent_get_state(
         Err(e) => return AgentEvent::err(id_ref, tn, e),
     };
     let mut cmd = serde_json::json!({ "type": "get_state" });
+    if let Some(since) = since {
+        cmd["since"] = serde_json::json!(since);
+    }
     if let InspectionRoute::ViaAncestor { target_id, .. } = &route {
         cmd["agent_id"] = serde_json::json!(target_id);
     }

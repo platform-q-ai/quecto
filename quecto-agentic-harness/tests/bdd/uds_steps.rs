@@ -94,7 +94,17 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
             true, // guards enabled
             wf_emitter,
         ) {
-            Ok(handle) => Some(handle),
+            Ok(handle) => {
+                if let Some(template) = &world.uds_selected_workflow_template {
+                    let mut engine = handle
+                        .lock()
+                        .map_err(|_| "workflow lock poisoned".to_string())?;
+                    engine
+                        .select_template(template, None)
+                        .map_err(|e| format!("workflow select_template failed: {e}"))?;
+                }
+                Some(handle)
+            }
             Err(e) => {
                 return Err(format!("workflow init failed: {e}"));
             }
@@ -243,6 +253,14 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
     }
     e2e_steps::mount_auto_mock_responses_for_messages(world, &prompts);
     if world.auto_mock_manual_llm && world._workflow_enabled {
+        drive_single_client_over_real_socket(world);
+        return;
+    }
+    if world
+        .uds_commands
+        .iter()
+        .any(|c| c.contains("\"sinceFrom\""))
+    {
         drive_single_client_over_real_socket(world);
         return;
     }
@@ -712,6 +730,14 @@ fn when_start_uds_no_session_flag(world: &mut QuectoWorld) {
     world.no_session = true;
 }
 
+#[when(expr = "I start the UDS agent with workflow template {string} selected")]
+fn when_start_uds_agent_with_selected_workflow(world: &mut QuectoWorld, template: String) {
+    world.session_name = None;
+    world.no_session = true;
+    world._workflow_enabled = true;
+    world.uds_selected_workflow_template = Some(template);
+}
+
 #[when(expr = "I start the UDS agent with no session and system prompt {string}")]
 fn when_start_uds_no_session_with_system(world: &mut QuectoWorld, system: String) {
     world.session_name = None;
@@ -768,6 +794,18 @@ fn when_send_command_with_id(world: &mut QuectoWorld, command: String, id: Strin
 #[when(expr = "I send get_state with id {string}")]
 fn when_send_get_state_with_id(world: &mut QuectoWorld, id: String) {
     let cmd = serde_json::json!({"type": "get_state", "id": id});
+    world.uds_commands.push(cmd.to_string());
+}
+
+#[when(expr = "I send get_state with id {string} since generation {int}")]
+fn when_send_get_state_since_literal(world: &mut QuectoWorld, id: String, since: u64) {
+    let cmd = serde_json::json!({"type": "get_state", "id": id, "since": since});
+    world.uds_commands.push(cmd.to_string());
+}
+
+#[when(expr = "I send get_state with id {string} since generation from {string}")]
+fn when_send_get_state_since_generation(world: &mut QuectoWorld, id: String, prior_id: String) {
+    let cmd = serde_json::json!({"type": "get_state", "id": id, "sinceFrom": prior_id});
     world.uds_commands.push(cmd.to_string());
 }
 
@@ -1057,6 +1095,17 @@ pub fn find_agent_response(world: &QuectoWorld, command: &str) -> Option<serde_j
     })
 }
 
+pub fn find_agent_response_by_id(world: &QuectoWorld, id: &str) -> Option<serde_json::Value> {
+    world.agent_events.iter().find_map(|l| {
+        let v: serde_json::Value = serde_json::from_str(l).ok()?;
+        if v["type"] == "response" && v["id"] == id {
+            Some(v)
+        } else {
+            None
+        }
+    })
+}
+
 #[then(expr = "the agent output should contain a response command {string} with model {string}")]
 fn then_agent_output_response_contains_model(
     world: &mut QuectoWorld,
@@ -1208,6 +1257,141 @@ fn then_get_state_has_field(world: &mut QuectoWorld, field: String) {
         data.contains_key(&field),
         "expected get_state.data.{field}\nkeys: {:#?}",
         data.keys().collect::<Vec<_>>(),
+    );
+}
+
+fn assert_slim_get_state_data(data: &serde_json::Value, workflow: bool) {
+    let obj = data.as_object().expect("get_state data must be object");
+    let allowed: std::collections::BTreeSet<&str> = if workflow {
+        [
+            "state",
+            "effort",
+            "model",
+            "progress",
+            "generation",
+            "workflow",
+        ]
+        .into_iter()
+        .collect()
+    } else {
+        ["state", "effort", "model", "progress", "generation"]
+            .into_iter()
+            .collect()
+    };
+    let actual: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+    assert_eq!(
+        actual, allowed,
+        "unexpected slim get_state keys in data: {data}"
+    );
+    assert!(data["state"].is_string(), "state should be string: {data}");
+    assert!(data["model"].is_string(), "model should be string: {data}");
+    assert!(
+        data["generation"].as_u64().is_some(),
+        "generation should be numeric: {data}"
+    );
+    assert!(
+        data["progress"].is_object(),
+        "progress should be object: {data}"
+    );
+}
+
+#[then("the get_state response should have only the slim state fields without workflow")]
+fn then_get_state_slim_without_workflow(world: &mut QuectoWorld) {
+    let resp = find_agent_response(world, "get_state").expect("no get_state response");
+    assert_slim_get_state_data(&resp["data"], false);
+}
+
+#[then(
+    expr = "the get_state response {string} should have only the slim state fields without workflow"
+)]
+fn then_get_state_id_slim_without_workflow(world: &mut QuectoWorld, id: String) {
+    let resp = find_agent_response_by_id(world, &id)
+        .unwrap_or_else(|| panic!("no get_state response with id {id}"));
+    assert_slim_get_state_data(&resp["data"], false);
+}
+
+#[then(
+    expr = "the get_state response {string} should have only the slim state fields with workflow"
+)]
+fn then_get_state_id_slim_with_workflow(world: &mut QuectoWorld, id: String) {
+    let resp = find_agent_response_by_id(world, &id)
+        .unwrap_or_else(|| panic!("no get_state response with id {id}"));
+    assert_slim_get_state_data(&resp["data"], true);
+    let workflow = resp["data"]["workflow"]
+        .as_object()
+        .expect("workflow object");
+    let keys: std::collections::BTreeSet<&str> = workflow.keys().map(String::as_str).collect();
+    assert!(
+        keys.contains("activeTemplate"),
+        "workflow lacks identity: {workflow:?}"
+    );
+    assert!(
+        keys.contains("currentStep"),
+        "workflow lacks current step: {workflow:?}"
+    );
+    assert!(
+        !keys.contains("availableTemplates"),
+        "workflow should omit templates: {workflow:?}"
+    );
+    assert!(
+        !keys.contains("steps"),
+        "workflow should omit step lists: {workflow:?}"
+    );
+    assert!(
+        !keys.contains("guidance"),
+        "workflow should omit guidance: {workflow:?}"
+    );
+}
+
+#[then("the get_state progress should contain only verdict and reason")]
+fn then_get_state_progress_slim(world: &mut QuectoWorld) {
+    let resp = find_agent_response(world, "get_state").expect("no get_state response");
+    let progress = resp["data"]["progress"]
+        .as_object()
+        .expect("progress object");
+    let keys: std::collections::BTreeSet<&str> = progress.keys().map(String::as_str).collect();
+    assert_eq!(
+        keys,
+        ["reason", "verdict"].into_iter().collect(),
+        "progress keys: {progress:?}"
+    );
+}
+
+#[then(expr = "the get_state response {string} should be unchanged since {string}")]
+fn then_get_state_unchanged_since(world: &mut QuectoWorld, id: String, prior_id: String) {
+    let prior = find_agent_response_by_id(world, &prior_id).expect("missing prior response");
+    let resp = find_agent_response_by_id(world, &id).expect("missing since response");
+    let expected_generation = prior["data"]["generation"]
+        .as_u64()
+        .expect("prior generation");
+    let data = resp["data"].as_object().expect("since data object");
+    let keys: std::collections::BTreeSet<&str> = data.keys().map(String::as_str).collect();
+    assert_eq!(
+        keys,
+        ["generation", "unchanged"].into_iter().collect(),
+        "unchanged response data: {}",
+        resp["data"]
+    );
+    assert_eq!(resp["data"]["unchanged"].as_bool(), Some(true));
+    assert_eq!(
+        resp["data"]["generation"].as_u64(),
+        Some(expected_generation)
+    );
+}
+
+#[then(expr = "the get_state response {string} should have a different generation than {string}")]
+fn then_get_state_generation_different(world: &mut QuectoWorld, id: String, prior_id: String) {
+    let prior = find_agent_response_by_id(world, &prior_id).expect("missing prior response");
+    let resp = find_agent_response_by_id(world, &id).expect("missing response");
+    let before = prior["data"]["generation"]
+        .as_u64()
+        .expect("prior generation");
+    let after = resp["data"]["generation"]
+        .as_u64()
+        .expect("response generation");
+    assert_ne!(
+        after, before,
+        "expected generation to change from {before}; response: {resp}"
     );
 }
 
@@ -2249,7 +2433,13 @@ fn mc_drive_clients(world: &mut QuectoWorld, actions: McClientActions<'_>) {
     }
 
     mc_disconnect_early(&mut streams, disconnected);
-    mc_send_commands(&mut streams, connected, disconnected, commands);
+    mc_send_commands(
+        &mut streams,
+        &mut world.mc_client_events,
+        connected,
+        disconnected,
+        commands,
+    );
     if world.auto_mock_manual_llm && world._workflow_enabled {
         mc_collect_events_live(
             world,
@@ -2297,7 +2487,13 @@ fn mc_drive_clients(world: &mut QuectoWorld, actions: McClientActions<'_>) {
         }
 
         // Send commands for reconnect clients.
-        mc_send_commands(&mut streams, reconnect_clients, &[], commands);
+        mc_send_commands(
+            &mut streams,
+            &mut world.mc_client_events,
+            reconnect_clients,
+            &[],
+            commands,
+        );
         std::thread::sleep(std::time::Duration::from_secs(2));
         // Collect events and close reconnect clients.
         mc_collect_events(world, &mut streams, reconnect_clients, &[]);
@@ -2415,8 +2611,101 @@ fn mc_disconnect_early(
 }
 
 /// Send queued commands to connected clients.
+fn resolve_since_from(cmd: &str, events: &[String]) -> String {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(cmd) else {
+        return cmd.to_string();
+    };
+    let Some(prior_id) = value
+        .get("sinceFrom")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned)
+    else {
+        return cmd.to_string();
+    };
+    let prior = events
+        .iter()
+        .find_map(|line| {
+            let event: serde_json::Value = serde_json::from_str(line).ok()?;
+            if event["type"] == "response" && event["id"] == prior_id {
+                Some(event)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| panic!("no prior get_state response with id {prior_id}"));
+    let since = prior["data"]["generation"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("prior response has no numeric generation: {prior}"));
+    value["since"] = serde_json::json!(since);
+    value
+        .as_object_mut()
+        .expect("command object")
+        .remove("sinceFrom");
+    value.to_string()
+}
+
+fn mc_collect_events_partial(
+    streams: &mut HashMap<u32, std::os::unix::net::UnixStream>,
+    events: &mut HashMap<u32, Vec<String>>,
+    connected: &[u32],
+    disconnected: &[u32],
+) {
+    use std::io::{BufRead, BufReader};
+    for &cid in connected {
+        if disconnected.contains(&cid) {
+            continue;
+        }
+        if let Some(stream) = streams.get(&cid) {
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(25)));
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            while reader
+                .read_line(&mut line)
+                .ok()
+                .filter(|n| *n > 0)
+                .is_some()
+            {
+                let trimmed = line.trim().to_string();
+                if !trimmed.is_empty() {
+                    events.entry(cid).or_default().push(trimmed);
+                }
+                line.clear();
+            }
+        }
+    }
+}
+
+fn wait_for_mc_events(
+    streams: &mut HashMap<u32, std::os::unix::net::UnixStream>,
+    events: &mut HashMap<u32, Vec<String>>,
+    connected: &[u32],
+    disconnected: &[u32],
+    quiet_ms: u64,
+) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let before: usize = events.values().map(Vec::len).sum();
+        mc_collect_events_partial(streams, events, connected, disconnected);
+        let after: usize = events.values().map(Vec::len).sum();
+        if after > before {
+            continue;
+        }
+        if std::time::Instant::now() > deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(quiet_ms));
+        let before_sleep: usize = events.values().map(Vec::len).sum();
+        mc_collect_events_partial(streams, events, connected, disconnected);
+        if events.values().map(Vec::len).sum::<usize>() == before_sleep {
+            break;
+        }
+    }
+}
+
+/// Send queued commands to connected clients.
 fn mc_send_commands(
     streams: &mut HashMap<u32, std::os::unix::net::UnixStream>,
+    events: &mut HashMap<u32, Vec<String>>,
     connected: &[u32],
     disconnected: &[u32],
     commands: &HashMap<u32, Vec<String>>,
@@ -2426,11 +2715,18 @@ fn mc_send_commands(
         if disconnected.contains(&cid) {
             continue;
         }
-        if let (Some(cmds), Some(stream)) = (commands.get(&cid), streams.get_mut(&cid)) {
+        if let Some(cmds) = commands.get(&cid) {
             for cmd in cmds {
-                let _ = stream.write_all(format!("{cmd}\n").as_bytes());
+                let outbound =
+                    resolve_since_from(cmd, events.get(&cid).map(Vec::as_slice).unwrap_or(&[]));
+                if let Some(stream) = streams.get_mut(&cid) {
+                    let _ = stream.write_all(format!("{outbound}\n").as_bytes());
+                    let _ = stream.flush();
+                }
+                if cmd.contains("\"get_state\"") || cmd.contains("\"sinceFrom\"") {
+                    wait_for_mc_events(streams, events, connected, disconnected, 50);
+                }
             }
-            let _ = stream.flush();
         }
     }
 }
@@ -3100,10 +3396,48 @@ fn send_real_llm_commands(args: SendCommandsArgs<'_>) {
     use std::io::Write;
     let mut expected_completions: u32 = 0;
     for cmd_str in commands {
-        let _ = writer.write_all(format!("{cmd_str}\n").as_bytes());
+        let mut command = serde_json::from_str::<serde_json::Value>(cmd_str).ok();
+        if let Some(cmd) = command.as_mut() {
+            if let Some(prior_id) = cmd
+                .get("sinceFrom")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned)
+            {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                let prior = loop {
+                    if let Some(value) = state.events.lock().unwrap().iter().find_map(|line| {
+                        let value: serde_json::Value = serde_json::from_str(line).ok()?;
+                        if value["type"] == "response" && value["id"] == prior_id {
+                            Some(value)
+                        } else {
+                            None
+                        }
+                    }) {
+                        break value;
+                    }
+                    if std::time::Instant::now() > deadline {
+                        panic!("no prior get_state response with id {prior_id}");
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                };
+                let since = prior["data"]["generation"]
+                    .as_u64()
+                    .unwrap_or_else(|| panic!("prior response has no numeric generation: {prior}"));
+                cmd["since"] = serde_json::json!(since);
+                cmd.as_object_mut()
+                    .expect("command object")
+                    .remove("sinceFrom");
+            }
+        }
+        let outbound = command
+            .as_ref()
+            .map(serde_json::Value::to_string)
+            .unwrap_or_else(|| cmd_str.clone());
+        let _ = writer.write_all(format!("{outbound}\n").as_bytes());
         let _ = writer.flush();
 
-        let is_prompt = serde_json::from_str::<serde_json::Value>(cmd_str)
+        let is_prompt = command
+            .as_ref()
             .map(|v| v["type"].as_str() == Some("prompt"))
             .unwrap_or(false);
 

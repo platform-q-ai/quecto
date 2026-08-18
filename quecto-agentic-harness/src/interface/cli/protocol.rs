@@ -430,6 +430,8 @@ pub use crate::infrastructure::line_cap::{EVENT_LINE_CAP_BYTES, EVENT_LINE_JSON_
 #[serde(rename_all = "camelCase")]
 pub struct SessionState {
     pub model: String,
+    #[serde(default)]
+    pub generation: u64,
     pub is_streaming: bool,
     pub session_key: String,
     pub message_count: usize,

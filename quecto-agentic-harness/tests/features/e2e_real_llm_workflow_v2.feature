@@ -13,13 +13,12 @@ Feature: E2E Real LLM Workflow V2 UDS Tests
   # ═══════════════════════════════════════════════════════════════════════════
 
   @done @manual-real-llm @mock-llm
-  Scenario: get_state shows selector mode before template selection
+  Scenario: get_state omits workflow before template selection
     When I start the real LLM UDS workflow agent
     And I send get_state with id "gs-sel"
     And I close the UDS connection
     Then the UDS agent exits with code 0
-    And the get_state response "gs-sel" should have workflow mode "selecting_template"
-    And the get_state response "gs-sel" should have 10 available templates
+    And the get_state response "gs-sel" should not have workflow
 
   @done @manual-real-llm @mock-llm
   Scenario: LLM selects a workflow template
@@ -101,7 +100,7 @@ Feature: E2E Real LLM Workflow V2 UDS Tests
     And I close the UDS connection
     Then the UDS agent exits with code 0
     And the agent output should contain a workflow_state event with mode "selecting_template"
-    And the get_state response "gs-reset" should have workflow mode "selecting_template"
+    And the get_state response "gs-reset" should not have workflow
 
   # ═══════════════════════════════════════════════════════════════════════════
   # Completion
@@ -161,9 +160,8 @@ Feature: E2E Real LLM Workflow V2 UDS Tests
     And I send get_state with id "gs-progress"
     And I close the UDS connection
     Then the UDS agent exits with code 0
-    And the get_state response "gs-progress" should have workflow mode "active"
-    And the get_state response "gs-progress" should have workflow template "feature"
-    And the get_state response "gs-progress" should have workflow progress done 1
+    And the get_state response "gs-progress" should have slim workflow template "feature"
+    And the get_state response "gs-progress" should have slim workflow current step key "plan_intake"
 
   # ═══════════════════════════════════════════════════════════════════════════
   # Disabled workflow

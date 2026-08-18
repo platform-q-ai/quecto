@@ -59,7 +59,7 @@ pub(super) fn query_response_data(
     ctx: &DispatchCtx<'_>,
 ) -> Option<serde_json::Value> {
     match cmd {
-        AgentCommand::GetState { .. } => {
+        AgentCommand::GetState { since, .. } => {
             let workflow = ctx.workflow_state.as_ref().and_then(|ws| {
                 ws.lock().ok().map(|engine| {
                     let mut value = serde_json::to_value(engine.snapshot(true)).unwrap_or_default();
@@ -93,7 +93,9 @@ pub(super) fn query_response_data(
                 }
                 state.execution = Some(execution.snapshot());
             }
-            Some(serde_json::to_value(&state).unwrap_or_default())
+            Some(super::uds_state_projection::slim_state_response_data(
+                &state, *since,
+            ))
         }
         AgentCommand::GetMessages { count, before, .. } => {
             let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
@@ -190,6 +192,7 @@ mod cov2_tests {
         let value = query_response_data(
             &AgentCommand::GetState {
                 id: None,
+                since: None,
                 agent_id: None,
             },
             &ctx,

@@ -161,7 +161,8 @@ async fn real_multi_client_loop_answers_read_command_then_exits_on_disconnect() 
     assert_eq!(event["command"], "get_state");
     assert_eq!(event["success"], true);
     assert_eq!(event["data"]["model"], "stub");
-    assert_eq!(event["data"]["sessionKey"], "cli:cov");
+    assert_eq!(event["data"]["state"], "idle");
+    assert!(event["data"].get("sessionKey").is_none());
 
     drop(write_half);
     drop(lines);

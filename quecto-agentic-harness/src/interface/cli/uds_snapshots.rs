@@ -683,7 +683,7 @@ pub(crate) fn build_get_state_line_with_streaming(
     let ev = AgentEvent::ok(
         None,
         "get_state",
-        Some(serde_json::to_value(state).unwrap_or_default()),
+        Some(super::uds_state_projection::slim_state_projection(&state)),
     );
     let mut line = ev.to_json_line();
     line.push('\n');
@@ -721,10 +721,7 @@ pub(crate) fn build_get_state_line_live(
             state.workflow = Some(live);
         }
     }
-    let mut data = serde_json::to_value(state).unwrap_or_default();
-    if let Some(obj) = data.as_object_mut() {
-        obj.insert("snapshot".to_string(), serde_json::json!(true));
-    }
+    let data = super::uds_state_projection::slim_state_projection(&state);
     let ev = AgentEvent::ok(None, "get_state", Some(data));
     let mut line = ev.to_json_line();
     line.push('\n');

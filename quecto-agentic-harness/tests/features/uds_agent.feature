@@ -133,9 +133,22 @@ Feature: UDS mode for headless agent operation
     And I send command "get_state" with id "gs-1"
     And I close the UDS connection
     Then the agent output should contain a response command "get_state" with success true
-    And the get_state response should include field "isStreaming"
-    And the get_state response should include field "messageCount"
-    And the get_state response should include field "model"
+    And the get_state response should have only the slim state fields without workflow
+    And the get_state progress should contain only verdict and reason
+
+  @done @issue-1512
+  Scenario: get_state since cursor reports unchanged and changed slim projections
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the UDS agent with no [session]
+    And I send command "get_state" with id "gs-before"
+    And I send get_state with id "gs-same" since generation from "gs-before"
+    And I send set_model "gpt-5-mini"
+    And I send get_state with id "gs-after" since generation 1
+    And I close the UDS connection
+    Then the get_state response "gs-same" should be unchanged since "gs-before"
+    And the get_state response "gs-after" should have a different generation than "gs-before"
+    And the get_state response "gs-after" should have only the slim state fields without workflow
 
   # ─── get_messages command ───────────────────────────────────────────────────
 
@@ -915,19 +928,15 @@ Feature: UDS mode for headless agent operation
   # The WorkflowTool must emit workflow_state events on the broadcast channel
   # so that TUI clients can update the header bar live.
 
-  @done @multi-client @workflow-broadcast
-  Scenario: workflow select_template emits a workflow_state broadcast event
+  @done @issue-1512
+  Scenario: get_state includes only slim workflow identity and current step when selected
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    And the mock LLM returns a tool call for workflow select_template then text "done"
-    When I start the multi-client UDS agent with workflow enabled
-    And client 1 connects
-    And client 2 connects
-    And client 1 sends prompt "select template feature"
-    And I close all UDS clients
-    Then the UDS agent exits with code 0
-    And client 1 should have received a workflow_state event with mode "active"
-    And client 2 should have received a workflow_state event with mode "active"
+    When I start the UDS agent with workflow template "feature" selected
+    And I send command "get_state" with id "wf-state"
+    And I close the UDS connection
+    Then the agent output should contain a response command "get_state" with success true
+    And the get_state response "wf-state" should have only the slim state fields with workflow
 
   @done @multi-client @workflow-broadcast
   Scenario: workflow check emits a workflow_state broadcast event with updated progress

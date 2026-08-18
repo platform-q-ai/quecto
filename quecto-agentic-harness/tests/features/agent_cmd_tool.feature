@@ -63,10 +63,12 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
 
   # --- Command building ---
 
+  @issue-1512
   Scenario: get_state command is built correctly
     Given an AgentCmdTool with a mock registry entry "w1"
-    When I execute agent_cmd with '{"agent_id":"w1","command":"get_state"}'
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_state","since":42}'
     Then the agent_cmd should have sent command type "get_state"
+    And the agent_cmd should have sent since 42
 
   Scenario: get_messages command uses count parameter for tail reads
     Given an AgentCmdTool with a mock registry entry "w1"
@@ -219,8 +221,8 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     Given an AgentCmdTool with a busy state snapshot registry entry "busy-state"
     When I execute agent_cmd with '{"agent_id":"busy-state","command":"get_state"}'
     Then the agent_cmd result should not be an error
-    And the agent_cmd response command "get_state" should include boolean field "isStreaming"
-    And the agent_cmd response command "get_state" should include integer field "messageCount"
+    And the agent_cmd response command "get_state" should have only the slim state fields without workflow
+    And the agent_cmd response command "get_state" should not include field "snapshot"
 
   # A genuinely DIFFERENT command (get_session_stats) must never be answered by
   # the connect-time get_messages snapshot — the #835 id-correlation guarantee.

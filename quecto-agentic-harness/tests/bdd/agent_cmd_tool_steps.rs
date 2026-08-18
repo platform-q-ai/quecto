@@ -295,12 +295,22 @@ fn given_agent_cmd_with_busy_state_snapshot_entry(world: &mut QuectoWorld, agent
             let last_cmd_inner = last_cmd_clone.clone();
             std::thread::spawn(move || {
                 use std::io::Write;
-                let snapshot = r#"{"type":"response","command":"get_state","data":{"isStreaming":true,"messageCount":2,"model":"mock","snapshot":true}}"#;
-                let _ = writeln!(stream, "{}", snapshot);
-                while let Some(line) =
+                let snapshot = r#"{"type":"response","command":"get_state","data":{"state":"runningTool","effort":null,"model":"mock","progress":{"verdict":"active","reason":"busy"},"generation":7}}"#;
+                if let Some(line) =
                     quecto::infrastructure::test_support::read_framed_command(&stream)
                 {
-                    *last_cmd_inner.lock().unwrap() = line;
+                    *last_cmd_inner.lock().unwrap() = line.clone();
+                    let sent_id = serde_json::from_str::<serde_json::Value>(&line)
+                        .ok()
+                        .and_then(|v| v.get("id").and_then(|i| i.as_str()).map(str::to_owned))
+                        .unwrap_or_default();
+                    let response = snapshot.replacen(
+                        "\"command\"",
+                        &format!("\"id\":\"{sent_id}\",\"command\""),
+                        1,
+                    );
+                    let _ = writeln!(stream, "{}", response);
+                    let _ = stream.flush();
                 }
             });
         }
@@ -754,6 +764,18 @@ fn then_agent_cmd_sent_effort(world: &mut QuectoWorld, expected_effort: String) 
 
 // ===========================================================================
 
+#[then(expr = "the agent_cmd should have sent since {int}")]
+fn then_agent_cmd_sent_since(world: &mut QuectoWorld, expected: u64) {
+    let last_cmd = world
+        .agent_cmd_last_command
+        .as_ref()
+        .expect("no last command captured");
+    let cmd_str = last_cmd.lock().unwrap().clone();
+    let cmd: serde_json::Value = serde_json::from_str(&cmd_str)
+        .unwrap_or_else(|e| panic!("invalid JSON sent to mock: {} — raw: {}", e, cmd_str));
+    assert_eq!(cmd["since"].as_u64(), Some(expected), "sent command: {cmd}");
+}
+
 #[then(expr = "the agent_cmd should have sent count {int}")]
 fn then_agent_cmd_sent_count(world: &mut QuectoWorld, expected: u64) {
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -825,5 +847,31 @@ fn then_agent_cmd_response_integer(world: &mut QuectoWorld, command: String, fie
     assert!(
         json["data"][&field].as_i64().is_some(),
         "expected data.{field} integer in response: {json}"
+    );
+}
+
+#[then(
+    expr = "the agent_cmd response command {string} should have only the slim state fields without workflow"
+)]
+fn then_agent_cmd_response_slim_state(world: &mut QuectoWorld, command: String) {
+    let json = parse_agent_cmd_response(world, &command);
+    let data = json["data"].as_object().expect("data object");
+    let keys: std::collections::BTreeSet<&str> = data.keys().map(String::as_str).collect();
+    assert_eq!(
+        keys,
+        ["state", "effort", "model", "progress", "generation"]
+            .into_iter()
+            .collect(),
+        "unexpected get_state data keys: {}",
+        json["data"]
+    );
+}
+
+#[then(expr = "the agent_cmd response command {string} should not include field {string}")]
+fn then_agent_cmd_response_not_field(world: &mut QuectoWorld, command: String, field: String) {
+    let json = parse_agent_cmd_response(world, &command);
+    assert!(
+        json["data"].get(&field).is_none(),
+        "unexpected data.{field}: {json}"
     );
 }

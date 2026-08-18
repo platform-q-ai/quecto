@@ -943,6 +943,7 @@ pub struct QuectoWorld {
     pub _real_llm_uds: bool,
     /// Workflow V2: when true, register WorkflowEngine + WorkflowTool + WorkflowGuard
     pub _workflow_enabled: bool,
+    pub uds_selected_workflow_template: Option<String>,
     /// Workflow tool BDD: direct tool under test.
     pub workflow_tool: Option<quecto::infrastructure::tools::workflow_tool::WorkflowTool>,
     /// Workflow tool BDD: captured workflow_state events emitted by the tool.
