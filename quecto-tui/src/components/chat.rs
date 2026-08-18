@@ -504,6 +504,41 @@ impl Chat {
 }
 
 impl Chat {
+    fn style_thinking_text(text: &str) -> String {
+        const THINKING_STYLE: &str = "\x1b[3m\x1b[38;2;128;128;128m";
+        format!(
+            "{THINKING_STYLE}{}\x1b[0m",
+            text.replace("\x1b[0m", &format!("\x1b[0m{THINKING_STYLE}"))
+        )
+    }
+
+    fn render_thinking_block(block: &str, width: usize) -> Vec<String> {
+        let inner_width = width.saturating_sub(2);
+        let mut md = Markdown::new(block, 0);
+        let md_lines = md.render(inner_width);
+        let source_lines = if md_lines.is_empty() {
+            wrap_text(block, inner_width)
+        } else {
+            md_lines
+        };
+
+        if source_lines.is_empty() {
+            return vec![truncate_to_width("│ ", width, None)];
+        }
+
+        source_lines
+            .iter()
+            .map(|line| {
+                let text = truncate_to_width(line, inner_width, None);
+                truncate_to_width(
+                    &format!("│ {}", Self::style_thinking_text(&text)),
+                    width,
+                    None,
+                )
+            })
+            .collect()
+    }
+
     fn render_entry(
         entry: &ChatEntry,
         width: usize,
@@ -541,20 +576,8 @@ impl Chat {
                     lines.push(theme::dim("thinking hidden"));
                 }
                 if show_thinking {
-                    let inner_width = width.saturating_sub(2);
                     for block in thinking {
-                        let wrapped = wrap_text(block, inner_width);
-                        if wrapped.is_empty() {
-                            lines.push("│ ".to_string());
-                        } else {
-                            for line in &wrapped {
-                                let text = truncate_to_width(line, inner_width, None);
-                                lines.push(format!(
-                                    "│ {}",
-                                    theme::italic(&theme::tool_output(&text))
-                                ));
-                            }
-                        }
+                        lines.extend(Self::render_thinking_block(block, width));
                     }
                     if !thinking.is_empty() {
                         lines.push(String::new());
@@ -655,3 +678,6 @@ mod retention_tests;
 #[cfg(test)]
 #[path = "chat_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "chat_thinking_markdown_tests.rs"]
+mod thinking_markdown_tests;
