@@ -1,6 +1,8 @@
 use super::protocol::SessionState;
 use super::uds_execution_state::{ExecutionSnapshot, ProgressSummary, ToolSummary};
-use super::uds_state_projection::{slim_state_projection, slim_state_response_data};
+use super::uds_state_projection::{
+    slim_progress, slim_state_projection, slim_state_response_data, slim_workflow,
+};
 
 fn state_with_execution(activity_generation: u64, progress_state: &str) -> SessionState {
     SessionState {
@@ -104,5 +106,55 @@ fn streaming_generation_includes_live_workflow_revision_overlay() {
     assert!(
         data.get("unchanged").is_none(),
         "streaming workflow-only changes must bump the emitted cursor: {data}"
+    );
+}
+
+#[test]
+fn slim_workflow_accepts_snake_case_template_and_step() {
+    let workflow = slim_workflow(&serde_json::json!({
+        "active_template": { "id": "bugfix", "label": "Bugfix" },
+        "current_step": {
+            "index": 2,
+            "key": "sweep",
+            "label": "Sweep",
+            "phase": "green",
+            "done": true,
+            "guidance": "hidden"
+        },
+        "availableTemplates": [{ "id": "noise" }]
+    }))
+    .unwrap();
+
+    assert_eq!(
+        workflow["activeTemplate"],
+        serde_json::json!({"id": "bugfix"})
+    );
+    assert_eq!(workflow["currentStep"]["key"], "sweep");
+    assert_eq!(workflow["currentStep"].as_object().unwrap().len(), 5);
+    assert!(workflow.get("availableTemplates").is_none());
+}
+
+#[test]
+fn slim_progress_reports_streaming_without_execution_as_active() {
+    let mut state = state_with_execution(7, "advancing");
+    state.execution = None;
+    state.is_streaming = true;
+
+    let progress = slim_progress(&state);
+
+    assert_eq!(progress["state"], "active");
+    assert_eq!(progress["reason"], "agent is running");
+}
+
+#[test]
+fn since_equal_to_combined_streaming_generation_returns_unchanged_marker() {
+    let mut state = state_with_execution(7, "advancing");
+    state.generation = 9;
+
+    let data = slim_state_response_data(&state, Some(9));
+
+    assert_eq!(
+        data,
+        serde_json::json!({"unchanged": true, "generation": 9})
     );
 }
