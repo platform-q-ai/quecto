@@ -352,9 +352,10 @@ reports progress without polling:
   advance (tagged with the child's `agent_id`, so a grandchild's progress is
   attributed to the grandchild, not the child);
 - `agent_cmd get_state` is the live in-flight supervision API. It returns the
-  child's execution phase, current/recent tool activity, accurate canonical
-  message count, model/effort, and workflow snapshot (mode, current step,
-  done/total) on demand — including while the child is mid-turn;
+  child's slim state/effort/model/progress projection, `generation`, and (only
+  when selected) slim workflow identity plus current step on demand — including
+  while the child is mid-turn. Pass `since` to receive only
+  `{"unchanged": true, "generation": N}` when nothing changed;
 - in the TUI, the selected child renders its own workflow status bar.
 
 Read the child's final result the usual way — its one-line auto-note at your next
@@ -390,6 +391,10 @@ output (see [Notification model](#notification-model)).
     "before": {
       "type": "string",
       "description": "Paging cursor for get_messages: a message id from a prior response's before field; returns the adjacent older page"
+    },
+    "since": {
+      "type": "integer",
+      "description": "Generation cursor for get_state; unchanged state returns only {\"unchanged\": true, \"generation\": N}"
     }
   },
   "required": ["agent_id", "command"]
@@ -405,7 +410,7 @@ output (see [Notification model](#notification-model)).
 | `follow_up` | Queue a message for after the current run | Yes |
 | `abort` | Full stop: cancel the current run, kill in-flight tool/child processes, and suppress workflow auto-continue (does not resume) | No |
 | `kill` | Terminate the subagent process (SIGTERM) | No |
-| `get_state` | Inspect live/in-flight supervision state: phase, current/recent tools, progress, message count, model/effort, streaming, and workflow | No |
+| `get_state` | Inspect live/in-flight supervision state: slim state/effort/model/progress, generation cursor, and selected workflow identity/current step. Pass `since` for an unchanged marker | No |
 | `get_messages` | Inspect the stable committed transcript, normally after the turn ends (omit `count` for the newest page; pass `count` for the last N; pass `before` to page older history). A busy snapshot can lag the active turn | No |
 | `get_session_stats` | Get token usage and cost | No |
 | `get_subagents` | List subagents spawned by this agent | No |

@@ -581,9 +581,11 @@ changes which guards are active. Non-bash tools are never blocked.
 
 ### `get_state` response
 
-When workflow is available (normal UDS or `--workflow`), `get_state` includes a
-`workflow` field with the full engine snapshot. When disabled with
-`--no-workflow`, the field is absent.
+When a workflow template is selected, `get_state` includes only the slim
+workflow identity and current step in its `workflow` field. When no template is
+selected, or workflow is disabled with `--no-workflow`, the field is absent.
+Full step lists, guidance, available templates, and automation details are not
+part of `get_state`; use workflow commands/events for those details.
 
 ### `workflow_state` event
 

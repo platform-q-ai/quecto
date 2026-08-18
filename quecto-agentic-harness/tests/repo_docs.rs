@@ -356,6 +356,34 @@ fn agent_cmd_docs_match_tool_schema() {
         "README must not reference get_messages_tail (use get_messages with count)"
     );
 
+    let get_state_section = uds
+        .split("### `get_state`")
+        .nth(1)
+        .and_then(|text| text.split("### `get_messages`").next())
+        .expect("docs/uds-protocol.md must document get_state before get_messages");
+    assert!(
+        get_state_section.contains("`since`")
+            && get_state_section.contains("\"unchanged\": true")
+            && get_state_section.contains("\"generation\": 27"),
+        "get_state docs must document since and the bounded unchanged marker"
+    );
+    for forbidden in [
+        "isStreaming",
+        "sessionKey",
+        "messageCount",
+        "pendingMessageCount",
+        "maxContextTokens",
+        "effortLevels",
+        "availableTemplates",
+        "`snapshot: true`",
+        "rich execution internals",
+    ] {
+        assert!(
+            !get_state_section.contains(forbidden),
+            "get_state docs must not document removed bulky field/contract {forbidden}"
+        );
+    }
+
     // The alias is still honored in code for backward compatibility even though
     // it is undocumented; pin that so a refactor can't silently drop it. The
     // dispatch in agent_cmd.rs special-cases the alias name explicitly.

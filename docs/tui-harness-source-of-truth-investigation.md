@@ -42,8 +42,8 @@ Relevant files:
 - `quecto-agentic-harness/src/infrastructure/tools/*`
   - Tools resolve paths relative to the harness workspace/cwd, not the TUI.
 - `quecto-agentic-harness/src/interface/cli/protocol.rs`
-  - `SessionState` is the current `get_state` response payload.
-  - It includes model, streaming status, session key, message counts, context window, effort, workflow, execution, sync.
+  - `SessionState` feeds the current slim `get_state` response payload.
+  - Per #1512, `get_state` includes only state, effort, model, progress, generation, and selected workflow identity/current step.
   - It does **not** include workspace/cwd/repo/branch fields today.
 - `quecto-agentic-harness/src/interface/cli/uds_query.rs`
   - `get_state` builds the `SessionState` returned to clients.

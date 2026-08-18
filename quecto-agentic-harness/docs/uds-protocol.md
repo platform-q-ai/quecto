@@ -283,68 +283,68 @@ Switch the active UDS conversation to a persisted CLI session. The current sessi
 
 ### `get_state`
 
-Return live session supervision state. This is the command to use while an
-agent is in flight: unlike transcript inspection, its execution and message
-count fields are updated during the active turn.
+Return the slim live supervision projection for the active session. This is the
+command to use for occasional in-flight state/progress checks; transcript and
+history inspection remain the job of `get_messages`.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `type` | `"get_state"` | yes | |
 | `id` | string | no | Correlation ID |
+| `since` | integer | no | Previously observed `generation`; when unchanged, return only the bounded unchanged marker |
 
-**Response data:**
+**Response data (changed or no `since`):**
 
 ```json
 {
-  "model": "anthropic/claude-sonnet-4-6",
-  "isStreaming": true,
-  "sessionKey": "cli:default",
-  "messageCount": 6,
-  "pendingMessageCount": 0,
-  "maxContextTokens": 300000,
+  "state": "runningTool",
   "effort": "low",
-  "effortLevels": ["none", "low", "medium", "high", "xhigh", "max"],
-  "execution": {
-    "phase": "runningTool",
-    "activityGeneration": 27,
-    "lastActivityAt": "2026-07-27T20:14:52Z",
-    "lastActivitySecondsAgo": 7,
-    "currentTool": {
-      "name": "bash",
-      "callId": "call-abc123",
-      "startedAt": "2026-07-27T20:14:49Z",
-      "elapsedSeconds": 10
+  "model": "anthropic/claude-sonnet-4-6",
+  "progress": {
+    "state": "advancing",
+    "reason": "4 tools completed in the last 120 seconds"
+  },
+  "generation": 27,
+  "workflow": {
+    "mode": "active",
+    "activeTemplate": {
+      "id": "bugfix",
+      "label": "Bug fix"
     },
-    "tools": {"used":["bash"],"started":9,"completed":8,"failed":1},
-    "progress": {
-      "state":"advancing","reason":"4 tools completed in the last 120 seconds",
-      "windowSeconds":120,"lastProgressSecondsAgo":7,
-      "toolCallsCompleted":4,"toolCallsFailed":1
+    "currentStep": {
+      "key": "red",
+      "label": "Reproduce the bug in a failing test",
+      "phase": "RED",
+      "done": false
     }
   }
 }
 ```
 
+When no workflow template is selected, the `workflow` field is omitted entirely.
+
+**Response data (unchanged):**
+
+```json
+{"unchanged": true, "generation": 27}
+```
+
 | Field | Type | Description |
 |---|---|---|
-| `model` | string | Active model (qualified `provider/model` or bare name) |
-| `isStreaming` | boolean | `true` if the agent is currently processing a prompt |
-| `sessionKey` | string | Session identifier for persistence |
-| `messageCount` | integer | Current user-visible canonical message count, including messages committed during an active turn |
-| `pendingMessageCount` | integer | Number of queued follow-up/steer messages |
-| `maxContextTokens` | integer | Active model context-window limit in tokens (`0` when unknown) |
+| `state` | string | Current model/execution state such as `idle`, `streaming`, `thinking`, `runningTool`, or `finalizing` |
 | `effort` | string \| null | Effective session effort (`null` means provider default / unset) |
-| `effortLevels` | string[] | Effort vocabulary valid for the active model's provider |
-| `execution` | object | Live phase, activity watermark/timestamps, current tool, run totals, and evidence-based 120-second progress summary |
-| `workflow` | object \| omitted | Workflow snapshot when workflow is enabled for the session |
+| `model` | string | Active model (qualified `provider/model` or bare name) |
+| `progress` | object | Evidence-based progress verdict with only `state` and `reason` |
+| `generation` | integer | Activity cursor for `since` comparisons |
+| `workflow` | object \| omitted | Slim selected-workflow identity and current step only |
 
-`execution.phase` is `idle`, `thinking`, `runningTool`, or `finalizing`.
-`currentTool` is omitted when no tool is active. Progress is based on observed
-tool completions; it is not an inferred percentage of a non-workflow task.
-Busy snapshot responses retain `snapshot: true`, but the execution fields and
-`messageCount` are live overlays.
+`get_state` intentionally does not include static vocabularies, transcript
+counts, sync/history state, context-window metadata, available workflow
+templates, full workflow step lists, guidance, or detailed execution payloads.
+Busy `get_state` snapshots use the same slim shape. They do not carry a
+snapshot marker; if their generation equals the request's `since` value, the
+response is the unchanged marker above.
 
----
 
 ### `get_messages`
 
