@@ -69,7 +69,7 @@ fn generation_uses_activity_generation_even_when_projection_fields_do_not_change
                 .unwrap(),
         ),
     );
-    assert_eq!(data["generation"], 8);
+    assert_eq!(data["generation"], 9);
     assert!(
         data.get("unchanged").is_none(),
         "activity generation change must not be hidden as unchanged: {data}"
@@ -101,11 +101,50 @@ fn streaming_generation_includes_live_workflow_revision_overlay() {
         ),
     );
 
-    assert_eq!(data["generation"], 9);
+    assert_eq!(data["generation"], 16);
     assert_eq!(data["workflow"]["currentStep"]["key"], "green");
     assert!(
         data.get("unchanged").is_none(),
         "streaming workflow-only changes must bump the emitted cursor: {data}"
+    );
+}
+
+#[test]
+fn streaming_workflow_overlay_advances_cursor_when_activity_generation_is_ahead() {
+    let mut prior = state_with_execution(100, "advancing");
+    prior.generation = 2; // session generation 1 + workflow revision 1
+    prior.workflow = Some(serde_json::json!({
+        "activeTemplate": { "id": "bugfix" },
+        "currentStep": { "index": 0, "key": "red", "label": "RED", "phase": "test", "done": false }
+    }));
+
+    let mut later = prior.clone();
+    later.generation = 3; // same session generation + workflow revision 2
+    later.workflow = Some(serde_json::json!({
+        "activeTemplate": { "id": "bugfix" },
+        "currentStep": { "index": 1, "key": "green", "label": "GREEN", "phase": "fix", "done": false }
+    }));
+
+    let data = slim_state_response_data(
+        &later,
+        Some(
+            slim_state_projection(&prior)["generation"]
+                .as_u64()
+                .unwrap(),
+        ),
+    );
+
+    assert_eq!(data["workflow"]["currentStep"]["key"], "green");
+    assert!(
+        data["generation"].as_u64().unwrap()
+            > slim_state_projection(&prior)["generation"]
+                .as_u64()
+                .unwrap(),
+        "workflow-only streaming changes must advance the emitted cursor even when execution activity is ahead: {data}"
+    );
+    assert!(
+        data.get("unchanged").is_none(),
+        "changed workflow step must not collapse to unchanged under the prior cursor: {data}"
     );
 }
 
@@ -151,10 +190,13 @@ fn since_equal_to_combined_streaming_generation_returns_unchanged_marker() {
     let mut state = state_with_execution(7, "advancing");
     state.generation = 9;
 
-    let data = slim_state_response_data(&state, Some(9));
+    let generation = slim_state_projection(&state)["generation"]
+        .as_u64()
+        .unwrap();
+    let data = slim_state_response_data(&state, Some(generation));
 
     assert_eq!(
         data,
-        serde_json::json!({"unchanged": true, "generation": 9})
+        serde_json::json!({"unchanged": true, "generation": generation})
     );
 }

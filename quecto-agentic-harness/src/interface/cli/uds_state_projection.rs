@@ -67,14 +67,14 @@ fn activity_generation(state: &SessionState) -> u64 {
         .filter(|_| state.is_streaming)
         .map(|execution| {
             // Live/busy snapshots use the streaming activity cursor as their
-            // base, then fold slim-visible workflow revisions into
-            // `state.generation` before projection. Preserve that combined
-            // cursor so `since` observes workflow-only changes even when no
-            // new execution activity was emitted.
-            execution.activity_generation
-                + state
-                    .generation
-                    .saturating_sub(execution.activity_generation)
+            // base, then add the slim-visible session/workflow overlay carried
+            // in `state.generation`. These counters are independent; adding
+            // the overlay (rather than subtracting from the activity counter)
+            // keeps workflow-only revisions visible even after execution
+            // activity has advanced far ahead of the session/workflow counter.
+            execution
+                .activity_generation
+                .saturating_add(state.generation)
         })
         .unwrap_or(state.generation)
 }
