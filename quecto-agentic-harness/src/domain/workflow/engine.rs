@@ -204,10 +204,12 @@ impl WorkflowEngine {
 
     pub fn set_issue(&mut self, number: u32, title: String) {
         self.run.active_issue = Some((number, truncate_issue_title(title)));
+        self.bump_revision();
     }
 
     pub fn clear_issue(&mut self) {
         self.run.active_issue = None;
+        self.bump_revision();
     }
 
     pub fn progress(&self) -> WorkflowProgress {

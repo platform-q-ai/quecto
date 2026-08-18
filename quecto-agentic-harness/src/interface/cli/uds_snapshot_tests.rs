@@ -655,6 +655,10 @@ fn busy_get_state_reflects_live_workflow_progress_mid_turn() {
         "live get_state must reflect mid-turn current step, not the frozen snapshot"
     );
     assert!(
+        live_v["data"]["generation"].as_u64().unwrap() > state.generation,
+        "busy live workflow overlay must advance the slim get_state cursor: {live_v}"
+    );
+    assert!(
         live_v["data"]["workflow"].get("progress").is_none(),
         "slim workflow must omit progress: {live_v}"
     );

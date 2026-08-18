@@ -77,7 +77,7 @@ pub(super) fn query_response_data(
                         (Some(value), revision)
                     })
                 })
-                .unwrap_or((None, 1));
+                .unwrap_or((None, 0));
             // #1067: `SessionState` itself carries the session's effective
             // effort (the level string when set, an explicit null when unset)
             // plus the provider's valid vocabulary, so the live-query and
@@ -88,9 +88,7 @@ pub(super) fn query_response_data(
                 ctx.agent.max_context_tokens(),
                 ctx.agent.effort().map(|l| l.as_str().to_string()),
             );
-            if workflow_revision > state.generation {
-                state.generation = workflow_revision;
-            }
+            state.generation = state.generation.saturating_add(workflow_revision);
             if let Ok(mut execution) = ctx.execution_state.lock() {
                 if ctx.session.is_streaming() {
                     state.message_count = execution.message_count();

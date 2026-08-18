@@ -186,8 +186,11 @@ fn workflow_engine_for_get_state_since_tests() -> crate::interface::shared::Work
 }
 
 #[test]
-fn idle_get_state_since_reveals_workflow_selection_change() {
+fn idle_get_state_since_reveals_workflow_selection_change_after_session_generation_ahead() {
     let mut fx = Fx::new();
+    fx.session.set_model("stub-a".into());
+    fx.session.set_model("stub-b".into());
+    fx.session.set_model("stub-c".into());
     let workflow = workflow_engine_for_get_state_since_tests();
     let before = {
         let ctx = fx.ctx_with_workflow(Some(workflow.clone()));
@@ -203,6 +206,7 @@ fn idle_get_state_since_reveals_workflow_selection_change() {
     };
     assert!(before.get("workflow").is_none());
     let before_generation = before["generation"].as_u64().unwrap();
+    assert!(before_generation > workflow.lock().unwrap().revision());
 
     workflow
         .lock()
