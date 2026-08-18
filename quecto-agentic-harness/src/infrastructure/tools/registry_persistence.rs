@@ -38,9 +38,10 @@ impl ToolRegistryImpl {
             .collect::<Vec<_>>();
         for stable_id in removed {
             self.persisted_policy_scopes.remove(&stable_id);
-            if let Some(name) = self.name_for_stable_id(&stable_id)
-                && let Some(metadata) = self.metadata.get_mut(&name)
-            {
+            let name = self
+                .name_for_stable_id(&stable_id)
+                .unwrap_or_else(|| stable_id.clone());
+            if let Some(metadata) = self.metadata.get_mut(&name) {
                 metadata.configured_enabled = None;
                 metadata.configured_scope = None;
                 metadata.profile_scope = None;

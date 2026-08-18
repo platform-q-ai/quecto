@@ -311,6 +311,43 @@ fn reload_removed_persisted_policy_entry_clears_retained_and_live_metadata() {
 }
 
 #[test]
+fn reload_removed_name_key_persisted_policy_entry_clears_retained_and_live_metadata() {
+    use crate::infrastructure::config::ToolPolicyConfig;
+    use std::collections::HashMap;
+
+    let (mut reg, _tmp) = test_registry();
+    reg.persisted_policy_scopes
+        .insert("read".to_string(), ProfileAvailabilityScope::None);
+    let read = reg.metadata.get_mut("read").unwrap();
+    read.configured_enabled = Some(false);
+    read.configured_scope = Some(ProfileAvailabilityScope::None);
+    read.profile_scope = Some(ProfileAvailabilityScope::None);
+    read.profile_enabled = Some(false);
+    assert_eq!(
+        ToolRegistryImpl::effective_scope(reg.metadata.get("read").unwrap()),
+        ProfileAvailabilityScope::None
+    );
+
+    assert!(
+        reg.apply_persisted_tool_policy(&ToolPolicyConfig {
+            entries: HashMap::new()
+        })
+        .is_empty()
+    );
+    assert_eq!(reg.persisted_policy_scopes.get("read"), None);
+    let read = reg.metadata.get("read").unwrap();
+    assert_eq!(read.configured_scope, None);
+    assert_eq!(read.configured_enabled, None);
+    assert_eq!(read.profile_scope, None);
+    assert_eq!(read.profile_enabled, None);
+    assert_eq!(
+        ToolRegistryImpl::effective_scope(read),
+        ProfileAvailabilityScope::Both,
+        "removing a legacy name-keyed tools.policy entry on reload must restore normal availability"
+    );
+}
+
+#[test]
 fn late_registered_uds_tool_gets_retained_persisted_policy() {
     use crate::infrastructure::config::{ToolPolicyConfig, ToolPolicyEntryConfig};
     use std::collections::HashMap;
