@@ -44,10 +44,13 @@ pub(super) fn response_is_valid_answer(json: &serde_json::Value, command: &str) 
             // command shape can never be silently answered by the snapshot. #1512
             // slim busy snapshots are intentionally id-less and unmarked: accept
             // only the slim projection (or unchanged cursor response), never the
-            // legacy bulky snapshot marker/message-count shape.
+            // legacy bulky snapshot marker/message-count shape. A request carrying
+            // `since` can only be answered by a snapshot whose generation proves it
+            // changed after that cursor, or by the bounded unchanged marker.
             cmd.get("count").is_none()
                 && json.get("command").and_then(|v| v.as_str()) == Some("get_state")
                 && get_state_data_is_slim_snapshot(json.pointer("/data"))
+                && get_state_snapshot_honors_since(json.pointer("/data"), cmd.get("since"))
         }
         Some("get_subagents") => {
             json.get("command").and_then(|v| v.as_str()) == Some("get_subagents")
@@ -74,6 +77,23 @@ pub(super) fn response_is_valid_answer(json: &serde_json::Value, command: &str) 
         }
         _ => false,
     }
+}
+
+fn get_state_snapshot_honors_since(
+    data: Option<&serde_json::Value>,
+    since: Option<&serde_json::Value>,
+) -> bool {
+    let Some(since) = since.and_then(|v| v.as_u64()) else {
+        return true;
+    };
+    let Some(data) = data else {
+        return false;
+    };
+    let generation = data.get("generation").and_then(|v| v.as_u64());
+    if data.get("unchanged").and_then(|v| v.as_bool()) == Some(true) {
+        return generation == Some(since);
+    }
+    generation.is_some_and(|generation| generation >= since)
 }
 
 fn get_state_data_is_slim_snapshot(data: Option<&serde_json::Value>) -> bool {
@@ -113,8 +133,32 @@ pub(super) fn finalize_snapshot_answer(
     mut json: serde_json::Value,
     command: &str,
 ) -> String {
-    let Some(count) = serde_json::from_str::<serde_json::Value>(command)
-        .ok()
+    let cmd = serde_json::from_str::<serde_json::Value>(command).ok();
+    if cmd
+        .as_ref()
+        .and_then(|cmd| cmd.get("type"))
+        .and_then(|v| v.as_str())
+        == Some("get_state")
+    {
+        if let (Some(since), Some(generation)) = (
+            cmd.as_ref()
+                .and_then(|cmd| cmd.get("since"))
+                .and_then(|v| v.as_u64()),
+            json.pointer("/data/generation").and_then(|v| v.as_u64()),
+        ) {
+            if generation == since
+                && json.pointer("/data/unchanged").and_then(|v| v.as_bool()) != Some(true)
+            {
+                if let Some(data) = json.pointer_mut("/data") {
+                    *data = serde_json::json!({"unchanged": true, "generation": generation});
+                }
+                return json.to_string();
+            }
+        }
+        return line;
+    }
+    let Some(count) = cmd
+        .as_ref()
         .and_then(|cmd| cmd.get("count").and_then(|v| v.as_u64()))
     else {
         return line;

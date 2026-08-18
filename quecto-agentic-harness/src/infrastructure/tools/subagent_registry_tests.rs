@@ -473,6 +473,37 @@ fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
         &state_snapshot,
         r#"{"type":"get_state"}"#
     ));
+    assert!(subagent_snapshot::response_is_valid_answer(
+        &state_snapshot,
+        r#"{"type":"get_state","since":6}"#
+    ));
+    assert!(subagent_snapshot::response_is_valid_answer(
+        &state_snapshot,
+        r#"{"type":"get_state","since":7}"#
+    ));
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &state_snapshot,
+        r#"{"type":"get_state","since":8}"#
+    ));
+    let unchanged_line = subagent_snapshot::finalize_snapshot_answer(
+        state_snapshot.to_string(),
+        state_snapshot.clone(),
+        r#"{"type":"get_state","since":7}"#,
+    );
+    let unchanged_json: serde_json::Value = serde_json::from_str(&unchanged_line).unwrap();
+    assert_eq!(
+        unchanged_json["data"],
+        serde_json::json!({ "unchanged": true, "generation": 7 })
+    );
+    let unchanged_state_snapshot = serde_json::json!({
+        "type": "response",
+        "command": "get_state",
+        "data": { "unchanged": true, "generation": 7 }
+    });
+    assert!(subagent_snapshot::response_is_valid_answer(
+        &unchanged_state_snapshot,
+        r#"{"type":"get_state","since":7}"#
+    ));
     let legacy_state_snapshot = serde_json::json!({
         "type": "response",
         "command": "get_state",
