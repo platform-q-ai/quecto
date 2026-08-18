@@ -231,10 +231,18 @@ fn tool_policy_mutation_result_wire_uses_camel_case_fields_and_status() {
 
     let unknown = ToolPolicyMutationResult {
         status: ToolPolicyMutationStatus::UnknownTool,
-        ..result
+        ..result.clone()
     };
     let unknown_wire = serde_json::to_value(&unknown).expect("serialize unknown");
     assert_eq!(unknown_wire["status"], "unknownTool");
+
+    let persistence_failed = ToolPolicyMutationResult {
+        status: ToolPolicyMutationStatus::PersistenceFailed,
+        ..result
+    };
+    let persistence_failed_wire =
+        serde_json::to_value(&persistence_failed).expect("serialize persistence failed");
+    assert_eq!(persistence_failed_wire["status"], "persistenceFailed");
 
     let reconciliation = ToolPolicyReconciliation {
         correlation_id: None,

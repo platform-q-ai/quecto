@@ -8,6 +8,45 @@ use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 use std::sync::Arc;
 
 #[test]
+fn queued_persist_failure_does_not_emit_success_policy_changed_event() {
+    let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let events_cb = events.clone();
+    agent.set_progress_callback(Some(Arc::new(move |event| {
+        events_cb.lock().unwrap().push(event);
+    })));
+    agent.set_tool_policy_persistence(Some(Arc::new(|_| Err("disk full".to_string()))));
+
+    let request = ToolPolicyRequest::patch(vec![ToolPolicyMutation::set_scope(
+        "alpha",
+        ProfileAvailabilityScope::None,
+        "queue disable",
+    )]);
+    let mut queued_request = request.clone();
+    queued_request.persist = true;
+    agent.queue_tool_policy_request(queued_request);
+
+    let reconciliation = agent
+        .drain_tool_policy_mutations_at_boundary()
+        .expect("queued policy drains even when persistence fails");
+    assert_eq!(
+        reconciliation.results[0].status,
+        ToolPolicyMutationStatus::PersistenceFailed
+    );
+    assert!(
+        reconciliation.results[0].reason.contains("disk full"),
+        "persist error should be visible on the drain reconciliation path"
+    );
+    assert!(
+        events.lock().unwrap().iter().all(|event| !matches!(
+            event,
+            crate::domain::agent::AgentProgressEvent::ToolPolicyChanged { .. }
+        )),
+        "failed queued persistence must not emit a success-looking tool_policy_changed event"
+    );
+}
+
+#[test]
 fn queued_drain_keeps_registry_catalogue_and_event_after_consistent() {
     let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
     let events = Arc::new(std::sync::Mutex::new(Vec::new()));

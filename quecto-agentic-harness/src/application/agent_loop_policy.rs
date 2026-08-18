@@ -316,16 +316,36 @@ impl AgentLoopImpl {
             if combined.correlation_id.is_none() {
                 combined.correlation_id = request.correlation_id.clone();
             }
-            let reconciliation = self
+            let mut live_request = request.clone();
+            live_request.persist = false;
+            let mut reconciliation = self
                 .tool_registry
-                .apply_tool_policy_request(&request, ToolPolicyApplyMode::AtNextTurnBoundary);
+                .apply_tool_policy_request(&live_request, ToolPolicyApplyMode::AtNextTurnBoundary);
             self.record_applied_tool_policy_overlay(&reconciliation);
-            if request.persist {
-                if let Some(persist) = &self.tool_policy_persistence {
-                    let _ = persist(&reconciliation);
+            let persist_error = if request.persist {
+                self.tool_policy_persistence
+                    .as_ref()
+                    .and_then(|persist| persist(&reconciliation).err())
+            } else {
+                None
+            };
+            if let Some(error) = persist_error {
+                for result in &mut reconciliation.results {
+                    if matches!(
+                        result.status,
+                        ToolPolicyMutationStatus::Applied
+                            | ToolPolicyMutationStatus::AlreadyInState
+                    ) {
+                        result.status = ToolPolicyMutationStatus::PersistenceFailed;
+                        result.reason = format!(
+                            "{}; persisted tool policy update failed: {}",
+                            result.reason, error
+                        );
+                    }
                 }
+            } else {
+                self.notify_tool_policy_changed(&reconciliation, "turn_boundary");
             }
-            self.notify_tool_policy_changed(&reconciliation, "turn_boundary");
             combined.results.extend(reconciliation.results);
         }
         self.refresh_spawn_inherited_child_policy_snapshot();

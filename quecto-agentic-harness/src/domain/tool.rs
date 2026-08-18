@@ -290,6 +290,7 @@ pub enum ToolPolicyMutationStatus {
     AlreadyInState,
     UnknownTool,
     BlockedByRestriction,
+    PersistenceFailed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
