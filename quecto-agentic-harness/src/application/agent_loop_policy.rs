@@ -72,6 +72,12 @@ impl ToolPolicyState {
         }
     }
 
+    fn clear_runtime_overlays(&mut self) {
+        self.disabled_tools.clear();
+        self.enabled_tools.clear();
+        self.scopes.clear();
+    }
+
     pub(super) fn apply_to_catalogue_entry(&self, entry: &mut ToolCatalogueEntry) {
         let name = entry.name.as_ref();
         let scope = self.scopes.get(name).copied().or_else(|| {
@@ -121,6 +127,10 @@ impl AgentLoopImpl {
         let unknown = self
             .tool_registry
             .apply_persisted_tool_policy_entries(entries);
+        self.tool_policy_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear_runtime_overlays();
         self.refresh_spawn_inherited_child_policy_snapshot();
         unknown
     }

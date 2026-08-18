@@ -30,6 +30,24 @@ impl ToolRegistryImpl {
     }
 
     pub fn apply_persisted_tool_policy(&mut self, policy: &ToolPolicyConfig) -> Vec<String> {
+        let removed = self
+            .persisted_policy_scopes
+            .keys()
+            .filter(|stable_id| !policy.entries.contains_key(*stable_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        for stable_id in removed {
+            self.persisted_policy_scopes.remove(&stable_id);
+            if let Some(name) = self.name_for_stable_id(&stable_id)
+                && let Some(metadata) = self.metadata.get_mut(&name)
+            {
+                metadata.configured_enabled = None;
+                metadata.configured_scope = None;
+                metadata.profile_scope = None;
+                metadata.profile_enabled = None;
+            }
+        }
+
         let mut unknown = Vec::new();
         for (stable_id, entry) in &policy.entries {
             self.persisted_policy_scopes

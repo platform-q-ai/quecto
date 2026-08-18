@@ -262,6 +262,55 @@ fn first_time_live_policy_persist_installs_retained_ceiling_for_reregistered_uds
 }
 
 #[test]
+fn reload_removed_persisted_policy_entry_clears_retained_and_live_metadata() {
+    use crate::infrastructure::config::{ToolPolicyConfig, ToolPolicyEntryConfig};
+    use std::collections::HashMap;
+
+    let (mut reg, _tmp) = test_registry();
+    let write_id = reg
+        .metadata
+        .get("write")
+        .unwrap()
+        .identity_for_name("write")
+        .stable_id
+        .to_string();
+    let mut entries = HashMap::new();
+    entries.insert(
+        write_id.clone(),
+        ToolPolicyEntryConfig {
+            scope: ProfileAvailabilityScope::None,
+        },
+    );
+
+    assert!(
+        reg.apply_persisted_tool_policy(&ToolPolicyConfig { entries })
+            .is_empty()
+    );
+    assert_eq!(
+        ToolRegistryImpl::effective_scope(reg.metadata.get("write").unwrap()),
+        ProfileAvailabilityScope::None
+    );
+
+    assert!(
+        reg.apply_persisted_tool_policy(&ToolPolicyConfig {
+            entries: HashMap::new()
+        })
+        .is_empty()
+    );
+    assert_eq!(reg.persisted_policy_scopes.get(&write_id), None);
+    let write = reg.metadata.get("write").unwrap();
+    assert_eq!(write.configured_scope, None);
+    assert_eq!(write.configured_enabled, None);
+    assert_eq!(write.profile_scope, None);
+    assert_eq!(write.profile_enabled, None);
+    assert_eq!(
+        ToolRegistryImpl::effective_scope(write),
+        ProfileAvailabilityScope::Both,
+        "removing tools.policy entry on reload must restore normal availability"
+    );
+}
+
+#[test]
 fn late_registered_uds_tool_gets_retained_persisted_policy() {
     use crate::infrastructure::config::{ToolPolicyConfig, ToolPolicyEntryConfig};
     use std::collections::HashMap;

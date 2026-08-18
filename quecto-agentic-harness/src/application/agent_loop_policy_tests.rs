@@ -735,5 +735,7 @@ async fn direct_execution_honors_runtime_profile_scope() {
 mod drain_tests;
 #[path = "agent_loop_policy_persist_tests.rs"]
 mod persist_tests;
+#[path = "agent_loop_policy_reload_tests.rs"]
+mod reload_tests;
 #[path = "agent_loop_policy_restriction_tests.rs"]
 mod restriction_tests;
