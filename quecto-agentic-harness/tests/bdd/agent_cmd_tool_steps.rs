@@ -295,7 +295,7 @@ fn given_agent_cmd_with_busy_state_snapshot_entry(world: &mut QuectoWorld, agent
             let last_cmd_inner = last_cmd_clone.clone();
             std::thread::spawn(move || {
                 use std::io::Write;
-                let snapshot = r#"{"type":"response","command":"get_state","data":{"state":"runningTool","effort":null,"model":"mock","progress":{"verdict":"active","reason":"busy"},"generation":7}}"#;
+                let snapshot = r#"{"type":"response","command":"get_state","data":{"state":"runningTool","effort":null,"model":"mock","progress":{"state":"active","reason":"busy"},"generation":7}}"#;
                 if let Some(line) =
                     quecto::infrastructure::test_support::read_framed_command(&stream)
                 {

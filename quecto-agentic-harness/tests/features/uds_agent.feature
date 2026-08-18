@@ -134,7 +134,7 @@ Feature: UDS mode for headless agent operation
     And I close the UDS connection
     Then the agent output should contain a response command "get_state" with success true
     And the get_state response should have only the slim state fields without workflow
-    And the get_state progress should contain only verdict and reason
+    And the get_state progress should contain only state and reason
 
   @done @issue-1512
   Scenario: get_state since cursor reports unchanged and changed slim projections

@@ -1343,7 +1343,7 @@ fn then_get_state_id_slim_with_workflow(world: &mut QuectoWorld, id: String) {
     );
 }
 
-#[then("the get_state progress should contain only verdict and reason")]
+#[then("the get_state progress should contain only state and reason")]
 fn then_get_state_progress_slim(world: &mut QuectoWorld) {
     let resp = find_agent_response(world, "get_state").expect("no get_state response");
     let progress = resp["data"]["progress"]
@@ -1352,7 +1352,7 @@ fn then_get_state_progress_slim(world: &mut QuectoWorld) {
     let keys: std::collections::BTreeSet<&str> = progress.keys().map(String::as_str).collect();
     assert_eq!(
         keys,
-        ["reason", "verdict"].into_iter().collect(),
+        ["reason", "state"].into_iter().collect(),
         "progress keys: {progress:?}"
     );
 }
