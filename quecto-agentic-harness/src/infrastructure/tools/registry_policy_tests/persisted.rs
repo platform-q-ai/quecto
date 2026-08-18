@@ -113,8 +113,8 @@ fn persisted_policy_intersects_with_defaults_profile_restrictions_and_runtime() 
     );
     assert_eq!(
         ToolRegistryImpl::effective_scope(reg.metadata.get("python_lab").unwrap()),
-        ProfileAvailabilityScope::Parent,
-        "configured persisted parent still ceilings effective access until persisted config changes/reload"
+        ProfileAvailabilityScope::Both,
+        "persisted live widen must update the effective configured preference immediately"
     );
 
     reg.apply_tool_policy_mutations(
@@ -128,6 +128,38 @@ fn persisted_policy_intersects_with_defaults_profile_restrictions_and_runtime() 
     assert_eq!(
         ToolRegistryImpl::effective_scope(reg.metadata.get("python_lab").unwrap()),
         ProfileAvailabilityScope::None
+    );
+}
+
+#[test]
+fn late_registered_uds_tool_gets_retained_persisted_policy() {
+    use crate::infrastructure::config::{ToolPolicyConfig, ToolPolicyEntryConfig};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    let (mut reg, _tmp) = test_registry();
+    let stable_id = "tool.v1:test:late:tool".to_string();
+    let mut entries = HashMap::new();
+    entries.insert(
+        stable_id.clone(),
+        ToolPolicyEntryConfig {
+            scope: ProfileAvailabilityScope::None,
+        },
+    );
+
+    let unknown = reg.apply_persisted_tool_policy(&ToolPolicyConfig { entries });
+    assert_eq!(unknown, vec![stable_id.clone()]);
+
+    assert!(reg.register_uds_tool_for_owner_with_stable_id(
+        Arc::new(DummyTestTool::new("late_uds")),
+        "owner".into(),
+        Some(stable_id),
+    ));
+
+    assert_eq!(
+        ToolRegistryImpl::effective_scope(reg.metadata.get("late_uds").unwrap()),
+        ProfileAvailabilityScope::None,
+        "late UDS/MCP registration must reapply retained persisted policy"
     );
 }
 

@@ -37,6 +37,7 @@ pub struct ToolRegistryImpl {
     pub(super) denied_policy_ids: std::collections::HashSet<String>,
     pub(super) inherited_policy_scopes: HashMap<String, ProfileAvailabilityScope>,
     pub(super) inherited_policy_default_scope: Option<ProfileAvailabilityScope>,
+    pub(super) persisted_policy_scopes: HashMap<String, ProfileAvailabilityScope>,
 }
 
 impl std::fmt::Debug for ToolRegistryImpl {
@@ -73,6 +74,7 @@ impl ToolRegistryImpl {
             denied_policy_ids: std::collections::HashSet::new(),
             inherited_policy_scopes: HashMap::new(),
             inherited_policy_default_scope: None,
+            persisted_policy_scopes: HashMap::new(),
         }
     }
 
@@ -230,6 +232,7 @@ impl ToolRegistryImpl {
             }
             Err(ToolIdResolveError::Unknown(_)) => unreachable!("register does not resolve ids"),
         }
+        self.apply_retained_persisted_policy(&name, &mut metadata);
         if let Some(scope) = self
             .inherited_scope_for(&name, &metadata)
             .or(self.inherited_policy_default_scope)
@@ -477,12 +480,29 @@ impl ToolRegistryImpl {
                     if entry
                         .profile_scope
                         .unwrap_or(ProfileAvailabilityScope::Both)
-                        == mutation.scope =>
+                        == mutation.scope
+                        && self
+                            .metadata
+                            .get(&resolved_name)
+                            .and_then(|metadata| metadata.configured_scope)
+                            .is_none_or(|configured| configured == mutation.scope) =>
                 {
                     ToolPolicyMutationStatus::AlreadyInState
                 }
                 Some(_) => {
                     self.set_profile_scope(&resolved_name, mutation.scope);
+                    if let Some(metadata) = self.metadata.get_mut(&resolved_name) {
+                        if metadata.configured_scope.is_some() {
+                            metadata.configured_enabled = Some(mutation.scope.is_enabled());
+                            metadata.configured_scope = Some(mutation.scope);
+                            let stable_id = metadata
+                                .identity_for_name(&resolved_name)
+                                .stable_id
+                                .into_owned();
+                            self.persisted_policy_scopes
+                                .insert(stable_id, mutation.scope);
+                        }
+                    }
                     ToolPolicyMutationStatus::Applied
                 }
             };
