@@ -52,6 +52,7 @@ struct EffortFx {
     agent: AgentLoopImpl,
     messages: Vec<crate::domain::message::Message>,
     session: AgentSession,
+    execution_state: crate::interface::cli::uds_execution_state::ExecutionStateHandle,
     session_key: String,
     store: crate::infrastructure::persistence::session_store::FileSessionStore,
     _tmp: tempfile::TempDir,
@@ -65,6 +66,7 @@ impl EffortFx {
             agent: make_effort_test_agent(effort),
             messages: Vec::new(),
             session: AgentSession::new("stub".into(), "cli:test".into()),
+            execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_key: "cli:test".into(),
             store: crate::infrastructure::persistence::session_store::FileSessionStore::new(
                 tmp.path(),
@@ -80,7 +82,7 @@ impl EffortFx {
             &self.messages,
         );
         DispatchCtx {
-            execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
+            execution_state: self.execution_state.clone(),
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,

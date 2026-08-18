@@ -117,11 +117,11 @@ impl ExecutionState {
         session_generation: u64,
         workflow_revision: u64,
     ) -> u64 {
-        if self.observed_session_generation != session_generation {
+        if session_generation > self.observed_session_generation {
             self.observed_session_generation = session_generation;
             self.visible_generation = self.visible_generation.saturating_add(1);
         }
-        if self.observed_workflow_revision != workflow_revision {
+        if workflow_revision > self.observed_workflow_revision {
             self.observed_workflow_revision = workflow_revision;
             self.visible_generation = self.visible_generation.saturating_add(1);
         }

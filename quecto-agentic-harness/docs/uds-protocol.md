@@ -340,9 +340,12 @@ When no workflow template is selected, the `workflow` field is omitted entirely.
 `get_state` intentionally does not include static vocabularies, transcript
 counts, sync/history state, context-window metadata, available workflow
 templates, full workflow step lists, guidance, or detailed execution payloads.
-Busy `get_state` snapshots use the same slim shape. They do not carry a
-snapshot marker; if their generation equals the request's `since` value, the
-response is the unchanged marker above.
+Busy `get_state` snapshots use the same slim shape and do not carry a snapshot
+marker. For an exact `since` query, an id-less connect-time snapshot is accepted
+only when its generation equals `since`, and is then finalized as the unchanged
+marker above. A snapshot newer than `since` is only a point-in-time observation;
+it is not used as changed-data proof for that cursor, so the caller waits for the
+correlated live response instead.
 
 
 ### `get_messages`

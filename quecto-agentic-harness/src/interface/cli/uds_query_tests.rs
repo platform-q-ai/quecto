@@ -63,7 +63,7 @@ pub(crate) struct Fx {
     agent: AgentLoopImpl,
     messages: Vec<Message>,
     session: AgentSession,
-    execution_state: crate::interface::cli::uds_execution_state::ExecutionStateHandle,
+    pub(crate) execution_state: crate::interface::cli::uds_execution_state::ExecutionStateHandle,
     session_key: String,
     store: FileSessionStore,
     _tmp: tempfile::TempDir,

@@ -45,8 +45,8 @@ pub(super) fn response_is_valid_answer(json: &serde_json::Value, command: &str) 
             // slim busy snapshots are intentionally id-less and unmarked: accept
             // only the slim projection (or unchanged cursor response), never the
             // legacy bulky snapshot marker/message-count shape. A request carrying
-            // `since` can only be answered by a snapshot whose generation proves it
-            // changed after that cursor, or by the bounded unchanged marker.
+            // `since` can use an id-less snapshot only at exactly that generation,
+            // where finalization turns it into the bounded unchanged marker.
             cmd.get("count").is_none()
                 && json.get("command").and_then(|v| v.as_str()) == Some("get_state")
                 && get_state_data_is_slim_snapshot(json.pointer("/data"))
@@ -93,7 +93,13 @@ fn get_state_snapshot_honors_since(
     if data.get("unchanged").and_then(|v| v.as_bool()) == Some(true) {
         return generation == Some(since);
     }
-    generation.is_some_and(|generation| generation >= since)
+    // A changed connect-time snapshot is only a point-in-time observation and
+    // cannot prove that its projection is the state immediately after an older
+    // cursor. Accepting generation > since could therefore return stale changed
+    // fields as the answer to a precise delta query. Equality is safe because
+    // finalization converts it to the bounded unchanged marker; otherwise wait
+    // for the correlated live reply.
+    generation == Some(since)
 }
 
 fn get_state_data_is_slim_snapshot(data: Option<&serde_json::Value>) -> bool {

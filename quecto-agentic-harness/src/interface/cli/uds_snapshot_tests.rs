@@ -589,7 +589,7 @@ fn busy_get_state_reflects_live_workflow_progress_mid_turn() {
         WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
     };
     use crate::interface::cli::uds_snapshots::{
-        build_get_state_line_live, build_get_state_line_with_streaming,
+        build_busy_get_state_line, build_get_state_line_with_streaming,
     };
     use std::sync::{Arc, Mutex};
 
@@ -660,9 +660,11 @@ fn busy_get_state_reflects_live_workflow_progress_mid_turn() {
     );
 
     // #914 fix: the live builder reports the engine's current step.
-    let live_v: serde_json::Value =
-        serde_json::from_str(build_get_state_line_live(&state, &Some(handle), true).trim())
-            .unwrap();
+    let execution = Arc::new(Mutex::new(Default::default()));
+    let live_v: serde_json::Value = serde_json::from_str(
+        build_busy_get_state_line(&state, &Some(handle.clone()), &execution).trim(),
+    )
+    .unwrap();
     assert_eq!(
         live_v["data"]["workflow"]["currentStep"]["key"], "c",
         "live get_state must reflect mid-turn current step, not the frozen snapshot"
@@ -678,5 +680,32 @@ fn busy_get_state_reflects_live_workflow_progress_mid_turn() {
     assert!(
         live_v["data"]["workflow"].get("automation").is_none(),
         "slim workflow must omit automation flags: {live_v}"
+    );
+
+    let prior_generation = live_v["data"]["generation"].as_u64().unwrap();
+    let poisoned_workflow = handle.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = poisoned_workflow.lock().unwrap();
+        panic!("poison busy workflow lock");
+    })
+    .join();
+    let poisoned_execution = execution.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = poisoned_execution.lock().unwrap();
+        panic!("poison busy execution lock");
+    })
+    .join();
+
+    let recovered: serde_json::Value =
+        serde_json::from_str(build_busy_get_state_line(&state, &Some(handle), &execution).trim())
+            .unwrap();
+    assert_eq!(
+        recovered["data"]["workflow"]["currentStep"]["key"], "c",
+        "poison recovery must preserve the coherent live workflow projection: {recovered}"
+    );
+    assert_eq!(
+        recovered["data"]["generation"].as_u64().unwrap(),
+        prior_generation,
+        "poison recovery and an older frozen session snapshot must not change the cursor: {recovered}"
     );
 }
