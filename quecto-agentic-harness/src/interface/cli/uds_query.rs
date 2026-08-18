@@ -60,18 +60,24 @@ pub(super) fn query_response_data(
 ) -> Option<serde_json::Value> {
     match cmd {
         AgentCommand::GetState { since, .. } => {
-            let workflow = ctx.workflow_state.as_ref().and_then(|ws| {
-                ws.lock().ok().map(|engine| {
-                    let mut value = serde_json::to_value(engine.snapshot(true)).unwrap_or_default();
-                    if let Some(config) = &ctx.workflow_config {
-                        value["automation"] = serde_json::json!({
-                            "autoContinue": config.auto_continue,
-                            "completionNudge": config.completion_nudge,
-                        });
-                    }
-                    value
+            let (workflow, workflow_revision) = ctx
+                .workflow_state
+                .as_ref()
+                .and_then(|ws| {
+                    ws.lock().ok().map(|engine| {
+                        let revision = engine.revision();
+                        let mut value =
+                            serde_json::to_value(engine.snapshot(true)).unwrap_or_default();
+                        if let Some(config) = &ctx.workflow_config {
+                            value["automation"] = serde_json::json!({
+                                "autoContinue": config.auto_continue,
+                                "completionNudge": config.completion_nudge,
+                            });
+                        }
+                        (Some(value), revision)
+                    })
                 })
-            });
+                .unwrap_or((None, 1));
             // #1067: `SessionState` itself carries the session's effective
             // effort (the level string when set, an explicit null when unset)
             // plus the provider's valid vocabulary, so the live-query and
@@ -82,6 +88,9 @@ pub(super) fn query_response_data(
                 ctx.agent.max_context_tokens(),
                 ctx.agent.effort().map(|l| l.as_str().to_string()),
             );
+            if workflow_revision > state.generation {
+                state.generation = workflow_revision;
+            }
             if let Ok(mut execution) = ctx.execution_state.lock() {
                 if ctx.session.is_streaming() {
                     state.message_count = execution.message_count();

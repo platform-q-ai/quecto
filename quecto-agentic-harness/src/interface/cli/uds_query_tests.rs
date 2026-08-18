@@ -2,6 +2,9 @@ use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::{Message, ToolCall};
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::domain::workflow::{
+    WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
+};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::test_support::message_contents;
 use crate::infrastructure::tools::registration::ToolRegistration;
@@ -104,6 +107,13 @@ impl Fx {
     }
 
     pub(crate) fn ctx(&mut self) -> crate::interface::cli::uds::DispatchCtx<'_> {
+        self.ctx_with_workflow(None)
+    }
+
+    pub(crate) fn ctx_with_workflow(
+        &mut self,
+        workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
+    ) -> crate::interface::cli::uds::DispatchCtx<'_> {
         let initial_stats = compute_session_stats_with_usage(
             &self.session_key,
             &self.messages,
@@ -140,7 +150,7 @@ impl Fx {
             current_client_id: 0,
             subagent_registry: None,
             notification_rx: None,
-            workflow_state: None,
+            workflow_state,
             workflow_config: None,
             provider_reload: None,
             provider_reload_inputs: None,
@@ -148,6 +158,75 @@ impl Fx {
             durable_prefix_dirty: false,
         }
     }
+}
+
+fn workflow_engine_for_get_state_since_tests() -> crate::interface::shared::WorkflowStateHandle {
+    Arc::new(std::sync::Mutex::new(
+        WorkflowEngine::new(
+            WorkflowConfig {
+                templates: vec![WorkflowTemplate {
+                    id: "feature".into(),
+                    label: "Feature".into(),
+                    description: "desc".into(),
+                    when_to_use: None,
+                    steps: vec![WorkflowTemplateStep {
+                        key: "plan".into(),
+                        label: "Plan".into(),
+                        phase: "design".into(),
+                        guidance: None,
+                    }],
+                    guards: vec![],
+                }],
+                ..WorkflowConfig::default()
+            },
+            false,
+        )
+        .unwrap(),
+    ))
+}
+
+#[test]
+fn idle_get_state_since_reveals_workflow_selection_change() {
+    let mut fx = Fx::new();
+    let workflow = workflow_engine_for_get_state_since_tests();
+    let before = {
+        let ctx = fx.ctx_with_workflow(Some(workflow.clone()));
+        query_response_data(
+            &AgentCommand::GetState {
+                id: None,
+                since: None,
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .unwrap()
+    };
+    assert!(before.get("workflow").is_none());
+    let before_generation = before["generation"].as_u64().unwrap();
+
+    workflow
+        .lock()
+        .unwrap()
+        .select_template("feature", None)
+        .unwrap();
+
+    let ctx = fx.ctx_with_workflow(Some(workflow));
+    let after = query_response_data(
+        &AgentCommand::GetState {
+            id: None,
+            since: Some(before_generation),
+            agent_id: None,
+        },
+        &ctx,
+    )
+    .unwrap();
+
+    assert_ne!(after.get("unchanged"), Some(&serde_json::Value::Bool(true)));
+    assert_eq!(after["workflow"]["activeTemplate"]["id"], "feature");
+    assert!(
+        after["generation"].as_u64().unwrap() > before_generation,
+        "workflow-visible idle mutation must advance get_state since cursor: before={before}, after={after}"
+    );
 }
 
 #[test]
