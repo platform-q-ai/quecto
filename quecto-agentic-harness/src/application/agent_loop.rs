@@ -20,6 +20,9 @@ use crate::domain::tool::{
 };
 use std::pin::Pin;
 use std::sync::Arc;
+
+pub type ToolPolicyPersistence =
+    Arc<dyn Fn(&crate::domain::tool::ToolPolicyReconciliation) -> Result<(), String> + Send + Sync>;
 #[path = "agent_loop_clamp.rs"]
 mod agent_loop_clamp;
 #[path = "agent_loop_effort.rs"]
@@ -124,6 +127,7 @@ pub struct AgentLoopImpl {
     pub(super) tool_policy_state: std::sync::Mutex<ToolPolicyState>,
     pub(super) turn_in_flight: std::sync::atomic::AtomicBool,
     pub(super) tool_profile_context: ToolProfileContext,
+    pub(super) tool_policy_persistence: Option<ToolPolicyPersistence>,
 }
 impl std::fmt::Debug for AgentLoopImpl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -167,6 +171,7 @@ impl AgentLoopImpl {
             tool_policy_state: std::sync::Mutex::new(ToolPolicyState::default()),
             turn_in_flight: std::sync::atomic::AtomicBool::new(false),
             tool_profile_context: config.tool_profile_context,
+            tool_policy_persistence: None,
         }
     }
     /// Read-and-clear the durable-prefix dirty latch (#1072).

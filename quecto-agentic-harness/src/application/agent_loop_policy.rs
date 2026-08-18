@@ -219,6 +219,13 @@ impl AgentLoopImpl {
         self.turn_in_flight.store(false, Ordering::SeqCst);
     }
 
+    pub fn set_tool_policy_persistence(
+        &mut self,
+        persistence: Option<super::agent_loop::ToolPolicyPersistence>,
+    ) {
+        self.tool_policy_persistence = persistence;
+    }
+
     pub fn request_tool_policy_mutation(
         &mut self,
         mutations: &[ToolPolicyMutation],
@@ -313,6 +320,11 @@ impl AgentLoopImpl {
                 .tool_registry
                 .apply_tool_policy_request(&request, ToolPolicyApplyMode::AtNextTurnBoundary);
             self.record_applied_tool_policy_overlay(&reconciliation);
+            if request.persist {
+                if let Some(persist) = &self.tool_policy_persistence {
+                    let _ = persist(&reconciliation);
+                }
+            }
             self.notify_tool_policy_changed(&reconciliation, "turn_boundary");
             combined.results.extend(reconciliation.results);
         }

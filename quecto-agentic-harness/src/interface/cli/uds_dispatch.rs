@@ -220,6 +220,15 @@ pub(super) async fn handle_set_tool_policy(
             request
         }
     };
+    if persist {
+        if let Some(inputs) = ctx.provider_reload_inputs {
+            let config_path = inputs.config_path.clone();
+            ctx.agent
+                .set_tool_policy_persistence(Some(std::sync::Arc::new(move |reconciliation| {
+                    persist_tool_policy_results(&config_path, reconciliation)
+                })));
+        }
+    }
     let reconciliation = ctx.agent.request_tool_policy(request, apply_mode);
     let data = match reconciliation {
         Some(reconciliation) => {

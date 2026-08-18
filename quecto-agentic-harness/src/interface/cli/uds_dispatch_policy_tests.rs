@@ -1,7 +1,9 @@
 use super::*;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::infrastructure::config::Config;
 use crate::interface::cli::protocol::{AgentCommand, ToolPolicyApplyModeCommand};
+use crate::interface::cli::provider_reload::ProviderReloadInputs;
 
 #[derive(Debug)]
 struct NamedTool(&'static str);
@@ -156,4 +158,66 @@ async fn dispatch_set_tool_policy_tool_id_only_still_applies() {
         .expect("alpha entry");
     assert_eq!(alpha.profile_scope, Some(ProfileAvailabilityScope::Child));
     assert_eq!(alpha.effective_scope, ProfileAvailabilityScope::Child);
+}
+
+#[tokio::test]
+async fn queued_persist_tool_policy_is_written_when_boundary_drains() {
+    let mut fx = cov_tests::Fixture::new();
+    fx.agent
+        .register_runtime_tool(std::sync::Arc::new(NamedTool("alpha")));
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config_path = tmp.path().join("config.json");
+    std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&Config::default()).unwrap(),
+    )
+    .unwrap();
+    fx.provider_reload_inputs = Some(ProviderReloadInputs::new(
+        config_path.clone(),
+        tmp.path().to_path_buf(),
+        std::collections::HashMap::new(),
+        reqwest::Client::new(),
+    ));
+
+    let cmd = AgentCommand::SetToolPolicy {
+        id: Some("pol".into()),
+        mutations: vec![crate::interface::cli::protocol::ToolPolicyMutationCommand {
+            tool_id: None,
+            name: Some("alpha".into()),
+            scope: ProfileAvailabilityScope::Child,
+            reason: Some("durable".into()),
+        }],
+        mode: ToolPolicyApplyModeCommand::AtNextTurnBoundary,
+        operation: crate::interface::cli::protocol::ToolPolicyOperationCommand::Patch,
+        unlisted_scope: None,
+        persist: true,
+    };
+    {
+        let mut ctx = fx.ctx();
+        assert!(!dispatch_command(cmd, &mut ctx).await);
+    }
+
+    assert!(
+        Config::load(config_path.to_str().unwrap())
+            .unwrap()
+            .tools
+            .policy
+            .entries
+            .is_empty(),
+        "queued requests must persist after the boundary applies, not before"
+    );
+
+    fx.agent.drain_tool_policy_mutations_at_boundary();
+
+    let config = Config::load(config_path.to_str().unwrap()).unwrap();
+    assert!(
+        config
+            .tools
+            .policy
+            .entries
+            .values()
+            .any(|entry| entry.scope == ProfileAvailabilityScope::Child),
+        "expected queued persisted policy entry in config, got {:?}",
+        config.tools.policy.entries
+    );
 }
