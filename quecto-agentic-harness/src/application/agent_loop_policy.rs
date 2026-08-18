@@ -316,11 +316,9 @@ impl AgentLoopImpl {
             if combined.correlation_id.is_none() {
                 combined.correlation_id = request.correlation_id.clone();
             }
-            let mut live_request = request.clone();
-            live_request.persist = false;
             let mut reconciliation = self
                 .tool_registry
-                .apply_tool_policy_request(&live_request, ToolPolicyApplyMode::AtNextTurnBoundary);
+                .apply_tool_policy_request(&request, ToolPolicyApplyMode::AtNextTurnBoundary);
             self.record_applied_tool_policy_overlay(&reconciliation);
             let persist_error = if request.persist {
                 self.tool_policy_persistence

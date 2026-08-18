@@ -65,12 +65,12 @@ fn queued_persist_patch_request_persists_after_live_registry_apply() {
     );
     assert_eq!(
         reconciliation.results[0].status,
-        ToolPolicyMutationStatus::Applied,
-        "queued persist applies live without leaking persist:true into the runtime registry"
+        ToolPolicyMutationStatus::BlockedByRestriction,
+        "queued persist must reach the live registry with persist:true so runtime-tool reconnects retain the configured ceiling"
     );
     assert_eq!(
         persisted.lock().unwrap().as_slice(),
-        &[ToolPolicyMutationStatus::Applied],
-        "queued persist writes the successful live reconciliation via the persistence callback"
+        &[ToolPolicyMutationStatus::BlockedByRestriction],
+        "queued persist writes the live persisted reconciliation via the persistence callback"
     );
 }
