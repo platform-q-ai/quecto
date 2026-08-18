@@ -100,24 +100,74 @@ fn get_state_data_is_slim_snapshot(data: Option<&serde_json::Value>) -> bool {
     let Some(data) = data else {
         return false;
     };
+    let Some(object) = data.as_object() else {
+        return false;
+    };
     if data.get("unchanged").and_then(|v| v.as_bool()) == Some(true) {
-        return data.get("generation").and_then(|v| v.as_u64()).is_some()
-            && data.as_object().is_some_and(|o| o.len() == 2);
+        return data.get("generation").and_then(|v| v.as_u64()).is_some() && object.len() == 2;
+    }
+    let allowed_top_level = [
+        "state",
+        "effort",
+        "model",
+        "progress",
+        "generation",
+        "workflow",
+    ];
+    if object
+        .keys()
+        .any(|key| !allowed_top_level.contains(&key.as_str()))
+    {
+        return false;
     }
     data.get("state").and_then(|v| v.as_str()).is_some()
+        && object.contains_key("effort")
         && data.get("model").and_then(|v| v.as_str()).is_some()
         && data.get("generation").and_then(|v| v.as_u64()).is_some()
-        && data
-            .pointer("/progress/state")
-            .and_then(|v| v.as_str())
-            .is_some()
-        && data
-            .pointer("/progress/reason")
-            .and_then(|v| v.as_str())
-            .is_some()
-        && data.get("snapshot").is_none()
-        && data.get("isStreaming").is_none()
-        && data.get("messageCount").is_none()
+        && progress_is_slim(data.get("progress"))
+        && data.get("workflow").is_none_or(workflow_is_slim)
+}
+
+fn progress_is_slim(progress: Option<&serde_json::Value>) -> bool {
+    let Some(progress) = progress.and_then(|v| v.as_object()) else {
+        return false;
+    };
+    progress.len() == 2
+        && progress.get("state").and_then(|v| v.as_str()).is_some()
+        && progress.get("reason").and_then(|v| v.as_str()).is_some()
+}
+
+fn workflow_is_slim(workflow: &serde_json::Value) -> bool {
+    let Some(workflow) = workflow.as_object() else {
+        return false;
+    };
+    let allowed_workflow = ["activeTemplate", "currentStep"];
+    if workflow
+        .keys()
+        .any(|key| !allowed_workflow.contains(&key.as_str()))
+    {
+        return false;
+    }
+    let Some(active_template) = workflow.get("activeTemplate").and_then(|v| v.as_object()) else {
+        return false;
+    };
+    if active_template.len() != 1 || active_template.get("id").and_then(|v| v.as_str()).is_none() {
+        return false;
+    }
+    workflow.get("currentStep").is_none_or(current_step_is_slim)
+}
+
+fn current_step_is_slim(step: &serde_json::Value) -> bool {
+    let Some(step) = step.as_object() else {
+        return false;
+    };
+    let allowed_step = ["index", "key", "label", "phase", "done"];
+    step.keys().all(|key| allowed_step.contains(&key.as_str()))
+        && step.get("index").and_then(|v| v.as_u64()).is_some()
+        && step.get("key").and_then(|v| v.as_str()).is_some()
+        && step.get("label").and_then(|v| v.as_str()).is_some()
+        && step.get("phase").and_then(|v| v.as_str()).is_some()
+        && step.get("done").and_then(|v| v.as_bool()).is_some()
 }
 
 /// Apply the request's `count` (if any) to an accepted `get_messages` snapshot by

@@ -504,29 +504,29 @@ fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
         &unchanged_state_snapshot,
         r#"{"type":"get_state","since":7}"#
     ));
-    let legacy_state_snapshot = serde_json::json!({
-        "type": "response",
-        "command": "get_state",
-        "data": { "isStreaming": true, "messageCount": 2, "snapshot": true }
+    let mut bulky_state_snapshot = state_snapshot.clone();
+    bulky_state_snapshot["data"]["effortLevels"] = serde_json::json!(["low", "medium"]);
+    bulky_state_snapshot["data"]["workflow"] = serde_json::json!({
+        "activeTemplate":{"id":"bugfix"},
+        "currentStep":{"index":1,"key":"red","label":"RED","phase":"RED","done":false},
+        "available_templates":[{"id":"bugfix"}]
     });
     assert!(!subagent_snapshot::response_is_valid_answer(
-        &legacy_state_snapshot,
+        &bulky_state_snapshot,
         r#"{"type":"get_state"}"#
     ));
-    let malformed_state_snapshot = serde_json::json!({
-        "type": "response",
-        "command": "get_state",
-        "data": { "state": "idle", "generation": 7 }
-    });
     assert!(!subagent_snapshot::response_is_valid_answer(
-        &malformed_state_snapshot,
+        &serde_json::json!({"type":"response","command":"get_state","data":{"isStreaming":true,"messageCount":2,"snapshot":true}}),
+        r#"{"type":"get_state"}"#
+    ));
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &serde_json::json!({"type":"response","command":"get_state","data":{"state":"idle","generation":7}}),
         r#"{"type":"get_state"}"#
     ));
     assert!(!subagent_snapshot::response_is_valid_answer(
         &state_snapshot,
         r#"{"type":"get_session_stats"}"#
     ));
-
     // #874: a get_subagents snapshot is a valid answer for a get_subagents
     // request (the registry is independent of the dispatch loop, so a busy child
     // can serve it off the turn).
