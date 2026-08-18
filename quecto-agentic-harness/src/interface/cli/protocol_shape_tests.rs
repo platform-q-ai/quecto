@@ -534,7 +534,8 @@ fn core_command_type_names() {
     assert_eq!(
         AgentCommand::GetState {
             id: None,
-            agent_id: None
+            agent_id: None,
+            since: None
         }
         .type_name(),
         "get_state"

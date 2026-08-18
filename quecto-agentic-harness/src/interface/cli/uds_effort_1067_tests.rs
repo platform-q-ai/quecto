@@ -128,6 +128,7 @@ fn get_state_exposes_configured_effort() {
         &AgentCommand::GetState {
             id: None,
             agent_id: None,
+            since: None,
         },
         &ctx,
     )
@@ -146,6 +147,7 @@ fn get_state_exposes_null_effort_when_unset() {
         &AgentCommand::GetState {
             id: None,
             agent_id: None,
+            since: None,
         },
         &ctx,
     )
@@ -162,32 +164,32 @@ fn get_state_exposes_null_effort_when_unset() {
 }
 
 #[test]
-fn get_state_exposes_provider_effort_vocabulary() {
-    // The agent is the single source of truth for the provider→levels rule:
-    // get_state must carry the valid vocabulary so clients (TUI selector /
-    // validation) never duplicate it (#1067 review).
+fn get_state_omits_provider_effort_vocabulary() {
+    // #1512: get_state is a slim live-supervision projection. Static effort
+    // vocabulary belongs on purpose-built capability/status surfaces, not on
+    // every state poll.
     let mut fx = EffortFx::new(None);
     let ctx = fx.ctx();
     let state = crate::interface::cli::uds_query::query_response_data(
         &AgentCommand::GetState {
             id: None,
             agent_id: None,
+            since: None,
         },
         &ctx,
     )
     .expect("get_state must return data");
-    assert_eq!(
-        state["effortLevels"],
-        serde_json::json!(["none", "low", "medium", "high", "xhigh"]),
-        "get_state must list the provider's valid effort levels, got: {state}"
+    assert!(
+        state.get("effortLevels").is_none(),
+        "get_state must not carry effortLevels vocabulary, got: {state}"
     );
 }
 
 #[tokio::test]
-async fn busy_snapshot_get_state_carries_effort_and_vocabulary() {
+async fn busy_snapshot_get_state_carries_effort_without_vocabulary() {
     // A TUI connecting mid-turn is served the frozen snapshot instead of the
-    // live query; it must not silently drop the effort override or the
-    // vocabulary (#1067 review: snapshot/live get_state shape parity).
+    // live query; it must not silently drop the effort override, but it should
+    // keep the slim get_state shape.
     let mut fx = EffortFx::new(Some(EffortLevel::XHigh));
     let ctx = fx.ctx();
     crate::interface::cli::uds_snapshots::refresh_state_snapshot(&ctx).await;
@@ -198,10 +200,9 @@ async fn busy_snapshot_get_state_carries_effort_and_vocabulary() {
         value["data"]["effort"], "xhigh",
         "busy-connect snapshot get_state must carry the active effort, got: {value}"
     );
-    assert_eq!(
-        value["data"]["effortLevels"],
-        serde_json::json!(["none", "low", "medium", "high", "xhigh"]),
-        "busy-connect snapshot get_state must carry the vocabulary, got: {value}"
+    assert!(
+        value["data"].get("effortLevels").is_none(),
+        "busy-connect snapshot get_state must omit effortLevels vocabulary, got: {value}"
     );
 }
 

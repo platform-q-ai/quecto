@@ -472,6 +472,7 @@ async fn get_message_metadata_too_large_returns_error_and_keeps_connection_usabl
             AgentCommand::GetState {
                 id: Some("after-error".into()),
                 agent_id: None,
+                since: None
             },
             &mut fx.ctx(Some(tx))
         )
@@ -484,7 +485,6 @@ async fn get_message_metadata_too_large_returns_error_and_keeps_connection_usabl
     assert_eq!(follow_up["id"], "after-error");
     assert_eq!(follow_up["command"], "get_state");
 }
-
 #[tokio::test]
 async fn get_message_idle_recalls_full_content_for_collapsed_live_message() {
     let spill_id = "turn1:msg:assistant";

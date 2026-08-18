@@ -59,41 +59,71 @@ pub(super) fn query_response_data(
     ctx: &DispatchCtx<'_>,
 ) -> Option<serde_json::Value> {
     match cmd {
-        AgentCommand::GetState { .. } => {
-            let workflow = ctx.workflow_state.as_ref().and_then(|ws| {
-                ws.lock().ok().map(|engine| {
-                    let mut value = serde_json::to_value(engine.snapshot(true)).unwrap_or_default();
-                    if let Some(config) = &ctx.workflow_config {
-                        value["automation"] = serde_json::json!({
-                            "autoContinue": config.auto_continue,
-                            "completionNudge": config.completion_nudge,
-                        });
-                    }
-                    value
-                })
-            });
-            // #1067: `SessionState` itself carries the session's effective
-            // effort (the level string when set, an explicit null when unset)
-            // plus the provider's valid vocabulary, so the live-query and
-            // busy-connect snapshot paths serve the same `get_state` shape.
-            let mut state = ctx.session.state_snapshot(
-                user_visible_message_count(ctx.messages, ctx.system_prompt),
-                workflow,
-                ctx.agent.max_context_tokens(),
-                ctx.agent.effort().map(|l| l.as_str().to_string()),
-            );
-            if let Ok(mut execution) = ctx.execution_state.lock() {
+        AgentCommand::GetState { since, .. } => {
+            let execution = ctx.execution_state.lock().ok().map(|mut execution| {
+                let visible_count = user_visible_message_count(ctx.messages, ctx.system_prompt);
                 if ctx.session.is_streaming() {
-                    state.message_count = execution.message_count();
+                    // Keep the execution-owned in-flight count authoritative while busy.
                 } else {
-                    execution.set_hidden_message_count(
-                        ctx.messages.len().saturating_sub(state.message_count),
-                    );
-                    execution.set_message_count(state.message_count);
+                    execution
+                        .set_hidden_message_count(ctx.messages.len().saturating_sub(visible_count));
+                    execution.set_message_count(visible_count);
                 }
-                state.execution = Some(execution.snapshot());
+                execution.snapshot()
+            });
+            let generation = execution
+                .as_ref()
+                .map(|snapshot| snapshot.activity_generation)
+                .unwrap_or_default();
+            if since == &Some(generation) {
+                return Some(serde_json::json!({
+                    "unchanged": true,
+                    "generation": generation,
+                }));
             }
-            Some(serde_json::to_value(&state).unwrap_or_default())
+
+            let mut state = serde_json::json!({
+                "state": execution.as_ref().map(|snapshot| snapshot.phase.as_str()).unwrap_or("idle"),
+                "effort": ctx.agent.effort().map(|level| level.as_str().to_string()),
+                "model": ctx.agent.model(),
+                "progress": {
+                    "state": execution.as_ref().map(|snapshot| snapshot.progress.state.as_str()).unwrap_or("advancing"),
+                    "reason": execution.as_ref().map(|snapshot| snapshot.progress.reason.as_str()).unwrap_or("idle"),
+                },
+                "generation": generation,
+            });
+            if let Some(workflow) = ctx.workflow_state.as_ref().and_then(|ws| {
+                ws.lock().ok().and_then(|engine| {
+                    let snapshot = engine.snapshot(true);
+                    snapshot.active_template.map(|template| {
+                        let mut value = serde_json::json!({
+                            "id": template.id,
+                            "label": template.label,
+                            "mode": snapshot.mode,
+                            "progress": snapshot.progress,
+                        });
+                        if let Some(issue) = snapshot.active_issue {
+                            value["activeIssue"] = serde_json::json!({
+                                "number": issue.0,
+                                "title": issue.1,
+                            });
+                        }
+                        if let Some(step) = snapshot.current_step {
+                            value["currentStep"] = serde_json::json!({
+                                "index": step.index,
+                                "key": step.key,
+                                "label": step.label,
+                                "phase": step.phase,
+                                "done": step.done,
+                            });
+                        }
+                        value
+                    })
+                })
+            }) {
+                state["workflow"] = workflow;
+            }
+            Some(state)
         }
         AgentCommand::GetMessages { count, before, .. } => {
             let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
@@ -191,6 +221,7 @@ mod cov2_tests {
             &AgentCommand::GetState {
                 id: None,
                 agent_id: None,
+                since: None,
             },
             &ctx,
         )

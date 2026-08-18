@@ -38,6 +38,8 @@ pub enum AgentCommand {
         id: Option<String>,
         #[serde(rename = "agent_id", default, skip_serializing_if = "Option::is_none")]
         agent_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        since: Option<u64>,
     },
     /// Return conversation history. Optional `count` returns the last N messages.
     ///

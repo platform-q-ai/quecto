@@ -159,13 +159,16 @@ fn query_get_state_messages_and_stats_are_shaped() {
         &AgentCommand::GetState {
             id: None,
             agent_id: None,
+            since: None,
         },
         &ctx,
     )
     .unwrap();
     assert_eq!(state["model"], "stub");
-    assert_eq!(state["messageCount"], 2);
-    assert_eq!(state["execution"]["phase"], "idle");
+    assert!(state.get("messageCount").is_none());
+    assert_eq!(state["state"], "idle");
+    assert_eq!(state["progress"]["state"], "quiet");
+    assert_eq!(state["generation"], 0);
 
     let all = query_response_data(
         &AgentCommand::GetMessages {

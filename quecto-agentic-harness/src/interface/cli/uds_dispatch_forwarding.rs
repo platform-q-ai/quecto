@@ -21,6 +21,7 @@ pub(super) async fn try_forward_subagent_targeted_command(
     if let AgentCommand::GetState {
         agent_id: Some(agent_id),
         id,
+        ..
     } = cmd
     {
         let tn = cmd.type_name();
