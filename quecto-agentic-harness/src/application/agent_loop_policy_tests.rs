@@ -5,7 +5,7 @@ use crate::domain::message::Role;
 use crate::domain::tool::{
     RuntimeToolLifecycleRegistry, ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation,
     ToolPolicyMutationResult, ToolPolicyMutationStatus, ToolPolicyReconciliation,
-    ToolProfileContext, ToolRegistry,
+    ToolPolicyRequest, ToolProfileContext, ToolRegistry,
 };
 use crate::domain::tool_descriptor::{
     ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolHealth, ToolLifecycleKind,
@@ -50,12 +50,13 @@ pub(super) fn mock_catalogue_entry(name: &str, effective_enabled: bool) -> ToolC
 
 impl RuntimeToolLifecycleRegistry for MockRegistry {}
 impl SessionAwareTools for MockRegistry {}
-impl crate::domain::tool::ToolPolicyMutator for MockRegistry {
-    fn apply_tool_policy_mutations(
+impl MockRegistry {
+    fn apply_mock_policy_request(
         &mut self,
-        mutations: &[ToolPolicyMutation],
+        request: &ToolPolicyRequest,
         mode: ToolPolicyApplyMode,
     ) -> ToolPolicyReconciliation {
+        let mutations = &request.mutations;
         let mut results = Vec::new();
         for mutation in mutations {
             let before_exists = self
@@ -122,8 +123,45 @@ impl crate::domain::tool::ToolPolicyMutator for MockRegistry {
         ToolPolicyReconciliation {
             mode,
             results,
-            correlation_id: None,
+            correlation_id: request.correlation_id.clone(),
         }
+    }
+}
+impl crate::domain::tool::ToolPolicyMutator for MockRegistry {
+    fn apply_tool_policy_mutations(
+        &mut self,
+        mutations: &[ToolPolicyMutation],
+        mode: ToolPolicyApplyMode,
+    ) -> ToolPolicyReconciliation {
+        self.apply_mock_policy_request(&ToolPolicyRequest::patch(mutations.to_vec()), mode)
+    }
+
+    fn apply_tool_policy_request(
+        &mut self,
+        request: &ToolPolicyRequest,
+        mode: ToolPolicyApplyMode,
+    ) -> ToolPolicyReconciliation {
+        if request.persist {
+            return ToolPolicyReconciliation {
+                mode,
+                results: request
+                    .mutations
+                    .iter()
+                    .map(|mutation| ToolPolicyMutationResult {
+                        name: mutation.name.clone(),
+                        requested_identifier: None,
+                        requested_availability: mutation.availability,
+                        requested_scope: mutation.scope,
+                        status: ToolPolicyMutationStatus::BlockedByRestriction,
+                        before: None,
+                        after: None,
+                        reason: "persist flag reached registry".into(),
+                    })
+                    .collect(),
+                correlation_id: request.correlation_id.clone(),
+            };
+        }
+        self.apply_mock_policy_request(request, mode)
     }
 }
 impl ToolRegistry for MockRegistry {}
@@ -178,10 +216,19 @@ impl crate::domain::tool::ToolPolicyMutator for RestrictedMockRegistry {
         mutations: &[ToolPolicyMutation],
         mode: ToolPolicyApplyMode,
     ) -> ToolPolicyReconciliation {
+        self.apply_tool_policy_request(&ToolPolicyRequest::patch(mutations.to_vec()), mode)
+    }
+
+    fn apply_tool_policy_request(
+        &mut self,
+        request: &ToolPolicyRequest,
+        mode: ToolPolicyApplyMode,
+    ) -> ToolPolicyReconciliation {
         ToolPolicyReconciliation {
             mode,
-            correlation_id: None,
-            results: mutations
+            correlation_id: request.correlation_id.clone(),
+            results: request
+                .mutations
                 .iter()
                 .map(|mutation| ToolPolicyMutationResult {
                     name: mutation.name.clone(),
@@ -417,34 +464,6 @@ async fn queued_policy_disable_blocks_stale_post_boundary_tool_call() {
         stale_result.content.contains("disabled by runtime policy"),
         "stale post-boundary call must be rejected: {}",
         stale_result.content
-    );
-}
-
-#[test]
-fn queued_policy_enable_preserves_restricted_status() {
-    let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
-    {
-        let mut policy = agent.tool_policy_state.lock().unwrap();
-        policy.disabled_tools.insert("alpha".to_string());
-    }
-    agent.swap_registry(Box::new(RestrictedMockRegistry::new("alpha")));
-
-    agent.queue_tool_policy_mutation(&[ToolPolicyMutation::enable("alpha", "try enable")]);
-    let reconciliation = agent
-        .drain_tool_policy_mutations_at_boundary()
-        .expect("queued enable drains");
-
-    assert_eq!(
-        reconciliation.results[0].status,
-        ToolPolicyMutationStatus::BlockedByRestriction
-    );
-    assert!(
-        agent
-            .tool_policy_state
-            .lock()
-            .unwrap()
-            .disabled_tools
-            .contains("alpha")
     );
 }
 
@@ -709,3 +728,7 @@ async fn direct_execution_honors_runtime_profile_scope() {
 
 #[path = "agent_loop_policy_drain_tests.rs"]
 mod drain_tests;
+#[path = "agent_loop_policy_persist_tests.rs"]
+mod persist_tests;
+#[path = "agent_loop_policy_restriction_tests.rs"]
+mod restriction_tests;

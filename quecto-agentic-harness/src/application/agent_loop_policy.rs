@@ -248,14 +248,7 @@ impl AgentLoopImpl {
             self.queue_tool_policy_request(request);
             return None;
         }
-        let reconciliation = match request.operation {
-            crate::domain::tool::ToolPolicyOperation::Patch => self
-                .tool_registry
-                .apply_tool_policy_mutations(&request.mutations, mode),
-            crate::domain::tool::ToolPolicyOperation::Replace => {
-                self.tool_registry.apply_tool_policy_request(&request, mode)
-            }
-        };
+        let reconciliation = self.tool_registry.apply_tool_policy_request(&request, mode);
         self.record_applied_tool_policy_overlay(&reconciliation);
         self.refresh_spawn_inherited_child_policy_snapshot();
         self.notify_tool_policy_changed(&reconciliation, "immediate");
@@ -316,19 +309,9 @@ impl AgentLoopImpl {
             if combined.correlation_id.is_none() {
                 combined.correlation_id = request.correlation_id.clone();
             }
-            let reconciliation = match request.operation {
-                crate::domain::tool::ToolPolicyOperation::Patch => {
-                    let mut reconciliation = self.tool_registry.apply_tool_policy_mutations(
-                        &request.mutations,
-                        ToolPolicyApplyMode::AtNextTurnBoundary,
-                    );
-                    reconciliation.correlation_id = request.correlation_id.clone();
-                    reconciliation
-                }
-                crate::domain::tool::ToolPolicyOperation::Replace => self
-                    .tool_registry
-                    .apply_tool_policy_request(&request, ToolPolicyApplyMode::AtNextTurnBoundary),
-            };
+            let reconciliation = self
+                .tool_registry
+                .apply_tool_policy_request(&request, ToolPolicyApplyMode::AtNextTurnBoundary);
             self.record_applied_tool_policy_overlay(&reconciliation);
             self.notify_tool_policy_changed(&reconciliation, "turn_boundary");
             combined.results.extend(reconciliation.results);
