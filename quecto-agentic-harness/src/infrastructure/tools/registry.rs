@@ -1,6 +1,5 @@
 // ToolRegistry: holds all Tool implementations, provides lookup by name.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -318,45 +317,6 @@ impl ToolRegistryImpl {
         names
     }
 
-    /// Compatibility name for the legacy extension lifecycle API.
-    pub fn extension_names(&self) -> Vec<String> {
-        self.runtime_tool_names()
-    }
-
-    /// Compatibility name for the legacy extension lifecycle API.
-    pub fn register_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
-        self.register_runtime_tool(tool)
-    }
-
-    /// Compatibility name for the legacy UDS lifecycle API.
-    pub fn register_uds_extension(&mut self, tool: Arc<dyn Tool>) -> bool {
-        self.register_uds_tool(tool)
-    }
-
-    /// Compatibility name for the legacy UDS lifecycle API.
-    pub fn can_register_uds_extension_for_owner(&self, name: &str, owner: &str) -> bool {
-        self.can_register_uds_tool_for_owner(name, owner)
-    }
-
-    /// Compatibility name for the legacy UDS lifecycle API.
-    pub fn register_uds_extension_for_owner(
-        &mut self,
-        tool: Arc<dyn Tool>,
-        owner: Cow<'static, str>,
-    ) -> bool {
-        self.register_uds_tool_for_owner(tool, owner)
-    }
-
-    /// Compatibility name for the legacy extension lifecycle API.
-    pub fn unregister_extension(&mut self, name: &str) {
-        self.unregister_runtime_tool(name)
-    }
-
-    /// Compatibility name for the legacy extension lifecycle API.
-    pub fn unregister_extensions_for_owner(&mut self, owner: &str) -> Vec<String> {
-        self.unregister_runtime_tools_for_owner(owner)
-    }
-
     /// Return descriptors for all registered tools.
     pub fn descriptors(&self) -> Vec<ToolDescriptor> {
         let mut descriptors: Vec<ToolDescriptor> = self
@@ -481,11 +441,17 @@ impl ToolRegistryImpl {
                         .profile_scope
                         .unwrap_or(ProfileAvailabilityScope::Both)
                         == mutation.scope
-                        && self
-                            .metadata
-                            .get(&resolved_name)
-                            .and_then(|metadata| metadata.configured_scope)
-                            .is_none_or(|configured| configured == mutation.scope) =>
+                        && self.metadata.get(&resolved_name).is_some_and(|metadata| {
+                            let configured_scope = metadata.configured_scope;
+                            if !request.persist {
+                                return configured_scope
+                                    .is_none_or(|configured| configured == mutation.scope);
+                            }
+                            let stable_id = metadata.identity_for_name(&resolved_name).stable_id;
+                            configured_scope == Some(mutation.scope)
+                                && self.persisted_policy_scopes.get(stable_id.as_ref())
+                                    == Some(&mutation.scope)
+                        }) =>
                 {
                     ToolPolicyMutationStatus::AlreadyInState
                 }

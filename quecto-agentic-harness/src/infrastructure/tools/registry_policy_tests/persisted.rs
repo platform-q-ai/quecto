@@ -131,6 +131,78 @@ fn persisted_policy_intersects_with_defaults_profile_restrictions_and_runtime() 
 }
 
 #[test]
+fn same_scope_persist_after_live_only_policy_installs_retained_ceiling_for_reregistered_uds_tool() {
+    use std::sync::Arc;
+
+    let (mut reg, _tmp) = test_registry();
+    let stable_id = "tool.v1:test:owner:live_then_persist_uds".to_string();
+    assert!(reg.register_uds_tool_for_owner_with_stable_id(
+        Arc::new(DummyTestTool::new("live_then_persist_uds")),
+        "owner".into(),
+        Some(stable_id.clone()),
+    ));
+
+    let live_only = reg.apply_tool_policy_mutations(
+        &[ToolPolicyMutation::set_scope(
+            "live_then_persist_uds",
+            ProfileAvailabilityScope::Parent,
+            "temporary live-only parent scope",
+        )],
+        ToolPolicyApplyMode::ImmediateIfIdle,
+    );
+    assert_eq!(
+        live_only.results[0].status,
+        ToolPolicyMutationStatus::Applied
+    );
+    assert_eq!(
+        reg.metadata
+            .get("live_then_persist_uds")
+            .unwrap()
+            .configured_scope,
+        None,
+        "persist:false live-only mutation must not install a configured ceiling"
+    );
+
+    let mut request = ToolPolicyRequest::patch(vec![ToolPolicyMutation::set_scope(
+        "live_then_persist_uds",
+        ProfileAvailabilityScope::Parent,
+        "make current parent scope durable",
+    )]);
+    request.persist = true;
+    let persisted = reg.apply_tool_policy_request(&request, ToolPolicyApplyMode::ImmediateIfIdle);
+    assert_eq!(
+        persisted.results[0].status,
+        ToolPolicyMutationStatus::Applied,
+        "persist:true at the current live scope still has retained state to install"
+    );
+    assert_eq!(
+        reg.metadata
+            .get("live_then_persist_uds")
+            .unwrap()
+            .configured_scope,
+        Some(ProfileAvailabilityScope::Parent),
+        "same-scope persist:true must install the live configured ceiling"
+    );
+    assert_eq!(
+        reg.persisted_policy_scopes.get(&stable_id),
+        Some(&ProfileAvailabilityScope::Parent),
+        "same-scope persist:true must be retained by stable id for reconnects"
+    );
+
+    reg.unregister_runtime_tool("live_then_persist_uds");
+    assert!(reg.register_uds_tool_for_owner_with_stable_id(
+        Arc::new(DummyTestTool::new("live_then_persist_uds")),
+        "owner".into(),
+        Some(stable_id),
+    ));
+    assert_eq!(
+        ToolRegistryImpl::effective_scope(reg.metadata.get("live_then_persist_uds").unwrap()),
+        ProfileAvailabilityScope::Parent,
+        "UDS/MCP reconnect before restart must reapply the just-persisted ceiling"
+    );
+}
+
+#[test]
 fn first_time_live_policy_persist_installs_retained_ceiling_for_reregistered_uds_tool() {
     use std::sync::Arc;
 
