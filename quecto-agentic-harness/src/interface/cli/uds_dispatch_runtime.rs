@@ -52,8 +52,11 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
     // into another provider's vocabulary, where it would be clamped on the
     // wire while the UI still displays the stale level. Explicit `low` is
     // predictable and cost-safe; the user re-raises effort via set_effort.
-    ctx.agent
-        .set_effort(crate::domain::provider::EffortLevel::Low);
+    let reset_effort = crate::domain::provider::EffortLevel::Low;
+    if ctx.agent.effort() != Some(reset_effort) {
+        ctx.agent.set_effort(reset_effort);
+        ctx.session.bump_visible_generation();
+    }
     tracing::debug!(new_model = %ctx.session.model(), "UDS: model switched; effort reset to low");
     let ev = AgentEvent::ok(args.id.as_deref(), &args.type_name, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;

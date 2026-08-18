@@ -226,3 +226,53 @@ async fn set_model_resets_the_session_effort_to_low() {
         "a model switch must reset the session effort to low"
     );
 }
+
+#[tokio::test]
+async fn set_model_same_model_effort_reset_advances_get_state_since_cursor() {
+    let mut fx = EffortFx::new(Some(EffortLevel::High));
+    let before = {
+        let ctx = fx.ctx();
+        crate::interface::cli::uds_query::query_response_data(
+            &AgentCommand::GetState {
+                id: None,
+                since: None,
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .expect("initial get_state must return data")
+    };
+    assert_eq!(before["effort"], "high");
+    let before_generation = before["generation"]
+        .as_u64()
+        .expect("initial get_state includes generation");
+
+    {
+        let mut ctx = fx.ctx();
+        let cmd: AgentCommand = serde_json::from_str(r#"{"type":"set_model","model":"stub"}"#)
+            .expect("set_model parses");
+        crate::interface::cli::uds::uds_dispatch::dispatch_command(cmd, &mut ctx).await;
+    }
+
+    let after = {
+        let ctx = fx.ctx();
+        crate::interface::cli::uds_query::query_response_data(
+            &AgentCommand::GetState {
+                id: None,
+                since: Some(before_generation),
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .expect("follow-up get_state must return data")
+    };
+    assert_eq!(after["effort"], "low");
+    assert!(
+        after["generation"].as_u64().unwrap() > before_generation,
+        "same-model set_model must advance generation when it visibly resets effort: before={before}, after={after}"
+    );
+    assert!(
+        after.get("unchanged").is_none(),
+        "changed effort must not be hidden behind unchanged since response: {after}"
+    );
+}
