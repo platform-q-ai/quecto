@@ -84,6 +84,30 @@ async fn tool_result_preview_is_built_once_for_observed_tool_finish() {
 }
 
 #[tokio::test]
+async fn final_assistant_turn_preserves_thinking_blocks() {
+    let provider = Arc::new(MockProvider::new(vec![LlmResponse {
+        content: Some("done".to_string()),
+        tool_calls: vec![],
+        usage: None,
+        stop_reason: None,
+        thinking_blocks: vec![ThinkingBlock::Normal {
+            thinking: "visible final-turn reasoning".to_string(),
+            signature: "sig-final".to_string(),
+        }],
+    }]));
+    let registry = MockRegistry::new();
+    let mut agent = AgentLoopImpl::new(agent_config(provider, registry, None));
+    let mut messages = vec![Message::user("finish")];
+
+    let result = agent.run_loop(&mut messages).await.unwrap();
+
+    assert_eq!(messages[1].role, Role::Assistant);
+    assert_eq!(messages[1].thinking_blocks.len(), 1);
+    assert_eq!(result.appended_messages.len(), 1);
+    assert_eq!(result.appended_messages[0].thinking_blocks.len(), 1);
+}
+
+#[tokio::test]
 async fn tool_turn_preserves_message_order_and_tool_arguments() {
     let first_arguments = format!(
         r#"{{"path":"notes.txt","content":"{}"}}"#,
