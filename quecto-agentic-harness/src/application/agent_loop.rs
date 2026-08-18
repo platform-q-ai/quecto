@@ -445,6 +445,7 @@ impl AgentLoopImpl {
     ) -> AgentResult {
         let text = response.content.unwrap_or_default();
         let mut assistant_message = Message::assistant(text.clone(), vec![]);
+        assistant_message.thinking_blocks = response.thinking_blocks;
         // Stamp + spill at creation: the loop returns right after this, so no
         // later pruning pass could file the final reply (#1046).
         assistant_message.turn = Some(end.current_turn);
