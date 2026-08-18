@@ -283,6 +283,29 @@ fn register_and_broadcast_without_channel_still_registers() {
     );
 }
 
+#[test]
+fn register_and_broadcast_rejects_duplicate_agent_uuid_without_replacing_existing_entry() {
+    // #1395: duplicate durable registry keys are a real registration failure,
+    // giving the application rollback path a production seam instead of relying
+    // on fabricated fake-port failures.
+    let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let first = SubagentEntry::new(PathBuf::from("/tmp/first.sock"), 1);
+    let duplicate_uuid = first.agent_uuid.clone();
+    super::register_and_broadcast(&registry, None, "first", first).unwrap();
+
+    let mut second = SubagentEntry::new(PathBuf::from("/tmp/second.sock"), 2);
+    second.agent_uuid = duplicate_uuid;
+    let err = super::register_and_broadcast(&registry, None, "second", second)
+        .expect_err("duplicate agent UUID must fail registration");
+
+    assert!(err.to_string().contains("duplicate subagent registry key"));
+    let guard = registry.lock().unwrap();
+    assert_eq!(guard.len(), 1);
+    let entry = guard.values().next().unwrap();
+    assert_eq!(entry.display_name, "first");
+    assert_eq!(entry.pid, 1);
+}
+
 // ─── #1049: task-less spawn settles to Idle on registration ──────────────────
 //
 // Tests target `initial_registry_entry` (shared by production post-socket-ready

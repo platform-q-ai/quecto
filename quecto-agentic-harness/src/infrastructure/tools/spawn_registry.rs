@@ -1,3 +1,5 @@
+use std::collections::hash_map::Entry;
+
 use super::subagent_registry::{ExitSignal, SubagentEntry, SubagentRegistry};
 
 /// Insert a freshly-spawned child entry into the registry and immediately
@@ -20,7 +22,17 @@ pub fn register_and_broadcast(
         let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
         let mut entry = entry;
         entry.display_name = session_name.to_string();
-        guard.insert(entry.agent_uuid.to_string(), entry);
+        match guard.entry(entry.agent_uuid.to_string()) {
+            Entry::Vacant(slot) => {
+                slot.insert(entry);
+            }
+            Entry::Occupied(existing) => {
+                return Err(crate::domain::error::DomainError::Other(format!(
+                    "duplicate subagent registry key {} while registering {session_name}",
+                    existing.key()
+                )));
+            }
+        }
         broadcast_tx.map(|_| {
             crate::infrastructure::tools::subagent_cascade::build_state_changed_event_locked(&guard)
         })
