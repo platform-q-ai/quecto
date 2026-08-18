@@ -255,6 +255,7 @@ pub struct ToolPolicyRequest {
     pub mutations: Vec<ToolPolicyMutation>,
     pub unlisted_scope: Option<ProfileAvailabilityScope>,
     pub correlation_id: Option<String>,
+    pub persist: bool,
 }
 
 impl ToolPolicyRequest {
@@ -264,6 +265,7 @@ impl ToolPolicyRequest {
             mutations,
             unlisted_scope: None,
             correlation_id: None,
+            persist: false,
         }
     }
 
@@ -276,6 +278,7 @@ impl ToolPolicyRequest {
             mutations,
             unlisted_scope: Some(unlisted_scope),
             correlation_id: None,
+            persist: false,
         }
     }
 }

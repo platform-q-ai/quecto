@@ -491,17 +491,17 @@ impl ToolRegistryImpl {
                 }
                 Some(_) => {
                     self.set_profile_scope(&resolved_name, mutation.scope);
-                    if let Some(metadata) = self.metadata.get_mut(&resolved_name) {
-                        if metadata.configured_scope.is_some() {
-                            metadata.configured_enabled = Some(mutation.scope.is_enabled());
-                            metadata.configured_scope = Some(mutation.scope);
-                            let stable_id = metadata
-                                .identity_for_name(&resolved_name)
-                                .stable_id
-                                .into_owned();
-                            self.persisted_policy_scopes
-                                .insert(stable_id, mutation.scope);
-                        }
+                    if request.persist
+                        && let Some(metadata) = self.metadata.get_mut(&resolved_name)
+                    {
+                        metadata.configured_enabled = Some(mutation.scope.is_enabled());
+                        metadata.configured_scope = Some(mutation.scope);
+                        let stable_id = metadata
+                            .identity_for_name(&resolved_name)
+                            .stable_id
+                            .into_owned();
+                        self.persisted_policy_scopes
+                            .insert(stable_id, mutation.scope);
                     }
                     ToolPolicyMutationStatus::Applied
                 }

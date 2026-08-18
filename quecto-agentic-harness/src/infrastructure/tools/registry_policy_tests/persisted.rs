@@ -95,14 +95,13 @@ fn persisted_policy_intersects_with_defaults_profile_restrictions_and_runtime() 
         "persisted both must not widen spawn/session restrictions"
     );
 
-    let widen = reg.apply_tool_policy_mutations(
-        &[ToolPolicyMutation::set_scope(
-            "python_lab",
-            ProfileAvailabilityScope::Both,
-            "user widens durable preference",
-        )],
-        ToolPolicyApplyMode::ImmediateIfIdle,
-    );
+    let mut widen_request = ToolPolicyRequest::patch(vec![ToolPolicyMutation::set_scope(
+        "python_lab",
+        ProfileAvailabilityScope::Both,
+        "user widens durable preference",
+    )]);
+    widen_request.persist = true;
+    let widen = reg.apply_tool_policy_request(&widen_request, ToolPolicyApplyMode::ImmediateIfIdle);
     assert!(
         matches!(
             widen.results[0].status,
@@ -128,6 +127,58 @@ fn persisted_policy_intersects_with_defaults_profile_restrictions_and_runtime() 
     assert_eq!(
         ToolRegistryImpl::effective_scope(reg.metadata.get("python_lab").unwrap()),
         ProfileAvailabilityScope::None
+    );
+}
+
+#[test]
+fn first_time_live_policy_persist_installs_retained_ceiling_for_reregistered_uds_tool() {
+    use std::sync::Arc;
+
+    let (mut reg, _tmp) = test_registry();
+    let stable_id = "tool.v1:test:owner:first_time_uds".to_string();
+    assert!(reg.register_uds_tool_for_owner_with_stable_id(
+        Arc::new(DummyTestTool::new("first_time_uds")),
+        "owner".into(),
+        Some(stable_id.clone()),
+    ));
+    assert_eq!(
+        reg.metadata.get("first_time_uds").unwrap().configured_scope,
+        None,
+        "test starts without a persisted tools.policy entry"
+    );
+
+    let mut request = ToolPolicyRequest::patch(vec![ToolPolicyMutation::set_scope(
+        "first_time_uds",
+        ProfileAvailabilityScope::Parent,
+        "first durable preference",
+    )]);
+    request.persist = true;
+    let persisted = reg.apply_tool_policy_request(&request, ToolPolicyApplyMode::ImmediateIfIdle);
+    assert_eq!(
+        persisted.results[0].status,
+        ToolPolicyMutationStatus::Applied
+    );
+    assert_eq!(
+        reg.metadata.get("first_time_uds").unwrap().configured_scope,
+        Some(ProfileAvailabilityScope::Parent),
+        "first persist:true mutation must immediately install the live configured ceiling"
+    );
+    assert_eq!(
+        reg.persisted_policy_scopes.get(&stable_id),
+        Some(&ProfileAvailabilityScope::Parent),
+        "first persist:true mutation must be retained by stable id for reconnects"
+    );
+
+    reg.unregister_runtime_tool("first_time_uds");
+    assert!(reg.register_uds_tool_for_owner_with_stable_id(
+        Arc::new(DummyTestTool::new("first_time_uds")),
+        "owner".into(),
+        Some(stable_id),
+    ));
+    assert_eq!(
+        ToolRegistryImpl::effective_scope(reg.metadata.get("first_time_uds").unwrap()),
+        ProfileAvailabilityScope::Parent,
+        "UDS/MCP reconnect before restart must reapply the just-persisted ceiling"
     );
 }
 

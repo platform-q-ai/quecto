@@ -205,6 +205,7 @@ pub(super) async fn handle_set_tool_policy(
             mutations: domain_mutations,
             unlisted_scope: None,
             correlation_id: id.map(str::to_string),
+            persist,
         },
         ToolPolicyOperationCommand::Replace => {
             let Some(scope) = unlisted_scope else {
@@ -215,6 +216,7 @@ pub(super) async fn handle_set_tool_policy(
             };
             let mut request = ToolPolicyRequest::replace(domain_mutations, scope);
             request.correlation_id = id.map(str::to_string);
+            request.persist = persist;
             request
         }
     };
