@@ -1,6 +1,6 @@
 # Tool policy persistence
 
-Quecto exposes live tool access through the catalogue and `set_tool_policy` command. By default, a policy mutation changes the current session/profile overlay only. Clients that want an immediately applied choice to survive restart set `persist: true` on `set_tool_policy` (the TUI Ctrl+T modal applies immediately and does this when applying scopes). Queued `atNextTurnBoundary` policy changes remain live-session changes; persist them with an immediate request after the boundary if they should become defaults. The agent stores successful choices in the active config under `tools.policy.entries`, keyed by each catalogue entry's stable tool id.
+Quecto exposes live tool access through the catalogue and `set_tool_policy` command. By default, a policy mutation changes the current session/profile overlay only. Clients that want a successful choice to survive restart set `persist: true` on `set_tool_policy` (the TUI Ctrl+T modal does this when applying scopes). Immediate requests write successful choices when they apply; queued `atNextTurnBoundary` requests write successful choices when the boundary drains. Requests without `persist: true` remain live-session overlays only. The agent stores durable choices in the active config under `tools.policy.entries`, keyed by each catalogue entry's stable tool id.
 
 Example:
 
