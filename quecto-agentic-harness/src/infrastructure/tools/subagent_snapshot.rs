@@ -41,21 +41,13 @@ pub(super) fn response_is_valid_answer(json: &serde_json::Value, command: &str) 
         }
         Some("get_state") => {
             // A `count` on get_state is meaningless; keep it strict so an unusual
-            // command shape can never be silently answered by the snapshot. Also
-            // require the explicit snapshot marker: an id-less unmarked state can
-            // be a stale turn-boundary line and must not beat the correlated live
-            // reply once the child is idle (#1104).
+            // command shape can never be silently answered by the snapshot. #1512
+            // slim busy snapshots are intentionally id-less and unmarked: accept
+            // only the slim projection (or unchanged cursor response), never the
+            // legacy bulky snapshot marker/message-count shape.
             cmd.get("count").is_none()
                 && json.get("command").and_then(|v| v.as_str()) == Some("get_state")
-                && json.pointer("/data/snapshot").and_then(|v| v.as_bool()) == Some(true)
-                && json
-                    .pointer("/data/isStreaming")
-                    .and_then(|v| v.as_bool())
-                    .is_some()
-                && json
-                    .pointer("/data/messageCount")
-                    .and_then(|v| v.as_u64())
-                    .is_some()
+                && get_state_data_is_slim_snapshot(json.pointer("/data"))
         }
         Some("get_subagents") => {
             json.get("command").and_then(|v| v.as_str()) == Some("get_subagents")
@@ -82,6 +74,30 @@ pub(super) fn response_is_valid_answer(json: &serde_json::Value, command: &str) 
         }
         _ => false,
     }
+}
+
+fn get_state_data_is_slim_snapshot(data: Option<&serde_json::Value>) -> bool {
+    let Some(data) = data else {
+        return false;
+    };
+    if data.get("unchanged").and_then(|v| v.as_bool()) == Some(true) {
+        return data.get("generation").and_then(|v| v.as_u64()).is_some()
+            && data.as_object().is_some_and(|o| o.len() == 2);
+    }
+    data.get("state").and_then(|v| v.as_str()).is_some()
+        && data.get("model").and_then(|v| v.as_str()).is_some()
+        && data.get("generation").and_then(|v| v.as_u64()).is_some()
+        && data
+            .pointer("/progress/state")
+            .and_then(|v| v.as_str())
+            .is_some()
+        && data
+            .pointer("/progress/reason")
+            .and_then(|v| v.as_str())
+            .is_some()
+        && data.get("snapshot").is_none()
+        && data.get("isStreaming").is_none()
+        && data.get("messageCount").is_none()
 }
 
 /// Apply the request's `count` (if any) to an accepted `get_messages` snapshot by

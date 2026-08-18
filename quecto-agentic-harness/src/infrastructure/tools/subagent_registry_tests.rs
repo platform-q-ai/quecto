@@ -458,28 +458,34 @@ fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
         r#"{"type":"get_messages","before":"some-cursor"}"#
     ));
 
-    let unmarked_state_snapshot = serde_json::json!({
-        "type": "response",
-        "command": "get_state",
-        "data": { "isStreaming": true, "messageCount": 2 }
-    });
-    assert!(!subagent_snapshot::response_is_valid_answer(
-        &unmarked_state_snapshot,
-        r#"{"type":"get_state"}"#
-    ));
     let state_snapshot = serde_json::json!({
         "type": "response",
         "command": "get_state",
-        "data": { "isStreaming": true, "messageCount": 2, "snapshot": true }
+        "data": {
+            "state": "runningTool",
+            "effort": null,
+            "model": "mock",
+            "progress": { "state": "advancing", "reason": "tool activity" },
+            "generation": 7
+        }
     });
     assert!(subagent_snapshot::response_is_valid_answer(
         &state_snapshot,
         r#"{"type":"get_state"}"#
     ));
+    let legacy_state_snapshot = serde_json::json!({
+        "type": "response",
+        "command": "get_state",
+        "data": { "isStreaming": true, "messageCount": 2, "snapshot": true }
+    });
+    assert!(!subagent_snapshot::response_is_valid_answer(
+        &legacy_state_snapshot,
+        r#"{"type":"get_state"}"#
+    ));
     let malformed_state_snapshot = serde_json::json!({
         "type": "response",
         "command": "get_state",
-        "data": { "messageCount": 2 }
+        "data": { "state": "idle", "generation": 7 }
     });
     assert!(!subagent_snapshot::response_is_valid_answer(
         &malformed_state_snapshot,

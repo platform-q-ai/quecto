@@ -6,7 +6,7 @@ fn state_with_execution(activity_generation: u64, progress_state: &str) -> Sessi
     SessionState {
         model: "mock".into(),
         generation: 1,
-        is_streaming: false,
+        is_streaming: true,
         session_key: "s".into(),
         message_count: 0,
         pending_message_count: 0,
@@ -39,6 +39,19 @@ fn progress_uses_state_key_not_verdict() {
     assert!(
         data["progress"].get("verdict").is_none(),
         "progress must not expose verdict: {data}"
+    );
+}
+
+#[test]
+fn idle_generation_uses_session_cursor_even_when_execution_snapshot_exists() {
+    let mut state = state_with_execution(8, "quiet");
+    state.is_streaming = false;
+    state.generation = 3;
+    let data = slim_state_response_data(&state, Some(8));
+    assert_eq!(data["generation"], 3);
+    assert!(
+        data.get("unchanged").is_none(),
+        "idle get_state must compare since against session generation, not stale execution: {data}"
     );
 }
 

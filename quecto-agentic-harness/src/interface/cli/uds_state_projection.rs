@@ -64,6 +64,7 @@ fn activity_generation(state: &SessionState) -> u64 {
     state
         .execution
         .as_ref()
+        .filter(|_| state.is_streaming)
         .map(|execution| execution.activity_generation)
         .unwrap_or(state.generation)
 }
