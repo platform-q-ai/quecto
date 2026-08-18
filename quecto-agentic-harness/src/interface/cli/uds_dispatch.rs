@@ -232,16 +232,27 @@ pub(super) async fn handle_set_tool_policy(
     let reconciliation = ctx.agent.request_tool_policy(request, apply_mode);
     let data = match reconciliation {
         Some(reconciliation) => {
-            if persist {
-                if let Some(inputs) = ctx.provider_reload_inputs {
-                    if let Err(err) =
-                        persist_tool_policy_results(&inputs.config_path, &reconciliation)
-                    {
-                        let ev = AgentEvent::err(id, type_name, &err);
-                        emit_event_to_broadcast_or_writer(ctx, &ev).await;
-                        return false;
-                    }
-                }
+            if persist
+                && reconciliation.results.iter().any(|result| {
+                    result.status
+                        == crate::domain::tool::ToolPolicyMutationStatus::PersistenceFailed
+                })
+            {
+                let ev = AgentEvent::err(
+                    id,
+                    type_name,
+                    reconciliation
+                        .results
+                        .iter()
+                        .find(|result| {
+                            result.status
+                                == crate::domain::tool::ToolPolicyMutationStatus::PersistenceFailed
+                        })
+                        .map(|result| result.reason.as_str())
+                        .unwrap_or("persisted tool policy update failed"),
+                );
+                emit_event_to_broadcast_or_writer(ctx, &ev).await;
+                return false;
             }
             serde_json::to_value(&reconciliation).unwrap_or_default()
         }

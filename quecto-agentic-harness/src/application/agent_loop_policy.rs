@@ -255,10 +255,25 @@ impl AgentLoopImpl {
             self.queue_tool_policy_request(request);
             return None;
         }
-        let reconciliation = self.tool_registry.apply_tool_policy_request(&request, mode);
-        self.record_applied_tool_policy_overlay(&reconciliation);
-        self.refresh_spawn_inherited_child_policy_snapshot();
-        self.notify_tool_policy_changed(&reconciliation, "immediate");
+        let mut reconciliation = self.tool_registry.apply_tool_policy_request(&request, mode);
+        let persist_error = if request.persist {
+            self.tool_policy_persistence
+                .as_ref()
+                .and_then(|persist| persist(&reconciliation).err())
+        } else {
+            None
+        };
+        if let Some(error) = persist_error {
+            self.mark_tool_policy_persistence_failed(&mut reconciliation, &error);
+        } else {
+            self.record_applied_tool_policy_overlay(&reconciliation);
+            if request.persist && self.tool_policy_persistence.is_some() {
+                self.tool_registry
+                    .record_persisted_tool_policy_results(&reconciliation);
+            }
+            self.refresh_spawn_inherited_child_policy_snapshot();
+            self.notify_tool_policy_changed(&reconciliation, "immediate");
+        }
         Some(reconciliation)
     }
 
@@ -270,6 +285,25 @@ impl AgentLoopImpl {
         for result in &reconciliation.results {
             if result.status == ToolPolicyMutationStatus::Applied {
                 policy.record_applied(result.name.as_ref(), result.requested_scope);
+            }
+        }
+    }
+
+    fn mark_tool_policy_persistence_failed(
+        &self,
+        reconciliation: &mut ToolPolicyReconciliation,
+        error: &str,
+    ) {
+        for result in &mut reconciliation.results {
+            if matches!(
+                result.status,
+                ToolPolicyMutationStatus::Applied | ToolPolicyMutationStatus::AlreadyInState
+            ) {
+                result.status = ToolPolicyMutationStatus::PersistenceFailed;
+                result.reason = format!(
+                    "{}; persisted tool policy update failed: {}",
+                    result.reason, error
+                );
             }
         }
     }
@@ -328,20 +362,12 @@ impl AgentLoopImpl {
                 None
             };
             if let Some(error) = persist_error {
-                for result in &mut reconciliation.results {
-                    if matches!(
-                        result.status,
-                        ToolPolicyMutationStatus::Applied
-                            | ToolPolicyMutationStatus::AlreadyInState
-                    ) {
-                        result.status = ToolPolicyMutationStatus::PersistenceFailed;
-                        result.reason = format!(
-                            "{}; persisted tool policy update failed: {}",
-                            result.reason, error
-                        );
-                    }
-                }
+                self.mark_tool_policy_persistence_failed(&mut reconciliation, &error);
             } else {
+                if request.persist && self.tool_policy_persistence.is_some() {
+                    self.tool_registry
+                        .record_persisted_tool_policy_results(&reconciliation);
+                }
                 self.notify_tool_policy_changed(&reconciliation, "turn_boundary");
             }
             combined.results.extend(reconciliation.results);

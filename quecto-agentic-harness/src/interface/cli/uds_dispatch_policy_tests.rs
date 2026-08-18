@@ -161,6 +161,46 @@ async fn dispatch_set_tool_policy_tool_id_only_still_applies() {
 }
 
 #[tokio::test]
+async fn immediate_persist_failure_dispatch_returns_error_without_retained_policy() {
+    let mut fx = cov_tests::Fixture::new();
+    fx.agent
+        .register_runtime_tool(std::sync::Arc::new(NamedTool("alpha")));
+    let tmp = tempfile::TempDir::new().unwrap();
+    fx.provider_reload_inputs = Some(ProviderReloadInputs::new(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        std::collections::HashMap::new(),
+        reqwest::Client::new(),
+    ));
+
+    let cmd = AgentCommand::SetToolPolicy {
+        id: Some("pol".into()),
+        mutations: vec![crate::interface::cli::protocol::ToolPolicyMutationCommand {
+            tool_id: None,
+            name: Some("alpha".into()),
+            scope: ProfileAvailabilityScope::Child,
+            reason: Some("durable".into()),
+        }],
+        mode: ToolPolicyApplyModeCommand::ImmediateIfIdle,
+        operation: crate::interface::cli::protocol::ToolPolicyOperationCommand::Patch,
+        unlisted_scope: None,
+        persist: true,
+    };
+    {
+        let mut ctx = fx.ctx();
+        assert!(!dispatch_command(cmd, &mut ctx).await);
+    }
+
+    let alpha = fx
+        .agent
+        .tool_catalogue_entries()
+        .into_iter()
+        .find(|entry| entry.name == "alpha")
+        .expect("alpha entry");
+    assert_eq!(alpha.configured_enabled, None);
+}
+
+#[tokio::test]
 async fn queued_persist_tool_policy_is_written_when_boundary_drains() {
     let mut fx = cov_tests::Fixture::new();
     fx.agent

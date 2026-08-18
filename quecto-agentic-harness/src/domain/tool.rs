@@ -318,6 +318,9 @@ pub struct ToolPolicyReconciliation {
 
 /// Port: live runtime policy mutation for registered tools.
 pub trait ToolPolicyMutator: Send + Sync {
+    fn record_persisted_tool_policy_results(&mut self, _reconciliation: &ToolPolicyReconciliation) {
+    }
+
     fn apply_tool_policy_mutations(
         &mut self,
         mutations: &[ToolPolicyMutation],

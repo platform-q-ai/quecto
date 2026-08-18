@@ -115,6 +115,29 @@ impl RuntimeToolLifecycleRegistry for ToolRegistryImpl {
 }
 
 impl crate::domain::tool::ToolPolicyMutator for ToolRegistryImpl {
+    fn record_persisted_tool_policy_results(&mut self, reconciliation: &ToolPolicyReconciliation) {
+        use crate::domain::tool::ToolPolicyMutationStatus;
+        for result in &reconciliation.results {
+            if !matches!(
+                result.status,
+                ToolPolicyMutationStatus::Applied | ToolPolicyMutationStatus::AlreadyInState
+            ) {
+                continue;
+            }
+            let Some(metadata) = self.metadata.get_mut(result.name.as_ref() as &str) else {
+                continue;
+            };
+            metadata.configured_enabled = Some(result.requested_scope.is_enabled());
+            metadata.configured_scope = Some(result.requested_scope);
+            let stable_id = metadata
+                .identity_for_name(result.name.as_ref())
+                .stable_id
+                .into_owned();
+            self.persisted_policy_scopes
+                .insert(stable_id, result.requested_scope);
+        }
+    }
+
     fn apply_tool_policy_mutations(
         &mut self,
         mutations: &[ToolPolicyMutation],
