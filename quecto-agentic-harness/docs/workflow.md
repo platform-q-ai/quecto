@@ -712,10 +712,11 @@ explicitly asked.
 ## Dormant workflow vs disabling workflow completely
 
 Workflow is **available by default** in UDS mode. If you do not pass
-`--workflow`, the `workflow` tool is registered and `get_state` includes
-workflow state, but the model is not shown selector-mode instructions and is not
-pushed to start a workflow. The user may explicitly ask the model to select a
-template later, for example: "select the feature workflow and implement abc".
+`--workflow`, the `workflow` tool is registered, but `get_state` still omits
+workflow state until a template is selected. The model is not shown
+selector-mode instructions and is not pushed to start a workflow. The user may
+explicitly ask the model to select a template later, for example: "select the
+feature workflow and implement abc".
 
 ```bash
 # Dormant workflow tool available — standard conversational UDS agent

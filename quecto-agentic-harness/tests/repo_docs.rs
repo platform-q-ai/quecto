@@ -375,6 +375,8 @@ fn agent_cmd_docs_match_tool_schema() {
         "maxContextTokens",
         "effortLevels",
         "availableTemplates",
+        "\"mode\": \"active\"",
+        "\"label\": \"Bug fix\"",
         "`snapshot: true`",
         "rich execution internals",
     ] {

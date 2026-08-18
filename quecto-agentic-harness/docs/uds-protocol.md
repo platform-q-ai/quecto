@@ -306,10 +306,8 @@ history inspection remain the job of `get_messages`.
   },
   "generation": 27,
   "workflow": {
-    "mode": "active",
     "activeTemplate": {
-      "id": "bugfix",
-      "label": "Bug fix"
+      "id": "bugfix"
     },
     "currentStep": {
       "key": "red",
