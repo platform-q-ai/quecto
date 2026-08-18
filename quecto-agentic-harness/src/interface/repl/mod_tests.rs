@@ -16,7 +16,6 @@ fn test_repl_flags_default() {
         session_name: None,
         system_prompt: None,
         model_override: None,
-        no_sandbox: false,
     };
     assert!(flags.session_name.is_none());
     assert!(flags.system_prompt.is_none());
@@ -29,7 +28,6 @@ fn test_repl_flags_with_values() {
         session_name: Some("mysession".to_string()),
         system_prompt: Some("You are helpful".to_string()),
         model_override: Some("gpt-5-mini".to_string()),
-        no_sandbox: false,
     };
     assert_eq!(flags.session_name.as_deref(), Some("mysession"));
     assert_eq!(flags.system_prompt.as_deref(), Some("You are helpful"));
@@ -51,7 +49,7 @@ fn test_load_session_messages_ephemeral_returns_empty() {
     let rt = build_repl_runtime().unwrap();
     let tmp = tempfile::TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-    let messages = load_session_messages_with_rt(&rt, &store, "any_key", true);
+    let messages = load_session_messages_with_rt(&rt, &store, "any_key", true).unwrap();
     assert!(messages.is_empty());
 }
 
@@ -60,7 +58,7 @@ fn test_load_session_messages_no_session_returns_empty() {
     let rt = build_repl_runtime().unwrap();
     let tmp = tempfile::TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
-    let messages = load_session_messages_with_rt(&rt, &store, "nonexistent", false);
+    let messages = load_session_messages_with_rt(&rt, &store, "nonexistent", false).unwrap();
     assert!(messages.is_empty());
 }
 
@@ -74,9 +72,10 @@ fn test_load_session_messages_existing_session() {
         key: "test:key".to_string(),
         messages: vec![Message::user("hello")],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     rt.block_on(store.save(&session)).unwrap();
-    let messages = load_session_messages_with_rt(&rt, &store, "test:key", false);
+    let messages = load_session_messages_with_rt(&rt, &store, "test:key", false).unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].content, "hello");
 }
@@ -91,7 +90,6 @@ fn test_build_system_prompt_no_user_prompt() {
         session_name: None,
         system_prompt: None,
         model_override: None,
-        no_sandbox: false,
     };
     let provider = make_stub_provider();
     let ctx = ReplContext {
@@ -100,6 +98,7 @@ fn test_build_system_prompt_no_user_prompt() {
         provider,
         config: &config,
         flags: &flags,
+        cwd_override: None,
         progress_callback: None,
     };
     let result = build_system_prompt(&ctx);
@@ -120,7 +119,6 @@ fn test_build_system_prompt_with_user_prompt() {
         session_name: None,
         system_prompt: Some("Be helpful".to_string()),
         model_override: None,
-        no_sandbox: false,
     };
     let provider = make_stub_provider();
     let ctx = ReplContext {
@@ -129,6 +127,7 @@ fn test_build_system_prompt_with_user_prompt() {
         provider,
         config: &config,
         flags: &flags,
+        cwd_override: None,
         progress_callback: None,
     };
     let result = build_system_prompt(&ctx);

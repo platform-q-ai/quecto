@@ -67,8 +67,6 @@ pub struct SubagentConfig {
     /// Optional user-facing display label (`agent_id` on the compatibility wire).
     /// This is not durable identity and must not key persistence or sockets.
     pub agent_id: Option<String>,
-    /// Whether the subagent should restrict to workspace.
-    pub restrict_to_workspace: bool,
     /// Optional system prompt for the subagent.
     pub system: Option<String>,
     /// Optional config file path to forward as `--config <path>`.
@@ -106,8 +104,10 @@ pub enum ContainerSelection {
     #[default]
     Local,
     New {
-        repo: Option<String>,
-        container_script: Option<String>,
+        /// Optional container-config name; omitted selects the config labeled
+        /// `"default": true`. The config itself owns its repository/auth
+        /// (#1410) — Quecto passes no source information.
+        container_config: Option<String>,
         /// Optional environment name for later `{"mode":"existing","name"}`
         /// joins and `kill_container` targeting (#1369 slice 2).
         name: Option<String>,

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Official Docker adapter for the Quecto container-runtime contract: `exec` (join).
 #   exec.sh --state-dir <dir> -- <child-binary> <child-args...>
-# Environment: QUECTO_CONTAINER_SCRIPT, QUECTO_CONTAINER_ENVIRONMENT_ID
+# Environment: QUECTO_CONTAINER_CONFIG, QUECTO_CONTAINER_ENVIRONMENT_ID
 #
 # Starts a joining child inside the environment's existing container via
 # `docker exec`, in the environment's checkout. The joiner's socket lives

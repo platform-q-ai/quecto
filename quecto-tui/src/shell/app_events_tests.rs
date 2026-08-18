@@ -4,15 +4,16 @@ use super::*;
 #[tokio::test]
 async fn subagent_notification_appends_one_status_line() {
     let mut app = test_app().await;
-    let before = app.master_session.chat.entry_count();
+    let before = app.ac().master_session.chat.entry_count();
     app.handle_event(Event::SubagentNotification {
         agent_id: "researcher".into(),
         sequence: 1,
         message: "Agent 'researcher' completed and is ready for inspection".into(),
     });
     // Exactly one status entry is appended — passive, non-interactive.
-    assert_eq!(app.master_session.chat.entry_count(), before + 1);
+    assert_eq!(app.ac().master_session.chat.entry_count(), before + 1);
     let text = app
+        .ac()
         .master_session
         .chat
         .last_status_text()
@@ -32,6 +33,7 @@ async fn subagent_notification_sanitizes_control_sequences() {
         message: "done\u{1b}[31m hijack".into(),
     });
     let text = app
+        .ac()
         .master_session
         .chat
         .last_status_text()
@@ -46,7 +48,7 @@ async fn subagent_notification_sanitizes_control_sequences() {
 async fn subagent_notification_deferred_while_parent_streams_then_flushed_on_idle() {
     let mut app = test_app().await;
     app.handle_event(Event::AgentStart);
-    let before = app.master_session.chat.entry_count();
+    let before = app.ac().master_session.chat.entry_count();
     app.handle_event(Event::SubagentNotification {
         agent_id: "worker".into(),
         sequence: 1,
@@ -54,7 +56,7 @@ async fn subagent_notification_deferred_while_parent_streams_then_flushed_on_idl
     });
     // Mid-turn: the note must NOT be inserted into the streaming response.
     assert_eq!(
-        app.master_session.chat.entry_count(),
+        app.ac().master_session.chat.entry_count(),
         before,
         "note must be deferred while the parent is streaming"
     );
@@ -64,6 +66,7 @@ async fn subagent_notification_deferred_while_parent_streams_then_flushed_on_idl
         message_refs: vec![],
     });
     let text = app
+        .ac()
         .master_session
         .chat
         .last_status_text()
@@ -75,8 +78,8 @@ async fn subagent_notification_deferred_while_parent_streams_then_flushed_on_idl
 async fn handles_agent_lifecycle_and_token_events() {
     let mut app = test_app().await;
     app.handle_event(Event::AgentStart);
-    assert!(app.agent_state.is_running());
-    assert!(app.spinner.is_some());
+    assert!(app.ac().agent_state.is_running());
+    assert!(app.ac().spinner.is_some());
     app.handle_event(Event::Token {
         token: "hello".into(),
     });
@@ -85,8 +88,8 @@ async fn handles_agent_lifecycle_and_token_events() {
         messages: vec![],
         message_refs: vec![],
     });
-    assert!(!app.agent_state.is_running());
-    assert!(app.spinner.is_none());
+    assert!(!app.ac().agent_state.is_running());
+    assert!(app.ac().spinner.is_none());
 }
 
 #[tokio::test]
@@ -99,8 +102,8 @@ async fn handles_turn_end_usage_with_context_window_and_stats_fallback() {
             "maxContextTokens": 100
         }),
     });
-    assert!(app.sessions.context_stats_requested);
-    let rendered = app.master_session.footer.render(80).join("\n");
+    assert!(app.ac().sessions.context_stats_requested);
+    let rendered = app.ac_mut().master_session.footer.render(80).join("\n");
     assert!(
         rendered.contains("40/100"),
         "footer should use contextTokens: {rendered}"
@@ -110,7 +113,7 @@ async fn handles_turn_end_usage_with_context_window_and_stats_fallback() {
     app.handle_event(Event::TurnEnd {
         message: serde_json::json!({"usage": {"total": 1}}),
     });
-    assert!(app.sessions.context_stats_requested);
+    assert!(app.ac().sessions.context_stats_requested);
 }
 
 #[tokio::test]
@@ -125,8 +128,8 @@ async fn handles_turn_end_context_tokens_without_usage_field() {
             "maxContextTokens": 100
         }),
     });
-    assert!(app.sessions.context_stats_requested);
-    let rendered = app.master_session.footer.render(80).join("\n");
+    assert!(app.ac().sessions.context_stats_requested);
+    let rendered = app.ac_mut().master_session.footer.render(80).join("\n");
     assert!(
         rendered.contains("40/100"),
         "footer should use contextTokens even without usage: {rendered}"
@@ -148,7 +151,7 @@ async fn session_stats_footer_uses_context_tokens_not_cumulative_input() {
         error: None,
     });
 
-    let rendered = app.master_session.footer.render(80).join("\n");
+    let rendered = app.ac_mut().master_session.footer.render(80).join("\n");
     let plain: String = rendered
         .chars()
         .filter(|c| !c.is_control() || *c == '\n')
@@ -166,13 +169,13 @@ async fn session_stats_footer_uses_context_tokens_not_cumulative_input() {
 #[tokio::test]
 async fn handles_tool_start_and_end_for_spawn_and_regular_tools() {
     let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
+    app.ac_mut().spinner = Some(Spinner::new("Working"));
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "spawn-1".into(),
         tool_name: "spawn".into(),
         args: serde_json::json!({"agent_id":"worker-1"}),
     });
-    assert!(app.subagents.tracked.contains_key("worker-1"));
+    assert!(app.ac().roster.tracked.contains_key("worker-1"));
 
     app.handle_event(Event::ToolExecutionEnd {
             tool_call_id: "spawn-1".into(),
@@ -182,13 +185,13 @@ async fn handles_tool_start_and_end_for_spawn_and_regular_tools() {
         });
     // #1378: ToolEnd rekeys the optimistic display row onto the durable UUID.
     assert!(
-        !app.subagents.tracked.contains_key("worker-1"),
+        !app.ac().roster.tracked.contains_key("worker-1"),
         "display-keyed optimistic row must be migrated"
     );
     let uuid = "33333333-3333-4333-8333-333333333333";
-    assert_eq!(app.subagents.tracked[uuid].info.status, "running");
+    assert_eq!(app.ac().roster.tracked[uuid].info.status, "running");
     assert_eq!(
-        app.subagents.tracked[uuid].info.display_name.as_deref(),
+        app.ac().roster.tracked[uuid].info.display_name.as_deref(),
         Some("worker-1")
     );
 
@@ -209,33 +212,31 @@ async fn handles_tool_start_and_end_for_spawn_and_regular_tools() {
 #[tokio::test]
 async fn agent_cmd_get_state_renders_box_on_master_path() {
     let mut app = test_app().await;
-    let before = app.master_session.chat.entry_count();
+    let before = app.ac().master_session.chat.entry_count();
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "gs-1".into(),
         tool_name: "agent_cmd".into(),
         args: serde_json::json!({"agent_id":"worker-1", "command":"get_state"}),
     });
-    let after = app.master_session.chat.entry_count();
+    let after = app.ac().master_session.chat.entry_count();
     assert_eq!(after, before + 1, "get_state renders a box");
 }
 
 #[tokio::test]
 async fn handles_agent_cmd_spinner_and_subagent_refresh() {
     let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
+    app.ac_mut().spinner = Some(Spinner::new("Working"));
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "cmd-1".into(),
         tool_name: "agent_cmd".into(),
-        args: serde_json::json!({"agent_id":"worker-1", "command":"await"}),
+        args: serde_json::json!({"agent_id":"worker-1", "command":"get_state"}),
     });
-    // An `await` agent_cmd marks the awaited agent and rewrites the spinner to
-    // the generic interruptible message (the awaited agent shows on its own row).
-    let awaiting = "Working... (Esc to interrupt)";
     assert_eq!(
-        app.spinner.as_ref().unwrap().message(),
-        awaiting,
-        "await sets generic msg"
+        app.ac().spinner.as_ref().unwrap().message(),
+        "get_state → worker-1...",
+        "agent_cmd includes command and target"
     );
+    let awaiting = "Working... (Esc to interrupt)";
     app.handle_event(Event::ToolExecutionEnd {
         tool_call_id: "cmd-1".into(),
         tool_name: "agent_cmd".into(),
@@ -244,7 +245,7 @@ async fn handles_agent_cmd_spinner_and_subagent_refresh() {
     });
     // Tool end keeps the spinner alive and resets it to the working message.
     assert_eq!(
-        app.spinner.as_ref().unwrap().message(),
+        app.ac().spinner.as_ref().unwrap().message(),
         awaiting,
         "tool end keeps working msg"
     );
@@ -264,7 +265,10 @@ async fn handles_response_variants() {
         })),
         error: None,
     });
-    assert_eq!(app.inference.current_model.as_deref(), Some("test-model"));
+    assert_eq!(
+        app.ac().inference.current_model.as_deref(),
+        Some("test-model")
+    );
 
     for command in ["set_model", "list_sessions", "resume_session"] {
         app.handle_event(Event::Response {
@@ -339,7 +343,7 @@ async fn forwarded_child_workflow_state_does_not_clobber_parent_bar() {
         available_templates: None,
     });
     assert!(
-        app.master_session.workflow_bar.issue_number.is_none(),
+        app.ac().master_session.workflow_bar.issue_number.is_none(),
         "a forwarded child event must not set the parent's workflow bar"
     );
 
@@ -355,7 +359,7 @@ async fn forwarded_child_workflow_state_does_not_clobber_parent_bar() {
         available_templates: None,
     });
     assert!(
-        app.master_session.workflow_bar.issue_number.is_none(),
+        app.ac().master_session.workflow_bar.issue_number.is_none(),
         "an unregistered child's first forwarded event must not flash the parent bar"
     );
 
@@ -369,7 +373,7 @@ async fn forwarded_child_workflow_state_does_not_clobber_parent_bar() {
         active_template: None,
         available_templates: None,
     });
-    assert_eq!(app.master_session.workflow_bar.issue_number, Some(9));
+    assert_eq!(app.ac().master_session.workflow_bar.issue_number, Some(9));
 }
 
 #[tokio::test]
@@ -395,7 +399,7 @@ async fn named_connected_agent_own_workflow_updates_bar() {
         available_templates: None,
     });
     assert_eq!(
-        app.master_session.workflow_bar.issue_number,
+        app.ac().master_session.workflow_bar.issue_number,
         Some(11),
         "named agent's own event should update its bar"
     );
@@ -410,7 +414,7 @@ async fn named_connected_agent_own_workflow_updates_bar() {
         available_templates: None,
     });
     assert_eq!(
-        app.master_session.workflow_bar.issue_number,
+        app.ac().master_session.workflow_bar.issue_number,
         Some(11),
         "a child's forwarded event must not overwrite the named agent's bar"
     );
@@ -466,7 +470,7 @@ async fn handles_subagent_workflow_and_error_events() {
         data: None,
         error: Some("boom".into()),
     });
-    assert!(!app.agent_state.is_running());
+    assert!(!app.ac().agent_state.is_running());
 }
 #[test]
 fn sanitized_arg_strips_control_chars_and_uses_fallback() {
@@ -482,27 +486,27 @@ async fn update_tool_spinner_is_noop_when_spinner_none() {
     // When no spinner is active, update_tool_spinner should be a no-op
     // (no panic, no spinner magically created).
     let mut app = test_app().await;
-    assert!(app.spinner.is_none());
+    assert!(app.ac().spinner.is_none());
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "t1".into(),
         tool_name: "bash".into(),
         args: serde_json::json!({"command": "ls"}),
     });
     // Spinner should still be None — handle_tool_start doesn't create one.
-    assert!(app.spinner.is_none());
+    assert!(app.ac().spinner.is_none());
 }
 
 #[tokio::test]
 async fn update_tool_spinner_formats_spawn_message() {
     let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
+    app.ac_mut().spinner = Some(Spinner::new("Working"));
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "spawn-1".into(),
         tool_name: "spawn".into(),
         args: serde_json::json!({"agent_id": "my-agent"}),
     });
     // The spinner message should contain the agent_id.
-    if let Some(ref spinner) = app.spinner {
+    if let Some(ref spinner) = app.ac().spinner {
         let msg = spinner.message();
         assert!(
             msg.contains("my-agent"),
@@ -512,33 +516,15 @@ async fn update_tool_spinner_formats_spawn_message() {
 }
 
 #[tokio::test]
-async fn update_tool_spinner_formats_agent_cmd_await_message() {
-    let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
-    app.handle_event(Event::ToolExecutionStart {
-        tool_call_id: "cmd-1".into(),
-        tool_name: "agent_cmd".into(),
-        args: serde_json::json!({"agent_id": "worker-1", "command": "await"}),
-    });
-    if let Some(ref spinner) = app.spinner {
-        let msg = spinner.message();
-        assert!(
-            msg.contains("Working... (Esc to interrupt)"),
-            "agent_cmd await should have stable message: {msg}"
-        );
-    }
-}
-
-#[tokio::test]
 async fn update_tool_spinner_formats_agent_cmd_generic_message() {
     let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
+    app.ac_mut().spinner = Some(Spinner::new("Working"));
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "cmd-1".into(),
         tool_name: "agent_cmd".into(),
         args: serde_json::json!({"agent_id": "worker-1", "command": "prompt"}),
     });
-    if let Some(ref spinner) = app.spinner {
+    if let Some(ref spinner) = app.ac().spinner {
         let msg = spinner.message();
         assert!(
             msg.contains("prompt"),
@@ -554,13 +540,13 @@ async fn update_tool_spinner_formats_agent_cmd_generic_message() {
 #[tokio::test]
 async fn update_tool_spinner_formats_generic_tool_message() {
     let mut app = test_app().await;
-    app.spinner = Some(Spinner::new("Working"));
+    app.ac_mut().spinner = Some(Spinner::new("Working"));
     app.handle_event(Event::ToolExecutionStart {
         tool_call_id: "read-1".into(),
         tool_name: "read".into(),
         args: serde_json::json!({"path": "file.txt"}),
     });
-    if let Some(ref spinner) = app.spinner {
+    if let Some(ref spinner) = app.ac().spinner {
         let msg = spinner.message();
         assert!(
             msg.contains("read"),
@@ -575,6 +561,7 @@ async fn command_send_failure_becomes_error_notification() {
     let mut app = App::new(Terminal::new(), client);
 
     app.send_command(Command::GetState {
+        agent_id: None,
         id: Some("test".into()),
     });
     let failure = tokio::time::timeout(

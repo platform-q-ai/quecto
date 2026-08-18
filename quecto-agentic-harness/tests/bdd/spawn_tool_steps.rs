@@ -6,17 +6,15 @@ use quecto::infrastructure::tools::agent_cmd::AgentCmdTool;
 
 // --- Given ---
 
-#[given(expr = "a SpawnTool with allowlist {string} and restrict_to_workspace {word}")]
-fn given_spawn_tool_with_allowlist(world: &mut QuectoWorld, allowlist: String, restrict: String) {
+#[given(expr = "a SpawnTool with allowlist {string}")]
+fn given_spawn_tool_with_allowlist(world: &mut QuectoWorld, allowlist: String) {
     let agents: Vec<String> = allowlist.split(',').map(|s| s.trim().to_string()).collect();
-    let restrict = restrict == "true";
-    world.spawn_tool = Some(SpawnTool::new(agents, restrict));
+    world.spawn_tool = Some(SpawnTool::new(agents));
 }
 
-#[given(expr = "a SpawnTool with empty allowlist and restrict_to_workspace {word}")]
-fn given_spawn_tool_empty_allowlist(world: &mut QuectoWorld, restrict: String) {
-    let restrict = restrict == "true";
-    world.spawn_tool = Some(SpawnTool::new(vec![], restrict));
+#[given(expr = "a SpawnTool with empty allowlist")]
+fn given_spawn_tool_empty_allowlist(world: &mut QuectoWorld) {
+    world.spawn_tool = Some(SpawnTool::new(vec![]));
 }
 
 #[given(expr = "a SpawnTool with empty allowlist, parent id {string}, and a broadcast listener")]
@@ -26,7 +24,7 @@ fn given_spawn_tool_empty_allowlist_parent_and_broadcast(
 ) {
     let (tx, rx) = tokio::sync::broadcast::channel::<String>(8);
     world.spawn_tool =
-        Some(SpawnTool::new(vec![], true).with_event_forwarding(Some(tx), Some(parent_id)));
+        Some(SpawnTool::new(vec![]).with_event_forwarding(Some(tx), Some(parent_id)));
     // Keep assertions deterministic without keeping a runtime alive across steps:
     // execute() sends the immediate-visibility event synchronously enough that it
     // is queued for this receiver before execute() returns.
@@ -36,11 +34,7 @@ fn given_spawn_tool_empty_allowlist_parent_and_broadcast(
 
 #[given(expr = "a SpawnTool created with base_dir {string}")]
 fn given_spawn_tool_with_base_dir(world: &mut QuectoWorld, base_dir: String) {
-    world.spawn_tool = Some(SpawnTool::with_base_dir(
-        vec![],
-        true,
-        PathBuf::from(base_dir),
-    ));
+    world.spawn_tool = Some(SpawnTool::with_base_dir(vec![], PathBuf::from(base_dir)));
 }
 
 // --- When ---
@@ -127,18 +121,6 @@ fn then_has_system_prompt(world: &mut QuectoWorld, expected: String) {
 #[then("the parsed config should have no system prompt")]
 fn then_no_system_prompt(world: &mut QuectoWorld) {
     let result = world.spawn_result.as_ref().expect("no spawn result");
-    assert!(
-        !result.is_error,
-        "expected success, got error: {}",
-        result.content
-    );
-}
-
-#[then(expr = "the parsed config should have restrict_to_workspace {word}")]
-fn then_restrict_to_workspace(world: &mut QuectoWorld, _expected: String) {
-    let result = world.spawn_result.as_ref().expect("no spawn result");
-    // Stub mode no longer echoes restrict_to_workspace — successful parse
-    // with the correct constructor (which sets the field) is sufficient.
     assert!(
         !result.is_error,
         "expected success, got error: {}",
@@ -675,7 +657,7 @@ pub(crate) fn given_live_spawn_agent_cmd_mock_child(world: &mut QuectoWorld) {
     let socket_dir = base.join("sockets");
     std::fs::create_dir_all(&socket_dir).expect("create socket dir");
     world.spawn_tool = Some(
-        SpawnTool::with_base_dir(vec![], true, base.clone())
+        SpawnTool::with_base_dir(vec![], base.clone())
             .with_socket_dir(socket_dir)
             .with_registry(registry.clone()),
     );
@@ -746,8 +728,8 @@ fn given_script_spawn_default(world: &mut QuectoWorld, script: String) {
     given_script_spawn(world, script, None, None);
 }
 
-#[given(expr = "script-managed subagent spawning is available with parent repository {string}")]
-fn given_script_spawn_parent_repo(world: &mut QuectoWorld, repo: String) {
+#[given(expr = "script-managed subagent spawning is available with baked repository {string}")]
+fn given_script_spawn_baked_repo(world: &mut QuectoWorld, repo: String) {
     given_script_spawn(world, "default".to_string(), Some(repo), None);
 }
 
@@ -761,7 +743,7 @@ fn rebuild_spawn_tool_with_parent_config(world: &mut QuectoWorld, parent_config:
         .clone()
         .expect("registry from live spawn setup");
     world.spawn_tool = Some(
-        SpawnTool::with_base_dir(vec![], true, base.clone())
+        SpawnTool::with_base_dir(vec![], base.clone())
             .with_socket_dir(base.join("sockets"))
             .with_registry(registry)
             .with_parent_config_path(Some(parent_config)),
@@ -819,7 +801,7 @@ fn given_script_child_running(world: &mut QuectoWorld, agent_id: String, task: S
 fn given_script_spawn(
     world: &mut QuectoWorld,
     default_script: String,
-    parent_repo: Option<String>,
+    baked_repo: Option<String>,
     mode: Option<String>,
 ) {
     given_live_spawn_agent_cmd_mock_child(world);
@@ -833,7 +815,16 @@ fn given_script_spawn(
         r#"#!/usr/bin/env bash
 set -euo pipefail
 env_ref="env-bdd"
-echo "{{\"kind\":\"create\",\"script\":\"${{QUECTO_CONTAINER_SCRIPT:-default}}\",\"repo\":\"${{QUECTO_CONTAINER_REPO:-}}\",\"base_dir\":\"${{QUECTO_BASE_DIR:-}}\",\"mode\":\"{}\",\"env_ref\":\"$env_ref\"}}" >> '{}'
+# The repository is this config's OWN argv (--repo before `--`), never a
+# Quecto-provided env var (#1410).
+baked_repo=""
+prev_own=""
+for own in "$@"; do
+  if [ "$own" = "--" ]; then break; fi
+  if [ "$prev_own" = "--repo" ]; then baked_repo="$own"; fi
+  prev_own="$own"
+done
+echo "{{\"kind\":\"create\",\"script\":\"${{QUECTO_CONTAINER_CONFIG:-default}}\",\"repo\":\"$baked_repo\",\"base_dir\":\"${{QUECTO_BASE_DIR:-}}\",\"mode\":\"{}\",\"env_ref\":\"$env_ref\"}}" >> '{}'
 socket_path=""
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "--" ]; then shift; break; fi
@@ -897,27 +888,19 @@ printf '{{"kind":"cleanup","env_ref":"%s"}}\n' "${{QUECTO_CONTAINER_ENVIRONMENT_
         p.set_mode(0o700);
         std::fs::set_permissions(&cleanup, p).unwrap();
     }
-    v["container_scripts"] = serde_json::json!({"default": default_script, "scripts": {"default": {"create": [script.to_string_lossy()], "cleanup": [cleanup.to_string_lossy()]}, "alternate": {"create": [script.to_string_lossy()], "cleanup": [cleanup.to_string_lossy()]}}});
-    let repo = parent_repo.unwrap_or_else(|| "https://github.com/example/parent.git".to_string());
-    if !base.join(".git").exists() {
-        std::process::Command::new("git")
-            .arg("init")
-            .arg(&base)
-            .status()
-            .expect("git init for parent repo fixture");
+    // The default entry may bake a repository into its OWN argv (#1410); the
+    // parent base dir is deliberately NOT a git checkout — parent location is
+    // irrelevant to container semantics, and no scenario configures a remote.
+    let _ = default_script;
+    let mut default_create = vec![script.to_string_lossy().to_string()];
+    if let Some(repo) = baked_repo {
+        default_create.push("--repo".to_string());
+        default_create.push(repo);
     }
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(&base)
-        .args(["remote", "remove", "origin"])
-        .status()
-        .ok();
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(&base)
-        .args(["remote", "add", "origin", &repo])
-        .status()
-        .expect("git remote add for parent repo fixture");
+    v["container_configs"] = serde_json::json!({
+        "default": {"default": true, "create": default_create, "cleanup": [cleanup.to_string_lossy()]},
+        "alternate": {"create": [script.to_string_lossy()], "cleanup": [cleanup.to_string_lossy()]}
+    });
     std::fs::write(&cfg_path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
 }
 
@@ -960,15 +943,7 @@ fn when_spawn_script_named(
 ) {
     execute_spawn_json(
         world,
-        serde_json::json!({"agent_id":agent_id,"task":task,"container":{"mode":"new","container_script":script},"read_only":true}),
-    );
-}
-
-#[when(expr = "I spawn script-managed subagent {string} for repository {string} and task {string}")]
-fn when_spawn_script_repo(world: &mut QuectoWorld, agent_id: String, repo: String, task: String) {
-    execute_spawn_json(
-        world,
-        serde_json::json!({"agent_id":agent_id,"task":task,"container":{"mode":"new","repo":repo},"read_only":true}),
+        serde_json::json!({"agent_id":agent_id,"task":task,"container":{"mode":"new","container_config":script},"read_only":true}),
     );
 }
 
@@ -1007,7 +982,7 @@ fn then_container_requires_config_error(world: &mut QuectoWorld) {
     assert!(
         r.is_error
             && r.content
-                .contains("requires --config so container_scripts can be loaded"),
+                .contains("requires --config so container_configs can be loaded"),
         "{}",
         r.content
     );
@@ -1110,6 +1085,30 @@ fn then_repo_received(world: &mut QuectoWorld, repo: String) {
         "invocations: {inv:?}"
     );
 }
+#[then("the script-managed runtime should have received no repository")]
+fn then_no_repo_received(world: &mut QuectoWorld) {
+    // Sandbox configs (#1410): the create script ran with no --repo in its
+    // own argv, and Quecto passed no source information at all.
+    let inv = script_invocations(world);
+    let creates: Vec<_> = inv.iter().filter(|v| v["kind"] == "create").collect();
+    assert!(!creates.is_empty(), "invocations: {inv:?}");
+    assert!(
+        creates.iter().all(|v| v["repo"] == ""),
+        "invocations: {inv:?}"
+    );
+}
+#[then(expr = "the spawn result should fail listing available container configs {string}")]
+fn then_unknown_config_enumerates(world: &mut QuectoWorld, names: String) {
+    let r = world.spawn_result.as_ref().unwrap();
+    assert!(
+        r.is_error
+            && r.content.contains("unknown container config")
+            && r.content
+                .contains(&format!("available container configs: {names}")),
+        "{}",
+        r.content
+    );
+}
 #[then("the script-managed runtime should have received the configured base directory")]
 fn then_base_dir_received(world: &mut QuectoWorld) {
     let inv = script_invocations(world);
@@ -1207,17 +1206,22 @@ fn then_existing_error(world: &mut QuectoWorld) {
 #[then(expr = "the spawn result should fail because script configuration {string} is invalid")]
 fn then_config_error(world: &mut QuectoWorld, err: String) {
     let expected = match err.as_str() {
-        "missing default" => "missing default",
-        "default name not found" => "not found",
-        "missing create argv" | "empty create argv" => "missing create argv",
-        "missing cleanup argv" => "missing cleanup argv",
-        "unsafe create argv" => "unsafe argv",
+        // The default label is validated at config LOAD time (#1410), so the
+        // spawn surfaces the ConfigError (its Display carries the section
+        // prefix) — pin that prefix so this scenario cannot silently drift to
+        // a different error path.
+        "no default label" => "invalid container_configs: no container config is labeled",
+        "missing create argv" | "empty create argv" => {
+            "invalid container_configs configuration: missing create argv"
+        }
+        "missing cleanup argv" => "invalid container_configs configuration: missing cleanup argv",
+        "unsafe create argv" => "invalid container_configs configuration: unsafe argv",
         "unknown config field" => "unknown field",
         other => panic!("unmapped config error variant '{other}'"),
     };
     let r = world.spawn_result.as_ref().unwrap();
     assert!(
-        r.is_error && r.content.contains("container_scripts") && r.content.contains(expected),
+        r.is_error && r.content.contains(expected),
         "expected '{expected}' for '{err}' in: {}",
         r.content
     );
@@ -1256,27 +1260,24 @@ fn given_invalid_runtime_config(world: &mut QuectoWorld, err: String) {
     }
     let mut v: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
-    v["container_scripts"] = match err.as_str() {
-        "missing default" => {
-            serde_json::json!({"scripts":{"default":{"create":[create.to_string_lossy()],"cleanup":["true"]}}})
-        }
-        "default name not found" => {
-            serde_json::json!({"default":"missing","scripts":{"default":{"create":[create.to_string_lossy()],"cleanup":["true"]}}})
+    v["container_configs"] = match err.as_str() {
+        "no default label" => {
+            serde_json::json!({"default":{"create":[create.to_string_lossy()],"cleanup":["true"]}})
         }
         "missing create argv" => {
-            serde_json::json!({"default":"default","scripts":{"default":{"cleanup":["true"]}}})
+            serde_json::json!({"default":{"default":true,"cleanup":["true"]}})
         }
         "empty create argv" => {
-            serde_json::json!({"default":"default","scripts":{"default":{"create":[],"cleanup":["true"]}}})
+            serde_json::json!({"default":{"default":true,"create":[],"cleanup":["true"]}})
         }
         "missing cleanup argv" => {
-            serde_json::json!({"default":"default","scripts":{"default":{"create":[create.to_string_lossy()]}}})
+            serde_json::json!({"default":{"default":true,"create":[create.to_string_lossy()]}})
         }
         "unsafe create argv" => {
-            serde_json::json!({"default":"default","scripts":{"default":{"create":["bad\u{0000}arg"],"cleanup":["true"]}}})
+            serde_json::json!({"default":{"default":true,"create":["bad\u{0000}arg"],"cleanup":["true"]}})
         }
         "unknown config field" => {
-            serde_json::json!({"default":"default","scripts":{"default":{"create":[create.to_string_lossy()],"cleanup":["true"],"surprise":true}}})
+            serde_json::json!({"default":{"default":true,"create":[create.to_string_lossy()],"cleanup":["true"],"surprise":true}})
         }
         other => panic!("unknown config_error example: {other}"),
     };

@@ -11,7 +11,7 @@ use crate::components::chat::Chat;
 use crate::components::footer::Footer;
 use crate::components::list_navigator::ListNavigator;
 use crate::components::workflow_bar;
-use crate::protocol::client::{Command, Event, SubagentInfoEvent, SubagentWorkflow};
+use crate::protocol::client::{Command, SubagentInfoEvent, SubagentWorkflow};
 use std::collections::{BTreeMap, VecDeque};
 use tokio::sync::mpsc;
 
@@ -63,6 +63,7 @@ impl RosterInfo for SubagentInfoEvent {
 pub(crate) struct FeedState {
     pub(crate) cmd_tx: mpsc::Sender<Command>,
     pub(crate) handle: tokio::task::JoinHandle<()>,
+    pub(crate) inspection_only: bool,
     pub(crate) epoch: u64,
     pub(crate) rev: u64,
     pub(crate) last_fresh_at: Option<std::time::Instant>,
@@ -79,8 +80,9 @@ pub(crate) fn ledger_entry_to_chat_entry(
     use crate::components::chat::ChatEntry;
     match entry {
         LedgerEntry::User { text } => ChatEntry::User { text },
-        LedgerEntry::Assistant { text } => ChatEntry::Assistant {
+        LedgerEntry::Assistant { text, thinking } => ChatEntry::Assistant {
             text,
+            thinking,
             streaming: false,
         },
         LedgerEntry::ToolExecution {
@@ -106,6 +108,7 @@ impl FeedState {
         Self {
             cmd_tx: runtime.cmd_tx,
             handle: runtime.handle,
+            inspection_only: runtime.inspection_only,
             epoch: sync.epoch,
             rev: sync.rev,
             last_fresh_at: sync.last_fresh_at,
@@ -117,21 +120,19 @@ impl FeedState {
     }
 }
 
-/// Concrete sub-agent / multi-session UI state, grouped by owner (#997) and
-/// backed by the pure agents roster/feed/focus policy modules (#1222).
-pub(crate) struct SubagentUi {
+/// The per-connection roster half of the sub-agent UI (#1463): everything
+/// scoped to ONE tab's agent tree — its tracked children, their sessions and
+/// feeds, and which of them is focused. Lives on `ConnectionState`.
+pub(crate) struct ConnectionRoster {
     /// Client-side subagent state for immediate bar updates (#525).
     /// Updated from tool events (spawn/agent_cmd) and server pushes.
     /// Entries track expiry timestamps for auto-removal (#540).
     pub(crate) tracked: BTreeMap<String, TrackedSubagent<SubagentInfoEvent>>,
     /// Animation frame for the subagent spinner, advanced on each spinner tick.
     pub(crate) frame: usize,
-    /// The sub-agent the parent is currently blocked on via `agent_cmd await`,
-    /// if any. Rendered as a per-row "awaiting" indicator instead of a shared
-    /// spinner line.
-    pub(crate) awaited_agent_id: Option<String>,
-    /// Per-sub-agent session views, keyed by agent id (#800). The master is not
-    /// in this map — it is top-level App state and `active_agent_id == None`.
+    /// Per-sub-agent session views, keyed by agent id (#800). The master is
+    /// not in this map — it lives on the connection and
+    /// `active_agent_id == None` selects it.
     pub(crate) sessions: BTreeMap<String, SessionView>,
     /// Insertion order of session ids, for bounded retention eviction (#800).
     pub(crate) session_order: Vec<String>,
@@ -142,18 +143,11 @@ pub(crate) struct SubagentUi {
     /// key (`SubagentEnvironmentInfo::group_key`, review #1392), not the
     /// painted ref. `None` = agent chrome.
     pub(crate) selected_environment: Option<String>,
-    /// Left-panel selection cursor over the flattened (master + tree) rows.
-    pub(crate) panel_nav: ListNavigator,
-    /// Fan-in for events from direct sub-agent connections (#800).
-    pub(crate) event_tx: mpsc::Sender<(String, Event)>,
-    pub(crate) event_rx: mpsc::Receiver<(String, Event)>,
     /// Per-subagent synced feed state keyed by agent id.
     pub(crate) feeds: BTreeMap<String, FeedState>,
-    /// Which pane has keyboard focus: the editor or the side panel (#802).
-    pub(crate) focus: Focus,
 }
 
-impl SubagentUi {
+impl ConnectionRoster {
     /// How many tracked child agents are currently in an active status.
     pub(crate) fn tracked_active_count(&self) -> usize {
         self.tracked
@@ -168,19 +162,46 @@ impl SubagentUi {
     }
 
     pub(crate) fn new() -> Self {
-        let (event_tx, event_rx) = mpsc::channel(256);
         Self {
             tracked: BTreeMap::new(),
             frame: 0,
-            awaited_agent_id: None,
             sessions: BTreeMap::new(),
             session_order: Vec::new(),
             active_agent_id: None,
             selected_environment: None,
+            feeds: BTreeMap::new(),
+        }
+    }
+}
+
+/// The global UI half of the sub-agent state (#997/#1463): panel focus and
+/// cursor are app chrome shared across tabs, and the event channel is the
+/// shared fan-in transport for every tab's feeds.
+pub(crate) struct SubagentUi {
+    /// Left-panel selection cursor over the flattened (master + tree) rows.
+    pub(crate) panel_nav: ListNavigator,
+    /// Durable identity for the focused panel cursor. The row index is only a
+    /// viewport coordinate; live roster updates can reorder rows, so focused
+    /// navigation preserves/commits by this key when possible.
+    pub(crate) panel_nav_key: Option<String>,
+    /// Shared fan-in for the tab's master connection AND its direct/routed
+    /// sub-agent feeds (#800/#1442/#1462), keyed by
+    /// [`crate::shell::connection::SourcedEvent`] so the event loop drains ONE
+    /// channel regardless of connection count.
+    pub(crate) event_tx: mpsc::Sender<crate::shell::connection::SourcedEvent>,
+    pub(crate) event_rx: mpsc::Receiver<crate::shell::connection::SourcedEvent>,
+    /// Which pane has keyboard focus: the editor or the side panel (#802).
+    pub(crate) focus: Focus,
+}
+
+impl SubagentUi {
+    pub(crate) fn new() -> Self {
+        let (event_tx, event_rx) = mpsc::channel(256);
+        Self {
             panel_nav: ListNavigator::new(),
+            panel_nav_key: None,
             event_tx,
             event_rx,
-            feeds: BTreeMap::new(),
             focus: Focus::Input,
         }
     }
@@ -260,12 +281,22 @@ impl SessionView {
         if clear_live {
             self.live_inflight.clear();
         }
+        let preserved_scroll_offset = self.chat.scroll_offset();
         self.chat.clear();
+        if preserved_scroll_offset > 0 {
+            self.chat.scroll_up(preserved_scroll_offset);
+        }
         for entry in ledger {
             self.chat
                 .add_entry(crate::agents::view::ledger_entry_to_chat_entry(entry));
         }
+        // Projection rebuilds are authoritative snapshots. Discard trim deltas
+        // accumulated while rebuilding the committed prefix so callers only
+        // reconcile retention that happens after the live boundary is reset.
+        let _ = self.chat.take_retention_front_delta();
+        let committed_entry_count = self.chat.entry_count();
         if attach_live {
+            self.active_turn_start = committed_entry_count;
             // Skip live tool cards already present in the committed ledger so a
             // mid-turn tool checkpoint does not double-render (#1259 review).
             let ledger_tool_ids: std::collections::HashSet<String> = self
@@ -295,6 +326,16 @@ impl SessionView {
 
     /// Drop oldest live-inflight entries past [`LIVE_INFLIGHT_ENTRY_CAP`],
     /// leaving a single truncation status so overflow is visible (#1259).
+    pub(crate) fn reconcile_chat_retention_trim(&mut self) {
+        let (trimmed, inserted) = self.chat.take_retention_front_delta();
+        if trimmed > 0 || inserted > 0 {
+            self.active_turn_start = self
+                .active_turn_start
+                .saturating_sub(trimmed)
+                .saturating_add(inserted);
+        }
+    }
+
     pub(crate) fn cap_live_inflight(&mut self) {
         let n = self.live_inflight.entry_count();
         if n <= LIVE_INFLIGHT_ENTRY_CAP {

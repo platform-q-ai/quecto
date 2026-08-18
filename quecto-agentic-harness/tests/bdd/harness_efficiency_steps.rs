@@ -127,7 +127,7 @@ fn when_read_later_page(world: &mut QuectoWorld) {
         .as_ref()
         .expect("workspace prepared")
         .clone();
-    let sandbox = Sandbox::new(Some(workspace.clone()), true);
+    let sandbox = Sandbox::new(Some(workspace.clone()));
     let tool = ReadTool::new(Arc::new(workspace), Arc::new(sandbox));
     let result = tokio::runtime::Runtime::new()
         .expect("create runtime")
@@ -181,7 +181,7 @@ fn when_command_result_prepared(world: &mut QuectoWorld) {
         .as_ref()
         .expect("workspace prepared")
         .clone();
-    let sandbox = Sandbox::new(Some(workspace.clone()), true);
+    let sandbox = Sandbox::new(Some(workspace.clone()));
     let tool = ExecTool::new(Arc::new(workspace), Arc::new(sandbox));
     let result = tokio::runtime::Runtime::new()
         .expect("create runtime")
@@ -265,7 +265,7 @@ fn when_plain_file_edited(world: &mut QuectoWorld) {
         .as_ref()
         .expect("workspace prepared")
         .clone();
-    let sandbox = Sandbox::new(Some(workspace.clone()), true);
+    let sandbox = Sandbox::new(Some(workspace.clone()));
     let tool = EditTool::new(Arc::new(workspace), Arc::new(sandbox));
     let result = tokio::runtime::Runtime::new()
         .expect("create runtime")

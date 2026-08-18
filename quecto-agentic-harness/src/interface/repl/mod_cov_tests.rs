@@ -340,6 +340,48 @@ fn run_dispatches_agent_and_spawn_prefix_commands() {
 }
 
 #[test]
+fn repl_open_refuses_live_foreign_owner_but_ephemeral_skips_claim() {
+    let rt = build_repl_runtime().unwrap();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let owner = FileSessionStore::new(tmp.path());
+    owner.claim("test:owned").unwrap();
+
+    let repl_owner = FileSessionStore::new(tmp.path());
+    repl_owner.claim("repl:owned").unwrap();
+
+    let contender = FileSessionStore::new(tmp.path());
+    let err = load_session_messages_with_rt(&rt, &contender, "test:owned", false).unwrap_err();
+    assert!(
+        err.to_string().contains("refusing a second writer"),
+        "{err}"
+    );
+
+    let messages = load_session_messages_with_rt(&rt, &contender, "test:owned", true).unwrap();
+    assert!(messages.is_empty());
+
+    let config: Config = serde_json::from_str("{}").unwrap();
+    let flags = ReplFlags {
+        session_name: Some("owned".to_string()),
+        system_prompt: None,
+        model_override: None,
+    };
+    let ctx = ReplContext {
+        base_dir: tmp.path(),
+        config_path: tmp.path(),
+        provider: make_stub_provider(),
+        config: &config,
+        flags: &flags,
+        cwd_override: None,
+        progress_callback: None,
+    };
+    let mut output = Vec::new();
+    let code = run_repl(b"/exit\n".as_slice(), &mut output, false, &ctx);
+    let output = String::from_utf8(output).unwrap();
+    assert_eq!(code, 1, "{output}");
+    assert!(output.contains("refusing a second writer"), "{output}");
+}
+
+#[test]
 fn bufreader_tty_run_prints_banner_help_clear_and_uses_system_prompt() {
     let tmp = tempfile::TempDir::new().unwrap();
     let input = b"/help\n/clear\nhello\n/exit\n";

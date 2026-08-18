@@ -2,10 +2,46 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+use crate::domain::visible_thinking::append_visible_thinking;
+
+struct AbortOnDrop<T> {
+    handle: Option<tokio::task::JoinHandle<T>>,
+}
+
+impl<T> AbortOnDrop<T> {
+    fn new(handle: tokio::task::JoinHandle<T>) -> Self {
+        Self {
+            handle: Some(handle),
+        }
+    }
+}
+
+impl<T> Future for AbortOnDrop<T> {
+    type Output = Result<T, tokio::task::JoinError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let handle = self
+            .handle
+            .as_mut()
+            .expect("AbortOnDrop polled after completion");
+        Pin::new(handle).poll(cx)
+    }
+}
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        if let Some(handle) = &self.handle {
+            if !handle.is_finished() {
+                handle.abort();
+            }
+        }
+    }
+}
 
 /// OpenAI-compatible LLM provider.
 #[derive(Debug, Clone)]
@@ -171,6 +207,21 @@ impl OpenAiProvider {
 
         let message = &choice["message"];
         let content = message["content"].as_str().map(|s| s.to_string());
+        let thinking_blocks = message
+            .get("reasoning")
+            .or_else(|| message.get("reasoning_content"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|thinking| {
+                let mut capped = String::new();
+                append_visible_thinking(&mut capped, thinking, "OpenAI non-stream reasoning")?;
+                Ok(vec![crate::domain::message::ThinkingBlock::Normal {
+                    thinking: capped,
+                    signature: String::new(),
+                }])
+            })
+            .transpose()?
+            .unwrap_or_default();
 
         let mut tool_calls = Vec::new();
         if let Some(tcs) = message["tool_calls"].as_array() {
@@ -209,7 +260,7 @@ impl OpenAiProvider {
             tool_calls,
             usage,
             stop_reason: None,
-            thinking_blocks: vec![],
+            thinking_blocks,
         })
     }
 }
@@ -245,14 +296,32 @@ impl OpenAiProvider {
             )));
         }
 
-        let full = response
-            .text()
-            .await
-            .map_err(|e| DomainError::Provider(format!("failed to read stream: {}", e)))?;
-
-        Self::parse_sse_response(&full)
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let pump = AbortOnDrop::new(tokio::spawn(openai_sse::pump_sse_response(response, tx)));
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::Done(response) => {
+                    let _ = pump.await;
+                    return Ok(response);
+                }
+                StreamEvent::Error(error) => {
+                    let _ = pump.await;
+                    return Err(DomainError::Provider(error));
+                }
+                StreamEvent::TextDelta(_)
+                | StreamEvent::ThinkingDelta(_)
+                | StreamEvent::ToolCallStart { .. }
+                | StreamEvent::ToolCallDelta(_)
+                | StreamEvent::ToolCallEnd { .. } => {}
+            }
+        }
+        let _ = pump.await;
+        Err(DomainError::Provider(
+            "OpenAI SSE stream ended without completion".to_string(),
+        ))
     }
 
+    #[cfg(test)]
     fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> {
         openai_sse_parser::parse_sse_response(raw)
     }
@@ -301,7 +370,7 @@ impl OpenAiProvider {
         delta: &serde_json::Value,
         content: &mut String,
         tool_calls: &mut Vec<ToolCall>,
-    ) {
+    ) -> Result<(), DomainError> {
         openai_sse_parser::apply_delta(delta, content, tool_calls)
     }
 }
@@ -393,7 +462,7 @@ impl LlmProvider for OpenAiProvider {
 #[path = "openai_sse.rs"]
 pub(super) mod openai_sse;
 #[path = "openai_sse_parser.rs"]
-mod openai_sse_parser;
+pub(crate) mod openai_sse_parser;
 
 #[cfg(test)]
 #[path = "openai_cov_tests.rs"]

@@ -293,12 +293,17 @@ fn builtin_commands_have_stable_order_and_names() {
             "help",
             "hotkeys",
             "new",
+            "tab-new",
+            "tab-close",
+            "tab-next",
+            "tab-prev",
             "session",
             "refresh-tui",
             "delete-all-subagents",
             "resume",
             "model",
             "effort",
+            "thinking",
             "workflow",
             "workflow-auto",
             "workflow-nudge",
@@ -574,7 +579,7 @@ fn spawn_tool_output_suppressed() {
 #[test]
 fn agent_cmd_content_reads_shown() {
     // Content reads and one-shot results still render in the chat.
-    for cmd in &["get_messages", "get_messages_tail", "await"] {
+    for cmd in &["get_messages", "get_messages_tail"] {
         let args = serde_json::json!({"agent_id": "w1", "command": cmd});
         assert!(
             !super::app_events::suppress_tool_box("agent_cmd", &args),
@@ -596,7 +601,6 @@ fn every_agent_cmd_command_renders_a_box() {
         "get_session_stats",
         "get_tool_catalogue",
         "get_messages",
-        "await",
         "prompt",
         "steer",
         "abort",

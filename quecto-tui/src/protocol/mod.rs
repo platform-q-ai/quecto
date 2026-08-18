@@ -10,6 +10,7 @@
 
 pub mod agent_ledger_payloads;
 pub mod client;
+pub(crate) mod inspection_routing;
 pub mod model_payloads;
 pub mod presentation_payloads;
 pub mod range_accumulator;

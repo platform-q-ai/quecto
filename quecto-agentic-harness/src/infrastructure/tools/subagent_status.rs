@@ -20,6 +20,12 @@ pub enum SubagentStatus {
 }
 
 impl SubagentStatus {
+    /// True while this status represents active work that should keep ancestors
+    /// effectively running.
+    pub fn is_active(&self) -> bool {
+        matches!(self, Self::Starting | Self::Running)
+    }
+
     /// Wire-format string for the UDS protocol (lowercase, zero-alloc).
     pub fn to_wire_str(&self) -> &'static str {
         match self {

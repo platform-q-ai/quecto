@@ -1,7 +1,10 @@
 use super::infrastructure_k8s::*;
 use super::*;
-use crate::domain::{RepositoryCheckout, RuntimeCapabilities, WorkflowExecution};
+use crate::domain::{
+    EnsureRuntimeRequest, RepositoryCheckout, RuntimeCapabilities, WorkflowExecution,
+};
 use axum::{
+    Router,
     body::{Body, to_bytes},
     http::Request,
 };
@@ -31,6 +34,8 @@ fn test_state(tmp: &tempfile::TempDir, token: Option<String>) -> AppState {
         registry: Arc::new(Mutex::new(RuntimeRegistry::default())),
         token,
         http: Client::new(),
+        lifecycle: Arc::new(ProductionRuntimeLifecycle),
+        pending_starts: Arc::new(Mutex::new(HashSet::new())),
     }
 }
 
@@ -49,6 +54,84 @@ fn fake_runtime(runtime_ref: &str, socket_path: PathBuf) -> ManagedRuntime {
         pod_ip: None,
         last_used_at: Instant::now(),
     }
+}
+
+#[derive(Default)]
+struct FakeLifecycle {
+    starts: Arc<Mutex<Vec<(String, String, u16)>>>,
+    credential_syncs: Arc<Mutex<Vec<String>>>,
+    pod_deletes: Arc<Mutex<Vec<String>>>,
+    pod_statuses: Arc<Mutex<Vec<String>>>,
+    delay_start: bool,
+}
+
+impl RuntimeLifecycle for FakeLifecycle {
+    fn start_runtime(
+        &self,
+        state: AppState,
+        body: EnsureRuntimeRequest,
+        runtime_ref: String,
+        port: u16,
+    ) -> BoxFutureResult<ManagedRuntime> {
+        let starts = self.starts.clone();
+        let delay = self.delay_start;
+        Box::pin(async move {
+            if delay {
+                sleep(Duration::from_millis(50)).await;
+            }
+            starts.lock().await.push((
+                runtime_ref.clone(),
+                body.execution_model
+                    .clone()
+                    .unwrap_or_else(|| "process".to_string()),
+                port,
+            ));
+            let mut runtime = fake_runtime(
+                &runtime_ref,
+                state.config.socket_root.join(format!("{runtime_ref}.sock")),
+            );
+            runtime.port = port;
+            if body.execution_model.as_deref() == Some("pod") {
+                runtime.pod_name = Some(runtime_pod_name(&runtime_ref));
+                runtime.pod_ip = Some("10.42.0.10".to_string());
+            }
+            Ok(runtime)
+        })
+    }
+
+    fn sync_credentials(&self, _state: AppState, credentials_json: String) -> BoxFutureResult<()> {
+        let syncs = self.credential_syncs.clone();
+        Box::pin(async move {
+            syncs.lock().await.push(credentials_json);
+            Ok(())
+        })
+    }
+
+    fn delete_runtime_pod(&self, _state: AppState, pod_name: String) -> BoxFutureResult<()> {
+        let deletes = self.pod_deletes.clone();
+        Box::pin(async move {
+            deletes.lock().await.push(pod_name);
+            Ok(())
+        })
+    }
+
+    fn runtime_pod_status(&self, _state: AppState, pod_name: String) -> BoxFutureResult<Value> {
+        let statuses = self.pod_statuses.clone();
+        Box::pin(async move {
+            statuses.lock().await.push(pod_name.clone());
+            Ok(json!({ "pod_name": pod_name, "phase": "Running" }))
+        })
+    }
+}
+
+fn test_state_with_lifecycle(
+    tmp: &tempfile::TempDir,
+    token: Option<String>,
+    lifecycle: Arc<dyn RuntimeLifecycle>,
+) -> AppState {
+    let mut state = test_state(tmp, token);
+    state.lifecycle = lifecycle;
+    state
 }
 
 fn board_pod_request() -> EnsureRuntimeRequest {
@@ -130,6 +213,22 @@ fn runtime_bootstrap_verifies_toolchain_database_and_project_dependencies_before
             .contains("setup_project_dependencies\nif [ -n \"${QUECTO_WORKFLOW_CONFIG_JSON:-}\" ]")
     );
     assert!(bootstrap.contains("exec quecto agent"));
+}
+
+#[test]
+fn runtime_bootstrap_keeps_agent_in_requested_workdir_and_omits_removed_flags() {
+    let bootstrap = runtime_bootstrap_command();
+    assert!(bootstrap.contains(
+        "cd \"$QUECTO_WORKDIR\"
+setup_project_dependencies"
+    ));
+    assert!(!bootstrap.contains("cd /workspace"));
+    assert!(!bootstrap.contains("--network"));
+    assert!(!bootstrap.contains("--no-sandbox"));
+    assert!(
+        bootstrap.find("cd \"$QUECTO_WORKDIR\"").unwrap()
+            < bootstrap.find("exec quecto agent").unwrap()
+    );
 }
 
 #[test]
@@ -528,3 +627,6 @@ async fn stop_runtime_is_idempotent_and_removes_socket() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["stopped"], false);
 }
+
+#[path = "infrastructure_lifecycle_tests.rs"]
+mod lifecycle_tests;

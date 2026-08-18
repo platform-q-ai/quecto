@@ -16,6 +16,8 @@ async fn forwards_valid_tool_policy_mutation() {
             reason: Some("test".into()),
         }],
         ToolPolicyApplyModePayload::ImmediateIfIdle,
+        ToolPolicyOperationPayload::Patch,
+        None,
     )
     .await
     .expect("forwarded");
@@ -41,6 +43,8 @@ async fn rejects_missing_identifier() {
             reason: None,
         }],
         ToolPolicyApplyModePayload::ImmediateIfIdle,
+        ToolPolicyOperationPayload::Patch,
+        None,
     )
     .await
     .expect_err("invalid");

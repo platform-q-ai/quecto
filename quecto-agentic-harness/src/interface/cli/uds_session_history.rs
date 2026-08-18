@@ -1,5 +1,5 @@
 use crate::domain::ids::MessageId;
-use crate::domain::message::Message;
+use crate::domain::message::{Message, ThinkingBlock};
 
 use super::{message_to_json, role_wire_name};
 
@@ -8,6 +8,7 @@ pub(crate) use super::super::protocol::HISTORY_PAGE_SIZE;
 pub(crate) const HISTORY_PAGE_JSON_BUDGET: usize =
     crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET / 2;
 pub(super) const HISTORY_MESSAGE_SUMMARY_PREVIEW_BYTES: usize = 2048;
+pub(super) const HISTORY_THINKING_SUMMARY_PREVIEW_BYTES: usize = 2048;
 
 /// Locate a message by its stable wire id (a stringified UUID). Parses the id
 /// ONCE and compares typed UUIDs instead of allocating a `to_string` per
@@ -83,6 +84,64 @@ pub fn messages_page_json(
     messages_page_json_for_id(messages, count, before.as_ref())
 }
 
+fn byte_preview(s: &str, max_bytes: usize) -> String {
+    s.chars()
+        .scan(0usize, |used, ch| {
+            let next = *used + ch.len_utf8();
+            if next > max_bytes {
+                None
+            } else {
+                *used = next;
+                Some(ch)
+            }
+        })
+        .collect()
+}
+
+fn thinking_summary_json(msg: &Message, max_encoded_bytes: usize) -> serde_json::Value {
+    let mut values = Vec::new();
+    let mut used = 2usize;
+    let mut omitted = 0usize;
+    for block in &msg.thinking_blocks {
+        let value = match block {
+            ThinkingBlock::Normal { thinking, .. } => {
+                let preview = byte_preview(thinking, HISTORY_THINKING_SUMMARY_PREVIEW_BYTES);
+                let mut value = serde_json::json!({
+                    "kind": "text",
+                    "text": preview,
+                });
+                if value["text"].as_str().map(str::len).unwrap_or(0) < thinking.len() {
+                    value["truncated"] = serde_json::json!(true);
+                    value["textLength"] = serde_json::json!(thinking.len());
+                }
+                value
+            }
+            ThinkingBlock::Redacted { .. } => serde_json::json!({ "kind": "redacted" }),
+        };
+        let value_len = serde_json::to_vec(&value)
+            .map(|v| v.len())
+            .unwrap_or(usize::MAX);
+        let next_len = used
+            .saturating_add(value_len)
+            .saturating_add(!values.is_empty() as usize);
+        if next_len > max_encoded_bytes && !values.is_empty() {
+            omitted += 1;
+            continue;
+        }
+        used = next_len;
+        values.push(value);
+    }
+    if omitted > 0 {
+        values.push(serde_json::json!({
+            "kind": "text",
+            "text": "",
+            "truncated": true,
+            "omittedBlocks": omitted,
+        }));
+    }
+    serde_json::Value::Array(values)
+}
+
 pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Value {
     let full = message_to_json(msg);
     let full_size = serde_json::to_vec(&full)
@@ -92,21 +151,9 @@ pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Val
         return full;
     }
 
-    let preview: String = msg
-        .content
-        .chars()
-        .scan(0usize, |used, ch| {
-            let next = *used + ch.len_utf8();
-            if next > HISTORY_MESSAGE_SUMMARY_PREVIEW_BYTES {
-                None
-            } else {
-                *used = next;
-                Some(ch)
-            }
-        })
-        .collect();
+    let preview = byte_preview(&msg.content, HISTORY_MESSAGE_SUMMARY_PREVIEW_BYTES);
 
-    serde_json::json!({
+    let mut summary = serde_json::json!({
         "id": msg.id().to_string(),
         "role": role_wire_name(&msg.role),
         "content": preview,
@@ -123,7 +170,44 @@ pub(crate) fn message_to_json_for_history_page(msg: &Message) -> serde_json::Val
         "collapsed": true,
         "truncated": true,
         "contentLength": msg.content.len(),
-    })
+    });
+    if !msg.thinking_blocks.is_empty() {
+        let base_size = serde_json::to_vec(&summary)
+            .map(|v| v.len())
+            .unwrap_or(usize::MAX);
+        let thinking_budget = HISTORY_PAGE_JSON_BUDGET.saturating_sub(base_size + 64);
+        summary["thinking"] = thinking_summary_json(msg, thinking_budget);
+    }
+    while serde_json::to_vec(&summary)
+        .map(|v| v.len() > HISTORY_PAGE_JSON_BUDGET)
+        .unwrap_or(true)
+    {
+        let Some(thinking) = summary["thinking"].as_array_mut() else {
+            break;
+        };
+        if thinking.len() <= 1 {
+            break;
+        }
+        let removed = thinking.pop().unwrap();
+        let omitted = removed
+            .get("omittedBlocks")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(1) as usize;
+        if let Some(last) = thinking.last_mut() {
+            if last.get("omittedBlocks").is_some() {
+                let current = last["omittedBlocks"].as_u64().unwrap_or(0) as usize;
+                last["omittedBlocks"] = serde_json::json!(current + omitted);
+            } else {
+                thinking.push(serde_json::json!({
+                    "kind": "text",
+                    "text": "",
+                    "truncated": true,
+                    "omittedBlocks": omitted,
+                }));
+            }
+        }
+    }
+    summary
 }
 
 #[cfg(test)]

@@ -1,99 +1,171 @@
-use super::{SubagentLifecycleEvent as Event, SubagentLifecycleState as State};
-use crate::infrastructure::tools::subagent_registry::SubagentStatus;
+use crate::infrastructure::tools::subagent_lifecycle::{
+    SubagentLifecycleEvent, SubagentLifecycleState, apply_lifecycle_event,
+};
+use crate::infrastructure::tools::subagent_status::SubagentStatus;
 
 #[test]
-fn newly_launched_child_reports_starting_until_socket_is_ready() {
-    let state = State::default();
-
-    assert_eq!(state, State::Launched);
-    assert_eq!(state.status_projection(), SubagentStatus::Starting);
-}
-
-#[test]
-fn socket_ready_child_still_reports_starting_until_a_run_is_observed() {
-    let state = State::default().transition(Event::SocketConnected);
-
-    assert_eq!(state, State::SocketReady);
-    assert_eq!(state.status_projection(), SubagentStatus::Starting);
-}
-
-#[test]
-fn child_exit_before_socket_ready_is_terminal() {
-    let state = State::Launched.transition(Event::SocketConnectFailed);
-
-    assert_eq!(state, State::Exited);
-    assert_eq!(state.status_projection(), SubagentStatus::Exited);
-    assert_eq!(state.transition(Event::SocketConnected), State::Exited);
-}
-
-#[test]
-fn await_before_completion_times_out_without_changing_busy_state() {
-    let state = State::SocketReady.transition(Event::RunStarted);
-
-    assert_eq!(state, State::Busy);
-    assert_eq!(state.transition(Event::AwaitTimedOut), State::Busy);
-    assert_eq!(state.status_projection(), SubagentStatus::Running);
-}
-
-#[test]
-fn completion_consumed_by_manual_await_keeps_child_idle() {
-    let state = State::Busy.transition(Event::RunEnded);
-
-    assert_eq!(state, State::Idle);
+fn lifecycle_terminal_and_failure_transitions_are_stable() {
     assert_eq!(
-        state.transition(Event::AwaitConsumedCompletion),
-        State::Idle
+        SubagentLifecycleState::Exited.transition(SubagentLifecycleEvent::SocketConnected),
+        SubagentLifecycleState::Exited
+    );
+    assert_eq!(
+        SubagentLifecycleState::Exited.transition(SubagentLifecycleEvent::KillRequested),
+        SubagentLifecycleState::Killed
+    );
+    assert_eq!(
+        SubagentLifecycleState::Failed.transition(SubagentLifecycleEvent::ToolStarted),
+        SubagentLifecycleState::Failed
+    );
+    assert_eq!(
+        SubagentLifecycleState::Launched.transition(SubagentLifecycleEvent::RunFailed),
+        SubagentLifecycleState::Failed
     );
 }
 
 #[test]
-fn passive_note_emission_keeps_completed_child_idle() {
-    let state = State::Busy.transition(Event::RunEnded);
-
-    assert_eq!(state, State::Idle);
-    assert_eq!(state.transition(Event::PassiveNoteEmitted), State::Idle);
-}
-
-#[test]
-fn kill_during_busy_is_terminal_and_projects_to_existing_exited_status() {
-    let state = State::Busy.transition(Event::KillRequested);
-
-    assert_eq!(state, State::Killed);
-    assert_eq!(state.status_projection(), SubagentStatus::Exited);
-    assert_eq!(state.transition(Event::RunEnded), State::Killed);
-}
-
-#[test]
-fn tool_failure_stays_sticky_until_current_tool_or_run_ends() {
-    let state = State::Busy.transition(Event::RunFailed);
-
-    assert_eq!(state, State::Failed);
-    assert_eq!(state.status_projection(), SubagentStatus::Error);
-    assert_eq!(state.transition(Event::ToolStarted), State::Failed);
-}
-
-#[test]
-fn recoverable_tool_failure_returns_to_idle_when_run_ends() {
-    let state = State::Busy.transition(Event::RunFailed);
-
-    assert_eq!(state.transition(Event::RunEnded), State::Idle);
-}
-
-#[test]
-fn failed_child_can_recover_when_a_new_agent_run_starts() {
-    let state = State::Busy.transition(Event::RunFailed);
-
-    assert_eq!(state.transition(Event::RunStarted), State::Busy);
-}
-
-#[test]
-fn existing_registry_statuses_are_interpreted_as_equivalent_lifecycle_states() {
+fn lifecycle_projection_and_status_reconstruction_cover_all_variants() {
     assert_eq!(
-        State::from_status(&SubagentStatus::Starting),
-        State::Launched
+        SubagentLifecycleState::Launched.status_projection(),
+        SubagentStatus::Starting
     );
-    assert_eq!(State::from_status(&SubagentStatus::Running), State::Busy);
-    assert_eq!(State::from_status(&SubagentStatus::Idle), State::Idle);
-    assert_eq!(State::from_status(&SubagentStatus::Error), State::Failed);
-    assert_eq!(State::from_status(&SubagentStatus::Exited), State::Exited);
+    assert_eq!(
+        SubagentLifecycleState::SocketReady.status_projection(),
+        SubagentStatus::Starting
+    );
+    assert_eq!(
+        SubagentLifecycleState::Busy.status_projection(),
+        SubagentStatus::Running
+    );
+    assert_eq!(
+        SubagentLifecycleState::Idle.status_projection(),
+        SubagentStatus::Idle
+    );
+    assert_eq!(
+        SubagentLifecycleState::Failed.status_projection(),
+        SubagentStatus::Error
+    );
+    assert_eq!(
+        SubagentLifecycleState::Exited.status_projection(),
+        SubagentStatus::Exited
+    );
+    assert_eq!(
+        SubagentLifecycleState::Killed.status_projection(),
+        SubagentStatus::Exited
+    );
+
+    assert_eq!(
+        SubagentLifecycleState::from_status(&SubagentStatus::Starting),
+        SubagentLifecycleState::Launched
+    );
+    assert_eq!(
+        SubagentLifecycleState::from_status(&SubagentStatus::Idle),
+        SubagentLifecycleState::Idle
+    );
+    assert_eq!(
+        SubagentLifecycleState::from_status(&SubagentStatus::Running),
+        SubagentLifecycleState::Busy
+    );
+    assert_eq!(
+        SubagentLifecycleState::from_status(&SubagentStatus::Error),
+        SubagentLifecycleState::Failed
+    );
+    assert_eq!(
+        SubagentLifecycleState::from_status(&SubagentStatus::Exited),
+        SubagentLifecycleState::Exited
+    );
+}
+
+#[test]
+fn apply_lifecycle_event_updates_state_and_returns_projected_status() {
+    let mut state = SubagentLifecycleState::Launched;
+    assert_eq!(
+        apply_lifecycle_event(&mut state, SubagentLifecycleEvent::SocketConnected),
+        SubagentStatus::Starting
+    );
+    assert_eq!(state, SubagentLifecycleState::SocketReady);
+    assert_eq!(
+        apply_lifecycle_event(&mut state, SubagentLifecycleEvent::RunStarted),
+        SubagentStatus::Running
+    );
+    assert_eq!(state, SubagentLifecycleState::Busy);
+    assert_eq!(
+        apply_lifecycle_event(&mut state, SubagentLifecycleEvent::RunEnded),
+        SubagentStatus::Idle
+    );
+    assert_eq!(state, SubagentLifecycleState::Idle);
+}
+
+#[test]
+fn lifecycle_socket_ready_failure_and_exit_paths_project_terminal_statuses() {
+    assert_eq!(
+        SubagentLifecycleState::SocketReady.transition(SubagentLifecycleEvent::SocketConnectFailed),
+        SubagentLifecycleState::Exited
+    );
+    assert_eq!(
+        SubagentLifecycleState::SocketReady.transition(SubagentLifecycleEvent::ProcessExited),
+        SubagentLifecycleState::Exited
+    );
+}
+
+#[test]
+fn lifecycle_idle_restart_and_failure_paths_are_observable() {
+    assert_eq!(
+        SubagentLifecycleState::Idle.transition(SubagentLifecycleEvent::ToolStarted),
+        SubagentLifecycleState::Busy
+    );
+    assert_eq!(
+        SubagentLifecycleState::Idle.transition(SubagentLifecycleEvent::RunFailed),
+        SubagentLifecycleState::Failed
+    );
+}
+
+#[test]
+fn lifecycle_busy_kill_and_process_exit_paths_are_terminal() {
+    assert_eq!(
+        SubagentLifecycleState::Busy.transition(SubagentLifecycleEvent::KillRequested),
+        SubagentLifecycleState::Killed
+    );
+    assert_eq!(
+        SubagentLifecycleState::Busy.transition(SubagentLifecycleEvent::ProcessExited),
+        SubagentLifecycleState::Exited
+    );
+}
+
+#[test]
+fn lifecycle_killed_state_is_sticky_except_process_exit() {
+    assert_eq!(
+        SubagentLifecycleState::Killed.transition(SubagentLifecycleEvent::RunStarted),
+        SubagentLifecycleState::Killed
+    );
+    assert_eq!(
+        SubagentLifecycleState::Killed.transition(SubagentLifecycleEvent::ProcessExited),
+        SubagentLifecycleState::Killed
+    );
+}
+
+#[test]
+fn apply_lifecycle_event_covers_kill_terminal_projection() {
+    let mut state = SubagentLifecycleState::Busy;
+    assert_eq!(
+        apply_lifecycle_event(&mut state, SubagentLifecycleEvent::KillRequested),
+        SubagentStatus::Exited
+    );
+    assert_eq!(state, SubagentLifecycleState::Killed);
+}
+
+#[test]
+fn lifecycle_launched_duplicate_and_tool_started_paths_are_observable() {
+    assert_eq!(
+        SubagentLifecycleState::Launched.transition(SubagentLifecycleEvent::SocketConnected),
+        SubagentLifecycleState::SocketReady
+    );
+    assert_eq!(
+        SubagentLifecycleState::Launched.transition(SubagentLifecycleEvent::ToolStarted),
+        SubagentLifecycleState::Busy
+    );
+    assert_eq!(
+        SubagentLifecycleState::Launched.transition(SubagentLifecycleEvent::PassiveNoteEmitted),
+        SubagentLifecycleState::Launched
+    );
 }

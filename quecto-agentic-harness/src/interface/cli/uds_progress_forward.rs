@@ -5,6 +5,7 @@ use crate::interface::cli::protocol::{AgentEvent, ToolResultContent};
 pub(crate) async fn forward_event(ev: AgentProgressEvent, sink: &mut EventSink<'_>) {
     match ev {
         AgentProgressEvent::Token(token) => sink.emit(&AgentEvent::Token { token }).await,
+        AgentProgressEvent::ThinkingDelta(text) => sink.emit(&AgentEvent::Thinking { text }).await,
         AgentProgressEvent::ToolStarted {
             tool_call_id,
             name,
@@ -54,6 +55,7 @@ pub(crate) async fn forward_event(ev: AgentProgressEvent, sink: &mut EventSink<'
             reconciliation,
             reason,
         } => {
+            let correlation_id = reconciliation.correlation_id.clone();
             sink.emit(&AgentEvent::ToolPolicyChanged {
                 changed_tools: reconciliation
                     .results
@@ -70,6 +72,7 @@ pub(crate) async fn forward_event(ev: AgentProgressEvent, sink: &mut EventSink<'
                     }
                 },
                 reason,
+                correlation_id,
             })
             .await;
         }

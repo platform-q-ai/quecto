@@ -5,7 +5,7 @@ use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry
 use crate::domain::error::DomainError;
 use crate::domain::subagent::{ContainerSelection, SubagentConfig};
 use crate::domain::subagent_launch::ParentEndpoint;
-use crate::infrastructure::config::{Config, ContainerScriptConfig};
+use crate::infrastructure::config::{Config, ContainerConfig};
 
 #[derive(Debug)]
 pub(super) struct PreparedChild {
@@ -17,6 +17,7 @@ pub(super) struct PreparedChild {
     /// Proxy bridge materialized at readiness; carried so registration can
     /// take ownership and rollback can abort it.
     pub proxy_bridge: Option<super::spawn_proxy_bridge::ProxyBridge>,
+    pub process_owner: super::process_tree::ProcessOwner,
     cleanup_environment_id: Option<String>,
     cleanup_argv: Vec<String>,
     /// Session registry the environment was committed to, so rollback can
@@ -36,6 +37,7 @@ impl PreparedChild {
             environment_ref,
             endpoint,
             proxy_bridge: None,
+            process_owner: super::process_tree::ProcessOwner::DirectPid,
             cleanup_environment_id: None,
             cleanup_argv: vec![],
             environments: None,
@@ -57,7 +59,11 @@ impl PreparedChild {
 
     pub async fn rollback_once(&mut self) {
         if let Some(child) = &mut self.child {
-            let _ = child.kill().await;
+            if let Some(pid) = child.id() {
+                super::process_tree::terminate_owned_process_tree(pid, self.process_owner);
+            } else {
+                let _ = child.kill().await;
+            }
             let _ = child.wait().await;
         }
         if let Some(bridge) = self.proxy_bridge.take() {
@@ -94,13 +100,13 @@ pub(super) async fn spawn_prepared_child(
     match &config.container {
         ContainerSelection::Local => spawn_local_child(child),
         ContainerSelection::New {
-            container_script, ..
+            container_config, ..
         } => {
             spawn_script_managed_child(
                 config,
                 child,
-                &load_container_config(config, parent_config_path)?,
-                container_script,
+                &load_container_config(config, parent_config_path, child.base_dir)?,
+                container_config,
                 environments,
             )
             .await
@@ -129,7 +135,7 @@ async fn join_script_managed_child(
         )));
     }
     let mut cmd = script_command(&record.retained_exec_argv, child.binary, child.cli_args);
-    cmd.env("QUECTO_CONTAINER_SCRIPT", &record.script_name);
+    cmd.env("QUECTO_CONTAINER_CONFIG", &record.script_name);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", &record.environment_id);
     apply_common_child_env(&mut cmd, child.base_dir);
     cmd.stdout(std::process::Stdio::piped());
@@ -149,6 +155,7 @@ async fn join_script_managed_child(
         environment_ref: Some(record.environment_ref),
         endpoint: Some(endpoint),
         proxy_bridge: None,
+        process_owner: super::process_tree::ProcessOwner::DirectPid,
         cleanup_environment_id: None,
         cleanup_argv: Vec::new(),
         // Joining never owns the environment: a failed join must not
@@ -244,6 +251,8 @@ fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, DomainEr
     let mut cmd = tokio::process::Command::new(child.binary);
     cmd.args(child.cli_args);
     apply_common_child_env(&mut cmd, child.base_dir);
+    #[cfg(unix)]
+    cmd.process_group(0);
     let child = cmd
         .spawn()
         .map_err(|e| DomainError::Tool(format!("failed to spawn subagent: {e}")))?;
@@ -252,20 +261,51 @@ fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, DomainEr
         environment_ref: None,
         endpoint: None,
         proxy_bridge: None,
+        process_owner: super::process_tree::ProcessOwner::LocalProcessGroup,
         cleanup_environment_id: None,
         cleanup_argv: Vec::new(),
         environments: None,
     })
 }
 
-/// Resolve the trusted config file `container_scripts` loads from: an explicit
+/// Resolve the trusted config file `container_configs` loads from: an explicit
 /// spawn `config` argument wins; without one the parent's own effective config
 /// path is used (#1369 follow-up), so `container: true` works without the
 /// caller hunting for the config location. Whichever path is chosen must be
 /// absolute — the trusted-path requirement is not relaxed by the fallback.
-fn load_container_config(
+fn container_config_load_error(e: crate::infrastructure::config::ConfigError) -> DomainError {
+    match e {
+        // ContainerConfigs errors already name the section — wrapping them
+        // again would stutter ("invalid container_configs configuration:
+        // invalid container_configs: ...").
+        e @ crate::infrastructure::config::ConfigError::ContainerConfigs(_) => {
+            DomainError::Tool(e.to_string())
+        }
+        e => DomainError::Tool(format!("invalid container_configs configuration: {e}")),
+    }
+}
+
+pub(super) fn load_container_config(
     config: &SubagentConfig,
     parent_config_path: Option<&Path>,
+    checkout: &Path,
+) -> Result<Config, DomainError> {
+    load_container_config_with_trust(config, parent_config_path, checkout, true)
+}
+
+pub(super) fn load_container_config_for_roster(
+    config: &SubagentConfig,
+    parent_config_path: Option<&Path>,
+    checkout: &Path,
+) -> Result<Config, DomainError> {
+    load_container_config_with_trust(config, parent_config_path, checkout, false)
+}
+
+fn load_container_config_with_trust(
+    config: &SubagentConfig,
+    parent_config_path: Option<&Path>,
+    checkout: &Path,
+    prompt_on_miss: bool,
 ) -> Result<Config, DomainError> {
     let cfg_path = config
         .config_path
@@ -273,7 +313,7 @@ fn load_container_config(
         .or(parent_config_path)
         .ok_or_else(|| {
             DomainError::Tool(
-                "container spawn requires --config so container_scripts can be loaded".into(),
+                "container spawn requires --config so container_configs can be loaded".into(),
             )
         })?;
     if !cfg_path.is_absolute() {
@@ -281,27 +321,35 @@ fn load_container_config(
             "container spawn requires an absolute trusted config path".into(),
         ));
     }
-    Config::load(&cfg_path.to_string_lossy())
-        .map_err(|e| DomainError::Tool(format!("invalid container_scripts configuration: {e}")))
+    let global = Config::load(&cfg_path.to_string_lossy()).map_err(container_config_load_error)?;
+    let mut trust = if prompt_on_miss {
+        crate::infrastructure::repo_local_container_config::PersistentRepoLocalContainerConfigTrust::new()
+    } else {
+        crate::infrastructure::repo_local_container_config::PersistentRepoLocalContainerConfigTrust::read_only()
+    };
+    let effective = crate::infrastructure::repo_local_container_config::effective_container_configs_for_checkout(
+        global, checkout, &mut trust,
+    )
+    .map_err(container_config_load_error)?;
+    if !effective.diagnostics.is_empty() {
+        eprintln!("{}", effective.diagnostics.join("\n"));
+    }
+    Ok(effective.config)
 }
 
 async fn spawn_script_managed_child(
     config: &SubagentConfig,
     child: &ChildCommand<'_>,
     cfg: &Config,
-    selected_script: &Option<String>,
+    selected_config: &Option<String>,
     environments: &EnvironmentRegistry,
 ) -> Result<PreparedChild, DomainError> {
-    let script_name = script_name(selected_script, cfg)?;
-    let script = script_config(cfg, script_name)?;
-    validate_script(script)?;
-    let repository = selected_repo(config, child.base_dir)?.unwrap_or_default();
+    let config_name = container_config_name(selected_config, cfg)?;
+    let container = container_config(cfg, config_name)?;
+    validate_container_config(container)?;
     let environment_ref = environments.mint_ref();
-    let mut cmd = script_command(&script.create, child.binary, child.cli_args);
-    if !repository.is_empty() {
-        cmd.env("QUECTO_CONTAINER_REPO", &repository);
-    }
-    cmd.env("QUECTO_CONTAINER_SCRIPT", script_name);
+    let mut cmd = script_command(&container.create, child.binary, child.cli_args);
+    cmd.env("QUECTO_CONTAINER_CONFIG", config_name);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_REF", &environment_ref);
     apply_common_child_env(&mut cmd, child.base_dir);
     cmd.stdout(std::process::Stdio::piped());
@@ -318,7 +366,7 @@ async fn spawn_script_managed_child(
     let result = match parse_create_result(&output.stdout) {
         Ok(result) => result,
         Err(e) => {
-            let mut cleanup_argv = script.cleanup.clone();
+            let mut cleanup_argv = container.cleanup.clone();
             if let Some(env_id) = salvage_environment_id(&output.stdout) {
                 run_cleanup_once(Some(env_id), &mut cleanup_argv).await;
             }
@@ -331,12 +379,15 @@ async fn spawn_script_managed_child(
         environment_uuid: crate::domain::environment_registry::mint_environment_uuid(),
         name: environment_name(config),
         workspace_path: result.workspace_path.clone(),
-        repository,
-        script_name: script_name.to_string(),
-        retained_exec_argv: script.exec.clone(),
-        retained_kill_argv: script.kill.clone(),
-        retained_cleanup_argv: script.cleanup.clone(),
-        retained_inspect_argv: script.inspect.clone(),
+        // The config owns its source (#1410): the repository shown in
+        // listings/TUI is whatever the create script truthfully reported in
+        // its metadata; sandbox configs report none.
+        repository: reported_repository(&result.metadata),
+        script_name: config_name.to_string(),
+        retained_exec_argv: container.exec.clone(),
+        retained_kill_argv: container.kill.clone(),
+        retained_cleanup_argv: container.cleanup.clone(),
+        retained_inspect_argv: container.inspect.clone(),
         members: Vec::new(),
         status: crate::domain::environment_registry::EnvironmentStatus::Running,
         metadata: result.metadata.clone(),
@@ -347,8 +398,9 @@ async fn spawn_script_managed_child(
         environment_ref: Some(environment_ref),
         endpoint: Some(result.endpoint),
         proxy_bridge: None,
+        process_owner: super::process_tree::ProcessOwner::DirectPid,
         cleanup_environment_id: Some(result.environment_id),
-        cleanup_argv: script.cleanup.clone(),
+        cleanup_argv: container.cleanup.clone(),
         environments: Some(environments.clone()),
     })
 }
@@ -419,28 +471,68 @@ fn parse_create_result(stdout: &[u8]) -> Result<CreateResult, DomainError> {
     })
 }
 
-fn script_name<'a>(selected: &'a Option<String>, cfg: &'a Config) -> Result<&'a str, DomainError> {
-    let name = selected
-        .as_deref()
-        .unwrap_or(&cfg.container_scripts.default);
-    if name.is_empty() {
-        Err(DomainError::Tool(
-            "invalid container_scripts configuration: missing default".into(),
-        ))
+/// Sorted names of every configured container config, for error messages and
+/// the spawn tool's roster line: an agent that hits a selection error must be
+/// able to offer the real menu instead of dead-ending (#1410).
+pub(crate) fn container_config_names(cfg: &Config) -> Vec<String> {
+    let mut names: Vec<String> = cfg.container_configs.keys().cloned().collect();
+    names.sort_unstable();
+    names
+}
+
+fn enumerate_names(cfg: &Config) -> String {
+    let names = container_config_names(cfg);
+    if names.is_empty() {
+        "none configured".to_string()
     } else {
-        Ok(name)
+        names.join(", ")
     }
 }
 
-fn script_config<'a>(
+fn container_config_name<'a>(
+    selected: &'a Option<String>,
     cfg: &'a Config,
-    name: &str,
-) -> Result<&'a ContainerScriptConfig, DomainError> {
-    cfg.container_scripts.scripts.get(name).ok_or_else(|| {
+) -> Result<&'a str, DomainError> {
+    if let Some(name) = selected.as_deref() {
+        return Ok(name);
+    }
+    // Config::load enforces exactly-one-default for non-empty maps, so the
+    // only way to arrive here without one is an empty map: container spawning
+    // was requested but no container configs are defined.
+    let mut defaults: Vec<&str> = cfg
+        .container_configs
+        .iter()
+        .filter(|(_, c)| c.default)
+        .map(|(name, _)| name.as_str())
+        .collect();
+    defaults.sort_unstable();
+    match defaults.as_slice() {
+        [only] => Ok(only),
+        _ => Err(DomainError::Tool(format!(
+            "no container config is labeled \"default\": true (available container configs: {})",
+            enumerate_names(cfg)
+        ))),
+    }
+}
+
+fn container_config<'a>(cfg: &'a Config, name: &str) -> Result<&'a ContainerConfig, DomainError> {
+    cfg.container_configs.get(name).ok_or_else(|| {
         DomainError::Tool(format!(
-            "invalid container_scripts configuration: script '{name}' not found"
+            "unknown container config '{name}' (available container configs: {})",
+            enumerate_names(cfg)
         ))
     })
+}
+
+/// The repository shown in listings and TUI chrome is whatever the create
+/// script truthfully reported in its result metadata (the config owns its
+/// source, #1410); sandbox configs report nothing and list as empty.
+fn reported_repository(metadata: &serde_json::Value) -> String {
+    metadata
+        .get("repository")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// Argv-safe script invocation: `<argv...> -- <child binary> <child args...>`.
@@ -458,73 +550,28 @@ fn script_command(
     cmd
 }
 
-fn selected_repo(config: &SubagentConfig, base_dir: &Path) -> Result<Option<String>, DomainError> {
-    match &config.container {
-        ContainerSelection::New {
-            repo: Some(repo), ..
-        } => Ok(Some(repo.clone())),
-        ContainerSelection::New { repo: None, .. } => discover_parent_repo(base_dir).map(Some),
-        ContainerSelection::Local | ContainerSelection::Existing { .. } => Ok(None),
-    }
-}
-
-fn discover_parent_repo(base_dir: &Path) -> Result<String, DomainError> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(base_dir)
-        .arg("config")
-        .arg("--get")
-        .arg("remote.origin.url")
-        .output()
-        .map_err(|e| {
-            DomainError::Tool(format!(
-                "failed to discover parent repository remote.origin.url: {e}"
-            ))
-        })?;
-    if !output.status.success() {
+fn validate_container_config(container: &ContainerConfig) -> Result<(), DomainError> {
+    if container.create.is_empty() {
         return Err(DomainError::Tool(
-            "container spawn requires parent checkout remote.origin.url when container.repo is omitted".into(),
+            "invalid container_configs configuration: missing create argv".into(),
         ));
     }
-    let repo = String::from_utf8(output.stdout)
-        .map_err(|e| {
-            DomainError::Tool(format!(
-                "parent repository remote.origin.url is not UTF-8: {e}"
-            ))
-        })?
-        .trim()
-        .to_string();
-    if repo.is_empty() {
-        Err(DomainError::Tool(
-            "container spawn requires non-empty parent checkout remote.origin.url when container.repo is omitted".into(),
-        ))
-    } else {
-        Ok(repo)
-    }
-}
-
-fn validate_script(script: &ContainerScriptConfig) -> Result<(), DomainError> {
-    if script.create.is_empty() {
+    if container.cleanup.is_empty() {
         return Err(DomainError::Tool(
-            "invalid container_scripts configuration: missing create argv".into(),
+            "invalid container_configs configuration: missing cleanup argv".into(),
         ));
     }
-    if script.cleanup.is_empty() {
-        return Err(DomainError::Tool(
-            "invalid container_scripts configuration: missing cleanup argv".into(),
-        ));
-    }
-    if script
+    if container
         .create
         .iter()
-        .chain(script.cleanup.iter())
-        .chain(script.exec.iter())
-        .chain(script.kill.iter())
-        .chain(script.inspect.iter())
+        .chain(container.cleanup.iter())
+        .chain(container.exec.iter())
+        .chain(container.kill.iter())
+        .chain(container.inspect.iter())
         .any(|s| unsafe_arg(s))
     {
         return Err(DomainError::Tool(
-            "invalid container_scripts configuration: unsafe argv".into(),
+            "invalid container_configs configuration: unsafe argv".into(),
         ));
     }
     Ok(())

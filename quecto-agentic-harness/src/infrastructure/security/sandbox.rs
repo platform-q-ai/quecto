@@ -1,13 +1,12 @@
-// Security sandbox: workspace path validation, dangerous command blocklist, and command allowlist.
+// Shared path hook plus dangerous command blocklist and command allowlist.
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 /// Shell metacharacters that indicate command chaining/substitution.
 /// Includes `\n` because bash treats newlines as command separators equivalent to `;`.
 const SHELL_METACHARACTERS: &[&str] = &[";", "\n", "&&", "||", "|", "$(", "`", "<(", ">("];
 
-/// Dangerous command patterns that are always blocked regardless of workspace restriction.
+/// Dangerous command patterns that are always blocked regardless of filesystem path policy.
 /// All patterns MUST be lowercase (compared against lowercased input).
 const DANGEROUS_PATTERNS: &[&str] = &[
     "rm -rf /",
@@ -45,29 +44,21 @@ const DANGEROUS_PATTERNS: &[&str] = &[
     "curl | sh",
 ];
 
-/// Security sandbox that validates file paths and commands.
+/// Shared path-policy hook plus command allowlist/denylist checks.
 #[derive(Debug)]
 pub struct Sandbox {
-    /// The workspace directory that tools are restricted to.
+    /// The workspace directory used as the default working directory for tools.
     pub workspace: Option<PathBuf>,
-    /// Whether to enforce workspace restriction.
-    pub restrict_to_workspace: bool,
     /// Optional command allowlist. When set, only commands whose first token
     /// is in this list are permitted. When `None`, falls back to the denylist.
     command_allowlist: Option<Vec<String>>,
-    /// Lazily computed canonical workspace path. We avoid doing the filesystem
-    /// work at construction so that missing directories do not fail, and cache
-    /// it so repeated `validate_path` calls are not penalized.
-    canonical_workspace: OnceLock<PathBuf>,
 }
 
 impl Clone for Sandbox {
     fn clone(&self) -> Self {
         Self {
             workspace: self.workspace.clone(),
-            restrict_to_workspace: self.restrict_to_workspace,
             command_allowlist: self.command_allowlist.clone(),
-            canonical_workspace: OnceLock::new(),
         }
     }
 }
@@ -79,112 +70,43 @@ impl Sandbox {
         self
     }
 
-    /// Create a new sandbox with the given workspace and restriction setting.
-    pub fn new(workspace: Option<PathBuf>, restrict_to_workspace: bool) -> Self {
-        Self::with_allowlist(workspace, restrict_to_workspace, None)
+    /// Create command/path policy with the given workspace.
+    pub fn new(workspace: Option<PathBuf>) -> Self {
+        Self::with_allowlist(workspace, None)
     }
 
-    /// Create a new sandbox with an explicit allowlist.
+    /// Create a new sandbox with an explicit command allowlist.
     pub fn with_allowlist(
         workspace: Option<PathBuf>,
-        restrict_to_workspace: bool,
         command_allowlist: Option<Vec<String>>,
     ) -> Self {
         Self {
             workspace,
-            restrict_to_workspace,
             command_allowlist,
-            canonical_workspace: OnceLock::new(),
         }
     }
 
-    /// Build a sandbox for an agent/repl entry point from the parsed config.
+    /// Build command/path policy for an agent/repl entry point from the parsed config.
     ///
-    /// This centralises the policy decisions so the CLI/REPL interface layers
-    /// do not need to know which `AgentDefaults` fields map to sandbox policy.
+    /// The legacy filesystem sandbox mode has been removed; paths are no longer
+    /// rejected for being outside the workspace. Command denylist/allowlist
+    /// policy remains active.
     pub fn for_agent_workspace(
         config: &crate::infrastructure::config::Config,
         workspace: PathBuf,
-        no_sandbox: bool,
     ) -> Self {
-        let restrict_to_workspace = !no_sandbox && config.agents.defaults.restrict_to_workspace;
         Self::with_allowlist(
             Some(workspace),
-            restrict_to_workspace,
             config.agents.defaults.command_allowlist.clone(),
         )
     }
 
-    /// Validate that a file path is within the workspace (if restriction is enabled).
-    /// Follows symlinks to ensure the resolved real path is inside the workspace.
+    /// Validate or normalize a file path.
     ///
-    /// # TOCTOU note (#303)
-    ///
-    /// There is an inherent time-of-check / time-of-use gap between this call and
-    /// the subsequent filesystem I/O (open/write/read) performed by the caller.
-    /// A symlink could be swapped to point outside the workspace in that window.
-    ///
-    /// - **Process-local check**: filesystem tools (read, write, edit, ls) run in
-    ///   the Quecto process and call `validate_path` directly, so the TOCTOU gap
-    ///   exists regardless of any external isolation (e.g. a container).
-    /// - **Known low-severity limitation**: exploitation requires local filesystem
-    ///   access and precise timing. For security-critical native deployments,
-    ///   consider `O_NOFOLLOW` on the final path component, or re-validate by
-    ///   comparing the open fd target via `/proc/self/fd/N` after open.
+    /// Filesystem workspace confinement has been removed. This shared hook now
+    /// accepts paths without rejecting absolute, home-relative, or parent paths.
     pub fn validate_path(&self, path: &str) -> Result<PathBuf, SandboxError> {
-        let path = Path::new(path);
-
-        if !self.restrict_to_workspace {
-            return Ok(path.to_path_buf());
-        }
-
-        let workspace = self.workspace.as_ref().ok_or(SandboxError::NoWorkspace)?;
-
-        // Canonicalize the workspace lazily on first use, then cache. If it
-        // doesn't exist yet, resolve it textually so the prefix check is still
-        // meaningful, but avoid repeated filesystem work on subsequent calls.
-        let canonical_workspace = self.canonical_workspace.get_or_init(|| {
-            if workspace.exists() {
-                workspace
-                    .canonicalize()
-                    .unwrap_or_else(|_| resolve_path(workspace))
-            } else {
-                resolve_path(workspace)
-            }
-        });
-
-        // Try to canonicalize the target path to resolve symlinks.
-        // If the full path doesn't exist, try canonicalizing the parent
-        // (for paths where the file hasn't been created yet).
-        let resolved = if path.exists() {
-            path.canonicalize()
-                .map_err(|e| SandboxError::Io(path.display().to_string(), e))?
-        } else if let Some(parent) = path.parent() {
-            if parent.exists() {
-                let canonical_parent = parent
-                    .canonicalize()
-                    .map_err(|e| SandboxError::Io(parent.display().to_string(), e))?;
-                if let Some(file_name) = path.file_name() {
-                    canonical_parent.join(file_name)
-                } else {
-                    canonical_parent
-                }
-            } else {
-                // Neither path nor parent exists — fall back to textual resolution
-                resolve_path(path)
-            }
-        } else {
-            resolve_path(path)
-        };
-
-        if resolved.starts_with(canonical_workspace) {
-            Ok(resolved)
-        } else {
-            Err(SandboxError::OutsideWorkspace(
-                resolved.display().to_string(),
-                canonical_workspace.display().to_string(),
-            ))
-        }
+        Ok(Path::new(path).to_path_buf())
     }
 
     /// Validate that a command is permitted.
@@ -540,41 +462,17 @@ pub(crate) fn extract_all_command_tokens(command: &str) -> Vec<String> {
     tokens
 }
 
-/// Resolve a path by normalizing ".." and "." components without requiring the path to exist.
-fn resolve_path(path: &Path) -> PathBuf {
-    let mut result = PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::ParentDir => {
-                result.pop();
-            }
-            std::path::Component::CurDir => {}
-            other => result.push(other),
-        }
-    }
-    result
-}
-
 #[derive(Debug)]
 pub enum SandboxError {
-    /// Path is outside the allowed workspace directory.
-    OutsideWorkspace(String, String),
     /// Command matches a dangerous pattern.
     DangerousPattern(String, String),
     /// Command is not in the allowlist.
     NotInAllowlist(String, String),
-    /// No workspace directory configured.
-    NoWorkspace,
-    /// I/O error during path resolution.
-    Io(String, std::io::Error),
 }
 
 impl std::fmt::Display for SandboxError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SandboxError::OutsideWorkspace(path, workspace) => {
-                write!(f, "path '{}' is outside working dir '{}'", path, workspace)
-            }
             SandboxError::DangerousPattern(cmd, pattern) => {
                 write!(
                     f,
@@ -584,10 +482,6 @@ impl std::fmt::Display for SandboxError {
             }
             SandboxError::NotInAllowlist(cmd, token) => {
                 write!(f, "command '{}': '{}' is not in allowlist", cmd, token)
-            }
-            SandboxError::NoWorkspace => write!(f, "no workspace directory configured"),
-            SandboxError::Io(path, err) => {
-                write!(f, "I/O error resolving '{}': {}", path, err)
             }
         }
     }

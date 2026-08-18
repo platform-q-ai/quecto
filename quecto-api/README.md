@@ -4,7 +4,7 @@ HTTP/WebSocket gateway to a quecto agent over UDS.
 
 Connects to a running `quecto agent --mode uds` process via Unix domain socket
 and exposes its capabilities as a REST + WebSocket API for web applications.
-Version **0.5.0**.
+Version **0.5.4**.
 
 ## Endpoints
 
@@ -76,7 +76,7 @@ Unknown flags and missing `--socket` / `QUECTO_SOCKET` exit with a non-zero stat
 
 ### WebSocket (`/ws`)
 
-On connect the gateway subscribes to the agent's broadcast event stream and forwards every event as a JSON text frame (except duplicate direct `get_message` responses already returned to the requester).
+On connect the gateway subscribes to the agent's broadcast event stream and forwards every event as a JSON text frame (except duplicate direct command responses already returned to the requester).
 
 **Client → gateway text frames:**
 
@@ -84,8 +84,11 @@ On connect the gateway subscribes to the agent's broadcast event stream and forw
 2. **Direct `get_message`** (#1094):  
    `{"type":"get_message","id":"...","messageId":"...","agent_id":"...","toolCallId":"...","offset":0,"limit":65536}`  
    Correlated `response` is written back on the same socket with the client `id` echoed. Malformed `get_message` frames yield `success: false` with `command: "get_message"`.
+3. **Direct ledger `sync`** (#1195):  
+   `{"type":"sync","id":"...","epoch":1,"sinceRev":42,"agent_id":"..."}`  
+   Pulls committed ledger messages after `sinceRev` for `epoch`; omit `agent_id` for the root agent or set it to target a child. The correlated `response` echoes the client `id` and carries the agent's sync payload, for example `{"epoch":1,"rev":45,"messages":[...],"nextRev":45,"caughtUp":true}`. Resync metadata from stale/future cursors is forwarded in the response payload. Malformed `sync` frames yield `success: false` with `command: "sync"` and are not sent to the agent.
 
-Oversized messages should be recovered by walking `offset` / `nextOffset` / `hasMoreContent` rather than relying on a single frame.
+Oversized messages should be recovered by walking `offset` / `nextOffset` / `hasMoreContent` or ledger `sync` cursors rather than relying on a single frame.
 
 ### Event shapes (subset)
 
@@ -94,10 +97,11 @@ Gateway domain events mirror the UDS wire types the client cares about, includin
 - `agent_end` — `messages` is legacy/empty after harness #1060; use `messageRefs` + `GET /messages/{id}` (or WS `get_message`) for content.
 - `turn_end` — assistant turn payload + `toolResults`.
 - `subagent_messages_appended` — child turn refs (`agent_id`, `messageRefs`).
-- `response` — command ack (`id`, `command`, `success`, optional `data` / `error`).
+- `response` — command ack (`id`, `command`, `success`, optional `data` / `error`). For `command: "sync"`, `data` contains the ledger cursor metadata and messages returned by the agent.
+- `ledger_advanced` — `{"type":"ledger_advanced","epoch":1,"rev":45}`. Treat it as a hint that newer ledger entries exist; use `sync` with the last durable cursor to recover missed/skipped broadcast tail events.
 - `token`, `tool_execution_start` / `tool_execution_end`, `agent_start`, `turn_start`.
 
-Unknown future agent event types deserialize as `unknown` and are still forwarded when present on the wire as parseable JSON matching the tagged enum; unparseable lines are logged and dropped.
+Unknown future agent event types deserialize as `unknown` unless explicitly modeled; ledger-related future events modeled by the gateway preserve their flattened payload. Unparseable lines are logged and dropped.
 
 ## Architecture
 

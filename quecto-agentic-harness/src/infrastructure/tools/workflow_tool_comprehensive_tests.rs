@@ -304,12 +304,19 @@ async fn check_enforces_ordering_and_skip_bypasses_it() {
     assert!(check.is_error);
     assert!(check.content.contains("complete step 1"));
 
-    let skip = tool.execute(r#"{"action":"skip","step":6}"#).await.unwrap();
+    let skip = tool.execute(r#"{"action":"skip","step":7}"#).await.unwrap();
     assert!(!skip.is_error);
-    assert!(skip.content.contains("Step 6 skipped."));
+    assert!(skip.content.contains("Step 7 skipped."));
 
     let status = tool.execute(r#"{"action":"status"}"#).await.unwrap();
-    assert!(status.content.contains("[✓] 6. Implement code (GREEN)"));
+    assert!(
+        !status.content.contains("[✓] 7. Implement the scoped phase"),
+        "status must not expose future skipped steps: {}",
+        status.content
+    );
+    let engine = tool.engine();
+    let all_steps = engine.lock().unwrap().all_step_statuses();
+    assert!(all_steps[6].done);
 }
 
 #[tokio::test]
@@ -338,7 +345,7 @@ async fn status_reflects_complete_mode() {
         .await
         .unwrap();
 
-    for step in 1..=19 {
+    for step in 1..=20 {
         let result = tool
             .execute(&format!(r#"{{"action":"check","step":{step}}}"#))
             .await
@@ -461,10 +468,10 @@ async fn check_guards_is_command_scoped_for_multi_guard_templates() {
         .await
         .unwrap();
     // Check every step before `commit` so the commit guard is satisfied. The
-    // feature template has 9 steps ahead of `commit` (hooks, scenarios, tests,
-    // red, bdd_review, green, refactor, verify, version_bump — the last added by
-    // #950).
-    for step in 1..=9 {
+    // feature template has 11 steps ahead of `commit` (hooks, plan intake,
+    // semantic contract, test design/review, RED/GREEN, refactor/harden,
+    // local review, verify, and version bump).
+    for step in 1..=11 {
         tool.execute(&format!(r#"{{"action":"check","step":{step}}}"#))
             .await
             .unwrap();
@@ -481,7 +488,7 @@ async fn check_guards_is_command_scoped_for_multi_guard_templates() {
         .await
         .unwrap();
     assert!(merge_result.is_error, "merge guard should remain active");
-    assert!(merge_result.content.contains("conformance gate"));
+    assert!(merge_result.content.contains("does not merge"));
 }
 
 #[tokio::test]
@@ -564,7 +571,7 @@ async fn register_workflow_tool_with_broadcast_emitter() {
 
     let tmp = tempfile::tempdir().unwrap();
     let workspace = tmp.path().to_path_buf();
-    let sandbox = Sandbox::new(Some(workspace.clone()), false);
+    let sandbox = Sandbox::new(Some(workspace.clone()));
     let mut registry = crate::infrastructure::extensions::native::build_official_tool_registry(
         workspace,
         sandbox,

@@ -2,10 +2,11 @@ use std::collections::BTreeMap;
 
 use super::*;
 use crate::components::selectable_item_modal::{
-    ScopeSelection, SelectableItemModal, SelectableItemModalResult,
+    ScopeSelection, SearchFieldWeights, SelectableItemModal, SelectableItemModalResult,
 };
 use crate::protocol::client::{
-    Command, ToolCatalogueEntry, ToolPolicyApplyMode, ToolPolicyMutation, ToolScope,
+    Command, ToolCatalogueEntry, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyOperation,
+    ToolScope,
 };
 
 impl From<ToolScope> for ScopeSelection {
@@ -32,7 +33,10 @@ impl From<ScopeSelection> for ToolScope {
 
 impl App {
     pub(super) fn open_tool_policy_modal(&mut self) {
-        let id = format!("tool-policy-catalogue-{}", super::app_events::uuid_like());
+        let id = self.ac().namespaced_id(&format!(
+            "tool-policy-catalogue-{}",
+            super::app_events::uuid_like()
+        ));
         self.tool_policy_modal_pending_catalogue_id = Some(id.clone());
         self.send_command(Command::GetToolCatalogue { id: Some(id) });
         self.notify("Requested tool catalogue", NotifyLevel::Info);
@@ -69,9 +73,16 @@ impl App {
             .label(|entry| entry.name.clone())
             .description(|entry| entry.source.clone())
             .search_metadata(|entry| vec![entry.stable_id.clone()])
+            .search_weights(SearchFieldWeights::tool_lookup())
             .build()
         {
-            Ok(modal) => self.tool_policy_modal = Some(modal.with_scope_selection(scopes)),
+            Ok(modal) => {
+                self.tool_policy_modal = Some(
+                    modal
+                        .with_scope_selection(scopes)
+                        .with_space_toggle_while_filtering(),
+                )
+            }
             Err(error) => self.notify(
                 &format!("Tool policy modal unavailable: {error}"),
                 NotifyLevel::Error,
@@ -101,13 +112,13 @@ impl App {
                             })
                     })
                     .collect::<Vec<_>>();
-                if !mutations.is_empty() {
-                    self.send_command(Command::SetToolPolicy {
-                        id: Some("tool-policy-apply".into()),
-                        mutations,
-                        mode: ToolPolicyApplyMode::ImmediateIfIdle,
-                    });
-                }
+                self.send_command(Command::SetToolPolicy {
+                    id: Some(self.ac().namespaced_id("tool-policy-apply")),
+                    mutations,
+                    mode: ToolPolicyApplyMode::ImmediateIfIdle,
+                    operation: ToolPolicyOperation::Replace,
+                    unlisted_scope: Some(ToolScope::None),
+                });
             }
             SelectableItemModalResult::Dismissed => {
                 self.tool_policy_modal = None;

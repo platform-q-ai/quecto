@@ -70,8 +70,9 @@ Send a user message to the agent. This is the primary command — it triggers an
 
 1. `agent_start` — run begins
 2. `turn_start` — LLM call begins
-3. `token` (zero or more) — incremental streaming tokens
-4. `tool_execution_start` / `tool_execution_end` (if tools are called)
+3. `token` (zero or more) — incremental answer-text streaming tokens
+4. `thinking` (zero or more) — display-safe model reasoning/thinking deltas, separate from answer text
+5. `tool_execution_start` / `tool_execution_end` (if tools are called)
 5. `turn_end` — LLM call completed, includes assistant message
 6. `agent_end` — run finished; carries `messageRefs` for this run (legacy `messages` is empty after #1060)
 7. `response` with `command: "prompt"` and `success: true`
@@ -432,6 +433,7 @@ Each message contains:
 | `toolName` | string \| null | For `tool` messages: name of the tool that produced this result |
 | `isError` | boolean | Whether a `tool` message carries an error result |
 | `collapsed` | boolean | `true` when the context ladder demoted this message to a stub — recall the full body on demand via `get_message` with this `id` (#1061) |
+| `thinking` | array | Optional assistant-only display-safe thinking blocks, omitted when absent. Text blocks use `{ "kind": "text", "text": "..." }`; redacted/private provider blocks use `{ "kind": "redacted" }` and never expose signatures, encrypted reasoning, or redacted payload bytes. `content` remains answer-only. |
 
 ---
 
@@ -678,6 +680,35 @@ Returns an empty `tools` array only when no tools are registered in the process.
 
 ---
 
+### `set_tool_policy`
+
+Mutate the live tool-policy overlay used by subsequent model-visible tool catalogues. The command is backward compatible: omitting `operation` keeps legacy patch semantics.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"set_tool_policy"` | yes | |
+| `id` | string | no | Correlation ID |
+| `mutations` | array | yes for patch; may be empty for replace | Listed tool policy changes. Each item identifies a tool by `toolId` (stable id, preferred) or `name`, plus `scope` (`"none"`, `"parent"`, `"child"`, or `"both"`) and optional `reason`. |
+| `mode` | `"immediateIfIdle"` \| `"atNextTurnBoundary"` | no | Defaults to `"immediateIfIdle"`. Timing is unchanged by `operation`: if the agent is busy, immediate requests queue for the next boundary. |
+| `operation` | `"patch"` \| `"replace"` | no | Defaults to `"patch"`. Patch changes only listed tools. Replace treats `mutations` as the complete desired profile and applies `unlistedScope` to every currently registered, unlisted tool. |
+| `unlistedScope` | scope string | required when `operation` is `"replace"` | Closed-world scope for registered tools not listed in `mutations`. |
+
+`replace` reconciliation reports public per-tool statuses for listed and unlisted current catalogue entries (`applied`, `alreadyInState`, `blockedByRestriction`, or `unknownTool`). Known entries report the resolved catalogue `name`; when the caller supplied a different identifier such as a stable `toolId`, results include `requestedIdentifier` for audit/display. Listed unknown/removed tools remain reported as `unknownTool`; stable-id-shaped identifiers are resolved only as stable ids and do not fall through to current tool names. Registered but unlisted tools are reconciled with `unlistedScope`. Restriction ceilings still prevent widening even in replace mode.
+
+Queued reconciliation outcomes are observable through the later `tool_policy_changed` event. When the initiating command included `id`, that event includes `correlationId` with the same value so clients can correlate application-time results to the queued request.
+
+Examples:
+
+```json
+{"type":"set_tool_policy","mutations":[{"name":"read","scope":"child"}]}
+```
+
+```json
+{"type":"set_tool_policy","operation":"replace","unlistedScope":"none","mutations":[{"toolId":"tool-read","scope":"both"}]}
+```
+
+---
+
 ### `register_tools`
 
 Register one or more tools from a connected extension client. See Extensions guide (`docs {"name":"extensions"}`) for full details.
@@ -815,6 +846,14 @@ Incremental text token from the LLM during streaming. Tokens arrive in real time
 
 ```json
 {"type":"token","token":"Hello"}
+```
+
+### `thinking`
+
+Display-safe model thinking/reasoning text from the LLM during streaming. Thinking is additive protocol data and is never part of answer `token` text. Providers may also expose redacted/private thinking metadata internally; UDS only carries visible text deltas and recovered messages only carry display-safe thinking blocks/placeholders.
+
+```json
+{"type":"thinking","text":"I should compare the alternatives."}
 ```
 
 ### `turn_start`
@@ -1189,7 +1228,6 @@ All flags for `quecto agent` that affect UDS mode:
 | `--model <model>` | Override default model from config |
 | `--max-iterations <n>` | Max tool call rounds per prompt |
 | `--max-time <secs>` | Wall-clock timeout for the entire agent |
-| `--no-sandbox` | Disable workspace path restriction (DANGEROUS) |
 | `--persist` | Keep agent alive after all clients disconnect |
 | `--effort <level>` | Reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`). Provider vocabulary still applies at request time. Overrides config and env var |
 | `--workflow` | Start workflow-driven prompt injection immediately |

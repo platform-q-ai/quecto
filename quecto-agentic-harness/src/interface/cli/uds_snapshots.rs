@@ -4,7 +4,7 @@ use super::uds_session::{
     HISTORY_PAGE_SIZE, compute_session_stats_with_usage, message_to_json_for_history_page,
     messages_page_json,
 };
-use crate::domain::message::{Message, Role};
+use crate::domain::message::{Message, Role, ThinkingBlock};
 use crate::domain::session::ContextSpillStore;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -56,6 +56,20 @@ fn message_bytes(m: &Message) -> usize {
             .sum::<usize>()
         + m.tool_call_id.as_ref().map_or(0, |s| s.len())
         + m.tool_name.as_ref().map_or(0, |s| s.len())
+        + m.thinking_blocks
+            .iter()
+            .map(thinking_block_bytes)
+            .sum::<usize>()
+}
+
+fn thinking_block_bytes(tb: &ThinkingBlock) -> usize {
+    match tb {
+        ThinkingBlock::Normal {
+            thinking,
+            signature,
+        } => thinking.len() + signature.len(),
+        ThinkingBlock::Redacted { data } => data.len(),
+    }
 }
 /// Busy-path conversation snapshot: pruned live messages plus a bounded
 /// id→message ledger for resolving recent end-of-turn refs after pruning.
@@ -715,32 +729,4 @@ pub(crate) fn build_get_state_line_live(
     let mut line = ev.to_json_line();
     line.push('\n');
     line
-}
-
-#[cfg(test)]
-mod cov_tests {
-    use super::*;
-    use crate::domain::message::{Message, ToolCall};
-
-    #[test]
-    fn message_bytes_counts_optional_tool_metadata_and_lookup_falls_back_to_live_messages() {
-        let mut msg = Message::assistant(
-            "content",
-            vec![ToolCall {
-                id: "call-id".into(),
-                name: "bash".into(),
-                arguments: r#"{"command":"true"}"#.into(),
-            }],
-        );
-        msg.tool_call_id = Some("call-id".into());
-        msg.tool_name = Some("bash".into());
-
-        let size = message_bytes(&msg);
-        assert!(size > LEDGER_ENTRY_OVERHEAD + "content".len());
-
-        let id = msg.id().to_string();
-        let mut snapshot = ConversationSnapshotData::default();
-        snapshot.messages.push(msg);
-        assert_eq!(snapshot.lookup(&id).unwrap().id().to_string(), id);
-    }
 }

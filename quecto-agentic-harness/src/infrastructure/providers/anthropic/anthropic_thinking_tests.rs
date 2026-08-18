@@ -186,20 +186,6 @@ data: {\"type\":\"message_stop\"}\n";
 }
 
 #[test]
-fn test_parse_response_with_thinking_blocks() {
-    let body = serde_json::json!({
-        "content": [
-            {"type": "thinking", "thinking": "Let me reason through this..."},
-            {"type": "text", "text": "The answer is 42"}
-        ],
-        "usage": {"input_tokens": 10, "output_tokens": 5},
-        "stop_reason": "end_turn"
-    });
-    let result = AnthropicProvider::parse_response(&body, false, &[]).unwrap();
-    assert_eq!(result.content.as_deref(), Some("The answer is 42"));
-}
-
-#[test]
 fn test_thinking_budget_tokens_levels() {
     use crate::domain::provider::ThinkingLevel;
     assert_eq!(ThinkingLevel::Low.budget_tokens(), Some(1024));

@@ -128,7 +128,6 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     pub exec_options: crate::infrastructure::tools::bash::ExecOptions,
     pub session_key: String,
     pub spawned: bool,
-    pub restrict_to_workspace: bool,
     pub parent_session_name: Option<String>,
     /// The parent agent's own config path, forwarded so container spawns can
     /// fall back to it when the spawn call omits `config` (#1369 follow-up).
@@ -187,7 +186,6 @@ pub(crate) fn build_tool_runtime(
         exec_options,
         session_key,
         spawned,
-        restrict_to_workspace,
         parent_session_name,
         parent_config_path,
         disabled_tools,
@@ -219,6 +217,9 @@ pub(crate) fn build_tool_runtime(
             } else {
                 crate::infrastructure::tools::docs::DocsContentPolicy::Parent
             },
+            python_lab_config: crate::infrastructure::tools::python_lab::PythonLabConfig::from(
+                config.tools.python_lab.clone(),
+            ),
         }),
         match profile_context {
             // A fresh top-level session has no user/profile policy yet. Leaving
@@ -244,7 +245,6 @@ pub(crate) fn build_tool_runtime(
     let agent_control = build_agent_control_tool_extensions(AgentControlToolDeps {
         base_dir: base_dir.to_path_buf(),
         socket_dir: crate::interface::shared::xdg_runtime_dir_or_temp(),
-        restrict_to_workspace,
         broadcast_tx: workflow.broadcast_tx.clone(),
         parent_session_name,
         inherited_tool_policy: None,

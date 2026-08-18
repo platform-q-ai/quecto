@@ -11,10 +11,16 @@ fn tool_policy_command_and_catalogue_events_round_trip() {
             reason: Some("test".into()),
         }],
         mode: ToolPolicyApplyMode::ImmediateIfIdle,
+        operation: ToolPolicyOperation::Patch,
+        unlisted_scope: None,
     };
     let json = serde_json::to_string(&cmd).unwrap();
-    assert!(json.contains("\"type\":\"set_tool_policy\""));
-    assert!(json.contains("\"scope\":\"child\""));
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["type"], "set_tool_policy");
+    assert_eq!(value["scope"], serde_json::Value::Null);
+    assert_eq!(value["mutations"][0]["scope"], "child");
+    assert_eq!(value["operation"], "patch");
+    assert!(value.get("unlistedScope").is_none());
 
     let wire = r#"{"type":"tool_catalogue_changed","changedTools":["alpha"],"before":[],"after":[{"stableId":"s1","name":"alpha","profileScope":"child","effectiveScope":"child","effectiveParentEnabled":false,"effectiveChildEnabled":true}],"reason":"policy"}"#;
     let event: Event = serde_json::from_str(wire).unwrap();

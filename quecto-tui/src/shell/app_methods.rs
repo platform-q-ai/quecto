@@ -1,7 +1,7 @@
 pub(super) use super::app_render_helpers::{
     strip_ansi, subagent_activity_line, subagent_idle_line,
 };
-use super::app_selection::{SelectionAnchor, apply_selection_highlight, display_col_to_char_idx};
+use super::app_selection::apply_selection_highlight;
 use super::*;
 use crate::components::select_list::route_overlay_key;
 use crate::components::select_overlay::{
@@ -10,72 +10,59 @@ use crate::components::select_overlay::{
 use crate::components::theme;
 use crate::protocol::session_payloads;
 
-/// Format a Unix timestamp as `YYYY-MM-DD HH:MM` in **local** time, falling
-/// back to UTC if the platform's local-time conversion is unavailable.
-fn format_unix_minutes(secs: u64) -> String {
-    format_local_minutes(secs).unwrap_or_else(|| format_utc_minutes(secs))
-}
-
-/// Local time via `libc::localtime_r`. Returns `None` if the conversion fails.
-fn format_local_minutes(secs: u64) -> Option<String> {
-    let t = secs.try_into().ok()?;
-    // SAFETY: `libc::tm` is plain-old-data; an all-zero value is a valid initial state for libc to fill.
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    // SAFETY: `&t`/`&mut tm` point to live locals; localtime_r fills `tm` and returns null on failure (checked next).
-    if unsafe { libc::localtime_r(&t, &mut tm) }.is_null() {
-        return None;
-    }
-    Some(format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}",
-        tm.tm_year + 1900,
-        tm.tm_mon + 1,
-        tm.tm_mday,
-        tm.tm_hour,
-        tm.tm_min
-    ))
-}
-
-/// UTC fallback (pure arithmetic) when local-time conversion is unavailable.
-pub(super) fn format_utc_minutes(secs: u64) -> String {
-    let secs = secs as i64;
-    let days = secs.div_euclid(86_400);
-    let mut rem = secs.rem_euclid(86_400);
-    let hour = rem / 3_600;
-    rem %= 3_600;
-    let minute = rem / 60;
-    let (year, month, day) = civil_from_days(days);
-    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
-}
-
-pub(super) fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = mp + if mp < 10 { 3 } else { -9 };
-    let year = y + if m <= 2 { 1 } else { 0 };
-    (year, m as u32, d as u32)
-}
+// Wall-clock formatting helpers live in `app_time` (this module is at the
+// source line cap); re-exported so `app_methods::format_utc_minutes` and the
+// internal `format_unix_minutes` call sites stay put.
+use super::app_time::format_unix_minutes;
+// Only the unit tests reference these through `app_methods::…`; production reads
+// go straight to `app_time` (via `format_unix_minutes`), so gate the re-export.
+#[cfg(test)]
+pub(super) use super::app_time::{civil_from_days, format_utc_minutes};
 
 impl App {
     // ── Slash command handlers ─────────────────────────────────────────
 
     pub(super) fn reject_unknown_slash_command(&mut self, command: &str) {
-        self.master_session.chat.add_entry(ChatEntry::Status {
-            text: format!(
-                "Unknown slash command: {command}\nType /help to see available commands."
-            ),
-        });
+        self.ac_mut()
+            .master_session
+            .chat
+            .add_entry(ChatEntry::Status {
+                text: format!(
+                    "Unknown slash command: {command}\nType /help to see available commands."
+                ),
+            });
         self.notify("Unknown slash command", NotifyLevel::Warning);
     }
 
+    /// Ctrl+Z: leave the alternate screen, stop the process, and restore raw
+    /// mode + kitty protocol with a full repaint once resumed with `fg`.
+    pub(super) fn suspend_and_resume(&mut self) {
+        self.kitty.cleanup();
+        self.terminal.show_cursor();
+        crate::shell::signals::suspend();
+        // Resumed — re-enter raw mode.
+        self.terminal.enter_raw_mode();
+        self.terminal.hide_cursor();
+        self.kitty.query();
+        self.render_full();
+    }
+
     pub(super) fn show_help(&mut self) {
-        let mut text = String::from(
-            "Keyboard shortcuts:\n\
+        // Slash commands first, keyboard shortcuts last: compose_frame follows the
+        // chat tail, so Ctrl+T (and other shortcuts) stay in the viewport as the
+        // slash list grows (#1465 /tab-* entries).
+        let mut text = String::from("Slash commands:");
+        // Derive the slash-command listing from the single source of truth so it
+        // can never drift from the autocomplete set or the dispatch handler.
+        for command in builtin_commands() {
+            text.push_str(&format!(
+                "\n  /{:<14} {}",
+                command.name, command.description
+            ));
+        }
+        text.push_str(
+            "\n\n\
+             Keyboard shortcuts:\n\
              \x20 Enter          Send message (idle) / queue follow-up (running)\n\
              \x20 Shift+Enter    Insert newline\n\
              \x20 Alt+Enter      Insert newline\n\
@@ -92,30 +79,29 @@ impl App {
              \x20 PageUp/Down    Scroll chat\n\
              \x20 Up/Down        Input history\n\
              \n\
+             Tabs:\n\
+             \x20 Ctrl+N         Open a new tab\n\
+             \x20 Ctrl+1-9       Focus tab N\n\
+             \x20 Ctrl+PgUp/PgDn Cycle to previous/next tab\n\
+             \x20 Click a block  Focus that tab (+ opens a new one)\n\
+             \x20 (Alt+1-9 and Alt/Ctrl+Tab also work when the window\n\
+             \x20 manager does not grab them)\n\
+             \n\
              Mouse / links:\n\
              \x20 Wheel          Scroll chat\n\
              \x20 Drag           Select text\n\
              \x20 Shift+click    Open markdown/OSC 8 link in browser\n\
              \x20                (when mouse capture is on; some terminals\n\
-             \x20                use Ctrl/Cmd+click instead)\n\
-             \n\
-             Slash commands:",
+             \x20                use Ctrl/Cmd+click instead)\n",
         );
-        // Derive the slash-command listing from the single source of truth so it
-        // can never drift from the autocomplete set or the dispatch handler.
-        for command in builtin_commands() {
-            text.push_str(&format!(
-                "\n  /{:<14} {}",
-                command.name, command.description
-            ));
-        }
-        self.master_session
+        self.ac_mut()
+            .master_session
             .chat
             .add_entry(ChatEntry::Status { text });
     }
 
     pub(super) fn show_workflow_status(&mut self) {
-        let wf = &self.master_session.workflow_bar;
+        let wf = &self.ac().master_session.workflow_bar;
         let text = if workflow_bar::render_widget(wf, self.terminal.width).is_empty() {
             "Workflow is not active. Start quecto-tui with --workflow to enable it.".to_string()
         } else {
@@ -134,24 +120,25 @@ impl App {
                 wf.total.max(1)
             )
         };
-        self.master_session
+        self.ac_mut()
+            .master_session
             .chat
             .add_entry(ChatEntry::Status { text });
     }
 
     pub(super) fn toggle_workflow_auto_continue(&mut self) {
-        let next = !self.workflow.auto_continue;
+        let next = !self.ac().workflow.auto_continue;
         self.send_command(Command::SetWorkflowAutomation {
-            id: Some("workflow-auto".into()),
+            id: Some(self.ac().namespaced_id("workflow-auto")),
             auto_continue: Some(next),
             completion_nudge: None,
         });
     }
 
     pub(super) fn toggle_workflow_completion_nudge(&mut self) {
-        let next = !self.workflow.completion_nudge;
+        let next = !self.ac().workflow.completion_nudge;
         self.send_command(Command::SetWorkflowAutomation {
-            id: Some("workflow-nudge".into()),
+            id: Some(self.ac().namespaced_id("workflow-nudge")),
             auto_continue: None,
             completion_nudge: Some(next),
         });
@@ -159,7 +146,7 @@ impl App {
 
     pub(super) fn send_session_stats(&mut self) {
         self.send_command(Command::GetSessionStats {
-            id: Some("stats".into()),
+            id: Some(self.ac().namespaced_id("stats")),
         });
     }
 
@@ -167,7 +154,7 @@ impl App {
     /// line). Routed by the "stats-footer" id in the response handler.
     pub(super) fn send_session_stats_footer(&mut self) {
         self.send_command(Command::GetSessionStats {
-            id: Some("stats-footer".into()),
+            id: Some(self.ac().namespaced_id("stats-footer")),
         });
     }
 
@@ -176,15 +163,18 @@ impl App {
     pub(super) fn update_footer_stats(&mut self, data: &serde_json::Value) {
         let stats = session_payloads::parse_session_stats(data);
         if stats.context_usage.is_some() {
-            self.sessions.context_stats_requested = true;
+            self.ac_mut().sessions.context_stats_requested = true;
         }
         // Shared session-stats→footer mapping (context + cost gate); see #805.
-        self.master_session.footer.apply_session_stats(&stats);
+        self.ac_mut()
+            .master_session
+            .footer
+            .apply_session_stats(&stats);
     }
 
     pub(super) fn send_list_sessions(&mut self) {
         self.send_command(Command::ListSessions {
-            id: Some("resume-list".into()),
+            id: Some(self.ac().namespaced_id("resume-list")),
         });
     }
 
@@ -194,7 +184,7 @@ impl App {
             return;
         }
         self.send_command(Command::ResumeSession {
-            id: Some("resume".into()),
+            id: Some(self.ac().namespaced_id("resume")),
             session: session.trim().to_string(),
         });
     }
@@ -203,30 +193,49 @@ impl App {
         // Footer context/cost update has a single owner; this adds the chat line.
         self.update_footer_stats(data);
         let stats = session_payloads::parse_session_stats(data);
-        self.master_session.chat.add_entry(ChatEntry::Status {
-            text: format!(
-                "Session: {} | Messages: {} | Tokens: ↑{} ↓{}",
-                stats.session_key, stats.total_messages, stats.input_tokens, stats.output_tokens
-            ),
-        });
+        self.ac_mut()
+            .master_session
+            .chat
+            .add_entry(ChatEntry::Status {
+                text: format!(
+                    "Session: {} | Messages: {} | Tokens: ↑{} ↓{}",
+                    stats.session_key,
+                    stats.total_messages,
+                    stats.input_tokens,
+                    stats.output_tokens
+                ),
+            });
     }
 
     // ── Resume selector ─────────────────────────────────────────────
 
     pub(super) fn open_resume_selector(&mut self, data: &serde_json::Value) {
-        let sessions = session_payloads::parse_resume_sessions(data);
-        if sessions.is_empty() {
-            let text = if session_payloads::has_session_entries(data) {
-                "No resumable CLI sessions found."
+        self.open_resume_selector_at(
+            data,
+            &crate::shell::workspace_manifest::default_manifest_path(),
+        );
+    }
+
+    /// Testable resume selector open with an explicit manifest path (#1465 AC5).
+    pub(super) fn open_resume_selector_at(
+        &mut self,
+        data: &serde_json::Value,
+        manifest_path: &std::path::Path,
+    ) {
+        let mut sessions = session_payloads::parse_resume_sessions(data);
+        // #1466 fix pass item 3: sessions, like workspaces, list most
+        // recently active first (unknown times sink to the bottom).
+        sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_unix_secs.unwrap_or(0)));
+        let empty_hint = if sessions.is_empty() {
+            if session_payloads::has_session_entries(data) {
+                Some("No resumable CLI sessions found.")
             } else {
-                "No persisted sessions found."
-            };
-            self.master_session.chat.add_entry(ChatEntry::Status {
-                text: text.to_string(),
-            });
-            return;
-        }
-        let items = sessions
+                Some("No persisted sessions found.")
+            }
+        } else {
+            None
+        };
+        let session_items = sessions
             .into_iter()
             .map(|session| {
                 let when = session
@@ -234,18 +243,19 @@ impl App {
                     .map(format_unix_minutes)
                     .unwrap_or_else(|| "unknown time".to_string());
                 SelectItem {
-                    value: session.key,
+                    value: format!("session:{}", session.key),
                     label: session.title,
                     description: Some(format!("{when}   ({} msgs)", session.message_count)),
                 }
             })
             .collect::<Vec<_>>();
-        self.sessions.resume_selector = Some(SelectList::new(items, 10));
+        // AC5: workspaces above bare sessions.
+        self.open_resume_selector_with_workspaces(session_items, manifest_path, empty_hint);
     }
 
     pub(super) fn handle_resume_selector_key(&mut self, key: &Key) {
-        if let Some(session) = route_overlay_key(&mut self.sessions.resume_selector, key) {
-            self.send_resume_session(&session);
+        if let Some(choice) = route_overlay_key(&mut self.ac_mut().sessions.resume_selector, key) {
+            self.apply_resume_selection(&choice);
         }
     }
 
@@ -262,7 +272,8 @@ impl App {
             Ok(messages) => messages,
             Err(error) => {
                 let text = format!("Invalid resume payload: {}", error.description());
-                self.master_session
+                self.ac_mut()
+                    .master_session
                     .chat
                     .add_entry(ChatEntry::Status { text: text.clone() });
                 self.notify(&text, NotifyLevel::Error);
@@ -271,14 +282,17 @@ impl App {
         };
 
         let has_displayable_messages = !messages.is_empty();
-        self.master_session.chat.clear();
+        self.ac_mut().master_session.chat.clear();
         for entry in Self::resumed_chat_entries(messages) {
-            self.master_session.chat.add_entry(entry);
+            self.ac_mut().master_session.chat.add_entry(entry);
         }
         if !has_displayable_messages {
-            self.master_session.chat.add_entry(ChatEntry::Status {
-                text: empty_status.to_string(),
-            });
+            self.ac_mut()
+                .master_session
+                .chat
+                .add_entry(ChatEntry::Status {
+                    text: empty_status.to_string(),
+                });
         }
         has_displayable_messages
     }
@@ -322,12 +336,15 @@ impl App {
         let mut bottom = Vec::new();
 
         // Sub-agent/workflow bars moved out of the bottom stack.
-        if self.subagents.active_agent_id.is_none() && self.spinner.is_some() {
+        let active_is_master = self.ac().roster.active_agent_id.is_none();
+        let active_spinner_visible = self.ac().spinner.is_some();
+        let active_roster_empty = self.ac().roster.tracked.is_empty();
+        if active_is_master && active_spinner_visible {
             // Master is active and mid-turn: show its richer tool spinner (tool
             // name + elapsed), the only master-local render telemetry layered on
             // top of the shared per-session `running` flag (#828).
-            if let Some(spinner) = &mut self.spinner {
-                if self.subagents.tracked.is_empty() {
+            if let Some(spinner) = &mut self.ac_mut().spinner {
+                if active_roster_empty {
                     bottom.push(String::new());
                 }
                 bottom.extend(spinner.render(width));
@@ -337,13 +354,14 @@ impl App {
             // follow-up work, or the master before its spinner exists); show the
             // working indicator so it never looks dead.
             bottom.push(String::new());
-            bottom.push(subagent_activity_line(1, self.subagents.frame));
-        } else if !self.subagents.tracked.is_empty() {
-            let active = self.subagents.tracked_active_count();
+            bottom.push(subagent_activity_line(1, self.ac().roster.frame));
+        } else if !self.ac().roster.tracked.is_empty() {
+            let roster = &self.ac().roster;
+            let active = roster.tracked_active_count();
             if active > 0 {
-                bottom.push(subagent_activity_line(active, self.subagents.frame));
+                bottom.push(subagent_activity_line(active, roster.frame));
             } else {
-                bottom.push(subagent_idle_line(self.subagents.tracked.len()));
+                bottom.push(subagent_idle_line(roster.tracked.len()));
             }
         }
 
@@ -420,17 +438,21 @@ impl App {
 
         let mut lines = Vec::new();
 
+        // Tab bar (#1466): only with 2+ tabs, so single-tab frames are
+        // byte-identical to the pre-tab layout.
+        if let Some(tab_bar) = self.render_tab_bar(width) {
+            lines.push(tab_bar);
+        }
+
         // ── Render bottom section first to know its height ──────────
         let bottom = self.compose_bottom(width);
         let bottom_height = bottom.len();
 
-        // ── Render top section (header + chat) ──────────────────────
-        // Header.
-        let version = env!("CARGO_PKG_VERSION");
-        lines.push(theme::dim(&format!(
-            "quecto-tui v{} — Enter send, Shift+Enter newline, /help for commands",
-            version
-        )));
+        // ── Render top section (spacer + chat) ──────────────────────
+        // The version/help header line is gone (#1466 round 2): a BLANK
+        // spacer keeps the tab bar / Master status breathing room and the
+        // frame geometry stays otherwise identical.
+        lines.push(String::new());
 
         // Sub-agent-first main pane (#820 / #1288 / #1309): title + optional
         // compact workflow progress framed by separator rules above the chat.
@@ -491,12 +513,12 @@ impl App {
         // Composite the active centered overlay (only one is ever active at a
         // time). All three splice through the same ANSI-aware helper so the
         // centering and escape-safe splice rule lives in one place.
-        if let Some(selector) = &mut self.sessions.resume_selector {
+        if let Some(selector) = &mut self.ac_mut().sessions.resume_selector {
             let (selector_lines, overlay_width) =
                 build_resume_selector_overlay(selector, width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
-        if let Some(selector) = &mut self.rewind.selector {
+        if let Some(selector) = &mut self.ac_mut().rewind.selector {
             let (selector_lines, overlay_width) =
                 build_rewind_selector_overlay(selector, width, height);
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
@@ -638,25 +660,85 @@ impl App {
         self.render();
     }
 
+    /// Start a fresh `/new` workspace, preserving the old one for `/resume`.
+    pub(super) fn reset_workspace(&mut self) -> Vec<crate::shell::child_watch::ChildWatch> {
+        self.persist_default_durability();
+
+        let mut master = self
+            .tabs
+            .remove(&crate::shell::connection::TabId::MASTER)
+            .expect("workspace reset requires a master tab");
+        let mut watches = Vec::new();
+        for (_, mut state) in self.tabs.drain() {
+            state.transport.abort_feed();
+            watches.extend(state.child_exit_watch.take());
+        }
+        master.name = None;
+        master.session_key = None;
+        master.pending_session_resume = None;
+        master.roster = crate::agents::view::ConnectionRoster::new();
+        self.tabs
+            .insert(crate::shell::connection::TabId::MASTER, master);
+        self.active_tab = crate::shell::connection::TabId::MASTER;
+        self.routing_tab_override = None;
+        self.editor.set_text("");
+        self.subagents = crate::agents::view::SubagentUi::new();
+        self.workspace_id = crate::shell::workspace_manifest::generate_workspace_id();
+        self.workspace_label = crate::shell::workspace_manifest::generate_workspace_label();
+        self.reset_session("New session started");
+        self.persist_default_durability();
+        watches
+    }
+
     /// Reset the conversation — clears agent history, chat UI, and context display.
     pub(super) fn reset_session(&mut self, message: &str) {
-        self.send_new_session();
-        self.master_session.chat.clear();
+        // Invalidate a pending off-loop disconnect diagnosis (#1470 r2/r3)
+        // so the stale completion never lands in the fresh transcript.
+        self.ac_mut().disconnect_diag_pending = false;
+        // A dead connection still clears the LOCAL transcript (/clear must
+        // work on a dead session) but reports honestly (#1470 r3).
+        // Optimistic-enqueue window (#1470 r5): a just-died socket whose
+        // Closed sentinel has not drained still enqueues successfully —
+        // identical to pre-seam master; command acks are phase-2 scope.
+        let was_connected = self.ac().agent_connected;
+        let agent_reset = self.send_new_session();
+        self.ac_mut().master_session.chat.clear();
+        // The clear wiped any persistent refusal Status line; re-arm the
+        // once-per-episode latch so the next refusal (send_state_resync
+        // below, on a dead connection) re-raises the toast and re-writes
+        // the line into the fresh transcript (#1470 r6).
+        if !self.ac().agent_connected {
+            self.ac_mut().disconnect_refusal_notified = false;
+        }
         // Invalidate in-flight ref recovery so a late get_message from the OLD
         // transcript can't splice into the cleared /clear-or-/new session (#1060 r4).
         self.clear_message_recovery();
-        self.master_session.footer.set_context(None, 0);
-        self.sessions.context_stats_requested = false;
-        // The agent resets session-scoped state (e.g. the effort override,
-        // #1067) on new_session; re-fetch so the footer tracks it. Commands
-        // are dispatched in order, so this get_state observes the fresh
-        // session.
+        self.ac_mut().master_session.footer.set_context(None, 0);
+        self.ac_mut().sessions.context_stats_requested = false;
+        // The agent resets session-scoped state (e.g. the effort override, #1067)
+        // on new_session; re-fetch so the footer tracks it (commands dispatch in
+        // order, so this get_state observes the fresh session).
         self.send_state_resync();
-        self.notify(message, NotifyLevel::Success);
+        if agent_reset {
+            self.notify(message, NotifyLevel::Success);
+        } else if was_connected {
+            // Connected but the enqueue failed (backpressure): a disconnect
+            // diagnosis here would misdirect the user (#1470 r4).
+            self.notify(
+                "Cleared locally — sending new_session failed, retry /new",
+                NotifyLevel::Warning,
+            );
+        } else {
+            self.notify(
+                "Cleared locally — agent disconnected, no new session started",
+                NotifyLevel::Warning,
+            );
+        }
     }
 
-    pub(super) fn send_new_session(&mut self) {
-        self.send_command(Command::NewSession { id: None });
+    /// Request a fresh agent session; false when the connection is dead (#1470).
+    pub(super) fn send_new_session(&mut self) -> bool {
+        self.send_command(Command::NewSession { id: None })
     }
 
     #[cfg(test)]
@@ -665,86 +747,4 @@ impl App {
     }
 
     // ── Command sending ───────────────────────────────────────────────
-
-    pub(super) fn send_command(&mut self, cmd: Command) -> bool {
-        // Enqueue synchronously, in call order, onto the client's FIFO writer
-        // channel. A previous `tokio::spawn` per command let detached tasks
-        // race to enqueue, so recovery/reset bursts could reach the agent
-        // reordered — or look incomplete to an observer draining mid-batch
-        // (#1060 review).
-        if let Err(e) = self.client.clone_sender().try_send(&cmd) {
-            // Report without blocking the loop (a dropped notice is acceptable).
-            let _ = self.command_send_failure_tx.try_send(CommandSendFailure {
-                command: cmd,
-                error: e.to_string(),
-            });
-            return false;
-        }
-        true
-    }
-
-    pub(super) fn handle_command_send_failure(&mut self, failure: CommandSendFailure) {
-        let command_kind = failure.command.kind();
-        self.rollback_failed_history_command(&failure.command);
-        self.notify(
-            &format!("Failed to send {} command: {}", command_kind, failure.error),
-            NotifyLevel::Error,
-        );
-    }
-
-    // ── Mouse text selection (#528) ───────────────────────────────────
-
-    /// Extract visible text from the rendered buffer between two selection anchors.
-    pub(super) fn extract_selection(
-        &self,
-        start: &SelectionAnchor,
-        end: &SelectionAnchor,
-    ) -> String {
-        // Normalize: ensure start ≤ end (top-to-bottom, left-to-right).
-        let (start, end) = if (start.row, start.col) <= (end.row, end.col) {
-            (start, end)
-        } else {
-            (end, start)
-        };
-
-        let lines = &self.last_rendered_lines;
-        let (panel_width, divider_width, _) = self.frame_split();
-        let body_start_col = panel_width.saturating_add(divider_width);
-        let mut result = String::new();
-
-        for row in start.row..=end.row {
-            let row_idx = row as usize;
-            if row_idx >= lines.len() {
-                break;
-            }
-            let visible = strip_ansi_for_selection(&lines[row_idx]);
-            let visible_width = crate::components::utils::visible_width(&visible);
-            let chars: Vec<char> = visible.chars().collect();
-
-            let col_start = if row == start.row {
-                start.col as usize
-            } else {
-                0
-            };
-            let col_end = if row == end.row {
-                end.col as usize
-            } else {
-                visible_width
-            };
-
-            let col_start = col_start.max(body_start_col).min(visible_width);
-            let col_end = col_end.max(body_start_col).min(visible_width);
-
-            let start_idx = display_col_to_char_idx(&chars, col_start);
-            let end_idx = display_col_to_char_idx(&chars, col_end);
-            let segment: String = chars[start_idx..end_idx].iter().collect();
-
-            if !result.is_empty() {
-                result.push('\n');
-            }
-            result.push_str(&segment);
-        }
-
-        result
-    }
 }

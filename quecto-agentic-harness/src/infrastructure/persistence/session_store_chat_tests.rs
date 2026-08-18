@@ -26,6 +26,7 @@ async fn list_returns_only_user_chat_sessions_with_metadata_newest_first() {
                 key: key.to_string(),
                 messages: vec![chat_message(Role::User, "internal")],
                 workflow_run: None,
+                subagent_roster: Vec::new(),
             })
             .await
             .unwrap();
@@ -39,6 +40,7 @@ async fn list_returns_only_user_chat_sessions_with_metadata_newest_first() {
                 chat_message(Role::System, "sys"),
             ],
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();
@@ -53,6 +55,7 @@ async fn list_returns_only_user_chat_sessions_with_metadata_newest_first() {
                 chat_message(Role::Tool, "tool output"),
             ],
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();
@@ -84,6 +87,7 @@ async fn list_extracts_raw_first_user_message() {
             key: "chat-long".to_string(),
             messages: vec![chat_message(Role::User, long)],
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();
@@ -92,6 +96,7 @@ async fn list_extracts_raw_first_user_message() {
             key: "chat-empty".to_string(),
             messages: vec![chat_message(Role::Assistant, "hello")],
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();
@@ -100,6 +105,7 @@ async fn list_extracts_raw_first_user_message() {
             key: "chat-huge".to_string(),
             messages: vec![chat_message(Role::User, &huge)],
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();

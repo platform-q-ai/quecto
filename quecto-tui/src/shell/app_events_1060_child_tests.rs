@@ -12,7 +12,8 @@ use crate::shell::app::app_events::recovered_chat_entries;
 use crate::shell::app::tui_harness::{TuiHarness, subagent, subagents_changed};
 
 fn chat_text(app: &mut App) -> String {
-    app.master_session
+    app.ac_mut()
+        .master_session
         .chat
         .render(120)
         .iter()
@@ -180,6 +181,112 @@ async fn child_streamed_turn_after_prior_tools_does_not_refetch() {
         !cmds.iter().any(|l| is_get_message_cmd(l)),
         "a child text turn after prior tool turns must not refetch (per-turn \
          count, not lifetime); got: {cmds:?}"
+    );
+}
+
+/// Child recovery must judge only the active turn range; a previous assistant
+/// in the same child session must not suppress recovery for a lost/empty turn.
+#[tokio::test]
+async fn child_empty_turn_recovery_ignores_previous_assistant() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent(
+        "worker",
+        "running",
+        Some(("active", 1, 3)),
+    )]));
+
+    h.route("worker", Event::AgentStart);
+    h.route(
+        "worker",
+        Event::Token {
+            token: "prior complete".into(),
+        },
+    );
+    h.route(
+        "worker",
+        Event::TurnEnd {
+            message: serde_json::json!({
+                "role":"assistant", "content":"prior complete", "messageRefs":["prior-ref"]
+            }),
+        },
+    );
+    let _ = h.drain_commands().await;
+
+    let ref_id = "lost-child-turn-ref";
+    h.route("worker", Event::AgentStart);
+    h.route(
+        "worker",
+        Event::TurnEnd {
+            message: serde_json::json!({
+                "role":"assistant", "content":"", "messageRefs":[ref_id], "contentLength": 9
+            }),
+        },
+    );
+
+    let cmds = h.drain_commands().await;
+    assert!(
+        cmds.iter().filter(|l| is_get_message_cmd(l)).any(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).unwrap();
+            v["agent_id"].as_str() == Some("worker") && v["messageId"].as_str() == Some(ref_id)
+        }),
+        "empty child turn must recover despite previous assistant: {cmds:?}"
+    );
+}
+
+/// Child recovery de-dupe is child-scoped: two children may legitimately share
+/// the same opaque message ref, so a pending recovery for one child must not
+/// suppress the other's request.
+#[tokio::test]
+async fn child_recovery_dedupe_allows_same_ref_for_different_children() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![
+        subagent("child-a", "running", Some(("active", 1, 3))),
+        subagent("child-b", "running", Some(("active", 1, 3))),
+    ]));
+
+    let ref_id = "shared-child-ref";
+    h.route("child-a", Event::AgentStart);
+    h.route(
+        "child-a",
+        Event::TurnEnd {
+            message: serde_json::json!({
+                "role":"assistant", "content":"", "messageRefs":[ref_id], "contentLength": 20
+            }),
+        },
+    );
+    let first_cmds = h.drain_commands().await;
+    assert!(
+        first_cmds
+            .iter()
+            .filter(|l| is_get_message_cmd(l))
+            .any(|l| {
+                let v: serde_json::Value = serde_json::from_str(l).unwrap();
+                v["agent_id"].as_str() == Some("child-a") && v["messageId"].as_str() == Some(ref_id)
+            }),
+        "first child must start recovery: {first_cmds:?}"
+    );
+
+    h.route("child-b", Event::AgentStart);
+    h.route(
+        "child-b",
+        Event::TurnEnd {
+            message: serde_json::json!({
+                "role":"assistant", "content":"", "messageRefs":[ref_id], "contentLength": 20
+            }),
+        },
+    );
+    let second_cmds = h.drain_commands().await;
+    assert!(
+        second_cmds
+            .iter()
+            .filter(|l| is_get_message_cmd(l))
+            .any(|l| {
+                let v: serde_json::Value = serde_json::from_str(l).unwrap();
+                v["agent_id"].as_str() == Some("child-b") && v["messageId"].as_str() == Some(ref_id)
+            }),
+        "second child with colliding ref must issue its own scoped recovery: {second_cmds:?}"
     );
 }
 

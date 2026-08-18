@@ -7,7 +7,7 @@ use super::*;
 fn given_tool_workspace(world: &mut QuectoWorld) {
     let td = TempDir::new().expect("failed to create temp dir");
     let ws = td.path().to_path_buf();
-    let sandbox = Sandbox::new(Some(ws.clone()), true);
+    let sandbox = Sandbox::new(Some(ws.clone()));
     let registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
         ws.clone(),
         sandbox,
@@ -22,14 +22,14 @@ fn given_tool_workspace(world: &mut QuectoWorld) {
 fn given_tool_workspace_with_exec_timeout(world: &mut QuectoWorld, timeout_secs: u64) {
     let td = TempDir::new().expect("failed to create temp dir");
     let ws = td.path().to_path_buf();
-    let sandbox = Sandbox::new(Some(ws.clone()), true);
+    let sandbox = Sandbox::new(Some(ws.clone()));
     let mut registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
         ws.clone(),
         sandbox,
         Default::default(),
     );
 
-    let exec_sandbox = Sandbox::new(Some(ws.clone()), true);
+    let exec_sandbox = Sandbox::new(Some(ws.clone()));
     let exec = ExecTool::with_timeout(
         std::sync::Arc::new(ws.clone()),
         std::sync::Arc::new(exec_sandbox),
@@ -60,7 +60,7 @@ fn given_workspace_with_many_files(world: &mut QuectoWorld, count: usize) {
         std::fs::write(tmp.path().join(format!("file{:04}.txt", i)), "x").unwrap();
     }
     let ws = tmp.path().to_path_buf();
-    let sandbox = Sandbox::new(Some(ws.clone()), true);
+    let sandbox = Sandbox::new(Some(ws.clone()));
     let registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
         ws.clone(),
         sandbox,
@@ -243,39 +243,10 @@ fn then_registry_contains(world: &mut QuectoWorld, tool_name: String) {
 // Security (Subagent Inheritance) Steps
 // ===========================================================================
 
-#[given("a subagent context inheriting restrict_to_workspace")]
-fn given_subagent_inheriting_sandbox(world: &mut QuectoWorld) {
-    let sb = world.sandbox.as_ref().expect("sandbox not configured");
-    // Create a subagent config that inherits the sandbox's restrict_to_workspace
-    world.subagent_config = Some(SubagentConfig {
-        container: quecto::domain::subagent::ContainerSelection::Local,
-        task: Some("test task".to_string()),
-        agent_id: None,
-        restrict_to_workspace: sb.restrict_to_workspace,
-        system: None,
-        config_path: None,
-        workflow: false,
-        workflow_guards: false,
-        workflow_spec: None,
-        model: None,
-        effort: None,
-        disable_tools: Vec::new(),
-        read_only: false,
-    });
-    let ctx = SubagentContext::from_config(world.subagent_config.as_ref().unwrap());
-    world.subagent_context = Some(ctx);
-}
-
 #[when(expr = "the subagent sandbox validates path {string}")]
 fn when_subagent_validates_path(world: &mut QuectoWorld, path: String) {
     // The subagent inherits the same sandbox config; validate using it
     let sb = world.sandbox.as_ref().expect("sandbox not configured");
-    // Verify the subagent context also has restrict_to_workspace set
-    let ctx = world
-        .subagent_context
-        .as_ref()
-        .expect("subagent context not set");
-    assert_eq!(ctx.restrict_to_workspace, sb.restrict_to_workspace);
     world.validation_result = Some(
         sb.validate_path(&path)
             .map(|_| ())
@@ -289,7 +260,7 @@ fn when_subagent_validates_path(world: &mut QuectoWorld, path: String) {
 
 #[given(expr = "a spawn tool with allowed agents {string} and {string}")]
 fn given_spawn_tool(world: &mut QuectoWorld, agent1: String, agent2: String) {
-    world.spawn_tool = Some(SpawnTool::new(vec![agent1, agent2], true));
+    world.spawn_tool = Some(SpawnTool::new(vec![agent1, agent2]));
 }
 
 #[when(expr = "the agent executes the spawn tool with task {string}")]

@@ -759,6 +759,9 @@ fn execute_repl_with_recorder(world: &mut QuectoWorld) {
                     format!("ToolFinished:{}", name)
                 }
                 quecto::domain::agent::AgentProgressEvent::Token(_) => "Token".to_string(),
+                quecto::domain::agent::AgentProgressEvent::ThinkingDelta(_) => {
+                    "ThinkingDelta".to_string()
+                }
                 quecto::domain::agent::AgentProgressEvent::TurnCompleted { .. } => {
                     "TurnCompleted".to_string()
                 }

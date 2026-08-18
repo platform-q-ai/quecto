@@ -217,6 +217,16 @@ fn test_parse_repl_flags_model_missing_value() {
 }
 
 #[test]
+fn test_parse_repl_flags_no_sandbox_is_rejected() {
+    let args: Vec<String> = vec!["--no-sandbox".into(), "--model".into(), "gpt-4o".into()];
+    let result = parse_repl_flags(&args);
+    match result {
+        Err(msg) => assert!(msg.contains("unknown flag '--no-sandbox'"), "got: {msg}"),
+        Ok(_) => panic!("expected error"),
+    }
+}
+
+#[test]
 fn test_parse_repl_flags_unknown_flag() {
     let args: Vec<String> = vec!["--foobar".into()];
     let result = parse_repl_flags(&args);
@@ -351,6 +361,19 @@ fn test_run_with_output_empty_args() {
 }
 
 #[test]
+fn test_run_with_output_repl_leading_no_sandbox_is_rejected() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let out = run_with_output(vec!["quecto".into(), "--no-sandbox".into()], &ctx);
+    assert_ne!(out.exit_code, 0);
+    assert!(out.stderr.contains("Unknown command"), "{}", out.stderr);
+    assert!(out.stderr.contains("--no-sandbox"), "{}", out.stderr);
+}
+
+#[test]
 fn test_run_with_output_empty_args_with_provider_exits_clean() {
     // No subcommand + a usable config (provider + default model) → REPL mode;
     // with empty stdin it hits EOF immediately and exits cleanly (0). Hermetic
@@ -407,6 +430,7 @@ fn test_cli_context_all_fields() {
         config_path: None,
         stdin_data: Some("input".to_string()),
         oauth_base_url: Some("http://oauth.local".to_string()),
+        cwd: Some(PathBuf::from("/tmp/test/workspace")),
     };
     assert_eq!(ctx.base_dir(), PathBuf::from("/tmp/test"));
     assert_eq!(ctx.stdin_data.as_deref(), Some("input"));
@@ -508,46 +532,6 @@ fn test_build_tokio_runtime_succeeds() {
     let result = rt.block_on(async { 42 });
     assert_eq!(result, 42);
 }
-
-// ===================================================================
-// --no-sandbox flag tests for REPL
-// ===================================================================
-
-#[test]
-fn test_parse_repl_flags_no_sandbox_defaults_false() {
-    let flags = parse_repl_flags(&[]).unwrap();
-    assert!(
-        !flags.no_sandbox,
-        "--no-sandbox should be false by default in REPL"
-    );
-}
-
-#[test]
-fn test_parse_repl_flags_no_sandbox_parsed() {
-    let args: Vec<String> = vec!["--no-sandbox".into()];
-    let flags = parse_repl_flags(&args).unwrap();
-    assert!(
-        flags.no_sandbox,
-        "--no-sandbox should be true when provided to REPL"
-    );
-}
-
-#[test]
-fn test_parse_repl_flags_no_sandbox_combined_with_session() {
-    let args: Vec<String> = vec![
-        "--no-sandbox".into(),
-        "-s".into(),
-        "chat1".into(),
-        "--model".into(),
-        "gpt-4".into(),
-    ];
-    let flags = parse_repl_flags(&args).unwrap();
-    assert!(flags.no_sandbox);
-    assert_eq!(flags.session_name.as_deref(), Some("chat1"));
-    assert_eq!(flags.model_override.as_deref(), Some("gpt-4"));
-}
-
-// --- Issue #300: --config flag ---
 
 #[test]
 fn test_config_flag_extracted_from_args() {

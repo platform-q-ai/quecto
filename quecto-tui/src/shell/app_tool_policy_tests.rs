@@ -41,9 +41,27 @@ async fn ctrl_t_opens_tool_policy_modal_and_apply_sends_mutations() {
     h.app_mut().handle_key(crate::shell::keys::Key::Char(' '));
     h.app_mut().handle_key(crate::shell::keys::Key::Enter);
     let sent = h.drain_commands().await.join("\n");
-    assert!(sent.contains("\"type\":\"set_tool_policy\""), "{sent}");
-    assert!(sent.contains("\"toolId\":\"tool-alpha\""), "{sent}");
-    assert!(sent.contains("\"scope\":\"parent\""), "{sent}");
+    let value: serde_json::Value = serde_json::from_str(&sent).expect(&sent);
+    assert_eq!(value["type"], "set_tool_policy");
+    assert_eq!(value["operation"], "replace");
+    assert_eq!(value["unlistedScope"], "none");
+    assert_eq!(value["mutations"][0]["toolId"], "tool-alpha");
+    assert_eq!(value["mutations"][0]["scope"], "parent");
+}
+
+#[tokio::test]
+async fn empty_tool_policy_modal_apply_sends_complete_profile_replace() {
+    let mut h = harness().await;
+
+    h.app_mut().open_tool_policy_modal_now();
+    h.app_mut().handle_key(crate::shell::keys::Key::Enter);
+
+    let sent = h.drain_commands().await.join("\n");
+    let value: serde_json::Value = serde_json::from_str(&sent).expect(&sent);
+    assert_eq!(value["type"], "set_tool_policy");
+    assert_eq!(value["operation"], "replace");
+    assert_eq!(value["unlistedScope"], "none");
+    assert_eq!(value["mutations"].as_array().unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -94,7 +112,7 @@ async fn incremental_catalogue_event_during_pending_ctrl_t_does_not_open_or_cons
 
     let request_id = request_tool_catalogue(&mut h).await;
     assert!(
-        request_id.starts_with("tool-policy-catalogue-"),
+        request_id.starts_with("tab0:tool-policy-catalogue-"),
         "{request_id}"
     );
 
@@ -149,7 +167,7 @@ async fn stale_get_tool_catalogue_response_does_not_open_or_consume_pending_ctrl
 
     let request_id = request_tool_catalogue(&mut h).await;
     assert!(
-        request_id.starts_with("tool-policy-catalogue-"),
+        request_id.starts_with("tab0:tool-policy-catalogue-"),
         "{request_id}"
     );
 
@@ -692,10 +710,17 @@ async fn tool_policy_changed_result_updates_reopened_modal_scope() {
 async fn help_mentions_ctrl_t_tool_policy_shortcut() {
     let mut h = harness().await;
     h.app_mut().show_help();
-    let frame = h.app_mut().compose_frame().join("\n");
+    // Status body (not viewport): slash-command growth can scroll shortcuts off-frame.
+    let body = h
+        .app_mut()
+        .ac()
+        .master_session
+        .chat
+        .last_status_text()
+        .unwrap_or("");
     assert!(
-        crate::components::ansi::strip_ansi(&frame)
-            .contains("Ctrl+T         Open tool policy selector")
+        body.contains("Ctrl+T         Open tool policy selector"),
+        "{body}"
     );
 }
 

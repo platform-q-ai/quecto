@@ -6,6 +6,7 @@ pub(super) struct ForwardGetMessage {
     pub(super) message_id: MessageId,
     pub(super) tool_call_id: Option<ToolCallId>,
     pub(super) offset: Option<usize>,
+    pub(super) thinking_offset: Option<usize>,
     pub(super) limit: Option<usize>,
 }
 
@@ -17,13 +18,16 @@ pub(super) async fn forward_subagent_get_message(
     req: ForwardGetMessage,
 ) -> AgentEvent {
     use crate::infrastructure::tools::subagent_registry::{
-        INSPECTOR_RESPONSE_TIMEOUT, lookup_subagent_socket, send_subagent_uds_command_with_timeout,
+        INSPECTOR_RESPONSE_TIMEOUT, send_subagent_uds_command_with_timeout,
+    };
+    use crate::infrastructure::tools::subagent_routing::{
+        InspectionRoute, resolve_inspection_route,
     };
     let Some(registry) = ctx.subagent_registry.as_ref() else {
         return AgentEvent::err(id, tn, "no sub-agent registry available");
     };
-    let socket_path = match lookup_subagent_socket(registry, req.agent_id.as_str()) {
-        Ok(path) => path,
+    let route = match resolve_inspection_route(registry, req.agent_id.as_str()) {
+        Ok(route) => route,
         Err(e) => return AgentEvent::err(id, tn, e),
     };
     let mut cmd = serde_json::json!({
@@ -36,11 +40,24 @@ pub(super) async fn forward_subagent_get_message(
     if let Some(offset) = req.offset {
         cmd["offset"] = serde_json::json!(offset);
     }
+    if let Some(thinking_offset) = req.thinking_offset {
+        cmd["thinkingOffset"] = serde_json::json!(thinking_offset);
+    }
     if let Some(limit) = req.limit {
         cmd["limit"] = serde_json::json!(limit);
     }
+    if let InspectionRoute::ViaAncestor { target_id, .. } = &route {
+        cmd["agent_id"] = serde_json::json!(target_id);
+    }
+    let socket_path = match &route {
+        InspectionRoute::Direct { socket_path } => socket_path,
+        InspectionRoute::ViaAncestor {
+            ancestor_socket_path,
+            ..
+        } => ancestor_socket_path,
+    };
     let cmd = cmd.to_string();
-    match send_subagent_uds_command_with_timeout(&socket_path, &cmd, INSPECTOR_RESPONSE_TIMEOUT)
+    match send_subagent_uds_command_with_timeout(socket_path, &cmd, INSPECTOR_RESPONSE_TIMEOUT)
         .await
     {
         Ok(line) => match super::uds_forward_response::parse_forwarded_get_message(&line) {

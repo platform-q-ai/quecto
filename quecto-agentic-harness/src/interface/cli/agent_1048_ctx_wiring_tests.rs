@@ -16,7 +16,6 @@ fn flags_for_wiring_test() -> AgentFlags {
         max_iterations: Some(5),
         max_time: None,
         uds_mode: false,
-        no_sandbox: false,
         socket_path: None,
         persist: false,
         disabled_tools: vec![],
@@ -28,6 +27,9 @@ fn flags_for_wiring_test() -> AgentFlags {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
+        cwd_override: None,
     }
 }
 

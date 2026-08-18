@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 #[path = "client_policy_types.rs"]
 mod client_policy_types;
 pub use client_policy_types::{
-    ToolCatalogueEntry, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyResult, ToolScope,
+    ToolCatalogueEntry, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyOperation,
+    ToolPolicyResult, ToolScope,
 };
 use std::path::Path;
 use tokio::io::BufReader;
@@ -62,12 +63,16 @@ pub enum Command {
     GetState {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+        #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
     },
     GetMessages {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         before: Option<String>,
+        #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
     },
     GetMessagesTail {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -90,6 +95,8 @@ pub enum Command {
         tool_call_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         offset: Option<usize>,
+        #[serde(rename = "thinkingOffset", skip_serializing_if = "Option::is_none")]
+        thinking_offset: Option<usize>,
         #[serde(skip_serializing_if = "Option::is_none")]
         limit: Option<usize>,
     },
@@ -107,6 +114,9 @@ pub enum Command {
         id: Option<String>,
         mutations: Vec<ToolPolicyMutation>,
         mode: ToolPolicyApplyMode,
+        operation: ToolPolicyOperation,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unlisted_scope: Option<ToolScope>,
     },
     ListModels {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -176,6 +186,8 @@ pub enum Command {
         epoch: u64,
         #[serde(rename = "sinceRev")]
         since_rev: u64,
+        #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
     },
 }
 /// An event received from the agent.
@@ -196,6 +208,9 @@ pub enum Event {
     },
     Token {
         token: String,
+    },
+    Thinking {
+        text: String,
     },
     TurnStart,
     TurnEnd {
@@ -307,6 +322,8 @@ pub enum Event {
         results: Vec<ToolPolicyResult>,
         apply_mode: String,
         reason: String,
+        #[serde(rename = "correlationId", default)]
+        correlation_id: Option<String>,
     },
     /// Catch-all for unknown/future event types (forward-compatible).
     #[serde(other)]
@@ -317,7 +334,6 @@ pub enum Event {
 pub use crate::protocol::subagent_payloads::{
     SubagentEnvironmentInfo, SubagentInfoEvent, SubagentWorkflow,
 };
-
 // ─── Result text extraction ───────────────────────────────────────────────────
 /// Extract the first text content from a tool result JSON value.
 ///
@@ -376,10 +392,12 @@ impl From<serde_json::Error> for ClientError {
 /// Multiple tasks can hold a `CommandSender` to send commands concurrently.
 #[derive(Clone)]
 pub struct CommandSender {
-    tx: mpsc::Sender<String>,
+    pub(crate) tx: mpsc::Sender<String>,
 }
 impl Command {
-    /// Non-sensitive command kind for user-facing diagnostics.
+    pub fn with_inspection_agent_id(&self, agent_id: &str, ns: &str) -> Option<Self> {
+        super::inspection_routing::with_inspection_agent_id(self, agent_id, ns)
+    }
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Prompt { .. } => "prompt",
@@ -408,10 +426,7 @@ impl Command {
         }
     }
 }
-/// Serialize a command to its JSON-lines wire form (JSON + trailing newline).
-///
-/// Both [`CommandSender::send`] and [`Client::send`] write the same framed wire
-/// format, so the serialize-and-newline rule lives here in one place.
+/// Serialize a command to JSON-lines wire form (JSON + trailing newline).
 fn serialize_command(cmd: &Command) -> Result<String, ClientError> {
     let mut json = serde_json::to_string(cmd)?;
     json.push('\n');
@@ -493,6 +508,10 @@ pub struct Client {
     /// [`MAX_LINE_BYTES`], so the UI can surface the loss instead of the
     /// session silently appearing frozen (#1047).
     dropped_oversized: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// ADR-0008 negotiation outcome this connection was built with: `true`
+    /// for length-prefixed frames (protocol v2), `false` for legacy NDJSON.
+    /// Per-connection state, not a `run_tui` local (#1462).
+    speaks_frames: bool,
 }
 impl Client {
     /// Connect to a quecto agent at the given socket path, speaking
@@ -633,10 +652,22 @@ impl Client {
             cmd_tx,
             event_rx: rx,
             dropped_oversized,
+            speaks_frames: mode == WireMode::Framed,
         })
     }
-    /// How many event lines the reader has dropped for exceeding
-    /// [`MAX_LINE_BYTES`] (#1047). The UI polls this to surface the drop.
+    /// Whether this connection negotiated length-prefixed frames (ADR-0008
+    /// protocol v2) rather than legacy NDJSON. Recorded at connect time so
+    /// the framing outcome is per-connection state (#1462).
+    pub fn speaks_frames(&self) -> bool {
+        self.speaks_frames
+    }
+    /// Shared handle to the reader's oversized-drop counter (#1047), kept
+    /// observable after the `Client` moves behind a feed task (#1462).
+    pub fn dropped_oversized_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicU64> {
+        std::sync::Arc::clone(&self.dropped_oversized)
+    }
+    /// Test-only drop count; production uses [`Self::dropped_oversized_handle`].
+    #[cfg(any(test, feature = "test-harness"))]
     pub fn dropped_oversized_events(&self) -> u64 {
         self.dropped_oversized
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -681,6 +712,7 @@ impl Client {
             cmd_tx,
             event_rx,
             dropped_oversized: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            speaks_frames: true,
         }
     }
 }
@@ -701,6 +733,9 @@ mod client_defence_tests;
 #[cfg(test)]
 #[path = "client_legacy_tests.rs"]
 mod client_legacy_tests;
+#[cfg(test)]
+#[path = "client_line_cap_tests.rs"]
+mod client_line_cap_tests;
 #[cfg(test)]
 #[path = "client_policy_tests.rs"]
 mod client_policy_tests;

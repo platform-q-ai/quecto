@@ -168,7 +168,6 @@ fn config_with_task(task: Option<&str>) -> SubagentConfig {
         task: task.map(str::to_string),
         container: ContainerSelection::Local,
         agent_id: Some("child".into()),
-        restrict_to_workspace: false,
         system: None,
         config_path: None,
         workflow: false,

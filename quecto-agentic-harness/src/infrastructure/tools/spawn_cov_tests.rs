@@ -12,7 +12,7 @@ use super::*;
 #[test]
 fn registry_accessor_reflects_shared_state() {
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
-    let tool = SpawnTool::new(vec![], true).with_registry(registry.clone());
+    let tool = SpawnTool::new(vec![]).with_registry(registry.clone());
     registry.lock().unwrap().insert(
         "probe".to_string(),
         SubagentEntry::new(PathBuf::from("/tmp/probe.sock"), 7),
@@ -105,7 +105,7 @@ fn validate_config_path_rejects_parent_dir_component() {
 
 #[test]
 fn parse_args_accepts_all_optional_spawn_fields() {
-    let tool = SpawnTool::new(vec!["allowed".to_string()], false);
+    let tool = SpawnTool::new(vec!["allowed".to_string()]);
     let cfg = tool
         .parse_args(
             r#"{
@@ -136,12 +136,11 @@ fn parse_args_accepts_all_optional_spawn_fields() {
     assert_eq!(cfg.effort.as_deref(), Some("high"));
     assert_eq!(cfg.disable_tools, vec!["write", "edit", "grep"]);
     assert!(cfg.read_only);
-    assert!(!cfg.restrict_to_workspace);
 }
 
 #[test]
 fn parse_args_rejects_bad_json_config_path_and_disable_tool_shapes() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
 
     let err = tool.parse_args("{").unwrap_err();
     assert!(err.contains("invalid JSON"), "{err}");
@@ -162,7 +161,7 @@ fn parse_args_rejects_bad_json_config_path_and_disable_tool_shapes() {
 
 #[test]
 fn parse_args_rejects_specific_invalid_fields() {
-    let tool = SpawnTool::new(vec!["ok".to_string()], true);
+    let tool = SpawnTool::new(vec!["ok".to_string()]);
     let err = tool.parse_args(r#"{"agent_id":"bad space"}"#).unwrap_err();
     assert!(err.contains("invalid") || err.contains("agent_id"), "{err}");
 
@@ -189,7 +188,7 @@ fn parse_args_rejects_specific_invalid_fields() {
 
 #[tokio::test]
 async fn execute_parse_error_returns_llm_addressable_tool_error() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let result = tool.execute(r#"{"read_only":"yes"}"#).await.unwrap();
     assert!(result.is_error);
     assert!(result.content.contains("read_only must be a boolean"));
@@ -197,7 +196,7 @@ async fn execute_parse_error_returns_llm_addressable_tool_error() {
 
 #[tokio::test]
 async fn stub_spawn_duplicate_id_rejects_live_duplicate_without_panic() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     tool.execute(r#"{"agent_id":"dup"}"#).await.unwrap();
     let duplicate = tool
         .execute(r#"{"agent_id":"dup","task":"now busy"}"#)
@@ -217,7 +216,7 @@ async fn stub_spawn_duplicate_id_rejects_live_duplicate_without_panic() {
 async fn register_and_broadcast_sends_state_changed_event() {
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let (tx, mut rx) = tokio::sync::broadcast::channel(4);
-    let cfg = SpawnTool::new(vec![], true)
+    let cfg = SpawnTool::new(vec![])
         .parse_args(r#"{"agent_id":"child","read_only":true}"#)
         .unwrap();
     let entry = initial_registry_entry(InitialRegistryEntrySpec {
@@ -232,6 +231,7 @@ async fn register_and_broadcast_sends_state_changed_event() {
         cleanup_argv: Vec::new(),
         environment_registry: None,
         environment_ref: None,
+        process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
     });
 
     register_and_broadcast(&registry, Some(&tx), "child", entry).unwrap();
@@ -275,7 +275,7 @@ async fn launch_uds_agent_duplicate_id_fails_before_spawning() {
         "taken".to_string(),
         SubagentEntry::new(PathBuf::from("/tmp/taken.sock"), 0),
     );
-    let tool = SpawnTool::with_base_dir(vec![], true, dir.path().to_path_buf())
+    let tool = SpawnTool::with_base_dir(vec![], dir.path().to_path_buf())
         .with_socket_dir(dir.path().to_path_buf())
         .with_registry(registry);
     let cfg = tool.parse_args(r#"{"agent_id":"taken"}"#).unwrap();
@@ -308,7 +308,7 @@ async fn wait_for_socket_returns_ok_when_socket_is_connectable() {
     let socket_path = dir.path().join("ready.sock");
     let _listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
 
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     tool.wait_for_socket(&socket_path)
         .await
         .expect("listener is bound, so the socket should be connectable");
@@ -321,7 +321,7 @@ async fn wait_for_socket_or_child_exit_reports_pre_ready_exit() {
     let mut child = tokio::process::Command::new("/usr/bin/false")
         .spawn()
         .expect("test helper process should spawn");
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
 
     let err = tool
         .wait_for_socket_or_child_exit(&socket_path, &mut child)
@@ -341,7 +341,7 @@ async fn wait_for_socket_or_child_exit_reports_pre_ready_exit() {
 async fn send_initial_prompt_errors_when_socket_absent() {
     let dir = tempfile::TempDir::new().unwrap();
     let socket_path = dir.path().join("nope.sock");
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let err = tool
         .send_initial_prompt_for_test(&socket_path, "hi")
         .await
@@ -387,7 +387,7 @@ async fn send_initial_prompt_writes_to_listening_socket() {
         text
     });
 
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     tool.send_initial_prompt_for_test(&socket_path, "do-the-thing")
         .await
         .expect("send to a bound listener should succeed");
@@ -399,7 +399,7 @@ async fn send_initial_prompt_writes_to_listening_socket() {
 
 #[test]
 fn parse_args_workflow_spec_null_and_scalar_paths() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let cfg = tool.parse_args(r#"{"workflow_spec":null}"#).unwrap();
     assert!(cfg.workflow_spec.is_none());
 
@@ -422,7 +422,7 @@ async fn register_and_broadcast_closed_receiver_still_inserts_entry() {
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let (tx, rx) = tokio::sync::broadcast::channel(1);
     drop(rx);
-    let cfg = SpawnTool::new(vec![], true)
+    let cfg = SpawnTool::new(vec![])
         .parse_args(r#"{"agent_id":"closed"}"#)
         .unwrap();
     let entry = initial_registry_entry(InitialRegistryEntrySpec {
@@ -437,6 +437,7 @@ async fn register_and_broadcast_closed_receiver_still_inserts_entry() {
         cleanup_argv: Vec::new(),
         environment_registry: None,
         environment_ref: None,
+        process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
     });
 
     register_and_broadcast(&registry, Some(&tx), "closed", entry).unwrap();
@@ -453,7 +454,7 @@ async fn register_and_broadcast_closed_receiver_still_inserts_entry() {
 #[tokio::test]
 async fn spawn_registry_poison_recovery_paths_do_not_drop_entries() {
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
-    let cfg = SpawnTool::new(vec![], true)
+    let cfg = SpawnTool::new(vec![])
         .parse_args(r#"{"agent_id":"poison","read_only":true}"#)
         .unwrap();
     poison_registry(&registry);
@@ -474,6 +475,7 @@ async fn spawn_registry_poison_recovery_paths_do_not_drop_entries() {
             cleanup_argv: Vec::new(),
             environment_registry: None,
             environment_ref: None,
+            process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
         }),
     )
     .unwrap();
@@ -503,7 +505,7 @@ async fn launch_uds_agent_rejects_an_oversized_workflow_spec_before_spawning() {
     // The size check must therefore reject before any file is created or any
     // child process is launched.
     let dir = tempfile::tempdir().expect("tempdir");
-    let tool = SpawnTool::new(vec![], true).with_socket_dir(dir.path().to_path_buf());
+    let tool = SpawnTool::new(vec![]).with_socket_dir(dir.path().to_path_buf());
 
     let huge = "g".repeat(crate::domain::workflow::MAX_WORKFLOW_SPEC_BYTES + 1);
     let spec = WorkflowSpec {
@@ -551,7 +553,7 @@ async fn launch_uds_agent_rejects_an_oversized_workflow_spec_before_spawning() {
 
 #[test]
 fn parse_args_provider_model_id_form_sets_model() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
 
     let cfg = tool
         .parse_args(r#"{"provider":"openai","model_id":"gpt-5"}"#)
@@ -570,7 +572,7 @@ async fn launch_uds_agent_duplicate_with_poisoned_registry_recovers() {
     );
     poison_registry(&registry);
 
-    let tool = SpawnTool::with_base_dir(vec![], true, dir.path().to_path_buf())
+    let tool = SpawnTool::with_base_dir(vec![], dir.path().to_path_buf())
         .with_socket_dir(dir.path().to_path_buf())
         .with_registry(registry);
     let cfg = tool.parse_args(r#"{"agent_id":"taken"}"#).unwrap();
@@ -595,7 +597,7 @@ async fn launch_uds_agent_maps_workflow_spec_write_failure() {
     // Missing socket directory: writing the by-value workflow spec fails before
     // resolving or spawning any child binary.
     let missing_socket_dir = dir.path().join("missing-socket-dir");
-    let tool = SpawnTool::with_base_dir(vec![], true, dir.path().to_path_buf())
+    let tool = SpawnTool::with_base_dir(vec![], dir.path().to_path_buf())
         .with_socket_dir(missing_socket_dir);
 
     let mut cfg = tool.parse_args(r#"{"agent_id":"wf-child"}"#).unwrap();
@@ -659,7 +661,7 @@ time.sleep(0.2)
 
     // SAFETY: this test runs in-process and restores QUECTO_CHILD_BINARY before returning.
     unsafe { std::env::set_var("QUECTO_CHILD_BINARY", &child) };
-    let tool = SpawnTool::with_base_dir(vec![], true, dir.path().to_path_buf())
+    let tool = SpawnTool::with_base_dir(vec![], dir.path().to_path_buf())
         .with_socket_dir(dir.path().to_path_buf());
     let mut cfg = tool.parse_args(r#"{"agent_id":"worker"}"#).unwrap();
     cfg.workflow_spec = Some(crate::domain::workflow::WorkflowSpec {
@@ -700,4 +702,30 @@ time.sleep(0.2)
     );
 
     super::shutdown_all(tool.registry());
+}
+
+#[test]
+fn spawn_tool_environment_registry_and_inherited_policy_builders_are_observed() {
+    use crate::domain::environment_registry::EnvironmentRegistry;
+    use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+    use std::collections::BTreeMap;
+
+    let registry = EnvironmentRegistry::new();
+    let first = registry.mint_ref();
+    let tool = SpawnTool::new(vec![]).with_environment_registry(registry.clone());
+    let second = tool.environment_registry().mint_ref();
+    assert_ne!(first, second);
+    assert_eq!(registry.mint_ref(), "C3");
+
+    let mut tools = BTreeMap::new();
+    tools.insert("bash".to_string(), ProfileAvailabilityScope::Both);
+    let snapshot =
+        crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot::new(
+            tools.clone(),
+        );
+    let tool = tool.with_inherited_tool_policy(snapshot);
+    assert_eq!(
+        crate::infrastructure::tools::spawn_inherited_policy::tools(&tool.inherited_tool_policy),
+        Some(tools)
+    );
 }

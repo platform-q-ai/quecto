@@ -17,7 +17,7 @@ in the current code:
 `agent.rs` installs a `system_prompt_provider` closure that re-renders the
 system prompt before **every** turn, appending
 `WorkflowEngine::prompt_snippet()`. That snippet embeds mutable state:
-progress counts (`Progress: 3/19`), the current step, the active issue, and
+progress counts (`Progress: 3/20`), the current step, the active issue, and
 per-step guidance blobs (up to ~3.3 KB each).
 
 Every `workflow(action="check", ...)` therefore mutates the system prompt →
@@ -29,7 +29,7 @@ worst-case interaction.
 ### P2 — Templates are monolithic and steps are copy-pasted
 
 All templates live inline in one 44 KB `workflow-config.json`. The two
-shipped templates (`feature`: 19 steps, `refactor`: 18 steps) share many
+shipped templates (`feature`: 20 steps, `refactor`: 18 steps) share many
 byte-identical steps maintained by copy-paste. There is no step library and
 no way to reuse a step (e.g. "adversarial reviewers") across templates.
 

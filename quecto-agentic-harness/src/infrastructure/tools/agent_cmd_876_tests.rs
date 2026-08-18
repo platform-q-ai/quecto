@@ -91,7 +91,6 @@ fn is_control_command_matches_queueable_agent_cmd_forwards() {
         "get_messages",
         "get_session_stats",
         "get_tool_catalogue",
-        "await",
         "kill",
     ] {
         assert!(!AgentCmdTool::is_control_command(c), "{c} is not control");

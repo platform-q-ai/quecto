@@ -2,10 +2,7 @@ use super::super::subagent_registry::SubagentStatus;
 use super::*;
 
 fn test_tool() -> SpawnTool {
-    SpawnTool::new(
-        vec!["news-bot".to_string(), "weather-bot".to_string()],
-        true,
-    )
+    SpawnTool::new(vec!["news-bot".to_string(), "weather-bot".to_string()])
 }
 #[test]
 fn parse_args_accepts_by_value_workflow_spec() {
@@ -19,7 +16,7 @@ fn parse_args_accepts_by_value_workflow_spec() {
 
 #[tokio::test]
 async fn workflow_spec_seeds_binding_before_first_monitor_event() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     tool.execute(r#"{"task":"t","agent_id":"bound","workflow_spec":{"template":{"id":"rev","label":"Rev","description":"d","steps":[{"key":"a","label":"A","phase":"review"},{"key":"b","label":"B","phase":"review"}]}}}"#)
         .await
         .expect("stub spawn must succeed");
@@ -51,7 +48,7 @@ fn parse_args_without_workflow_spec_leaves_it_none() {
 
 #[test]
 fn parse_read_only_marks_config_as_observer() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let cfg = tool
         .parse_args(r#"{"task":"review","read_only":true}"#)
         .unwrap();
@@ -63,7 +60,7 @@ fn parse_read_only_marks_config_as_observer() {
 
 #[test]
 fn parse_disable_write_and_edit_marks_config_as_observer() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     for args in [
         r#"{"task":"review","disable_tools":["write","edit"]}"#,
         r#"{"task":"review","disable_tools":["edit","write"]}"#,
@@ -79,7 +76,7 @@ fn parse_disable_write_and_edit_marks_config_as_observer() {
 
 #[test]
 fn parse_single_mutation_tool_disabled_does_not_mark_config_as_observer() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     for args in [
         r#"{"task":"review","disable_tools":["write"]}"#,
         r#"{"task":"review","disable_tools":["edit"]}"#,
@@ -93,7 +90,7 @@ fn parse_single_mutation_tool_disabled_does_not_mark_config_as_observer() {
 }
 #[tokio::test]
 async fn execute_stub_mode_registers_read_only_observer() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let _result = tool
         .execute(r#"{"task":"review","agent_id":"reviewer","read_only":true}"#)
         .await
@@ -192,7 +189,7 @@ fn test_parse_disallowed_agent() {
 
 #[test]
 fn test_parse_empty_allowlist_permits_any() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let config = tool
         .parse_args(r#"{"task":"Do stuff","agent_id":"any-bot"}"#)
         .unwrap();
@@ -210,7 +207,7 @@ fn test_parse_with_system_prompt() {
 
 #[test]
 fn test_parse_rejects_invalid_agent_id_format() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let result = tool.parse_args(r#"{"task":"Do stuff","agent_id":"../escape"}"#);
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("[a-zA-Z0-9_-]"));
@@ -219,22 +216,21 @@ fn test_parse_rejects_invalid_agent_id_format() {
 #[test]
 fn test_with_base_dir_sets_fields() {
     let base = PathBuf::from("/tmp/quecto-test");
-    let tool = SpawnTool::with_base_dir(vec!["bot-a".to_string()], false, base.clone());
+    let tool = SpawnTool::with_base_dir(vec!["bot-a".to_string()], base.clone());
     assert_eq!(tool.base_dir, base);
     assert_eq!(tool.allowed_agents, vec!["bot-a".to_string()]);
-    assert!(!tool.restrict_to_workspace);
 }
 
 #[test]
 fn test_new_sets_empty_base_dir() {
-    let tool = SpawnTool::new(vec![], false);
+    let tool = SpawnTool::new(vec![]);
     assert!(tool.base_dir.as_os_str().is_empty());
 }
 
 #[test]
 fn test_with_registry_shares_state() {
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
-    let tool = SpawnTool::new(vec![], true).with_registry(registry.clone());
+    let tool = SpawnTool::new(vec![]).with_registry(registry.clone());
     registry.lock().unwrap().insert(
         "test".to_string(),
         SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 123),
@@ -321,7 +317,6 @@ fn sample_config(task: Option<&str>) -> crate::domain::subagent::SubagentConfig 
         container: crate::domain::subagent::ContainerSelection::Local,
         task: task.map(String::from),
         agent_id: Some("worker".into()),
-        restrict_to_workspace: true,
         system: None,
         config_path: None,
         workflow: false,
@@ -332,6 +327,97 @@ fn sample_config(task: Option<&str>) -> crate::domain::subagent::SubagentConfig 
         disable_tools: vec![],
         read_only: false,
     }
+}
+
+#[tokio::test]
+async fn spawned_parent_id_ignores_empty_session_key_refresh() {
+    use crate::domain::tool::Tool;
+
+    let tool =
+        SpawnTool::new(vec![]).with_event_forwarding(None, Some("existing-parent".to_string()));
+    tool.set_session_key(String::new());
+    let _ = tool
+        .execute(r#"{"task":"work","agent_id":"child-empty-refresh"}"#)
+        .await
+        .unwrap();
+    let registry = tool.registry().lock().unwrap();
+    let entry = registry
+        .values()
+        .find(|entry| entry.display_name == "child-empty-refresh")
+        .expect("spawned entry should exist");
+    assert_eq!(entry.parent_id.as_deref(), Some("existing-parent"));
+}
+
+#[tokio::test]
+async fn spawned_parent_id_tracks_raw_session_key_changes() {
+    use crate::domain::tool::Tool;
+
+    let tool = SpawnTool::new(vec![]).with_event_forwarding(None, Some("old".to_string()));
+    tool.set_session_key("raw-session".to_string());
+    let _ = tool
+        .execute(r#"{"task":"work","agent_id":"child-raw"}"#)
+        .await
+        .unwrap();
+    let registry = tool.registry().lock().unwrap();
+    let entry = registry
+        .values()
+        .find(|entry| entry.display_name == "child-raw")
+        .expect("spawned entry should exist");
+    assert_eq!(entry.parent_id.as_deref(), Some("raw-session"));
+}
+
+#[tokio::test]
+async fn spawned_parent_id_tracks_cli_session_name_changes() {
+    use crate::domain::tool::Tool;
+
+    let tool = SpawnTool::new(vec![]).with_event_forwarding(None, Some("old".to_string()));
+    tool.set_session_key("cli:new-name".to_string());
+    let _ = tool
+        .execute(r#"{"task":"work","agent_id":"child-cli"}"#)
+        .await
+        .unwrap();
+    let registry = tool.registry().lock().unwrap();
+    let entry = registry
+        .values()
+        .find(|entry| entry.display_name == "child-cli")
+        .expect("spawned entry should exist");
+    assert_eq!(entry.parent_id.as_deref(), Some("new-name"));
+}
+
+#[tokio::test]
+async fn spawned_parent_id_tracks_colon_session_name_changes() {
+    use crate::domain::tool::Tool;
+
+    let tool = SpawnTool::new(vec![]).with_event_forwarding(None, Some("old".to_string()));
+    tool.set_session_key("kind:new-name".to_string());
+    let _ = tool
+        .execute(r#"{"task":"work","agent_id":"child-colon"}"#)
+        .await
+        .unwrap();
+    let registry = tool.registry().lock().unwrap();
+    let entry = registry
+        .values()
+        .find(|entry| entry.display_name == "child-colon")
+        .expect("spawned entry should exist");
+    assert_eq!(entry.parent_id.as_deref(), Some("new-name"));
+}
+
+#[tokio::test]
+async fn spawned_parent_id_tracks_session_key_changes() {
+    use crate::domain::tool::Tool;
+
+    let tool = SpawnTool::new(vec![]).with_event_forwarding(None, Some("chat-old".to_string()));
+    tool.set_session_key("chat-new".to_string());
+    let _ = tool
+        .execute(r#"{"task":"work","agent_id":"child-after-new"}"#)
+        .await
+        .unwrap();
+    let registry = tool.registry().lock().unwrap();
+    let entry = registry
+        .values()
+        .find(|entry| entry.display_name == "child-after-new")
+        .expect("spawned entry should exist");
+    assert_eq!(entry.parent_id.as_deref(), Some("chat-new"));
 }
 
 #[test]
@@ -349,6 +435,7 @@ fn initial_entry_taskless_is_idle() {
         cleanup_argv: Vec::new(),
         environment_registry: None,
         environment_ref: None,
+        process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
     });
     assert_eq!(entry.status, SubagentStatus::Idle);
     assert_eq!(entry.parent_id.as_deref(), Some("parent"));
@@ -370,6 +457,7 @@ fn initial_entry_with_task_stays_starting() {
         cleanup_argv: Vec::new(),
         environment_registry: None,
         environment_ref: None,
+        process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
     });
     assert_eq!(
         entry.status,
@@ -396,6 +484,7 @@ fn initial_entry_taskless_broadcasts_idle_via_register() {
         cleanup_argv: Vec::new(),
         environment_registry: None,
         environment_ref: None,
+        process_owner: crate::infrastructure::tools::process_tree::ProcessOwner::DirectPid,
     });
     super::register_and_broadcast(&registry, Some(&tx), "idle-worker", entry).unwrap();
     let line = rx
@@ -414,7 +503,7 @@ fn initial_entry_taskless_broadcasts_idle_via_register() {
 #[tokio::test]
 async fn taskless_stub_spawn_registers_as_idle() {
     // End-to-end stub path still uses the shared builder.
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     tool.execute(r#"{"agent_id":"idle-worker"}"#)
         .await
         .expect("stub spawn must succeed");
@@ -433,7 +522,7 @@ async fn taskless_stub_spawn_registers_as_idle() {
 #[tokio::test]
 async fn with_task_stub_spawn_stays_starting() {
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
-    let tool = SpawnTool::new(vec![], true).with_event_forwarding(Some(tx), None);
+    let tool = SpawnTool::new(vec![]).with_event_forwarding(Some(tx), None);
     tool.execute(r#"{"task":"do work","agent_id":"busy-worker"}"#)
         .await
         .expect("stub spawn must succeed");
@@ -468,7 +557,7 @@ async fn stub_spawn_keys_socket_by_uuid_not_display_label() {
     // Surviving adversarial finding on PR #1386: socket paths still used the
     // display label (`quecto-agent-reviewer.sock`), so respawning the same label
     // could collide with a stale socket or resume `cli:reviewer`.
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     tool.execute(r#"{"agent_id":"reviewer"}"#)
         .await
         .expect("stub spawn must succeed");
@@ -502,7 +591,7 @@ async fn stub_spawn_keys_socket_by_uuid_not_display_label() {
 
 #[tokio::test]
 async fn stub_respawn_same_display_label_mints_fresh_uuid_and_socket() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     tool.execute(r#"{"agent_id":"reviewer"}"#)
         .await
         .expect("first spawn must succeed");
@@ -580,6 +669,9 @@ fn test_definition_documents_container_spawning() {
         "true",
         "\"mode\":\"new\"",
         "\"mode\":\"existing\"",
+        "container_config",
+        "sandbox",
+        "self-contained",
         "environment_ref=",
         "get_containers",
         "kill_container",
@@ -598,5 +690,48 @@ fn test_definition_documents_container_spawning() {
     assert!(config_desc.contains("absolute"));
     assert!(config_desc.contains("falls back to the parent's own effective config path"));
     assert!(config_desc.contains("explicit config here wins"));
-    assert!(desc.contains("parent's own effective config path"));
+}
+
+#[test]
+fn test_definition_carries_the_container_config_roster() {
+    // #1410: the tool description is the agent's session-start menu.
+    let no_config = SpawnTool::new(vec![]);
+    assert!(
+        no_config
+            .definition()
+            .description
+            .contains("Available container configs: none configured."),
+        "{}",
+        no_config.definition().description
+    );
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let cfg = dir.path().join("config.json");
+    std::fs::write(
+        &cfg,
+        r#"{"container_configs":{
+            "quecto":{"default":true,"create":["/bin/true"],"cleanup":["/bin/true"]},
+            "alpha":{"create":["/bin/true"],"cleanup":["/bin/true"]}}}"#,
+    )
+    .unwrap();
+    let tool = SpawnTool::new(vec![]).with_parent_config_path(Some(cfg));
+    assert!(
+        tool.definition()
+            .description
+            .contains("Available container configs: alpha, quecto (default)."),
+        "{}",
+        tool.definition().description
+    );
+
+    // A config that fails to load must degrade honestly, not panic.
+    let broken = dir.path().join("broken.json");
+    std::fs::write(&broken, "{not json").unwrap();
+    let tool = SpawnTool::new(vec![]).with_parent_config_path(Some(broken));
+    assert!(
+        tool.definition()
+            .description
+            .contains("Available container configs: unavailable (config failed to load)."),
+        "{}",
+        tool.definition().description
+    );
 }

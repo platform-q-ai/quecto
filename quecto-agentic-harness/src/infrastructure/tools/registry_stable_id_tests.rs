@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use super::{ToolRegistration, ToolRegistryImpl};
-use crate::domain::tool::{ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus};
+use crate::domain::tool::{
+    ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus, ToolPolicyRequest,
+};
 use crate::domain::tool_descriptor::ToolAvailability;
 use crate::infrastructure::tools::registry::tests::DummyTestTool;
 
@@ -255,6 +257,33 @@ fn live_policy_mutations_resolve_stable_legacy_alias_and_unknown_ids() {
     assert_eq!(
         reconciliation.results[3].status,
         ToolPolicyMutationStatus::UnknownTool
+    );
+}
+
+#[test]
+fn stale_stable_id_that_matches_current_name_remains_unknown_tool() {
+    let mut reg = ToolRegistryImpl::new();
+    let stale_stable_id = "tool.v1:uds:12:uds:client-a:weather";
+    assert!(
+        reg.register_with_metadata(
+            Arc::new(DummyTestTool::new(stale_stable_id)),
+            ToolRegistration::uds_owner("uds:client-b")
+                .with_stable_id("tool.v1:uds:12:uds:client-b:renamed-weather"),
+        )
+    );
+
+    let reconciliation = reg.apply_tool_policy_request(
+        &ToolPolicyRequest::patch(vec![ToolPolicyMutation::disable(
+            stale_stable_id,
+            "stale id",
+        )]),
+        ToolPolicyApplyMode::ImmediateIfIdle,
+    );
+
+    assert_eq!(
+        reconciliation.results[0].status,
+        ToolPolicyMutationStatus::UnknownTool,
+        "stale stable-id syntax must not fall through to a current tool name"
     );
 }
 

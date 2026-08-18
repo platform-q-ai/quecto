@@ -55,9 +55,8 @@ async fn oversized_event_line_is_dropped_but_later_valid_events_still_arrive() {
 }
 
 #[test]
-fn max_line_bytes_matches_documented_protocol_limit() {
-    // 8 MiB interim cap (#1094); derives from the shared line-io constant.
-    assert_eq!(MAX_LINE_BYTES, 8 * 1_048_576);
+fn max_line_bytes_matches_shared_line_io_cap() {
+    assert_eq!(MAX_LINE_BYTES, quecto_line_io::PROTOCOL_LINE_CAP_BYTES);
 }
 
 // ── #1061 lockstep: paged history cursor reaches the wire ────────────────
@@ -100,6 +99,8 @@ fn control_commands_serialize_to_wire() {
                 reason: Some("test".into()),
             }],
             mode: crate::application::ports::agent_gateway::ToolPolicyApplyModePayload::AtNextTurnBoundary,
+            operation: crate::application::ports::agent_gateway::ToolPolicyOperationPayload::Patch,
+            unlisted_scope: None,
         },
         "p1",
     );
@@ -136,6 +137,33 @@ fn get_messages_command_serializes_optional_before_cursor() {
 }
 
 // ── #1060 lockstep: refs preserved through the API event model ──────────
+
+#[test]
+fn sync_command_serializes_to_wire_with_optional_agent_id() {
+    let root = command_to_json(
+        AgentCommand::Sync {
+            epoch: 4,
+            since_rev: 9,
+            agent_id: None,
+        },
+        "sync1",
+    );
+    assert_eq!(root["type"], "sync");
+    assert_eq!(root["id"], "sync1");
+    assert_eq!(root["epoch"], 4);
+    assert_eq!(root["sinceRev"], 9);
+    assert!(root.get("agent_id").is_none());
+
+    let child = command_to_json(
+        AgentCommand::Sync {
+            epoch: 5,
+            since_rev: 10,
+            agent_id: Some("worker".into()),
+        },
+        "sync2",
+    );
+    assert_eq!(child["agent_id"], "worker");
+}
 
 #[test]
 fn get_message_command_serializes_to_wire() {
@@ -490,7 +518,7 @@ fn remaining_commands_serialize_to_wire() {
 
 #[test]
 fn tool_policy_changed_is_modeled_not_unknown() {
-    let wire = r#"{"type":"tool_policy_changed","changedTools":["alpha"],"results":[{"name":"alpha","before":{"effectiveScope":"both"},"after":{"effectiveScope":"child"}}],"applyMode":"immediateIfIdle","reason":"set_tool_policy"}"#;
+    let wire = r#"{"type":"tool_policy_changed","changedTools":["alpha"],"results":[{"name":"alpha","before":{"effectiveScope":"both"},"after":{"effectiveScope":"child"}}],"applyMode":"immediateIfIdle","reason":"set_tool_policy","correlationId":"req-1"}"#;
     let ev: AgentEvent = serde_json::from_str(wire).expect("parse");
     match &ev {
         AgentEvent::ToolPolicyChanged {
@@ -498,12 +526,39 @@ fn tool_policy_changed_is_modeled_not_unknown() {
             results,
             apply_mode,
             reason,
+            correlation_id,
         } => {
             assert_eq!(changed_tools, &vec!["alpha".to_string()]);
             assert_eq!(results[0]["after"]["effectiveScope"], "child");
             assert_eq!(apply_mode, "immediateIfIdle");
             assert_eq!(reason, "set_tool_policy");
+            assert_eq!(correlation_id.as_deref(), Some("req-1"));
         }
         other => panic!("expected ToolPolicyChanged, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn send_also_broadcasts_correlated_response_to_subscribers() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = spawn_echo_agent(&dir, "get_message").await;
+    let gw = UdsGateway::connect(&path).await.unwrap();
+    let mut sub = gw.subscribe().await.unwrap();
+
+    let response = gw
+        .send(AgentCommand::GetMessage {
+            message_id: "m1".into(),
+            agent_id: None,
+            tool_call_id: None,
+            offset: None,
+            limit: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(response, AgentEvent::Response { command, .. } if command == "get_message"));
+    let broadcast = tokio::time::timeout(std::time::Duration::from_secs(2), sub.recv())
+        .await
+        .expect("correlated send response is broadcast to subscribers")
+        .expect("subscriber receives response");
+    assert!(matches!(broadcast, AgentEvent::Response { command, .. } if command == "get_message"));
 }

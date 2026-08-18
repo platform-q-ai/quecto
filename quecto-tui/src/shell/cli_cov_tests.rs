@@ -57,13 +57,12 @@ fn tmp_dir(tag: &str) -> PathBuf {
 // ── parse_flags ──────────────────────────────────────────────────────
 
 #[test]
-fn parse_socket_and_no_sandbox() {
-    let flags = parse_flags(&args("--socket /tmp/a.sock --no-sandbox"));
+fn parse_socket_path() {
+    let flags = parse_flags(&args("--socket /tmp/a.sock"));
     assert_eq!(
         flags.socket_path.as_ref().unwrap().to_str().unwrap(),
         "/tmp/a.sock"
     );
-    assert!(flags.no_sandbox);
 }
 
 #[test]
@@ -527,13 +526,12 @@ fn parse_no_workflow_before_workflow_allows_reenable() {
 #[test]
 fn parse_workflow_flags_and_build_agent_args_are_forwarded() {
     let mut flags = parse_flags(&args(
-        "--no-sandbox --workflow --workflow-guards --config /tmp/cfg.json --system prompt --disable-tool write",
+        "--workflow --workflow-guards --config /tmp/cfg.json --system prompt --disable-tool write",
     ));
     apply_workflow_defaults(&mut flags);
 
     let built = build_agent_args(&flags);
     assert_eq!(&built[..3], ["agent", "--mode", "uds"]);
-    assert!(built.windows(1).any(|w| w == ["--no-sandbox"]));
     assert!(built.windows(1).any(|w| w == ["--workflow"]));
     assert!(built.windows(1).any(|w| w == ["--workflow-guards"]));
     assert!(built.windows(2).any(|w| w == ["--config", "/tmp/cfg.json"]));
@@ -705,4 +703,36 @@ async fn spawn_agent_program_rejects_announced_regular_file_socket() {
 
     assert!(err.contains("not a Unix socket"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn parse_flags_default_persist_and_detach_on_exit() {
+    let f = parse_flags(&["quecto-tui".into()]);
+    assert!(f.persist);
+    assert!(!f.kill_on_exit);
+}
+
+#[test]
+fn parse_flags_kill_on_exit_and_no_persist() {
+    let f = parse_flags(&[
+        "quecto-tui".into(),
+        "--kill-on-exit".into(),
+        "--no-persist".into(),
+    ]);
+    assert!(f.kill_on_exit);
+    assert!(!f.persist);
+}
+
+#[test]
+fn build_agent_args_includes_persist_by_default() {
+    let f = parse_flags(&["quecto-tui".into()]);
+    let args = build_agent_args(&f);
+    assert!(args.iter().any(|a| a == "--persist"), "{args:?}");
+}
+
+#[test]
+fn build_agent_args_omits_persist_when_disabled() {
+    let f = parse_flags(&["quecto-tui".into(), "--no-persist".into()]);
+    let args = build_agent_args(&f);
+    assert!(!args.iter().any(|a| a == "--persist"), "{args:?}");
 }

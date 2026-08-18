@@ -28,7 +28,7 @@ fn mount_web_fetch_mock(server: &'static wiremock::MockServer, mock: wiremock::M
 fn given_web_fetch_workspace(world: &mut QuectoWorld) {
     let td = TempDir::new().expect("create temp dir");
     let ws = td.path().to_path_buf();
-    let sandbox = Sandbox::new(Some(ws.clone()), true);
+    let sandbox = Sandbox::new(Some(ws.clone()));
     let mut registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
         ws.clone(),
         sandbox,
@@ -59,7 +59,7 @@ fn given_web_fetch_workspace(world: &mut QuectoWorld) {
 fn given_web_fetch_workspace_1kb(world: &mut QuectoWorld) {
     let td = TempDir::new().expect("create temp dir");
     let ws = td.path().to_path_buf();
-    let sandbox = Sandbox::new(Some(ws.clone()), true);
+    let sandbox = Sandbox::new(Some(ws.clone()));
     let mut registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
         ws.clone(),
         sandbox,

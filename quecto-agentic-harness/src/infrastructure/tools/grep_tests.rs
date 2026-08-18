@@ -4,7 +4,7 @@ use tempfile::TempDir;
 fn test_grep() -> (GrepTool, Arc<PathBuf>, TempDir) {
     let tmp = TempDir::new().unwrap();
     let ws = Arc::new(tmp.path().to_path_buf());
-    let sandbox = Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), true));
+    let sandbox = Arc::new(Sandbox::new(Some(tmp.path().to_path_buf())));
     let tool = GrepTool::new(ws.clone(), sandbox);
     (tool, ws, tmp)
 }
@@ -14,7 +14,7 @@ fn test_format_grep_output_empty() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt.block_on(format_grep_output(GrepFormatArgs {
         json_output: "",
-        sandbox: &Sandbox::new(None, false),
+        sandbox: &Sandbox::new(None),
         workspace: &PathBuf::from("/ws"),
         match_limit: 100,
         context_lines: 0,
@@ -34,7 +34,7 @@ fn test_format_grep_output_basic() {
     let json_patched = json.replace("/ws", &ws.path().to_string_lossy());
     let result = rt.block_on(format_grep_output(GrepFormatArgs {
         json_output: &json_patched,
-        sandbox: &Sandbox::new(None, false),
+        sandbox: &Sandbox::new(None),
         workspace: ws.path(),
         match_limit: 100,
         context_lines: 0,
@@ -63,7 +63,7 @@ fn test_format_grep_output_match_limit() {
     let json = json_lines.join("\n");
     let result = rt.block_on(format_grep_output(GrepFormatArgs {
         json_output: &json,
-        sandbox: &Sandbox::new(None, false),
+        sandbox: &Sandbox::new(None),
         workspace: ws.path(),
         match_limit: 5,
         context_lines: 0,
@@ -224,10 +224,20 @@ async fn test_grep_no_matches() {
 }
 
 #[tokio::test]
-async fn test_grep_outside_workspace_blocked() {
+async fn test_grep_outside_workspace_allowed() {
     let (tool, _ws, _tmp) = test_grep();
-    let result = tool.execute(r#"{"pattern": "root", "path": "/etc"}"#).await;
-    assert!(result.is_err() || result.unwrap().is_error);
+    let outside = tempfile::tempdir().unwrap();
+    let file = outside.path().join("outside.txt");
+    std::fs::write(&file, "needle\n").unwrap();
+    let result = tool
+        .execute(&format!(
+            r#"{{"pattern": "needle", "path": "{}"}}"#,
+            outside.path().display()
+        ))
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    assert!(result.content.contains("outside.txt"));
 }
 
 // --- Fix 2: Actionable missing-parameter error ---

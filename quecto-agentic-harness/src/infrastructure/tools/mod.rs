@@ -12,6 +12,14 @@ pub(crate) mod inherited_tool_policy;
 #[path = "inherited_tool_policy_unit_tests.rs"]
 mod inherited_tool_policy_unit_tests;
 pub mod path_utils;
+mod process_tree;
+pub mod python_lab;
+#[cfg(test)]
+mod python_lab_ac_gap_tests;
+#[cfg(test)]
+mod python_lab_job_tests;
+#[cfg(test)]
+mod python_lab_tests;
 pub mod recall;
 pub mod registration;
 #[cfg(test)]
@@ -37,6 +45,7 @@ mod subagent_cleanup;
 #[cfg(test)]
 mod subagent_cleanup_tests;
 pub mod subagent_environment_wire;
+pub mod subagent_identity;
 mod subagent_lifecycle;
 pub mod subagent_monitor;
 mod subagent_monitor_canonical;
@@ -45,8 +54,15 @@ mod subagent_monitor_registry;
 mod subagent_monitor_stall;
 mod subagent_monitor_truncate;
 pub mod subagent_registry;
+pub(crate) mod subagent_routing;
+#[cfg(test)]
+mod subagent_routing_tests;
 mod subagent_status;
 pub mod truncate;
 pub mod web_fetch;
 pub mod web_search;
 pub mod workflow_tool;
+
+#[cfg(test)]
+#[path = "subagent_status_tests.rs"]
+mod subagent_status_tests;

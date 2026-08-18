@@ -132,9 +132,15 @@ pub struct TuiWorld {
     /// TUI agent-disconnect diagnostics BDD (#1047): the real spawned child
     /// under the production exit watcher.
     pub tui_disconnect_child: Option<tui_agent_disconnect_steps::DisconnectChildWatch>,
+    /// TUI master-connection feed-task seam BDD (#1462): frame captured from
+    /// the direct-handling baseline, for fan-in byte-parity assertions.
+    pub tui_seam_baseline_frame: Option<String>,
     /// The sub-agent id currently being viewed (#828): captured on select so
     /// backfill/assertion steps route to the right session, not a literal id.
     pub tui_viewed_agent: Option<String>,
+    /// TUI per-connection state BDD (#1463): the correlation id minted by the
+    /// scenario's When, for connection-namespace assertions.
+    pub tui_minted_correlation_id: Option<String>,
     /// TUI scrollback BDD: viewport captured after streaming growth.
     pub tui_viewport_after_stream: Vec<String>,
     /// TUI #981 render-cache BDD: tail render captured before scrollback.
@@ -350,9 +356,14 @@ mod tui_file_mention_steps;
 mod tui_foundation_steps;
 mod tui_idle_efficiency_steps;
 mod tui_list_render_state_steps;
+mod tui_master_connection_feed_steps;
+mod tui_multi_tab_fix_pass_steps;
+mod tui_multi_tab_polish_steps;
+mod tui_multi_tab_round2_steps;
 mod tui_new_reset_context_steps;
 mod tui_paged_history_1094_steps;
 mod tui_paged_history_steps;
+mod tui_per_connection_state_steps;
 mod tui_pid_safety_steps;
 mod tui_stdin_buffer_cap_steps;
 mod tui_stdin_retry_steps;
@@ -364,6 +375,7 @@ mod tui_table_safety_steps;
 mod tui_terminal_restore_steps;
 mod tui_tool_access_management_steps;
 mod tui_tool_policy_modal_steps;
+mod tui_tool_search_ranking_steps;
 mod tui_uds_client_defence_steps;
 
 fn main() {

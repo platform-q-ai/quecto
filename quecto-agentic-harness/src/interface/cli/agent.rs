@@ -38,7 +38,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut max_iterations: Option<u32> = None;
     let mut max_time: Option<u64> = None;
     let mut uds_mode = false;
-    let mut no_sandbox = false;
     let mut socket_path: Option<std::path::PathBuf> = None;
     let mut persist = false;
     let mut disabled_tools: Vec<String> = Vec::new();
@@ -54,11 +53,10 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
 
     while i < args.len() {
         match args[i].as_str() {
-            f @ ("--no-session" | "--no-sandbox" | "--persist" | "--workflow"
-            | "--workflow-guards" | "--spawned") => {
+            f @ ("--no-session" | "--persist" | "--workflow" | "--workflow-guards"
+            | "--spawned") => {
                 *match f {
                     "--no-session" => &mut no_session,
-                    "--no-sandbox" => &mut no_sandbox,
                     "--persist" => &mut persist,
                     "--workflow" => &mut workflow,
                     "--spawned" => &mut spawned,
@@ -143,6 +141,16 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                     Some(flag_private::parse_snapshot_path(args, i, stderr)?);
                 i += 2;
             }
+            "--network" => {
+                stderr.push_str(
+                    "agent: WARNING: --network is deprecated and ignored; network isolation flag has been removed\n",
+                );
+                i += 1;
+            }
+            other if other.starts_with("--") || other.starts_with('-') => {
+                stderr.push_str(&format!("agent: unknown flag '{other}'\n"));
+                return None;
+            }
             _ => {
                 i += 1;
             }
@@ -172,7 +180,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         max_iterations,
         max_time,
         uds_mode,
-        no_sandbox,
         socket_path,
         persist,
         disabled_tools,
@@ -184,6 +191,9 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         inherited_tool_policy: None,
         parent_id,
         spawned,
+        parent_identity_override: None,
+        session_key_override: None,
+        cwd_override: None,
     };
     flags = validate_agent_flags(flags, stderr)?;
 
@@ -225,6 +235,7 @@ pub(crate) fn cmd_agent(
         Some(f) => f,
         None => return 1,
     };
+    flags.cwd_override = ctx.cwd.clone();
 
     // ── UDS mode ──────────────────────────────────────────────────────────────
     if flags.uds_mode {
@@ -464,6 +475,12 @@ pub(crate) fn run_agent_session(
     };
 
     let mut messages: Vec<Message> = if !ephemeral {
+        // Refuse at open, not at first save (#1460): a key owned by another
+        // live process must fail before any turn runs against it.
+        if let Err(e) = SessionStore::claim(&session_store, &session_key) {
+            out.stderr.push_str(&format!("{}\n", e));
+            return 1;
+        }
         match rt.block_on(session_store.load(&session_key)) {
             Ok(Some(session)) => session.messages,
             Ok(None) => Vec::new(),
@@ -523,6 +540,7 @@ pub(crate) fn run_agent_session(
                     key: session_key,
                     messages: std::mem::take(&mut messages),
                     workflow_run: None,
+                    subagent_roster: Vec::new(),
                 };
                 if let Err(e) = rt.block_on(session_store.save(&session)) {
                     out.stderr
@@ -561,7 +579,7 @@ fn resolve_uds_session_key(ephemeral: bool, session_name: Option<&str>) -> Strin
     }
 }
 
-fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i32 {
+fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -> i32 {
     // Early validation for user-supplied --socket paths: check length before
     // doing any I/O (config load, agent build).  Auto-generated paths are
     // always short, so we only gate on explicitly provided paths here.
@@ -574,6 +592,13 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     }
     if flags.persist {
         stderr.push_str("WARNING: --persist keeps the agent alive indefinitely. Shutdown via SIGTERM/SIGINT only.\n");
+    }
+
+    let ephemeral = flags.no_session || flags.session_name.as_deref() == Some("-");
+    let session_key = resolve_uds_session_key(ephemeral, flags.session_name.as_deref());
+    if flags.session_name.is_none() && !ephemeral && flags.parent_identity_override.is_none() {
+        flags.parent_identity_override = Some(session_key.clone());
+        flags.session_key_override = Some(session_key.clone());
     }
 
     let base_dir = ctx.base_dir();
@@ -604,8 +629,6 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     // Enable incremental streaming so the UDS layer emits token events.
     agent.set_streaming(true);
 
-    let ephemeral = flags.no_session || flags.session_name.as_deref() == Some("-");
-    let session_key = resolve_uds_session_key(ephemeral, flags.session_name.as_deref());
     agent.set_session_key(session_key.clone());
 
     // Keep durable audit logging tied to explicit workflow-driven mode. Normal UDS
@@ -643,8 +666,11 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     // Use --socket path if provided; otherwise auto-generate in $XDG_RUNTIME_DIR or temp.
     let socket_path = flags.socket_path.clone().unwrap_or_else(|| {
         let dir = crate::interface::shared::xdg_runtime_dir_or_temp();
-        // Best-effort: remove stale quecto-agent-*.sock files older than 24 h.
-        // Drop guards do not run on SIGKILL so stale sockets can accumulate.
+        // Best-effort: reap dead quecto-agent-*.sock files (kernel-table
+        // probed, #1460 — a live agent is never touched, let alone severed,
+        // regardless of age; the 24 h threshold only gates files whose probe
+        // is inconclusive). Drop guards do not run on SIGKILL so dead
+        // sockets can accumulate.
         crate::interface::cli::uds::reap_stale_sockets(
             &dir,
             std::time::Duration::from_secs(86_400),
@@ -701,9 +727,6 @@ mod integration_tests;
 #[cfg(test)]
 #[path = "agent_926_tests.rs"]
 mod issue_926_tests;
-#[cfg(test)]
-#[path = "agent_no_sandbox_tests.rs"]
-mod no_sandbox_tests;
 #[cfg(test)]
 #[path = "agent_no_session_tests.rs"]
 mod no_session_tests;

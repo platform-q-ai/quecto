@@ -3940,8 +3940,8 @@ fn then_content_has_redacted(world: &mut QuectoWorld, data: String) {
     assert_eq!(block["data"].as_str().unwrap(), data);
 }
 
-#[then(expr = "the content blocks should include a text block with {string} instead of thinking")]
-fn then_content_text_fallback(world: &mut QuectoWorld, text: String) {
+#[then(expr = "the content blocks should not include provider thinking text {string}")]
+fn then_content_omits_unsigned_provider_thinking(world: &mut QuectoWorld, text: String) {
     let content = parity_assistant_content(world);
     assert!(
         content.iter().all(|b| b["type"] != "thinking"),
@@ -3950,9 +3950,8 @@ fn then_content_text_fallback(world: &mut QuectoWorld, text: String) {
     assert!(
         content
             .iter()
-            .any(|b| b["type"] == "text" && b["text"].as_str() == Some(text.as_str())),
-        "expected a text block with '{}'",
-        text
+            .all(|b| b["text"].as_str() != Some(text.as_str())),
+        "provider thinking text must not be replayed as assistant answer text"
     );
 }
 

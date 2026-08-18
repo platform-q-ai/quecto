@@ -173,3 +173,11 @@ async fn read_bounded_line_never_buffers_an_oversized_command_past_the_cap() {
         bounded.content.capacity()
     );
 }
+
+#[test]
+fn command_reader_frame_payload_cap_matches_shared_line_io_cap() {
+    assert_eq!(
+        MAX_FRAME_PAYLOAD_BYTES,
+        quecto_line_io::PROTOCOL_LINE_CAP_BYTES
+    );
+}

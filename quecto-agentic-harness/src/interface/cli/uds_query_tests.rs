@@ -155,7 +155,14 @@ fn query_get_state_messages_and_stats_are_shaped() {
     let mut fx = Fx::new();
     let ctx = fx.ctx();
 
-    let state = query_response_data(&AgentCommand::GetState { id: None }, &ctx).unwrap();
+    let state = query_response_data(
+        &AgentCommand::GetState {
+            id: None,
+            agent_id: None,
+        },
+        &ctx,
+    )
+    .unwrap();
     assert_eq!(state["model"], "stub");
     assert_eq!(state["messageCount"], 2);
     assert_eq!(state["execution"]["phase"], "idle");
@@ -471,6 +478,7 @@ fn query_get_message_hit_returns_message_by_stable_id() {
             agent_id: None,
             tool_call_id: None,
             offset: None,
+            thinking_offset: None,
             limit: None,
         },
         &ctx,
@@ -501,6 +509,7 @@ fn query_get_message_miss_returns_none_for_structured_error() {
                 agent_id: None,
                 tool_call_id: None,
                 offset: None,
+                thinking_offset: None,
                 limit: None,
             },
             &ctx,
@@ -533,6 +542,7 @@ fn query_get_message_tool_call_uses_tool_id_not_request_or_message_id() {
             agent_id: None,
             tool_call_id: Some("call-target".into()),
             offset: None,
+            thinking_offset: None,
             limit: None,
         },
         &ctx,

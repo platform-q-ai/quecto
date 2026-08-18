@@ -9,7 +9,7 @@ async fn harness() -> TuiHarness {
 }
 
 fn chat_text(app: &mut App) -> String {
-    let lines = app.master_session.chat.render(120);
+    let lines = app.ac_mut().master_session.chat.render(120);
     lines
         .iter()
         .map(|l| super::app_methods::strip_ansi(l))
@@ -26,7 +26,7 @@ fn chat_text(app: &mut App) -> String {
 async fn internal_state_polling_response_renders_no_box() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.ac().master_session.chat.entry_count();
     a.handle_event(Event::Response {
         id: Some("init".into()),
         command: "get_state".into(),
@@ -39,14 +39,14 @@ async fn internal_state_polling_response_renders_no_box() {
         error: None,
     });
     a.handle_event(Event::Response {
-        id: Some("stats-footer".into()),
+        id: Some("tab0:stats-footer".into()),
         command: "get_session_stats".into(),
         success: true,
         data: Some(serde_json::json!({"cost": 0.0})),
         error: None,
     });
     assert_eq!(
-        a.master_session.chat.entry_count(),
+        a.ac().master_session.chat.entry_count(),
         before,
         "internal get_state/stats polling must not render a chat box (#865)"
     );
@@ -64,8 +64,8 @@ async fn idle_escape_first_press_arms_notification() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.handle_idle_escape_for_rewind();
-    assert!(a.rewind.last_idle_escape.is_some());
-    assert!(a.rewind.pending_open_id.is_none());
+    assert!(a.ac().rewind.last_idle_escape.is_some());
+    assert!(a.ac().rewind.pending_open_id.is_none());
     assert!(!a.notifications.is_empty());
 }
 
@@ -75,8 +75,8 @@ async fn idle_escape_double_press_requests_messages() {
     let a = h.app_mut();
     a.handle_idle_escape_for_rewind();
     a.handle_idle_escape_for_rewind();
-    assert!(a.rewind.last_idle_escape.is_none());
-    assert!(a.rewind.pending_open_id.is_some());
+    assert!(a.ac().rewind.last_idle_escape.is_none());
+    assert!(a.ac().rewind.pending_open_id.is_some());
 }
 
 #[tokio::test]
@@ -84,7 +84,7 @@ async fn open_rewind_selector_no_messages_key_notifies() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.open_rewind_selector(&serde_json::json!({}));
-    assert!(a.rewind.selector.is_none());
+    assert!(a.ac().rewind.selector.is_none());
     assert!(!a.notifications.is_empty());
 }
 
@@ -101,7 +101,7 @@ async fn open_rewind_selector_builds_turns_in_reverse() {
     {
         let a = h.app_mut();
         a.open_rewind_selector(&data);
-        assert_eq!(a.rewind.selector.as_ref().unwrap().item_count(), 2);
+        assert_eq!(a.ac().rewind.selector.as_ref().unwrap().item_count(), 2);
         let frame = a.compose_frame().join("\n");
         assert!(
             frame.contains("Previous turn: two"),
@@ -135,7 +135,7 @@ async fn open_rewind_selector_no_user_turns_notifies() {
     let data = serde_json::json!({"messages": [{"role": "assistant", "content": "x"}]});
     let a = h.app_mut();
     a.open_rewind_selector(&data);
-    assert!(a.rewind.selector.is_none());
+    assert!(a.ac().rewind.selector.is_none());
     assert!(!a.notifications.is_empty());
 }
 
@@ -149,7 +149,7 @@ async fn rewind_selector_skips_idless_user_turns() {
     {
         let a = h.app_mut();
         a.open_rewind_selector(&data);
-        assert_eq!(a.rewind.selector.as_ref().unwrap().item_count(), 1);
+        assert_eq!(a.ac().rewind.selector.as_ref().unwrap().item_count(), 1);
         let frame = a.compose_frame().join("\n");
         assert!(
             frame.contains("Previous turn: stable older"),
@@ -184,9 +184,12 @@ async fn rewind_selector_enter_requests_rewind() {
     let a = h.app_mut();
     a.open_rewind_selector(&data);
     a.handle_rewind_selector_key(&Key::Enter);
-    assert!(a.rewind.selector.is_none());
-    assert!(a.rewind.pending_load_id.is_some());
-    assert_eq!(a.rewind.pending_apply_message_id.as_deref(), Some("u1"));
+    assert!(a.ac().rewind.selector.is_none());
+    assert!(a.ac().rewind.pending_load_id.is_some());
+    assert_eq!(
+        a.ac().rewind.pending_apply_message_id.as_deref(),
+        Some("u1")
+    );
 }
 
 #[tokio::test]
@@ -233,8 +236,8 @@ async fn rewind_selector_escape_cancels() {
     let a = h.app_mut();
     a.open_rewind_selector(&data);
     a.handle_rewind_selector_key(&Key::Escape);
-    assert!(a.rewind.selector.is_none());
-    assert!(a.rewind.pending_apply_id.is_none());
+    assert!(a.ac().rewind.selector.is_none());
+    assert!(a.ac().rewind.pending_apply_id.is_none());
 }
 
 #[tokio::test]
@@ -249,35 +252,35 @@ async fn rewind_selector_pending_keeps_open() {
     let a = h.app_mut();
     a.open_rewind_selector(&data);
     a.handle_rewind_selector_key(&Key::Down);
-    assert!(a.rewind.selector.is_some());
+    assert!(a.ac().rewind.selector.is_some());
 }
 
 #[tokio::test]
 async fn rewind_request_ids_are_monotonically_increasing() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let seq_before = a.rewind.request_seq;
+    let seq_before = a.ac().rewind.request_seq;
     // First double-escape generates an open request.
     a.handle_idle_escape_for_rewind();
     a.handle_idle_escape_for_rewind();
-    let open_id = a.rewind.pending_open_id.as_ref().unwrap().clone();
+    let open_id = a.ac().rewind.pending_open_id.as_ref().unwrap().clone();
     assert!(open_id.contains("rewind-open-"));
-    let seq_after_open = a.rewind.request_seq;
+    let seq_after_open = a.ac().rewind.request_seq;
     assert_eq!(seq_after_open, seq_before.wrapping_add(1));
     // Now simulate a rewind apply (open selector, press Enter).
     let data = serde_json::json!({"messages": [{"role": "user", "content": "turn", "id": "u1"}]});
-    a.rewind.pending_open_id = None; // simulate response clearing it
+    a.ac_mut().rewind.pending_open_id = None; // simulate response clearing it
     a.open_rewind_selector(&data);
     a.handle_rewind_selector_key(&Key::Enter);
-    let load_id = a.rewind.pending_load_id.as_ref().unwrap().clone();
+    let load_id = a.ac().rewind.pending_load_id.as_ref().unwrap().clone();
     assert!(load_id.contains("rewind-load-"));
-    let seq_after_load = a.rewind.request_seq;
+    let seq_after_load = a.ac().rewind.request_seq;
     assert_eq!(seq_after_load, seq_before.wrapping_add(2));
     let message = serde_json::json!({"role": "user", "content": "turn", "id": "u1"});
     respond(a, Some(&load_id), "get_message", true, Some(message), None);
-    let apply_id = a.rewind.pending_apply_id.as_ref().unwrap().clone();
+    let apply_id = a.ac().rewind.pending_apply_id.as_ref().unwrap().clone();
     assert!(apply_id.contains("rewind-to-"));
-    let seq_after_apply = a.rewind.request_seq;
+    let seq_after_apply = a.ac().rewind.request_seq;
     assert_eq!(seq_after_apply, seq_before.wrapping_add(3));
 }
 
@@ -287,17 +290,17 @@ async fn double_escape_outside_window_does_not_open_selector() {
     let a = h.app_mut();
     // First Escape arms.
     a.handle_idle_escape_for_rewind();
-    assert!(a.rewind.last_idle_escape.is_some());
+    assert!(a.ac().rewind.last_idle_escape.is_some());
     // Simulate passage of time beyond the window by clearing last_idle_escape.
-    a.rewind.last_idle_escape = None;
+    a.ac_mut().rewind.last_idle_escape = None;
     // Second Escape should arm again (not open selector).
     a.handle_idle_escape_for_rewind();
     assert!(
-        a.rewind.last_idle_escape.is_some(),
+        a.ac().rewind.last_idle_escape.is_some(),
         "should arm again after window expired"
     );
     assert!(
-        a.rewind.pending_open_id.is_none(),
+        a.ac().rewind.pending_open_id.is_none(),
         "should not open selector"
     );
 }
@@ -345,13 +348,13 @@ async fn response_get_state_populates_model_and_agent_id() {
     let a = h.app_mut();
     respond(a, None, "get_state", true, Some(data), None);
     assert_eq!(
-        a.inference.current_model.as_deref(),
+        a.ac().inference.current_model.as_deref(),
         Some("anthropic/claude-opus-4-5")
     );
-    assert_eq!(a.connected_agent_id.as_deref(), Some("worker"));
-    assert!(a.workflow.auto_continue);
-    assert!(a.workflow.completion_nudge);
-    assert!(a.sessions.context_stats_requested);
+    assert_eq!(a.ac().connected_agent_id.as_deref(), Some("worker"));
+    assert!(a.ac().workflow.auto_continue);
+    assert!(a.ac().workflow.completion_nudge);
+    assert!(a.ac().sessions.context_stats_requested);
 }
 
 #[tokio::test]
@@ -360,7 +363,7 @@ async fn response_get_state_default_session_clears_agent_id() {
     let data = serde_json::json!({"sessionKey": "cli:default"});
     let a = h.app_mut();
     respond(a, None, "get_state", true, Some(data), None);
-    assert!(a.connected_agent_id.is_none());
+    assert!(a.ac().connected_agent_id.is_none());
 }
 
 #[tokio::test]
@@ -368,7 +371,7 @@ async fn response_get_state_no_data_is_noop() {
     let mut h = harness().await;
     let a = h.app_mut();
     respond(a, None, "get_state", true, None, None);
-    assert!(a.inference.current_model.is_none());
+    assert!(a.ac().inference.current_model.is_none());
 }
 
 #[tokio::test]
@@ -386,7 +389,7 @@ async fn response_set_workflow_automation_success_and_failure() {
     let a = h.app_mut();
     let data = serde_json::json!({"autoContinue": true, "completionNudge": false});
     respond(a, None, "set_workflow_automation", true, Some(data), None);
-    assert!(a.workflow.auto_continue);
+    assert!(a.ac().workflow.auto_continue);
     assert!(!a.notifications.is_empty());
     respond(
         a,
@@ -413,7 +416,7 @@ async fn response_list_sessions_success_and_failure() {
     let a = h.app_mut();
     let data = serde_json::json!({"sessions": [{"name": "alpha"}]});
     respond(a, None, "list_sessions", true, Some(data), None);
-    assert!(a.sessions.resume_selector.is_some());
+    assert!(a.ac().sessions.resume_selector.is_some());
     respond(a, None, "list_sessions", false, None, Some("err"));
     assert!(!a.notifications.is_empty());
 }
@@ -432,11 +435,11 @@ async fn response_resume_session_success_and_failure() {
 async fn response_get_messages_opens_rewind_when_id_matches() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.rewind.pending_open_id = Some("rid".into());
+    a.ac_mut().rewind.pending_open_id = Some("rid".into());
     let data = serde_json::json!({"messages": [{"role": "user", "content": "turn", "id": "u1"}]});
     respond(a, Some("rid"), "get_messages", true, Some(data), None);
-    assert!(a.rewind.selector.is_some());
-    assert!(a.rewind.pending_open_id.is_none());
+    assert!(a.ac().rewind.selector.is_some());
+    assert!(a.ac().rewind.pending_open_id.is_none());
 }
 
 #[tokio::test]
@@ -454,9 +457,9 @@ async fn response_get_messages_replaces_chat_when_no_match() {
 async fn response_rewind_to_success_clears_pending_and_notifies() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.rewind.pending_apply_id = Some("rt".into());
+    a.ac_mut().rewind.pending_apply_id = Some("rt".into());
     respond(a, Some("rt"), "rewind_to", true, None, None);
-    assert!(a.rewind.pending_apply_id.is_none());
+    assert!(a.ac().rewind.pending_apply_id.is_none());
     assert!(!a.notifications.is_empty());
 }
 
@@ -465,8 +468,8 @@ async fn response_get_message_for_rewind_sends_rewind_with_full_text() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.editor.set_text("draft");
-    a.rewind.pending_load_id = Some("load".into());
-    a.rewind.pending_apply_message_id = Some("u1".into());
+    a.ac_mut().rewind.pending_load_id = Some("load".into());
+    a.ac_mut().rewind.pending_apply_message_id = Some("u1".into());
     let data = serde_json::json!({
         "id": "u1",
         "role": "user",
@@ -476,15 +479,15 @@ async fn response_get_message_for_rewind_sends_rewind_with_full_text() {
         "offset": 0
     });
     respond(a, Some("load"), "get_message", true, Some(data), None);
-    assert!(a.rewind.pending_load_id.is_none());
-    assert!(a.rewind.pending_apply_message_id.is_none());
-    assert!(a.rewind.pending_apply_id.is_some());
+    assert!(a.ac().rewind.pending_load_id.is_none());
+    assert!(a.ac().rewind.pending_apply_message_id.is_none());
+    assert!(a.ac().rewind.pending_apply_id.is_some());
     assert_eq!(
-        a.rewind.pending_apply_text.as_deref(),
+        a.ac().rewind.pending_apply_text.as_deref(),
         Some("full prompt body")
     );
     assert_eq!(
-        a.rewind.pending_apply_editor_baseline.as_deref(),
+        a.ac().rewind.pending_apply_editor_baseline.as_deref(),
         Some("draft")
     );
 }
@@ -494,12 +497,12 @@ async fn response_rewind_to_success_moves_selected_text_into_editor() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.editor.set_text("draft");
-    a.rewind.pending_apply_id = Some("rt".into());
-    a.rewind.pending_apply_editor_baseline = Some("draft".into());
-    a.rewind.pending_apply_text = Some("original prompt\nsecond line".into());
+    a.ac_mut().rewind.pending_apply_id = Some("rt".into());
+    a.ac_mut().rewind.pending_apply_editor_baseline = Some("draft".into());
+    a.ac_mut().rewind.pending_apply_text = Some("original prompt\nsecond line".into());
     respond(a, Some("rt"), "rewind_to", true, None, None);
     assert_eq!(a.editor.text(), "original prompt\nsecond line");
-    assert!(a.rewind.pending_apply_text.is_none());
+    assert!(a.ac().rewind.pending_apply_text.is_none());
 }
 
 #[tokio::test]
@@ -507,25 +510,25 @@ async fn response_rewind_to_success_keeps_newer_editor_draft() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.editor.set_text("newer draft");
-    a.rewind.pending_apply_id = Some("rt".into());
-    a.rewind.pending_apply_editor_baseline = Some("draft at send".into());
-    a.rewind.pending_apply_text = Some("original prompt".into());
+    a.ac_mut().rewind.pending_apply_id = Some("rt".into());
+    a.ac_mut().rewind.pending_apply_editor_baseline = Some("draft at send".into());
+    a.ac_mut().rewind.pending_apply_text = Some("original prompt".into());
     respond(a, Some("rt"), "rewind_to", true, None, None);
     assert_eq!(a.editor.text(), "newer draft");
-    assert!(a.rewind.pending_apply_text.is_none());
+    assert!(a.ac().rewind.pending_apply_text.is_none());
 }
 
 #[tokio::test]
 async fn response_rewind_to_failure_clears_pending_and_notifies_error() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.rewind.pending_apply_id = Some("rt".into());
-    a.rewind.pending_apply_editor_baseline = Some("".into());
-    a.rewind.pending_apply_text = Some("keep out of editor".into());
+    a.ac_mut().rewind.pending_apply_id = Some("rt".into());
+    a.ac_mut().rewind.pending_apply_editor_baseline = Some("".into());
+    a.ac_mut().rewind.pending_apply_text = Some("keep out of editor".into());
     respond(a, Some("rt"), "rewind_to", false, None, Some("bad"));
-    assert!(a.rewind.pending_apply_id.is_none());
-    assert!(a.rewind.pending_apply_editor_baseline.is_none());
-    assert!(a.rewind.pending_apply_text.is_none());
+    assert!(a.ac().rewind.pending_apply_id.is_none());
+    assert!(a.ac().rewind.pending_apply_editor_baseline.is_none());
+    assert!(a.ac().rewind.pending_apply_text.is_none());
     assert_eq!(a.editor.text(), "");
     assert!(!a.notifications.is_empty());
 }
@@ -542,11 +545,11 @@ async fn response_rewind_to_unmatched_is_noop() {
 async fn response_unknown_is_noop() {
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.ac().master_session.chat.entry_count();
     respond(a, None, "totally_unknown_command", true, None, None);
     // An unknown response is not surfaced: no chat entries, no notifications.
     assert_eq!(
-        a.master_session.chat.entry_count(),
+        a.ac().master_session.chat.entry_count(),
         before,
         "noop responses must not add chat entries"
     );
@@ -562,10 +565,10 @@ async fn response_clear_history_signals_workflow_retained() {
     // conversation from the workflow engine state, which is retained by design.
     let mut h = harness().await;
     let a = h.app_mut();
-    let before = a.master_session.chat.entry_count();
+    let before = a.ac().master_session.chat.entry_count();
     respond(a, None, "clear_history", true, None, None);
     assert_eq!(
-        a.master_session.chat.entry_count(),
+        a.ac().master_session.chat.entry_count(),
         before,
         "clear_history must not add chat entries"
     );
@@ -597,17 +600,17 @@ async fn response_get_subagents_updates_bar() {
         ]
     });
     respond(a, None, "get_subagents", true, Some(data), None);
-    assert!(!a.subagents.tracked.is_empty());
+    assert!(!a.ac().roster.tracked.is_empty());
 }
 
 #[tokio::test]
 async fn response_agent_error_appends_status_and_resets() {
     let mut h = harness().await;
     let a = h.app_mut();
-    a.spinner = Some(super::Spinner::new("x"));
+    a.ac_mut().spinner = Some(super::Spinner::new("x"));
     respond(a, None, "agent_error", false, None, Some("kaboom"));
     assert!(chat_text(a).contains("kaboom"));
-    assert!(a.spinner.is_none());
+    assert!(a.ac().spinner.is_none());
 }
 
 #[tokio::test]
@@ -646,7 +649,7 @@ async fn rewind_refresh_replaces_transcript_and_resets_paging_state() {
     );
     let _ = h.drain_commands().await;
 
-    h.app_mut().rewind.pending_apply_id = Some("rw".into());
+    h.app_mut().ac_mut().rewind.pending_apply_id = Some("rw".into());
     respond(h.app_mut(), Some("rw"), "rewind_to", true, None, None);
     let refresh_id = h
         .app_mut()
@@ -715,12 +718,14 @@ async fn rewind_success_clears_failed_stub_recall_state() {
     // (#1061 review — clear_message_recovery must reset stub-recall state).
     let mut h = harness().await;
     let a = h.app_mut();
-    a.failed_stub_recalls.insert((None, "stub-1".to_string()));
-    a.rewind.pending_apply_id = Some("rw".into());
+    a.ac_mut()
+        .failed_stub_recalls
+        .insert((None, "stub-1".to_string()));
+    a.ac_mut().rewind.pending_apply_id = Some("rw".into());
     respond(a, Some("rw"), "rewind_to", true, None, None);
     assert!(
-        a.failed_stub_recalls.is_empty(),
+        a.ac().failed_stub_recalls.is_empty(),
         "rewind must reset failed stub-recall markers"
     );
-    assert!(a.pending_stub_recall.is_empty());
+    assert!(a.ac().pending_stub_recall.is_empty());
 }

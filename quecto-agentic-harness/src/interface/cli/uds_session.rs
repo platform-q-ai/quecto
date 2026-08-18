@@ -461,9 +461,11 @@ impl serde::Serialize for MessageView<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
         let msg = self.0;
-        // 8 fields: stable id (#1060) + role/content/tools + isError + collapsed
+        // 8 base fields: stable id (#1060) + role/content/tools + isError + collapsed
         // (a demoted stub the client recalls by id; #1061 / ADR-0008 part 3).
-        let mut s = serializer.serialize_struct("Message", 8)?;
+        // Assistant thinking is an additive, display-safe recovery field (#1231).
+        let field_count = if msg.thinking_blocks.is_empty() { 8 } else { 9 };
+        let mut s = serializer.serialize_struct("Message", field_count)?;
         // Domain UUID as a round-trippable string key (AC6).
         s.serialize_field("id", &msg.id().to_string())?;
         s.serialize_field("role", role_wire_name(&msg.role))?;
@@ -474,6 +476,12 @@ impl serde::Serialize for MessageView<'_> {
         s.serialize_field("isError", &msg.is_error)?;
         // Ladder-collapsed stub: rendered in place, full body recallable by id.
         s.serialize_field("collapsed", &msg.is_collapsed)?;
+        if !msg.thinking_blocks.is_empty() {
+            s.serialize_field(
+                "thinking",
+                &uds_visible_thinking_wire::visible_thinking_blocks_json(&msg.thinking_blocks),
+            )?;
+        }
         s.end()
     }
 }
@@ -489,6 +497,8 @@ pub fn message_to_json(msg: &Message) -> serde_json::Value {
 
 #[path = "uds_session_message_range.rs"]
 mod uds_session_message_range;
+#[path = "uds_visible_thinking_wire.rs"]
+mod uds_visible_thinking_wire;
 pub use uds_session_message_range::{
     message_to_json_range, message_to_json_range_for_response,
     tool_call_arguments_to_json_range_for_response,

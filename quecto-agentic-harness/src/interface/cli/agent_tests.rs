@@ -417,7 +417,6 @@ fn test_build_agent_from_config_no_config_file() {
         max_iterations: None,
         max_time: None,
         uds_mode: false,
-        no_sandbox: false,
         socket_path: None,
         persist: false,
         disabled_tools: vec![],
@@ -429,6 +428,9 @@ fn test_build_agent_from_config_no_config_file() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
+        cwd_override: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -467,7 +469,6 @@ fn test_build_agent_from_config_explicit_missing_errors() {
         max_iterations: None,
         max_time: None,
         uds_mode: false,
-        no_sandbox: false,
         socket_path: None,
         persist: false,
         disabled_tools: vec![],
@@ -479,6 +480,9 @@ fn test_build_agent_from_config_explicit_missing_errors() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
+        cwd_override: None,
     };
     let mut stderr = String::new();
     // An explicit --config (config_explicit = true) pointing at a missing file
@@ -502,7 +506,6 @@ fn test_build_agent_from_config_invalid_json() {
         max_iterations: None,
         max_time: None,
         uds_mode: false,
-        no_sandbox: false,
         socket_path: None,
         persist: false,
         disabled_tools: vec![],
@@ -514,6 +517,9 @@ fn test_build_agent_from_config_invalid_json() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
+        cwd_override: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -539,7 +545,6 @@ fn test_build_agent_from_config_no_providers() {
         max_iterations: None,
         max_time: None,
         uds_mode: false,
-        no_sandbox: false,
         socket_path: None,
         persist: false,
         disabled_tools: vec![],
@@ -551,6 +556,9 @@ fn test_build_agent_from_config_no_providers() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
+        cwd_override: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -576,7 +584,6 @@ fn test_build_agent_from_config_with_model_override() {
         max_iterations: Some(5),
         max_time: None,
         uds_mode: false,
-        no_sandbox: false,
         socket_path: None,
         persist: false,
         disabled_tools: vec![],
@@ -588,6 +595,9 @@ fn test_build_agent_from_config_with_model_override() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
+        cwd_override: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");

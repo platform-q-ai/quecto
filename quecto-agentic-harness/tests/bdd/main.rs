@@ -270,8 +270,17 @@ impl std::ops::DerefMut for DebugEditor {
     }
 }
 
+pub struct DebugPythonLab(pub Arc<quecto::infrastructure::tools::python_lab::PythonLabTool>);
+impl std::fmt::Debug for DebugPythonLab {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<PythonLabTool>")
+    }
+}
+
 #[derive(Debug, Default, World)]
 pub struct QuectoWorld {
+    /// #1460 shared-state hardening scenario state (sockets, cred lock, ownership).
+    pub hardening: shared_state_hardening_steps::HardeningState,
     /// Exit code from the last CLI invocation
     pub exit_code: i32,
     /// Captured stdout from the last CLI invocation
@@ -662,6 +671,19 @@ pub struct QuectoWorld {
     pub grep_workspace: Option<PathBuf>,
     /// Result from grep tool execution
     pub grep_result: Option<quecto::domain::tool::ToolResult>,
+    // --- Python Lab BDD fields ---
+    /// Temp dir for the python lab workspace (kept alive)
+    pub _python_lab_temp_dir: Option<TempDir>,
+    /// Workspace path for python lab tests
+    pub python_lab_workspace: Option<PathBuf>,
+    /// Result from the most recent python lab tool execution
+    pub python_lab_result: Option<quecto::domain::tool::ToolResult>,
+    /// Scenario-scoped tool instance; owns the background job registry
+    pub python_lab_tool: Option<DebugPythonLab>,
+    /// Job id returned by the most recent background run
+    pub python_lab_job_id: Option<String>,
+    /// Pid a background python lab program recorded for itself
+    pub python_lab_pid: Option<i32>,
     // --- Find BDD fields ---
     /// Temp dir for find workspace (kept alive)
     pub _find_temp_dir: Option<TempDir>,
@@ -785,7 +807,7 @@ pub struct QuectoWorld {
     pub notify_rx: Option<quecto::infrastructure::tools::subagent_registry::NotificationRx>,
     /// Count from drain operation
     pub notify_drain_count: Option<usize>,
-    /// Parent session under test for #816 auto-await idle delivery
+    /// Parent session under test for #816 passive completion-note idle delivery
     pub notify_parent_session: Option<quecto::interface::cli::uds_session::AgentSession>,
     /// Per-agent completion sequence counter (kept out of the Gherkin, #816)
     pub notify_seq: std::collections::HashMap<String, u64>,
@@ -951,17 +973,6 @@ pub struct QuectoWorld {
     pub audit_content_preview: Option<String>,
     /// Audit events captured from a real agent-loop run (#937 emission path)
     pub audit_loop_events: Vec<quecto::domain::audit::AuditEvent>,
-    // --- agent_cmd await (#612) ---
-    /// Parsed await result for BDD assertions
-    pub await_result: Option<serde_json::Value>,
-    /// Mock await registry for BDD scenarios
-    pub await_registry: Option<quecto::infrastructure::tools::agent_cmd::SubagentRegistry>,
-    /// Active awaits tracker for BDD scenarios
-    pub await_active_awaits: Option<quecto::infrastructure::tools::agent_cmd::ActiveAwaits>,
-    /// Temp dir for await mock sockets (kept alive)
-    pub _await_mock_tmp: Option<TempDir>,
-    /// Mock listener for await scenarios (kept alive)
-    pub _await_mock_listener: Option<std::os::unix::net::UnixListener>,
     /// RuntimeReload BDD: temp dir holding the watched source file(s)
     pub _reload_tmp: Option<TempDir>,
     /// RuntimeReload BDD: path → file label map (for multi-source scenarios)
@@ -1050,6 +1061,8 @@ fn ensure_temp_dir(world: &mut QuectoWorld) {
     if world._temp_dir.is_none() {
         let td = TempDir::new().expect("failed to create temp dir");
         world.cli_context.base_dir = Some(td.path().to_path_buf());
+        world.cli_context.cwd = Some(td.path().join("workspace"));
+        std::fs::create_dir_all(td.path().join("workspace")).expect("create workspace cwd");
         world._temp_dir = Some(td);
     }
 }
@@ -1328,7 +1341,6 @@ fn table_to_json(table: &gherkin::Table) -> String {
     obj.to_string()
 }
 
-mod agent_cmd_await_steps;
 mod agent_cmd_tool_steps;
 mod agent_loop_steps;
 mod agent_tools_steps;
@@ -1354,6 +1366,7 @@ mod path_utils_steps;
 mod provider_auth_modes_steps;
 mod provider_steps;
 mod pruning_1072_steps;
+mod python_lab_steps;
 mod read_tool_steps;
 mod recall_tool_steps;
 mod release_profile_steps;
@@ -1363,6 +1376,7 @@ mod repo_docs_steps;
 mod sandbox_steps;
 mod security_steps;
 mod session_steps;
+mod shared_state_hardening_steps;
 mod spawn_env_steps;
 mod spawn_liveness_steps;
 mod spawn_runtime_slice5_steps;

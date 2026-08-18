@@ -3,21 +3,31 @@
 //! Spawns (or connects to) a `quecto agent --mode uds` process and provides
 //! a rich interactive terminal interface over the framed JSON UDS protocol.
 
-use std::os::unix::fs::FileTypeExt;
-use std::path::{Component, Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
+
+pub(crate) use super::socket_path::validate_socket_path;
+#[cfg(test)]
+use super::socket_path::{canonical_allowed_socket_roots, canonicalize_socket_roots};
 
 /// Parsed CLI flags for quecto-tui.
-struct CliFlags {
-    socket_path: Option<PathBuf>,
-    no_sandbox: bool,
-    workflow: bool,
-    workflow_guards: bool,
-    workflow_disabled: bool,
-    config_path: Option<PathBuf>,
-    system_prompt: Option<String>,
+pub(crate) struct CliFlags {
+    pub(crate) socket_path: Option<PathBuf>,
+    pub(crate) workflow: bool,
+    pub(crate) workflow_guards: bool,
+    pub(crate) workflow_disabled: bool,
+    pub(crate) config_path: Option<PathBuf>,
+    pub(crate) system_prompt: Option<String>,
     /// Tool names to forward to the spawned coordinator as `--disable-tool <name>`
     /// (repeatable). Empty means none are disabled (#957 TUI forward fix).
-    disable_tools: Vec<String>,
+    pub(crate) disable_tools: Vec<String>,
+    /// Spawn tab agents with `--persist` (ADR-0023 / #1465). Default true when
+    /// the TUI owns the child; ignored for `--socket` attach.
+    pub(crate) persist: bool,
+    /// When true, terminate owned child agents on TUI exit. Default false
+    /// (detach-on-exit). `--kill-on-exit` restores legacy teardown.
+    pub(crate) kill_on_exit: bool,
 }
 
 pub fn run(args: Vec<String>) -> i32 {
@@ -36,16 +46,17 @@ pub fn run(args: Vec<String>) -> i32 {
 }
 
 /// Parse CLI flags from command-line arguments.
-fn parse_flags(args: &[String]) -> CliFlags {
+pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
     let mut flags = CliFlags {
         socket_path: None,
-        no_sandbox: false,
         workflow: false,
         workflow_guards: false,
         workflow_disabled: false,
         config_path: None,
         system_prompt: None,
         disable_tools: Vec::new(),
+        persist: true,
+        kill_on_exit: false,
     };
     // An explicit `--system` literal takes precedence over `--system-file`
     // regardless of order; track it so a later/earlier `--system-file` can't
@@ -83,8 +94,20 @@ fn parse_flags(args: &[String]) -> CliFlags {
                 }
                 i += 2;
             }
-            "--no-sandbox" => {
-                flags.no_sandbox = true;
+            "--persist" => {
+                flags.persist = true;
+                i += 1;
+            }
+            "--no-persist" => {
+                flags.persist = false;
+                i += 1;
+            }
+            "--kill-on-exit" => {
+                flags.kill_on_exit = true;
+                i += 1;
+            }
+            "--detach-on-exit" => {
+                flags.kill_on_exit = false;
                 i += 1;
             }
             "--workflow" => {
@@ -136,8 +159,27 @@ fn apply_workflow_defaults(flags: &mut CliFlags) {
     }
 }
 
+pub(crate) use super::tab_spawn_policy::{TabSpawnPolicy, tab_spawn_flags_from_policy};
+
+/// Spawn a secondary tab agent and return socket path + child + stderr tail.
+pub(crate) async fn spawn_agent_for_tab(
+    flags: &CliFlags,
+) -> Result<
+    (
+        PathBuf,
+        tokio::process::Child,
+        crate::shell::child_watch::StderrTail,
+        Option<u8>,
+    ),
+    String,
+> {
+    spawn_agent(flags).await
+}
+
 /// Main async entry point.
 async fn run_tui(flags: CliFlags) -> i32 {
+    // Capture spawn policy before any partial moves out of `flags` (F8).
+    let tab_spawn_policy = TabSpawnPolicy::from_flags(&flags);
     // For a TUI-owned child, the #1047 exit watcher takes ownership of the
     // `Child` (so it can reap it and record an exit diagnosis for the
     // disconnect notification). Termination also goes through the watcher —
@@ -199,7 +241,10 @@ async fn run_tui(flags: CliFlags) -> i32 {
 
     // Connect to the agent, in the framing its announcement negotiated:
     // length-prefixed frames for protocol v2+, legacy NDJSON for agents that
-    // announced no version (deprecation window, ADR-0008 / #1059).
+    // announced no version (deprecation window, ADR-0008 / #1059). The
+    // outcome only picks the connect call here; it is recorded on the
+    // `Client` and carried as per-connection state by the master
+    // `Connection` (#1462), not kept as a `run_tui` local.
     let speaks_frames = should_speak_frames(announced_protocol);
     let connect = async {
         if speaks_frames {
@@ -222,26 +267,38 @@ async fn run_tui(flags: CliFlags) -> i32 {
     // Run the TUI.
     let terminal = crate::shell::terminal::Terminal::new();
     let mut app = crate::shell::app::App::new(terminal, client);
+    app.tab_spawn_policy = Some(tab_spawn_policy);
+    app.ac_mut().socket_path = Some(socket.clone()); // AC4 durability
     if let Some(watch) = &child_watch {
+        app.ac_mut().child_pid = watch.pid();
         app.set_child_exit_watch(watch.clone());
     }
+    // Master ready: capture initial durability snapshot (F3).
+    app.persist_default_durability();
     let exit_code = app.run().await;
 
-    // Kill the child agent process group on TUI exit (catches subagents too),
-    // via the watcher so an already-reaped (possibly recycled) PID is never
-    // signalled (#1051 review).
-    if let Some(watch) = &child_watch {
-        watch.terminate().await;
+    // Clean exit: flush registry/manifest before teardown (F3).
+    app.persist_default_durability();
+
+    // Detach-on-exit by default (ADR-0023); `--kill-on-exit` terminates every tab child.
+    if flags.kill_on_exit {
+        let mut watches = app.take_all_child_exit_watches();
+        if let Some(watch) = child_watch {
+            watches.push(watch);
+        }
+        for watch in watches {
+            watch.terminate().await;
+        }
     }
 
     exit_code
 }
 
 /// Build the `quecto agent` argv used for an owned TUI child process.
-fn build_agent_args(flags: &CliFlags) -> Vec<String> {
+pub(crate) fn build_agent_args(flags: &CliFlags) -> Vec<String> {
     let mut args = vec!["agent".to_string(), "--mode".to_string(), "uds".to_string()];
-    if flags.no_sandbox {
-        args.push("--no-sandbox".to_string());
+    if flags.persist {
+        args.push("--persist".to_string());
     }
     if flags.workflow {
         args.push("--workflow".to_string());
@@ -305,7 +362,7 @@ pub fn agent_socket_timeout_message() -> String {
 /// The caller MUST store the child handle and call `child.kill()` + `child.wait()`
 /// on TUI exit. Tokio's `Child` does NOT kill the process on drop — dropping it
 /// creates an orphan. See the security review for PR #442.
-async fn spawn_agent(
+pub(crate) async fn spawn_agent(
     flags: &CliFlags,
 ) -> Result<
     (
@@ -658,83 +715,6 @@ fn format_agent_startup_failure(reason: &str, stderr_lines: &[String]) -> String
     }
 
     format!("{}\nAgent stderr:\n{}", reason, stderr_lines.join("\n"))
-}
-
-/// Validate that a socket path is under a safe, expected directory.
-///
-/// Accepts paths under /tmp, $TMPDIR, $XDG_RUNTIME_DIR, or the user's home.
-/// Rejects absolute paths under system directories to prevent the TUI from
-/// connecting to arbitrary sockets if the agent binary is compromised.
-fn validate_socket_path(path: &Path) -> Result<(), String> {
-    let path_str = path.to_string_lossy();
-
-    if !path.is_absolute() {
-        return Err(format!("socket path is not absolute: {path_str}"));
-    }
-    if path
-        .components()
-        .any(|component| matches!(component, Component::ParentDir))
-    {
-        return Err(format!("socket path must not contain '..': {path_str}"));
-    }
-
-    let metadata = std::fs::symlink_metadata(path)
-        .map_err(|e| format!("socket path '{}' is not accessible: {e}", path_str))?;
-    if metadata.file_type().is_symlink() {
-        return Err(format!("socket path must not be a symlink: {path_str}"));
-    }
-    if !metadata.file_type().is_socket() {
-        return Err(format!("socket path is not a Unix socket: {path_str}"));
-    }
-
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("socket path has no parent directory: {path_str}"))?;
-    let canonical_parent = std::fs::canonicalize(parent).map_err(|e| {
-        format!(
-            "socket parent '{}' is not accessible: {e}",
-            parent.display()
-        )
-    })?;
-    let allowed_roots = canonical_allowed_socket_roots();
-
-    if allowed_roots
-        .iter()
-        .any(|prefix| canonical_parent.starts_with(prefix))
-    {
-        return Ok(());
-    }
-
-    Err(format!(
-        "socket path '{}' is not under an expected directory (/tmp, $TMPDIR, $XDG_RUNTIME_DIR, $HOME)",
-        path_str
-    ))
-}
-
-fn canonical_allowed_socket_roots() -> Vec<PathBuf> {
-    let mut roots = vec![PathBuf::from("/tmp")];
-    if let Ok(tmpdir) = std::env::var("TMPDIR") {
-        roots.push(PathBuf::from(tmpdir));
-    }
-    if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
-        roots.push(PathBuf::from(xdg));
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        roots.push(PathBuf::from(home));
-    }
-    canonicalize_socket_roots(roots)
-}
-
-/// Keep only absolute, canonicalizable roots. Split out from
-/// [`canonical_allowed_socket_roots`] so the relative-path rejection can be
-/// tested without mutating the process environment (which races with other
-/// tests that read `TMPDIR`/`XDG_RUNTIME_DIR` under parallel execution).
-fn canonicalize_socket_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
-    roots
-        .into_iter()
-        .filter(|root| root.is_absolute())
-        .filter_map(|root| std::fs::canonicalize(root).ok())
-        .collect()
 }
 
 #[cfg(test)]

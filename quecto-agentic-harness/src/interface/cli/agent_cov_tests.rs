@@ -107,6 +107,29 @@ fn mode_missing_value_returns_none() {
 }
 
 #[test]
+fn removed_no_sandbox_is_rejected() {
+    let mut e = String::new();
+    assert!(parse_agent_flags(&argv(&["--no-sandbox", "-m", "hi"]), &mut e).is_none());
+    assert!(e.contains("unknown flag '--no-sandbox'"), "stderr={e}");
+}
+
+#[test]
+fn legacy_network_is_accepted_as_noop_warning() {
+    let mut e = String::new();
+    let f = parse_agent_flags(&argv(&["--network", "--mode", "uds"]), &mut e).unwrap();
+    assert!(f.uds_mode);
+    assert!(e.contains("--network"), "stderr={e}");
+    assert!(e.contains("ignored"), "stderr={e}");
+}
+
+#[test]
+fn unknown_agent_flag_is_rejected() {
+    let mut e = String::new();
+    assert!(parse_agent_flags(&argv(&["--sokcet", "/tmp/x.sock"]), &mut e).is_none());
+    assert!(e.contains("unknown flag '--sokcet'"), "stderr={e}");
+}
+
+#[test]
 fn socket_sets_path() {
     let mut e = String::new();
     let f =
@@ -294,13 +317,6 @@ fn no_session_and_session_mutually_exclusive() {
 }
 
 #[test]
-fn no_sandbox_flag_sets() {
-    let mut e = String::new();
-    let f = parse_agent_flags(&argv(&["--no-sandbox"]), &mut e).unwrap();
-    assert!(f.no_sandbox);
-}
-
-#[test]
 fn workflow_guards_conflicts_no_workflow() {
     let mut e = String::new();
     let r = parse_agent_flags(
@@ -352,7 +368,6 @@ fn parse_agent_flags_covers_boolean_bundle_and_missing_values() {
             "/tmp/spec.json",
             "--parent-id",
             "parent",
-            "--no-sandbox",
             "--no-session",
         ]),
         &mut stderr,
@@ -367,7 +382,6 @@ fn parse_agent_flags_covers_boolean_bundle_and_missing_values() {
     assert_eq!(flags.model_override.as_deref(), Some("local/model"));
     assert_eq!(flags.max_iterations, Some(3));
     assert_eq!(flags.max_time, Some(4));
-    assert!(flags.no_sandbox);
     assert!(flags.no_session);
     assert_eq!(flags.disabled_tools, vec!["bash".to_string()]);
     assert!(stderr.is_empty());
@@ -400,7 +414,6 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         max_iterations: None,
         max_time: None,
         uds_mode: true,
-        no_sandbox: false,
         socket_path: Some(std::path::PathBuf::from(format!(
             "/tmp/{}",
             "x".repeat(140)
@@ -415,6 +428,9 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
+        cwd_override: None,
     };
     let ctx = CliContext::default();
     let mut stderr = String::new();
@@ -430,7 +446,6 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         max_iterations: None,
         max_time: None,
         uds_mode: true,
-        no_sandbox: false,
         socket_path: Some(std::path::PathBuf::from(format!(
             "/tmp/{}",
             "y".repeat(140)
@@ -445,6 +460,9 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         inherited_tool_policy: None,
         parent_id: None,
         spawned: false,
+        parent_identity_override: None,
+        session_key_override: None,
+        cwd_override: None,
     };
     flags.persist = true;
     stderr.clear();

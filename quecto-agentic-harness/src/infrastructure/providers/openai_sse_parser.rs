@@ -4,15 +4,33 @@
 //! limit and to make the parser independently testable.
 
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, ToolCall, UsageInfo};
+use crate::domain::message::ToolCall;
+#[cfg(test)]
+use crate::domain::message::{LlmResponse, UsageInfo};
 
 /// Maximum number of tool calls allowed in a single streaming response.
 const MAX_TOOL_CALLS: usize = 128;
+
+/// Maximum accumulated assistant content bytes for one OpenAI SSE response.
+///
+/// 8 MiB is far above legitimate chat completions while keeping a pathological
+/// stream orders of magnitude below the RSS growth seen in #1201. The limit is
+/// byte-based because `String` growth and provider payloads are byte-sized.
+pub(crate) const MAX_OPENAI_SSE_CONTENT_BYTES: usize = 8 * 1024 * 1024;
+
+/// Maximum accumulated `function.arguments` bytes for one tool call.
+///
+/// 2 MiB comfortably covers normal JSON tool payloads but prevents a single
+/// adversarial tool-call argument accumulator from growing without bound.
+pub(crate) const MAX_OPENAI_SSE_TOOL_ARGUMENT_BYTES: usize = 2 * 1024 * 1024;
+
+pub(crate) use crate::infrastructure::providers::sse_limits::append_with_limit;
 
 /// Parse an SSE text stream into an assembled `LlmResponse`.
 ///
 /// Captures content deltas, tool-call deltas, and the final `usage` chunk
 /// (when `stream_options.include_usage` is enabled).
+#[cfg(test)]
 pub(crate) fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> {
     let mut content = String::new();
     let mut tool_calls: Vec<ToolCall> = Vec::new();
@@ -34,7 +52,7 @@ pub(crate) fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> 
                     choice.get("delta").unwrap_or(&serde_json::Value::Null),
                     &mut content,
                     &mut tool_calls,
-                );
+                )?;
             }
         }
 
@@ -65,9 +83,14 @@ pub(crate) fn apply_delta(
     delta: &serde_json::Value,
     content: &mut String,
     tool_calls: &mut Vec<ToolCall>,
-) {
+) -> Result<(), DomainError> {
     if let Some(text) = delta["content"].as_str() {
-        content.push_str(text);
+        append_with_limit(
+            content,
+            text,
+            MAX_OPENAI_SSE_CONTENT_BYTES,
+            "assistant content",
+        )?;
     }
     if let Some(tcs) = delta["tool_calls"].as_array() {
         for tc in tcs {
@@ -89,10 +112,16 @@ pub(crate) fn apply_delta(
                 tool_calls[idx].name = name.to_string();
             }
             if let Some(args) = tc["function"]["arguments"].as_str() {
-                tool_calls[idx].arguments.push_str(args);
+                append_with_limit(
+                    &mut tool_calls[idx].arguments,
+                    args,
+                    MAX_OPENAI_SSE_TOOL_ARGUMENT_BYTES,
+                    "tool-call arguments",
+                )?;
             }
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

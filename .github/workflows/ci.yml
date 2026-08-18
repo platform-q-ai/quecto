@@ -125,8 +125,11 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
-      - run: cargo llvm-cov --lib -p quecto-agentic-harness --ignore-filename-regex '(tui_harness|test_support|warn_capture)' --fail-under-functions 92
+      - run: cargo llvm-cov clean --workspace
+      - run: cargo llvm-cov --lib -p quecto-agentic-harness --ignore-filename-regex '(tui_harness|test_support|warn_capture)' --fail-under-functions 92 --summary-only
+      - run: cargo llvm-cov clean --workspace
       - run: cargo llvm-cov --lib -p quecto-tui --ignore-filename-regex '(tui_harness|test_support|warn_capture)' --fail-under-functions 95
+      - run: cargo llvm-cov clean --workspace
       - run: cargo llvm-cov --lib -p quecto-api --ignore-filename-regex '(tui_harness|test_support|warn_capture)' --fail-under-functions 95
 
   dependency-policy:

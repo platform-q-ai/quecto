@@ -62,10 +62,7 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
 
     let workspace = std::path::PathBuf::from(config.workspace_path());
     let model = config.agents.defaults.model.clone();
-    let sandbox = Sandbox::new(
-        Some(workspace.clone()),
-        config.agents.defaults.restrict_to_workspace,
-    );
+    let sandbox = Sandbox::new(Some(workspace.clone()));
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
     let mut registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
         workspace.clone(),
@@ -1570,6 +1567,7 @@ fn given_session_already_contains_messages(
             key: uds_session_key(&session_name),
             messages: vec![Message::user(user), Message::assistant(assistant, vec![])],
             workflow_run: None,
+            subagent_roster: Vec::new(),
         },
     );
 }
@@ -1591,6 +1589,7 @@ fn given_session_has_workflow_progress(
                 done: (0..7).map(|i| i < completed).collect(),
                 active_issue: None,
             }),
+            subagent_roster: Vec::new(),
         },
     );
     world._workflow_enabled = true;

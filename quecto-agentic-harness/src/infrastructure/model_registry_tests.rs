@@ -535,6 +535,20 @@ fn max_tokens_for_returns_none_when_model_omits_max_tokens() {
 }
 
 #[test]
+fn model_record_qualified_id_and_registry_fallback_limits_are_covered() {
+    let registry = ModelRegistry::builtin();
+    let model = registry
+        .find("anthropic-api", "claude-sonnet-5")
+        .expect("builtin model");
+    assert_eq!(model.qualified_id(), "anthropic-api/claude-sonnet-5");
+
+    let tmp = tempfile::tempdir().unwrap();
+    let (cap, window) = ModelRegistry::model_limits_from_base_dir(tmp.path(), "not-qualified");
+    assert_eq!(cap, None);
+    assert_eq!(window, None);
+}
+
+#[test]
 fn model_limits_from_base_dir_reads_output_cap_from_models_json() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -608,10 +622,22 @@ fn builtin_xai_grok_45_is_oauth_openai_completions() {
 }
 
 #[test]
-fn builtin_xai_grok_43_present_with_conservative_defaults() {
+fn builtin_xai_grok_46_is_oauth_openai_completions() {
     let registry = ModelRegistry::builtin();
-    let model = registry.find("xai", "grok-4.3").expect("grok-4.3 builtin");
-    assert_eq!(model.oauth_provider.as_deref(), Some("xai"));
+    let model = registry.find("xai", "grok-4.6").expect("grok-4.6 builtin");
+    assert_eq!(model.api, ProviderApi::OpenAiCompletions);
     assert_eq!(model.auth, AuthMode::OAuth);
+    assert_eq!(model.oauth_provider.as_deref(), Some("xai"));
+    assert_eq!(model.context_window, 500_000);
     assert!(model.reasoning);
+    assert!(model.input.iter().any(|m| m == "image"));
+    assert_eq!(model.cost.input, 2.0);
+    assert_eq!(model.cost.output, 6.0);
+    assert_eq!(model.cost.cache_read, 0.5);
+}
+
+#[test]
+fn builtin_xai_grok_43_removed() {
+    let registry = ModelRegistry::builtin();
+    assert!(registry.find("xai", "grok-4.3").is_none());
 }

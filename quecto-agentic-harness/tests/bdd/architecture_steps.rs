@@ -382,7 +382,7 @@ fn when_platform_specific_dependencies_classified(_world: &mut QuectoWorld) {}
 fn then_each_search_tool_keeps_direct_install_guidance(_world: &mut QuectoWorld) {
     let tmp = TempDir::new().expect("create search-tool workspace");
     let workspace = Arc::new(tmp.path().to_path_buf());
-    let sandbox = Arc::new(Sandbox::new(Some(workspace.as_ref().clone()), true));
+    let sandbox = Arc::new(Sandbox::new(Some(workspace.as_ref().clone())));
 
     let grep_tool = quecto::infrastructure::tools::grep::GrepTool::with_rg_binary(
         workspace.clone(),

@@ -1,6 +1,41 @@
 //! Unit tests for `presentation_payloads` mappings.
 
-use super::is_subagent_note;
+use super::{is_subagent_note, recovered_thinking_page};
+
+#[test]
+fn recovered_thinking_page_projects_blocks_and_pagination() {
+    let data = serde_json::json!({
+        "thinking": [{"kind":"text","text":"first"}, {"kind":"redacted"}],
+        "hasMoreThinking": true,
+        "nextThinkingOffset": 42,
+    });
+
+    let page = recovered_thinking_page(&data);
+
+    assert_eq!(page.blocks.len(), 2);
+    assert_eq!(
+        page.blocks[0].to_wire(),
+        serde_json::json!({"kind":"text","text":"first"})
+    );
+    assert_eq!(
+        page.blocks[1].to_wire(),
+        serde_json::json!({"kind":"redacted"})
+    );
+    assert!(page.has_more);
+    assert_eq!(page.next_offset, Some(42));
+}
+
+#[test]
+fn recovered_thinking_page_defaults_absent_or_invalid_pagination() {
+    let page = recovered_thinking_page(&serde_json::json!({
+        "thinking": [{"kind":"text","text":"only"}],
+        "hasMoreThinking": "yes",
+        "nextThinkingOffset": "42",
+    }));
+
+    assert!(!page.has_more);
+    assert_eq!(page.next_offset, None);
+}
 
 #[test]
 fn detects_notes_verbatim_and_collapsed() {

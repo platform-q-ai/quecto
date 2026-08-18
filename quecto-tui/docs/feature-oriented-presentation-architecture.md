@@ -273,7 +273,9 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `components/autocomplete.rs` | `components` (relocated, #1257 Phase 1) |
 | `components/chat.rs` | `components` (relocated, #1257 Phase 1/6) |
 | `components/chat_render.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/chat_retention.rs` | `components` chat retained-window policy (#1196) |
 | `components/chat_stub.rs` | `components` (relocated, #1257 Phase 1/6) |
+| `components/chat_view.rs` | `components` chat viewport/render-cache implementation split for line-count baseline (#1196) |
 | `components/component.rs` | `components` (relocated, #1257 Phase 1/6) |
 | `components/editor.rs` | `components` compat re-export of text-input Editor (#1277) |
 | `components/text_input/editor.rs` | `components` text-input system core (#1277) |
@@ -316,6 +318,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/agent_ledger_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/client.rs` | `protocol` UDS client and wire DTOs (relocated, #1257 Phase 2) |
 | `protocol/client_classes.rs` | `protocol` command admission classes + test-harness queue constructor (split from `client.rs` for the 750-line baseline, child-progress-freeze fix 2026-07-29) |
+| `protocol/inspection_routing.rs` | `protocol` safe routed subagent inspection command mapping (#1442; split from `client.rs` for the 750-line baseline) |
 | `protocol/client_policy_types.rs` | `protocol` catalogue-backed tool policy wire DTOs (#1334 Phase 4) |
 | `protocol/mod.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/model_payloads.rs` | `protocol` mapper feeding `models` (relocated, #1257 Phase 2) |
@@ -329,28 +332,47 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `sessions/mod.rs` | `sessions` (relocated, #1257 Phase 5) |
 | `shell/app.rs` | `shell` composition root (relocated, #1257 Phase 6) |
 | `shell/app_commands.rs` | `shell` top-level command routing (relocated, #1257 Phase 6) |
+| `shell/app_conversation_characterization_tests/mod.rs` | `shell` conversation characterization test module split for line budget (#1231) |
 | `shell/app_disconnect.rs` | `shell` runtime/disconnect coordination (relocated, #1257 Phase 6) |
 | `shell/app_event_loop.rs` | `shell` event loop (relocated, #1257 Phase 6) |
 | `shell/app_events.rs` | `shell` top-level event routing (relocated, #1257 Phase 6) |
 | `shell/app_events_test_support.rs` | `shell` test support (relocated, #1257 Phase 6) |
 | `shell/app_idle_efficiency.rs` | `shell` event-loop policy (relocated, #1257 Phase 6) |
 | `shell/app_methods.rs` | `shell` composition methods (relocated, #1257 Phase 6) |
+| `shell/app_methods_send.rs` | `shell` send/selection helpers split for line budget (#1465) |
 | `shell/app_render_helpers.rs` | `shell` render helper extraction (line-count split, #1334 PR 4) |
 | `shell/app_response.rs` | `shell` response dispatch seam (relocated, #1257 Phase 6; protocol-mapper allowlist #1220) |
+| `shell/app_response_test_api.rs` | `shell` multi-tab test/harness API (#1465) |
 | `shell/app_selection.rs` | `shell` focus/selection routing (relocated, #1257 Phase 6) |
 | `shell/app_stdin.rs` | `shell` stdin coordination (relocated, #1257 Phase 6) |
 | `shell/app_submit.rs` | `shell` submit/prompt coordination (relocated, #1257 Phase 6) |
+| `shell/app_thinking_visibility.rs` | `shell` model-thinking visibility preference controller (#1231) |
+| `shell/app_time.rs` | `shell` wall-clock formatting helpers (line-count split from `app_methods.rs`, #1470 review) |
 | `shell/child_watch.rs` | `shell` runtime supervision (relocated, #1257 Phase 1) |
 | `shell/cli.rs` | `shell` CLI entry (relocated, #1257 Phase 1) |
+| `shell/connection.rs` | `shell` master-connection feed task and `Source`-keyed fan-in seam (#1462) |
+| `shell/connection_state.rs` | `shell` per-connection state bundle behind the `active_conn()` seam (#1463) |
+| `shell/atomic_file.rs` | `shell` atomic temp+rename durability helper (#1465 AC4) |
 | `shell/keys.rs` | `shell` input mapping primitive (relocated, #1257 Phase 1) |
 | `shell/mod.rs` | `shell` module root |
 | `shell/process.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
 | `shell/render.rs` | `shell` terminal/render runtime adapter (relocated, #1257 Phase 1) |
 | `shell/signals.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
+| `shell/socket_path.rs` | `shell` shared socket-path validation policy for every connect (#1460) |
+| `shell/tab_activity.rs` | `shell` pure per-tab spinner/unread activity policy (#1466) |
+| `shell/tab_lifecycle.rs` | `shell` multi-tab open/switch/close + durability snapshot (#1465 P3) |
+| `shell/tab_registry.rs` | `shell` tab-agent registry sidecar (#1465 AC4) |
+| `shell/tab_spawn_policy.rs` | `shell` parent CLI policy inherited by secondary tab spawns (#1465 F8) |
+| `shell/workspace_manifest.rs` | `shell` workspace tab-set manifest (#1465 AC4) |
+| `shell/workspace_resume.rs` | `shell` workspace-aware /resume restore (#1465 P4) |
 | `shell/stdin_buffer.rs` | `shell` stdin adapter/policy (relocated, #1257 Phase 6) |
 | `shell/terminal.rs` | `shell` terminal adapter (relocated, #1257 Phase 1) |
+| `shell/thinking_preferences.rs` | `shell` durable model-thinking visibility preference storage (#1231) |
 | `shell/tool_policy.rs` | `shell` live tool/profile policy modal controller (#1334 PR 4) |
 | `shell/tui_harness.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
+| `shell/tui_harness_layout.rs` | `shell` harness layout probes split for line budget (#1465) |
+| `shell/tui_harness_sourced.rs` | `shell` fan-in/feed-task harness drivers for the #1462 seam |
+| `shell/tui_harness_tabs.rs` | `shell` multi-tab paint/activity harness drivers (#1466) |
 | `shell/tui_harness_tool_policy.rs` | `shell` tool policy test-harness event helpers (#1334 PR 4) |
 | `shell/tui_harness_disconnect.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
 | `shell/tui_harness_events.rs` | `shell` test harness support (relocated, #1257 Phase 6) |
@@ -419,7 +441,7 @@ Parity evidence recorded during #1222 implementation:
 | Frozen characterization suite | Roster/source authority, warm-feed startup, retained feed/session cap, ledger no-op hints, caught-up sync, duplicate-id transcript upsert, active-child fallback, and authoritative ledger projection preserve behavior. | `cargo test -p quecto-tui --lib app_agents_characterization_tests` passed after refactor. Mutation evidence before freeze killed M1–M15. The ledger projection test needed a mechanical type adaptation from `ChatEntry` to pure `LedgerEntry` after extraction; follow-up mutations M16/M17 against `agents/ledger.rs` both failed the adapted test. | PASS |
 | Existing targeted unit suites | Existing subagent, ledger, workflow-stickiness, panel/session, and roster-authority behavior remains unchanged. | Passed: `cargo test -p quecto-tui --lib` (1642 tests); explicit targeted runs of `app_ledger_sync_tests`, `ledger_sync_tests`, `app_subagent_roster_authority_tests`, `app_subagents_tests`, `app_subagent_panel_tests`, and `app_subagent_workflow_sticky_tests`. Existing tests changed only for mechanical module/type moves (`feed_state`/`ledger_sync` into top-level `agents/*`, `ui` → `runtime`/`view`, plus typed `LedgerEntry` projection). | PASS |
 | Visual / rendered frames | Panel-first layout, read-only marker, and sub-agent session parity render identical user-visible surfaces. | `cd quecto-tui && QUECTO_TAG=tui cargo test --features test-harness --test bdd` passed 28 TUI features / 175 scenarios, including `tui_subagent_first_layout`, `tui_subagent_readonly_marker`, and `tui_subagent_session_parity`. | PASS |
-| Architecture policy | Raw JSON and wire DTO parsing sites do not grow; pure agents policy has no Tokio handles/channels, terminal/widget types, or concrete client; runtime feed ownership remains separated. | `cargo test -p quecto-agentic-harness --test architecture tui_feature_view_raw_json_parsing_sites_are_eliminated -- --exact` and `cargo test -p quecto-agentic-harness --test architecture tui_wire_dto_usage_does_not_grow -- --exact` passed. `grep` over `agents/{feed,roster,ledger,focus}.rs` found no channels, task handles, concrete client, terminal/widget types, or `serde_json`; only `tokio::time::Instant` remains in roster lifecycle timestamps. Caveat on the ratchets: both counters are heuristic — the raw-JSON counter matches literal `.get("`/`.pointer("` and accessor+`and_then` lines, so `serde_json::from_str`/`from_value` and dynamic `value.get(key)` in `protocol/agent_ledger_payloads.rs` are not counted; the wire-DTO counter matches `Command::`/`Event::`/`infrastructure::client`/`protocol::client` lines, so unqualified DTO uses after a single grouped import are not counted. They confirm no growth in the shapes they measure, not the absence of raw JSON parsing. Runtime `cmd_tx`/task handle live in `agents/runtime.rs::FeedRuntime`, separate from `FeedSyncState`, but are re-flattened into `FeedState` (see the structural-check caveat above). | PASS |
+| Architecture policy | Raw JSON and wire DTO parsing sites do not grow; pure agents policy has no Tokio handles/channels, terminal/widget types, or concrete client; runtime feed ownership remains separated. | `cargo test -p quecto-agentic-harness --test architecture tui_feature_view_raw_json_parsing_sites_do_not_grow -- --exact` and `cargo test -p quecto-agentic-harness --test architecture tui_wire_dto_usage_does_not_grow -- --exact` passed. `grep` over `agents/{feed,roster,ledger,focus}.rs` found no channels, task handles, concrete client, terminal/widget types, or `serde_json`; only `tokio::time::Instant` remains in roster lifecycle timestamps. Caveat on the ratchets: both counters are line heuristics — the raw-JSON counter matches literal `.get("`/`.pointer("`, indexed-value/accessor, accessor+`and_then`, direct `serde_json::from_str`/`from_value`, and precise JSON-receiver dynamic-key shapes while intentionally ignoring ambiguous bare `.get(` and multi-line chains; the wire-DTO counter is import-gated for `protocol::client` and counts grouped-import/unqualified DTO uses. They confirm no growth in the shapes they measure, not the absence of every possible raw JSON parsing pattern. Runtime `cmd_tx`/task handle live in `agents/runtime.rs::FeedRuntime`, separate from `FeedSyncState`, but are re-flattened into `FeedState` (see the structural-check caveat above). | PASS |
 | Performance parity (source inspection only; no enforcing check) | Replaced specialized code keeps the same asymptotic passes and allocation boundaries. | Roster snapshot merge still builds one `BTreeMap` of candidates/incoming/new map and one parent carry-over queue in `apply_roster_snapshot`; no render-loop work or background task moved into policy. Ledger transcript still uses one `HashMap` plus one ordered `Vec` and applies deltas in O(messages). Retention still evicts through the existing session-order vector and active-id skip. Warm feeds remain bounded by `MAX_RETAINED_SESSIONS`. | PASS |
 | Quantitative / formatting / lint | File-size cap and strict local checks remain green. | Largest agents pure-policy file is `agents/roster.rs` at 294 lines; `app.rs` dropped from 741 to 617 lines. Overall changed-file line count is +884 (1437 insertions, 553 deletions) including 310 lines of new characterization tests, 203 lines of typed ledger DTOs, and the parity/deletion documentation below. `cargo fmt --check` and `cargo clippy -p quecto-tui --lib -- -D warnings -W clippy::cognitive_complexity -W clippy::too_many_arguments -W clippy::too_many_lines` passed. | PASS |
 
@@ -563,10 +585,10 @@ Four decrease-only guards live in `quecto-agentic-harness/tests/architecture.rs`
 and therefore run in the fast pre-commit guard suite (targets are enumerated
 dynamically, so they cannot be silently dropped):
 
-- `tui_feature_view_raw_json_parsing_sites_are_eliminated` — final feature/view total `0`; scan roots include `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`.
-- `tui_protocol_raw_json_parsing_sites_do_not_grow` — final protocol mapper total and seed `127`.
-- `tui_combined_raw_json_inventory_does_not_grow` — feature/view plus protocol sites may not exceed the historical combined ceiling `178` (current total `127`), preventing growth hidden by moving sites between buckets.
-- `tui_wire_dto_usage_does_not_grow` — import-aware inventory exact total and seed `98` with no whole-file exemptions (documented shell/runtime and agents direct-feed seams remain measured).
+- `tui_feature_view_raw_json_parsing_sites_do_not_grow` — feature/view exact total and seed `5`; scan roots include `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`.
+- `tui_protocol_raw_json_parsing_sites_do_not_grow` — protocol mapper exact total and seed `137`.
+- `tui_combined_raw_json_inventory_does_not_grow` — feature/view plus protocol sites may not exceed the exact combined ceiling `142` (current total `142`), preventing growth hidden by moving sites between buckets.
+- `tui_wire_dto_usage_does_not_grow` — import-aware inventory exact total `116` and seed `97` with no whole-file exemptions (documented shell/runtime and agents direct-feed seams remain measured).
 
 Both were hardened after review on #1235, which proved the first drafts did not
 measure what they claimed:
@@ -575,13 +597,19 @@ measure what they claimed:
   `use ... infrastructure::client` lines and saw only 2, because `shell/app.rs`
   imports the DTOs and siblings reach them through `use super::*`. A probe module
   constructing `Command::Prompt` via the glob compiled and left the guard green.
-  It now counts `Command::`/`Event::`/`infrastructure::client` *usages*, so globs
-  and fully-qualified paths are visible; the same probe now fails it.
+  It now counts `protocol::client` references and, once that import gate is
+  present, unqualified `Command`/`Event`/`SubagentInfoEvent`/`SubagentWorkflow`
+  usages, so grouped imports, globs, and fully-qualified paths are visible; the
+  same probe now fails it.
 - **JSON-aware counting.** `as_str()` also exists on `String`, so the raw-JSON
   count included `match args[i].as_str()` and `m.id.as_str()` and listed modules
   that parse no wire payload at all. An accessor is now counted only alongside a
-  key lookup (`.get("…")`/`.pointer("…")`) or an `and_then` chain, and the
-  inventory below contains only genuine payload parsers.
+  JSON key lookup (`.get("…")`/`.pointer("…")`), an indexed JSON value, an
+  `and_then` chain, a precise JSON-ish dynamic-key helper such as
+  `value.get(key).and_then(Value::as_str)`, or direct
+  `serde_json::from_str`/`serde_json::from_value` deserialization. Ambiguous bare
+  `.get(` / `.pointer(` and multi-line chains remain intentionally unsupported by
+  the line heuristic.
 - **`cfg(test)`-based exclusion.** Exclusion was by filename (`*_tests.rs`,
   `tui_harness*`), which exempted `tui_harness*.rs` — real production modules
   gated by the `test-harness` *feature*, not `cfg(test)` — while leaving
@@ -595,7 +623,7 @@ measure what they claimed:
   exempt only from the protocol raw-JSON ratchet as the wire seam.
   Wire-DTO whole-file exemptions were removed in #1257 Phase 6: seam files
   (including `agents/runtime.rs`, `agents/view.rs`, and shell composition/runtime
-  adapters) remain in the measured inventory under a decrease-only seed of `98`.
+  adapters) remain in the measured inventory under a decrease-only exact total of `116`.
 - **No vacuous pass.** Both ratchets assert the scan yielded a non-empty file
   list, so renaming the scan root fails them instead of silently disabling them.
 
@@ -603,9 +631,9 @@ Seeds may be lowered as sites migrate; they may never be raised.
 
 ### Raw-JSON burn-down inventory
 
-The Phase 6 feature/view raw-JSON ratchet scans `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`; its exact total is 0 (`shell/app_response.rs` is the only feature/view allowlisted raw-JSON seam as the #1220 response dispatcher). The protocol raw-JSON ratchet has an exact total and seed of 127, with `protocol/client.rs` allowlisted as the wire seam. The combined inventory is 127 and may not exceed its historical ceiling of 178, so moving parsing between these buckets cannot conceal growth. Each ratchet's failure message reprints the live inventory in burn-down order; this document intentionally does not duplicate per-file counts that can go stale.
+The Phase 6 feature/view raw-JSON ratchet scans `components/`, `shell/`, `conversation/`, `agents/`, `sessions/`, `workflow/`, `inference/`, and `workspace/`; its exact total and seed are `5` (`shell/app_response.rs` is the only feature/view allowlisted raw-JSON seam as the #1220 response dispatcher). The protocol raw-JSON ratchet has an exact total and seed of `137`, with `protocol/client.rs` allowlisted as the wire seam. The combined inventory is `142` and may not exceed its exact ceiling of `142`, so moving parsing between these buckets cannot conceal growth. Each ratchet's failure message reprints the live inventory in burn-down order; this document intentionally does not duplicate per-file counts that can go stale.
 
-The import-aware wire-DTO inventory has an exact total and seed of 98 with an empty allowlist. Residual usages are concentrated in shell composition/runtime paths and agents direct-feed adapters; because those files stay measured, new DTO coupling inside a seam still fails the decrease-only ratchet.
+The import-aware wire-DTO inventory has an exact total of `116` with an empty allowlist. Its historical seed remains `97`; the exact total is the enforced bound. Residual usages are concentrated in shell composition/runtime paths and agents direct-feed adapters; because those files stay measured, new DTO coupling inside a seam still fails the decrease-only ratchet.
 
 ### Deletion ledger
 

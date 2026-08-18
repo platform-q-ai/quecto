@@ -21,6 +21,9 @@ pub enum AgentEvent {
     Token {
         token: String,
     },
+    Thinking {
+        text: String,
+    },
     TurnStart,
     TurnEnd {
         message: serde_json::Value,
@@ -53,6 +56,10 @@ pub enum AgentEvent {
         #[serde(default)]
         error: Option<String>,
     },
+    LedgerAdvanced {
+        epoch: u64,
+        rev: u64,
+    },
     /// Rich catalogue changed after tool registration/unregistration.
     #[serde(rename_all = "camelCase")]
     ToolCatalogueChanged {
@@ -71,6 +78,8 @@ pub enum AgentEvent {
         results: Vec<serde_json::Value>,
         apply_mode: String,
         reason: String,
+        #[serde(default)]
+        correlation_id: Option<String>,
     },
     /// A spawned child appended messages this turn (#1060: refs-based, so the
     /// full content is not re-carried). Preserved rather than falling through to
@@ -83,7 +92,21 @@ pub enum AgentEvent {
         #[serde(rename = "messageRefs", default)]
         message_refs: Vec<String>,
     },
+    /// Future ledger checkpoint event shape; raw flattened payload is retained.
+    LedgerCheckpoint {
+        #[serde(flatten)]
+        payload: serde_json::Map<String, serde_json::Value>,
+    },
+    /// Future ledger resync hint shape; raw flattened payload is retained.
+    LedgerResyncRequired {
+        #[serde(flatten)]
+        payload: serde_json::Map<String, serde_json::Value>,
+    },
     /// Catch-all for unknown/future event types.
     #[serde(other)]
     Unknown,
 }
+
+#[cfg(test)]
+#[path = "event_tests.rs"]
+mod tests;

@@ -7,6 +7,8 @@ use super::*;
 fn given_temp_base_directory(world: &mut QuectoWorld) {
     let td = TempDir::new().expect("failed to create temp dir");
     world.cli_context.base_dir = Some(td.path().to_path_buf());
+    world.cli_context.cwd = Some(td.path().join("workspace"));
+    std::fs::create_dir_all(td.path().join("workspace")).expect("create workspace cwd");
     world._temp_dir = Some(td);
 }
 
@@ -708,7 +710,7 @@ fn responses_for_prompt(prompt: &str) -> Vec<serde_json::Value> {
             responses.push(workflow_call("list_templates", serde_json::json!({})));
         }
         if lower.contains("all steps complete") {
-            for step in 1..=19 {
+            for step in 1..=20 {
                 responses.push(workflow_call("check", serde_json::json!({ "step": step })));
             }
             responses.push(workflow_call("status", serde_json::json!({})));
@@ -1240,37 +1242,6 @@ fn when_run_agent_effort(world: &mut QuectoWorld, effort: String, message: Strin
     world.stderr = output.stderr;
 }
 
-#[when(expr = "I run quecto agent --no-sandbox -m {string}")]
-fn when_run_agent_no_sandbox(world: &mut QuectoWorld, message: String) {
-    let args = vec![
-        "quecto".to_string(),
-        "agent".to_string(),
-        "--no-sandbox".to_string(),
-        "-m".to_string(),
-        message,
-    ];
-    let output = cli::run_with_output(args, &world.cli_context);
-    world.exit_code = output.exit_code;
-    world.stdout = output.stdout;
-    world.stderr = output.stderr;
-}
-
-#[when(expr = "I run quecto agent --no-sandbox --no-session -m {string}")]
-fn when_run_agent_no_sandbox_no_session(world: &mut QuectoWorld, message: String) {
-    let args = vec![
-        "quecto".to_string(),
-        "agent".to_string(),
-        "--no-sandbox".to_string(),
-        "--no-session".to_string(),
-        "-m".to_string(),
-        message,
-    ];
-    let output = cli::run_with_output(args, &world.cli_context);
-    world.exit_code = output.exit_code;
-    world.stdout = output.stdout;
-    world.stderr = output.stderr;
-}
-
 #[when("I run quecto help")]
 fn when_run_quecto_help(world: &mut QuectoWorld) {
     let args = vec!["quecto".to_string(), "help".to_string()];
@@ -1700,19 +1671,6 @@ fn given_final_text_for_parallel(world: &mut QuectoWorld, content: String) {
 // ===========================================================================
 // E2E Safety and Limits Steps
 // ===========================================================================
-
-#[given("restrict_to_workspace is enabled in the config")]
-fn given_restrict_to_workspace_enabled(world: &mut QuectoWorld) {
-    let base = base_path(world);
-    let config_str = std::fs::read_to_string(base.join("config.json")).expect("read config");
-    let mut config: serde_json::Value = serde_json::from_str(&config_str).expect("parse config");
-    config["agents"]["defaults"]["restrict_to_workspace"] = serde_json::Value::Bool(true);
-    std::fs::write(
-        base.join("config.json"),
-        serde_json::to_string_pretty(&config).unwrap(),
-    )
-    .expect("rewrite config");
-}
 
 #[given(expr = "the config sets max_tool_iterations to {int}")]
 fn given_config_max_tool_iterations(world: &mut QuectoWorld, max_iterations: u32) {
@@ -2287,6 +2245,10 @@ fn spawn_quecto_subprocess_with_stdin(
     // "I set QUECTO_BASE_DIR" step) and the child inherits it.
     if let Some(ref base) = world.cli_context.base_dir {
         cmd.env("QUECTO_BASE_DIR", base.to_string_lossy().as_ref());
+    }
+    if let Some(ref cwd) = world.cli_context.cwd {
+        std::fs::create_dir_all(cwd).expect("create subprocess cwd");
+        cmd.current_dir(cwd);
     }
 
     let mut child = cmd.spawn().expect("spawn quecto subprocess");

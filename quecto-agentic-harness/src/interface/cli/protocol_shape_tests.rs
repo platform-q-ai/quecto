@@ -370,6 +370,7 @@ fn subagent_info_camel_case_serialization() {
         display_name: None,
         agent_id: "test-agent".into(),
         status: "running".into(),
+        liveness: None,
         last_tool: Some("bash".into()),
         last_error: None,
         pid: 12345,
@@ -397,6 +398,7 @@ fn subagent_info_null_fields_omitted() {
         display_name: None,
         agent_id: "idle".into(),
         status: "idle".into(),
+        liveness: None,
         last_tool: None,
         last_error: None,
         pid: 1,
@@ -419,6 +421,7 @@ fn subagent_info_with_error_field() {
         display_name: None,
         agent_id: "err".into(),
         status: "error".into(),
+        liveness: None,
         last_tool: None,
         last_error: Some("tool 'bash' returned error".into()),
         pid: 0,
@@ -442,6 +445,7 @@ fn subagent_state_changed_event_matches_spec() {
                 display_name: None,
                 agent_id: "reviewer".into(),
                 status: "running".into(),
+                liveness: None,
                 last_tool: Some("bash: cargo test".into()),
                 last_error: None,
                 pid: 12345,
@@ -457,6 +461,7 @@ fn subagent_state_changed_event_matches_spec() {
                 display_name: None,
                 agent_id: "formatter".into(),
                 status: "idle".into(),
+                liveness: None,
                 last_tool: None,
                 last_error: None,
                 pid: 12346,
@@ -490,6 +495,7 @@ fn subagent_state_changed_event_roundtrip() {
             display_name: None,
             agent_id: "test".into(),
             status: "exited".into(),
+            liveness: None,
             last_tool: None,
             last_error: None,
             pid: 999,
@@ -525,7 +531,14 @@ fn subagent_state_changed_empty_list() {
 #[test]
 fn core_command_type_names() {
     assert_eq!(AgentCommand::Abort { id: None }.type_name(), "abort");
-    assert_eq!(AgentCommand::GetState { id: None }.type_name(), "get_state");
+    assert_eq!(
+        AgentCommand::GetState {
+            id: None,
+            agent_id: None
+        }
+        .type_name(),
+        "get_state"
+    );
     assert_eq!(
         AgentCommand::GetSessionStats { id: None }.type_name(),
         "get_session_stats"
@@ -571,7 +584,7 @@ fn core_command_type_names() {
     assert_eq!(
         AgentCommand::ResumeSession {
             id: None,
-            session: "work".into()
+            session: "work".into(),
         }
         .type_name(),
         "resume_session"

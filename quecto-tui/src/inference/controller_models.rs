@@ -27,12 +27,12 @@ impl App {
     /// previously active model visible.
     pub(super) fn send_set_model(&mut self, model: &str) {
         let cmd = Command::SetModel {
-            id: Some("sm".into()),
+            id: Some(self.ac().namespaced_id("sm")),
             model: Some(model.to_string()),
             provider: None,
             model_id: None,
         };
-        if self.subagents.active_agent_id.is_some() {
+        if self.ac().roster.active_agent_id.is_some() {
             if !self.send_to_active_subagent(cmd) {
                 self.notify(
                     "Selected sub-agent is not ready for model changes yet",
@@ -47,9 +47,9 @@ impl App {
             return;
         }
         self.send_command(cmd);
-        self.master_session.footer.set_model(model);
-        self.inference.current_model = Some(model.to_string());
-        self.sessions.context_stats_requested = false;
+        self.ac_mut().master_session.footer.set_model(model);
+        self.ac_mut().inference.current_model = Some(model.to_string());
+        self.ac_mut().sessions.context_stats_requested = false;
     }
 
     pub(super) fn open_model_selector(&mut self) {
@@ -62,17 +62,17 @@ impl App {
         if !self.inference.model_registry.open_pending {
             self.inference.model_registry.open_pending = true;
             self.send_command(Command::ListModels {
-                id: Some("model-selector".into()),
+                id: Some(self.ac().namespaced_id("model-selector")),
             });
         }
     }
 
     pub(super) fn open_model_selector_now(&mut self) {
         let selector = if self.inference.model_registry.entries.is_empty() {
-            ModelSelector::new(self.inference.current_model.as_deref())
+            ModelSelector::new(self.ac().inference.current_model.as_deref())
         } else {
             let entries = self.inference.model_registry.entries.clone();
-            ModelSelector::with_models(entries, self.inference.current_model.as_deref())
+            ModelSelector::with_models(entries, self.ac().inference.current_model.as_deref())
         };
         self.inference.model_selector = Some(selector);
     }

@@ -350,3 +350,380 @@ async fn uds_extension_registers_tools_and_returns_tool_result() {
     .unwrap();
     server_task.await.unwrap();
 }
+
+#[test]
+fn refresh_interval_error_mentions_restart() {
+    let err = Config::from_env_and_args([
+        "quecto-mcp".to_string(),
+        "--socket".to_string(),
+        "/tmp/q.sock".to_string(),
+        "--mcp-url".to_string(),
+        "https://example.test/mcp".to_string(),
+        "--mcp-token".to_string(),
+        "agent-token".to_string(),
+        "--refresh-interval".to_string(),
+        "60".to_string(),
+    ])
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("restart"), "{err}");
+}
+
+#[test]
+fn rejects_invalid_final_name_from_name_prefix() {
+    let tools = vec![McpTool {
+        name: "community.feed.list".into(),
+        description: "".into(),
+        input_schema: serde_json::json!({}),
+    }];
+    assert!(matches!(
+        build_mapping_with_name_prefix(&tools, "1_"),
+        Err(QuectoMcpError::InvalidToolName(_))
+    ));
+    assert!(matches!(
+        build_registrations_with_name_prefix(&tools, "1_"),
+        Err(QuectoMcpError::InvalidToolName(_))
+    ));
+}
+
+#[test]
+fn duplicate_original_mcp_names_fail_closed() {
+    let tools = vec![
+        McpTool {
+            name: "community.feed.list".into(),
+            description: "one".into(),
+            input_schema: serde_json::json!({}),
+        },
+        McpTool {
+            name: "community.feed.list".into(),
+            description: "two".into(),
+            input_schema: serde_json::json!({}),
+        },
+    ];
+    assert!(matches!(
+        build_mapping(&tools),
+        Err(QuectoMcpError::ToolNameCollision { .. })
+    ));
+}
+
+#[test]
+fn env_token_is_used_when_no_explicit_source_is_set() {
+    // SAFETY: this test mutates process environment before reading config and restores it before returning.
+    unsafe {
+        std::env::set_var("PERME8_MCP_TOKEN", " env-token ");
+    }
+    let config = Config::from_env_and_args([
+        "quecto-mcp".to_string(),
+        "--socket".to_string(),
+        "/tmp/q.sock".to_string(),
+        "--mcp-url".to_string(),
+        "https://example.test/mcp".to_string(),
+    ])
+    .unwrap();
+    assert_eq!(config.mcp_token, "env-token");
+    // SAFETY: restores the process environment mutated by this test.
+    unsafe {
+        std::env::remove_var("PERME8_MCP_TOKEN");
+    }
+}
+
+#[test]
+fn direct_token_overrides_env_and_is_trimmed() {
+    // SAFETY: this test mutates process environment before reading config and restores it before returning.
+    unsafe {
+        std::env::set_var("PERME8_MCP_TOKEN", "env-token");
+    }
+    let config = Config::from_env_and_args([
+        "quecto-mcp".to_string(),
+        "--socket".to_string(),
+        "/tmp/q.sock".to_string(),
+        "--mcp-url".to_string(),
+        "https://example.test/mcp".to_string(),
+        "--mcp-token".to_string(),
+        " cli-token ".to_string(),
+    ])
+    .unwrap();
+    assert_eq!(config.mcp_token, "cli-token");
+    // SAFETY: restores the process environment mutated by this test.
+    unsafe {
+        std::env::remove_var("PERME8_MCP_TOKEN");
+    }
+}
+
+#[test]
+fn token_file_success_overrides_env_and_is_trimmed() {
+    // SAFETY: this test mutates process environment before reading config and restores it before returning.
+    unsafe {
+        std::env::set_var("PERME8_MCP_TOKEN", "env-token");
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("token");
+    std::fs::write(&path, " file-token\n").unwrap();
+    let config = Config::from_env_and_args([
+        "quecto-mcp".to_string(),
+        "--socket".to_string(),
+        "/tmp/q.sock".to_string(),
+        "--mcp-url".to_string(),
+        "https://example.test/mcp".to_string(),
+        "--mcp-token-file".to_string(),
+        path.display().to_string(),
+    ])
+    .unwrap();
+    assert_eq!(config.mcp_token, "file-token");
+    // SAFETY: restores the process environment mutated by this test.
+    unsafe {
+        std::env::remove_var("PERME8_MCP_TOKEN");
+    }
+}
+
+#[test]
+fn token_command_success_overrides_env_and_is_trimmed() {
+    // SAFETY: this test mutates process environment before reading config and restores it before returning.
+    unsafe {
+        std::env::set_var("PERME8_MCP_TOKEN", "env-token");
+    }
+    let config = Config::from_env_and_args([
+        "quecto-mcp".to_string(),
+        "--socket".to_string(),
+        "/tmp/q.sock".to_string(),
+        "--mcp-url".to_string(),
+        "https://example.test/mcp".to_string(),
+        "--mcp-token-command".to_string(),
+        "printf ' command-token\\n'".to_string(),
+    ])
+    .unwrap();
+    assert_eq!(config.mcp_token, "command-token");
+    // SAFETY: restores the process environment mutated by this test.
+    unsafe {
+        std::env::remove_var("PERME8_MCP_TOKEN");
+    }
+}
+
+#[test]
+fn token_command_invalid_quoting_is_fatal() {
+    let err = Config::from_env_and_args([
+        "quecto-mcp".to_string(),
+        "--socket".to_string(),
+        "/tmp/q.sock".to_string(),
+        "--mcp-url".to_string(),
+        "https://example.test/mcp".to_string(),
+        "--mcp-token-command".to_string(),
+        "printf 'unterminated".to_string(),
+    ])
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("--mcp-token-command"), "{err}");
+}
+
+#[test]
+fn token_command_empty_stdout_is_fatal() {
+    let err = Config::from_env_and_args([
+        "quecto-mcp".to_string(),
+        "--socket".to_string(),
+        "/tmp/q.sock".to_string(),
+        "--mcp-url".to_string(),
+        "https://example.test/mcp".to_string(),
+        "--mcp-token-command".to_string(),
+        "true".to_string(),
+    ])
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("empty"), "{err}");
+}
+
+#[test]
+fn token_command_nonzero_exit_is_fatal() {
+    let err = Config::from_env_and_args([
+        "quecto-mcp".to_string(),
+        "--socket".to_string(),
+        "/tmp/q.sock".to_string(),
+        "--mcp-url".to_string(),
+        "https://example.test/mcp".to_string(),
+        "--mcp-token-command".to_string(),
+        "sh -c 'echo bad; exit 7'".to_string(),
+    ])
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("--mcp-token-command"), "{err}");
+}
+
+#[test]
+fn token_file_missing_operand_is_source_specific_and_fatal() {
+    let err = Config::from_env_and_args([
+        "quecto-mcp".to_string(),
+        "--socket".to_string(),
+        "/tmp/q.sock".to_string(),
+        "--mcp-url".to_string(),
+        "https://example.test/mcp".to_string(),
+        "--mcp-token".to_string(),
+        "fallback".to_string(),
+        "--mcp-token-file".to_string(),
+    ])
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("--mcp-token-file"), "{err}");
+}
+
+#[test]
+fn token_command_missing_operand_is_source_specific_and_fatal() {
+    let err = Config::from_env_and_args([
+        "quecto-mcp".to_string(),
+        "--socket".to_string(),
+        "/tmp/q.sock".to_string(),
+        "--mcp-url".to_string(),
+        "https://example.test/mcp".to_string(),
+        "--mcp-token".to_string(),
+        "fallback".to_string(),
+        "--mcp-token-command".to_string(),
+    ])
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("--mcp-token-command"), "{err}");
+}
+
+#[test]
+fn token_file_read_error_is_source_specific_and_fatal() {
+    let err = Config::from_env_and_args([
+        "quecto-mcp".to_string(),
+        "--socket".to_string(),
+        "/tmp/q.sock".to_string(),
+        "--mcp-url".to_string(),
+        "https://example.test/mcp".to_string(),
+        "--mcp-token".to_string(),
+        "fallback".to_string(),
+        "--mcp-token-file".to_string(),
+        "/definitely/missing/token".to_string(),
+    ])
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("--mcp-token-file"), "{err}");
+}
+
+#[test]
+fn empty_token_is_rejected() {
+    let err = Config::from_env_and_args([
+        "quecto-mcp".to_string(),
+        "--socket".to_string(),
+        "/tmp/q.sock".to_string(),
+        "--mcp-url".to_string(),
+        "https://example.test/mcp".to_string(),
+        "--mcp-token".to_string(),
+        "".to_string(),
+    ])
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("empty"), "{err}");
+}
+
+#[tokio::test]
+async fn tools_list_malformed_entry_fails() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST")).and(path("/")).and(body_partial_json(serde_json::json!({"method": "tools/list"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"jsonrpc":"2.0","id":"list","result":{"tools":[{"description":"bad"}]}})))
+        .mount(&server).await;
+    let client = McpClient::new(server.uri(), "token".into());
+    let err = client.list_tools().await.unwrap_err().to_string();
+    assert!(err.contains("invalid tools/list"), "{err}");
+}
+
+#[tokio::test]
+async fn initialized_notification_failure_fails_startup() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(body_partial_json(
+            serde_json::json!({"method":"initialize"}),
+        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"jsonrpc":"2.0","id":"init","result":{}})),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(body_partial_json(
+            serde_json::json!({"method":"notifications/initialized"}),
+        ))
+        .respond_with(
+            ResponseTemplate::new(500)
+                .set_body_json(serde_json::json!({"error":{"message":"init notification failed"}})),
+        )
+        .mount(&server)
+        .await;
+    let client = McpClient::new(server.uri(), "token".into());
+    let err = client
+        .initialize("perme8-mcp")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("init notification failed") || err.contains("HTTP 500"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn missing_execute_arguments_returns_tool_result_error() {
+    let execute = serde_json::json!({"type":"execute_tool","toolCallId":"uds-missing","toolName":"community_chat_send_dm"});
+    assert_execute_event_returns_error(execute, "uds-missing").await;
+}
+
+#[tokio::test]
+async fn non_string_execute_arguments_returns_tool_result_error() {
+    let execute = serde_json::json!({"type":"execute_tool","toolCallId":"uds-bad","toolName":"community_chat_send_dm","arguments":{"message":"hi"}});
+    assert_execute_event_returns_error(execute, "uds-bad").await;
+}
+
+async fn assert_execute_event_returns_error(execute: Value, expected_tool_call_id: &str) {
+    let expected_tool_call_id = expected_tool_call_id.to_string();
+    let temp = tempfile::tempdir().unwrap();
+    let socket = temp.path().join("agent.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let server_task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut reader = BufReader::new(&mut stream);
+        let mut register_line = String::new();
+        reader.read_line(&mut register_line).await.unwrap();
+        drop(reader);
+        let response = serde_json::json!({"type":"response","id":"quecto-mcp-register","command":"register_tools","success":true});
+        stream
+            .write_all(format!("{}\n", response).as_bytes())
+            .await
+            .unwrap();
+        stream
+            .write_all(format!("{}\n", execute).as_bytes())
+            .await
+            .unwrap();
+        let mut reader = BufReader::new(&mut stream);
+        let mut result_line = String::new();
+        tokio::time::timeout(Duration::from_secs(1), reader.read_line(&mut result_line))
+        .await
+        .expect(
+            "non-string arguments should produce a deterministic tool_result instead of hanging",
+        )
+        .unwrap();
+        let result_json: Value = serde_json::from_str(result_line.trim()).unwrap();
+        assert_eq!(result_json["type"], "tool_result");
+        assert_eq!(result_json["toolCallId"], expected_tool_call_id);
+        assert_eq!(result_json["isError"], true);
+        assert!(!result_json["content"].to_string().contains("message"));
+    });
+    let tools = vec![McpTool {
+        name: "community.chat.send_dm".into(),
+        description: "".into(),
+        input_schema: serde_json::json!({}),
+    }];
+    serve_uds_extension(
+        &socket,
+        RegisteredMcpTools {
+            registrations: build_registrations(&tools).unwrap(),
+            mapping: build_mapping(&tools).unwrap(),
+        },
+        McpClient::new("http://127.0.0.1:9".into(), "token".into()),
+        Duration::from_secs(1),
+    )
+    .await
+    .unwrap();
+    server_task.await.unwrap();
+}

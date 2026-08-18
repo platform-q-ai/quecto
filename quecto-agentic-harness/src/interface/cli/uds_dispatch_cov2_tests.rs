@@ -47,6 +47,7 @@ async fn dispatch_fieldless_list_sessions_get_messages_and_() {
             key: "chat:one".into(),
             messages: vec![Message::user("hello")],
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();

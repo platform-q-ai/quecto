@@ -64,7 +64,7 @@ fn test_validate_agent_id_format_invalid_unicode() {
 }
 #[tokio::test]
 async fn test_execute_stub_mode_success() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let result = tool
         .execute(r#"{"task":"Do something useful"}"#)
         .await
@@ -75,7 +75,7 @@ async fn test_execute_stub_mode_success() {
 
 #[tokio::test]
 async fn test_execute_stub_mode_no_task() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let result = tool.execute(r#"{"agent_id":"idle-worker"}"#).await.unwrap();
     assert!(!result.is_error);
     assert!(result.content.contains("agent_cmd"));
@@ -84,7 +84,7 @@ async fn test_execute_stub_mode_no_task() {
 
 #[tokio::test]
 async fn test_execute_stub_mode_registers_in_registry() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let _result = tool
         .execute(r#"{"task":"work","agent_id":"my-bot"}"#)
         .await
@@ -97,7 +97,7 @@ async fn test_spawned_entry_carries_parent_id() {
     // Regression (#820 panel tree): a spawned child's registry entry must record
     // the spawning agent's own id as its parent_id, otherwise grandchildren can
     // never nest under their real parent in the sub-agent panel.
-    let tool = SpawnTool::new(vec![], true).with_event_forwarding(None, Some("childA".to_string()));
+    let tool = SpawnTool::new(vec![]).with_event_forwarding(None, Some("childA".to_string()));
     let _ = tool
         .execute(r#"{"task":"work","agent_id":"grandchildB"}"#)
         .await
@@ -111,14 +111,14 @@ async fn test_spawned_entry_carries_parent_id() {
 
 #[tokio::test]
 async fn test_execute_stub_mode_default_agent_id() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let _result = tool.execute(r#"{"task":"work"}"#).await.unwrap();
     assert!(tool.registry.lock().unwrap().contains_key("subagent"));
 }
 
 #[tokio::test]
 async fn test_execute_stub_mode_with_agent_id() {
-    let tool = SpawnTool::new(vec!["my-bot".to_string()], true);
+    let tool = SpawnTool::new(vec!["my-bot".to_string()]);
     let result = tool
         .execute(r#"{"task":"fetch data","agent_id":"my-bot"}"#)
         .await
@@ -128,7 +128,7 @@ async fn test_execute_stub_mode_with_agent_id() {
 }
 #[tokio::test]
 async fn test_execute_invalid_json() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let result = tool.execute("not valid json").await.unwrap();
     assert!(result.is_error);
     assert!(result.content.contains("Failed to spawn subagent"));
@@ -137,7 +137,7 @@ async fn test_execute_invalid_json() {
 
 #[tokio::test]
 async fn test_execute_disallowed_agent_returns_error() {
-    let tool = SpawnTool::new(vec!["allowed-bot".to_string()], true);
+    let tool = SpawnTool::new(vec!["allowed-bot".to_string()]);
     let result = tool
         .execute(r#"{"task":"evil","agent_id":"not-allowed"}"#)
         .await
@@ -148,7 +148,7 @@ async fn test_execute_disallowed_agent_returns_error() {
 
 #[tokio::test]
 async fn test_execute_invalid_agent_id_format_returns_error() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let result = tool
         .execute(r#"{"task":"test","agent_id":"bad id!"}"#)
         .await
@@ -196,13 +196,10 @@ fn test_parse_args_agent_id_not_string_ignored() {
 }
 
 #[test]
-fn test_parse_args_restrict_to_workspace_inherited() {
-    let tool_true = SpawnTool::new(vec![], true);
-    let tool_false = SpawnTool::new(vec![], false);
+    let tool_true = SpawnTool::new(vec![]);
+    let tool_false = SpawnTool::new(vec![]);
     let cfg_t = tool_true.parse_args(r#"{"task":"a"}"#).unwrap();
     let cfg_f = tool_false.parse_args(r#"{"task":"a"}"#).unwrap();
-    assert!(cfg_t.restrict_to_workspace);
-    assert!(!cfg_f.restrict_to_workspace);
 }
 #[test]
 fn test_shutdown_all_clears_registry() {
@@ -217,16 +214,15 @@ fn test_shutdown_all_clears_registry() {
 }
 #[test]
 fn test_debug_trait() {
-    let tool = SpawnTool::new(vec!["bot".to_string()], true);
+    let tool = SpawnTool::new(vec!["bot".to_string()]);
     let debug_str = format!("{:?}", tool);
     assert!(debug_str.contains("SpawnTool"));
     assert!(debug_str.contains("bot"));
-    assert!(debug_str.contains("restrict_to_workspace: true"));
 }
 
 #[test]
 fn test_debug_with_base_dir() {
-    let tool = SpawnTool::with_base_dir(vec![], false, PathBuf::from("/some/path"));
+    let tool = SpawnTool::with_base_dir(vec![], PathBuf::from("/some/path"));
     let debug_str = format!("{:?}", tool);
     assert!(debug_str.contains("/some/path"));
 }
@@ -256,7 +252,7 @@ fn test_effective_config_path_inherits_runtime_config_when_explicit_absent() {
 
 #[test]
 fn test_parse_config_path_valid_absolute() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let cfg = tool
         .parse_args(r#"{"task":"work","config":"/home/user/.quecto/config.json"}"#)
         .unwrap();
@@ -268,7 +264,7 @@ fn test_parse_config_path_valid_absolute() {
 
 #[test]
 fn test_parse_config_path_valid_relative() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let cfg = tool
         .parse_args(r#"{"task":"work","config":"configs/custom.json"}"#)
         .unwrap();
@@ -277,7 +273,7 @@ fn test_parse_config_path_valid_relative() {
 
 #[test]
 fn test_parse_config_path_traversal_rejected() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let result = tool.parse_args(r#"{"task":"work","config":"../../etc/shadow"}"#);
     assert!(result.is_err());
     let err = result.unwrap_err();
@@ -290,21 +286,21 @@ fn test_parse_config_path_traversal_rejected() {
 
 #[test]
 fn test_parse_config_path_traversal_absolute_rejected() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let result = tool.parse_args(r#"{"task":"work","config":"/safe/../etc/shadow"}"#);
     assert!(result.is_err());
 }
 
 #[test]
 fn test_parse_config_path_absent_is_none() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let cfg = tool.parse_args(r#"{"task":"work"}"#).unwrap();
     assert!(cfg.config_path.is_none());
 }
 
 #[test]
 fn test_parse_config_path_non_string_ignored() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let cfg = tool.parse_args(r#"{"task":"work","config":123}"#).unwrap();
     assert!(cfg.config_path.is_none());
 }
@@ -313,7 +309,7 @@ fn test_parse_config_path_non_string_ignored() {
 
 #[test]
 fn test_parse_workflow_true() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let cfg = tool
         .parse_args(r#"{"task":"work","workflow":true}"#)
         .unwrap();
@@ -323,7 +319,7 @@ fn test_parse_workflow_true() {
 
 #[test]
 fn test_parse_workflow_false_by_default() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let cfg = tool.parse_args(r#"{"task":"work"}"#).unwrap();
     assert!(!cfg.workflow);
     assert!(!cfg.workflow_guards);
@@ -331,7 +327,7 @@ fn test_parse_workflow_false_by_default() {
 
 #[test]
 fn test_parse_workflow_guards_requires_workflow() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let result = tool.parse_args(r#"{"task":"work","workflow_guards":true}"#);
     assert!(result.is_err());
     assert!(
@@ -343,7 +339,7 @@ fn test_parse_workflow_guards_requires_workflow() {
 
 #[test]
 fn test_parse_workflow_guards_with_workflow_ok() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let cfg = tool
         .parse_args(r#"{"task":"work","workflow":true,"workflow_guards":true}"#)
         .unwrap();
@@ -353,7 +349,7 @@ fn test_parse_workflow_guards_with_workflow_ok() {
 
 #[test]
 fn test_parse_workflow_non_bool_ignored() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let cfg = tool
         .parse_args(r#"{"task":"work","workflow":"yes"}"#)
         .unwrap();
@@ -362,7 +358,7 @@ fn test_parse_workflow_non_bool_ignored() {
 
 #[test]
 fn test_parse_workflow_guards_non_bool_ignored() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let cfg = tool
         .parse_args(r#"{"task":"work","workflow_guards":1}"#)
         .unwrap();
@@ -409,7 +405,7 @@ fn test_validate_config_path_single_dot_ok() {
 fn with_event_forwarding_sets_broadcast_and_parent() {
     let (tx, _rx) = tokio::sync::broadcast::channel::<String>(4);
     let tool =
-        SpawnTool::new(vec![], true).with_event_forwarding(Some(tx), Some("root".to_string()));
+        SpawnTool::new(vec![]).with_event_forwarding(Some(tx), Some("root".to_string()));
     // Fields are private; the Debug projection exercises the builder + fields.
     assert!(format!("{tool:?}").contains("root"));
 }
@@ -418,7 +414,7 @@ fn with_event_forwarding_sets_broadcast_and_parent() {
 async fn execute_in_stub_mode_returns_running_message() {
     // SpawnTool::new has an empty base_dir → execute() runs in stub mode and
     // does not spawn a real process.
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let result = tool
         .execute(r#"{"task":"do it","agent_id":"probe"}"#)
         .await
@@ -433,7 +429,7 @@ async fn execute_in_stub_mode_returns_running_message() {
 
 #[tokio::test]
 async fn execute_with_invalid_args_is_error() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let result = tool
         .execute(r#"{"workflow_spec":{"no":"template"}}"#)
         .await
@@ -446,7 +442,7 @@ async fn execute_with_invalid_args_is_error() {
 
 #[test]
 fn test_parse_model_full_string() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let cfg = tool
         .parse_args(r#"{"task":"work","model":"openai/gpt-5.5"}"#)
         .unwrap();
@@ -455,7 +451,7 @@ fn test_parse_model_full_string() {
 
 #[test]
 fn test_parse_model_provider_and_model_id() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let cfg = tool
         .parse_args(r#"{"task":"work","provider":"openai","model_id":"gpt-5.5"}"#)
         .unwrap();
@@ -464,14 +460,14 @@ fn test_parse_model_provider_and_model_id() {
 
 #[test]
 fn test_parse_model_absent_is_none() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let cfg = tool.parse_args(r#"{"task":"work"}"#).unwrap();
     assert!(cfg.model.is_none());
 }
 
 #[test]
 fn test_parse_model_provider_without_model_id_is_error() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let err = tool
         .parse_args(r#"{"task":"work","provider":"openai"}"#)
         .unwrap_err();
@@ -481,7 +477,7 @@ fn test_parse_model_provider_without_model_id_is_error() {
 
 #[tokio::test]
 async fn execute_with_invalid_model_is_error() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let result = tool
         .execute(r#"{"task":"work","provider":"openai"}"#)
         .await
@@ -492,7 +488,7 @@ async fn execute_with_invalid_model_is_error() {
 
 #[test]
 fn test_schema_includes_model_property() {
-    let tool = SpawnTool::new(vec![], true);
+    let tool = SpawnTool::new(vec![]);
     let schema: serde_json::Value =
         serde_json::from_str(&tool.definition().parameters_schema).unwrap();
     let props = schema["properties"].as_object().unwrap();

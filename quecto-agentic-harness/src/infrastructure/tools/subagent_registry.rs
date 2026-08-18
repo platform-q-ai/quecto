@@ -1,12 +1,15 @@
-use std::collections::{HashMap, HashSet};
+use crate::domain::ids::AgentUuid;
+use crate::domain::session::SubagentLiveness;
+use crate::domain::subagent::{DisplayNameResolutionEntry, resolve_live_display_name};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::domain::ids::AgentUuid;
-use crate::domain::subagent::{DisplayNameResolutionEntry, resolve_live_display_name};
-
-use super::subagent_lifecycle::{SubagentLifecycleEvent, SubagentLifecycleState};
+use super::process_tree::ProcessOwner;
+#[cfg(test)]
+use super::subagent_lifecycle::SubagentLifecycleEvent;
+use super::subagent_lifecycle::SubagentLifecycleState;
 pub use super::subagent_status::SubagentStatus;
 
 /// Entry for a spawned subagent in the shared registry.
@@ -21,6 +24,8 @@ pub struct SubagentEntry {
     pub socket_path: PathBuf,
     /// Child process PID (0 in stub mode).
     pub pid: u32,
+    /// Owned OS process topology used by infrastructure cleanup paths.
+    pub process_owner: ProcessOwner,
     /// Explicit internal lifecycle state. Parent-facing status is projected from
     /// this richer state so lifecycle races can be tested without changing the
     /// existing UDS status vocabulary.
@@ -32,8 +37,8 @@ pub struct SubagentEntry {
     /// Description of the last terminal/run-level error (for example agent_error).
     pub last_error: Option<String>,
     /// Run-level agent error (for example provider/model failure). Unlike a tool
-    /// error, this means the prompt run failed and `agent_cmd await` should
-    /// return a structured error instead of waiting for recovery.
+    /// error, this means the prompt run failed and passive completion notes should
+    /// report failure rather than completion.
     pub run_error: Option<String>,
     /// When this entry was last updated by the monitor.
     pub updated_at: Instant,
@@ -48,15 +53,12 @@ pub struct SubagentEntry {
     /// Monotonic notification id for this subagent.
     pub notification_sequence: u64,
     /// Exit signal sender — the reaper task sends the exit code/signal through
-    /// this channel so that a waiting `await` call can return immediately (#612).
+    /// this channel so legacy lifecycle observers can return immediately (#612).
     pub exit_signal_tx: Option<ExitSignalTx>,
     /// The spawning agent's id, for reconstructing the unit tree (PRD Stage B).
     pub parent_id: Option<String>,
     /// Latest workflow snapshot reported by the child's monitor (PRD Stage B).
     pub workflow: Option<WorkflowSnapshot>,
-    /// Set by `execute_await`'s TERMINAL result, consumed by the dispatch loop to
-    /// suppress the duplicate passive note, re-armed on a new run (#await-dedupe).
-    pub completion_consumed_by_await: bool,
     /// Terminal-completion latch (#904): consumed by the first `complete`-mode
     /// `agent_end`, re-armed when the workflow leaves `complete`.
     pub completion_armed: bool,
@@ -86,6 +88,8 @@ pub struct SubagentEntry {
     /// for race-focused tests; parent-facing behavior continues to use `status`.
     #[cfg(test)]
     pub last_lifecycle_event: Option<SubagentLifecycleEvent>,
+    /// Persisted cross-process liveness for historical/resumed entries (#1461).
+    pub persisted_liveness: SubagentLiveness,
 }
 
 pub(super) fn seed_bound_workflow(
@@ -136,6 +140,7 @@ impl SubagentEntry {
             display_name,
             socket_path,
             pid,
+            process_owner: ProcessOwner::DirectPid,
             lifecycle: SubagentLifecycleState::Launched,
             status: SubagentStatus::Starting,
             last_tool: None,
@@ -149,7 +154,6 @@ impl SubagentEntry {
             exit_signal_tx: None,
             parent_id: None,
             workflow: None,
-            completion_consumed_by_await: false,
             completion_armed: true,
             stalled_armed: true,
             pending_stall: None,
@@ -162,6 +166,7 @@ impl SubagentEntry {
             forwarded_environment: None,
             #[cfg(test)]
             last_lifecycle_event: None,
+            persisted_liveness: SubagentLiveness::Live,
         }
     }
 }
@@ -171,9 +176,7 @@ impl SubagentEntry {
 /// entries), then fall back to live-only display-name resolution (#1378).
 ///
 /// Live-only display resolution keeps dead agents non-targetable for NEW
-/// commands (socket lookup / await arming). Await-dedupe uses
-/// [`resolve_registry_key_for_await_dedupe`] so an exit note that still shows
-/// the display label can coalesce against a retained Exited entry.
+/// commands (socket lookup / lifecycle arming).
 pub fn resolve_registry_key(
     entries: &HashMap<String, SubagentEntry>,
     agent_ref: &str,
@@ -185,34 +188,6 @@ pub fn resolve_registry_key(
     resolve_live_display_name(&resolution_entries, agent_ref).map(|uuid| uuid.into_string())
 }
 
-/// Like [`resolve_registry_key`], but display-label fallback also matches a
-/// unique retained **exited** entry. Used only for await-dedupe coalescing so
-/// notes that embed the user-facing label still suppress after `mark_exited`
-/// (#1378 adversarial re-review). Does not re-arm sockets or resume sessions.
-pub fn resolve_registry_key_for_await_dedupe(
-    entries: &HashMap<String, SubagentEntry>,
-    agent_ref: &str,
-) -> Result<String, crate::domain::subagent::DisplayNameResolveError> {
-    if entries.contains_key(agent_ref) {
-        return Ok(agent_ref.to_string());
-    }
-    if let Some((key, _)) = entries.iter().find(|(key, entry)| {
-        entry.effective_display_name(key) == agent_ref && entry.completion_consumed_by_await
-    }) {
-        return Ok(key.clone());
-    }
-
-    let resolution_entries = display_resolution_entries(entries);
-    match resolve_live_display_name(&resolution_entries, agent_ref) {
-        Ok(uuid) => Ok(uuid.into_string()),
-        Err(crate::domain::subagent::DisplayNameResolveError::NoLiveMatch { .. }) => {
-            resolve_unique_retained_display_name(&resolution_entries, agent_ref)
-                .map(|uuid| uuid.into_string())
-        }
-        Err(err) => Err(err),
-    }
-}
-
 fn display_resolution_entries(
     entries: &HashMap<String, SubagentEntry>,
 ) -> Vec<DisplayNameResolutionEntry> {
@@ -221,7 +196,8 @@ fn display_resolution_entries(
         .map(|(key, entry)| DisplayNameResolutionEntry {
             agent_uuid: entry.agent_uuid.clone(),
             display_name: entry.effective_display_name(key).to_string(),
-            live: entry.status != SubagentStatus::Exited,
+            live: entry.persisted_liveness == SubagentLiveness::Live
+                && entry.status != SubagentStatus::Exited,
         })
         .collect()
 }
@@ -229,90 +205,111 @@ fn display_resolution_entries(
 /// Unique retained display-name match across live **and** exited entries.
 /// Prefers not to invent multi-match semantics: zero → NoLiveMatch, 2+ →
 /// AmbiguousLiveMatch (same error vocabulary as live resolve).
-fn resolve_unique_retained_display_name(
-    entries: &[DisplayNameResolutionEntry],
-    display_name: &str,
-) -> Result<crate::domain::ids::AgentUuid, crate::domain::subagent::DisplayNameResolveError> {
-    let mut matches = entries
-        .iter()
-        .filter(|entry| entry.display_name == display_name)
-        .map(|entry| entry.agent_uuid.clone());
-
-    let Some(first) = matches.next() else {
-        return Err(
-            crate::domain::subagent::DisplayNameResolveError::NoLiveMatch {
-                display_name: display_name.to_string(),
-            },
-        );
-    };
-    if matches.next().is_some() {
-        return Err(
-            crate::domain::subagent::DisplayNameResolveError::AmbiguousLiveMatch {
-                display_name: display_name.to_string(),
-            },
-        );
-    }
-    Ok(first)
-}
-
-/// Mark `agent_ref`'s entry as having had its current-run terminal completion
-/// consumed by a manual `await` (auto-await dedupe). `agent_ref` may be a live
-/// display label, retained exited display label, or UUID; the flag is always
-/// stored on the UUID-keyed entry (#1378). No-op if the entry no longer exists.
-pub fn mark_completion_consumed_by_await(registry: &SubagentRegistry, agent_ref: &str) {
-    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    let Ok(key) = resolve_registry_key_for_await_dedupe(&entries, agent_ref) else {
-        return;
-    };
-    if let Some(entry) = entries.get_mut(&key) {
-        entry.completion_consumed_by_await = true;
-        entry.status = super::subagent_lifecycle::apply_lifecycle_event(
-            &mut entry.lifecycle,
-            SubagentLifecycleEvent::AwaitConsumedCompletion,
-        );
-    }
-}
-
-/// Check-and-consume the await-dedupe flag for `agent_ref`. Returns `true` when
-/// the passive completion note should be SUPPRESSED because a manual `await`
-/// already reported this terminal result; in that case the flag is cleared so a
-/// future re-run still notifies. Returns `false` otherwise. Race-free against
-/// `execute_await`: the UDS dispatch loop is single-threaded, so the await tool
-/// call sets the flag before the loop processes the queued notification.
-/// `agent_ref` may be a live / retained-exited display label or UUID (#1378).
-pub fn take_completion_consumed_by_await(registry: &SubagentRegistry, agent_ref: &str) -> bool {
-    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    let Ok(key) = resolve_registry_key_for_await_dedupe(&entries, agent_ref) else {
-        return false;
-    };
-    if let Some(entry) = entries.get_mut(&key) {
-        if entry.completion_consumed_by_await {
-            entry.completion_consumed_by_await = false;
-            entry.status = super::subagent_lifecycle::apply_lifecycle_event(
-                &mut entry.lifecycle,
-                SubagentLifecycleEvent::PassiveNoteEmitted,
-            );
-            return true;
-        }
-    }
-    false
-}
-
-/// Check-and-consume the await-dedupe flag for `agent_id` against an OPTIONAL
-/// registry, the form both UDS dispatch paths hold (#828). Returns `true` when
-/// the passive completion note should be suppressed (a manual `await` already
-/// reported it); `false` when there is no registry or no pending flag. Wraps
-/// [`take_completion_consumed_by_await`] so the predicate lives in ONE place.
-pub fn consume_await_dedupe(registry: &Option<SubagentRegistry>, agent_id: &str) -> bool {
-    registry
-        .as_ref()
-        .is_some_and(|reg| take_completion_consumed_by_await(reg, agent_id))
-}
-
 pub type SubagentRegistry = Arc<Mutex<HashMap<String, SubagentEntry>>>;
 
 pub fn new_registry() -> SubagentRegistry {
     Arc::new(Mutex::new(HashMap::new()))
+}
+/// Effective status: own activity wins; otherwise active descendants make it running.
+pub fn effective_status(
+    entries: &HashMap<String, SubagentEntry>,
+    agent_id: &str,
+) -> Option<SubagentStatus> {
+    let entry = entries.get(agent_id)?;
+    if entry.status.is_active() {
+        Some(entry.status.clone())
+    } else if has_active_descendant(entries, agent_id, entry) {
+        Some(SubagentStatus::Running)
+    } else {
+        Some(entry.status.clone())
+    }
+}
+
+pub fn has_active_descendant_for_agent(
+    registry: &Option<SubagentRegistry>,
+    agent_id: &str,
+) -> bool {
+    let Some(reg) = registry else { return false };
+    let guard = reg.lock().unwrap_or_else(|e| e.into_inner());
+    has_active_descendant_for_agent_locked(&guard, agent_id)
+}
+/// Check activity while the caller holds the registry lock, allowing workflow
+/// turn admission and child registration to share one critical section.
+pub fn has_active_descendant_for_agent_locked(
+    entries: &HashMap<String, SubagentEntry>,
+    agent_id: &str,
+) -> bool {
+    let Some(entry) = entries.get(agent_id) else {
+        return entries.iter().any(|(candidate_id, candidate)| {
+            candidate.parent_id.as_deref() == Some(agent_id)
+                && effective_status(entries, candidate_id)
+                    .unwrap_or_else(|| candidate.status.clone())
+                    .is_active()
+        });
+    };
+    has_active_descendant(entries, agent_id, entry)
+}
+fn has_active_descendant(
+    entries: &HashMap<String, SubagentEntry>,
+    agent_id: &str,
+    entry: &SubagentEntry,
+) -> bool {
+    let mut visited = std::collections::HashSet::new();
+    has_active_descendant_inner(
+        entries,
+        descendant_parent_ids(entries, agent_id, entry),
+        &mut visited,
+    )
+}
+
+fn has_active_descendant_inner(
+    entries: &HashMap<String, SubagentEntry>,
+    parent_ids: Vec<String>,
+    visited: &mut std::collections::HashSet<String>,
+) -> bool {
+    parent_ids.into_iter().any(|parent_id| {
+        if !visited.insert(parent_id.clone()) {
+            return false;
+        }
+        entries.iter().any(|(child_id, child)| {
+            child.parent_id.as_deref() == Some(parent_id.as_str())
+                && (child.status.is_active()
+                    || has_active_descendant_inner(
+                        entries,
+                        descendant_parent_ids(entries, child_id, child),
+                        visited,
+                    ))
+        })
+    })
+}
+
+fn descendant_parent_ids(
+    entries: &HashMap<String, SubagentEntry>,
+    agent_id: &str,
+    entry: &SubagentEntry,
+) -> Vec<String> {
+    let mut ids = vec![agent_id.to_string(), entry.agent_uuid.to_string()];
+    if is_unambiguous_display_name(entries, agent_id, entry) {
+        ids.push(entry.display_name.clone());
+    }
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+fn is_unambiguous_display_name(
+    entries: &HashMap<String, SubagentEntry>,
+    agent_id: &str,
+    entry: &SubagentEntry,
+) -> bool {
+    !entry.display_name.is_empty()
+        && entries
+            .iter()
+            .filter(|(other_id, other)| {
+                other_id.as_str() != agent_id && other.display_name == entry.display_name
+            })
+            .count()
+            == 0
 }
 
 /// Maximum wall-clock time to wait for a forwarded sub-agent UDS response on the
@@ -347,10 +344,23 @@ pub fn lookup_subagent_socket(
             format!("duplicate live subagent display label '{display_name}'")
         }
     })?;
-    entries
+    let entry = entries
         .get(&key)
-        .map(|e| e.socket_path.clone())
-        .ok_or_else(|| format!("subagent '{}' not found in registry", agent_id))
+        .ok_or_else(|| format!("subagent '{}' not found in registry", agent_id))?;
+    if entry.persisted_liveness != SubagentLiveness::Live {
+        return Err(format!(
+            "subagent '{agent_id}' is {} and not command-targetable",
+            match entry.persisted_liveness {
+                SubagentLiveness::Live => "live",
+                SubagentLiveness::Detached => "detached",
+                SubagentLiveness::Dead => "dead",
+            }
+        ));
+    }
+    if entry.socket_path.as_os_str().is_empty() {
+        return Err(super::subagent_routing::non_connectable_error(agent_id));
+    }
+    Ok(entry.socket_path.clone())
 }
 
 /// Send a framed JSON command to a sub-agent's UDS socket and read back the
@@ -547,11 +557,6 @@ where
     }
 }
 
-// ─── Await support (#612) ────────────────────────────────────────────────────
-// `AwaitResult`, `WorkflowSnapshot`, `WorkflowResult`, `ResultProgress` and the
-// verdict-derivation logic live in the `subagent_await_result` child module
-// (declared near the bottom of this file) to respect the 750-line file cap; they
-// are re-exported below so `subagent_registry::AwaitResult` etc. keep working.
 /// Signal sent by the reaper task when a child process exits.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExitSignal {
@@ -582,19 +587,21 @@ pub enum ExitSignalKind {
     NeverReachable,
 }
 
+impl ExitSignalKind {
+    pub fn to_wire_str(self) -> &'static str {
+        match self {
+            Self::ProcessExit => "process_exit",
+            Self::ConnectionClosed => "connection_closed",
+            Self::NeverReachable => "never_reachable",
+        }
+    }
+}
+
 pub type ExitSignalTx = tokio::sync::watch::Sender<Option<ExitSignal>>;
 pub type ExitSignalRx = tokio::sync::watch::Receiver<Option<ExitSignal>>;
 
 pub fn new_exit_signal_channel() -> (ExitSignalTx, ExitSignalRx) {
     tokio::sync::watch::channel(None)
-}
-
-/// Tracks which agent_ids have an active `await` call to prevent duplicates.
-pub type ActiveAwaits = Arc<Mutex<HashSet<String>>>;
-
-/// Create a new empty active awaits tracker.
-pub fn new_active_awaits() -> ActiveAwaits {
-    Arc::new(Mutex::new(HashSet::new()))
 }
 
 // ─── Subagent notifications (#523) ───────────────────────────────────────────
@@ -617,7 +624,10 @@ pub enum SubagentNotification {
     /// Child agent's last tool execution returned an error.
     Errored { agent_id: String, error: String },
     /// Child agent process exited (connection closed or process reaped).
-    Exited { agent_id: String },
+    Exited {
+        agent_id: String,
+        reason: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -654,17 +664,9 @@ impl SequencedSubagentNotification {
             SubagentNotification::Completed { agent_id, .. }
             | SubagentNotification::Stalled { agent_id, .. }
             | SubagentNotification::Errored { agent_id, .. }
-            | SubagentNotification::Exited { agent_id } => agent_id.clone(),
+            | SubagentNotification::Exited { agent_id, .. } => agent_id.clone(),
         };
         (agent_id, self.sequence)
-    }
-
-    /// Internal await-dedupe reference: UUID when stamped, else display label.
-    pub fn await_dedupe_key(&self) -> (String, u64) {
-        self.agent_uuid
-            .as_ref()
-            .map(|uuid| (uuid.to_string(), self.sequence))
-            .unwrap_or_else(|| self.dedupe_key())
     }
 
     pub fn to_message(&self) -> String {
@@ -694,7 +696,12 @@ impl SubagentNotification {
                 "Agent '{agent_id}' stalled: idle with workflow still {workflow_mode} at {steps_completed}/{steps_total}. Inspect output/state, then prompt, steer, abort, or kill it."
             ),
             Self::Errored { agent_id, error } => format!("Agent '{agent_id}' failed: {error}"),
-            Self::Exited { agent_id } => format!("Agent '{agent_id}' exited unexpectedly"),
+            Self::Exited { agent_id, reason } => match reason {
+                Some(reason) if !reason.is_empty() => {
+                    format!("Agent '{agent_id}' exited unexpectedly ({reason})")
+                }
+                _ => format!("Agent '{agent_id}' exited unexpectedly"),
+            },
         }
     }
 }
@@ -725,16 +732,19 @@ pub fn validate_agent_id_format(agent_id: &str) -> Result<(), String> {
         .ok_or_else(|| "agent_id must use only [a-zA-Z0-9_-]".to_string())
 }
 
-#[path = "subagent_await_result.rs"]
-mod subagent_await_result;
-pub use subagent_await_result::{AwaitResult, ResultProgress, WorkflowResult, WorkflowSnapshot};
+/// Snapshot of workflow state reported by a subagent.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct WorkflowSnapshot {
+    pub mode: String,
+    pub steps_completed: u32,
+    pub steps_total: u32,
+}
 
+#[cfg(test)]
+#[path = "subagent_registry_more_tests.rs"]
+mod more_tests;
 #[path = "subagent_snapshot.rs"]
 mod subagent_snapshot;
 #[cfg(test)]
 #[path = "subagent_registry_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "subagent_registry_cov_tests.rs"]
-mod cov_tests;

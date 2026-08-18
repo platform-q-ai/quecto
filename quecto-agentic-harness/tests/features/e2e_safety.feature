@@ -1,17 +1,16 @@
 @done
 Feature: End-to-End Safety and Limits
   As a system operator
-  I want sandbox enforcement, iteration limits, and wall-clock timeouts to work end-to-end
-  So that the agent cannot escape its restrictions or run indefinitely
+  I want command safety, iteration limits, and wall-clock timeouts to work end-to-end
+  So that dangerous commands are blocked and runs cannot continue indefinitely
 
   Background:
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    And restrict_to_workspace is enabled in the config
 
-  # --- Sandbox enforcement through CLI ---
+  # --- Filesystem access and command safety through CLI ---
 
-  Scenario: Tool call to read file outside workspace returns error to LLM
+  Scenario: Tool call to read file outside workspace is allowed
     Given the mock LLM first returns a tool call for "read" with args:
       | path | /etc/passwd |
     And the mock LLM then returns a text response "I cannot access that file"
@@ -43,7 +42,7 @@ Feature: End-to-End Safety and Limits
     Then the exit code should be 0
     And stdout should contain "blocked"
 
-  Scenario: Path traversal via tool call is blocked
+  Scenario: Path traversal via tool call is allowed
     Given the mock LLM first returns a tool call for "read" with args:
       | path | ../../etc/passwd |
     And the mock LLM then returns a text response "Access denied"
@@ -51,7 +50,7 @@ Feature: End-to-End Safety and Limits
     Then the exit code should be 0
     And stdout should contain "Access denied"
 
-  Scenario: Write_file outside workspace is blocked
+  Scenario: Write_file outside workspace is allowed
     Given the mock LLM first returns a tool call for "write" with args:
       | path    | ../../tmp/pwned.txt |
       | content | owned               |
@@ -60,7 +59,7 @@ Feature: End-to-End Safety and Limits
     Then the exit code should be 0
     And stdout should contain "Write denied"
 
-  Scenario: Edit outside workspace is blocked
+  Scenario: Edit outside workspace is allowed
     Given the mock LLM first returns a tool call for "edit" with args:
       | path    | ../../etc/passwd |
       | oldText | root             |
@@ -71,7 +70,7 @@ Feature: End-to-End Safety and Limits
     And stdout should contain "Edit denied"
 
 
-  Scenario: List_dir outside workspace is blocked
+  Scenario: List_dir outside workspace is allowed
     Given the mock LLM first returns a tool call for "ls" with args:
       | path | ../../ |
     And the mock LLM then returns a text response "Listing denied"

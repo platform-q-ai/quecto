@@ -115,7 +115,11 @@ pub(super) fn arm_own_get_messages_if_needed(h: &mut TuiHarness, id: &str) {
         h.app_mut().test_arm_attach_backfill(id);
     } else if id == "resume-messages" || id.starts_with("resume-messages-") {
         h.app_mut().test_arm_resume_messages(id);
-    } else if id == "rewind-refresh" || id.starts_with("rewind-refresh-") {
+    } else if id.trim_start_matches("tab0:") == "rewind-refresh"
+        || id
+            .trim_start_matches("tab0:")
+            .starts_with("rewind-refresh-")
+    {
         h.app_mut().test_arm_rewind_refresh(id);
     }
 }

@@ -204,7 +204,7 @@ fn subagent_activity_line_frame_wraps() {
 #[tokio::test]
 async fn extract_selection_omits_navigation_panel_and_divider_columns() {
     let mut app = test_app_for_methods().await;
-    app.agent_connected = true;
+    app.ac_mut().agent_connected = true;
 
     for terminal_width in [50, 80] {
         app.terminal.width = terminal_width;
@@ -247,8 +247,8 @@ async fn extract_selection_omits_navigation_panel_and_divider_columns() {
 #[tokio::test]
 async fn extract_selection_uses_display_columns_for_wide_text() {
     let mut app = test_app_for_methods().await;
-    app.agent_connected = false;
-    app.agent_ever_connected = false;
+    app.ac_mut().agent_connected = false;
+    app.ac_mut().agent_ever_connected = false;
     app.last_rendered_lines = vec!["ab界de".to_string()];
 
     let copied = app.extract_selection(
@@ -262,7 +262,7 @@ async fn extract_selection_uses_display_columns_for_wide_text() {
 #[tokio::test]
 async fn extract_selection_multi_row_omits_panel_and_divider() {
     let mut app = test_app_for_methods().await;
-    app.agent_connected = true;
+    app.ac_mut().agent_connected = true;
 
     for terminal_width in [50, 80] {
         app.terminal.width = terminal_width;
@@ -404,7 +404,8 @@ async fn resume_harness() -> super::tui_harness::TuiHarness {
 }
 
 fn resume_chat_text(app: &mut super::App) -> String {
-    app.master_session
+    app.ac_mut()
+        .master_session
         .chat
         .render(120)
         .iter()
@@ -442,7 +443,7 @@ async fn successful_resume_requests_full_messages_before_stats() {
         .and_then(|v| v.get("id")?.as_str().map(str::to_string))
         .expect("resume get_messages id");
     assert!(
-        resume_id.starts_with("resume-messages-") && resume_id != "resume-messages",
+        resume_id.starts_with("tab0:resume-messages-") && resume_id != "tab0:resume-messages",
         "resume id must be uniquely minted, got {resume_id}"
     );
     assert_eq!(
@@ -454,7 +455,7 @@ async fn successful_resume_requests_full_messages_before_stats() {
         "resume should refresh stats after requesting messages: {cmds:?}"
     );
     assert!(
-        cmds[2].contains("\"type\":\"get_state\"") && cmds[2].contains("\"id\":\"resync\""),
+        cmds[2].contains("\"type\":\"get_state\"") && cmds[2].contains("\"id\":\"tab0:resync\""),
         "resume should resync session-scoped state after stats: {cmds:?}"
     );
 }
@@ -686,7 +687,7 @@ async fn resumed_tool_name_strips_terminal_control_sequences() {
         ]})),
         None,
     );
-    let raw = a.master_session.chat.render(120).join("\n");
+    let raw = a.ac_mut().master_session.chat.render(120).join("\n");
     let text = resume_chat_text(a);
     assert!(text.contains("evilname"), "{text}");
     assert!(!raw.contains("\u{1b}]8"), "{raw:?}");

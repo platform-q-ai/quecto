@@ -543,6 +543,7 @@ fn seed_oversized_history_session(world: &mut QuectoWorld) {
         key: session_key,
         messages,
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
@@ -584,6 +585,7 @@ fn seed_oversized_tool_call_history_session(world: &mut QuectoWorld) {
         key: Session::build_key("cli", PAGED_SESSION),
         messages: vec![message],
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     let store = FileSessionStore::new(base_path(world));
     tokio::runtime::Runtime::new().unwrap().block_on(async {
@@ -615,6 +617,7 @@ fn seed_plain_session_with_body(world: &mut QuectoWorld, n: usize, body_len: usi
         key: session_key,
         messages,
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async { store.save(&session).await.expect("save seeded session") });
@@ -696,6 +699,7 @@ fn seed_stub_session(world: &mut QuectoWorld) {
         key: session_key,
         messages,
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
     rt.block_on(async { store.save(&session).await.expect("save stub session") });
     world.no_session = false;
@@ -857,10 +861,7 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
     let provider_reload_inputs =
         ProviderReloadInputs::new(config_path, base.to_path_buf(), env_overrides, http_client);
     let workspace = std::path::PathBuf::from(config.workspace_path());
-    let sandbox = Sandbox::new(
-        Some(workspace.clone()),
-        config.agents.defaults.restrict_to_workspace,
-    );
+    let sandbox = Sandbox::new(Some(workspace.clone()));
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
     let mut registry = quecto::infrastructure::extensions::native::build_official_tool_registry(
         workspace,

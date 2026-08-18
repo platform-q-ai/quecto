@@ -1,4 +1,5 @@
 use crate::domain::message::Message;
+use crate::domain::visible_thinking::{visible_thinking_len, visible_thinking_page};
 use crate::interface::cli::protocol::AgentEvent;
 
 #[cfg(test)]
@@ -35,8 +36,12 @@ fn tool_calls_json(msg: &Message) -> serde_json::Value {
     )
 }
 
-fn message_to_json_with_content(msg: &Message, content: &str) -> serde_json::Value {
-    serde_json::json!({
+fn message_to_json_with_content_and_thinking(
+    msg: &Message,
+    content: &str,
+    include_thinking: bool,
+) -> serde_json::Value {
+    let mut value = serde_json::json!({
         "id": msg.id().to_string(),
         "role": super::role_wire_name(&msg.role),
         "content": content,
@@ -45,7 +50,12 @@ fn message_to_json_with_content(msg: &Message, content: &str) -> serde_json::Val
         "toolName": msg.tool_name,
         "isError": msg.is_error,
         "collapsed": msg.is_collapsed,
-    })
+    });
+    if include_thinking && !msg.thinking_blocks.is_empty() {
+        value["thinking"] =
+            super::uds_visible_thinking_wire::visible_thinking_blocks_json(&msg.thinking_blocks);
+    }
+    value
 }
 
 fn one_char_end(s: &str, start: usize) -> usize {
@@ -56,8 +66,73 @@ fn one_char_end(s: &str, start: usize) -> usize {
         .unwrap_or(s.len())
 }
 
-fn ranged_value(msg: &Message, start: usize, end: usize, content_len: usize) -> serde_json::Value {
-    let mut value = message_to_json_with_content(msg, &msg.content[start..end]);
+fn clear_thinking_page(value: &mut serde_json::Value) {
+    let object = value.as_object_mut().expect("object");
+    object.remove("thinking");
+    object.remove("thinkingOffset");
+    object.remove("nextThinkingOffset");
+    object.remove("thinkingLength");
+    object.remove("hasMoreThinking");
+}
+
+fn add_bounded_thinking_page(
+    value: &mut serde_json::Value,
+    msg: &Message,
+    start: usize,
+    request_id: Option<&str>,
+) {
+    let thinking_len = visible_thinking_len(&msg.thinking_blocks);
+    if thinking_len == 0 || start >= thinking_len {
+        return;
+    }
+
+    let start = start.min(thinking_len);
+    let mut end = thinking_len;
+    value["thinking"] = super::uds_visible_thinking_wire::visible_thinking_page_json(
+        visible_thinking_page(&msg.thinking_blocks, start, end),
+    );
+    if data_fits_frame(value, request_id) {
+        value["thinkingOffset"] = serde_json::json!(start);
+        value["nextThinkingOffset"] = serde_json::json!(end);
+        value["thinkingLength"] = serde_json::json!(thinking_len);
+        value["hasMoreThinking"] = serde_json::json!(end < thinking_len);
+        return;
+    }
+
+    while end > start {
+        let midpoint = start + (end - start) / 2;
+        end = midpoint;
+        if end == start && start < thinking_len {
+            end = (start + 1).min(thinking_len);
+        }
+        value["thinking"] = super::uds_visible_thinking_wire::visible_thinking_page_json(
+            visible_thinking_page(&msg.thinking_blocks, start, end),
+        );
+        value["thinkingOffset"] = serde_json::json!(start);
+        value["nextThinkingOffset"] = serde_json::json!(end);
+        value["thinkingLength"] = serde_json::json!(thinking_len);
+        value["hasMoreThinking"] = serde_json::json!(end < thinking_len);
+        if data_fits_frame(value, request_id) {
+            return;
+        }
+        if end <= start + 1 {
+            break;
+        }
+    }
+
+    clear_thinking_page(value);
+}
+
+fn ranged_value(
+    msg: &Message,
+    start: usize,
+    end: usize,
+    content_len: usize,
+    thinking_start: usize,
+    request_id: Option<&str>,
+) -> serde_json::Value {
+    let mut value = message_to_json_with_content_and_thinking(msg, &msg.content[start..end], false);
+    add_bounded_thinking_page(&mut value, msg, thinking_start, request_id);
     value["offset"] = serde_json::json!(start);
     value["nextOffset"] = serde_json::json!(end);
     value["contentLength"] = serde_json::json!(content_len);
@@ -81,7 +156,12 @@ fn bounded_range_end(
     if end == start && start < content_len {
         end = one_char_end(&msg.content, start);
     }
-    while end > start && !data_fits_frame(&ranged_value(msg, start, end, content_len), request_id) {
+    while end > start
+        && !data_fits_frame(
+            &ranged_value(msg, start, end, content_len, 0, request_id),
+            request_id,
+        )
+    {
         let midpoint = start + (end - start) / 2;
         end = nearest_char_boundary_at_or_before(&msg.content, midpoint);
         if end == start {
@@ -89,10 +169,12 @@ fn bounded_range_end(
             break;
         }
     }
-    if end > start && !data_fits_frame(&ranged_value(msg, start, end, content_len), request_id) {
-        // Metadata/tool-call overhead alone is too large for a success response.
-        // Return an empty page rather than pretending progress is frame-safe; the
-        // outer response guard will emit the explicit frame-limit error.
+    if end > start
+        && !data_fits_frame(
+            &ranged_value(msg, start, end, content_len, 0, request_id),
+            request_id,
+        )
+    {
         start
     } else {
         end
@@ -107,7 +189,7 @@ pub fn message_to_json_range(
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> serde_json::Value {
-    message_to_json_range_for_response(msg, offset, limit, None)
+    message_to_json_range_for_response(msg, offset, None, limit, None)
 }
 
 pub fn tool_call_arguments_to_json_range_for_response(
@@ -160,11 +242,15 @@ pub fn tool_call_arguments_to_json_range_for_response(
 pub fn message_to_json_range_for_response(
     msg: &Message,
     offset: Option<usize>,
+    thinking_offset: Option<usize>,
     limit: Option<usize>,
     request_id: Option<&str>,
 ) -> serde_json::Value {
-    if offset.is_none() && limit.is_none() {
-        return super::message_to_json(msg);
+    if offset.is_none() && thinking_offset.is_none() && limit.is_none() {
+        let value = super::message_to_json(msg);
+        if data_fits_frame(&value, request_id) {
+            return value;
+        }
     }
 
     let content_len = msg.content.len();
@@ -173,5 +259,12 @@ pub fn message_to_json_range_for_response(
     let requested = limit.unwrap_or(remaining).min(remaining);
     let requested_end = start.saturating_add(requested).min(content_len);
     let end = bounded_range_end(msg, start, requested_end, content_len, request_id);
-    ranged_value(msg, start, end, content_len)
+    ranged_value(
+        msg,
+        start,
+        end,
+        content_len,
+        thinking_offset.unwrap_or_else(|| offset.unwrap_or(0)),
+        request_id,
+    )
 }

@@ -1,31 +1,26 @@
 @done
-Feature: Sandbox Hardening
+Feature: Command Policy Hardening
   As a system administrator
-  I want the security sandbox to prevent sophisticated attack vectors
-  So that even a compromised agent cannot escape its confinement
+  I want command allowlists and denylists to prevent bypasses
+  So that dangerous commands remain blocked
 
-  # --- Symlink escape prevention ---
+  # --- Symlink path behavior: validate_path is not a jail ---
 
-  Scenario: Symlink pointing outside workspace is blocked
+  Scenario: Symlink pointing outside workspace is allowed
     Given a sandboxed workspace at a temporary directory
-    And restrict_to_workspace is true
-    And a symlink "link.txt" in the workspace pointing to "/etc/passwd"
+        And a symlink "link.txt" in the workspace pointing to "/etc/passwd"
     When the agent tries to validate path "link.txt" resolved against the workspace
-    Then the validation should be an error
-    And the error should mention "outside working dir"
+    Then the validation should be ok
 
-  Scenario: Nested symlink chain escaping workspace is blocked
+  Scenario: Nested symlink chain escaping workspace is allowed
     Given a sandboxed workspace at a temporary directory
-    And restrict_to_workspace is true
-    And a symlink "step1" in the workspace pointing to "/tmp"
+        And a symlink "step1" in the workspace pointing to "/tmp"
     When the agent tries to validate path "step1/some-file.txt" resolved against the workspace
-    Then the validation should be an error
-    And the error should mention "outside working dir"
+    Then the validation should be ok
 
   Scenario: Symlink pointing within workspace is allowed
     Given a sandboxed workspace at a temporary directory
-    And restrict_to_workspace is true
-    And a file "real.txt" exists in the workspace
+        And a file "real.txt" exists in the workspace
     And a symlink "link.txt" in the workspace pointing to "real.txt"
     When the agent tries to validate path "link.txt" resolved against the workspace
     Then the validation should be ok

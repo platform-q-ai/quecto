@@ -49,39 +49,33 @@ use app_message_recovery::{MessageRecoveryBatch, PendingMessageRecovery};
 pub struct App {
     terminal: Terminal,
     renderer: DiffRenderer<std::io::Stdout>,
-    client: Client,
+    /// Per-tab connection states (#1465 / epic #1467). Indexed by [`TabId`];
+    /// the active tab is selected by `active_tab`. Call sites reach the
+    /// active slot via `ac()` / `ac()`, and a specific
+    /// tab via `conn_for` / `conn_mut`.
+    tabs: std::collections::HashMap<
+        crate::shell::connection::TabId,
+        connection_state::ConnectionState,
+    >,
+    /// Which tab is focused for input, render, and active command send.
+    active_tab: crate::shell::connection::TabId,
+    /// This TUI's workspace identity (#1466 decision 1): a UUID minted at
+    /// startup (never cwd-derived) plus its auto-generated human label.
+    pub(crate) workspace_id: String,
+    pub(crate) workspace_label: String,
+    /// When set, `active_conn(_mut)` temporarily targets this tab so inbound
+    /// `SourcedEvent` routing can mutate the owner without flipping focus.
+    routing_tab_override: Option<crate::shell::connection::TabId>,
     editor: Editor,
-    /// The master agent's own session, modeled as just another [`SessionView`]
-    /// (#828) so render/input share ONE active-session path with sub-agents
-    /// (`active_agent_id == None` selects this). Only `spinner`/`agent_state`
-    /// stay master-local; sub-agents derive `running` from forwarded events.
-    master_session: SessionView,
-    spinner: Option<Spinner>,
     autocomplete: Autocomplete,
     workspace: WorkspaceFlow,
     notifications: NotificationStack,
     kitty: KittyProtocol,
-    agent_state: AgentRunState,
     should_exit: bool,
     stdin_buffer: crate::shell::stdin_buffer::StdinBuffer,
-    agent_connected: bool,
-    /// Pin: once the left panel has shown for a connected agent it must not
-    /// vanish when the agent dies (#1047) — the user keeps the session /
-    /// sub-agent context to diagnose the failure. Stays `true` on disconnect.
-    agent_ever_connected: bool,
-    /// Exit-diagnosis watch for the TUI-owned agent child (#1047), published by
-    /// [`crate::shell::child_watch`]. `None` for external sockets.
-    child_exit_watch: Option<crate::shell::child_watch::ChildWatch>,
-    /// Oversized-event drops already surfaced as a notification, so each is
-    /// reported exactly once (#1047).
-    surfaced_oversized_drops: u64,
+    /// Global selector-overlay half of the inference flow; per-tab
+    /// model/effort state lives on `conn` (#1463).
     inference: InferenceFlow,
-    /// Connected agent's own id (get_state sessionKey), vs descendants' (#997).
-    connected_agent_id: Option<String>,
-    sessions: SessionsFlow,
-    workflow: WorkflowFlow,
-    /// Rewind flow state (#997).
-    rewind: RewindFlow,
     /// Sub-agent / multi-session UI state (#997).
     subagents: SubagentUi,
     /// Diagnostic: with `QUECTO_TUI_RENDER_LOG` set, frames are appended here.
@@ -96,39 +90,51 @@ pub struct App {
     selection: Option<TextSelection>,
     /// Last rendered lines (for extracting selected text from the buffer).
     last_rendered_lines: Vec<String>,
-    pending_message_recovery: HashMap<String, PendingMessageRecovery>,
-    /// Recovery batches (client-local id → turn chat range) guarding late overwrites.
-    message_recovery_batches: HashMap<String, MessageRecoveryBatch>,
-    pending_stub_recall: HashMap<String, app_paged_history::StubRecall>,
     /// Latest catalogue snapshot keyed by stable id (or name fallback) for future policy UI.
     tool_catalogue: HashMap<String, crate::protocol::client::ToolCatalogueEntry>,
     tool_policy_modal: Option<SelectableItemModal>,
     tool_policy_modal_pending_catalogue_id: Option<String>,
-    failed_stub_recalls: HashSet<(Option<String>, String)>,
-    /// Exact correlation id for this client's in-flight resume transcript fetch (#1237).
-    /// `get_messages` responses are broadcast; fixed literals would clobber peers.
-    pending_resume_messages_id: Option<String>,
-    /// Exact correlation id for this client's post-rewind transcript refresh (#1237).
-    pending_rewind_refresh_id: Option<String>,
-    /// Exact correlation id for this client's solicited attach backfill (#1237).
-    /// Id-less busy-connect snapshots must not clear this pending.
-    pending_attach_backfill_id: Option<String>,
-    /// Local sequence suffix for minted solicited `get_messages` ids (#1237).
-    solicited_get_messages_seq: u64,
-    /// Tool boxes observed since the current master AgentStart (#1060 recovery).
-    tools_this_turn: usize,
-    /// Tool starts not yet matched by an end; > 0 forces recovery on a dropped end.
-    open_tool_calls: usize,
-    active_turn_start: usize,
     command_send_failure_tx: mpsc::Sender<CommandSendFailure>,
     command_send_failure_rx: mpsc::Receiver<CommandSendFailure>,
-    /// When the TUI session started — drives the Master row's uptime timer (#820).
-    started_at: tokio::time::Instant,
+    /// Completion channel for the OFF-LOOP disconnect diagnosis (#1462 scope
+    /// 3): the `SourcedEvent::Closed` sentinel spawns the bounded child-exit /
+    /// stderr-drain waits (#1047) onto a task carrying this sender, so a
+    /// dying child can never stall the select loop; the loop finishes the
+    /// disconnect when the diagnosis lands here.
+    /// Keyed by the closing tab (#1470 r3) so N>1 tabs can never
+    /// misattribute an exit detail.
+    disconnect_diag_tx: mpsc::Sender<(crate::shell::connection::TabId, Option<String>)>,
+    disconnect_diag_rx: mpsc::Receiver<(crate::shell::connection::TabId, Option<String>)>,
+    /// Dedicated fan-in for master-connection events (`SourcedEvent::Tab` /
+    /// `Closed`). A separate channel from the sub-agent fan-in restores the
+    /// deleted dedicated select arm's fair interleave: master events and the
+    /// close sentinel can no longer queue FIFO behind a chatty sub-agent
+    /// burst (#1470 review). All tabs share this one channel, so the select
+    /// arm count stays independent of N.
+    pub(super) tab_event_rx: mpsc::Receiver<crate::shell::connection::SourcedEvent>,
+    /// Sender half of `tab_event_rx`, retained so newly spawned/reattached tabs
+    /// can join the same fan-in (#1465 AC1/AC2/AC6).
+    pub(super) tab_event_tx: Option<mpsc::Sender<crate::shell::connection::SourcedEvent>>,
+    /// Background tab spawn/reattach results (#1465).
+    pub(super) tab_attach_tx: Option<mpsc::Sender<tab_lifecycle::TabAttachOutcome>>,
+    pub(super) tab_attach_rx: mpsc::Receiver<tab_lifecycle::TabAttachOutcome>,
+    /// Monotonic attach epoch so recycled TabIds reject stale spawn outcomes (#1465 F2).
+    pub(super) next_attach_generation: u64,
+    /// Parent CLI policy inherited by secondary tab spawns (#1465 F8).
+    pub(crate) tab_spawn_policy: Option<crate::shell::cli::TabSpawnPolicy>,
 }
+
+/// Id of the TUI's single (master) agent connection. With one replicant
+/// agent per tab (#1463, epic #1467) each connection carries its own id.
+pub(crate) const MASTER_CONNECTION_ID: &str = "master";
 
 struct CommandSendFailure {
     command: Command,
     error: String,
+    /// Connection the send failed on — `MASTER_CONNECTION_ID` for today's
+    /// single connection — so the rollback/notice cannot be misrouted
+    /// cross-tab once there are N per-tab connections (#1460).
+    connection: String,
 }
 
 impl App {
@@ -138,31 +144,49 @@ impl App {
         let git_branch = git_repo.as_deref().and_then(app_git::read_git_branch_from);
         footer.set_git_branch(git_branch.clone());
         let (command_send_failure_tx, command_send_failure_rx) = mpsc::channel(16);
+        let (disconnect_diag_tx, disconnect_diag_rx) = mpsc::channel(4);
 
-        Self {
+        // Sub-agent feeds fan into the channel on the sub-agent UI state;
+        // master-connection events ride their own dedicated fan-in so they
+        // interleave fairly with sub-agent bursts (#1462 / #1470 review).
+        let subagents = SubagentUi::new();
+        let (tab_event_tx, tab_event_rx) = mpsc::channel(256);
+        let (tab_attach_tx, tab_attach_rx) = mpsc::channel(8);
+        let connection = crate::shell::connection::Connection::spawn(
+            client,
+            crate::shell::connection::TabId::MASTER,
+            tab_event_tx.clone(),
+        );
+
+        let thinking_visible = thinking_preferences::load_thinking_visible();
+
+        let mut app = Self {
             terminal,
             renderer: DiffRenderer::new(std::io::stdout()),
-            client,
+            tabs: {
+                let mut tabs = std::collections::HashMap::new();
+                tabs.insert(
+                    crate::shell::connection::TabId::MASTER,
+                    connection_state::ConnectionState::new(
+                        connection,
+                        SessionView::with_footer(footer),
+                    ),
+                );
+                tabs
+            },
+            active_tab: crate::shell::connection::TabId::MASTER,
+            workspace_id: crate::shell::workspace_manifest::generate_workspace_id(),
+            workspace_label: crate::shell::workspace_manifest::generate_workspace_label(),
+            routing_tab_override: None,
             editor: Editor::new(),
-            master_session: SessionView::with_footer(footer),
-            spinner: None,
             autocomplete: Autocomplete::new(builtin_commands().to_vec(), 8),
             workspace: WorkspaceFlow::new(git_branch, git_repo),
             notifications: NotificationStack::new(),
             kitty: KittyProtocol::new(),
-            agent_state: AgentRunState::new(),
             should_exit: false,
             stdin_buffer: crate::shell::stdin_buffer::StdinBuffer::new(),
-            agent_connected: true,
-            agent_ever_connected: true,
-            child_exit_watch: None,
-            surfaced_oversized_drops: 0,
             inference: InferenceFlow::default(),
-            connected_agent_id: None,
-            sessions: SessionsFlow::default(),
-            workflow: WorkflowFlow::default(),
-            rewind: RewindFlow::default(),
-            subagents: SubagentUi::new(),
+            subagents,
             render_log_path: std::env::var("QUECTO_TUI_RENDER_LOG").ok(),
             #[cfg(any(test, feature = "test-harness"))]
             rendered_frames: 0,
@@ -170,24 +194,22 @@ impl App {
             suppress_paint: false,
             selection: None,
             last_rendered_lines: Vec::new(),
-            pending_message_recovery: HashMap::new(),
-            message_recovery_batches: HashMap::new(),
-            pending_stub_recall: HashMap::new(),
             tool_catalogue: HashMap::new(),
             tool_policy_modal: None,
             tool_policy_modal_pending_catalogue_id: None,
-            failed_stub_recalls: HashSet::new(),
-            pending_resume_messages_id: None,
-            pending_rewind_refresh_id: None,
-            pending_attach_backfill_id: None,
-            solicited_get_messages_seq: 0,
-            tools_this_turn: 0,
-            open_tool_calls: 0,
-            active_turn_start: 0,
             command_send_failure_tx,
             command_send_failure_rx,
-            started_at: tokio::time::Instant::now(),
-        }
+            disconnect_diag_tx,
+            disconnect_diag_rx,
+            tab_event_rx,
+            tab_event_tx: Some(tab_event_tx),
+            tab_attach_tx: Some(tab_attach_tx),
+            tab_attach_rx,
+            next_attach_generation: 1,
+            tab_spawn_policy: None,
+        };
+        app.set_thinking_visibility(thinking_visible);
+        app
     }
 
     pub(super) fn apply_git_branch(&mut self, branch: Option<String>) -> bool {
@@ -195,7 +217,7 @@ impl App {
             return false;
         }
         self.workspace.git_branch = branch.clone();
-        self.master_session.footer.set_git_branch(branch);
+        self.ac_mut().master_session.footer.set_git_branch(branch);
         true
     }
 
@@ -259,6 +281,9 @@ impl App {
     }
 }
 
+#[path = "connection_state.rs"]
+mod connection_state;
+
 #[path = "app_disconnect.rs"]
 mod app_disconnect;
 // #1257: feature-owned controllers live under their capability modules;
@@ -299,6 +324,8 @@ mod app_ledger_sync;
 pub(crate) mod app_message_recovery;
 #[path = "app_methods.rs"]
 mod app_methods;
+#[path = "app_methods_send.rs"]
+mod app_methods_send;
 #[path = "../inference/controller_models.rs"]
 mod app_models;
 #[path = "../conversation/controller_paged_history.rs"]
@@ -307,6 +334,9 @@ mod app_paged_history;
 mod app_render_helpers;
 #[path = "app_response.rs"]
 mod app_response;
+#[cfg(any(test, feature = "test-harness"))]
+#[path = "app_response_test_api.rs"]
+mod app_response_test_api;
 #[path = "../conversation/controller_resumed_history.rs"]
 mod app_resumed_history;
 #[path = "../conversation/controller_rewind.rs"]
@@ -323,6 +353,18 @@ mod app_subagent_panel;
 mod app_subagent_panel_rows;
 #[path = "app_submit.rs"]
 mod app_submit;
+#[path = "app_thinking_visibility.rs"]
+mod app_thinking_visibility;
+#[path = "app_time.rs"]
+mod app_time;
+#[path = "tab_activity.rs"]
+mod tab_activity;
+#[path = "tab_lifecycle.rs"]
+mod tab_lifecycle;
+#[path = "thinking_preferences.rs"]
+mod thinking_preferences;
+#[path = "workspace_resume.rs"]
+mod workspace_resume;
 use crate::agents::roster::{
     gc_exited_subagents, next_exited_subagent_gc_deadline, subagent_status_is_active,
 };
@@ -539,7 +581,7 @@ mod app_bottom_spacing_tests;
 #[path = "app_clipboard_tests.rs"]
 mod app_clipboard_tests;
 #[cfg(test)]
-#[path = "app_conversation_characterization_tests.rs"]
+#[path = "app_conversation_characterization_tests/mod.rs"]
 mod app_conversation_characterization_tests;
 #[cfg(test)]
 #[path = "app_cov_tests.rs"]
@@ -550,6 +592,9 @@ mod app_delete_all_subagents_tests;
 #[cfg(test)]
 #[path = "app_disconnect_tests.rs"]
 mod app_disconnect_tests;
+#[cfg(test)]
+#[path = "app_event_loop_abort_tests.rs"]
+mod app_event_loop_abort_tests;
 #[cfg(test)]
 #[path = "app_event_loop_cov_tests.rs"]
 mod app_event_loop_cov_tests;
@@ -562,6 +607,15 @@ mod app_events_1060_lifecycle_tests;
 #[cfg(test)]
 #[path = "app_events_1060_tests.rs"]
 mod app_events_1060_tests;
+#[cfg(test)]
+#[path = "app_fix_pass_1466_round2_tests.rs"]
+mod app_fix_pass_1466_round2_tests;
+#[cfg(test)]
+#[path = "app_fix_pass_1466_tests.rs"]
+mod app_fix_pass_1466_tests;
+#[cfg(test)]
+#[path = "app_fix_pass_1485_review_tests.rs"]
+mod app_fix_pass_1485_review_tests;
 #[cfg(test)]
 #[path = "../workspace/app_git_tests.rs"]
 mod app_git_tests;
@@ -577,6 +631,9 @@ mod app_live_inflight_1259_tests;
 #[cfg(test)]
 #[path = "app_methods_tests.rs"]
 mod app_methods_tests;
+#[cfg(test)]
+#[path = "app_multi_tab_polish_tests.rs"]
+mod app_multi_tab_polish_tests;
 #[cfg(test)]
 #[path = "../conversation/app_paged_history_review_tests.rs"]
 mod app_paged_history_review_tests;
@@ -599,6 +656,12 @@ mod app_rewind_response_tests;
 #[path = "app_selection_tests.rs"]
 mod app_selection_tests;
 #[cfg(test)]
+#[path = "app_socket_path_tests.rs"]
+mod app_socket_path_tests;
+#[cfg(test)]
+#[path = "app_sourced_event_tests.rs"]
+mod app_sourced_event_tests;
+#[cfg(test)]
 #[path = "app_streaming_stability_tests.rs"]
 mod app_streaming_stability_tests;
 #[cfg(test)]
@@ -614,17 +677,29 @@ mod app_subagent_first_tests;
 #[path = "../agents/app_subagent_panel_observer_tests.rs"]
 mod app_subagent_panel_observer_tests;
 #[cfg(test)]
+#[path = "../agents/app_subagent_panel_scroll_tests.rs"]
+mod app_subagent_panel_scroll_tests;
+#[cfg(test)]
 #[path = "../agents/app_subagent_panel_tests.rs"]
 mod app_subagent_panel_tests;
 #[cfg(test)]
 #[path = "../agents/app_subagent_roster_authority_tests.rs"]
 mod app_subagent_roster_authority_tests;
 #[cfg(test)]
+#[path = "../agents/app_subagent_scroll_1435_tests.rs"]
+mod app_subagent_scroll_1435_tests;
+#[cfg(test)]
 #[path = "../agents/app_subagent_workflow_sticky_tests.rs"]
 mod app_subagent_workflow_sticky_tests;
 #[cfg(test)]
 #[path = "../agents/app_subagents_tests.rs"]
 mod app_subagents_tests;
+#[cfg(test)]
+#[path = "app_tab_collection_tests.rs"]
+mod app_tab_collection_tests;
+#[cfg(test)]
+#[path = "../agents/app_tab_render_tests.rs"]
+mod app_tab_render_tests;
 #[cfg(test)]
 #[path = "app_text_input_1277_tests.rs"]
 mod app_text_input_1277_tests;

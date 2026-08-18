@@ -108,36 +108,6 @@ fn test_entry_socket_path() {
     assert_eq!(entry.socket_path, PathBuf::from("/run/quecto.sock"));
 }
 
-// --- consume_await_dedupe (#828) ---
-
-#[test]
-fn consume_await_dedupe_handles_none_registry() {
-    // No registry at all: nothing to suppress.
-    assert!(!consume_await_dedupe(&None, "anyone"));
-}
-
-#[test]
-fn consume_await_dedupe_false_without_pending_flag() {
-    let r = new_registry();
-    r.lock()
-        .unwrap()
-        .insert("bot".into(), SubagentEntry::new(PathBuf::from("/s"), 1));
-    assert!(!consume_await_dedupe(&Some(r), "bot"));
-}
-
-#[test]
-fn consume_await_dedupe_consumes_pending_flag_once() {
-    let r = new_registry();
-    r.lock()
-        .unwrap()
-        .insert("bot".into(), SubagentEntry::new(PathBuf::from("/s"), 1));
-    mark_completion_consumed_by_await(&r, "bot");
-    let reg = Some(r);
-    // First check consumes the flag (suppress), second sees it cleared.
-    assert!(consume_await_dedupe(&reg, "bot"));
-    assert!(!consume_await_dedupe(&reg, "bot"));
-}
-
 // --- SubagentNotification (#523) ---
 
 #[test]
@@ -170,6 +140,7 @@ fn test_errored_message_format() {
 fn test_exited_message_format() {
     let n = SubagentNotification::Exited {
         agent_id: "formatter".into(),
+        reason: None,
     };
     let msg = n.to_message();
     assert!(msg.contains("formatter"));
@@ -311,6 +282,45 @@ fn stamp_request_id_none_for_non_object() {
 }
 
 #[tokio::test]
+async fn public_command_wrapper_sends_framed_request_and_reads_reply() {
+    use tokio::io::BufReader;
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("wrapper.sock");
+    let listener = tokio::net::UnixListener::bind(&sock).unwrap();
+
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read_half, mut write_half) = tokio::io::split(stream);
+        let mut reader = BufReader::new(read_half);
+        let payload =
+            quecto_line_io::read_frame(&mut reader, quecto_line_io::PROTOCOL_FRAME_CAP_BYTES)
+                .await
+                .unwrap()
+                .unwrap();
+        let req: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(req["type"], "get_state");
+        let id = req["id"].as_str().unwrap();
+        let reply = format!(
+            r#"{{"type":"response","id":"{id}","command":"get_state","data":{{"status":"ok"}}}}"#
+        );
+        quecto_line_io::write_frame(
+            &mut write_half,
+            reply.as_bytes(),
+            quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    });
+
+    let reply = send_subagent_uds_command(&sock, r#"{"type":"get_state"}"#)
+        .await
+        .unwrap();
+    assert!(reply.contains(r#""status":"ok""#));
+    server.await.unwrap();
+}
+
+#[tokio::test]
 async fn command_reader_skips_connect_time_snapshot_and_returns_matching_reply() {
     // Reproduce #831: a BUSY child pushes an unsolicited connect-time
     // `get_messages` SNAPSHOT as the FIRST line, then the real reply. The
@@ -392,6 +402,7 @@ async fn test_notification_drain() {
                 i as u64 + 1,
                 SubagentNotification::Exited {
                     agent_id: format!("bot-{}", i),
+                    reason: None,
                 },
             ))
             .await;

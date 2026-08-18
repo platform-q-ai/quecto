@@ -28,7 +28,7 @@ pub(crate) fn write_executable(path: &PathBuf, content: String) {
 
 /// Configure a full create/exec/kill (plus rollback cleanup) script set that
 /// records every invocation kind to a shared JSONL log, then rewrites the
-/// session config's `container_scripts` to point at it.
+/// session config's `container_configs` to point at it.
 pub(crate) fn given_shared_script_spawn(world: &mut QuectoWorld, kill_fails_once: bool) {
     spawn_tool_steps::given_live_spawn_agent_cmd_mock_child(world);
     let base = base_path(world);
@@ -43,7 +43,7 @@ pub(crate) fn given_shared_script_spawn(world: &mut QuectoWorld, kill_fails_once
             r#"#!/usr/bin/env bash
 set -euo pipefail
 env_id="env-$RANDOM-$$"
-echo "{{\"kind\":\"create\",\"script\":\"${{QUECTO_CONTAINER_SCRIPT:-}}\",\"env_ref\":\"${{QUECTO_CONTAINER_ENVIRONMENT_REF:-}}\",\"env_id\":\"$env_id\"}}" >> '{log}'
+echo "{{\"kind\":\"create\",\"script\":\"${{QUECTO_CONTAINER_CONFIG:-}}\",\"env_ref\":\"${{QUECTO_CONTAINER_ENVIRONMENT_REF:-}}\",\"env_id\":\"$env_id\"}}" >> '{log}'
 socket_path=""
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "--" ]; then shift; break; fi
@@ -67,7 +67,7 @@ printf '{{"environment_id":"%s","workspace_path":"%s","metadata":{{}},"socket_pa
         format!(
             r#"#!/usr/bin/env bash
 set -euo pipefail
-echo "{{\"kind\":\"exec\",\"script\":\"${{QUECTO_CONTAINER_SCRIPT:-}}\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}\"}}" >> '{log}'
+echo "{{\"kind\":\"exec\",\"script\":\"${{QUECTO_CONTAINER_CONFIG:-}}\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}\"}}" >> '{log}'
 socket_path=""
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "--" ]; then shift; break; fi
@@ -146,34 +146,13 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
     });
     let mut alternate_set = script_set.clone();
     alternate_set["exec"] = serde_json::json!([exec_alt.to_string_lossy()]);
-    v["container_scripts"] = serde_json::json!({
-        "default": "default",
-        "scripts": {"default": script_set, "alternate": alternate_set}
+    let mut default_set = script_set.clone();
+    default_set["default"] = serde_json::json!(true);
+    v["container_configs"] = serde_json::json!({
+        "default": default_set, "alternate": alternate_set
     });
-    if !base.join(".git").exists() {
-        std::process::Command::new("git")
-            .arg("init")
-            .arg(&base)
-            .status()
-            .expect("git init for parent repo fixture");
-    }
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(&base)
-        .args(["remote", "remove", "origin"])
-        .status()
-        .ok();
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(&base)
-        .args([
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/example/shared-parent.git",
-        ])
-        .status()
-        .expect("git remote add for parent repo fixture");
+    // No git fixture: configs own their source (#1410) and the parent's
+    // location/checkout is irrelevant to container semantics.
     std::fs::write(&cfg_path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
 
     // Rebuild the SpawnTool with notification + live-event channels wired
@@ -188,7 +167,7 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
         quecto::infrastructure::tools::subagent_registry::new_notification_channel();
     let (broadcast_tx, broadcast_rx) = tokio::sync::broadcast::channel::<String>(64);
     world.spawn_tool = Some(
-        SpawnTool::with_base_dir(vec![], true, base.clone())
+        SpawnTool::with_base_dir(vec![], base.clone())
             .with_socket_dir(base.join("sockets"))
             .with_registry(subagent_registry_for_spawn)
             .with_notify_tx(notify_tx)
@@ -390,9 +369,17 @@ fn given_default_script_changes(world: &mut QuectoWorld, new_default: String) {
     let cfg_path = PathBuf::from(world.config_path.clone().unwrap());
     let mut v: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
-    v["container_scripts"]["default"] = serde_json::json!(new_default);
-    // The retained-script assertion must be able to distinguish the two sets,
-    // so the new default announces itself via QUECTO_CONTAINER_SCRIPT.
+    // Move the `"default": true` label to the new entry (#1410); the
+    // retained-script assertion must be able to distinguish the two sets.
+    let names: Vec<String> = v["container_configs"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    for name in names {
+        v["container_configs"][&name]["default"] = serde_json::json!(name == new_default);
+    }
     std::fs::write(&cfg_path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
 }
 
@@ -738,7 +725,7 @@ fn when_start_gated_spawn(world: &mut QuectoWorld, agent_id: String) {
             r#"#!/usr/bin/env bash
 set -euo pipefail
 env_id="env-gated-$$"
-echo "{{\"kind\":\"create\",\"script\":\"${{QUECTO_CONTAINER_SCRIPT:-}}\",\"env_ref\":\"${{QUECTO_CONTAINER_ENVIRONMENT_REF:-}}\",\"env_id\":\"$env_id\"}}" >> '{log}'
+echo "{{\"kind\":\"create\",\"script\":\"${{QUECTO_CONTAINER_CONFIG:-}}\",\"env_ref\":\"${{QUECTO_CONTAINER_ENVIRONMENT_REF:-}}\",\"env_id\":\"$env_id\"}}" >> '{log}'
 socket_path=""
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "--" ]; then shift; break; fi
@@ -758,8 +745,7 @@ printf '{{"environment_id":"%s","workspace_path":"%s","metadata":{{}},"socket_pa
     );
     let mut v: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
-    v["container_scripts"]["scripts"]["default"]["create"] =
-        serde_json::json!([create.to_string_lossy()]);
+    v["container_configs"]["default"]["create"] = serde_json::json!([create.to_string_lossy()]);
     std::fs::write(&cfg_path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
     world.gate_path = Some(gate);
 

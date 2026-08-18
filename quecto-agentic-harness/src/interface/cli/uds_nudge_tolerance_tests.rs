@@ -417,3 +417,131 @@ async fn unrelated_pending_turn_progress_is_not_attributed_to_the_nudge() {
         msgs[3]
     );
 }
+
+#[tokio::test]
+#[serial_test::serial(workflow_nudge_injection_hook)]
+async fn selected_nudge_is_cancelled_when_direct_child_becomes_active_before_injection() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+
+    let mut env = Env::with_progress_script(vec![]);
+    let reg = new_registry();
+    env.inner.subagent_registry = Some(reg.clone());
+    super::set_before_workflow_nudge_injection_test_hook(Box::new(move || {
+        let mut child = SubagentEntry::new("/tmp/racing-child.sock".into(), 1);
+        child.status = SubagentStatus::Starting;
+        child.parent_id = Some("test".to_string());
+        reg.lock()
+            .unwrap()
+            .insert("racing-child".to_string(), child);
+    }));
+
+    {
+        let mut ctx = env.ctx();
+        super::drain_pending_and_nudge(&mut ctx).await;
+    }
+
+    assert_eq!(
+        env.calls(),
+        0,
+        "a selected nudge must be revalidated immediately before injection"
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial(workflow_nudge_injection_hook)]
+async fn selected_nudge_is_cancelled_when_transitive_descendant_becomes_active_before_injection() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+
+    let mut env = Env::with_progress_script(vec![]);
+    let reg = new_registry();
+    env.inner.subagent_registry = Some(reg.clone());
+    super::set_before_workflow_nudge_injection_test_hook(Box::new(move || {
+        let mut child = SubagentEntry::new("/tmp/idle-child.sock".into(), 1);
+        child.status = SubagentStatus::Idle;
+        child.parent_id = Some("test".to_string());
+        let mut grandchild = SubagentEntry::new("/tmp/racing-grandchild.sock".into(), 2);
+        grandchild.status = SubagentStatus::Running;
+        grandchild.parent_id = Some("child".to_string());
+        let mut guard = reg.lock().unwrap();
+        guard.insert("child".to_string(), child);
+        guard.insert("grandchild".to_string(), grandchild);
+    }));
+
+    {
+        let mut ctx = env.ctx();
+        super::drain_pending_and_nudge(&mut ctx).await;
+    }
+
+    assert_eq!(
+        env.calls(),
+        0,
+        "transitive descendant activity must cancel the selected nudge"
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial(workflow_nudge_injection_hook)]
+async fn selected_nudge_runs_when_unrelated_child_becomes_active_before_injection() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+
+    let mut env = Env::with_progress_script(vec![]);
+    let reg = new_registry();
+    env.inner.subagent_registry = Some(reg.clone());
+    super::set_before_workflow_nudge_injection_test_hook(Box::new(move || {
+        let mut unrelated = SubagentEntry::new("/tmp/unrelated-racing-child.sock".into(), 1);
+        unrelated.status = SubagentStatus::Running;
+        unrelated.parent_id = Some("other-session".to_string());
+        reg.lock()
+            .unwrap()
+            .insert("unrelated".to_string(), unrelated);
+    }));
+
+    {
+        let mut ctx = env.ctx();
+        super::drain_pending_and_nudge(&mut ctx).await;
+    }
+
+    assert_eq!(
+        env.calls(),
+        3,
+        "unrelated activity must not suppress workflow nudges"
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial(workflow_nudge_injection_hook)]
+async fn selected_nudge_is_cancelled_when_child_becomes_active_after_final_recheck_before_turn_admission()
+ {
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+
+    let mut env = Env::with_progress_script(vec![]);
+    let reg = new_registry();
+    env.inner.subagent_registry = Some(reg.clone());
+    super::set_before_guarded_turn_admission_test_hook(Box::new(move || {
+        let mut child = SubagentEntry::new("/tmp/post-recheck-child.sock".into(), 1);
+        child.status = SubagentStatus::Starting;
+        child.parent_id = Some("test".to_string());
+        reg.lock()
+            .unwrap()
+            .insert("post-recheck-child".to_string(), child);
+    }));
+
+    {
+        let mut ctx = env.ctx();
+        super::drain_pending_and_nudge(&mut ctx).await;
+    }
+
+    assert_eq!(
+        env.calls(),
+        0,
+        "descendant activity after the final snapshot recheck but before turn admission must cancel the nudge"
+    );
+}

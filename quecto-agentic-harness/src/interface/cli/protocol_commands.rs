@@ -36,6 +36,8 @@ pub enum AgentCommand {
     GetState {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+        #[serde(rename = "agent_id", default, skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
     },
     /// Return conversation history. Optional `count` returns the last N messages.
     ///
@@ -139,6 +141,10 @@ pub enum AgentCommand {
         mutations: Vec<ToolPolicyMutationCommand>,
         #[serde(default = "default_tool_policy_apply_mode")]
         mode: ToolPolicyApplyModeCommand,
+        #[serde(default = "default_tool_policy_operation")]
+        operation: ToolPolicyOperationCommand,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unlisted_scope: Option<ProfileAvailabilityScope>,
     },
     /// Force a provider/model config reload.
     Reload {
@@ -225,6 +231,13 @@ pub enum AgentCommand {
         /// Byte offset for ranged content or tool-call argument recovery (#1094/#1107).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         offset: Option<usize>,
+        /// Independent byte offset for ranged visible-thinking recovery (#1231).
+        #[serde(
+            rename = "thinkingOffset",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        thinking_offset: Option<usize>,
         /// Maximum bytes of content to return for ranged recovery (#1094).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<usize>,
@@ -268,8 +281,19 @@ pub enum ToolPolicyApplyModeCommand {
     AtNextTurnBoundary,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ToolPolicyOperationCommand {
+    Patch,
+    Replace,
+}
+
 fn default_tool_policy_apply_mode() -> ToolPolicyApplyModeCommand {
     ToolPolicyApplyModeCommand::ImmediateIfIdle
+}
+
+fn default_tool_policy_operation() -> ToolPolicyOperationCommand {
+    ToolPolicyOperationCommand::Patch
 }
 
 impl AgentCommand {
@@ -280,7 +304,7 @@ impl AgentCommand {
             Self::Steer { id, .. } => id.as_deref(),
             Self::FollowUp { id, .. } => id.as_deref(),
             Self::Abort { id } => id.as_deref(),
-            Self::GetState { id } => id.as_deref(),
+            Self::GetState { id, .. } => id.as_deref(),
             Self::GetMessages { id, .. } => id.as_deref(),
             Self::Sync { id, .. } => id.as_deref(),
             Self::GetToolCatalogue { id } => id.as_deref(),

@@ -36,7 +36,7 @@ Implication: when TUI and harness run in different process cwd contexts (for exa
 Relevant files:
 
 - `quecto-agentic-harness/src/interface/shared.rs`
-  - Agent workspace resolution is centralised here; tests assert sandbox/no-sandbox workspace behaviour.
+  - Agent workspace resolution is centralised here; tests assert workspace behaviour.
 - `quecto-agentic-harness/src/interface/cli/agent.rs`
   - Captures the process cwd while building/running the agent.
 - `quecto-agentic-harness/src/infrastructure/tools/*`
@@ -200,7 +200,7 @@ The rule of thumb: if the value describes agent/session/runtime state, harness i
 
 4. **Sandbox/read-only/tool availability presentation**
    - Current source: partly implied by TUI launch mode and tool events.
-   - Desired source: harness capability snapshot: sandbox mode, read-only status, disabled tools, available native/extension tools. The TUI can then render badges or disable unsupported affordances without duplicating launch logic.
+   - Desired source: harness capability snapshot: read-only status, disabled tools, available native/extension tools. The TUI can then render badges or disable unsupported affordances without duplicating launch logic.
 
 5. **Provider/model capability details**
    - Current source: model list and effort levels are harness-backed, but selector UX can still cache local assumptions.

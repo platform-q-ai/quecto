@@ -33,6 +33,7 @@ pub(super) struct ParsedGetMessage {
     pub(super) message_id: String,
     pub(super) tool_call_id: Option<String>,
     pub(super) offset: Option<usize>,
+    pub(super) thinking_offset: Option<usize>,
     pub(super) limit: Option<usize>,
 }
 
@@ -47,6 +48,7 @@ pub(super) async fn service(
         message_id,
         tool_call_id,
         offset,
+        thinking_offset,
         limit,
     } = parsed;
     // Resolve against the id-addressable ledger (full copies) first, falling
@@ -67,6 +69,7 @@ pub(super) async fn service(
             None => Some(super::uds_session::message_to_json_range_for_response(
                 &msg,
                 offset,
+                thinking_offset,
                 limit,
                 request_id.as_deref(),
             )),
@@ -122,6 +125,10 @@ pub(super) fn parse(line: &str) -> Option<ParsedGetMessage> {
         .get("offset")
         .and_then(|v| v.as_u64())
         .and_then(|n| usize::try_from(n).ok());
+    let thinking_offset = value
+        .get("thinkingOffset")
+        .and_then(|v| v.as_u64())
+        .and_then(|n| usize::try_from(n).ok());
     let limit = value
         .get("limit")
         .and_then(|v| v.as_u64())
@@ -131,6 +138,7 @@ pub(super) fn parse(line: &str) -> Option<ParsedGetMessage> {
         message_id,
         tool_call_id,
         offset,
+        thinking_offset,
         limit,
     })
 }

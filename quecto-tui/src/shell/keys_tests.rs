@@ -569,6 +569,23 @@ fn cov_modify_other_keys_plain_printable() {
     assert_eq!(parse_key(b"\x1b[27;1;97~").unwrap().0, Key::Char('a'));
 }
 
+#[test]
+fn modify_other_keys_tab_switch_chords_match_kitty() {
+    // xterm modifyOtherKeys mode 2 must produce the same tab-cycle keys as
+    // the kitty protocol (#1466 decision 5): codepoint 9 with Ctrl/Alt.
+    assert_eq!(parse_key(b"\x1b[27;5;9~").unwrap().0, Key::TabSwitchNext);
+    assert_eq!(parse_key(b"\x1b[27;3;9~").unwrap().0, Key::TabSwitchNext);
+    assert_eq!(parse_key(b"\x1b[27;6;9~").unwrap().0, Key::TabSwitchPrev);
+    assert_eq!(parse_key(b"\x1b[27;4;9~").unwrap().0, Key::TabSwitchPrev);
+}
+
+#[test]
+fn modify_other_keys_ctrl_digit_aliases_alt_digit() {
+    // Ctrl+9 and Alt+9 both alias the tab-focus primary.
+    assert_eq!(parse_key(b"\x1b[27;5;57~").unwrap().0, Key::Alt('9'));
+    assert_eq!(parse_key(b"\x1b[27;3;57~").unwrap().0, Key::Alt('9'));
+}
+
 // ── Coverage: utf8 fallback + convenience matchers ────────────────────
 
 #[test]

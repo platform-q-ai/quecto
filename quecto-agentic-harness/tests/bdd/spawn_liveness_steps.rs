@@ -59,8 +59,7 @@ echo "{{\"kind\":\"inspect\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
         ),
     );
     let (cfg_path, mut v) = load_config(world);
-    v["container_scripts"]["scripts"]["default"]["inspect"] =
-        serde_json::json!([inspect.to_string_lossy()]);
+    v["container_configs"]["default"]["inspect"] = serde_json::json!([inspect.to_string_lossy()]);
     store_config(&cfg_path, &v);
 }
 
@@ -81,10 +80,8 @@ fn given_liveness_script_spawn(world: &mut QuectoWorld, inspect_fails: bool) {
     configure_inspect_script(world, inspect_fails);
 
     let (cfg_path, mut v) = load_config(world);
-    v["container_scripts"]["scripts"]["default"]["create"] =
-        serde_json::json!([create.to_string_lossy()]);
-    v["container_scripts"]["scripts"]["default"]["exec"] =
-        serde_json::json!([exec.to_string_lossy()]);
+    v["container_configs"]["default"]["create"] = serde_json::json!([create.to_string_lossy()]);
+    v["container_configs"]["default"]["exec"] = serde_json::json!([exec.to_string_lossy()]);
     store_config(&cfg_path, &v);
 }
 
@@ -108,7 +105,7 @@ fn pid_logging_script(log: &Path, kind: &str, env_id_expr: &str, is_create: bool
         r#"#!/usr/bin/env bash
 set -euo pipefail
 {env_line}
-echo "{{\"kind\":\"{kind}\",\"script\":\"${{QUECTO_CONTAINER_SCRIPT:-}}\",\"env_ref\":\"${{QUECTO_CONTAINER_ENVIRONMENT_REF:-}}\",\"env_id\":\"$env_id\"}}" >> '{log}'
+echo "{{\"kind\":\"{kind}\",\"script\":\"${{QUECTO_CONTAINER_CONFIG:-}}\",\"env_ref\":\"${{QUECTO_CONTAINER_ENVIRONMENT_REF:-}}\",\"env_id\":\"$env_id\"}}" >> '{log}'
 socket_path=""
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "--" ]; then shift; break; fi
@@ -202,7 +199,7 @@ exec python3 '__BRIDGE__' "$1"
     let create_script = r#"#!/usr/bin/env bash
 set -euo pipefail
 env_id="env-proxy-$RANDOM-$$"
-echo "{\"kind\":\"create\",\"script\":\"${QUECTO_CONTAINER_SCRIPT:-}\",\"env_ref\":\"${QUECTO_CONTAINER_ENVIRONMENT_REF:-}\",\"env_id\":\"$env_id\"}" >> '__LOG__'
+echo "{\"kind\":\"create\",\"script\":\"${QUECTO_CONTAINER_CONFIG:-}\",\"env_ref\":\"${QUECTO_CONTAINER_ENVIRONMENT_REF:-}\",\"env_id\":\"$env_id\"}" >> '__LOG__'
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "--" ]; then shift; break; fi
   shift
@@ -258,8 +255,7 @@ printf '{"environment_id":"%s","workspace_path":"%s","metadata":{},"socket_proxy
     write_executable(&create, create_script);
 
     let (cfg_path, mut v) = load_config(world);
-    v["container_scripts"]["scripts"]["default"]["create"] =
-        serde_json::json!([create.to_string_lossy()]);
+    v["container_configs"]["default"]["create"] = serde_json::json!([create.to_string_lossy()]);
     store_config(&cfg_path, &v);
 }
 
@@ -304,14 +300,13 @@ fn given_create_result_both_endpoints(world: &mut QuectoWorld) {
     let script = r#"#!/usr/bin/env bash
 set -euo pipefail
 env_id="env-both-$$"
-echo "{\"kind\":\"create\",\"script\":\"${QUECTO_CONTAINER_SCRIPT:-}\",\"env_ref\":\"${QUECTO_CONTAINER_ENVIRONMENT_REF:-}\",\"env_id\":\"$env_id\"}" >> '__LOG__'
+echo "{\"kind\":\"create\",\"script\":\"${QUECTO_CONTAINER_CONFIG:-}\",\"env_ref\":\"${QUECTO_CONTAINER_ENVIRONMENT_REF:-}\",\"env_id\":\"$env_id\"}" >> '__LOG__'
 printf '{"environment_id":"%s","workspace_path":"%s","metadata":{},"socket_path":"%s","socket_proxy":{"argv":["/bin/true"]}}' "$env_id" "$PWD/workspace-$env_id" "$PWD/never-used.sock"
 "#
     .replace("__LOG__", &log.display().to_string());
     write_executable(&both, script);
     let (cfg_path, mut v) = load_config(world);
-    v["container_scripts"]["scripts"]["default"]["create"] =
-        serde_json::json!([both.to_string_lossy()]);
+    v["container_configs"]["default"]["create"] = serde_json::json!([both.to_string_lossy()]);
     store_config(&cfg_path, &v);
 }
 
@@ -340,9 +335,9 @@ fn given_proxy_child_running(world: &mut QuectoWorld, agent_id: String, task: St
 #[given(expr = "subagent {string} has already exited behind Quecto's back")]
 fn given_already_exited_behind_back(world: &mut QuectoWorld, agent_id: String) {
     when_child_killed_behind_back(world, agent_id.clone());
-    // Context step: the death must be fully observed (await returns exited)
+    // Context step: the death must be fully observed in the subagent snapshot
     // before the scenario's own trigger fires.
-    then_await_reports_status(world, agent_id, "exited".to_string());
+    then_snapshot_reports_exited(world, agent_id);
 }
 
 #[given(
@@ -406,38 +401,6 @@ fn when_child_killed_behind_back(world: &mut QuectoWorld, agent_id: String) {
 }
 
 // --- Then ---
-
-#[then(expr = "awaiting subagent {string} should report status {string}")]
-fn then_await_reports_status(world: &mut QuectoWorld, agent_id: String, status: String) {
-    // Address by durable UUID: display-label resolution is live-only, and the
-    // whole point here is observing a child that may already be exited.
-    let target = world
-        .agent_spawn_uuids
-        .get(&agent_id)
-        .cloned()
-        .unwrap_or_else(|| agent_id.clone());
-    let result = run_container_command(
-        world,
-        serde_json::json!({"agent_id": target, "command": "await", "timeout": 15}),
-    );
-    assert!(!result.is_error, "await failed: {}", result.content);
-    assert!(
-        result.content.contains(&format!("\"status\":\"{status}\"")),
-        "expected await status {status}: {}",
-        result.content
-    );
-    world.agent_cmd_result = Some(result);
-}
-
-#[then(expr = "the last await reason should be {string}")]
-fn then_last_await_reason(world: &mut QuectoWorld, reason: String) {
-    let result = world.agent_cmd_result.as_ref().expect("await result");
-    assert!(
-        result.content.contains(&format!("\"reason\":\"{reason}\"")),
-        "expected await reason {reason}: {}",
-        result.content
-    );
-}
 
 #[then(
     expr = "the script-managed runtime should have inspected an environment exactly {int} time(s)"
@@ -585,11 +548,22 @@ fn then_live_event_reports_exited(world: &mut QuectoWorld, agent_id: String) {
     loop {
         match rx.try_recv() {
             Ok(event) => {
-                if event.contains("subagent_state_changed")
-                    && event.contains(&agent_id)
-                    && event.contains("exited")
-                {
-                    return;
+                if !event.contains("subagent_state_changed") {
+                    continue;
+                }
+                let parsed: serde_json::Value = serde_json::from_str(&event)
+                    .unwrap_or_else(|e| panic!("state event must be JSON: {e}; got {event}"));
+                if let Some(subagents) = parsed["subagents"].as_array() {
+                    let exited = subagents.iter().any(|s| {
+                        s["agentId"].as_str() == Some(agent_id.as_str())
+                            && s["status"].as_str() == Some("exited")
+                    });
+                    let absent = subagents
+                        .iter()
+                        .all(|s| s["agentId"].as_str() != Some(agent_id.as_str()));
+                    if exited || absent {
+                        return;
+                    }
                 }
             }
             Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
@@ -616,13 +590,19 @@ fn then_snapshot_reports_exited(world: &mut QuectoWorld, agent_id: String) {
         assert!(!result.is_error, "snapshot failed: {}", result.content);
         let parsed: serde_json::Value = serde_json::from_str(&result.content)
             .unwrap_or_else(|e| panic!("snapshot must be JSON: {e}; got {}", result.content));
-        let exited = parsed["subagents"].as_array().is_some_and(|subagents| {
+        let subagents = parsed["subagents"].as_array();
+        let exited = subagents.is_some_and(|subagents| {
             subagents.iter().any(|s| {
                 s["agentId"].as_str() == Some(agent_id.as_str())
                     && s["status"].as_str() == Some("exited")
             })
         });
-        if exited {
+        let absent = subagents.is_some_and(|subagents| {
+            subagents
+                .iter()
+                .all(|s| s["agentId"].as_str() != Some(agent_id.as_str()))
+        });
+        if exited || absent {
             return;
         }
         assert!(

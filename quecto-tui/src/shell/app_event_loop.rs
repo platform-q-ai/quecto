@@ -59,7 +59,94 @@ impl StreamRenderCoalescer {
     }
 }
 
+/// How the event loop should paint after routing one fan-in item (#1462):
+/// the exact render decision each replaced select arm made before the seam.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SourcedRender {
+    /// Paint now and re-base the coalescer (disconnects, surfaced drops).
+    Immediate,
+    /// Stream render: token events coalesce, everything else paints now.
+    Stream { is_token: bool },
+    /// No paint, no deferred wakeup (#1466): a background-tab event; state
+    /// (and the tab's unread dot) updated silently.
+    Silent,
+}
+
 impl App {
+    /// Route one item drained from the shared fan-in channel (#1462): master
+    /// events (`SourcedEvent::Tab`) go through the master event handler, sub-agent
+    /// events (`SourcedEvent::Subagent`) through sub-agent routing, and the
+    /// `SourcedEvent::Closed` sentinel runs the #1047 disconnect diagnosis path.
+    ///
+    /// The `SourcedEvent::Closed` arm never awaits the child-exit diagnosis
+    /// here (#1462 scope 3): when the TUI owns the agent child, the bounded
+    /// #1047 waits run on a spawned task and complete through the
+    /// disconnect-diagnosis select arm — a dying child cannot stall event
+    /// processing while other connections' events are queued. Sync by design:
+    /// "never blocks the select loop" is checkable by signature — no awaits.
+    pub(super) fn route_sourced(
+        &mut self,
+        item: crate::shell::connection::SourcedEvent,
+    ) -> SourcedRender {
+        use crate::shell::connection::SourcedEvent;
+        // #1465: fan-in may carry any known tab (unknown tabs no-op in arms);
+        // touching `.tab()` keeps the helper live under deny(dead_code).
+        let _routed_tab = item.tab();
+        match item {
+            SourcedEvent::Tab(tab, ev) => {
+                let is_token = Self::is_token_event(&ev);
+                let was_running = self.tab_spinner_active(tab);
+                // Route to the owner tab (#1465); unknown tabs no-op.
+                let Some(paint) = self.with_routing_tab(tab, |app| {
+                    app.handle_event(ev);
+                    if app.surface_dropped_oversized_events() {
+                        SourcedRender::Immediate
+                    } else {
+                        SourcedRender::Stream { is_token }
+                    }
+                }) else {
+                    return SourcedRender::Stream { is_token };
+                };
+                self.background_render_gate(tab, paint, was_running)
+            }
+            SourcedEvent::Subagent(tab, agent_id, ev) => {
+                // Direct child feeds belong to the tab that opened them.
+                let stream = SourcedRender::Stream {
+                    is_token: Self::is_token_event(&ev),
+                };
+                let was_running = self.tab_spinner_active(tab);
+                match self.with_routing_tab(tab, |app| {
+                    app.route_subagent_event(&agent_id, ev);
+                }) {
+                    Some(()) => self.background_render_gate(tab, stream, was_running),
+                    None => stream,
+                }
+            }
+            SourcedEvent::Closed(tab) => {
+                // Owner-targeted disconnect (#1465 / #1047 via #1462).
+                self.begin_agent_stream_closed(tab);
+                SourcedRender::Immediate
+            }
+        }
+    }
+
+    /// Apply one routed fan-in item's render decision (shared by both fan-in
+    /// select arms so the paint policy cannot drift between them).
+    pub(super) fn apply_sourced_render(
+        &mut self,
+        render: SourcedRender,
+        coalescer: &mut StreamRenderCoalescer,
+    ) {
+        match render {
+            SourcedRender::Immediate => self.render_and_note(coalescer),
+            SourcedRender::Stream { is_token } => self.render_stream_event(coalescer, is_token),
+            // Background-tab event (#1466 decision 3): the coalescer is left
+            // untouched, so an idle loop stays idle no matter how many
+            // background tabs are streaming.
+            SourcedRender::Silent => {}
+        }
+    }
+
     /// Render immediately and note it on the coalescer so a pending deferred
     /// token paint is consumed by this render (it paints all accumulated
     /// state, including any deferred tokens).
@@ -93,6 +180,25 @@ impl App {
         }
     }
 
+    /// Send the connect-time state requests for this tab's connection.
+    ///
+    /// Queries initial agent state and sub-agent roster (#525) through the
+    /// shared command path so startup send failures surface in the UI like
+    /// user-initiated sends, then backfills durable master history so
+    /// `--socket` attach (and any reconnect) shows prior session content
+    /// without waiting for new events. Empty payloads do not latch the
+    /// guard (#1050 / #828).
+    pub(super) fn send_startup_requests(&mut self) {
+        self.send_command(Command::GetState {
+            agent_id: None,
+            id: Some(self.ac().namespaced_id("init")),
+        });
+        self.send_command(Command::GetSubagents {
+            id: Some(self.ac().namespaced_id("init-subagents")),
+        });
+        self.request_master_attach_backfill();
+    }
+
     pub async fn run(&mut self) -> i32 {
         self.terminal.enter_raw_mode();
         self.terminal.hide_cursor();
@@ -100,19 +206,7 @@ impl App {
         // Query Kitty keyboard protocol support.
         self.kitty.query();
 
-        // Query initial state from agent through the shared command path so
-        // startup send failures surface in the UI like user-initiated sends.
-        self.send_command(Command::GetState {
-            id: Some("init".into()),
-        });
-        // Query initial subagent state (#525).
-        self.send_command(Command::GetSubagents {
-            id: Some("init-subagents".into()),
-        });
-        // Backfill durable master history on connect so `--socket` attach (and
-        // any reconnect) shows prior session content without waiting for new
-        // events. Empty payloads do not latch the guard (#1050 / #828).
-        self.request_master_attach_backfill();
+        self.send_startup_requests();
 
         // Set up SIGWINCH handler.
         let mut resize_rx = crate::shell::signals::sigwinch_stream().await;
@@ -187,28 +281,6 @@ impl App {
                     }
                     self.render_and_note(&mut stream_render_coalescer);
                 }
-                // Agent events.
-                event = self.client.recv(), if self.agent_connected => {
-                    match event {
-                        Some(ev) => {
-                            let is_token = Self::is_token_event(&ev);
-                            self.handle_event(ev);
-                            if self.surface_dropped_oversized_events() {
-                                self.render_and_note(&mut stream_render_coalescer);
-                            } else {
-                                self.render_stream_event(&mut stream_render_coalescer, is_token);
-                            }
-                        }
-                        None => {
-                            // Agent disconnected — stop polling. Report any
-                            // dropped events and the child's exit diagnosis
-                            // so the failure is visible (#1047).
-                            self.surface_dropped_oversized_events();
-                            self.handle_agent_stream_closed().await;
-                            self.render_and_note(&mut stream_render_coalescer);
-                        }
-                    }
-                }
                 // Terminal resize.
                 Some(()) = resize_rx.recv() => {
                     self.terminal.refresh_size();
@@ -240,15 +312,36 @@ impl App {
                         self.render_and_note(&mut stream_render_coalescer);
                     }
                 }
+                // Off-loop disconnect diagnosis completion (#1462 scope 3):
+                // the bounded #1047 waits ran on a spawned task; finish the
+                // disconnect with the diagnosis it reported.
+                Some((tab, detail)) = self.disconnect_diag_rx.recv() => {
+                    self.finish_agent_stream_closed(tab, detail);
+                    self.render_and_note(&mut stream_render_coalescer);
+                }
                 Some(failure) = self.command_send_failure_rx.recv() => {
                     self.handle_command_send_failure(failure);
                     self.render_and_note(&mut stream_render_coalescer);
                 }
-                // Events fanned in from per-subagent ledger-sync feeds.
-                Some((agent_id, ev)) = self.subagents.event_rx.recv() => {
-                    let is_token = Self::is_token_event(&ev);
-                    self.route_subagent_event(&agent_id, ev);
-                    self.render_stream_event(&mut stream_render_coalescer, is_token);
+                // Background /tab-new spawn + workspace reattach results (#1465).
+                Some(outcome) = self.tab_attach_rx.recv() => {
+                    self.apply_tab_attach_outcome(outcome);
+                    self.render_and_note(&mut stream_render_coalescer);
+                }
+                // Master-connection fan-in (`SourcedEvent::Tab` / `Closed`):
+                // its own channel so master events interleave fairly with
+                // sub-agent bursts instead of queueing FIFO behind them
+                // (#1470 review). All tabs share this arm — the select arm
+                // count stays constant as connections come and go (#1462).
+                Some(item) = self.tab_event_rx.recv() => {
+                    let render = self.route_sourced(item);
+                    self.apply_sourced_render(render, &mut stream_render_coalescer);
+                }
+                // Sub-agent fan-in (`SourcedEvent::Subagent`), fed by the
+                // per-subagent feed tasks.
+                Some(item) = self.subagents.event_rx.recv() => {
+                    let render = self.route_sourced(item);
+                    self.apply_sourced_render(render, &mut stream_render_coalescer);
                 }
                 Some((root, files)) = files_autocomplete_rx.recv() => {
                     files_autocomplete_load_in_flight = false;
@@ -309,13 +402,13 @@ impl App {
 
     pub(super) fn handle_key(&mut self, key: Key) {
         if !matches!(key, Key::Escape) {
-            self.rewind.last_idle_escape = None;
+            self.ac_mut().rewind.last_idle_escape = None;
         }
 
         // Unconditional exit — Ctrl+D must work regardless of overlays,
         // autocomplete state, or agent activity (#478).
         if matches!(key, Key::Ctrl('d')) {
-            if self.agent_state.is_running() {
+            if self.ac().agent_state.is_running() {
                 self.handle_abort();
             }
             self.should_exit = true;
@@ -323,36 +416,36 @@ impl App {
         }
 
         // If the resume selector is active, route input to it.
-        if self.sessions.resume_selector.is_some() {
-            self.rewind.last_idle_escape = None;
+        if self.ac().sessions.resume_selector.is_some() {
+            self.ac_mut().rewind.last_idle_escape = None;
             self.handle_resume_selector_key(&key);
             return;
         }
 
         // If the rewind selector is active, route input to it.
-        if self.rewind.selector.is_some() {
-            self.rewind.last_idle_escape = None;
+        if self.ac().rewind.selector.is_some() {
+            self.ac_mut().rewind.last_idle_escape = None;
             self.handle_rewind_selector_key(&key);
             return;
         }
 
         // If the tool policy modal is active, route input to it.
         if self.tool_policy_modal.is_some() {
-            self.rewind.last_idle_escape = None;
+            self.ac_mut().rewind.last_idle_escape = None;
             self.handle_tool_policy_modal_key(&key);
             return;
         }
 
         // If the model selector is active, route input to it.
         if self.inference.model_selector.is_some() {
-            self.rewind.last_idle_escape = None;
+            self.ac_mut().rewind.last_idle_escape = None;
             self.handle_model_selector_key(&key);
             return;
         }
 
         // If the effort selector is active, route input to it (#1067).
         if self.inference.effort_selector.is_some() {
-            self.rewind.last_idle_escape = None;
+            self.ac_mut().rewind.last_idle_escape = None;
             self.handle_effort_selector_key(&key);
             return;
         }
@@ -362,7 +455,7 @@ impl App {
             match &key {
                 Key::Up | Key::Down | Key::Tab | Key::Escape => {
                     if matches!(key, Key::Escape) {
-                        self.rewind.last_idle_escape = None;
+                        self.ac_mut().rewind.last_idle_escape = None;
                     }
                     self.autocomplete.handle_input(&key);
                     // Check if a suggestion was selected.
@@ -446,7 +539,7 @@ impl App {
         // Note: Ctrl+D is handled at the top of handle_key (unconditional exit).
         match &key {
             Key::Ctrl('c') => {
-                let running = self.agent_state.is_running() || self.active_subagent_running();
+                let running = self.ac().agent_state.is_running() || self.active_subagent_running();
                 match ctrl_c_action(running, self.editor.text().is_empty()) {
                     CtrlCAction::ClearEditor => {
                         self.editor.set_text("");
@@ -461,8 +554,8 @@ impl App {
             }
             Key::Escape => {
                 // Parity: Esc stops the viewed agent if running, else back to master.
-                if self.subagents.active_agent_id.is_some() {
-                    self.rewind.last_idle_escape = None;
+                if self.ac().roster.active_agent_id.is_some() {
+                    self.ac_mut().rewind.last_idle_escape = None;
                     if self.active_subagent_running() {
                         self.handle_abort();
                     } else {
@@ -470,11 +563,11 @@ impl App {
                     }
                     return;
                 }
-                if self.agent_state.is_running() {
-                    self.rewind.last_idle_escape = None;
+                if self.ac().agent_state.is_running() {
+                    self.ac_mut().rewind.last_idle_escape = None;
                     self.handle_abort();
                 } else if !self.editor.text().is_empty() {
-                    self.rewind.last_idle_escape = None;
+                    self.ac_mut().rewind.last_idle_escape = None;
                     self.editor.set_text("");
                     self.autocomplete.dismiss();
                 } else {
@@ -483,15 +576,7 @@ impl App {
                 return;
             }
             Key::Ctrl('z') => {
-                // Suspend (Ctrl+Z).
-                self.kitty.cleanup();
-                self.terminal.show_cursor();
-                crate::shell::signals::suspend();
-                // Resumed — re-enter raw mode.
-                self.terminal.enter_raw_mode();
-                self.terminal.hide_cursor();
-                self.kitty.query();
-                self.render_full();
+                self.suspend_and_resume();
                 return;
             }
             Key::Ctrl('l') => {
@@ -501,6 +586,14 @@ impl App {
             }
             Key::Ctrl('t') => {
                 self.open_tool_policy_modal();
+                return;
+            }
+            Key::Ctrl('n') => {
+                // New tab (#1466 round 2). Ctrl+T was the first-choice chord
+                // but is taken by the tool-policy selector above; Ctrl+N
+                // (0x0E) arrives unmodified in every terminal and tmux, and
+                // only Ctrl+SHIFT+N (a distinct key) is bound.
+                self.open_new_tab_announced();
                 return;
             }
             Key::Ctrl('o') => {
@@ -523,15 +616,15 @@ impl App {
                 return;
             }
             Key::MousePress(col, row) => {
+                // Tab-bar clicks (#1466): a block focuses its tab; ` + ` opens one.
+                if self.handle_tab_bar_click(*col, *row) {
+                    return;
+                }
+                let (col, row) = (*col, *row);
+                let anchor = SelectionAnchor { col, row };
                 self.selection = Some(TextSelection {
-                    start: SelectionAnchor {
-                        col: *col,
-                        row: *row,
-                    },
-                    end: SelectionAnchor {
-                        col: *col,
-                        row: *row,
-                    },
+                    start: anchor,
+                    end: anchor,
                 });
                 return;
             }
@@ -594,6 +687,8 @@ impl App {
                 self.active_chat_mut().scroll_down(10);
                 return;
             }
+            // Tab-switch chords (#1466 decision 5) — see `handle_tab_switch_key`.
+            _ if self.handle_tab_switch_key(&key) => return,
             _ => {}
         }
 
@@ -625,6 +720,8 @@ impl App {
         match key {
             Key::Up | Key::Char('k') => self.panel_highlight_previous(),
             Key::Down | Key::Char('j') => self.panel_highlight_next(),
+            Key::ScrollUp | Key::PageUp => self.panel_highlight_previous_by(MOUSE_SCROLL_LINES),
+            Key::ScrollDown | Key::PageDown => self.panel_highlight_next_by(MOUSE_SCROLL_LINES),
             Key::Char(c @ '1'..='9') => {
                 self.panel_highlight_row(*c as usize - '0' as usize);
             }

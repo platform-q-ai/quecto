@@ -1,48 +1,25 @@
 @done
-Feature: Security Sandbox
+Feature: Command Safety Policy
   As a system administrator
-  I want tools restricted to the workspace directory
-  So that the agent cannot access or modify files outside its sandbox
+  I want dangerous shell commands blocked
+  So that destructive operations are rejected while filesystem access follows process permissions
 
-  Scenario: Read file blocked outside workspace
+  Scenario: Paths outside the workspace are allowed
     Given a sandboxed workspace at "/tmp/quecto-test"
-    And restrict_to_workspace is true
     When the agent tries to validate path "/etc/passwd"
-    Then the validation should be an error
-    And the error should mention "outside working dir"
+    Then the validation should be ok
 
-  Scenario: Write file blocked outside workspace
+  Scenario: Parent path traversal is not jailed by validate_path
     Given a sandboxed workspace at "/tmp/quecto-test"
-    And restrict_to_workspace is true
-    When the agent tries to validate path "/tmp/evil.txt"
-    Then the validation should be an error
-
-  Scenario: Path traversal blocked
-    Given a sandboxed workspace at "/tmp/quecto-test"
-    And restrict_to_workspace is true
     When the agent tries to validate path "/tmp/quecto-test/../evil.txt"
-    Then the validation should be an error
-
-  Scenario: Relative path traversal blocked
-    Given a sandboxed workspace at "/tmp/quecto-test"
-    And restrict_to_workspace is true
-    When the agent tries to validate path "notes/../../etc/passwd"
-    Then the validation should be an error
-
-  Scenario: Double-slash traversal blocked
-    Given a sandboxed workspace at "/tmp/quecto-test"
-    And restrict_to_workspace is true
-    When the agent tries to validate path "/tmp/quecto-test//..//evil.txt"
-    Then the validation should be an error
+    Then the validation should be ok
 
   Scenario: Valid path inside workspace allowed
     Given a sandboxed workspace at "/tmp/quecto-test"
-    And restrict_to_workspace is true
     When the agent tries to validate path "/tmp/quecto-test/notes.txt"
     Then the validation should be ok
 
-  Scenario: Dangerous commands blocked even without workspace restriction
-    Given restrict_to_workspace is false
+  Scenario: Dangerous commands are blocked
     When the agent tries to validate command "rm -rf /"
     Then the validation should be an error
     And the error should mention "dangerous pattern"
@@ -60,47 +37,29 @@ Feature: Security Sandbox
       | reboot               |
 
   Scenario: Dangerous command check is case-insensitive
-    Given restrict_to_workspace is false
     When the agent tries to validate command "ReBoOt"
     Then the validation should be an error
     And the error should mention "dangerous pattern"
 
   Scenario: Dangerous rm wildcard variant is blocked
-    Given restrict_to_workspace is false
     When the agent tries to validate command "rm -rf /*"
     Then the validation should be an error
     And the error should mention "dangerous pattern"
 
-  # --- #304: Narrowed chown denylist pattern ---
-
   Scenario: chown targeting system root is blocked
-    Given restrict_to_workspace is false
     When the agent tries to validate command "chown -R root:root /"
     Then the validation should be an error
     And the error should mention "dangerous pattern"
 
   Scenario: chown scoped to workspace is allowed
-    Given restrict_to_workspace is false
     When the agent tries to validate command "chown -R user:group ./src"
     Then the validation should be ok
 
-  Scenario: Safe command allowed when restriction disabled
-    Given restrict_to_workspace is false
+  Scenario: Safe command allowed
     When the agent tries to validate command "echo hello"
     Then the validation should be ok
 
-  Scenario: Workspace restriction can be disabled
+  Scenario: Subagent sandbox allows outside paths
     Given a sandboxed workspace at "/tmp/quecto-test"
-    And restrict_to_workspace is false
-    When the agent tries to validate path "/tmp/quecto-external/test.txt"
-    Then the validation should be ok
-
-  Scenario: Subagent inherits workspace restrictions
-    Given a sandboxed workspace at "/tmp/quecto-test"
-    And restrict_to_workspace is true
-    And a subagent context inheriting restrict_to_workspace
     When the subagent sandbox validates path "/etc/passwd"
-    Then the validation should be an error
-    And the error should mention "outside working dir"
-
-
+    Then the validation should be ok

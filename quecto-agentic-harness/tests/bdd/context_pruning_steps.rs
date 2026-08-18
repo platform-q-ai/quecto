@@ -1227,6 +1227,7 @@ fn when_session_saved_and_reloaded(world: &mut QuectoWorld) {
         key: "test:persistence".to_string(),
         messages,
         workflow_run: None,
+        subagent_roster: Vec::new(),
     };
 
     let tmp = tempfile::TempDir::new().unwrap();

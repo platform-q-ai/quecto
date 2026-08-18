@@ -27,6 +27,28 @@ fn render_plain(chat: &mut Chat, width: usize) -> String {
 }
 
 #[test]
+fn thinking_renders_as_italic_bordered_text_without_label() {
+    let mut chat = Chat::new();
+    chat.add_entry(ChatEntry::Assistant {
+        text: "Answer".into(),
+        thinking: vec!["Planning the answer".into()],
+        streaming: false,
+    });
+
+    let lines = chat.render(80);
+    let thinking = lines
+        .iter()
+        .find(|line| strip_ansi(line).contains("Planning the answer"))
+        .expect("thinking line");
+    assert_eq!(strip_ansi(thinking), "│ Planning the answer");
+    assert!(thinking.contains("\x1b[3m"), "thinking should be italic");
+    assert!(thinking.contains("\x1b[38;2;128;128;128m"));
+    let plain = render_plain(&mut chat, 80);
+    assert!(plain.contains("│ Planning the answer\n\nAnswer"));
+    assert!(!plain.contains("thinking:"));
+}
+
+#[test]
 fn empty_chat_renders_empty() {
     let mut chat = Chat::new();
     assert!(chat.render(80).is_empty());
@@ -406,6 +428,7 @@ fn scroll_offset_not_artificially_clamped() {
         .join("\n");
     chat.add_entry(ChatEntry::Assistant {
         text: long_text,
+        thinking: Vec::new(),
         streaming: false,
     });
     chat.scroll_up(50);
@@ -432,6 +455,7 @@ fn render_cache_reuses_unchanged_assistant_entry() {
     let mut chat = Chat::new();
     chat.add_entry(ChatEntry::Assistant {
         text: "# Cached\n\nunchanged markdown".to_string(),
+        thinking: Vec::new(),
         streaming: false,
     });
 
@@ -553,6 +577,26 @@ fn scrolled_viewport_stays_anchored_when_tool_entries_arrive() {
 }
 
 #[test]
+fn scrolled_viewport_stays_anchored_when_message_entries_arrive() {
+    let mut chat = chat_with_streaming_history();
+
+    let height = 10;
+    chat.set_viewport_height(height);
+    chat.scroll_up(15);
+    let before = chat.render(80);
+
+    chat.add_entry(ChatEntry::Status {
+        text: "subagent completed".into(),
+    });
+    let after = chat.render(80);
+
+    assert_eq!(
+        after, before,
+        "new status/message entries must not snap a scrolled transcript to the tail"
+    );
+}
+
+#[test]
 fn viewport_clamps_to_full_oldest_page_instead_of_blank() {
     let mut chat = chat_with_streaming_history();
     let height = 10;
@@ -627,6 +671,7 @@ fn render_is_stable_across_repeated_calls() {
     });
     chat.add_entry(ChatEntry::Assistant {
         text: "world".into(),
+        thinking: Vec::new(),
         streaming: false,
     });
     let first = chat.render(80); // cache miss

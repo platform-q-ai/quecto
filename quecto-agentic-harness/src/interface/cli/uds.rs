@@ -14,19 +14,25 @@ use super::uds_session::{
 };
 #[cfg(test)]
 use super::uds_socket::bind_secure_socket;
-use super::uds_workflow_nudge::{workflow_nudge_message, workflow_progress_fingerprint};
+use super::uds_workflow_nudge::{
+    has_active_workflow_descendant, workflow_nudge_message, workflow_progress_fingerprint,
+};
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::message::Message;
 #[cfg(test)]
 use crate::domain::message::Role;
-use crate::domain::session::SessionStore;
+use crate::domain::session::{Session, SessionStore};
 use crate::domain::workflow::WorkflowRunPersisted;
+use futures::FutureExt;
 type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
 >;
 pub use super::uds_lifecycle::{UdsLoopArgs, run_uds_loop};
 pub(crate) use super::uds_lifecycle::{inject_system_prompt, remove_injected_system_prompt};
-pub(crate) use super::uds_socket::reap_stale_sockets;
+// `pub` (not `pub(crate)`) solely so the out-of-crate BDD suite can drive the
+// real reaper; hidden because it is not a supported library API.
+#[doc(hidden)]
+pub use super::uds_socket::reap_stale_sockets;
 pub(super) const MAX_FRAME_PAYLOAD_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 pub(super) fn is_cancel_command(trimmed: &str) -> bool {
     is_abort_command(trimmed) || is_steer_command(trimmed)
@@ -262,7 +268,7 @@ mod uds_dispatch_query;
 #[path = "uds_dispatch_runtime.rs"]
 mod uds_dispatch_runtime;
 #[path = "uds_dispatch_session.rs"]
-mod uds_dispatch_session;
+pub(crate) mod uds_dispatch_session;
 #[path = "uds_dispatch_sync_forward.rs"]
 mod uds_dispatch_sync_forward;
 #[path = "uds_forward_response.rs"]
@@ -297,15 +303,28 @@ async fn persist_user_prompt_before_run(
     remove_injected_system_prompt(&mut persisted_messages, ctx.system_prompt);
     persisted_messages.push(message.clone());
     let persisted_len = persisted_messages.len();
-    let result = ctx
-        .session_store
-        .save_delta(
-            ctx.session_key,
-            &persisted_messages,
-            ctx.last_persisted_message_index,
-            persisted_workflow_run(ctx),
-        )
-        .await;
+    let workflow_run = persisted_workflow_run(ctx);
+    let result = if ctx.subagent_registry.is_some() {
+        ctx.session_store
+            .save(&Session {
+                key: ctx.session_key.to_string(),
+                messages: persisted_messages,
+                workflow_run,
+                subagent_roster: uds_dispatch_session::snapshot_subagent_roster(
+                    &ctx.subagent_registry,
+                ),
+            })
+            .await
+    } else {
+        ctx.session_store
+            .save_delta(
+                ctx.session_key,
+                &persisted_messages,
+                ctx.last_persisted_message_index,
+                workflow_run,
+            )
+            .await
+    };
     if result.is_ok() {
         ctx.last_persisted_message_index = persisted_len;
     }
@@ -396,6 +415,45 @@ fn arm_prompt_cancel(
 const MAX_WORKFLOW_NUDGES: usize = 128;
 
 /// Drain pending messages, then inject core workflow nudges while progress is advancing (#562).
+#[cfg(test)]
+static BEFORE_WORKFLOW_NUDGE_INJECTION_TEST_HOOK: std::sync::Mutex<Option<Box<dyn Fn() + Send>>> =
+    std::sync::Mutex::new(None);
+#[cfg(test)]
+static BEFORE_GUARDED_TURN_ADMISSION_TEST_HOOK: std::sync::Mutex<Option<Box<dyn Fn() + Send>>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+fn run_before_workflow_nudge_injection_test_hook() {
+    if let Some(hook) = BEFORE_WORKFLOW_NUDGE_INJECTION_TEST_HOOK
+        .lock()
+        .unwrap()
+        .take()
+    {
+        hook();
+    }
+}
+
+#[cfg(test)]
+pub(super) fn set_before_workflow_nudge_injection_test_hook(hook: Box<dyn Fn() + Send>) {
+    *BEFORE_WORKFLOW_NUDGE_INJECTION_TEST_HOOK.lock().unwrap() = Some(hook);
+}
+
+#[cfg(test)]
+fn run_before_guarded_turn_admission_test_hook() {
+    if let Some(hook) = BEFORE_GUARDED_TURN_ADMISSION_TEST_HOOK
+        .lock()
+        .unwrap()
+        .take()
+    {
+        hook();
+    }
+}
+
+#[cfg(test)]
+pub(super) fn set_before_guarded_turn_admission_test_hook(hook: Box<dyn Fn() + Send>) {
+    *BEFORE_GUARDED_TURN_ADMISSION_TEST_HOOK.lock().unwrap() = Some(hook);
+}
+
 pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
     // #895: abort = full stop. A pending abort (set by the reader before this
     // command's handler runs) suppresses workflow auto-continue and discards
@@ -454,6 +512,15 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
             break;
         };
         let auto_continue = nudge.is_auto_continue();
+        // The nudge-selection descendant check is only a snapshot. Re-check the
+        // same harness-level identity/descendant predicate immediately before
+        // injection so a child that becomes starting/running between selection
+        // and model execution cancels this auto turn instead of racing it.
+        #[cfg(test)]
+        run_before_workflow_nudge_injection_test_hook();
+        if has_active_workflow_descendant(ctx) {
+            break;
+        }
         // A stalled previous nudged turn switches the auto-continue path to
         // its corrective wording: literal instruction-following models (e.g.
         // GPT-5.6) reply to the standard nudge with a bare status message and
@@ -467,9 +534,10 @@ pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
         // the nudge wording.
         {
             let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828
-            run_drained_message(
+            run_drained_message_guarded(
                 ctx,
                 Message::user(nudge.into_message(no_progress_turns > 0)),
+                TurnAdmissionGuard::NoActiveWorkflowDescendant,
             )
             .await;
         }
@@ -556,26 +624,76 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
 /// Callers own the busy flag (#828); this helper does not touch it, because
 /// [`BusyGuard`](super::uds_multi::BusyGuard) is a plain set/clear flag and
 /// nesting one per message would clear it while an outer scope is still busy.
+#[derive(Clone, Copy)]
+enum TurnAdmissionGuard {
+    None,
+    NoActiveWorkflowDescendant,
+}
+
 async fn run_drained_message(ctx: &mut DispatchCtx<'_>, msg: Message) {
+    run_drained_message_guarded(ctx, msg, TurnAdmissionGuard::None).await;
+}
+
+async fn run_drained_message_guarded(
+    ctx: &mut DispatchCtx<'_>,
+    msg: Message,
+    guard: TurnAdmissionGuard,
+) {
+    #[cfg(test)]
+    run_before_guarded_turn_admission_test_hook();
     let Some(rx) = arm_cancel(&ctx.cancel_handle) else {
         emit_pre_cancelled(ctx).await; // Stale abort (#483).
         return;
     };
-    let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout, &ctx.wire_mode);
-    run_agent_message(PromptRun {
-        agent: ctx.agent,
-        messages: ctx.messages,
-        conversation_snapshot: Some(ctx.conversation_snapshot.clone()),
-        execution_state: Some(ctx.execution_state.clone()),
-        session: ctx.session,
-        sink: &mut sink,
-        message: msg,
-        system_prompt: ctx.system_prompt,
-        cancel_rx: rx,
-        notification_rx: &mut ctx.notification_rx,
-        subagent_registry: &ctx.subagent_registry,
-    })
-    .await;
+    {
+        let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout, &ctx.wire_mode);
+        let run = run_agent_message(PromptRun {
+            agent: ctx.agent,
+            messages: ctx.messages,
+            conversation_snapshot: Some(ctx.conversation_snapshot.clone()),
+            execution_state: Some(ctx.execution_state.clone()),
+            session: ctx.session,
+            sink: &mut sink,
+            message: msg,
+            system_prompt: ctx.system_prompt,
+            cancel_rx: rx,
+            notification_rx: &mut ctx.notification_rx,
+            subagent_registry: &ctx.subagent_registry,
+        });
+        tokio::pin!(run);
+
+        // Polling the future once admits the turn: all synchronous setup before its
+        // first await happens while the registry is locked, so child registration
+        // cannot slip between the final descendant check and turn start. The lock is
+        // released before awaiting the rest of the model/tool execution; a nudge may
+        // therefore spawn children normally without deadlocking the registry.
+        let admitted = if matches!(guard, TurnAdmissionGuard::NoActiveWorkflowDescendant) {
+            let identity =
+                crate::infrastructure::tools::subagent_identity::parent_identity_from_session_key(
+                    ctx.session_key.as_str(),
+                );
+            if let (Some(identity), Some(registry)) = (identity, &ctx.subagent_registry) {
+                let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+                if crate::infrastructure::tools::subagent_registry::has_active_descendant_for_agent_locked(
+                &entries, identity,
+            ) {
+                drop(entries);
+                disarm_cancel(&ctx.cancel_handle);
+                return;
+            }
+                let result = run.as_mut().now_or_never();
+                drop(entries);
+                result
+            } else {
+                run.as_mut().now_or_never()
+            }
+        } else {
+            run.as_mut().now_or_never()
+        };
+        if admitted.is_none() {
+            run.as_mut().await;
+        }
+    }
     disarm_cancel(&ctx.cancel_handle);
     // #1072: drained runs (steer follow-ups, workflow auto-continue,
     // coalesced sub-agent notes) can prune too. Their dirty latch is
@@ -591,6 +709,9 @@ mod abort_steer_tests;
 #[cfg(test)]
 #[path = "uds_bounded_read_tests.rs"]
 mod bounded_read_tests;
+#[cfg(test)]
+#[path = "uds_dispatch_session_roster_tests.rs"]
+mod dispatch_session_roster_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_test_env.rs"]
 mod dispatch_test_env;

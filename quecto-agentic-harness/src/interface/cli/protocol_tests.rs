@@ -276,6 +276,7 @@ fn base_subagent_info(agent_id: &str, status: &str) -> SubagentInfo {
         display_name: None,
         agent_id: agent_id.to_string(),
         status: status.to_string(),
+        liveness: None,
         last_tool: None,
         last_error: None,
         pid: 0,
@@ -400,10 +401,9 @@ fn test_build_subagent_info_list_maps_all_statuses() {
 }
 
 #[test]
-fn test_build_subagent_info_list_surfaces_socket_path() {
-    // #800 connect-on-select: the TUI must learn each child's UDS socket path
-    // to open a direct connection. build_subagent_info_list surfaces it from
-    // the registry entry the kernel already tracks.
+fn test_build_subagent_info_list_omits_socket_path() {
+    // #1442: inspection is routed through the root/nearest reachable ancestor;
+    // public topology snapshots must not expose raw UDS socket paths.
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
@@ -418,15 +418,15 @@ fn test_build_subagent_info_list_surfaces_socket_path() {
     assert_eq!(list.len(), 1);
     assert_eq!(
         list[0].socket_path.as_deref(),
-        Some("/run/quecto/worker.sock"),
-        "socket_path must be surfaced for connect-on-select"
+        None,
+        "socket_path must not be exposed on public topology snapshots"
     );
 }
 
 #[test]
-fn test_subagent_info_socket_path_round_trips_camel_case() {
-    // The TUI deserializes SubagentInfo from the wire; the path must survive a
-    // serde round-trip under the camelCase `socketPath` key.
+fn test_subagent_info_socket_path_is_backcompat_input_only() {
+    // The wire type still accepts older snapshots containing socketPath, but
+    // newly built public snapshots omit it.
     use crate::infrastructure::tools::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
@@ -440,11 +440,13 @@ fn test_subagent_info_socket_path_round_trips_camel_case() {
     let list = build_subagent_info_list(&Some(reg));
     let json = serde_json::to_string(&list[0]).unwrap();
     assert!(
-        json.contains("\"socketPath\":\"/run/quecto/worker.sock\""),
-        "expected camelCase socketPath in wire form, got: {json}"
+        !json.contains("socketPath"),
+        "new public wire form must omit socketPath, got: {json}"
     );
-    let back: SubagentInfo = serde_json::from_str(&json).unwrap();
-    assert_eq!(back.socket_path.as_deref(), Some("/run/quecto/worker.sock"));
+    let back: SubagentInfo =
+        serde_json::from_str(r#"{"agentId":"w","status":"idle","pid":1,"socketPath":"/old.sock"}"#)
+            .unwrap();
+    assert_eq!(back.socket_path.as_deref(), Some("/old.sock"));
 }
 
 #[test]

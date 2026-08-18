@@ -20,7 +20,7 @@ pub fn parse_command_line(line: &str) -> Result<AgentCommand, String> {
 mod protocol_commands;
 pub use protocol_commands::{
     AgentCommand, StreamingBehavior, ToolPolicyApplyModeCommand, ToolPolicyMutationCommand,
-    ToolRegistration,
+    ToolPolicyOperationCommand, ToolRegistration,
 };
 
 // ─── Events (stdout) ─────────────────────────────────────────────────────────
@@ -60,6 +60,8 @@ pub enum AgentEvent {
     },
     /// An incremental text token from the LLM during streaming.
     Token { token: String },
+    /// A display-safe model thinking/reasoning delta from the LLM during streaming.
+    Thinking { text: String },
     /// A new LLM call begins.
     TurnStart,
     /// LLM call completed.
@@ -112,6 +114,8 @@ pub enum AgentEvent {
         results: Vec<serde_json::Value>,
         apply_mode: String,
         reason: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        correlation_id: Option<String>,
     },
     /// Request sent to an extension client to execute a tool.
     ///
@@ -201,6 +205,9 @@ pub struct SubagentInfo {
     pub display_name: Option<String>,
     /// Live status: "starting", "idle", "running", "error", "exited".
     pub status: String,
+    /// Cross-process liveness: "live", "detached", or "dead" (#1461).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liveness: Option<String>,
     /// Name of the last tool being executed, or `None`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_tool: Option<String>,
@@ -317,11 +324,23 @@ pub fn build_subagent_info_list(
                     agent_id: display_name.clone(),
                     agent_uuid: Some(entry.agent_uuid.to_string()),
                     display_name: Some(display_name),
-                    status: entry.status.to_wire_str().to_string(),
+                    status: crate::infrastructure::tools::subagent_registry::effective_status(
+                        &guard, id,
+                    )
+                    .unwrap_or_else(|| entry.status.clone())
+                    .to_wire_str()
+                    .to_string(),
+                    liveness: Some(match entry.persisted_liveness {
+                        crate::domain::session::SubagentLiveness::Live => "live".to_string(),
+                        crate::domain::session::SubagentLiveness::Detached => {
+                            "detached".to_string()
+                        }
+                        crate::domain::session::SubagentLiveness::Dead => "dead".to_string(),
+                    }),
                     last_tool: entry.last_tool.clone(),
                     last_error: entry.last_error.clone(),
                     pid: entry.pid,
-                    socket_path: Some(entry.socket_path.to_string_lossy().into_owned()),
+                    socket_path: None,
                     parent_id: entry.parent_id.clone(),
                     workflow: entry.workflow.clone(),
                     read_only: entry.read_only,
@@ -490,3 +509,7 @@ mod protocol_1060_tests;
 #[cfg(test)]
 #[path = "protocol_environment_tests.rs"]
 mod protocol_environment_tests;
+
+#[cfg(test)]
+#[path = "protocol_effective_status_tests.rs"]
+mod protocol_effective_status_tests;

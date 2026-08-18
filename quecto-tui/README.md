@@ -2,7 +2,7 @@
 
 A lightweight terminal UI client for `quecto agent --mode uds`.
 
-**Version `0.76.0` (pre-1.0).** The TUI is a UDS bus client of the harness: the
+**Version `0.76.7` (pre-1.0).** The TUI is a UDS bus client of the harness: the
 wire protocol and session ownership live in `quecto`, so most breaking risk is
 upstream. This crate stays on `0.y` until feature-oriented presentation boundaries and
 public surface (flags, slash commands, attach/spawn) meet the bar for a deliberate
@@ -86,7 +86,6 @@ When `quecto-tui` spawns the agent for you, it can forward these flags:
 | `--no-workflow` | Disable workflow tool/state/prompt for the spawned agent |
 | `--system <prompt>` | Pass a custom system prompt to the spawned agent |
 | `--config <path>` | Use an alternate quecto config file when spawning the agent |
-| `--no-sandbox` | Spawn the agent with filesystem sandboxing disabled |
 
 By default, the spawned UDS agent has the workflow tool available but dormant:
 you can talk normally, then ask the model to select a workflow template when you

@@ -315,6 +315,7 @@ async fn test_send_notification_exited() {
             1,
             SubagentNotification::Exited {
                 agent_id: "bot".to_string(),
+                reason: None,
             },
         ),
     );
@@ -325,6 +326,7 @@ async fn test_send_notification_exited() {
             1,
             SubagentNotification::Exited {
                 agent_id: "bot".to_string(),
+                reason: None,
             },
         )
     );

@@ -31,6 +31,7 @@ fn feed_with_rx() -> (FeedState, mpsc::Receiver<Command>) {
         FeedState {
             cmd_tx,
             handle,
+            inspection_only: false,
             epoch: 0,
             rev: 0,
             last_fresh_at: None,
@@ -52,7 +53,7 @@ async fn focus_mid_turn_backfills_inflight_live_prefix_before_streaming_continue
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.subagents.feeds.insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.update_subagent_bar(vec![subagent("worker", "running")]);
     // Stay on master while the child streams its in-flight turn.
     app.ensure_session("worker");
@@ -84,13 +85,13 @@ async fn focus_mid_turn_backfills_inflight_live_prefix_before_streaming_continue
 
     // Focus mid-turn: the full in-flight prefix must already be visible.
     app.select_agent(Some("worker"));
-    let entries = app.subagents.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(
             entries,
             [
                 ChatEntry::User { text, .. },
-                ChatEntry::Assistant { text: live, streaming: true }
+                            ChatEntry::Assistant { text: live, streaming: true, .. }
             ] if text == "initial task" && live == "prefix-a prefix-b"
         ),
         "focus mid-turn must show committed history plus the full in-flight live prefix: {entries:?}"
@@ -103,13 +104,13 @@ async fn focus_mid_turn_backfills_inflight_live_prefix_before_streaming_continue
             token: " suffix".into(),
         },
     );
-    let entries = app.subagents.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(
             entries,
             [
                 ChatEntry::User { text, .. },
-                ChatEntry::Assistant { text: live, streaming: true }
+                            ChatEntry::Assistant { text: live, streaming: true, .. }
             ] if text == "initial task" && live == "prefix-a prefix-b suffix"
         ),
         "post-focus live tokens must append to the retained in-flight prefix: {entries:?}"
@@ -125,7 +126,7 @@ async fn refocus_mid_turn_preserves_inflight_transcript_across_ledger_reproject(
     let app = h.app_mut();
     let (mut feed, mut rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.subagents.feeds.insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.update_subagent_bar(vec![subagent("worker", "running")]);
     app.select_agent(Some("worker"));
     app.ensure_session("worker");
@@ -175,13 +176,13 @@ async fn refocus_mid_turn_preserves_inflight_transcript_across_ledger_reproject(
         }),
     );
 
-    let entries = app.subagents.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(
             entries,
             [
                 ChatEntry::User { text, .. },
-                ChatEntry::Assistant { text: live, streaming: true }
+                            ChatEntry::Assistant { text: live, streaming: true, .. }
             ] if text == "initial task" && live == "live work while away"
         ),
         "refocus + ledger re-project mid-turn must keep the full in-flight transcript: {entries:?}"
@@ -193,13 +194,13 @@ async fn refocus_mid_turn_preserves_inflight_transcript_across_ledger_reproject(
             token: " after refocus".into(),
         },
     );
-    let entries = app.subagents.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(
             entries,
             [
                 ChatEntry::User { text, .. },
-                ChatEntry::Assistant { text: live, streaming: true }
+                            ChatEntry::Assistant { text: live, streaming: true, .. }
             ] if text == "initial task" && live == "live work while away after refocus"
         ),
         "streaming must resume on the retained in-flight transcript after refocus: {entries:?}"
@@ -215,7 +216,7 @@ async fn mid_turn_higher_rev_sync_keeps_uncommitted_live_tail() {
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.subagents.feeds.insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.update_subagent_bar(vec![subagent("worker", "running")]);
     app.select_agent(Some("worker"));
     app.ensure_session("worker");
@@ -253,13 +254,13 @@ async fn mid_turn_higher_rev_sync_keeps_uncommitted_live_tail() {
         }),
     );
 
-    let entries = app.subagents.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(
             entries,
             [
                 ChatEntry::User { text, .. },
-                ChatEntry::Assistant { text: live, streaming: true }
+                            ChatEntry::Assistant { text: live, streaming: true, .. }
             ] if text == "initial task" && live == "live ahead of ledger"
         ),
         "mid-turn higher-rev sync without assistant must keep live tail: {entries:?}"
@@ -274,7 +275,7 @@ async fn pre_authority_live_events_retained_across_first_sync() {
     let app = h.app_mut();
     // WarmSync, supports_sync not yet latched — the initial connect race.
     let (feed, _rx) = feed_with_rx();
-    app.subagents.feeds.insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.update_subagent_bar(vec![subagent("worker", "running")]);
     app.ensure_session("worker");
 
@@ -300,13 +301,13 @@ async fn pre_authority_live_events_retained_across_first_sync() {
     );
 
     app.select_agent(Some("worker"));
-    let entries = app.subagents.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(
             entries,
             [
                 ChatEntry::User { text, .. },
-                ChatEntry::Assistant { text: live, streaming: true }
+                            ChatEntry::Assistant { text: live, streaming: true, .. }
             ] if text == "initial task" && live == "before first sync"
         ),
         "pre-authority live tokens must survive first sync and attach on focus: {entries:?}"
@@ -323,7 +324,7 @@ async fn live_inflight_buffer_is_entry_capped() {
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.subagents.feeds.insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.update_subagent_bar(vec![subagent("worker", "running")]);
     app.ensure_session("worker");
     app.route_sync_response(
@@ -362,12 +363,14 @@ async fn live_inflight_buffer_is_entry_capped() {
         );
     }
 
-    let live_n = app.subagents.sessions["worker"].live_inflight.entry_count();
+    let live_n = app.ac().roster.sessions["worker"]
+        .live_inflight
+        .entry_count();
     assert!(
         live_n <= LIVE_INFLIGHT_ENTRY_CAP,
         "live_inflight must stay within entry cap ({LIVE_INFLIGHT_ENTRY_CAP}), got {live_n}"
     );
-    let has_truncation = app.subagents.sessions["worker"]
+    let has_truncation = app.ac().roster.sessions["worker"]
         .live_inflight
         .entries()
         .iter()
@@ -386,7 +389,7 @@ async fn later_turn_user_rev_advance_keeps_current_live_tail() {
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.subagents.feeds.insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.update_subagent_bar(vec![subagent("worker", "running")]);
     app.select_agent(Some("worker"));
     app.ensure_session("worker");
@@ -424,15 +427,15 @@ async fn later_turn_user_rev_advance_keeps_current_live_tail() {
         }),
     );
 
-    let entries = app.subagents.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(
             entries,
             [
                 ChatEntry::User { text: first, .. },
-                ChatEntry::Assistant { text: prior, streaming: false },
+                            ChatEntry::Assistant { text: prior, streaming: false, .. },
                 ChatEntry::User { text: second, .. },
-                ChatEntry::Assistant { text: live, streaming: true }
+                            ChatEntry::Assistant { text: live, streaming: true, .. }
             ] if first == "first task"
                 && prior == "first answer"
                 && second == "second task"
@@ -451,7 +454,7 @@ async fn inflight_live_buffer_reconciles_without_duplication_at_turn_end() {
     let app = h.app_mut();
     let (mut feed, _rx) = feed_with_rx();
     feed.supports_sync = true;
-    app.subagents.feeds.insert("worker".into(), feed);
+    app.ac_mut().roster.feeds.insert("worker".into(), feed);
     app.update_subagent_bar(vec![subagent("worker", "running")]);
     app.ensure_session("worker");
     app.route_sync_response(
@@ -493,13 +496,13 @@ async fn inflight_live_buffer_reconciles_without_duplication_at_turn_end() {
         }),
     );
 
-    let entries = app.subagents.sessions["worker"].chat.entries();
+    let entries = app.ac().roster.sessions["worker"].chat.entries();
     assert!(
         matches!(
             entries,
             [
                 ChatEntry::User { text, .. },
-                ChatEntry::Assistant { text: committed, streaming: false }
+                            ChatEntry::Assistant { text: committed, streaming: false, .. }
             ] if text == "initial task" && committed == "committed work"
         ),
         "turn-end ledger reconciliation must replace the in-flight live buffer exactly once: {entries:?}"

@@ -14,7 +14,7 @@ Feature: TUI shared list rendering and grouped App state
   Scenario: Slash dropdown windows the commands with an overflow indicator
     Given the editor text is "/"
     When the interface renders a frame
-    Then the slash dropdown draws exactly the first 8 commands with the indicator "(1/15)"
+    Then the slash dropdown draws exactly the first 8 commands with the indicator "(1/20)"
 
   @done
   Scenario: A stale file list reload keeps the selection marker

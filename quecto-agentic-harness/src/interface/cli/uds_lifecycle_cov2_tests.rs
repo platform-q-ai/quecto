@@ -240,6 +240,7 @@ async fn single_client_socket_override_serves_get_state() {
                     ephemeral: true,
                     system_prompt: "system".into(),
                     ext_registry: None,
+                    subagent_registry: None,
                     workflow_state: None,
                     provider_reload: None,
                     provider_reload_inputs: None,

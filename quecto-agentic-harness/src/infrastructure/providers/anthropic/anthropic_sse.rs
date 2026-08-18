@@ -6,6 +6,8 @@
 use crate::domain::message::{LlmResponse, StopReason, ThinkingBlock, ToolCall, UsageInfo};
 use crate::domain::provider::StreamEvent;
 use crate::domain::tool::ToolDefinition;
+use crate::domain::visible_thinking::{MAX_VISIBLE_THINKING_BYTES, append_visible_thinking};
+use crate::infrastructure::providers::sse_limits::append_with_limit;
 
 /// Accumulates Anthropic SSE events into a final [`LlmResponse`].
 #[derive(Default)]
@@ -94,7 +96,10 @@ impl SseAccumulator {
         }
     }
 
-    pub(super) fn handle_block_delta(&mut self, chunk: &serde_json::Value) {
+    pub(super) fn handle_block_delta(
+        &mut self,
+        chunk: &serde_json::Value,
+    ) -> Result<(), DomainError> {
         let delta = &chunk["delta"];
         match delta["type"].as_str() {
             Some("text_delta") => {
@@ -109,17 +114,27 @@ impl SseAccumulator {
             }
             Some("thinking_delta") => {
                 if let Some(thinking) = delta["thinking"].as_str() {
-                    self.current_thinking.push_str(thinking);
+                    append_visible_thinking(
+                        &mut self.current_thinking,
+                        thinking,
+                        "Anthropic SSE thinking",
+                    )?;
                 }
             }
             Some("signature_delta") => {
                 // #437-6: Capture thinking block signature for multi-turn replay.
                 if let Some(sig) = delta["signature"].as_str() {
-                    self.current_thinking_signature.push_str(sig);
+                    append_with_limit(
+                        &mut self.current_thinking_signature,
+                        sig,
+                        MAX_VISIBLE_THINKING_BYTES,
+                        "Anthropic SSE thinking signature",
+                    )?;
                 }
             }
             _ => {}
         }
+        Ok(())
     }
 
     pub(super) fn handle_block_stop(&mut self) {
@@ -238,9 +253,39 @@ impl SseAccumulator {
     pub(super) fn thinking_blocks(&self) -> &[ThinkingBlock] {
         &self.thinking_blocks
     }
+
+    pub(super) fn try_stream_event_from_block_delta(
+        &mut self,
+        chunk: &serde_json::Value,
+    ) -> Option<StreamEvent> {
+        let delta = &chunk["delta"];
+        match delta["type"].as_str() {
+            Some("text_delta") => delta["text"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(|s| StreamEvent::TextDelta(s.to_string())),
+            Some("thinking_delta") => {
+                let thinking = delta["thinking"].as_str().filter(|s| !s.is_empty())?;
+                // Budget-check only. Persistence happens in `handle_block_delta`
+                // so live + persist share one append.
+                let remaining = crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES
+                    .saturating_sub(self.current_thinking.len());
+                if thinking.len() > remaining {
+                    return None;
+                }
+                Some(StreamEvent::ThinkingDelta(thinking.to_string()))
+            }
+            Some("input_json_delta") => delta["partial_json"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(|s| StreamEvent::ToolCallDelta(s.to_string())),
+            _ => None,
+        }
+    }
 }
 
 /// Emit a [`StreamEvent`] for a single `content_block_delta` SSE event.
+#[cfg(test)]
 pub(super) fn stream_event_from_delta(delta: &serde_json::Value) -> Option<StreamEvent> {
     match delta["type"].as_str() {
         Some("text_delta") => {
@@ -249,6 +294,10 @@ pub(super) fn stream_event_from_delta(delta: &serde_json::Value) -> Option<Strea
         }
         Some("thinking_delta") => {
             let thinking = delta["thinking"].as_str().filter(|s| !s.is_empty())?;
+            let mut capped = String::new();
+            if append_visible_thinking(&mut capped, thinking, "Anthropic SSE thinking").is_err() {
+                return None;
+            }
             Some(StreamEvent::ThinkingDelta(thinking.to_string()))
         }
         Some("input_json_delta") => {
@@ -346,7 +395,7 @@ impl AnthropicProvider {
             match current_event.as_str() {
                 "message_start" => acc.handle_message_start(&chunk),
                 "content_block_start" => acc.handle_block_start(&chunk),
-                "content_block_delta" => acc.handle_block_delta(&chunk),
+                "content_block_delta" => acc.handle_block_delta(&chunk)?,
                 "content_block_stop" => acc.handle_block_stop(),
                 "message_delta" => acc.handle_message_delta(&chunk),
                 "message_stop" => {
@@ -501,14 +550,26 @@ async fn dispatch_sse_event(
     match event_type {
         "message_start" => acc.handle_message_start(chunk),
         "content_block_start" => {
+            let is_redacted_thinking =
+                chunk["content_block"]["type"].as_str() == Some("redacted_thinking");
             acc.handle_block_start(chunk);
+            if is_redacted_thinking {
+                let _ = tx
+                    .send(StreamEvent::ThinkingDelta(
+                        "[redacted thinking]".to_string(),
+                    ))
+                    .await;
+            }
             emit_tool_call_start(acc, tx).await;
         }
         "content_block_delta" => {
-            if let Some(ev) = stream_event_from_delta(&chunk["delta"]) {
+            if let Some(ev) = acc.try_stream_event_from_block_delta(chunk) {
                 let _ = tx.send(ev).await;
             }
-            acc.handle_block_delta(chunk);
+            if let Err(err) = acc.handle_block_delta(chunk) {
+                let _ = tx.send(StreamEvent::Error(err.to_string())).await;
+                return true;
+            }
         }
         "content_block_stop" => {
             emit_tool_call_end(acc, tx).await;

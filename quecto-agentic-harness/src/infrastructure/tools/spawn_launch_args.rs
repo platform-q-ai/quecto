@@ -97,7 +97,6 @@ pub(super) struct ChildLaunchSpec<'a> {
     /// Resolved `--config` path (explicit arg or inherited runtime config).
     pub effective_config: Option<&'a Path>,
     pub parent_id: Option<&'a str>,
-    pub restrict_to_workspace: bool,
     /// Already-written workflow spec file path, if any.
     pub workflow_spec_path: Option<&'a Path>,
     pub inherited_tool_policy_path: Option<&'a Path>,
@@ -114,7 +113,6 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
         config,
         effective_config,
         parent_id,
-        restrict_to_workspace,
         workflow_spec_path,
         inherited_tool_policy_path,
     } = *spec;
@@ -190,11 +188,6 @@ pub(super) fn build_child_cli_args(spec: &ChildLaunchSpec<'_>) -> Vec<OsString> 
     for tool in &config.disable_tools {
         args.push("--disable-tool".into());
         args.push(tool.into());
-    }
-
-    // Propagate --no-sandbox so children inherit the parent's workspace posture.
-    if !restrict_to_workspace {
-        args.push("--no-sandbox".into());
     }
 
     args

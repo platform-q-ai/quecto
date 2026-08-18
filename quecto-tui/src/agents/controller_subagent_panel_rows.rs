@@ -8,16 +8,17 @@ impl App {
     /// Flattened panel rows: the master pinned at the top, then the sub-agent
     /// tree depth-ordered by `parent_id` (grandchildren under their parent).
     pub(super) fn panel_rows(&self) -> Vec<PanelRow> {
+        let conn = self.ac();
         let master_wf = {
-            let wf = &self.master_session.workflow_bar;
+            let wf = &conn.master_session.workflow_bar;
             (wf.total > 0).then_some((wf.done, wf.total))
         };
         let mut rows = vec![PanelRow {
             id: None,
             env_key: None,
             prefix: String::new(),
-            label: "Master Agent".to_string(),
-            status: self.master_status().to_string(),
+            label: conn.master_panel_label().to_string(),
+            status: Self::master_status_for(conn).to_string(),
             workflow: master_wf,
         }];
         let groups = self.environment_groups();
@@ -51,7 +52,7 @@ impl App {
                     });
                 }
                 PanelNode::Agent(id) => {
-                    let info = self.subagents.tracked.get(&id).map(|t| &t.info);
+                    let info = self.ac().roster.tracked.get(&id).map(|t| &t.info);
                     let workflow = info
                         .and_then(|i| i.workflow.as_ref())
                         .filter(|w| w.steps_total > 0)
@@ -101,7 +102,7 @@ impl App {
         // members). Environment node keys can never collide with sanitized
         // agent ids because of the `\0` byte.
         let mut children: BTreeMap<Option<String>, Vec<PanelNode>> = BTreeMap::new();
-        for (id, tracked) in &self.subagents.tracked {
+        for (id, tracked) in &self.ac().roster.tracked {
             let parent = if grouped.contains(id.as_str()) {
                 // Grouped members always nest under their environment row.
                 tracked
@@ -115,7 +116,7 @@ impl App {
                     .info
                     .parent_id
                     .clone()
-                    .filter(|p| self.subagents.tracked.contains_key(p))
+                    .filter(|p| self.ac().roster.tracked.contains_key(p))
             };
             children
                 .entry(parent)

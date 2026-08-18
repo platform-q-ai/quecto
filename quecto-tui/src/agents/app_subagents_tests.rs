@@ -64,8 +64,8 @@ async fn update_subagent_bar_inserts_new_agents() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.update_subagent_bar(vec![info("w1", "running")]);
-    assert_eq!(a.subagents.tracked.len(), 1);
-    assert!(a.subagents.tracked.contains_key("w1"));
+    assert_eq!(a.ac().roster.tracked.len(), 1);
+    assert!(a.ac().roster.tracked.contains_key("w1"));
 }
 
 #[tokio::test]
@@ -74,7 +74,7 @@ async fn update_subagent_bar_updates_existing_status() {
     let a = h.app_mut();
     a.update_subagent_bar(vec![info("w1", "running")]);
     a.update_subagent_bar(vec![info("w1", "idle")]);
-    assert_eq!(a.subagents.tracked["w1"].info.status, "idle");
+    assert_eq!(a.ac().roster.tracked["w1"].info.status, "idle");
 }
 
 #[tokio::test]
@@ -82,10 +82,11 @@ async fn update_subagent_bar_preserves_started_at_on_update() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.update_subagent_bar(vec![info("w1", "running")]);
-    let original_started = a.subagents.tracked["w1"].started_at;
+    let original_started = a.ac().roster.tracked["w1"].started_at;
     a.update_subagent_bar(vec![info("w1", "idle")]);
     assert_eq!(
-        a.subagents.tracked["w1"].started_at, original_started,
+        a.ac().roster.tracked["w1"].started_at,
+        original_started,
         "started_at should be preserved across updates"
     );
 }
@@ -97,9 +98,9 @@ async fn update_subagent_bar_removes_absent_agents_without_grace() {
     a.update_subagent_bar(vec![info("w1", "running"), info("w2", "running")]);
     // Server push drops w2 (still running, not exited) → removed immediately.
     a.update_subagent_bar(vec![info("w1", "running")]);
-    assert!(a.subagents.tracked.contains_key("w1"));
+    assert!(a.ac().roster.tracked.contains_key("w1"));
     assert!(
-        !a.subagents.tracked.contains_key("w2"),
+        !a.ac().roster.tracked.contains_key("w2"),
         "absent running agent should be removed"
     );
 }
@@ -114,7 +115,7 @@ async fn update_subagent_bar_preserves_exited_within_grace() {
     // Now a server push that drops w2 — w2 should survive the grace period.
     a.update_subagent_bar(vec![info("w1", "running")]);
     assert!(
-        a.subagents.tracked.contains_key("w2"),
+        a.ac().roster.tracked.contains_key("w2"),
         "exited agent within grace period should be preserved"
     );
 }
@@ -125,10 +126,10 @@ async fn update_subagent_bar_replaces_all_entries() {
     let a = h.app_mut();
     a.update_subagent_bar(vec![info("w1", "running"), info("w2", "running")]);
     a.update_subagent_bar(vec![info("w3", "running")]);
-    assert_eq!(a.subagents.tracked.len(), 1);
-    assert!(a.subagents.tracked.contains_key("w3"));
-    assert!(!a.subagents.tracked.contains_key("w1"));
-    assert!(!a.subagents.tracked.contains_key("w2"));
+    assert_eq!(a.ac().roster.tracked.len(), 1);
+    assert!(a.ac().roster.tracked.contains_key("w3"));
+    assert!(!a.ac().roster.tracked.contains_key("w1"));
+    assert!(!a.ac().roster.tracked.contains_key("w2"));
 }
 
 #[tokio::test]
@@ -137,7 +138,7 @@ async fn update_subagent_bar_empty_clears_all() {
     let a = h.app_mut();
     a.update_subagent_bar(vec![info("w1", "running")]);
     a.update_subagent_bar(vec![]);
-    assert!(a.subagents.tracked.is_empty());
+    assert!(a.ac().roster.tracked.is_empty());
 }
 
 #[tokio::test]
@@ -146,7 +147,7 @@ async fn update_subagent_bar_sanitizes_agent_id() {
     let a = h.app_mut();
     a.update_subagent_bar(vec![info("w\u{0007}1", "running")]);
     assert!(
-        a.subagents.tracked.contains_key("w1"),
+        a.ac().roster.tracked.contains_key("w1"),
         "control chars in agent_id should be stripped"
     );
 }
@@ -157,11 +158,11 @@ async fn update_subagent_bar_preserves_workflow_on_workflowless_poll() {
     let a = h.app_mut();
     // First push with workflow info.
     a.update_subagent_bar(vec![info_with_workflow("w1", "running", "active", 2, 3)]);
-    assert!(a.subagents.tracked["w1"].info.workflow.is_some());
+    assert!(a.ac().roster.tracked["w1"].info.workflow.is_some());
     // Second push without workflow (get_subagents poll).
     a.update_subagent_bar(vec![info("w1", "running")]);
     assert!(
-        a.subagents.tracked["w1"].info.workflow.is_some(),
+        a.ac().roster.tracked["w1"].info.workflow.is_some(),
         "workflow should be preserved through workflowless poll"
     );
 }
@@ -194,13 +195,13 @@ async fn tick_subagent_animation_advances_when_active() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.update_subagent_bar(vec![info("w1", "running")]);
-    let frame_before = a.subagents.frame;
+    let frame_before = a.ac().roster.frame;
     assert!(
         a.tick_subagent_animation(),
         "active agent → animation should advance"
     );
     assert_eq!(
-        a.subagents.frame,
+        a.ac().roster.frame,
         frame_before.wrapping_add(1),
         "frame should increment"
     );
@@ -211,12 +212,12 @@ async fn tick_subagent_animation_advances_with_mixed_statuses() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.update_subagent_bar(vec![info("w1", "idle"), info("w2", "running")]);
-    let frame_before = a.subagents.frame;
+    let frame_before = a.ac().roster.frame;
     assert!(
         a.tick_subagent_animation(),
         "one active agent → animation needed"
     );
-    assert_eq!(a.subagents.frame, frame_before.wrapping_add(1));
+    assert_eq!(a.ac().roster.frame, frame_before.wrapping_add(1));
 }
 
 #[tokio::test]
@@ -225,9 +226,9 @@ async fn tick_subagent_animation_wraps_around() {
     let a = h.app_mut();
     a.update_subagent_bar(vec![info("w1", "running")]);
     // Set frame to max and tick — should wrap to 0.
-    a.subagents.frame = usize::MAX;
+    a.ac_mut().roster.frame = usize::MAX;
     a.tick_subagent_animation();
-    assert_eq!(a.subagents.frame, 0, "frame should wrap around");
+    assert_eq!(a.ac().roster.frame, 0, "frame should wrap around");
 }
 
 // ── gc_exited_subagents (App method) ──────────────────────────────────
@@ -245,7 +246,7 @@ async fn gc_exited_subagents_keeps_running() {
     let a = h.app_mut();
     a.update_subagent_bar(vec![info("w1", "running")]);
     assert!(!a.gc_exited_subagents(), "running agent should not be GC'd");
-    assert_eq!(a.subagents.tracked.len(), 1);
+    assert_eq!(a.ac().roster.tracked.len(), 1);
 }
 
 #[tokio::test]
@@ -254,7 +255,7 @@ async fn gc_exited_subagents_keeps_recent_exit() {
     let a = h.app_mut();
     a.update_subagent_bar(vec![info("w1", "exited")]);
     assert!(!a.gc_exited_subagents(), "recent exit should not be GC'd");
-    assert_eq!(a.subagents.tracked.len(), 1);
+    assert_eq!(a.ac().roster.tracked.len(), 1);
 }
 
 #[tokio::test]
@@ -265,11 +266,11 @@ async fn gc_exited_subagents_removes_expired_exit() {
     // Backdate the exited_at timestamp to beyond the grace period.
     let grace = EXITED_SUBAGENT_GRACE;
     let old = tokio::time::Instant::now() - grace - Duration::from_secs(1);
-    if let Some(entry) = a.subagents.tracked.get_mut("w1") {
+    if let Some(entry) = a.ac_mut().roster.tracked.get_mut("w1") {
         entry.exited_at = Some(old);
     }
     assert!(a.gc_exited_subagents(), "expired exit should be GC'd");
-    assert!(a.subagents.tracked.is_empty());
+    assert!(a.ac().roster.tracked.is_empty());
 }
 
 // ── subagent bar rendering via compose_bottom ─────────────────────────
@@ -342,17 +343,21 @@ async fn killed_subtree_state_changed_clears_panel_and_footer() {
         info_with_parent("gchild", "running", "child"),
         info("sibling", "running"),
     ]);
-    assert_eq!(a.subagents.tracked.len(), 4);
+    assert_eq!(a.ac().roster.tracked.len(), 4);
 
     // Server cascade-removed parent's subtree and broadcasts the survivor set.
     a.update_subagent_bar(vec![info("sibling", "running")]);
 
     // The whole dead subtree is gone from the panel; the live sibling stays.
-    assert_eq!(a.subagents.tracked.len(), 1, "dead subtree must be dropped");
-    assert!(a.subagents.tracked.contains_key("sibling"));
-    assert!(!a.subagents.tracked.contains_key("parent"));
-    assert!(!a.subagents.tracked.contains_key("child"));
-    assert!(!a.subagents.tracked.contains_key("gchild"));
+    assert_eq!(
+        a.ac().roster.tracked.len(),
+        1,
+        "dead subtree must be dropped"
+    );
+    assert!(a.ac().roster.tracked.contains_key("sibling"));
+    assert!(!a.ac().roster.tracked.contains_key("parent"));
+    assert!(!a.ac().roster.tracked.contains_key("child"));
+    assert!(!a.ac().roster.tracked.contains_key("gchild"));
 
     // Footer "N working" reflects the live set (1), not the stale 4.
     let footer = super::app_methods::strip_ansi(&a.compose_bottom(120).join("\n"));
@@ -378,20 +383,20 @@ async fn surviving_descendant_carries_its_intermediate_ancestors() {
         info_with_parent("child", "running", "parent"),
         info_with_parent("gchild", "running", "child"),
     ]);
-    assert_eq!(a.subagents.tracked.len(), 3);
+    assert_eq!(a.ac().roster.tracked.len(), 3);
 
     // A forwarded sub-tree push that lists ONLY the surviving grandchild.
     a.update_subagent_bar(vec![info_with_parent("gchild", "running", "child")]);
 
     // The grandchild survives AND its intermediate ancestors are carried over,
     // not dropped — nesting is preserved rather than re-rooted.
-    assert!(a.subagents.tracked.contains_key("gchild"));
+    assert!(a.ac().roster.tracked.contains_key("gchild"));
     assert!(
-        a.subagents.tracked.contains_key("child"),
+        a.ac().roster.tracked.contains_key("child"),
         "intermediate parent must be carried for the surviving descendant"
     );
     assert!(
-        a.subagents.tracked.contains_key("parent"),
+        a.ac().roster.tracked.contains_key("parent"),
         "grandparent must be carried transitively"
     );
 }
@@ -403,7 +408,7 @@ async fn idle_nested_grandchild_does_not_count_as_working() {
 
     a.update_subagent_bar(vec![info_with_parent("grandchild", "idle", "child")]);
 
-    assert_eq!(a.subagents.tracked["grandchild"].info.status, "idle");
+    assert_eq!(a.ac().roster.tracked["grandchild"].info.status, "idle");
     let frame = a.compose_frame().join("\n");
     let plain_frame = super::app_methods::strip_ansi(&frame);
     assert!(
@@ -435,7 +440,7 @@ async fn state_changed_dropping_all_clears_footer_count() {
         info_with_parent("child", "running", "parent"),
     ]);
     a.update_subagent_bar(vec![]);
-    assert!(a.subagents.tracked.is_empty(), "all agents cleared");
+    assert!(a.ac().roster.tracked.is_empty(), "all agents cleared");
     let footer = super::app_methods::strip_ansi(&a.compose_bottom(120).join("\n"));
     assert!(
         !footer.contains("working"),
@@ -547,7 +552,7 @@ async fn optimistic_starting_entry_survives_omitting_payload() {
     a.track_starting_subagent(&serde_json::json!({ "agent_id": "w1" }));
     a.update_subagent_bar(vec![info("other", "running")]);
     assert!(
-        a.subagents.tracked.contains_key("w1"),
+        a.ac().roster.tracked.contains_key("w1"),
         "#866: an unconfirmed local starting entry must not be dropped by a payload that predates its registration"
     );
 }
@@ -563,7 +568,7 @@ async fn confirmed_running_entry_still_dropped_when_omitted() {
     a.update_subagent_bar(vec![info("w1", "running"), info("other", "running")]);
     a.update_subagent_bar(vec![info("other", "running")]);
     assert!(
-        !a.subagents.tracked.contains_key("w1"),
+        !a.ac().roster.tracked.contains_key("w1"),
         "#831: a kernel-confirmed entry omitted from a later snapshot must be removed"
     );
 }
@@ -578,11 +583,11 @@ async fn track_starting_does_not_clobber_confirmed_entry() {
     let a = h.app_mut();
     a.track_starting_subagent(&serde_json::json!({ "agent_id": "w1" }));
     a.update_subagent_bar(vec![info("w1", "running")]);
-    let confirmed_started_at = a.subagents.tracked.get("w1").unwrap().started_at;
-    assert!(!a.subagents.tracked.get("w1").unwrap().optimistic);
+    let confirmed_started_at = a.ac().roster.tracked.get("w1").unwrap().started_at;
+    assert!(!a.ac().roster.tracked.get("w1").unwrap().optimistic);
     // A stray duplicate spawn ToolStart for the same id.
     a.track_starting_subagent(&serde_json::json!({ "agent_id": "w1" }));
-    let entry = a.subagents.tracked.get("w1").unwrap();
+    let entry = a.ac().roster.tracked.get("w1").unwrap();
     assert!(
         !entry.optimistic,
         "a confirmed entry must not revert to optimistic on a duplicate spawn ToolStart"
@@ -593,7 +598,7 @@ async fn track_starting_does_not_clobber_confirmed_entry() {
     );
     // It must then still drop on an omitting snapshot (#831 preserved).
     a.update_subagent_bar(vec![info("other", "running")]);
-    assert!(!a.subagents.tracked.contains_key("w1"));
+    assert!(!a.ac().roster.tracked.contains_key("w1"));
 }
 
 #[tokio::test]
@@ -604,10 +609,10 @@ async fn optimistic_entry_expires_if_never_confirmed() {
     let a = h.app_mut();
     a.track_starting_subagent(&serde_json::json!({ "agent_id": "w1" }));
     let old = tokio::time::Instant::now() - std::time::Duration::from_secs(3600);
-    a.subagents.tracked.get_mut("w1").unwrap().started_at = old;
+    a.ac_mut().roster.tracked.get_mut("w1").unwrap().started_at = old;
     a.update_subagent_bar(vec![info("other", "running")]);
     assert!(
-        !a.subagents.tracked.contains_key("w1"),
+        !a.ac().roster.tracked.contains_key("w1"),
         "#866: an unconfirmed optimistic entry past the grace window must be removed"
     );
 }
@@ -620,9 +625,9 @@ async fn source_scoped_child_roster_preserves_unrelated_sibling() {
 
     a.update_subagent_bar_from_source(Some("a"), vec![info_with_parent("a1", "running", "a")]);
 
-    assert!(a.subagents.tracked.contains_key("b"));
+    assert!(a.ac().roster.tracked.contains_key("b"));
     assert_eq!(
-        a.subagents.tracked["a1"].info.parent_id.as_deref(),
+        a.ac().roster.tracked["a1"].info.parent_id.as_deref(),
         Some("a")
     );
 }
@@ -642,10 +647,10 @@ async fn source_scoped_child_roster_removes_only_source_subtree() {
 
     a.update_subagent_bar_from_source(Some("a"), vec![]);
 
-    assert!(a.subagents.tracked.contains_key("a"));
-    assert!(a.subagents.tracked.contains_key("b"));
-    assert!(!a.subagents.tracked.contains_key("a1"));
-    assert!(!a.subagents.tracked.contains_key("a2"));
+    assert!(a.ac().roster.tracked.contains_key("a"));
+    assert!(a.ac().roster.tracked.contains_key("b"));
+    assert!(!a.ac().roster.tracked.contains_key("a1"));
+    assert!(!a.ac().roster.tracked.contains_key("a2"));
 }
 
 #[tokio::test]
@@ -659,8 +664,8 @@ async fn source_scoped_child_feed_takes_precedence_for_own_subtree() {
 
     a.update_subagent_bar_from_source(Some("a"), vec![info_with_parent("fresh", "running", "a")]);
 
-    assert!(a.subagents.tracked.contains_key("fresh"));
-    assert!(!a.subagents.tracked.contains_key("old"));
+    assert!(a.ac().roster.tracked.contains_key("fresh"));
+    assert!(!a.ac().roster.tracked.contains_key("old"));
 }
 
 #[tokio::test]
@@ -693,14 +698,19 @@ async fn malformed_or_non_socket_paths_are_not_registered_for_connection() {
             ),
         ],
     );
-    assert_eq!(a.subagents.tracked["empty"].info.socket_path, None);
-    assert_eq!(a.subagents.tracked["relative"].info.socket_path, None);
-    assert_eq!(a.subagents.tracked["file"].info.socket_path, None);
-    assert!(a.subagents.tracked["socket-ok"].info.socket_path.is_some());
-    assert!(!a.subagents.feeds.contains_key("empty"));
-    assert!(!a.subagents.feeds.contains_key("relative"));
-    assert!(!a.subagents.feeds.contains_key("file"));
-    assert!(a.subagents.feeds.contains_key("socket-ok"));
+    assert_eq!(a.ac().roster.tracked["empty"].info.socket_path, None);
+    assert_eq!(a.ac().roster.tracked["relative"].info.socket_path, None);
+    assert_eq!(a.ac().roster.tracked["file"].info.socket_path, None);
+    assert!(
+        a.ac().roster.tracked["socket-ok"]
+            .info
+            .socket_path
+            .is_some()
+    );
+    assert!(!a.ac().roster.feeds.contains_key("empty"));
+    assert!(!a.ac().roster.feeds.contains_key("relative"));
+    assert!(!a.ac().roster.feeds.contains_key("file"));
+    assert!(a.ac().roster.feeds.contains_key("socket-ok"));
     let _ = std::fs::remove_file(non_socket);
 }
 
@@ -718,8 +728,8 @@ async fn subagent_state_changed_does_not_make_synced_feed_authoritative() {
     );
 
     assert_eq!(
-        a.subagents.tracked["a1"].info.parent_id.as_deref(),
+        a.ac().roster.tracked["a1"].info.parent_id.as_deref(),
         Some("a")
     );
-    assert!(a.subagents.active_agent_id.is_none());
+    assert!(a.ac().roster.active_agent_id.is_none());
 }

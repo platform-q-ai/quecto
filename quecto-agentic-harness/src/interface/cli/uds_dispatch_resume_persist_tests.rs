@@ -9,10 +9,12 @@ use super::{dispatch_command, handle_resume_session, persist_current_session};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::context_pruning::build_manifest_text;
 use crate::domain::error::DomainError;
+use crate::domain::ids::AgentUuid;
 use crate::domain::message::{LlmResponse, Message, Role, ToolCall};
 use crate::domain::provider::{ChatRequest, LlmProvider};
-use crate::domain::session::{Session, SessionStore};
+use crate::domain::session::{Session, SessionStore, SubagentLiveness};
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::{inject_system_prompt, remove_injected_system_prompt};
 use crate::interface::cli::uds_session::{HISTORY_PAGE_SIZE, messages_page_json};
@@ -31,6 +33,41 @@ fn durable_contents(messages: &[Message]) -> Vec<&str> {
         .filter(|m| m.role != Role::System)
         .map(|m| m.content.as_str())
         .collect()
+}
+
+#[tokio::test]
+async fn prompt_persists_current_subagent_roster_before_assistant_reply() {
+    let mut fx = Fixture::new();
+    let registry = new_registry();
+    {
+        let mut entries = registry.lock().unwrap();
+        let mut entry = SubagentEntry::with_identity(
+            AgentUuid::from("child-a".to_string()),
+            "child-a".to_string(),
+            "/tmp/child-a.sock".into(),
+            123,
+        );
+        entry.persisted_liveness = SubagentLiveness::Detached;
+        entries.insert("child-a".to_string(), entry);
+    }
+    {
+        let mut ctx = fx.ctx();
+        ctx.subagent_registry = Some(registry);
+        let prompt = crate::domain::message::Message::user("run after spawn");
+        super::persist_user_prompt_before_run(&mut ctx, &prompt)
+            .await
+            .unwrap();
+    }
+
+    let loaded = fx.store.load("cli:test").await.unwrap().unwrap();
+    assert_eq!(loaded.messages.len(), 1);
+    assert_eq!(loaded.messages[0].content, "run after spawn");
+    assert_eq!(loaded.subagent_roster.len(), 1);
+    assert_eq!(loaded.subagent_roster[0].agent_uuid, "child-a");
+    assert_eq!(
+        loaded.subagent_roster[0].liveness,
+        SubagentLiveness::Detached
+    );
 }
 
 #[tokio::test]
@@ -58,6 +95,7 @@ async fn prompt_persists_user_message_before_assistant_reply() {
             key: Session::build_key("cli", "saved-one"),
             messages: loaded.messages.clone(),
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();
@@ -180,6 +218,7 @@ async fn multi_turn_persist_resume_restores_full_history_with_system_prompt() {
                     key: Session::build_key("cli", resume_name),
                     messages: loaded.messages.clone(),
                     workflow_run: None,
+                    subagent_roster: Vec::new(),
                 })
                 .await
                 .unwrap();
@@ -626,6 +665,7 @@ async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest()
             key: Session::build_key("cli", "saved-jsonl-chain"),
             messages: loaded.messages.clone(),
             workflow_run: None,
+            subagent_roster: Vec::new(),
         })
         .await
         .unwrap();
@@ -659,4 +699,47 @@ async fn multi_turn_jsonl_start_index_chain_contiguous_with_tools_and_manifest()
             "resume must keep the tool result"
         );
     }
+}
+
+#[tokio::test]
+async fn persist_current_session_clears_previously_persisted_roster_when_registry_empty() {
+    use crate::domain::session::{
+        PersistedSubagentRosterEntry, Session, SessionStore, SubagentLiveness,
+    };
+
+    let mut fx = Fixture::new();
+    fx.store
+        .save(&Session {
+            key: "cli:test".into(),
+            messages: vec![Message::user("old")],
+            workflow_run: None,
+            subagent_roster: vec![PersistedSubagentRosterEntry {
+                agent_uuid: "stale-child".into(),
+                display_name: "stale child".into(),
+                session_key: "stale-child".into(),
+                socket_path: "/tmp/stale.sock".into(),
+                pid: 0,
+                liveness: SubagentLiveness::Dead,
+                parent_id: None,
+                read_only: false,
+                status: None,
+            }],
+        })
+        .await
+        .unwrap();
+    fx.messages = vec![Message::user("old"), Message::assistant("new", Vec::new())];
+    fx.last_persisted_message_index = 1;
+    {
+        let mut ctx = fx.ctx();
+        ctx.subagent_registry =
+            Some(crate::infrastructure::tools::subagent_registry::new_registry());
+        persist_current_session(&mut ctx).await.unwrap();
+    }
+
+    let loaded = fx.store.load("cli:test").await.unwrap().unwrap();
+    assert!(
+        loaded.subagent_roster.is_empty(),
+        "stale roster was not cleared: {:?}",
+        loaded.subagent_roster
+    );
 }

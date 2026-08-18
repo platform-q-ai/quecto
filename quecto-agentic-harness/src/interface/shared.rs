@@ -328,10 +328,16 @@ fn persist_refreshed_token(
                 refresh_token: Some(effective_refresh),
                 account_id,
             };
-            if let Err(e) = store.store(new_cred) {
-                tracing::warn!("failed to persist refreshed token for {}: {}", provider, e);
+            // Rotation-aware persist: if another agent process refreshed
+            // concurrently (its rotated refresh token is already on disk),
+            // keep its credential instead of overwriting it (#1460 review).
+            match store.store_refreshed(new_cred, previous_refresh_token) {
+                Ok(authoritative) => Some(authoritative.token),
+                Err(e) => {
+                    tracing::warn!("failed to persist refreshed token for {}: {}", provider, e);
+                    Some(token_resp.access_token)
+                }
             }
-            Some(token_resp.access_token)
         }
         Err(e) => {
             tracing::warn!("failed to refresh OAuth token for {}: {}", provider, e);
@@ -340,40 +346,22 @@ fn persist_refreshed_token(
     }
 }
 
-/// Check which providers have expired credentials and need re-authentication.
-///
-/// Operates on a pre-loaded snapshot to avoid redundant file I/O.
 /// Resolve the effective workspace directory for an agent or REPL invocation.
 ///
-/// When `no_sandbox` is `true`, the agent should operate from the **process's
-/// current working directory** rather than the configured workspace path. This
-/// lets users run `quecto --no-sandbox` from any directory and have the agent
-/// see that directory as its root, matching how every other CLI tool behaves.
-///
-/// When sandbox is enabled (the default), the configured workspace path is used.
-///
-/// # Arguments
-///
-/// * `config_workspace` — the resolved workspace path from config (already `~`-expanded)
-/// * `no_sandbox` — whether the `--no-sandbox` flag was passed
-pub fn resolve_agent_workspace(config_workspace: &str, no_sandbox: bool) -> std::path::PathBuf {
-    let workspace = if no_sandbox {
-        match std::env::current_dir() {
-            Ok(cwd) => cwd,
-            Err(e) => {
-                // CWD is unavailable (e.g. deleted directory). Fall back to the
-                // config workspace and emit a warning so the user is not silently
-                // misled about which directory the agent is operating from.
-                tracing::warn!(
-                    error = %e,
-                    fallback = config_workspace,
-                    "--no-sandbox: current_dir() failed, falling back to config workspace"
-                );
-                std::path::PathBuf::from(config_workspace)
-            }
+/// Quecto now runs in the process's current working directory by default. The
+/// legacy configured workspace is accepted as a fallback only when the current
+/// directory cannot be read.
+pub fn resolve_agent_workspace(config_workspace: &str) -> std::path::PathBuf {
+    let workspace = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                fallback = config_workspace,
+                "current_dir() failed, falling back to config workspace"
+            );
+            std::path::PathBuf::from(config_workspace)
         }
-    } else {
-        std::path::PathBuf::from(config_workspace)
     };
     // Zero-config: ensure the workspace exists (onboarding used to create it).
     // Best-effort — a failure surfaces later as a clear filesystem error.

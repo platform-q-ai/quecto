@@ -106,7 +106,7 @@ Feature: Persistent subagent monitor — live event stream from child agents
   # --- Registry integration ---
 
   Scenario: Spawn registers child with Starting status
-    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    Given a SpawnTool with empty allowlist
     When I execute the SpawnTool with '{"task":"work","agent_id":"monitor-test"}'
     Then the subagent registry should contain "monitor-test"
     And the subagent registry entry "monitor-test" should have status "Starting"

@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::agent::AgentLoop;
+use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role};
 use crate::domain::provider::LlmProvider;
 use crate::domain::session::{Session, SessionStore};
@@ -21,21 +22,10 @@ use std::path::PathBuf;
 
 /// Parsed flags that apply to REPL mode.
 ///
-/// # Security note
-///
-/// The `no_sandbox` field disables the workspace path restriction that confines
-/// all filesystem tools to the configured workspace directory. Setting it to
-/// `true` allows the agent to read and write **any path on the system**.
-/// This is intentional when running quecto as a coding assistant on an arbitrary
-/// repo, but must never be set implicitly or without user consent.
 pub struct ReplFlags {
     pub session_name: Option<String>,
     pub system_prompt: Option<String>,
     pub model_override: Option<String>,
-    /// When true, disable workspace path restriction for all filesystem tools.
-    /// Overrides `config.agents.defaults.restrict_to_workspace`.
-    /// WARNING: allows the agent to read/write any path on the system.
-    pub no_sandbox: bool,
 }
 
 /// Session state for the REPL (agent, persistence, history).
@@ -170,6 +160,7 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
                 key: self.session.session_key.clone(),
                 messages: Vec::new(),
                 workflow_run: None,
+                subagent_roster: Vec::new(),
             };
             if let Err(e) = rt.block_on(self.session.session_store.save(&session)) {
                 let _ = writeln!(self.writer, "Warning: failed to clear session: {e}");
@@ -248,6 +239,7 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
                 key: self.session.session_key.clone(),
                 messages: self.session.messages.clone(),
                 workflow_run: None,
+                subagent_roster: Vec::new(),
             };
             if let Err(e) = rt.block_on(self.session.session_store.save(&session)) {
                 let _ = writeln!(self.writer, "Warning: failed to save session: {e}");
@@ -271,21 +263,15 @@ pub fn run_repl<R: BufRead, W: Write>(
     is_tty: bool,
     ctx: &ReplContext<'_>,
 ) -> i32 {
-    let workspace = crate::interface::shared::resolve_agent_workspace(
-        &ctx.config.workspace_path(),
-        ctx.flags.no_sandbox,
-    );
+    let workspace = ctx.cwd_override.map(Path::to_path_buf).unwrap_or_else(|| {
+        crate::interface::shared::resolve_agent_workspace(&ctx.config.workspace_path())
+    });
     let model = ctx
         .flags
         .model_override
         .clone()
         .unwrap_or(ctx.config.agents.defaults.model.clone());
-    // --no-sandbox overrides config: disables workspace path restriction for all
-    // filesystem tools. The dangerous-command denylist remains active regardless.
-    if ctx.flags.no_sandbox {
-        tracing::warn!("--no-sandbox: workspace path restriction disabled");
-    }
-    let sandbox = Sandbox::for_agent_workspace(ctx.config, workspace.clone(), ctx.flags.no_sandbox);
+    let sandbox = Sandbox::for_agent_workspace(ctx.config, workspace.clone());
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(ctx.config);
     let exec_options = crate::infrastructure::tools::bash::ExecOptions {
         max_capture_bytes: exec_settings,
@@ -312,8 +298,6 @@ pub fn run_repl<R: BufRead, W: Write>(
             exec_options,
             session_key,
             spawned: false,
-            restrict_to_workspace: !ctx.flags.no_sandbox
-                && ctx.config.agents.defaults.restrict_to_workspace,
             parent_session_name: ctx.flags.session_name.clone(),
             parent_config_path: Some(ctx.config_path.to_path_buf()),
             disabled_tools: &[],
@@ -411,7 +395,18 @@ pub fn run_repl<R: BufRead, W: Write>(
         }
     };
 
-    let mut messages = load_session_messages_with_rt(&rt, &session_store, &session_key, ephemeral);
+    let mut messages =
+        match load_session_messages_with_rt(&rt, &session_store, &session_key, ephemeral) {
+            Ok(messages) => messages,
+            Err(e) => {
+                let _ = writeln!(writer, "Error: {e}");
+                if let Some(handle) = spinner_handle {
+                    handle.stop();
+                }
+                crate::interface::shared::scrub_ephemeral_spill(ctx.base_dir, ephemeral);
+                return 1;
+            }
+        };
     if !ephemeral && !messages.is_empty() {
         rt.block_on(agent.prune_resumed_context(&mut messages));
     }
@@ -517,6 +512,8 @@ pub struct ReplContext<'a> {
     pub provider: Arc<dyn LlmProvider>,
     pub config: &'a Config,
     pub flags: &'a ReplFlags,
+    /// Test/support override for the effective process cwd.
+    pub cwd_override: Option<&'a Path>,
     /// Optional progress callback injected by the caller (e.g. BDD test recorder
     /// or the live TTY spinner). When `None`, the REPL builds its own spinner
     /// for TTY sessions or skips progress reporting for non-TTY.
@@ -529,13 +526,14 @@ fn load_session_messages_with_rt(
     store: &FileSessionStore,
     key: &str,
     ephemeral: bool,
-) -> Vec<Message> {
+) -> Result<Vec<Message>, DomainError> {
     if ephemeral {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    match rt.block_on(store.load(key)) {
-        Ok(Some(session)) => session.messages,
-        _ => Vec::new(),
+    store.claim(key)?;
+    match rt.block_on(store.load(key))? {
+        Some(session) => Ok(session.messages),
+        None => Ok(Vec::new()),
     }
 }
 

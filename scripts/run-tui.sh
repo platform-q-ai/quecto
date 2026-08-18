@@ -8,6 +8,4 @@ export PATH="${QUECTO_TUI_BIN_DIR:-${CARGO_HOME:-$HOME/.cargo}/bin}:$PATH"
 # POSIX-safe and must not fail the script if `quecto` is not yet on PATH.
 quecto --version >/dev/null 2>&1 || true
 
-exec quecto-tui \
-  --no-sandbox \
-  "$@" \
+exec quecto-tui "$@"

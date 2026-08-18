@@ -96,6 +96,7 @@ pub struct OfficialToolDeps {
     pub sandbox: crate::infrastructure::security::sandbox::Sandbox,
     pub exec_options: crate::infrastructure::tools::bash::ExecOptions,
     pub docs_content_policy: crate::infrastructure::tools::docs::DocsContentPolicy,
+    pub python_lab_config: crate::infrastructure::tools::python_lab::PythonLabConfig,
 }
 
 pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Extension>> {
@@ -131,6 +132,13 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
                 workspace.clone(),
                 sandbox.clone(),
             )),
+            Arc::new(
+                crate::infrastructure::tools::python_lab::PythonLabTool::new(
+                    workspace.clone(),
+                    sandbox.clone(),
+                    deps.python_lab_config,
+                ),
+            ),
             Arc::new(crate::infrastructure::tools::find::FindTool::new(
                 workspace, sandbox,
             )),
@@ -165,7 +173,6 @@ pub fn build_session_tool_extensions(deps: SessionToolDeps) -> Vec<Arc<dyn Exten
 pub struct AgentControlToolDeps {
     pub base_dir: PathBuf,
     pub socket_dir: PathBuf,
-    pub restrict_to_workspace: bool,
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     pub parent_session_name: Option<String>,
     pub inherited_tool_policy:
@@ -185,17 +192,13 @@ pub struct AgentControlToolBuild {
 pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentControlToolBuild {
     let registry = crate::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
     let (notification_tx, notification_rx) = tokio::sync::mpsc::channel(64);
-    let active_awaits = crate::infrastructure::tools::agent_cmd::new_active_awaits();
     let environment_registry = crate::domain::environment_registry::EnvironmentRegistry::new();
 
-    let mut spawn = crate::infrastructure::tools::spawn::SpawnTool::with_base_dir(
-        Vec::new(),
-        deps.restrict_to_workspace,
-        deps.base_dir,
-    )
-    .with_socket_dir(deps.socket_dir)
-    .with_environment_registry(environment_registry.clone())
-    .with_parent_config_path(deps.parent_config_path);
+    let mut spawn =
+        crate::infrastructure::tools::spawn::SpawnTool::with_base_dir(Vec::new(), deps.base_dir)
+            .with_socket_dir(deps.socket_dir)
+            .with_environment_registry(environment_registry.clone())
+            .with_parent_config_path(deps.parent_config_path);
     if let Some(snapshot) = deps.inherited_tool_policy {
         spawn = spawn.with_inherited_tool_policy(snapshot);
     }
@@ -214,12 +217,9 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
             ),
         ),
     );
-    let agent_cmd = crate::infrastructure::tools::agent_cmd::AgentCmdTool::with_active_awaits(
-        registry.clone(),
-        active_awaits,
-    )
-    .with_broadcast(deps.broadcast_tx)
-    .with_environment_control(environment_control);
+    let agent_cmd = crate::infrastructure::tools::agent_cmd::AgentCmdTool::new(registry.clone())
+        .with_broadcast(deps.broadcast_tx)
+        .with_environment_control(environment_control);
 
     AgentControlToolBuild {
         extensions: vec![Arc::new(NativeExtension::with_tools(
@@ -295,6 +295,7 @@ pub fn build_official_tool_registry(
             sandbox,
             exec_options,
             docs_content_policy: crate::infrastructure::tools::docs::DocsContentPolicy::Parent,
+            python_lab_config: crate::infrastructure::tools::python_lab::PythonLabConfig::default(),
         }),
     );
     registry

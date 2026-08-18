@@ -144,8 +144,12 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 socket_path,
                 config,
                 effective_config: effective_config.as_deref(),
-                parent_id: self.tool.parent_id.as_deref(),
-                restrict_to_workspace: self.tool.restrict_to_workspace,
+                parent_id: self
+                    .tool
+                    .parent_id
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_deref(),
                 workflow_spec_path: workflow_spec_path.as_deref(),
                 inherited_tool_policy_path: inherited_tool_policy_path.as_deref(),
             },
@@ -323,7 +327,12 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 display_name: identity.session_name.clone(),
                 socket_path: runtime.socket_path.clone(),
                 pid: runtime.pid,
-                parent_id: self.tool.parent_id.clone(),
+                parent_id: self
+                    .tool
+                    .parent_id
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone(),
                 config,
                 exit_signal_tx: Some(exit_tx.clone()),
                 cleanup_environment_id,
@@ -333,6 +342,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     .as_ref()
                     .map(|_| self.tool.environment_registry.clone()),
                 environment_ref: prepared.environment_ref.clone(),
+                process_owner: prepared.process_owner,
             });
             register_and_broadcast(
                 &self.tool.registry,
@@ -377,7 +387,11 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 self.tool.registry.clone(),
                 self.tool.notify_tx.clone(),
                 self.tool.broadcast_tx.clone(),
-                self.tool.parent_id.clone(),
+                self.tool
+                    .parent_id
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone(),
             );
             let proxy_bridge = prepared.proxy_bridge.take().map(|bridge| {
                 let (socket, handle) = bridge.into_parts();
@@ -443,7 +457,19 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     .tool
                     .environment_registry
                     .get(r)
-                    .map(|record| format!(" workspace={}", record.workspace_path.display()))
+                    .map(|record| {
+                        // A sandbox config made no checkout — say so in the
+                        // spawn result instead of leaving an ordinary-looking
+                        // workspace path (#1410).
+                        let sandbox = if record.metadata.get("source").and_then(|v| v.as_str())
+                            == Some("none")
+                        {
+                            " (sandbox: empty workspace)"
+                        } else {
+                            ""
+                        };
+                        format!(" workspace={}{sandbox}", record.workspace_path.display())
+                    })
                     .unwrap_or_default();
                 format!(" environment_ref={r}{workspace}")
             })
