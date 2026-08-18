@@ -310,6 +310,7 @@ history inspection remain the job of `get_messages`.
       "id": "bugfix"
     },
     "currentStep": {
+      "index": 2,
       "key": "red",
       "label": "Reproduce the bug in a failing test",
       "phase": "RED",

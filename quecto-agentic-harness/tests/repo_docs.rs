@@ -386,6 +386,61 @@ fn agent_cmd_docs_match_tool_schema() {
         );
     }
 
+    let changed_example = get_state_section
+        .split("**Response data (changed or no `since`):**")
+        .nth(1)
+        .and_then(|text| text.split("**Response data (unchanged):**").next())
+        .and_then(|text| text.split("```json").nth(1))
+        .and_then(|text| text.split("```").next())
+        .expect("get_state docs must include a changed response JSON example");
+    let changed: serde_json::Value = serde_json::from_str(changed_example)
+        .expect("get_state changed response example must be valid JSON");
+    assert_json_object_keys(
+        &changed,
+        &[
+            "effort",
+            "generation",
+            "model",
+            "progress",
+            "state",
+            "workflow",
+        ],
+        "get_state changed response",
+    );
+    assert_json_object_keys(
+        changed
+            .get("progress")
+            .expect("get_state example must include progress"),
+        &["reason", "state"],
+        "get_state progress",
+    );
+    let workflow = changed
+        .get("workflow")
+        .expect("get_state example must include workflow");
+    assert_json_object_keys(
+        workflow,
+        &["activeTemplate", "currentStep"],
+        "get_state workflow",
+    );
+    assert_json_object_keys(
+        workflow
+            .get("activeTemplate")
+            .expect("get_state workflow must include activeTemplate"),
+        &["id"],
+        "get_state workflow.activeTemplate",
+    );
+    assert_json_object_keys(
+        workflow
+            .get("currentStep")
+            .expect("get_state workflow must include currentStep"),
+        &["done", "index", "key", "label", "phase"],
+        "get_state workflow.currentStep",
+    );
+    assert!(
+        workflow["currentStep"]["index"].as_u64().is_some(),
+        "get_state workflow.currentStep.index must be an unsigned integer"
+    );
+
     // The alias is still honored in code for backward compatibility even though
     // it is undocumented; pin that so a refactor can't silently drop it. The
     // dispatch in agent_cmd.rs special-cases the alias name explicitly.
@@ -393,6 +448,18 @@ fn agent_cmd_docs_match_tool_schema() {
     assert!(
         agent_cmd.contains("get_messages_tail"),
         "agent_cmd.rs must still honor the backward-compat get_messages_tail alias"
+    );
+}
+
+fn assert_json_object_keys(value: &serde_json::Value, expected: &[&str], context: &str) {
+    let object = value
+        .as_object()
+        .unwrap_or_else(|| panic!("{context} must be a JSON object"));
+    let mut actual = object.keys().map(String::as_str).collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(
+        actual, expected,
+        "{context} must match the slim get_state contract"
     );
 }
 
