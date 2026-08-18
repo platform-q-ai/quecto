@@ -284,11 +284,15 @@ pub(super) async fn handle_set_workflow_automation(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     };
+    let before = (config.auto_continue, config.completion_nudge);
     if let Some(value) = auto_continue {
         config.auto_continue = value;
     }
     if let Some(value) = completion_nudge {
         config.completion_nudge = value;
+    }
+    if before != (config.auto_continue, config.completion_nudge) {
+        ctx.session.bump_visible_generation();
     }
     if let Some(workflow) = &ctx.workflow_state
         && let Ok(mut engine) = workflow.lock()

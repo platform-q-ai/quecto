@@ -24,10 +24,15 @@ pub(super) fn set_workflow_run(
     if let Some(workflow) = &ctx.workflow_state
         && let Ok(mut engine) = workflow.lock()
     {
+        let before = serde_json::to_value(engine.snapshot(true)).ok();
         if let Some(run) = workflow_run {
             engine.restore_run(run);
         } else {
             engine.reset();
+        }
+        let after = serde_json::to_value(engine.snapshot(true)).ok();
+        if before != after {
+            ctx.session.bump_visible_generation();
         }
     }
 }

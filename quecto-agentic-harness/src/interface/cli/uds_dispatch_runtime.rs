@@ -77,7 +77,10 @@ pub(super) async fn handle_set_effort(
     let valid = EffortLevel::levels_for_model(ctx.session.model());
     let ev = match EffortLevel::parse(effort).filter(|level| valid.contains(level)) {
         Some(level) => {
-            ctx.agent.set_effort(level);
+            if ctx.agent.effort() != Some(level) {
+                ctx.agent.set_effort(level);
+                ctx.session.bump_visible_generation();
+            }
             tracing::debug!(effort = level.as_str(), "UDS: effort switched");
             AgentEvent::ok(
                 id,

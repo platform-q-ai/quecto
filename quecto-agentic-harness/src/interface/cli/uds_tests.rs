@@ -343,9 +343,14 @@ fn test_resolve_set_model_target_from_provider_and_model_id() {
 #[test]
 fn test_set_model_is_reflected_in_state_snapshot() {
     let mut session = AgentSession::new("gpt-4".into(), "cli:test".into());
+    let before = session.state_snapshot(0, None, 0, None);
     session.set_model("claude-opus-4-5".into());
     let snap = session.state_snapshot(0, None, 0, None);
     assert_eq!(snap.model, "claude-opus-4-5");
+    assert!(
+        snap.generation > before.generation,
+        "idle get_state(since) cursor must advance when visible model changes"
+    );
 }
 
 // ─── get_messages count ──────────────────────────────────────────────────────

@@ -144,7 +144,7 @@ Feature: UDS mode for headless agent operation
     And I send command "get_state" with id "gs-before"
     And I send get_state with id "gs-same" since generation from "gs-before"
     And I send set_model "gpt-5-mini"
-    And I send get_state with id "gs-after" since generation 1
+    And I send get_state with id "gs-after" since generation from "gs-before"
     And I close the UDS connection
     Then the get_state response "gs-same" should be unchanged since "gs-before"
     And the get_state response "gs-after" should have a different generation than "gs-before"
