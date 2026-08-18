@@ -280,22 +280,78 @@ fn given_agent_cmd_with_fast_ack_busy_entry(world: &mut QuectoWorld, agent_id: S
     world.agent_cmd_last_command = Some(last_cmd);
 }
 
-#[given(expr = "an AgentCmdTool with a busy state snapshot registry entry {string}")]
-fn given_agent_cmd_with_busy_state_snapshot_entry(world: &mut QuectoWorld, agent_id: String) {
+fn install_busy_state_snapshot_entry(
+    world: &mut QuectoWorld,
+    agent_id: String,
+    snapshot_generation: u64,
+    live_generation: u64,
+) {
     let registry = AgentCmdTool::new_registry();
     let tmp = tempfile::TempDir::new().unwrap();
     let sock_path = tmp.path().join("busy-state-agent.sock");
     let last_cmd: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let std_listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
     let last_cmd_clone = last_cmd.clone();
+    let snapshot_shape = agent_id.clone();
 
     let _handle = std::thread::spawn(move || {
         for stream in std_listener.incoming() {
             let Ok(mut stream) = stream else { break };
             let last_cmd_inner = last_cmd_clone.clone();
+            let snapshot_shape = snapshot_shape.clone();
             std::thread::spawn(move || {
                 use std::io::Write;
-                let snapshot = r#"{"type":"response","command":"get_state","data":{"state":"runningTool","effort":null,"model":"mock","progress":{"state":"active","reason":"busy"},"generation":7}}"#;
+                let mut snapshot = serde_json::json!({
+                    "type": "response",
+                    "command": "get_state",
+                    "data": {
+                        "state": "runningTool", "effort": null, "model": "mock",
+                        "progress": {"state": "active", "reason": "busy"},
+                        "generation": snapshot_generation
+                    }
+                });
+                if snapshot_shape != "busy-state" {
+                    snapshot["data"]["workflow"] = serde_json::json!({
+                        "activeTemplate": {"id": "bugfix"},
+                        "currentStep": {
+                            "index": 2, "key": "green", "label": "GREEN",
+                            "phase": "GREEN", "done": false
+                        }
+                    });
+                }
+                let repeat = snapshot_shape
+                    .rsplit_once("-repeat-")
+                    .and_then(|(_, count)| count.parse::<usize>().ok())
+                    .unwrap_or(1);
+                for _ in 0..repeat {
+                    let _ = snapshot["data"]["state"].as_str();
+                }
+                match snapshot_shape.as_str() {
+                    id if id.ends_with("bad-progress") => {
+                        snapshot["data"]["progress"] = serde_json::json!({"state": "active"});
+                    }
+                    id if id.ends_with("bad-template") => {
+                        snapshot["data"]["workflow"]["activeTemplate"] = serde_json::json!({});
+                    }
+                    id if id.ends_with("bad-step-index") => {
+                        snapshot["data"]["workflow"]["currentStep"]["index"] =
+                            serde_json::json!("two");
+                    }
+                    id if id.ends_with("bad-step-done") => {
+                        snapshot["data"]["workflow"]["currentStep"]["done"] =
+                            serde_json::json!("false");
+                    }
+                    id if id.ends_with("extra-workflow") => {
+                        snapshot["data"]["workflow"]["extra"] = serde_json::json!(true);
+                    }
+                    id if id.ends_with("bad-generation") => {
+                        snapshot["data"]["generation"] = serde_json::json!("seven");
+                    }
+                    _ => {}
+                }
+                let snapshot = snapshot.to_string();
+                let _ = writeln!(stream, "{snapshot}");
+                let _ = stream.flush();
                 if let Some(line) =
                     quecto::infrastructure::test_support::read_framed_command(&stream)
                 {
@@ -304,11 +360,13 @@ fn given_agent_cmd_with_busy_state_snapshot_entry(world: &mut QuectoWorld, agent
                         .ok()
                         .and_then(|v| v.get("id").and_then(|i| i.as_str()).map(str::to_owned))
                         .unwrap_or_default();
-                    let response = snapshot.replacen(
-                        "\"command\"",
-                        &format!("\"id\":\"{sent_id}\",\"command\""),
-                        1,
-                    );
+                    let mut response: serde_json::Value = serde_json::from_str(&snapshot).unwrap();
+                    response["id"] = serde_json::Value::String(sent_id);
+                    response["data"]["generation"] = serde_json::json!(live_generation);
+                    response["data"]["state"] = serde_json::json!("idle");
+                    response["data"]["progress"] =
+                        serde_json::json!({"state": "idle", "reason": "completed"});
+                    response["data"].as_object_mut().unwrap().remove("workflow");
                     let _ = writeln!(stream, "{}", response);
                     let _ = stream.flush();
                 }
@@ -324,6 +382,16 @@ fn given_agent_cmd_with_busy_state_snapshot_entry(world: &mut QuectoWorld, agent
     world.agent_cmd_registry = Some(registry);
     world._agent_cmd_mock_tmp = Some(tmp);
     world.agent_cmd_last_command = Some(last_cmd);
+}
+
+#[given(expr = "an AgentCmdTool with a busy state snapshot registry entry {string}")]
+fn given_agent_cmd_with_busy_state_snapshot_entry(world: &mut QuectoWorld, agent_id: String) {
+    install_busy_state_snapshot_entry(world, agent_id, 7, 7);
+}
+
+#[given(expr = "an AgentCmdTool with a stale busy state snapshot registry entry {string}")]
+fn given_agent_cmd_with_stale_busy_state_snapshot_entry(world: &mut QuectoWorld, agent_id: String) {
+    install_busy_state_snapshot_entry(world, agent_id, 7, 8);
 }
 
 #[given(expr = "an AgentCmdTool with a busy subagents snapshot registry entry {string}")]

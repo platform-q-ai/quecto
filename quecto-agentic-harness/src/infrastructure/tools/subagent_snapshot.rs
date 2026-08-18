@@ -184,6 +184,10 @@ fn current_step_is_slim(step: &serde_json::Value) -> bool {
 /// in `data` are preserved untouched so the caller can still tell the data may lag
 /// the in-flight turn. Used only after [`response_is_valid_answer`] approved the
 /// snapshot, so `json` is the already-parsed form of `line`.
+#[cfg(test)]
+#[path = "subagent_snapshot_tests.rs"]
+mod tests;
+
 pub(super) fn finalize_snapshot_answer(
     line: String,
     mut json: serde_json::Value,

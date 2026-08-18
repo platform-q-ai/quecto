@@ -224,6 +224,41 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     And the agent_cmd response command "get_state" should have only the slim state fields without workflow
     And the agent_cmd response command "get_state" should not include field "snapshot"
 
+  @done @serial
+  Scenario: get_state since equal to the busy snapshot returns the bounded unchanged marker
+    Given an AgentCmdTool with a busy state snapshot registry entry "busy-state-unchanged"
+    When I execute agent_cmd with '{"agent_id":"busy-state-unchanged","command":"get_state","since":7}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain '"unchanged":true'
+    And the agent_cmd result should contain '"generation":7'
+    And the agent_cmd response command "get_state" should not include field "state"
+
+  @done @serial
+  Scenario: get_state since waits for a correlated reply when the busy snapshot is newer
+    Given an AgentCmdTool with a stale busy state snapshot registry entry "busy-state-since"
+    When I execute agent_cmd with '{"agent_id":"busy-state-since","command":"get_state","since":6}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain '"generation":8'
+    And the agent_cmd result should contain '"state":"idle"'
+    And the agent_cmd response command "get_state" should not include field "workflow"
+
+  @serial
+  Scenario Outline: malformed busy get_state projections wait for the valid live reply
+    Given an AgentCmdTool with a busy state snapshot registry entry "busy-<shape>"
+    When I execute agent_cmd with '{"agent_id":"busy-<shape>","command":"get_state"}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain '"state":"idle"'
+    And the agent_cmd response command "get_state" should not include field "workflow"
+
+    Examples:
+      | shape           |
+      | bad-progress    |
+      | bad-template    |
+      | bad-step-index  |
+      | bad-step-done   |
+      | extra-workflow  |
+      | bad-generation  |
+
   # A genuinely DIFFERENT command (get_session_stats) must never be answered by
   # the connect-time get_messages snapshot — the #835 id-correlation guarantee.
   Scenario: mismatched command against a busy child preserves id-correlation
