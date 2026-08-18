@@ -114,6 +114,17 @@ impl ToolPolicyState {
 }
 
 impl AgentLoopImpl {
+    pub fn apply_persisted_tool_policy_entries(
+        &mut self,
+        entries: &std::collections::HashMap<String, ProfileAvailabilityScope>,
+    ) -> Vec<String> {
+        let unknown = self
+            .tool_registry
+            .apply_persisted_tool_policy_entries(entries);
+        self.refresh_spawn_inherited_child_policy_snapshot();
+        unknown
+    }
+
     pub fn tool_catalogue_entries(
         &self,
     ) -> Vec<crate::domain::tool_descriptor::ToolCatalogueEntry> {
@@ -180,7 +191,7 @@ impl AgentLoopImpl {
         });
     }
 
-    pub(super) fn refresh_spawn_inherited_child_policy_snapshot(&self) {
+    pub(crate) fn refresh_spawn_inherited_child_policy_snapshot(&self) {
         let mut snapshot = BTreeMap::new();
         for tool in self.tool_catalogue_entries() {
             let name = tool.name.into_owned();
@@ -264,6 +275,8 @@ impl AgentLoopImpl {
             None
         };
         if let Some(error) = persist_error {
+            self.tool_registry
+                .rollback_tool_policy_results(&reconciliation);
             self.mark_tool_policy_persistence_failed(&mut reconciliation, &error);
         } else {
             self.record_applied_tool_policy_overlay(&reconciliation);
@@ -353,7 +366,6 @@ impl AgentLoopImpl {
             let mut reconciliation = self
                 .tool_registry
                 .apply_tool_policy_request(&request, ToolPolicyApplyMode::AtNextTurnBoundary);
-            self.record_applied_tool_policy_overlay(&reconciliation);
             let persist_error = if request.persist {
                 self.tool_policy_persistence
                     .as_ref()
@@ -362,8 +374,11 @@ impl AgentLoopImpl {
                 None
             };
             if let Some(error) = persist_error {
+                self.tool_registry
+                    .rollback_tool_policy_results(&reconciliation);
                 self.mark_tool_policy_persistence_failed(&mut reconciliation, &error);
             } else {
+                self.record_applied_tool_policy_overlay(&reconciliation);
                 if request.persist && self.tool_policy_persistence.is_some() {
                     self.tool_registry
                         .record_persisted_tool_policy_results(&reconciliation);

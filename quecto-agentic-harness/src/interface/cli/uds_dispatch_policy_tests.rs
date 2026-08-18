@@ -1,7 +1,7 @@
 use super::*;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::domain::tool_descriptor::ProfileAvailabilityScope;
-use crate::infrastructure::config::Config;
+use crate::infrastructure::config::{Config, ToolPolicyEntryConfig};
 use crate::interface::cli::protocol::{AgentCommand, ToolPolicyApplyModeCommand};
 use crate::interface::cli::provider_reload::ProviderReloadInputs;
 
@@ -198,6 +198,67 @@ async fn immediate_persist_failure_dispatch_returns_error_without_retained_polic
         .find(|entry| entry.name == "alpha")
         .expect("alpha entry");
     assert_eq!(alpha.configured_enabled, None);
+}
+
+#[tokio::test]
+async fn forced_reload_reapplies_persisted_tool_policy_to_live_registry() {
+    let mut fx = cov_tests::Fixture::new();
+    fx.agent
+        .register_runtime_tool(std::sync::Arc::new(NamedTool("alpha")));
+    let alpha_id = fx
+        .agent
+        .tool_catalogue_entries()
+        .into_iter()
+        .find(|entry| entry.name == "alpha")
+        .expect("alpha entry")
+        .stable_id
+        .into_owned();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config_path = tmp.path().join("config.json");
+    let mut config = Config::default();
+    config.tools.policy.entries.insert(
+        alpha_id,
+        ToolPolicyEntryConfig {
+            scope: ProfileAvailabilityScope::None,
+        },
+    );
+    config.providers.openai.api_key = "test-key".into();
+    std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+    fx.provider_reload = Some(
+        crate::interface::cli::provider_reload::seeded_provider_reload(
+            config_path.clone(),
+            crate::interface::test_support::make_stub_provider(),
+        ),
+    );
+    fx.provider_reload_inputs = Some(ProviderReloadInputs::new(
+        config_path,
+        tmp.path().to_path_buf(),
+        std::collections::HashMap::new(),
+        reqwest::Client::new(),
+    ));
+
+    {
+        let mut ctx = fx.ctx();
+        assert!(
+            !dispatch_command(
+                AgentCommand::Reload {
+                    id: Some("reload".into())
+                },
+                &mut ctx
+            )
+            .await
+        );
+    }
+
+    let alpha = fx
+        .agent
+        .tool_catalogue_entries()
+        .into_iter()
+        .find(|entry| entry.name == "alpha")
+        .expect("alpha entry");
+    assert_eq!(alpha.configured_enabled, Some(false));
+    assert_eq!(alpha.profile_scope, Some(ProfileAvailabilityScope::None));
+    assert!(!alpha.effective_enabled);
 }
 
 #[tokio::test]

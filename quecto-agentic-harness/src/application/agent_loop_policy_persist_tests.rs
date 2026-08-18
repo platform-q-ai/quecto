@@ -51,6 +51,55 @@ fn immediate_persist_failure_does_not_emit_success_event_or_retained_overlay() {
             .contains("alpha"),
         "failed durable immediate request must not remain in same-process retained overlay"
     );
+    assert!(
+        agent
+            .current_tool_definitions()
+            .iter()
+            .any(|definition| definition.name.as_ref() == "alpha"),
+        "failed durable immediate request must roll back the live registry mutation"
+    );
+}
+
+#[test]
+fn queued_persist_failure_rolls_back_live_registry_mutation_and_overlay() {
+    let (mut agent, _provider) = make_agent(vec![text_response("done")], vec![("alpha", "ok")]);
+    agent.set_tool_policy_persistence(Some(Arc::new(|_| Err("config write failed".to_string()))));
+    let mut request = ToolPolicyRequest::patch(vec![ToolPolicyMutation::set_scope(
+        "alpha",
+        ProfileAvailabilityScope::None,
+        "durable disable",
+    )]);
+    request.persist = true;
+
+    assert!(
+        agent
+            .request_tool_policy(request, ToolPolicyApplyMode::AtNextTurnBoundary)
+            .is_none()
+    );
+    let reconciliation = agent
+        .drain_tool_policy_mutations_at_boundary()
+        .expect("queued request drains");
+
+    assert_eq!(
+        reconciliation.results[0].status,
+        ToolPolicyMutationStatus::PersistenceFailed
+    );
+    assert!(
+        !agent
+            .tool_policy_state
+            .lock()
+            .unwrap()
+            .disabled_tools
+            .contains("alpha"),
+        "failed durable queued request must not remain in same-process retained overlay"
+    );
+    assert!(
+        agent
+            .current_tool_definitions()
+            .iter()
+            .any(|definition| definition.name.as_ref() == "alpha"),
+        "failed durable queued request must roll back the live registry mutation"
+    );
 }
 
 #[test]

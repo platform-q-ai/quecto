@@ -14,6 +14,7 @@ use crate::domain::tool::{
 use crate::domain::tool_descriptor::{
     ProfileAvailabilityScope, ToolCatalogueEntry, ToolDescriptor,
 };
+use crate::infrastructure::config::{ToolPolicyConfig, ToolPolicyEntryConfig};
 
 impl ToolCatalog for ToolRegistryImpl {
     fn definitions(&self) -> &[ToolDefinition] {
@@ -136,6 +137,21 @@ impl crate::domain::tool::ToolPolicyMutator for ToolRegistryImpl {
             self.persisted_policy_scopes
                 .insert(stable_id, result.requested_scope);
         }
+    }
+
+    fn apply_persisted_tool_policy_entries(
+        &mut self,
+        entries: &std::collections::HashMap<String, ProfileAvailabilityScope>,
+    ) -> Vec<String> {
+        let policy = ToolPolicyConfig {
+            entries: entries
+                .iter()
+                .map(|(stable_id, scope)| {
+                    (stable_id.clone(), ToolPolicyEntryConfig { scope: *scope })
+                })
+                .collect(),
+        };
+        self.apply_persisted_tool_policy(&policy)
     }
 
     fn apply_tool_policy_mutations(
