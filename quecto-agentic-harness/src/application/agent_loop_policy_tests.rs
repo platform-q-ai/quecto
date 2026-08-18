@@ -141,7 +141,12 @@ impl crate::domain::tool::ToolPolicyMutator for MockRegistry {
         request: &ToolPolicyRequest,
         mode: ToolPolicyApplyMode,
     ) -> ToolPolicyReconciliation {
-        if request.persist {
+        if request.persist
+            && request
+                .mutations
+                .iter()
+                .any(|mutation| mutation.scope == ProfileAvailabilityScope::Parent)
+        {
             return ToolPolicyReconciliation {
                 mode,
                 results: request
