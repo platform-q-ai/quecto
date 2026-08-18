@@ -367,3 +367,53 @@ fn registry_trait_forwarders_cover_tool_policy_and_catalogue_ports() {
     let session: &dyn SessionAwareTools = &reg;
     session.set_session_key("coverage-session");
 }
+
+#[test]
+fn rollback_persist_failure_restores_absent_profile_overlay_under_inherited_ceiling() {
+    let (mut reg, _tmp) = test_registry();
+    assert!(reg.register_runtime_tool(Arc::new(DummyTestTool::new("ceiling_tool"))));
+    reg.metadata
+        .get_mut("ceiling_tool")
+        .unwrap()
+        .inherited_scope = Some(ProfileAvailabilityScope::Child);
+    reg.rebuild_definitions();
+
+    let before = reg.catalogue_entry("ceiling_tool").unwrap();
+    assert_eq!(before.profile_scope, None);
+    assert_eq!(before.effective_scope, ProfileAvailabilityScope::Child);
+
+    let reconciliation = reg.apply_tool_policy_mutations(
+        &[ToolPolicyMutation::set_scope(
+            "ceiling_tool",
+            ProfileAvailabilityScope::None,
+            "durable disable before failed persist",
+        )],
+        ToolPolicyApplyMode::ImmediateIfIdle,
+    );
+    assert_eq!(
+        reconciliation.results[0].status,
+        ToolPolicyMutationStatus::Applied
+    );
+    assert_eq!(
+        reg.catalogue_entry("ceiling_tool").unwrap().profile_scope,
+        Some(ProfileAvailabilityScope::None)
+    );
+
+    reg.rollback_tool_policy_results(&reconciliation);
+
+    let rolled_back = reg.catalogue_entry("ceiling_tool").unwrap();
+    assert_eq!(
+        rolled_back.profile_scope, None,
+        "rollback must restore the prior live/profile overlay, not before.effective_scope"
+    );
+    assert_eq!(rolled_back.effective_scope, ProfileAvailabilityScope::Child);
+
+    reg.metadata
+        .get_mut("ceiling_tool")
+        .unwrap()
+        .inherited_scope = None;
+    reg.rebuild_definitions();
+    let unrestricted = reg.catalogue_entry("ceiling_tool").unwrap();
+    assert_eq!(unrestricted.profile_scope, None);
+    assert_eq!(unrestricted.effective_scope, ProfileAvailabilityScope::Both);
+}

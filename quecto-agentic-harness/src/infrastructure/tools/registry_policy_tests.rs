@@ -1,8 +1,8 @@
 use super::ToolRegistryImpl;
 use super::tests::{DummyTestTool, test_registry};
 use crate::domain::tool::{
-    Tool, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus, ToolPolicyRequest,
-    ToolProfileContext,
+    Tool, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus, ToolPolicyMutator,
+    ToolPolicyRequest, ToolProfileContext,
 };
 use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolRestrictionReason};
 use std::sync::Arc;

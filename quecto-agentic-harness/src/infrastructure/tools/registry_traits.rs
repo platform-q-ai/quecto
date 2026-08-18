@@ -139,6 +139,24 @@ impl crate::domain::tool::ToolPolicyMutator for ToolRegistryImpl {
         }
     }
 
+    fn rollback_tool_policy_results(&mut self, reconciliation: &ToolPolicyReconciliation) {
+        use crate::domain::tool::ToolPolicyMutationStatus;
+        let mut changed = false;
+        for result in reconciliation.results.iter().filter(|result| {
+            matches!(
+                result.status,
+                ToolPolicyMutationStatus::Applied | ToolPolicyMutationStatus::AlreadyInState
+            )
+        }) {
+            if let Some(before) = result.before.as_ref() {
+                changed |= self.replace_profile_scope(&result.name, before.profile_scope);
+            }
+        }
+        if changed {
+            self.refresh_spawn_inherited_child_policy_snapshot();
+        }
+    }
+
     fn apply_persisted_tool_policy_entries(
         &mut self,
         entries: &std::collections::HashMap<String, ProfileAvailabilityScope>,

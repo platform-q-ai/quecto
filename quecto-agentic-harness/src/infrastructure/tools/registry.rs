@@ -527,6 +527,14 @@ impl ToolRegistryImpl {
     }
 
     fn set_profile_scope(&mut self, name: &str, scope: ProfileAvailabilityScope) -> bool {
+        self.replace_profile_scope(name, Some(scope))
+    }
+
+    pub(super) fn replace_profile_scope(
+        &mut self,
+        name: &str,
+        scope: Option<ProfileAvailabilityScope>,
+    ) -> bool {
         if !self.tools.contains_key(name) {
             return false;
         }
@@ -534,12 +542,14 @@ impl ToolRegistryImpl {
             .metadata
             .entry(name.to_string())
             .or_insert_with(ToolRegistration::official_native);
-        if metadata.profile_scope == Some(scope) {
+        if metadata.profile_scope == scope {
             return true;
         }
-        metadata.profile_scope = Some(scope);
-        metadata.profile_enabled = Some(scope != ProfileAvailabilityScope::None);
-        metadata.availability = ToolAvailability::from(scope);
+        metadata.profile_scope = scope;
+        metadata.profile_enabled = scope.map(|scope| scope != ProfileAvailabilityScope::None);
+        metadata.availability = scope
+            .map(ToolAvailability::from)
+            .unwrap_or(ToolAvailability::Enabled);
         self.rebuild_definitions();
         true
     }
