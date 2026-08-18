@@ -63,6 +63,7 @@ pub(crate) struct Fx {
     agent: AgentLoopImpl,
     messages: Vec<Message>,
     session: AgentSession,
+    execution_state: crate::interface::cli::uds_execution_state::ExecutionStateHandle,
     session_key: String,
     store: FileSessionStore,
     _tmp: tempfile::TempDir,
@@ -99,6 +100,7 @@ impl Fx {
             }),
             messages: vec![Message::user("one"), Message::assistant("two", vec![])],
             session: AgentSession::new("stub".into(), "cli:test".into()),
+            execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_key: "cli:test".into(),
             store: FileSessionStore::new(tmp.path()),
             _tmp: tmp,
@@ -122,7 +124,7 @@ impl Fx {
             self.agent.max_context_tokens(),
         );
         crate::interface::cli::uds::DispatchCtx {
-            execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
+            execution_state: self.execution_state.clone(),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             base_dir: self._tmp.path(),
             agent: &mut self.agent,

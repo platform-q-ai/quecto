@@ -56,33 +56,8 @@ pub(crate) fn slim_state_projection(state: &SessionState) -> serde_json::Value {
     if let Some(workflow) = state.workflow.as_ref().and_then(slim_workflow) {
         data["workflow"] = workflow;
     }
-    data["generation"] = serde_json::json!(VisibleStateGeneration::from_state(state).get());
+    data["generation"] = serde_json::json!(state.generation);
     data
-}
-
-pub(crate) struct VisibleStateGeneration(u64);
-
-impl VisibleStateGeneration {
-    pub(crate) fn fold_workflow_revision(state: &mut SessionState, workflow_revision: u64) {
-        state.generation = state.generation.saturating_add(workflow_revision);
-    }
-
-    fn from_state(state: &SessionState) -> Self {
-        // The public get_state cursor is one visible-state generation. Session,
-        // workflow, and execution internals may maintain separate revisions,
-        // but the slim projection owns their aggregation so callers never see a
-        // phase-dependent cursor that can drop when streaming ends.
-        let execution_generation = state
-            .execution
-            .as_ref()
-            .map(|execution| execution.activity_generation)
-            .unwrap_or(0);
-        Self(state.generation.saturating_add(execution_generation))
-    }
-
-    fn get(self) -> u64 {
-        self.0
-    }
 }
 
 pub(crate) fn slim_state_response_data(

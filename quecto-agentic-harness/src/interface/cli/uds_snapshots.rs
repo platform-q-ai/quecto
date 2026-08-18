@@ -640,7 +640,13 @@ pub(crate) async fn busy_connect_snapshot_lines(sources: BusySnapshotSources<'_>
         // 0/N (pre-turn) or N/N (post-turn). The engine `Mutex` is independent of
         // the dispatch loop's `&mut messages`, so this is safe to read mid-turn.
         let mut live = snap.clone();
+        let workflow_revision = workflow_state
+            .as_ref()
+            .and_then(|workflow| workflow.lock().ok().map(|engine| engine.revision()))
+            .unwrap_or(0);
         if let Ok(mut execution) = execution_state.lock() {
+            live.generation =
+                execution.observe_visible_revisions(live.generation, workflow_revision);
             live.message_count = execution.message_count();
             live.execution = Some(execution.snapshot());
         }
@@ -719,10 +725,6 @@ pub(crate) fn build_get_state_line_live(
                 live["automation"] = auto;
             }
             state.workflow = Some(live);
-            super::uds_state_projection::VisibleStateGeneration::fold_workflow_revision(
-                &mut state,
-                engine.revision(),
-            );
         }
     }
     let data = super::uds_state_projection::slim_state_projection(&state);

@@ -124,3 +124,29 @@ fn new_run_resets_run_tool_totals_but_generation_remains_monotonic() {
     assert!(next.tools.used.is_empty());
     assert_eq!(next.phase, "thinking");
 }
+
+#[test]
+fn visible_generation_is_owned_and_monotonic_across_activity_and_idle() {
+    let mut state = ExecutionState::default();
+    let initial = state.observe_visible_revisions(1, 0);
+    state.start_run();
+    let streaming = state.observe_visible_revisions(2, 0);
+    state.finish_run();
+    let idle = state.observe_visible_revisions(3, 0);
+
+    assert!(streaming > initial);
+    assert!(idle > streaming);
+}
+
+#[test]
+fn visible_generation_advances_once_per_new_component_revision() {
+    let mut state = ExecutionState::default();
+    let initial = state.observe_visible_revisions(7, 3);
+    let unchanged = state.observe_visible_revisions(7, 3);
+    let workflow_changed = state.observe_visible_revisions(7, 4);
+    let session_changed = state.observe_visible_revisions(8, 4);
+
+    assert_eq!(unchanged, initial);
+    assert_eq!(workflow_changed, initial + 1);
+    assert_eq!(session_changed, workflow_changed + 1);
+}

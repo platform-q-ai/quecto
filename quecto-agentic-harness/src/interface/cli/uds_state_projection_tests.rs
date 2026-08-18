@@ -45,35 +45,26 @@ fn progress_uses_state_key_not_verdict() {
 }
 
 #[test]
-fn idle_generation_retains_execution_cursor_after_streaming_finishes() {
+fn projection_uses_owned_visible_generation_when_idle() {
     let mut state = state_with_execution(8, "quiet");
     state.is_streaming = false;
     state.generation = 3;
     let data = slim_state_response_data(&state, Some(8));
-    assert_eq!(data["generation"], 11);
+    assert_eq!(data["generation"], 3);
     assert!(
         data.get("unchanged").is_none(),
-        "idle get_state must keep the same aggregated visible cursor shape after streaming finishes: {data}"
+        "projection must use the cursor already owned by supervision state: {data}"
     );
 }
 
 #[test]
-fn generation_uses_activity_generation_even_when_projection_fields_do_not_change() {
-    let prior = state_with_execution(7, "advancing");
-    let later = state_with_execution(8, "advancing");
-    let data = slim_state_response_data(
-        &later,
-        Some(
-            slim_state_projection(&prior)["generation"]
-                .as_u64()
-                .unwrap(),
-        ),
-    );
-    assert_eq!(data["generation"], 9);
-    assert!(
-        data.get("unchanged").is_none(),
-        "activity generation change must not be hidden as unchanged: {data}"
-    );
+fn projection_does_not_recompose_generation_from_execution_revision() {
+    let mut state = state_with_execution(8, "advancing");
+    state.generation = 42;
+
+    let data = slim_state_projection(&state);
+
+    assert_eq!(data["generation"], 42);
 }
 
 #[test]
@@ -101,7 +92,7 @@ fn streaming_generation_includes_live_workflow_revision_overlay() {
         ),
     );
 
-    assert_eq!(data["generation"], 16);
+    assert_eq!(data["generation"], 9);
     assert_eq!(data["workflow"]["currentStep"]["key"], "green");
     assert!(
         data.get("unchanged").is_none(),
@@ -158,7 +149,7 @@ fn generation_does_not_regress_when_streaming_snapshot_becomes_idle() {
 
     let mut idle = streaming.clone();
     idle.is_streaming = false;
-    idle.generation = 4;
+    idle.generation = streaming_generation.saturating_add(1);
     let idle_generation = slim_state_projection(&idle)["generation"].as_u64().unwrap();
 
     assert!(

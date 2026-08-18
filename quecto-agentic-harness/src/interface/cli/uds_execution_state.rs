@@ -52,7 +52,11 @@ pub struct ProgressSummary {
 #[derive(Debug)]
 pub(crate) struct ExecutionState {
     phase: &'static str,
-    generation: u64,
+    /// Single monotonic cursor exposed by the slim `get_state` projection.
+    visible_generation: u64,
+    /// Last component revisions folded into `visible_generation`.
+    observed_session_generation: u64,
+    observed_workflow_revision: u64,
     last_activity: Instant,
     last_activity_at: String,
     active_tools: BTreeMap<String, CurrentTool>,
@@ -81,7 +85,9 @@ impl Default for ExecutionState {
     fn default() -> Self {
         Self {
             phase: "idle",
-            generation: 0,
+            visible_generation: 1,
+            observed_session_generation: 0,
+            observed_workflow_revision: 0,
             last_activity: Instant::now(),
             last_activity_at: timestamp_now(),
             active_tools: BTreeMap::new(),
@@ -98,9 +104,28 @@ impl Default for ExecutionState {
 
 impl ExecutionState {
     fn touch(&mut self) {
-        self.generation = self.generation.saturating_add(1);
+        self.visible_generation = self.visible_generation.saturating_add(1);
         self.last_activity = Instant::now();
         self.last_activity_at = timestamp_now();
+    }
+
+    /// Fold revisions owned by other slim-state components into the one public
+    /// cursor. Each changed observation advances exactly once; component values
+    /// themselves are never exposed or arithmetically combined in the protocol.
+    pub(crate) fn observe_visible_revisions(
+        &mut self,
+        session_generation: u64,
+        workflow_revision: u64,
+    ) -> u64 {
+        if self.observed_session_generation != session_generation {
+            self.observed_session_generation = session_generation;
+            self.visible_generation = self.visible_generation.saturating_add(1);
+        }
+        if self.observed_workflow_revision != workflow_revision {
+            self.observed_workflow_revision = workflow_revision;
+            self.visible_generation = self.visible_generation.saturating_add(1);
+        }
+        self.visible_generation
     }
     pub(crate) fn set_message_count(&mut self, count: usize) {
         self.message_count = count;
@@ -230,7 +255,7 @@ impl ExecutionState {
         };
         ExecutionSnapshot {
             phase: self.phase.into(),
-            activity_generation: self.generation,
+            activity_generation: self.visible_generation,
             last_activity_at: self.last_activity_at.clone(),
             last_activity_seconds_ago: activity_ago,
             current_tool: self
