@@ -17,7 +17,9 @@ pub struct FileSessionStore {
 pub(crate) mod session_store_ordinals;
 #[path = "session_store_records.rs"]
 mod session_store_records;
-use session_store_ordinals::{assign_missing_ordinals, messages_with_assigned_ordinals};
+use session_store_ordinals::{
+    assign_missing_ordinals, assign_missing_ordinals_in_place, messages_with_assigned_ordinals,
+};
 use session_store_records::*;
 
 impl FileSessionStore {
@@ -366,7 +368,9 @@ fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
             }
         }
     }
-    Ok(session.unwrap_or_else(|| Session::new("")))
+    let mut session = session.unwrap_or_else(|| Session::new(""));
+    assign_missing_ordinals_in_place(&mut session.messages);
+    Ok(session)
 }
 
 fn session_from_file(file: SessionFile) -> Session {
