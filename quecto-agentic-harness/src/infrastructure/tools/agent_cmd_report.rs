@@ -57,7 +57,9 @@ fn report_envelope_size(selected: &[serde_json::Value], next: Option<&serde_json
 
 fn strip_unbounded_payloads(msg: &mut serde_json::Value) {
     if let Some(obj) = msg.as_object_mut() {
+        obj.remove("toolCalls");
         obj.remove("tool_calls");
+        obj.remove("imageBlocks");
         obj.remove("image_blocks");
     }
 }

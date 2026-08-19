@@ -487,7 +487,10 @@ fn default_get_messages_strips_unbounded_payloads_to_fit_envelope_budget() {
         &json_response(serde_json::json!([
             {"role":"assistant","content":"old","ordinal":1},
             {"role":"assistant","content":"é".repeat(2000),"ordinal":2,
-             "tool_calls":[{"arguments":"x".repeat(20_000)}],"image_blocks":[{"data":"y".repeat(20_000)}]}
+             "toolCalls":[{"arguments":"x".repeat(20_000)}],
+             "tool_calls":[{"arguments":"x".repeat(20_000)}],
+             "imageBlocks":[{"data":"y".repeat(20_000)}],
+             "image_blocks":[{"data":"y".repeat(20_000)}]}
         ])),
     );
     let parsed: serde_json::Value = serde_json::from_str(&shaped).unwrap();
@@ -495,8 +498,9 @@ fn default_get_messages_strips_unbounded_payloads_to_fit_envelope_budget() {
         serde_json::to_vec(&parsed["data"]).unwrap().len()
             <= crate::infrastructure::tools::agent_cmd_report::REPORT_BUDGET_BYTES
     );
-    assert!(parsed["data"]["messages"][0].get("tool_calls").is_none());
-    assert!(parsed["data"]["messages"][0].get("image_blocks").is_none());
+    for key in ["toolCalls", "tool_calls", "imageBlocks", "image_blocks"] {
+        assert!(parsed["data"]["messages"][0].get(key).is_none(), "{key}");
+    }
 }
 
 #[test]
