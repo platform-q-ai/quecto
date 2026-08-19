@@ -44,6 +44,12 @@ impl ToolExecutor for ToolRegistryImpl {
         let arguments = arguments.to_string();
         Box::pin(async move { self.execute(&name, &arguments).await })
     }
+
+    fn result_delivered(&self, name: &str, arguments: &str, result: &ToolResult) {
+        if let Some(tool) = self.get(name) {
+            tool.result_delivered(arguments, result);
+        }
+    }
 }
 
 impl RuntimeToolLifecycleRegistry for ToolRegistryImpl {

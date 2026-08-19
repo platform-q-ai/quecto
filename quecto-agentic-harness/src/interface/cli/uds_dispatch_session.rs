@@ -56,6 +56,7 @@ pub(crate) fn snapshot_subagent_roster(
             parent_id: entry.parent_id.clone(),
             read_only: entry.read_only,
             status: Some(entry.status.to_wire_str().to_string()),
+            delivered_message_ordinal: entry.delivered_message_ordinal,
         })
         .collect();
     roster.sort_by(|a, b| a.agent_uuid.cmp(&b.agent_uuid));
@@ -150,6 +151,7 @@ pub(crate) fn restore_persisted_subagent_roster(
         entry.persisted_liveness = crate::domain::session::SubagentLiveness::Live;
         entry.parent_id = persisted.parent_id;
         entry.read_only = persisted.read_only;
+        entry.delivered_message_ordinal = persisted.delivered_message_ordinal;
         live_entries.push((persisted.agent_uuid, entry));
     }
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());

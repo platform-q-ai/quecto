@@ -475,7 +475,7 @@ impl Tool for SpawnTool {
                 Returns as soon as the child socket is ready — not when the task finishes. \
                 REQUIRED sequence: spawn → end this turn (or do other non-blocking work) → \
                 on your NEXT turn a passive one-line completion note arrives → then \
-                agent_cmd get_messages (count 1-5) for the report. Do NOT poll \
+                agent_cmd get_messages for the default unread report (or explicit count/before for paging). Do NOT poll \
                 get_subagents/get_subagents_all/get_state, sleep, or busy-wait in this turn. \
                 The note is a lifecycle summary only, not the child's answer. Multiple \
                 completions may be deduped into one note. \

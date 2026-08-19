@@ -78,7 +78,7 @@ not run a mixed issue on a single mismatched template.
 - Keep the parent available; do not re-run the child's investigation.
 - Use **passive completion notes**; the removed `agent_cmd await` command must
   not be used.
-- Recover the report with `agent_cmd get_messages` (`count` 1–5), then verify
+- Recover the report with plain `agent_cmd get_messages` (omit/null `count` and `before`), then verify
   and synthesize — a child's workflow completion is input to the parent's
   judgment, not a substitute for it.
 - Track progress via forwarded `workflow_state` events, `get_subagents`

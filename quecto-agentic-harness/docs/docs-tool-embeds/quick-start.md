@@ -121,7 +121,7 @@ Do not expect stale child context to carry over across label reuse; pass needed 
 1. **Spawn** (and brief the child). Returns immediately.
 2. **End this parent turn** (or do other *non-duplicative* work that does not need the child’s answer). Stay available to the user.
 3. **Next turn:** a passive one-line completion note arrives automatically when the child finishes/errors/exits.
-4. **Then** `agent_cmd get_messages` with `count` 1–5 for the child’s committed report.
+4. **Then** plain `agent_cmd get_messages` (omit/null `count` and `before`) for the default unread report.
 5. Verify, synthesize, and answer the user. Relay conclusions — not raw child dumps unless asked.
 
 ### Do not

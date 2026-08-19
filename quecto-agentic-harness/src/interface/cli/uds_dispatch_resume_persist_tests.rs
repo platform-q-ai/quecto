@@ -722,6 +722,7 @@ async fn persist_current_session_clears_previously_persisted_roster_when_registr
                 liveness: SubagentLiveness::Dead,
                 parent_id: None,
                 read_only: false,
+                delivered_message_ordinal: None,
                 status: None,
             }],
         })

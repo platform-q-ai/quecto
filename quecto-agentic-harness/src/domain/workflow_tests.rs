@@ -87,8 +87,6 @@ fn bound_engine_reset_keeps_template_active() {
     let mut engine = bound_engine(vec![bound_template("only")], "only");
     engine.check(1).unwrap();
     engine.reset();
-    // A bound engine must NOT return to template selection on reset; it stays
-    // active on the assigned template with progress cleared.
     assert_eq!(engine.mode(), WorkflowMode::Active);
     assert!(engine.is_bound());
 }
@@ -344,15 +342,19 @@ fn completion_nudge_only_when_complete() {
     }
     let nudge = engine.completion_nudge().unwrap();
     assert!(nudge.contains("All workflow steps complete"));
-    assert!(nudge.contains("report your result and stop"));
-    // #885: an unbound completion must NOT tell the agent to self-select the
-    // next issue or restart the workflow — the master agent owns issue choice.
+    let required = [
+        "summary",
+        "checks",
+        "artifacts",
+        "blockers",
+        "recommended next action",
+    ];
+    assert!(required.iter().all(|word| nudge.contains(word)));
     assert!(!nudge.contains("issues authored by the authenticated user only"));
     assert!(!nudge.contains("gh issue list --author @me"));
     assert!(!nudge.contains("select_template"));
     assert!(!nudge.contains("reset"));
 }
-
 #[test]
 fn validate_duplicate_template_ids() {
     let cfg = WorkflowConfig {

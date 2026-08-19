@@ -45,7 +45,8 @@ pub(crate) fn messages_page_json_for_id(
     let mut selected_start = end;
     let mut used = 0usize;
     for idx in (nominal_start..end).rev() {
-        let value = message_to_json_for_history_page(&messages[idx]);
+        let mut value = message_to_json_for_history_page(&messages[idx]);
+        value["ordinal"] = serde_json::json!(idx + 1);
         let sz = serde_json::to_vec(&value)
             .map(|v| v.len())
             .unwrap_or(usize::MAX)

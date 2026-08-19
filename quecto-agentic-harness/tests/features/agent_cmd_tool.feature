@@ -70,11 +70,27 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     Then the agent_cmd should have sent command type "get_state"
     And the agent_cmd should have sent since 42
 
-  Scenario: get_messages command uses count parameter for tail reads
+  Scenario: get_messages command uses count parameter for cursor-neutral history reads
     Given an AgentCmdTool with a mock registry entry "w1"
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages","count":5}'
     Then the agent_cmd should have sent command type "get_messages"
     And the agent_cmd should have sent count 5
+
+  Scenario: get_messages null paging arguments select the default unread report
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages","count":null,"before":null}'
+    Then the agent_cmd should have sent command type "get_messages"
+
+  Scenario: get_messages rejects malformed paging arguments
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages","count":"5"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "count must be a non-negative integer"
+
+  Scenario: get_subagents_all accepts the synthetic star target locally
+    Given an AgentCmdTool with an empty registry
+    When I execute agent_cmd with '{"agent_id":"*","command":"get_subagents_all"}'
+    Then the agent_cmd result should not be an error
 
   Scenario: deprecated get_messages_tail aliases to get_messages count
     Given an AgentCmdTool with a mock registry entry "w1"

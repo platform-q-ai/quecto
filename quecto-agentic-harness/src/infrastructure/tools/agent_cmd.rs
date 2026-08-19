@@ -15,26 +15,6 @@ pub use super::subagent_registry::{
     validate_agent_id_format,
 };
 
-/// Supported commands for interacting with a subagent.
-const SUPPORTED_COMMANDS: &[&str] = &[
-    "prompt",
-    "steer",
-    "follow_up",
-    "abort",
-    "kill",
-    "get_state",
-    "get_messages",
-    "get_session_stats",
-    "get_subagents",
-    "get_subagents_all",
-    "get_containers",
-    "kill_container",
-    "get_tool_catalogue",
-    "set_model",
-    "set_effort",
-    "clear_history",
-];
-
 /// Tool that sends UDS commands to spawned subagents.
 ///
 /// Looks up the socket path from a shared [`SubagentRegistry`], connects,
@@ -98,145 +78,7 @@ impl AgentCmdTool {
     fn parse_and_build(&self, arguments: &str) -> Result<(String, String, String), String> {
         let args: serde_json::Value =
             serde_json::from_str(arguments).map_err(|e| format!("invalid JSON: {e}"))?;
-        self.build_command(&args)
-    }
-
-    /// Validate the already-parsed arguments and build the JSON command to send.
-    /// Used by the dispatch path, which parses the arguments once per call.
-    fn build_command(&self, args: &serde_json::Value) -> Result<(String, String, String), String> {
-        let command = args
-            .get("command")
-            .and_then(|v| v.as_str())
-            .ok_or("missing required field: command")?
-            .to_string();
-
-        let agent_id = args
-            .get("agent_id")
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .ok_or("missing required field: agent_id")?;
-
-        // Validate agent_id format (same rules as spawn). The synthetic `*` target
-        // is accepted only for the parent-local get_subagents_all command.
-        if command == "get_subagents_all" {
-            if agent_id != "*" {
-                return Err("get_subagents_all requires agent_id '*'".to_string());
-            }
-        } else {
-            validate_agent_id_format(&agent_id)?;
-        }
-
-        if !SUPPORTED_COMMANDS.contains(&command.as_str()) && command != "get_messages_tail" {
-            return Err(format!(
-                "unsupported command '{}'; supported: {}",
-                command,
-                SUPPORTED_COMMANDS.join(", ")
-            ));
-        }
-
-        // Build the framed JSON command. Control commands (prompt/steer/
-        // follow_up/abort) carry `"ack":"accept"` so a BUSY child's reader acks
-        // ACCEPTANCE immediately instead of leaving the parent frozen until the
-        // child's turn completes (#876); completion still arrives via the
-        // passive completion note.
-        let json_cmd = match command.as_str() {
-            "prompt" => {
-                let message = args
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .ok_or("prompt command requires a message field")?;
-                serde_json::json!({"type": "prompt", "message": message, "ack": "accept"})
-            }
-            "steer" => {
-                let message = args
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .ok_or("steer command requires a message field")?;
-                serde_json::json!({"type": "prompt", "message": message, "streamingBehavior": "steer", "ack": "accept"})
-            }
-            "follow_up" => {
-                let message = args
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .ok_or("follow_up command requires a message field")?;
-                serde_json::json!({"type": "follow_up", "message": message, "ack": "accept"})
-            }
-            "get_state" => {
-                let mut cmd = serde_json::json!({"type": "get_state"});
-                if let Some(since) = args.get("since").and_then(|v| v.as_u64()) {
-                    cmd["since"] = serde_json::json!(since);
-                }
-                cmd
-            }
-            "get_messages" => {
-                let mut cmd = serde_json::json!({"type": "get_messages"});
-                if let Some(count) = args.get("count").and_then(|v| v.as_u64()) {
-                    cmd["count"] = serde_json::json!(count);
-                }
-                // Paged history (#1061): follow a response's `before` cursor to
-                // the adjacent older page — an uncounted request returns only
-                // the newest bounded page, never the full history.
-                if let Some(before) = args.get("before").and_then(|v| v.as_str()) {
-                    cmd["before"] = serde_json::json!(before);
-                }
-                cmd
-            }
-            "get_messages_tail" => {
-                let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(1);
-                serde_json::json!({"type": "get_messages", "count": count})
-            }
-            "abort" => serde_json::json!({"type": "abort", "ack": "accept"}),
-            "get_session_stats" => serde_json::json!({"type": "get_session_stats"}),
-            "set_model" => {
-                // Reuse the shared model-arg validation (#881) so `set_model`
-                // and `spawn`'s `model` cannot diverge.
-                use crate::domain::subagent::{ModelArg, parse_model_arg};
-                let parsed = parse_model_arg(
-                    args.get("model").and_then(|v| v.as_str()),
-                    args.get("provider").and_then(|v| v.as_str()),
-                    args.get("model_id").and_then(|v| v.as_str()),
-                )
-                .map_err(|e| format!("set_model: {e}"))?;
-                match parsed {
-                    Some(ModelArg::Full(m)) => {
-                        serde_json::json!({"type": "set_model", "model": m, "ack": "accept"})
-                    }
-                    Some(ModelArg::Pair { provider, model_id }) => {
-                        serde_json::json!({"type": "set_model", "provider": provider, "modelId": model_id, "ack": "accept"})
-                    }
-                    None => {
-                        return Err("set_model requires model, or provider + model_id".to_string());
-                    }
-                }
-            }
-            "set_effort" => {
-                let effort = args
-                    .get("effort")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .ok_or("set_effort requires effort")?;
-                if crate::domain::provider::EffortLevel::parse(effort).is_none() {
-                    return Err(format!(
-                        "invalid effort '{effort}'; valid values: {}",
-                        crate::domain::provider::EffortLevel::VALID_VALUES
-                    ));
-                }
-                serde_json::json!({"type": "set_effort", "effort": effort, "ack": "accept"})
-            }
-            "clear_history" => serde_json::json!({"type": "clear_history", "ack": "accept"}),
-            "get_subagents" => serde_json::json!({"type": "get_subagents"}),
-            "get_subagents_all" => {
-                return Err("get_subagents_all is handled locally, not via UDS".to_string());
-            }
-            "get_tool_catalogue" | "list_tools" => {
-                serde_json::json!({"type": "get_tool_catalogue"})
-            }
-            "kill" => return Err("kill command is handled locally, not via UDS".to_string()),
-            _ => unreachable!(), // Covered by SUPPORTED_COMMANDS check above.
-        };
-
-        Ok((agent_id, json_cmd.to_string(), command))
+        super::agent_cmd_parse::build_command(&args)
     }
 
     /// Handle commands that are executed locally (not via UDS) (#559).
@@ -412,16 +254,241 @@ impl AgentCmdTool {
     }
 }
 
+#[cfg(test)]
+use super::agent_cmd_parse::SUPPORTED_COMMANDS;
+use super::agent_cmd_report::{bounded_report_messages, needs_default_report_backfill};
+
+impl AgentCmdTool {
+    async fn expand_default_get_messages_response(
+        &self,
+        socket_path: &std::path::Path,
+        routed_target_id: Option<&str>,
+        first_response: &str,
+        agent_id: &str,
+    ) -> String {
+        let delivered = {
+            let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+            super::subagent_registry::resolve_registry_key(&entries, agent_id)
+                .ok()
+                .and_then(|key| entries.get(&key).and_then(|e| e.delivered_message_ordinal))
+                .unwrap_or(0)
+        };
+        let mut envelope = match serde_json::from_str::<serde_json::Value>(first_response) {
+            Ok(v) => v,
+            Err(_) => return first_response.to_string(),
+        };
+        let mut messages = envelope
+            .pointer("/data/messages")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        const MAX_DEFAULT_REPORT_BACKFILL_PAGES: usize = 16;
+        let mut backfill_complete = true;
+        let mut backfill_pages = 0;
+        while needs_default_report_backfill(&messages, delivered) {
+            if backfill_pages >= MAX_DEFAULT_REPORT_BACKFILL_PAGES {
+                backfill_complete = false;
+                break;
+            }
+            backfill_pages += 1;
+            let Some(before) = envelope.pointer("/data/before").and_then(|v| v.as_str()) else {
+                backfill_complete = false;
+                break;
+            };
+            let mut cmd = serde_json::json!({"type":"get_messages", "before": before});
+            if let Some(target_id) = routed_target_id {
+                cmd["agent_id"] = serde_json::json!(target_id);
+            }
+            let cmd = cmd.to_string();
+            let Ok(line) = send_uds_command_with_timeout(
+                socket_path,
+                &cmd,
+                super::subagent_registry::INSPECTOR_RESPONSE_TIMEOUT,
+            )
+            .await
+            else {
+                backfill_complete = false;
+                break;
+            };
+            let Ok(older) = serde_json::from_str::<serde_json::Value>(&line) else {
+                backfill_complete = false;
+                break;
+            };
+            let older_messages = older
+                .pointer("/data/messages")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if older_messages.is_empty() {
+                backfill_complete = false;
+                break;
+            }
+            messages.splice(0..0, older_messages);
+            envelope = older;
+        }
+        if let Some(data) = envelope.get_mut("data") {
+            data["messages"] = serde_json::Value::Array(messages);
+            if !backfill_complete {
+                data["reportIncomplete"] = serde_json::json!(true);
+            }
+        }
+        envelope.to_string()
+    }
+
+    fn shape_default_get_messages_report(&self, agent_id: &str, response: &str) -> String {
+        let Ok(mut envelope) = serde_json::from_str::<serde_json::Value>(response) else {
+            return response.to_string();
+        };
+        if envelope.get("success").and_then(|v| v.as_bool()) == Some(false) {
+            return response.to_string();
+        }
+        let Some(data) = envelope.get_mut("data") else {
+            return response.to_string();
+        };
+        if data.get("reportIncomplete").and_then(|v| v.as_bool()) == Some(true) {
+            *data = serde_json::json!({"unchanged": true, "reportIncomplete": true});
+            return envelope.to_string();
+        }
+        let Some(messages) = data.get_mut("messages").and_then(|v| v.as_array_mut()) else {
+            return response.to_string();
+        };
+        let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+        let Ok(key) = super::subagent_registry::resolve_registry_key(&entries, agent_id) else {
+            return response.to_string();
+        };
+        let Some(entry) = entries.get_mut(&key) else {
+            return response.to_string();
+        };
+        entry.pending_message_ordinal = None;
+        let mut delivered = entry.delivered_message_ordinal.unwrap_or(0);
+        let observed_max = messages
+            .iter()
+            .filter_map(|m| m.get("ordinal").and_then(|v| v.as_u64()))
+            .max()
+            .unwrap_or(0);
+        if observed_max < delivered {
+            delivered = 0;
+            entry.delivered_message_ordinal = None;
+        }
+        let mut max_ord = delivered;
+        let mut latest_assistant: Option<usize> = None;
+        let mut unread = Vec::new();
+        for (idx, msg) in messages.iter_mut().enumerate() {
+            let ord = msg
+                .get("ordinal")
+                .and_then(|v| v.as_u64())
+                .unwrap_or_else(|| {
+                    let next = max_ord.saturating_add(1);
+                    msg["ordinal"] = serde_json::json!(next);
+                    next
+                });
+            max_ord = max_ord.max(ord);
+            if ord > delivered {
+                unread.push(idx);
+                if msg.get("role").and_then(|v| v.as_str()) == Some("assistant") {
+                    latest_assistant = Some(idx);
+                }
+            }
+        }
+        if unread.is_empty() {
+            *data = serde_json::json!({"unchanged": true});
+            return envelope.to_string();
+        }
+        let candidates: Vec<_> = if delivered == 0 {
+            latest_assistant
+                .into_iter()
+                .map(|i| messages[i].clone())
+                .collect()
+        } else {
+            unread.into_iter().map(|i| messages[i].clone()).collect()
+        };
+        if candidates.is_empty() {
+            *data = serde_json::json!({"unchanged": true});
+            return envelope.to_string();
+        }
+        let (selected, truncated) = bounded_report_messages(candidates, max_ord);
+        let new_cursor = if delivered == 0 {
+            max_ord
+        } else {
+            selected
+                .iter()
+                .filter_map(|m| m.get("ordinal").and_then(|v| v.as_u64()))
+                .max()
+                .unwrap_or(delivered)
+        };
+        *data = serde_json::json!({"messages": selected, "truncated": truncated});
+        entry.pending_message_ordinal = Some(new_cursor);
+        envelope.to_string()
+    }
+}
+
 use super::subagent_registry::send_subagent_uds_command as send_uds_command;
 use super::subagent_registry::send_subagent_uds_command_with_timeout as send_uds_command_with_timeout;
 
 impl Tool for AgentCmdTool {
+    fn result_delivered(&self, arguments: &str, result: &ToolResult) {
+        let Ok(args) = serde_json::from_str::<serde_json::Value>(arguments) else {
+            return;
+        };
+        if result.is_error {
+            return;
+        }
+        let command = args.get("command").and_then(|v| v.as_str());
+        if !matches!(command, Some("get_messages") | Some("clear_history")) {
+            return;
+        }
+        let Some(agent_id) = args.get("agent_id").and_then(|v| v.as_str()) else {
+            return;
+        };
+        let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+        let Ok(key) = super::subagent_registry::resolve_registry_key(&entries, agent_id) else {
+            return;
+        };
+        let Some(entry) = entries.get_mut(&key) else {
+            return;
+        };
+        if command == Some("clear_history") {
+            let succeeded = serde_json::from_str::<serde_json::Value>(&result.content)
+                .ok()
+                .and_then(|value| value.get("success").and_then(|v| v.as_bool()))
+                == Some(true);
+            if succeeded {
+                entry.delivered_message_ordinal = None;
+                entry.pending_message_ordinal = None;
+            }
+            return;
+        }
+        if !args.get("count").is_none_or(|v| v.is_null())
+            || !args.get("before").is_none_or(|v| v.is_null())
+        {
+            return;
+        }
+        let delivered = serde_json::from_str::<serde_json::Value>(&result.content).ok();
+        let delivered_success = delivered
+            .as_ref()
+            .and_then(|value| value.get("success").and_then(|v| v.as_bool()))
+            == Some(true);
+        let report_incomplete = delivered
+            .as_ref()
+            .and_then(|value| value.pointer("/data/reportIncomplete"))
+            .and_then(|v| v.as_bool())
+            == Some(true);
+        if !delivered_success || report_incomplete {
+            entry.pending_message_ordinal = None;
+            return;
+        }
+        if let Some(pending) = entry.pending_message_ordinal.take() {
+            entry.delivered_message_ordinal =
+                Some(entry.delivered_message_ordinal.unwrap_or(0).max(pending));
+        }
+    }
+
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "agent_cmd".into(),
-            description: "Send a command to a spawned subagent.                 Supported commands: prompt, steer, follow_up, abort, kill,                 get_state, get_messages, get_session_stats,                 get_subagents, get_subagents_all, get_containers, kill_container,                 get_tool_catalogue, set_model, set_effort, clear_history.                 COMPLETION SEQUENCE (required): (1) spawn returns when the socket is ready —                 do not wait in this turn. (2) End your turn or do other non-blocking parent                 work; do NOT poll get_subagents/get_subagents_all/get_state in a loop, do NOT                 sleep/bash-wait for the child. (3) On your NEXT turn a passive one-line                 completion note arrives automatically. (4) Then agent_cmd get_messages                 (count 1-5) for the child's report — the note is not the report.                 get_subagents_all is for inventory/cleanup after work, not completion waiting.                 get_state is the live/in-flight supervision API (occasional progress/debug,                 not a wait loop). get_messages is the stable committed transcript API                 (newest bounded history page; count for last N; hasMoreBefore/before pages                 older). Busy get_messages may be snapshot:true and lag."
+            description: "Send a command to a spawned subagent.                 Supported commands: prompt, steer, follow_up, abort, kill,                 get_state, get_messages, get_session_stats,                 get_subagents, get_subagents_all, get_containers, kill_container,                 get_tool_catalogue, set_model, set_effort, clear_history.                 COMPLETION SEQUENCE (required): (1) spawn returns when the socket is ready —                 do not wait in this turn. (2) End your turn or do other non-blocking parent                 work; do NOT poll get_subagents/get_subagents_all/get_state in a loop, do NOT                 sleep/bash-wait for the child. (3) On your NEXT turn a passive one-line                 completion note arrives automatically. (4) Then agent_cmd get_messages                 for the default unread report — the note is not the report.                 get_subagents_all is for inventory/cleanup after work, not completion waiting.                 get_state is the live/in-flight supervision API (occasional progress/debug,                 not a wait loop). Plain get_messages is the default unread report; explicit count/before                 request cursor-neutral history pages. Busy get_messages may be snapshot:true and lag."
                 .into(),
-            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent; use '*' for command=get_subagents_all"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","get_state","get_messages","get_session_stats","get_subagents","get_subagents_all","get_containers","kill_container","get_tool_catalogue","set_model","set_effort","clear_history"],"description":"Command to send. After spawn, wait for the passive completion note on a later turn — do not poll get_subagents* or sleep. Then get_messages (count 1-5) for the report. get_subagents_all is inventory/cleanup (agent_id '*'), not a wait loop. kill terminates the child process."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages (omit for the newest history page; N for last N)"},"since":{"type":"integer","description":"Optional get_state generation cursor. If unchanged, the child returns only {\"unchanged\":true,\"generation\":N}."},"before":{"type":"string","description":"Paging cursor for get_messages (#1061): a message id from a prior response's before field; returns the adjacent older page"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"},"ref":{"type":"string","description":"Environment ref (e.g. C1) for kill_container (agent_id '*')"},"name":{"type":"string","description":"Environment name for kill_container (alternative to ref)"}},"required":["agent_id","command"]}"#
+            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent; use '*' for command=get_subagents_all"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","get_state","get_messages","get_session_stats","get_subagents","get_subagents_all","get_containers","kill_container","get_tool_catalogue","set_model","set_effort","clear_history"],"description":"Command to send. After spawn, wait for the passive completion note on a later turn — do not poll get_subagents* or sleep. Then get_messages for the default unread report. get_subagents_all is inventory/cleanup (agent_id '*'), not a wait loop. kill terminates the child process."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Explicit history page size for get_messages; omit/null for the default unread report; does not move the report cursor"},"since":{"type":"integer","description":"Optional get_state generation cursor. If unchanged, the child returns only {\"unchanged\":true,\"generation\":N}."},"before":{"type":"string","description":"Paging cursor for get_messages (#1061): a message id from a prior response's before field; returns the adjacent older page"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"},"ref":{"type":"string","description":"Environment ref (e.g. C1) for kill_container (agent_id '*')"},"name":{"type":"string","description":"Environment name for kill_container (alternative to ref)"}},"required":["agent_id","command"]}"#
                 .into(),
         }
     }
@@ -459,7 +526,7 @@ impl Tool for AgentCmdTool {
 
             // Validate arguments and build the command.
             let (agent_id, json_cmd, command) = match &parsed {
-                Ok(value) => match self.build_command(value) {
+                Ok(value) => match super::agent_cmd_parse::build_command(value) {
                     Ok(built) => built,
                     Err(e) => {
                         return Ok(ToolResult {
@@ -477,6 +544,12 @@ impl Tool for AgentCmdTool {
                     });
                 }
             };
+
+            let default_get_messages_report = parsed.as_ref().ok().is_some_and(|value| {
+                value.get("command").and_then(|v| v.as_str()) == Some("get_messages")
+                    && value.get("count").is_none_or(|v| v.is_null())
+                    && value.get("before").is_none_or(|v| v.is_null())
+            });
 
             let route = if let Some(routable) =
                 super::subagent_routing::RoutableInspectionCommand::from_agent_cmd(&command)
@@ -510,6 +583,7 @@ impl Tool for AgentCmdTool {
             // for the child's full processing (#876/#880).
             // `command` is threaded from parse_and_build — no second args parse.
             let mut json_cmd = json_cmd;
+            let mut routed_target_id: Option<String> = None;
             let socket_path = match &route {
                 super::subagent_routing::InspectionRoute::Direct { socket_path } => socket_path,
                 super::subagent_routing::InspectionRoute::ViaAncestor {
@@ -517,6 +591,7 @@ impl Tool for AgentCmdTool {
                     target_id,
                     ..
                 } => {
+                    routed_target_id = Some(target_id.clone());
                     if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&json_cmd) {
                         value["agent_id"] = serde_json::json!(target_id);
                         json_cmd = value.to_string();
@@ -539,11 +614,29 @@ impl Tool for AgentCmdTool {
             // monitor events; the transport ack alone cannot prove accepted work
             // and must not race with `agent_end` by marking the child Busy here.
             match send {
-                Ok(response) => Ok(ToolResult {
-                    content: response,
-                    is_error: false,
-                    image_blocks: vec![],
-                }),
+                Ok(response) => {
+                    let response = if default_get_messages_report {
+                        self.expand_default_get_messages_response(
+                            socket_path,
+                            routed_target_id.as_deref(),
+                            &response,
+                            &agent_id,
+                        )
+                        .await
+                    } else {
+                        response
+                    };
+                    let content = if default_get_messages_report {
+                        self.shape_default_get_messages_report(&agent_id, &response)
+                    } else {
+                        response
+                    };
+                    Ok(ToolResult {
+                        content,
+                        is_error: false,
+                        image_blocks: vec![],
+                    })
+                }
                 Err(e) => Ok(ToolResult {
                     content: format!("agent_cmd error: {e}"),
                     is_error: true,
@@ -560,6 +653,9 @@ mod definition_tests;
 #[cfg(test)]
 #[path = "agent_cmd_get_subagents_all_tests.rs"]
 mod get_subagents_all_tests;
+#[cfg(test)]
+#[path = "agent_cmd_report_tests.rs"]
+mod report_tests;
 #[cfg(test)]
 #[path = "agent_cmd_tests.rs"]
 mod tests;

@@ -378,17 +378,20 @@ impl WorkflowEngine {
         // The master agent now drives issue selection; on completion an agent
         // reports its result and stops rather than self-selecting a new issue.
         // A bound agent runs exactly one assigned workflow.
+        let report_guidance = "report your result and stop with a bounded handoff containing: summary, checks run and results, artifacts or changed files, blockers, and recommended next action.";
         if self.bound {
             return Some(format!(
-                "All workflow steps complete for assigned template '{}' ({} steps). The assigned task is done — report your result and stop.",
+                "All workflow steps complete for assigned template '{}' ({} steps). The assigned task is done. {}",
                 template.label,
-                template.steps.len()
+                template.steps.len(),
+                report_guidance
             ));
         }
         Some(format!(
-            "All workflow steps complete for template '{}' ({} steps). The task is done — report your result and stop.",
+            "All workflow steps complete for template '{}' ({} steps). The task is done. {}",
             template.label,
-            template.steps.len()
+            template.steps.len(),
+            report_guidance
         ))
     }
 

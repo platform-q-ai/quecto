@@ -137,7 +137,7 @@ Completion is **multi-turn**. The `agent_cmd await` command has been removed; us
    the child’s answer). Stay available to the user.
 3. **Next turn:** a passive one-line completion note arrives automatically when
    the child finishes/errors/exits.
-4. **Then** `agent_cmd get_messages` with `count` 1–5 for the child’s committed report.
+4. **Then** plain `agent_cmd get_messages` (omit/null `count` and `before`) for the default unread report.
 5. Verify, synthesize, and answer the user. Relay conclusions — not raw child dumps
    unless asked.
 
@@ -386,7 +386,7 @@ output (see [Notification model](#notification-model)).
     },
     "count": {
       "type": "integer",
-      "description": "Number of messages for get_messages (omit for the newest history page; N for the last N)"
+      "description": "Explicit history page size for get_messages; omit/null for the default unread report; does not move the report cursor"
     },
     "before": {
       "type": "string",
@@ -411,7 +411,7 @@ output (see [Notification model](#notification-model)).
 | `abort` | Full stop: cancel the current run, kill in-flight tool/child processes, and suppress workflow auto-continue (does not resume) | No |
 | `kill` | Terminate the subagent process (SIGTERM) | No |
 | `get_state` | Inspect live/in-flight supervision state: slim state/effort/model/progress, generation cursor, and selected workflow identity/current step. Pass `since` for an unchanged marker | No |
-| `get_messages` | Inspect the stable committed transcript, normally after the turn ends (omit `count` for the newest page; pass `count` for the last N; pass `before` to page older history). A busy snapshot can lag the active turn | No |
+| `get_messages` | Default report mode: omit/null `count` and `before` after the completion note to receive the unread report. Explicit `count` and/or `before` requests cursor-neutral history pages; `before` pages older history. A busy snapshot can lag the active turn | No |
 | `get_session_stats` | Get token usage and cost | No |
 | `get_subagents` | List subagents spawned by this agent | No |
 | `get_tool_catalogue` / `list_tools` | Return rich tool catalogue snapshot | No |
@@ -426,7 +426,7 @@ output (see [Notification model](#notification-model)).
 ```
 
 ```json
-{"name": "agent_cmd", "arguments": {"agent_id": "security-reviewer", "command": "get_messages", "count": 3}}
+{"name": "agent_cmd", "arguments": {"agent_id": "security-reviewer", "command": "get_messages"}}
 ```
 
 ```json
@@ -459,8 +459,9 @@ available or required. The note is:
   collapse to one note (latest wins), so a noisy child costs at most one extra
   turn.
 
-The note is a **summary only**; to read the child's full output call
-`get_messages` (optionally with `count` for the last N messages). Intermediate
+The note is a **summary only**; to read the child's default unread report call
+plain `get_messages` (omit/null `count` and `before`). Explicit `count`/`before`
+requests are cursor-neutral history pages. Intermediate
 child tool errors are the child's problem: they remain visible in the child
 transcript/tool stream but do not interrupt the parent, set
 `get_subagents.lastError`, or mark the child `status:error` unless the run later
@@ -481,7 +482,7 @@ Neither command registers as a notification. A single call that catches the
 agent mid-run tells you nothing about what happens next. Do not poll these
 commands in a loop waiting for completion.
 
-### Canonical pattern: passive note + tail
+### Canonical pattern: passive note + default unread report
 
 ```json
 // 1. Spawn — returns when the child socket is ready, not when work is done.
@@ -490,12 +491,12 @@ commands in a loop waiting for completion.
 // 2. End the parent turn or do independent work. At the next idle turn you receive:
 //    Agent 'worker' completed and is ready for inspection
 
-// 3. Inspect the full output when the note tells you the child is done.
-{"name": "agent_cmd", "arguments": {"agent_id": "worker", "command": "get_messages", "count": 5}}
+// 3. Inspect the unread report when the note tells you the child is done.
+{"name": "agent_cmd", "arguments": {"agent_id": "worker", "command": "get_messages"}}
 ```
 
 **Common mistake:** treating the one-line note as the child's result. Always
-tail the output to see what the agent actually produced.
+retrieve the unread report to see what the agent actually produced.
 
 ## Observing the unit tree
 
@@ -705,7 +706,7 @@ notes so the parent stays available:
 
 Continue useful non-duplicative parent work. When each one-line completion note
 arrives, read that child's report:
-  agent_cmd(agent_id='…', command='get_messages', count=5)
+  agent_cmd(agent_id='…', command='get_messages')
 
 Synthesize, dedupe, and judge before answering the user. Prefer passive notes; yield the turn if a
 verdict must gate the next action in the same turn."
@@ -747,7 +748,7 @@ researcher finishes; then read the report with agent_cmd get_messages."
 "Spawn agent_id='helper' with no task (starts idle).
 Later, when I need help:
   agent_cmd(agent_id='helper', command='prompt', message='Explain this function...')
-  agent_cmd(agent_id='helper', command='get_messages', count=1)"
+  agent_cmd(agent_id='helper', command='get_messages')"
 ```
 
 ### Steering a running agent

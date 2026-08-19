@@ -66,6 +66,8 @@ pub struct ToolResult {
 /// contract for readability and future telemetry, not a functional one.
 /// Adapter unit tests should assert the chosen shape to pin down behaviour.
 pub trait Tool: Send + Sync {
+    /// Called after a non-error tool result has been appended to the parent conversation and run ledger.
+    fn result_delivered(&self, _arguments: &str, _result: &ToolResult) {}
     /// Return the tool's definition for the LLM.
     fn definition(&self) -> ToolDefinition;
 
@@ -181,6 +183,9 @@ pub trait ToolExecutor: Send + Sync {
         name: &str,
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>>;
+
+    /// Acknowledge that a non-error result was durably delivered to the caller's context.
+    fn result_delivered(&self, _name: &str, _arguments: &str, _result: &ToolResult) {}
 }
 
 /// Requested runtime policy state for a registered tool.

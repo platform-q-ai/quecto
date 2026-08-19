@@ -236,12 +236,12 @@ fn agent_cmd_docs_match_tool_schema() {
     // schema. After the #841 consolidation `get_messages_tail` is no longer a
     // first-class agent_cmd command — it survives only as a deprecated UDS
     // protocol alias of `get_messages` with an optional `count`.
-    let src = read_repo_file("src/infrastructure/tools/agent_cmd.rs");
+    let src = read_repo_file("src/infrastructure/tools/agent_cmd_parse.rs");
     let block = src
         .split("const SUPPORTED_COMMANDS: &[&str] = &[")
         .nth(1)
         .and_then(|rest| rest.split("];").next())
-        .expect("agent_cmd.rs should declare SUPPORTED_COMMANDS");
+        .expect("agent_cmd_parse.rs should declare SUPPORTED_COMMANDS");
     let commands: Vec<String> = block
         .split(',')
         .map(str::trim)
@@ -315,26 +315,50 @@ fn agent_cmd_docs_match_tool_schema() {
         subagents.contains("get_messages"),
         "docs/subagents.md should document get_messages"
     );
-    // The AC requires documenting the optional `count` semantics (omit = newest
-    // page post-#1061, N = last N), not merely the command name.
+    // #1513: model-facing agent_cmd omits/nulls count+before for the default
+    // unread report; explicit count/before remain cursor-neutral history paging.
     let subagents_lower = subagents.to_lowercase();
+    let workflow_lower = read_repo_file("docs/workflow.md").to_lowercase();
+    let readme_lower = read_repo_file("README.md").to_lowercase();
+    let uds_protocol_lower = read_repo_file("docs/uds-protocol.md").to_lowercase();
+    let quick_start_embed_lower =
+        read_repo_file("docs/docs-tool-embeds/quick-start.md").to_lowercase();
+    let subagents_embed_lower = read_repo_file("docs/docs-tool-embeds/subagents.md").to_lowercase();
     assert!(
-        subagents.contains("count"),
-        "docs/subagents.md must document the optional `count` parameter of get_messages"
-    );
-    // Anchor on the documented phrasing rather than bare substrings (which occur
-    // inside common words), so removing the semantics sentence actually fails
-    // this guard. Post-#1061 an uncounted get_messages returns the newest
-    // bounded page, and the doc reads: "omit `count` for the newest history
-    // page; pass `count` for the last N messages".
-    assert!(
-        subagents_lower.contains("omit") && subagents_lower.contains("newest history page"),
-        "docs/subagents.md must explain that omitting count returns the newest history page"
+        subagents.contains("count") && subagents.contains("before"),
+        "docs/subagents.md must document get_messages count/before semantics"
     );
     assert!(
-        subagents_lower.contains("last n"),
-        "docs/subagents.md must explain that count returns the last N messages"
+        subagents_lower.contains("default report")
+            && subagents_lower.contains("unread report")
+            && subagents_lower.contains("cursor-neutral history"),
+        "docs/subagents.md must explain default unread report vs explicit cursor-neutral history"
     );
+    for (name, body) in [
+        ("docs/subagents.md", subagents_lower.as_str()),
+        ("docs/workflow.md", workflow_lower.as_str()),
+        ("README.md", readme_lower.as_str()),
+        ("docs/uds-protocol.md", uds_protocol_lower.as_str()),
+        (
+            "docs/docs-tool-embeds/quick-start.md",
+            quick_start_embed_lower.as_str(),
+        ),
+        (
+            "docs/docs-tool-embeds/subagents.md",
+            subagents_embed_lower.as_str(),
+        ),
+    ] {
+        assert!(
+            !body.contains("omit `count` for the newest history page")
+                && !body.contains("with `count` 1")
+                && !body.contains("count` 1–5")
+                && !body.contains("count` 1-5")
+                && !body.contains("command='get_messages', count=")
+                && !body.contains("command=\"get_messages\", count=")
+                && !body.contains("\"command\": \"get_messages\", \"count\":"),
+            "{name} must not preserve obsolete count-based report guidance"
+        );
+    }
 
     // docs/sessions.md UDS inspection examples must not present get_messages_tail.
     let sessions = read_repo_file("docs/sessions.md");
@@ -443,11 +467,11 @@ fn agent_cmd_docs_match_tool_schema() {
 
     // The alias is still honored in code for backward compatibility even though
     // it is undocumented; pin that so a refactor can't silently drop it. The
-    // dispatch in agent_cmd.rs special-cases the alias name explicitly.
-    let agent_cmd = read_repo_file("src/infrastructure/tools/agent_cmd.rs");
+    // dispatch in agent_cmd_parse.rs special-cases the alias name explicitly.
+    let agent_cmd = read_repo_file("src/infrastructure/tools/agent_cmd_parse.rs");
     assert!(
         agent_cmd.contains("get_messages_tail"),
-        "agent_cmd.rs must still honor the backward-compat get_messages_tail alias"
+        "agent_cmd_parse.rs must still honor the backward-compat get_messages_tail alias"
     );
 }
 
