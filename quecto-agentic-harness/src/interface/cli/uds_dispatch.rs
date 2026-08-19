@@ -445,6 +445,9 @@ mod lifecycle_1060_tests;
 #[path = "uds_dispatch_masked_pruning_tests.rs"]
 mod masked_pruning_tests;
 #[cfg(test)]
+#[path = "uds_dispatch_ordinal_tests.rs"]
+mod ordinal_tests;
+#[cfg(test)]
 #[path = "uds_dispatch_policy_tests.rs"]
 mod policy_tests;
 #[cfg(test)]
