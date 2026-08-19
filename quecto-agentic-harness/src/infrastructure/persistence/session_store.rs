@@ -1,11 +1,10 @@
-use std::future::Future;
-use std::path::{Path, PathBuf};
-use std::pin::Pin;
-
 use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role, StopReason, ThinkingBlock, ToolCall};
 use crate::domain::session::{Session, SessionStore, SessionSummary};
 use crate::domain::workflow::WorkflowRunPersisted;
+use std::future::Future;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
 
 #[derive(Debug)]
 pub struct FileSessionStore {
@@ -366,9 +365,9 @@ fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
             }
         }
     }
-    let mut session = session.unwrap_or_else(|| Session::new(""));
-    session.messages = assign_missing_ordinals(session.messages);
-    Ok(session)
+    Ok(session
+        .map(session_store_ordinals::with_assigned_ordinals)
+        .unwrap_or_else(|| Session::new("")))
 }
 
 fn session_from_file(file: SessionFile) -> Session {

@@ -1,4 +1,10 @@
 use crate::domain::message::Message;
+use crate::domain::session::Session;
+
+pub(super) fn with_assigned_ordinals(mut session: Session) -> Session {
+    assign_missing_ordinals_in_place(&mut session.messages);
+    session
+}
 
 pub(crate) fn assign_missing_ordinals_in_place(messages: &mut [Message]) {
     let mut next = messages
