@@ -27,6 +27,46 @@ fn prompt(message: &str) -> AgentCommand {
     }
 }
 
+#[tokio::test]
+async fn same_process_persist_then_prune_keeps_live_ordinals_durable_and_monotonic() {
+    let mut fx = Fixture::new();
+    let mut old_user = Message::user("old-user");
+    old_user.ordinal = Some(40);
+    let mut old_assistant = Message::assistant("old-assistant", vec![]);
+    old_assistant.ordinal = Some(41);
+    fx.messages = vec![old_user, old_assistant, Message::user("new-before-prune")];
+
+    {
+        let mut ctx = fx.ctx();
+        persist_current_session(&mut ctx).await.unwrap();
+        assert_eq!(
+            ctx.messages[2].ordinal,
+            Some(42),
+            "persist must stamp the live message, not only a serialized clone"
+        );
+
+        ctx.messages.remove(0);
+        ctx.durable_prefix_dirty = true;
+        ctx.messages
+            .push(Message::assistant("new-after-prune", vec![]));
+        persist_current_session(&mut ctx).await.unwrap();
+        assert_eq!(ctx.messages[2].ordinal, Some(43));
+    }
+
+    let loaded = fx.store.load("cli:test").await.unwrap().unwrap();
+    let ordinals = loaded
+        .messages
+        .iter()
+        .map(|message| message.ordinal)
+        .collect::<Vec<_>>();
+    assert_eq!(ordinals, vec![Some(41), Some(42), Some(43)]);
+    assert_eq!(
+        messages_page_json(&fx.messages, HISTORY_PAGE_SIZE, None)["messages"][2]["ordinal"],
+        43,
+        "an owned delivered cursor at 42 must not suppress the new message"
+    );
+}
+
 fn durable_contents(messages: &[Message]) -> Vec<&str> {
     messages
         .iter()
@@ -53,8 +93,8 @@ async fn prompt_persists_current_subagent_roster_before_assistant_reply() {
     {
         let mut ctx = fx.ctx();
         ctx.subagent_registry = Some(registry);
-        let prompt = crate::domain::message::Message::user("run after spawn");
-        super::persist_user_prompt_before_run(&mut ctx, &prompt)
+        let mut prompt = crate::domain::message::Message::user("run after spawn");
+        super::persist_user_prompt_before_run(&mut ctx, &mut prompt)
             .await
             .unwrap();
     }
@@ -78,8 +118,8 @@ async fn prompt_persists_user_message_before_assistant_reply() {
     let mut fx = Fixture::new();
     {
         let mut ctx = fx.ctx();
-        let prompt = crate::domain::message::Message::user("first only");
-        super::persist_user_prompt_before_run(&mut ctx, &prompt)
+        let mut prompt = crate::domain::message::Message::user("first only");
+        super::persist_user_prompt_before_run(&mut ctx, &mut prompt)
             .await
             .unwrap();
         ctx.messages.push(prompt);
@@ -278,13 +318,13 @@ async fn persist_watermark_matches_durable_len_not_live_len_plus_one() {
         );
 
         // Mid-turn pre-persist: production must leave watermark in durable space.
-        let next = Message::user("user-1");
+        let mut next = Message::user("user-1");
         let live_len_before_push = ctx.messages.len();
         assert!(
             live_len_before_push > durable_after_turn,
             "scenario setup: injected system must create live/durable skew"
         );
-        super::persist_user_prompt_before_run(&mut ctx, &next)
+        super::persist_user_prompt_before_run(&mut ctx, &mut next)
             .await
             .unwrap();
         let expected_durable_wm = durable_after_turn + 1; // prior durable + new user

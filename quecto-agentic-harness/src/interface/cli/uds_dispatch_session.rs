@@ -171,6 +171,9 @@ pub(super) async fn persist_current_session(
         return Ok(());
     }
     remove_injected_system_prompt(ctx.messages, ctx.system_prompt);
+    crate::infrastructure::persistence::session_store::session_store_ordinals::assign_missing_ordinals_in_place(
+        ctx.messages,
+    );
     // #1072/#1073 review: drain the agent's durable-prefix dirty latch HERE,
     // at the single sink that acts on it, instead of at every agent-running
     // dispatch site. The latch is sticky and outcome-independent (Success,

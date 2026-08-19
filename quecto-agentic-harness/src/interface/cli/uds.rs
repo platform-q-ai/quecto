@@ -294,7 +294,7 @@ fn persisted_workflow_run(ctx: &DispatchCtx<'_>) -> Option<WorkflowRunPersisted>
 
 async fn persist_user_prompt_before_run(
     ctx: &mut DispatchCtx<'_>,
-    message: &Message,
+    message: &mut Message,
 ) -> Result<(), crate::domain::error::DomainError> {
     if ctx.ephemeral || ctx.session_key.is_empty() {
         return Ok(());
@@ -302,6 +302,12 @@ async fn persist_user_prompt_before_run(
     let mut persisted_messages = ctx.messages.clone();
     remove_injected_system_prompt(&mut persisted_messages, ctx.system_prompt);
     persisted_messages.push(message.clone());
+    crate::infrastructure::persistence::session_store::session_store_ordinals::assign_missing_ordinals_in_place(
+        &mut persisted_messages,
+    );
+    message.ordinal = persisted_messages
+        .last()
+        .and_then(|message| message.ordinal);
     let persisted_len = persisted_messages.len();
     let workflow_run = persisted_workflow_run(ctx);
     let result = if ctx.subagent_registry.is_some() {
@@ -369,8 +375,8 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         drain_and_run_pending(ctx).await;
         return false;
     };
-    let message = Message::user(message);
-    if let Err(err) = persist_user_prompt_before_run(ctx, &message).await {
+    let mut message = Message::user(message);
+    if let Err(err) = persist_user_prompt_before_run(ctx, &mut message).await {
         tracing::warn!("failed to persist user prompt before turn: {err}");
     }
     // On success, persist_user_prompt_before_run already set last_persisted_message_index
