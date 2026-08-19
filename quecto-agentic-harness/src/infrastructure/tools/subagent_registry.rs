@@ -85,9 +85,7 @@ pub struct SubagentEntry {
     pub delivered_message_ordinal: Option<u64>,
     /// Prepared cursor awaiting parent-context delivery acknowledgment (#1513).
     pub pending_message_ordinal: Option<u64>,
-    /// Per-call pending cursors in send order. Delivery callbacks correlate by
-    /// matching the tool result content to the prepared response so an older
-    /// callback cannot accidentally commit a newer pending cursor.
+    /// Pending cursors correlated to their prepared response content (#1513).
     pub pending_message_reports: VecDeque<PendingMessageReport>,
     /// Persisted cross-process liveness for historical/resumed entries (#1461).
     pub persisted_liveness: SubagentLiveness,

@@ -14,8 +14,11 @@ pub struct FileSessionStore {
     ownership: super::session_ownership::SessionOwnershipRegistry,
 }
 
+#[path = "session_store_ordinals.rs"]
+mod session_store_ordinals;
 #[path = "session_store_records.rs"]
 mod session_store_records;
+use session_store_ordinals::{assign_missing_ordinals, messages_with_assigned_ordinals};
 use session_store_records::*;
 
 impl FileSessionStore {
@@ -386,39 +389,6 @@ fn session_from_file(file: SessionFile) -> Session {
         workflow_run: file.workflow_run,
         subagent_roster: file.subagent_roster,
     }
-}
-
-fn assign_missing_ordinals(mut messages: Vec<Message>) -> Vec<Message> {
-    let mut next = messages
-        .iter()
-        .filter_map(|m| m.ordinal)
-        .max()
-        .unwrap_or(0)
-        .saturating_add(1);
-    for msg in &mut messages {
-        if msg.ordinal.is_none() {
-            msg.ordinal = Some(next);
-            next = next.saturating_add(1);
-        }
-    }
-    messages
-}
-
-fn messages_with_assigned_ordinals(messages: &[Message]) -> Vec<Message> {
-    let mut cloned = messages.to_vec();
-    let mut next = cloned
-        .iter()
-        .filter_map(|m| m.ordinal)
-        .max()
-        .unwrap_or(0)
-        .saturating_add(1);
-    for msg in &mut cloned {
-        if msg.ordinal.is_none() {
-            msg.ordinal = Some(next);
-            next = next.saturating_add(1);
-        }
-    }
-    cloned
 }
 
 async fn is_jsonl_session_file(path: &Path) -> Result<bool, DomainError> {
