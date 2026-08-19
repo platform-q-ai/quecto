@@ -81,13 +81,9 @@ pub struct SubagentEntry {
     /// Last lifecycle event for race-focused tests.
     #[cfg(test)]
     pub last_lifecycle_event: Option<SubagentLifecycleEvent>,
-    /// Parent-scoped delivered get_messages report cursor (#1513).
     pub delivered_message_ordinal: Option<u64>,
-    /// Prepared cursor awaiting parent-context delivery acknowledgment (#1513).
     pub pending_message_ordinal: Option<u64>,
-    /// Pending cursors correlated to their prepared response content (#1513).
     pub pending_message_reports: VecDeque<PendingMessageReport>,
-    /// Persisted cross-process liveness for historical/resumed entries (#1461).
     pub persisted_liveness: SubagentLiveness,
 }
 

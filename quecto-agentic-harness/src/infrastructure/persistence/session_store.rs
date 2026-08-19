@@ -10,7 +10,6 @@ use crate::domain::workflow::WorkflowRunPersisted;
 #[derive(Debug)]
 pub struct FileSessionStore {
     sessions_dir: PathBuf,
-    /// Cross-process single-writer ownership of session keys (#1460).
     ownership: super::session_ownership::SessionOwnershipRegistry,
 }
 
@@ -33,7 +32,6 @@ impl FileSessionStore {
         self.ownership.claim(&self.sessions_dir, key)
     }
 
-    /// Convert a session key to a safe filename with `.json` extension.
     fn key_to_filename(key: &str) -> String {
         format!("{}.json", super::filename::sanitize_session_key(key))
     }
@@ -42,9 +40,6 @@ impl FileSessionStore {
         self.sessions_dir.join(Self::key_to_filename(key))
     }
 
-    /// Append a caller-known clean delta without reading/parsing durable history.
-    /// Callers must reset the watermark whenever the persisted prefix may have
-    /// been removed, replaced, or reordered.
     pub async fn save_clean_delta(
         &self,
         key: &str,
@@ -83,7 +78,6 @@ impl FileSessionStore {
         }
     }
 
-    /// Ensure the sessions directory exists.
     async fn ensure_dir(&self) -> Result<(), DomainError> {
         tokio::fs::create_dir_all(&self.sessions_dir)
             .await
@@ -216,8 +210,6 @@ impl SessionStore for FileSessionStore {
                 if path.extension().is_none_or(|ext| ext != "json") {
                     continue;
                 }
-                // Cheap filename-level filter: skip files outside the requested
-                // namespace before the costly read + parse.
                 if let Some(ref fp) = file_prefix {
                     if !entry.file_name().to_string_lossy().starts_with(fp.as_str()) {
                         continue;
@@ -251,7 +243,6 @@ impl SessionStore for FileSessionStore {
                         continue;
                     }
                 };
-                // Authoritative backstop on the real key.
                 if let Some(ref prefix) = key_prefix {
                     if !header.key.starts_with(prefix.as_str()) {
                         continue;
@@ -279,8 +270,6 @@ impl SessionStore for FileSessionStore {
         })
     }
 }
-
-// -- Conversion helpers --
 
 fn parse_session_header(data: &str) -> Result<SessionHeader<'_>, serde_json::Error> {
     if let Ok(header) = serde_json::from_str::<SessionHeader<'_>>(data) {
@@ -722,9 +711,6 @@ fn record_to_message(rec: MessageRecord) -> Message {
     msg.tool_name = rec.tool_name;
     msg.input_preview = rec.input_preview;
     msg.spill_id = rec.spill_id;
-    // is_pinned: `Some(v)` = explicitly persisted, use it.
-    // `None` = absent (old session file), keep constructor default
-    // (true for System, false for others).
     msg.is_error = rec.is_error;
     msg.stop_reason = rec.stop_reason.as_deref().map(StopReason::parse);
     if let Some(pinned) = rec.is_pinned {
