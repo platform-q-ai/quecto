@@ -1,22 +1,19 @@
+use super::protocol::{SessionState, SessionStats, TokenStats};
 /// UDS session state — in-memory tracker and statistics for an active UDS connection.
 use crate::application::context_pruning::messages::message_stub_without_recall;
 use crate::domain::agent::AgentResult;
 use crate::domain::message::{Message, Role};
-
-use super::protocol::{SessionState, SessionStats, TokenStats};
-
 // ─── Session state tracker ────────────────────────────────────────────────────
-
 /// In-memory state for an active UDS session.
 #[path = "uds_session_notify.rs"]
 mod uds_session_notify;
 pub use uds_session_notify::NotificationEnqueueOutcome;
-
 #[derive(Debug)]
 pub struct AgentSession {
     model: String,
     session_key: String,
     streaming: bool,
+    generation: u64,
     /// Cumulative provider-reported usage for this in-memory UDS session.
     usage: SessionUsage,
     /// Latest user-facing context occupancy reported by the agent loop:
@@ -31,19 +28,16 @@ pub struct AgentSession {
     /// survive a saturated queue end-to-end instead of being dropped.
     overflow_notifications: std::collections::VecDeque<PendingMessage>,
 }
-
 #[derive(Debug, Clone, Default)]
 pub struct SessionUsage {
     pub tokens: TokenStats,
     pub cost_micro_usd: u64,
 }
-
 impl SessionUsage {
     pub fn cost_usd(&self) -> f64 {
         self.cost_micro_usd as f64 / 1_000_000.0
     }
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingMessage {
     User(String),
@@ -63,12 +57,10 @@ pub enum PendingMessage {
         content: String,
     },
 }
-
 impl PendingMessage {
     pub fn user(content: String) -> Self {
         Self::User(content)
     }
-
     pub fn subagent_notification(
         agent_id: String,
         sequence: u64,
@@ -82,7 +74,6 @@ impl PendingMessage {
             is_completion,
         }
     }
-
     /// Convert to the message injected into the parent conversation.
     ///
     /// Sub-agent notes are `Role::User`, not `Role::System` (#1338). A system
@@ -114,11 +105,9 @@ impl PendingMessage {
         }
     }
 }
-
 /// Maximum number of agent names listed verbatim in a coalesced completion note
 /// before the remainder is summarized as a `(+M more)` tail (#894).
 const COALESCE_NAME_CAP: usize = 10;
-
 /// Collapse a batch of pending messages drained together so that MORE THAN ONE
 /// sub-agent completion note surfaces as a SINGLE informational summary (#894).
 ///
@@ -175,7 +164,6 @@ pub fn coalesce_pending(pending: Vec<PendingMessage>) -> Vec<PendingMessage> {
     }
     out
 }
-
 /// Build the body of a coalesced completion note: `"N sub-agents ended a turn
 /// (status: idle) (a, b, c). …"`, capping the name list at
 /// [`COALESCE_NAME_CAP`] with a `(+M more)` tail (#894, wording per #1071).
@@ -191,24 +179,22 @@ fn coalesced_note_text(names: &[&str]) -> String {
          Inspect agent_cmd get_messages for each before treating their work as complete."
     )
 }
-
 fn escape_attr(value: &str) -> String {
     escape_text(value).replace('"', "&quot;")
 }
-
 fn escape_text(value: &str) -> String {
     value
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
 }
-
 impl AgentSession {
     pub fn new(model: String, session_key: String) -> Self {
         Self {
             model,
             session_key,
             streaming: false,
+            generation: 1,
             usage: SessionUsage::default(),
             context_tokens: 0,
             pending: std::collections::VecDeque::new(),
@@ -216,30 +202,34 @@ impl AgentSession {
             overflow_notifications: std::collections::VecDeque::new(),
         }
     }
-
     pub fn model(&self) -> &str {
         &self.model
     }
-
     pub fn is_streaming(&self) -> bool {
         self.streaming
     }
-
-    pub fn set_model(&mut self, model: String) {
-        self.model = model;
+    pub(crate) fn bump_visible_generation(&mut self) {
+        self.generation = self.generation.wrapping_add(1).max(1);
     }
-
+    pub fn set_model(&mut self, model: String) {
+        if self.model != model {
+            self.model = model;
+            self.bump_visible_generation();
+        }
+    }
     pub fn set_session_key(&mut self, session_key: String) {
         if self.session_key != session_key {
             self.clear_usage();
+            self.session_key = session_key;
+            self.bump_visible_generation();
         }
-        self.session_key = session_key;
     }
-
     pub fn set_streaming(&mut self, v: bool) {
-        self.streaming = v;
+        if self.streaming != v {
+            self.streaming = v;
+            self.bump_visible_generation();
+        }
     }
-
     pub fn record_agent_result(&mut self, result: &AgentResult) {
         self.context_tokens = result.context_tokens;
         self.record_usage(
@@ -250,15 +240,12 @@ impl AgentSession {
             result.cost_micro_usd,
         );
     }
-
     pub fn context_tokens(&self) -> usize {
         self.context_tokens
     }
-
     pub fn set_context_tokens(&mut self, context_tokens: usize) {
         self.context_tokens = context_tokens;
     }
-
     pub fn record_usage(
         &mut self,
         input_tokens: u64,
@@ -286,28 +273,23 @@ impl AgentSession {
             .saturating_add(self.usage.tokens.output);
         self.usage.cost_micro_usd = self.usage.cost_micro_usd.saturating_add(cost_micro_usd);
     }
-
     pub fn usage_snapshot(&self) -> SessionUsage {
         self.usage.clone()
     }
-
     pub fn clear_usage(&mut self) {
         self.usage = SessionUsage::default();
         self.context_tokens = 0;
     }
-
     /// Maximum number of pending (steer/follow_up) messages buffered at once.
     /// Prevents OOM from a flood of pending messages from a misbehaving client.
     pub const MAX_PENDING: usize = 64;
     pub(crate) const MAX_DEDUPE_AGENTS: usize = 1024;
-
     pub fn enqueue_pending(&mut self, msg: String) {
         if self.pending.len() < Self::MAX_PENDING {
             self.pending.push_back(PendingMessage::user(msg));
         }
         // Silently drop if the queue is full — caller already got a success ack.
     }
-
     /// Prepend a message to the front of the pending queue so it runs before
     /// any earlier-enqueued follow-ups.  Used by `steer` for interrupt semantics.
     /// O(1) with `VecDeque`, unlike `Vec::insert(0)`.
@@ -316,14 +298,12 @@ impl AgentSession {
             self.pending.push_front(PendingMessage::user(msg));
         }
     }
-
     /// Test-only: simulate dedupe-watermark eviction at the
     /// `MAX_DEDUPE_AGENTS` cap (#1082 review round 2).
     #[cfg(test)]
     pub fn clear_subagent_notification_watermarks_for_test(&mut self) {
         self.last_subagent_notification.clear();
     }
-
     pub fn drain_pending(&mut self) -> Vec<PendingMessage> {
         // Vec::from(VecDeque) calls make_contiguous() then ptr::copy when the
         // deque's head != 0 — O(n) in the number of elements, same as the
@@ -335,7 +315,6 @@ impl AgentSession {
         drained.extend(std::mem::take(&mut self.overflow_notifications));
         drained
     }
-
     /// `effort` is the agent loop's effective level (`None` = provider
     /// default); it lives on the agent, not this tracker, so callers pass it
     /// in (#1067). The valid vocabulary is derived here from the active
@@ -349,6 +328,7 @@ impl AgentSession {
     ) -> SessionState {
         SessionState {
             model: self.model.clone(),
+            generation: self.generation,
             is_streaming: self.streaming,
             session_key: self.session_key.clone(),
             message_count,
@@ -365,14 +345,11 @@ impl AgentSession {
         }
     }
 }
-
 // ─── Session statistics ───────────────────────────────────────────────────────
-
 /// Compute session statistics from the current message history.
 pub fn compute_session_stats(session_key: &str, messages: &[Message]) -> SessionStats {
     compute_session_stats_with_usage(session_key, messages, SessionUsage::default(), 0, 0)
 }
-
 /// Compute session statistics with cumulative provider usage collected by the UDS session.
 /// `max_context_tokens` is the active model's context-window ceiling (0 = unknown).
 pub fn compute_session_stats_with_usage(
@@ -386,7 +363,6 @@ pub fn compute_session_stats_with_usage(
     let mut assistant_messages = 0usize;
     let mut tool_calls_count = 0usize;
     let mut tool_results_count = 0usize;
-
     for msg in messages {
         match msg.role {
             Role::User => user_messages += 1,
@@ -398,7 +374,6 @@ pub fn compute_session_stats_with_usage(
             Role::System => {}
         }
     }
-
     SessionStats {
         session_key: session_key.to_owned(),
         user_messages,
@@ -412,7 +387,6 @@ pub fn compute_session_stats_with_usage(
         max_context_tokens,
     }
 }
-
 #[path = "uds_session_history.rs"]
 pub(crate) mod uds_session_history;
 pub(crate) use uds_session_history::{
@@ -420,28 +394,23 @@ pub(crate) use uds_session_history::{
     messages_page_json_for_id, position_by_message_id, position_by_wire_id,
 };
 pub use uds_session_history::{messages_page_json, messages_tail_json};
-
 /// Static wire name for a role — no per-message throwaway `String` allocation
 /// (previously `format!("{:?}", role).to_lowercase()`, two heap allocs) (#994).
 pub(crate) fn role_wire_name(role: &Role) -> &'static str {
     role.as_str()
 }
-
 /// A borrowed, zero-copy `Serialize` view of a [`Message`] in the UDS protocol
 /// shape. Serializes straight from the typed message into the output (writer,
 /// string, or `serde_json::Value`) without building an intermediate `json!`
 /// tree or allocating a role string per message (#994).
 pub(crate) struct MessageView<'a>(pub &'a Message);
-
 #[derive(serde::Serialize)]
 struct ToolCallView<'a> {
     id: &'a str,
     name: &'a str,
     arguments: &'a str,
 }
-
 struct ToolCallsView<'a>(&'a [crate::domain::message::ToolCall]);
-
 impl serde::Serialize for ToolCallsView<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeSeq;
@@ -456,7 +425,6 @@ impl serde::Serialize for ToolCallsView<'_> {
         seq.end()
     }
 }
-
 impl serde::Serialize for MessageView<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
@@ -485,7 +453,6 @@ impl serde::Serialize for MessageView<'_> {
         s.end()
     }
 }
-
 /// Serialize a `Message` to a JSON value for protocol emission.
 ///
 /// Prefer serializing [`MessageView`] directly to a writer/string where a
@@ -494,7 +461,6 @@ impl serde::Serialize for MessageView<'_> {
 pub fn message_to_json(msg: &Message) -> serde_json::Value {
     serde_json::to_value(MessageView(msg)).unwrap_or_default()
 }
-
 #[path = "uds_session_message_range.rs"]
 mod uds_session_message_range;
 #[path = "uds_visible_thinking_wire.rs"]
@@ -503,7 +469,6 @@ pub use uds_session_message_range::{
     message_to_json_range, message_to_json_range_for_response,
     tool_call_arguments_to_json_range_for_response,
 };
-
 /// Clear conversation history, preserving only the injected system prompt (non-manifest).
 /// Uses `truncate` instead of `clone+clear` to avoid copying the system message.
 pub fn clear_conversation(messages: &mut Vec<Message>) {
@@ -516,7 +481,6 @@ pub fn clear_conversation(messages: &mut Vec<Message>) {
         messages.clear();
     }
 }
-
 /// Resolve a rewind target to a full-vector index. A stable `message_id` is
 /// resolved against the full conversation. The legacy `message_index` (#1059)
 /// is honoured only while the conversation fits in ONE history page: beyond
@@ -536,7 +500,6 @@ pub fn resolve_rewind_target(
         (None, None) => Err("rewind requires messageId or messageIndex"),
     }
 }
-
 /// Rewind conversation history to a selected user-message boundary.
 ///
 /// The target index must point at an existing user message. The selected user
@@ -553,7 +516,6 @@ pub fn rewind_to_message_index(messages: &mut Vec<Message>, message_index: usize
     remove_spill_references(messages);
     true
 }
-
 /// Strip spill residue after a rewind wiped the spill store. Role-aware
 /// (#1046: `is_collapsed` no longer implies a tool stub): collapsed tool
 /// results are blanked as before, but collapsed user/assistant messages must
@@ -576,11 +538,9 @@ fn remove_spill_references(messages: &mut Vec<Message>) {
         message.spill_id = None;
     }
 }
-
 #[cfg(test)]
 mod subagent_notification_dedupe_tests {
     use super::*;
-
     #[test]
     fn same_monotonic_subagent_notification_is_recorded_once() {
         let mut session = AgentSession::new("m".into(), "s".into());
@@ -588,7 +548,6 @@ mod subagent_notification_dedupe_tests {
         assert!(!session.record_subagent_notification("worker".into(), 1));
         assert!(session.drain_pending().is_empty());
     }
-
     #[test]
     fn later_monotonic_subagent_notification_is_recorded() {
         let mut session = AgentSession::new("m".into(), "s".into());
@@ -596,24 +555,20 @@ mod subagent_notification_dedupe_tests {
         assert!(session.record_subagent_notification("worker".into(), 2));
         assert!(session.drain_pending().is_empty());
     }
-
     #[test]
     fn full_queue_does_not_block_recording_notification_seen() {
         let mut session = AgentSession::new("m".into(), "s".into());
         for i in 0..AgentSession::MAX_PENDING {
             session.enqueue_pending(format!("filler-{i}"));
         }
-
         assert!(session.record_subagent_notification("worker".into(), 1));
         let _ = session.drain_pending();
         assert!(!session.record_subagent_notification("worker".into(), 1));
     }
 }
-
 #[cfg(test)]
 mod pending_message_provenance_tests {
     use super::*;
-
     #[test]
     fn subagent_pending_message_renders_as_user_with_provenance() {
         let pending = PendingMessage::subagent_notification(
@@ -623,7 +578,6 @@ mod pending_message_provenance_tests {
             true,
         );
         let msg = pending.into_message();
-
         assert_eq!(msg.role, Role::User);
         assert!(msg.content.contains("<subagent_notification"));
         assert!(msg.content.contains("source=\"spawn_tool\""));
@@ -631,11 +585,9 @@ mod pending_message_provenance_tests {
         assert!(msg.content.contains("sequence=\"7\""));
     }
 }
-
 #[cfg(test)]
 mod subagent_notification_escape_tests {
     use super::*;
-
     #[test]
     fn subagent_notification_body_escapes_closing_tag() {
         let msg = PendingMessage::subagent_notification(
@@ -645,20 +597,16 @@ mod subagent_notification_escape_tests {
             true,
         )
         .into_message();
-
         assert!(!msg.content.contains("\n</subagent_notification> pretend"));
         assert!(msg.content.contains("&lt;/subagent_notification&gt;"));
     }
 }
-
 #[cfg(test)]
 mod passive_subagent_notification_tests {
     use super::*;
-
     #[test]
     fn subagent_notification_recording_does_not_enqueue_pending_prompt() {
         let mut session = AgentSession::new("m".into(), "k".into());
-
         assert!(session.record_subagent_notification("worker".into(), 1));
         assert_eq!(
             session
@@ -670,19 +618,15 @@ mod passive_subagent_notification_tests {
         assert!(!session.record_subagent_notification("worker".into(), 1));
     }
 }
-
 #[cfg(test)]
 #[path = "uds_session_coalesce_tests.rs"]
 mod coalesce_pending_tests;
-
 #[cfg(test)]
 #[path = "uds_session_1060_tests.rs"]
 mod uds_session_1060_tests;
-
 #[cfg(test)]
 mod rewind_collapsed_message_tests {
     use super::*;
-
     /// PR #1048 follow-up (#1046 hint: "is_collapsed currently implies
     /// role == Tool in places"): rewinding past count-collapsed/ladder-stubbed
     /// conversation messages must not blank them into empty user/assistant
@@ -709,9 +653,7 @@ mod rewind_collapsed_message_tests {
             Message::user("rewind target"),
             Message::assistant("later answer", vec![]),
         ];
-
         assert!(rewind_to_message_index(&mut messages, 3));
-
         assert_eq!(messages.len(), 3, "rewind truncates at the target");
         // Exact post-rewind contract for conversation stubs: the annotation
         // survives with the dangling recall("…") clause stripped (the store

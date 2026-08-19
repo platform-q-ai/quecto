@@ -3555,26 +3555,52 @@ fn then_get_state_template_count(world: &mut QuectoWorld, id: String, count: usi
     );
 }
 
-#[then(expr = "the get_state response {string} should have workflow template {string}")]
-fn then_get_state_workflow_template(world: &mut QuectoWorld, id: String, expected: String) {
+#[then(expr = "the get_state response {string} should have slim workflow template {string}")]
+fn then_get_state_slim_workflow_template(world: &mut QuectoWorld, id: String, expected: String) {
     let resp = find_response_by_id(world, &id)
         .unwrap_or_else(|| panic!("no get_state response with id {id:?}"));
-    let tpl_id = resp["data"]["workflow"]["active_template"]["id"]
+    let workflow = resp["data"]["workflow"]
+        .as_object()
+        .expect("workflow object");
+    let tpl_id = workflow["activeTemplate"]["id"]
         .as_str()
         .unwrap_or("(missing)");
     assert_eq!(tpl_id, expected);
+    assert!(
+        workflow.get("mode").is_none(),
+        "slim workflow must omit mode: {workflow:?}"
+    );
+    assert!(
+        workflow.get("progress").is_none(),
+        "slim workflow must omit progress: {workflow:?}"
+    );
+    assert!(
+        workflow.get("availableTemplates").is_none(),
+        "slim workflow must omit templates: {workflow:?}"
+    );
+    assert!(
+        workflow.get("steps").is_none(),
+        "slim workflow must omit steps: {workflow:?}"
+    );
 }
 
-#[then(expr = "the get_state response {string} should have workflow progress done {int}")]
-fn then_get_state_workflow_progress(world: &mut QuectoWorld, id: String, expected: u64) {
+#[then(
+    expr = "the get_state response {string} should have slim workflow current step key {string}"
+)]
+fn then_get_state_slim_workflow_current_step(
+    world: &mut QuectoWorld,
+    id: String,
+    expected: String,
+) {
     let resp = find_response_by_id(world, &id)
         .unwrap_or_else(|| panic!("no get_state response with id {id:?}"));
-    let done = resp["data"]["workflow"]["progress"]["done"]
-        .as_u64()
-        .unwrap_or(0);
-    assert_eq!(
-        done, expected,
-        "expected progress.done={expected}, got {done}"
+    let step = resp["data"]["workflow"]["currentStep"]
+        .as_object()
+        .expect("currentStep object");
+    assert_eq!(step["key"].as_str().unwrap_or("(missing)"), expected);
+    assert!(
+        step.get("guidance").is_none(),
+        "slim currentStep must omit guidance: {step:?}"
     );
 }
 

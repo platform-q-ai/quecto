@@ -45,7 +45,6 @@ impl MemSpillStore {
         self.recalls.lock().unwrap().clone()
     }
 }
-
 impl ContextSpillStore for MemSpillStore {
     fn append(
         &self,
@@ -471,6 +470,7 @@ async fn get_message_metadata_too_large_returns_error_and_keeps_connection_usabl
         !dispatch_command(
             AgentCommand::GetState {
                 id: Some("after-error".into()),
+                since: None,
                 agent_id: None,
             },
             &mut fx.ctx(Some(tx))

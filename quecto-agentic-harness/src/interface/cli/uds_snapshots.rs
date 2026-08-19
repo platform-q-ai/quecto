@@ -634,17 +634,9 @@ pub(crate) async fn busy_connect_snapshot_lines(sources: BusySnapshotSources<'_>
         execution: execution_state,
     } = sources;
     let state_line = {
-        let snap = state_snapshot.read().await;
-        // #914: overlay the LIVE workflow engine onto the (turn-boundary) frozen
-        // snapshot so a busy `get_state` reports mid-turn step progress, not just
-        // 0/N (pre-turn) or N/N (post-turn). The engine `Mutex` is independent of
-        // the dispatch loop's `&mut messages`, so this is safe to read mid-turn.
-        let mut live = snap.clone();
-        if let Ok(mut execution) = execution_state.lock() {
-            live.message_count = execution.message_count();
-            live.execution = Some(execution.snapshot());
-        }
-        build_get_state_line_live(&live, workflow_state, true)
+        // Release the async snapshot lock before taking either sync mutex.
+        let live = state_snapshot.read().await.clone();
+        build_busy_get_state_line(&live, workflow_state, execution_state)
     };
     let messages_line = {
         let snap = conversation_snapshot.read().await;
@@ -667,6 +659,34 @@ pub(crate) async fn busy_connect_snapshot_lines(sources: BusySnapshotSources<'_>
     ]
 }
 
+pub(crate) fn build_busy_get_state_line(
+    state: &SessionState,
+    workflow_state: &Option<crate::interface::shared::WorkflowStateHandle>,
+    execution_state: &super::uds_execution_state::ExecutionStateHandle,
+) -> String {
+    let mut live = state.clone();
+    // Projection and revision come from one workflow critical section. Drop it
+    // before execution to keep a single, non-nested lock order.
+    let workflow_revision = if let Some(workflow) = workflow_state {
+        let engine = workflow
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let revision = engine.revision();
+        live.workflow = Some(serde_json::to_value(engine.snapshot(true)).unwrap_or_default());
+        revision
+    } else {
+        0
+    };
+    let mut execution = execution_state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    live.generation = execution.observe_visible_revisions(live.generation, workflow_revision);
+    live.message_count = execution.message_count();
+    live.execution = Some(execution.snapshot());
+    drop(execution);
+    build_get_state_line_live(&live, &None, true)
+}
+
 #[cfg(test)]
 pub(crate) fn build_get_state_line(state: &SessionState) -> String {
     build_get_state_line_with_streaming(state, state.is_streaming)
@@ -683,7 +703,7 @@ pub(crate) fn build_get_state_line_with_streaming(
     let ev = AgentEvent::ok(
         None,
         "get_state",
-        Some(serde_json::to_value(state).unwrap_or_default()),
+        Some(super::uds_state_projection::slim_state_projection(&state)),
     );
     let mut line = ev.to_json_line();
     line.push('\n');
@@ -708,23 +728,19 @@ pub(crate) fn build_get_state_line_live(
     state.is_streaming = is_streaming;
     state.sync = 1;
     if let Some(ws) = workflow_state {
-        if let Ok(engine) = ws.lock() {
-            let mut live = serde_json::to_value(engine.snapshot(true)).unwrap_or_default();
-            if let Some(auto) = state
-                .workflow
-                .as_ref()
-                .and_then(|w| w.get("automation"))
-                .cloned()
-            {
-                live["automation"] = auto;
-            }
-            state.workflow = Some(live);
+        let engine = ws.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut live = serde_json::to_value(engine.snapshot(true)).unwrap_or_default();
+        if let Some(auto) = state
+            .workflow
+            .as_ref()
+            .and_then(|w| w.get("automation"))
+            .cloned()
+        {
+            live["automation"] = auto;
         }
+        state.workflow = Some(live);
     }
-    let mut data = serde_json::to_value(state).unwrap_or_default();
-    if let Some(obj) = data.as_object_mut() {
-        obj.insert("snapshot".to_string(), serde_json::json!(true));
-    }
+    let data = super::uds_state_projection::slim_state_projection(&state);
     let ev = AgentEvent::ok(None, "get_state", Some(data));
     let mut line = ev.to_json_line();
     line.push('\n');

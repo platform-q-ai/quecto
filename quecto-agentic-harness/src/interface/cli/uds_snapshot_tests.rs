@@ -8,6 +8,7 @@
 
 use crate::domain::message::{Message, ThinkingBlock};
 use crate::interface::cli::protocol::SessionState;
+use crate::interface::cli::uds_execution_state::{ExecutionSnapshot, ProgressSummary, ToolSummary};
 use crate::interface::cli::uds_multi::{
     BusyFlag, BusyGuard, ConversationSnapshot, build_get_messages_line, build_get_state_line,
 };
@@ -446,6 +447,7 @@ fn build_get_state_line_serializes_status_snapshot() {
     let state = SessionState {
         execution: None,
         model: "mock-model".into(),
+        generation: 1,
         is_streaming: true,
         session_key: "cli:test".into(),
         message_count: 2,
@@ -467,16 +469,19 @@ fn build_get_state_line_serializes_status_snapshot() {
     assert_eq!(v["type"], "response");
     assert_eq!(v["command"], "get_state");
     assert_eq!(v["success"], true);
-    assert_eq!(v["data"]["isStreaming"], true);
-    assert_eq!(v["data"]["messageCount"], 2);
-    assert_eq!(v["data"]["pendingMessageCount"], 1);
+    assert_eq!(v["data"]["state"], "thinking");
+    assert_eq!(v["data"]["model"], "mock-model");
+    assert!(v["data"].get("isStreaming").is_none());
+    assert!(v["data"].get("messageCount").is_none());
+    assert!(v["data"].get("pendingMessageCount").is_none());
 }
 
 #[test]
-fn busy_get_state_line_marks_snapshot() {
+fn busy_get_state_line_omits_snapshot_marker() {
     let state = SessionState {
         execution: None,
         model: "mock-model".into(),
+        generation: 1,
         is_streaming: false,
         session_key: "cli:test".into(),
         message_count: 2,
@@ -490,9 +495,9 @@ fn busy_get_state_line_marks_snapshot() {
 
     let line = crate::interface::cli::uds_snapshots::build_get_state_line_live(&state, &None, true);
     let v: serde_json::Value = serde_json::from_str(line.trim()).expect("valid JSON line");
-    assert_eq!(
-        v["data"]["snapshot"], true,
-        "busy get_state snapshots must be tagged: {line}"
+    assert!(
+        v["data"].get("snapshot").is_none(),
+        "busy get_state snapshots must not add snapshot marker: {line}"
     );
 }
 
@@ -584,7 +589,7 @@ fn busy_get_state_reflects_live_workflow_progress_mid_turn() {
         WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
     };
     use crate::interface::cli::uds_snapshots::{
-        build_get_state_line_live, build_get_state_line_with_streaming,
+        build_busy_get_state_line, build_get_state_line_with_streaming,
     };
     use std::sync::{Arc, Mutex};
 
@@ -615,8 +620,21 @@ fn busy_get_state_reflects_live_workflow_progress_mid_turn() {
     let mut frozen_wf = serde_json::to_value(engine.snapshot(true)).unwrap();
     frozen_wf["automation"] = serde_json::json!({"autoContinue": true, "completionNudge": false});
     let state = SessionState {
-        execution: None,
+        execution: Some(ExecutionSnapshot {
+            phase: "streaming".into(),
+            activity_generation: 1,
+            last_activity_at: "now".into(),
+            last_activity_seconds_ago: 0,
+            current_tool: None,
+            tools: ToolSummary::default(),
+            progress: ProgressSummary {
+                state: "advancing".into(),
+                reason: "agent is streaming".into(),
+                ..Default::default()
+            },
+        }),
         model: "m".into(),
+        generation: 1,
         is_streaming: true,
         session_key: "k".into(),
         message_count: 1,
@@ -633,26 +651,61 @@ fn busy_get_state_reflects_live_workflow_progress_mid_turn() {
     engine.check(2).unwrap();
     let handle = Arc::new(Mutex::new(engine));
 
-    // The frozen-snapshot builder is stale (still 0/3) — this is the bug.
+    // The frozen-snapshot builder is stale (still first step) — this is the bug.
     let frozen_v: serde_json::Value =
         serde_json::from_str(build_get_state_line_with_streaming(&state, true).trim()).unwrap();
     assert_eq!(
-        frozen_v["data"]["workflow"]["progress"]["done"], 0,
-        "frozen snapshot reports pre-turn 0/3 (the stale path #914 fixes)"
+        frozen_v["data"]["workflow"]["currentStep"]["key"], "a",
+        "frozen snapshot reports the pre-turn step (the stale path #914 fixes)"
     );
 
-    // #914 fix: the live builder reports the engine's current 2/3.
-    let live_v: serde_json::Value =
-        serde_json::from_str(build_get_state_line_live(&state, &Some(handle), true).trim())
+    // #914 fix: the live builder reports the engine's current step.
+    let execution = Arc::new(Mutex::new(Default::default()));
+    let live_v: serde_json::Value = serde_json::from_str(
+        build_busy_get_state_line(&state, &Some(handle.clone()), &execution).trim(),
+    )
+    .unwrap();
+    assert_eq!(
+        live_v["data"]["workflow"]["currentStep"]["key"], "c",
+        "live get_state must reflect mid-turn current step, not the frozen snapshot"
+    );
+    assert!(
+        live_v["data"]["generation"].as_u64().unwrap() > state.generation,
+        "busy live workflow overlay must advance the slim get_state cursor: {live_v}"
+    );
+    assert!(
+        live_v["data"]["workflow"].get("progress").is_none(),
+        "slim workflow must omit progress: {live_v}"
+    );
+    assert!(
+        live_v["data"]["workflow"].get("automation").is_none(),
+        "slim workflow must omit automation flags: {live_v}"
+    );
+
+    let prior_generation = live_v["data"]["generation"].as_u64().unwrap();
+    let poisoned_workflow = handle.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = poisoned_workflow.lock().unwrap();
+        panic!("poison busy workflow lock");
+    })
+    .join();
+    let poisoned_execution = execution.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = poisoned_execution.lock().unwrap();
+        panic!("poison busy execution lock");
+    })
+    .join();
+
+    let recovered: serde_json::Value =
+        serde_json::from_str(build_busy_get_state_line(&state, &Some(handle), &execution).trim())
             .unwrap();
     assert_eq!(
-        live_v["data"]["workflow"]["progress"]["done"], 2,
-        "live get_state must reflect mid-turn progress (2/3), not the frozen snapshot"
+        recovered["data"]["workflow"]["currentStep"]["key"], "c",
+        "poison recovery must preserve the coherent live workflow projection: {recovered}"
     );
-    assert_eq!(live_v["data"]["workflow"]["progress"]["total"], 3);
-    // Automation flags are preserved from the frozen snapshot.
     assert_eq!(
-        live_v["data"]["workflow"]["automation"]["autoContinue"],
-        true
+        recovered["data"]["generation"].as_u64().unwrap(),
+        prior_generation,
+        "poison recovery and an older frozen session snapshot must not change the cursor: {recovered}"
     );
 }

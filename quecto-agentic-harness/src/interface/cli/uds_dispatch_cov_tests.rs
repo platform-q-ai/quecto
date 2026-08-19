@@ -677,6 +677,7 @@ async fn dispatch_routes_fieldless_get_state() {
     let cmd = AgentCommand::GetState {
         agent_id: None,
         id: Some("g".into()),
+        since: None,
     };
     let mut ctx = fx.ctx();
     // Handled by the fieldless fast-path; returns early.

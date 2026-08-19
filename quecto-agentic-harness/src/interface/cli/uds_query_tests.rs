@@ -2,6 +2,9 @@ use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::{Message, ToolCall};
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::domain::workflow::{
+    WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
+};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::test_support::message_contents;
 use crate::infrastructure::tools::registration::ToolRegistration;
@@ -60,6 +63,7 @@ pub(crate) struct Fx {
     agent: AgentLoopImpl,
     messages: Vec<Message>,
     session: AgentSession,
+    pub(crate) execution_state: crate::interface::cli::uds_execution_state::ExecutionStateHandle,
     session_key: String,
     store: FileSessionStore,
     _tmp: tempfile::TempDir,
@@ -96,6 +100,7 @@ impl Fx {
             }),
             messages: vec![Message::user("one"), Message::assistant("two", vec![])],
             session: AgentSession::new("stub".into(), "cli:test".into()),
+            execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_key: "cli:test".into(),
             store: FileSessionStore::new(tmp.path()),
             _tmp: tmp,
@@ -104,6 +109,13 @@ impl Fx {
     }
 
     pub(crate) fn ctx(&mut self) -> crate::interface::cli::uds::DispatchCtx<'_> {
+        self.ctx_with_workflow(None)
+    }
+
+    pub(crate) fn ctx_with_workflow(
+        &mut self,
+        workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
+    ) -> crate::interface::cli::uds::DispatchCtx<'_> {
         let initial_stats = compute_session_stats_with_usage(
             &self.session_key,
             &self.messages,
@@ -112,7 +124,7 @@ impl Fx {
             self.agent.max_context_tokens(),
         );
         crate::interface::cli::uds::DispatchCtx {
-            execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
+            execution_state: self.execution_state.clone(),
             wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
             base_dir: self._tmp.path(),
             agent: &mut self.agent,
@@ -140,7 +152,7 @@ impl Fx {
             current_client_id: 0,
             subagent_registry: None,
             notification_rx: None,
-            workflow_state: None,
+            workflow_state,
             workflow_config: None,
             provider_reload: None,
             provider_reload_inputs: None,
@@ -148,6 +160,79 @@ impl Fx {
             durable_prefix_dirty: false,
         }
     }
+}
+
+fn workflow_engine_for_get_state_since_tests() -> crate::interface::shared::WorkflowStateHandle {
+    Arc::new(std::sync::Mutex::new(
+        WorkflowEngine::new(
+            WorkflowConfig {
+                templates: vec![WorkflowTemplate {
+                    id: "feature".into(),
+                    label: "Feature".into(),
+                    description: "desc".into(),
+                    when_to_use: None,
+                    steps: vec![WorkflowTemplateStep {
+                        key: "plan".into(),
+                        label: "Plan".into(),
+                        phase: "design".into(),
+                        guidance: None,
+                    }],
+                    guards: vec![],
+                }],
+                ..WorkflowConfig::default()
+            },
+            false,
+        )
+        .unwrap(),
+    ))
+}
+
+#[test]
+fn idle_get_state_since_reveals_workflow_selection_change_after_session_generation_ahead() {
+    let mut fx = Fx::new();
+    fx.session.set_model("stub-a".into());
+    fx.session.set_model("stub-b".into());
+    fx.session.set_model("stub-c".into());
+    let workflow = workflow_engine_for_get_state_since_tests();
+    let before = {
+        let ctx = fx.ctx_with_workflow(Some(workflow.clone()));
+        query_response_data(
+            &AgentCommand::GetState {
+                id: None,
+                since: None,
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .unwrap()
+    };
+    assert!(before.get("workflow").is_none());
+    let before_generation = before["generation"].as_u64().unwrap();
+    assert!(before_generation > workflow.lock().unwrap().revision());
+
+    workflow
+        .lock()
+        .unwrap()
+        .select_template("feature", None)
+        .unwrap();
+
+    let ctx = fx.ctx_with_workflow(Some(workflow));
+    let after = query_response_data(
+        &AgentCommand::GetState {
+            id: None,
+            since: Some(before_generation),
+            agent_id: None,
+        },
+        &ctx,
+    )
+    .unwrap();
+
+    assert_ne!(after.get("unchanged"), Some(&serde_json::Value::Bool(true)));
+    assert_eq!(after["workflow"]["activeTemplate"]["id"], "feature");
+    assert!(
+        after["generation"].as_u64().unwrap() > before_generation,
+        "workflow-visible idle mutation must advance get_state since cursor: before={before}, after={after}"
+    );
 }
 
 #[test]
@@ -158,14 +243,16 @@ fn query_get_state_messages_and_stats_are_shaped() {
     let state = query_response_data(
         &AgentCommand::GetState {
             id: None,
+            since: None,
             agent_id: None,
         },
         &ctx,
     )
     .unwrap();
     assert_eq!(state["model"], "stub");
-    assert_eq!(state["messageCount"], 2);
-    assert_eq!(state["execution"]["phase"], "idle");
+    assert!(state.get("messageCount").is_none());
+    assert!(state.get("execution").is_none());
+    assert_eq!(state["state"], "idle");
 
     let all = query_response_data(
         &AgentCommand::GetMessages {

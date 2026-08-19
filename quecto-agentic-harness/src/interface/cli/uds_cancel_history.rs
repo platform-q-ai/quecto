@@ -80,3 +80,7 @@ pub(super) fn finalize_interrupted_turn(
     messages.extend(finalized.recordable_messages());
     finalized
 }
+
+#[cfg(test)]
+#[path = "uds_cancel_history_tests.rs"]
+mod tests;

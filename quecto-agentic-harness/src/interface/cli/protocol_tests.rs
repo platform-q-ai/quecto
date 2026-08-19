@@ -550,6 +550,7 @@ fn test_session_state_serializes() {
     let state = SessionState {
         execution: None,
         model: "gpt-5".to_string(),
+        generation: 1,
         is_streaming: false,
         session_key: "cli:test".to_string(),
         message_count: 4,
@@ -571,6 +572,7 @@ fn test_session_state_with_workflow_serializes() {
     let state = SessionState {
         execution: None,
         model: "gpt-5".to_string(),
+        generation: 1,
         is_streaming: false,
         session_key: "cli:wf".to_string(),
         message_count: 2,
@@ -596,6 +598,7 @@ fn test_session_state_without_workflow_omits_field() {
     let state = SessionState {
         execution: None,
         model: "gpt-5".to_string(),
+        generation: 1,
         is_streaming: false,
         session_key: "cli:no_wf".to_string(),
         message_count: 0,

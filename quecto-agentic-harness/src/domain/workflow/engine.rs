@@ -17,19 +17,8 @@ impl WorkflowEngine {
             selector_prompt: config.selector_prompt,
             bound: false,
             selector_nudge: false,
+            revision: 1,
         })
-    }
-
-    /// Bind the engine to its currently-selected template (a by-value
-    /// `--workflow-spec` assignment). Once bound, the model cannot switch or
-    /// re-select a different template. See [`WorkflowEngine`].
-    pub fn set_bound(&mut self, bound: bool) {
-        self.bound = bound;
-    }
-
-    /// Whether this engine is bound to a single assigned template.
-    pub fn is_bound(&self) -> bool {
-        self.bound
     }
 
     /// Arm (or disarm) the idle-boundary template-selector nudge (#1113).
@@ -161,6 +150,7 @@ impl WorkflowEngine {
         if let Some((number, title)) = issue {
             self.run.active_issue = Some((number, truncate_issue_title(title)));
         }
+        self.bump_revision();
         Ok(())
     }
 
@@ -177,6 +167,7 @@ impl WorkflowEngine {
             }
         }
         self.run.done[idx] = true;
+        self.bump_revision();
         Ok(())
     }
 
@@ -184,6 +175,7 @@ impl WorkflowEngine {
         let template = self.require_active_template()?;
         let idx = validate_step_index(step, template.steps.len())?;
         self.run.done[idx] = false;
+        self.bump_revision();
         Ok(())
     }
 
@@ -191,6 +183,7 @@ impl WorkflowEngine {
         let template = self.require_active_template()?;
         let idx = validate_step_index(step, template.steps.len())?;
         self.run.done[idx] = true;
+        self.bump_revision();
         Ok(())
     }
 
@@ -202,17 +195,21 @@ impl WorkflowEngine {
             if let Some(steps) = steps {
                 self.run.done = vec![false; steps];
             }
+            self.bump_revision();
             return;
         }
         self.run = WorkflowRun::default();
+        self.bump_revision();
     }
 
     pub fn set_issue(&mut self, number: u32, title: String) {
         self.run.active_issue = Some((number, truncate_issue_title(title)));
+        self.bump_revision();
     }
 
     pub fn clear_issue(&mut self) {
         self.run.active_issue = None;
+        self.bump_revision();
     }
 
     pub fn progress(&self) -> WorkflowProgress {

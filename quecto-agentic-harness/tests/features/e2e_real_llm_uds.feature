@@ -174,20 +174,17 @@ Feature: E2E Real LLM UDS Agent
     And I close the UDS connection
     Then the UDS agent exits with code 0
     And the agent output should contain a response command "get_state" with success true
-    And the get_state response should include field "isStreaming"
-    And the get_state response should include field "messageCount"
-    And the get_state response should include field "model"
-    And the get_state response should include field "sessionKey"
+    And the get_state response should have only the slim state fields without workflow
 
   @done @manual-real-llm @mock-llm
-  Scenario: UDS get_state message count increases after prompts
+  Scenario: UDS get_state omits message counts after prompts
     When I start the real LLM UDS agent
     And I send prompt "Reply with exactly COUNT_A"
     And I send prompt "Reply with exactly COUNT_B"
     And I send command "get_state" with id "gs-count"
     And I close the UDS connection
     Then the UDS agent exits with code 0
-    And the get_state response messageCount should be at least 4
+    And the get_state response should have only the slim state fields without workflow
 
   # ═══════════════════════════════════════════════════════════════════════════
   # get_messages command

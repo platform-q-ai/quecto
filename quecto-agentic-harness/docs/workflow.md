@@ -581,9 +581,11 @@ changes which guards are active. Non-bash tools are never blocked.
 
 ### `get_state` response
 
-When workflow is available (normal UDS or `--workflow`), `get_state` includes a
-`workflow` field with the full engine snapshot. When disabled with
-`--no-workflow`, the field is absent.
+When a workflow template is selected, `get_state` includes only the slim
+workflow identity and current step in its `workflow` field. When no template is
+selected, or workflow is disabled with `--no-workflow`, the field is absent.
+Full step lists, guidance, available templates, and automation details are not
+part of `get_state`; use workflow commands/events for those details.
 
 ### `workflow_state` event
 
@@ -710,10 +712,11 @@ explicitly asked.
 ## Dormant workflow vs disabling workflow completely
 
 Workflow is **available by default** in UDS mode. If you do not pass
-`--workflow`, the `workflow` tool is registered and `get_state` includes
-workflow state, but the model is not shown selector-mode instructions and is not
-pushed to start a workflow. The user may explicitly ask the model to select a
-template later, for example: "select the feature workflow and implement abc".
+`--workflow`, the `workflow` tool is registered, but `get_state` still omits
+workflow state until a template is selected. The model is not shown
+selector-mode instructions and is not pushed to start a workflow. The user may
+explicitly ask the model to select a template later, for example: "select the
+feature workflow and implement abc".
 
 ```bash
 # Dormant workflow tool available — standard conversational UDS agent

@@ -59,9 +59,11 @@ pub(super) fn query_response_data(
     ctx: &DispatchCtx<'_>,
 ) -> Option<serde_json::Value> {
     match cmd {
-        AgentCommand::GetState { .. } => {
-            let workflow = ctx.workflow_state.as_ref().and_then(|ws| {
-                ws.lock().ok().map(|engine| {
+        AgentCommand::GetState { since, .. } => {
+            let (workflow, workflow_revision) =
+                ctx.workflow_state.as_ref().map_or((None, 0), |ws| {
+                    let engine = ws.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let revision = engine.revision();
                     let mut value = serde_json::to_value(engine.snapshot(true)).unwrap_or_default();
                     if let Some(config) = &ctx.workflow_config {
                         value["automation"] = serde_json::json!({
@@ -69,9 +71,8 @@ pub(super) fn query_response_data(
                             "completionNudge": config.completion_nudge,
                         });
                     }
-                    value
-                })
-            });
+                    (Some(value), revision)
+                });
             // #1067: `SessionState` itself carries the session's effective
             // effort (the level string when set, an explicit null when unset)
             // plus the provider's valid vocabulary, so the live-query and
@@ -82,7 +83,16 @@ pub(super) fn query_response_data(
                 ctx.agent.max_context_tokens(),
                 ctx.agent.effort().map(|l| l.as_str().to_string()),
             );
-            if let Ok(mut execution) = ctx.execution_state.lock() {
+            {
+                // ExecutionState is the sole owner of the public cursor. Recover
+                // poisoned mutex data rather than publishing the raw session
+                // generation, which may be behind a cursor already observed.
+                let mut execution = ctx
+                    .execution_state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                state.generation =
+                    execution.observe_visible_revisions(state.generation, workflow_revision);
                 if ctx.session.is_streaming() {
                     state.message_count = execution.message_count();
                 } else {
@@ -93,7 +103,9 @@ pub(super) fn query_response_data(
                 }
                 state.execution = Some(execution.snapshot());
             }
-            Some(serde_json::to_value(&state).unwrap_or_default())
+            Some(super::uds_state_projection::slim_state_response_data(
+                &state, *since,
+            ))
         }
         AgentCommand::GetMessages { count, before, .. } => {
             let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
@@ -162,7 +174,7 @@ mod cov2_tests {
     use crate::interface::cli::protocol::AgentCommand;
 
     #[test]
-    fn get_state_query_ignores_poisoned_workflow_lock() {
+    fn get_state_query_recovers_poisoned_workflow_lock() {
         let mut fx = Fx::new();
         let state: std::sync::Arc<std::sync::Mutex<crate::domain::workflow::WorkflowEngine>> =
             std::sync::Arc::new(std::sync::Mutex::new(
@@ -178,6 +190,11 @@ mod cov2_tests {
                 )
                 .unwrap(),
             ));
+        state
+            .lock()
+            .unwrap()
+            .select_template("bugfix", None)
+            .unwrap();
         let poisoned = state.clone();
         let _ = std::thread::spawn(move || {
             let _guard = poisoned.lock().unwrap();
@@ -190,12 +207,46 @@ mod cov2_tests {
         let value = query_response_data(
             &AgentCommand::GetState {
                 id: None,
+                since: None,
                 agent_id: None,
             },
             &ctx,
         )
         .unwrap();
-        assert!(value.get("workflow").is_none());
+        assert_eq!(value["workflow"]["activeTemplate"]["id"], "bugfix");
         assert_eq!(value["model"], "stub");
+    }
+
+    #[test]
+    fn get_state_query_recovers_poisoned_execution_cursor() {
+        let mut fx = Fx::new();
+        let execution = fx.execution_state.clone();
+        let expected_generation = {
+            let mut state = execution.lock().unwrap();
+            state.observe_visible_revisions(50, 0)
+        };
+        let poisoned = execution.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned.lock().unwrap();
+            panic!("poison execution lock");
+        })
+        .join();
+
+        let ctx = fx.ctx();
+        let value = query_response_data(
+            &AgentCommand::GetState {
+                id: None,
+                since: None,
+                agent_id: None,
+            },
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(
+            value["generation"].as_u64().unwrap(),
+            expected_generation,
+            "must retain the execution-owned public cursor exactly after poison: {value}"
+        );
+        assert_eq!(value["state"], "idle");
     }
 }

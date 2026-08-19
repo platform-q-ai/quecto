@@ -41,21 +41,16 @@ pub(super) fn response_is_valid_answer(json: &serde_json::Value, command: &str) 
         }
         Some("get_state") => {
             // A `count` on get_state is meaningless; keep it strict so an unusual
-            // command shape can never be silently answered by the snapshot. Also
-            // require the explicit snapshot marker: an id-less unmarked state can
-            // be a stale turn-boundary line and must not beat the correlated live
-            // reply once the child is idle (#1104).
+            // command shape can never be silently answered by the snapshot. #1512
+            // slim busy snapshots are intentionally id-less and unmarked: accept
+            // only the slim projection (or unchanged cursor response), never the
+            // legacy bulky snapshot marker/message-count shape. A request carrying
+            // `since` can use an id-less snapshot only at exactly that generation,
+            // where finalization turns it into the bounded unchanged marker.
             cmd.get("count").is_none()
                 && json.get("command").and_then(|v| v.as_str()) == Some("get_state")
-                && json.pointer("/data/snapshot").and_then(|v| v.as_bool()) == Some(true)
-                && json
-                    .pointer("/data/isStreaming")
-                    .and_then(|v| v.as_bool())
-                    .is_some()
-                && json
-                    .pointer("/data/messageCount")
-                    .and_then(|v| v.as_u64())
-                    .is_some()
+                && get_state_data_is_slim_snapshot(json.pointer("/data"))
+                && get_state_snapshot_honors_since(json.pointer("/data"), cmd.get("since"))
         }
         Some("get_subagents") => {
             json.get("command").and_then(|v| v.as_str()) == Some("get_subagents")
@@ -84,6 +79,103 @@ pub(super) fn response_is_valid_answer(json: &serde_json::Value, command: &str) 
     }
 }
 
+fn get_state_snapshot_honors_since(
+    data: Option<&serde_json::Value>,
+    since: Option<&serde_json::Value>,
+) -> bool {
+    let Some(since) = since.and_then(|v| v.as_u64()) else {
+        return true;
+    };
+    let Some(data) = data else {
+        return false;
+    };
+    let generation = data.get("generation").and_then(|v| v.as_u64());
+    if data.get("unchanged").and_then(|v| v.as_bool()) == Some(true) {
+        return generation == Some(since);
+    }
+    // A changed connect-time snapshot is only a point-in-time observation and
+    // cannot prove that its projection is the state immediately after an older
+    // cursor. Accepting generation > since could therefore return stale changed
+    // fields as the answer to a precise delta query. Equality is safe because
+    // finalization converts it to the bounded unchanged marker; otherwise wait
+    // for the correlated live reply.
+    generation == Some(since)
+}
+
+fn get_state_data_is_slim_snapshot(data: Option<&serde_json::Value>) -> bool {
+    let Some(data) = data else {
+        return false;
+    };
+    let Some(object) = data.as_object() else {
+        return false;
+    };
+    if data.get("unchanged").and_then(|v| v.as_bool()) == Some(true) {
+        return data.get("generation").and_then(|v| v.as_u64()).is_some() && object.len() == 2;
+    }
+    let allowed_top_level = [
+        "state",
+        "effort",
+        "model",
+        "progress",
+        "generation",
+        "workflow",
+    ];
+    if object
+        .keys()
+        .any(|key| !allowed_top_level.contains(&key.as_str()))
+    {
+        return false;
+    }
+    data.get("state").and_then(|v| v.as_str()).is_some()
+        && object.contains_key("effort")
+        && data.get("model").and_then(|v| v.as_str()).is_some()
+        && data.get("generation").and_then(|v| v.as_u64()).is_some()
+        && progress_is_slim(data.get("progress"))
+        && data.get("workflow").is_none_or(workflow_is_slim)
+}
+
+fn progress_is_slim(progress: Option<&serde_json::Value>) -> bool {
+    let Some(progress) = progress.and_then(|v| v.as_object()) else {
+        return false;
+    };
+    progress.len() == 2
+        && progress.get("state").and_then(|v| v.as_str()).is_some()
+        && progress.get("reason").and_then(|v| v.as_str()).is_some()
+}
+
+fn workflow_is_slim(workflow: &serde_json::Value) -> bool {
+    let Some(workflow) = workflow.as_object() else {
+        return false;
+    };
+    let allowed_workflow = ["activeTemplate", "currentStep"];
+    if workflow
+        .keys()
+        .any(|key| !allowed_workflow.contains(&key.as_str()))
+    {
+        return false;
+    }
+    let Some(active_template) = workflow.get("activeTemplate").and_then(|v| v.as_object()) else {
+        return false;
+    };
+    if active_template.len() != 1 || active_template.get("id").and_then(|v| v.as_str()).is_none() {
+        return false;
+    }
+    workflow.get("currentStep").is_none_or(current_step_is_slim)
+}
+
+fn current_step_is_slim(step: &serde_json::Value) -> bool {
+    let Some(step) = step.as_object() else {
+        return false;
+    };
+    let allowed_step = ["index", "key", "label", "phase", "done"];
+    step.keys().all(|key| allowed_step.contains(&key.as_str()))
+        && step.get("index").and_then(|v| v.as_u64()).is_some()
+        && step.get("key").and_then(|v| v.as_str()).is_some()
+        && step.get("label").and_then(|v| v.as_str()).is_some()
+        && step.get("phase").and_then(|v| v.as_str()).is_some()
+        && step.get("done").and_then(|v| v.as_bool()).is_some()
+}
+
 /// Apply the request's `count` (if any) to an accepted `get_messages` snapshot by
 /// keeping the last-N messages, then return the single-line response (#842). When
 /// the request carries no `count` (every `get_state` and uncounted `get_messages`
@@ -92,13 +184,41 @@ pub(super) fn response_is_valid_answer(json: &serde_json::Value, command: &str) 
 /// in `data` are preserved untouched so the caller can still tell the data may lag
 /// the in-flight turn. Used only after [`response_is_valid_answer`] approved the
 /// snapshot, so `json` is the already-parsed form of `line`.
+#[cfg(test)]
+#[path = "subagent_snapshot_tests.rs"]
+mod tests;
+
 pub(super) fn finalize_snapshot_answer(
     line: String,
     mut json: serde_json::Value,
     command: &str,
 ) -> String {
-    let Some(count) = serde_json::from_str::<serde_json::Value>(command)
-        .ok()
+    let cmd = serde_json::from_str::<serde_json::Value>(command).ok();
+    if cmd
+        .as_ref()
+        .and_then(|cmd| cmd.get("type"))
+        .and_then(|v| v.as_str())
+        == Some("get_state")
+    {
+        if let (Some(since), Some(generation)) = (
+            cmd.as_ref()
+                .and_then(|cmd| cmd.get("since"))
+                .and_then(|v| v.as_u64()),
+            json.pointer("/data/generation").and_then(|v| v.as_u64()),
+        ) {
+            if generation == since
+                && json.pointer("/data/unchanged").and_then(|v| v.as_bool()) != Some(true)
+            {
+                if let Some(data) = json.pointer_mut("/data") {
+                    *data = serde_json::json!({"unchanged": true, "generation": generation});
+                }
+                return json.to_string();
+            }
+        }
+        return line;
+    }
+    let Some(count) = cmd
+        .as_ref()
         .and_then(|cmd| cmd.get("count").and_then(|v| v.as_u64()))
     else {
         return line;

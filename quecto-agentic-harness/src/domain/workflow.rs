@@ -228,10 +228,16 @@ pub struct WorkflowEngine {
     /// workflow sessions (`--workflow`): a plain UDS session that merely has
     /// the workflow tool available must never be nudged to pick a template.
     selector_nudge: bool,
+    /// Monotonic cursor for workflow state that is visible in slim get_state.
+    /// UDS folds this into AgentSession generation so idle since-cursors cannot
+    /// hide workflow tool mutations (#1512).
+    revision: u64,
 }
 
+mod binding;
 mod engine;
 pub use engine::*;
+mod revision;
 
 #[cfg(test)]
 #[path = "workflow_tests.rs"]

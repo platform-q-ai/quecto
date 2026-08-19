@@ -24,10 +24,15 @@ pub(super) fn set_workflow_run(
     if let Some(workflow) = &ctx.workflow_state
         && let Ok(mut engine) = workflow.lock()
     {
+        let before = serde_json::to_value(engine.snapshot(true)).ok();
         if let Some(run) = workflow_run {
             engine.restore_run(run);
         } else {
             engine.reset();
+        }
+        let after = serde_json::to_value(engine.snapshot(true)).ok();
+        if before != after {
+            ctx.session.bump_visible_generation();
         }
     }
 }
@@ -255,7 +260,11 @@ pub(super) async fn handle_new_session(
         .reset_to_with_spill_store(ctx.messages, ctx.agent.spill_store().cloned(), key.clone());
     emit_ledger_advanced(ctx, advance).await;
     // Session-scoped effort must not leak into the fresh session (#1067).
+    let before_effort = ctx.agent.effort();
     ctx.agent.reset_effort_to_default();
+    if ctx.agent.effort() != before_effort {
+        ctx.session.bump_visible_generation();
+    }
     set_workflow_run(ctx, None);
     if let Some(spill) = ctx.agent.spill_store()
         && let Err(e) = spill.clear(ctx.session_key).await
@@ -348,7 +357,11 @@ pub(super) async fn handle_resume_session(
     ctx.agent.set_session_key(new_key.clone());
     // Session-scoped effort must not follow the client into the resumed
     // session (#1067).
+    let before_effort = ctx.agent.effort();
     ctx.agent.reset_effort_to_default();
+    if ctx.agent.effort() != before_effort {
+        ctx.session.bump_visible_generation();
+    }
     ctx.session.clear_usage();
     ctx.session.drain_pending();
     let workflow_run = loaded.workflow_run;
