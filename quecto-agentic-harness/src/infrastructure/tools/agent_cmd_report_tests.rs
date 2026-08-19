@@ -64,7 +64,7 @@ async fn default_get_messages_backfill_failure_is_marked_incomplete() {
     let mut entry = SubagentEntry::new(sock_path.clone(), 0);
     entry.delivered_message_ordinal = Some(10);
     registry.lock().unwrap().insert("w1".to_string(), entry);
-    let tool = AgentCmdTool::new(registry);
+    let tool = AgentCmdTool::new(registry.clone());
     let first = serde_json::json!({"success": true, "data": {"messages": [
         {"role":"assistant","content":"tail","ordinal":12}
     ]}})
@@ -74,10 +74,9 @@ async fn default_get_messages_backfill_failure_is_marked_incomplete() {
         .await;
     let shaped = tool.shape_default_get_messages_report("w1", &expanded);
     let parsed: serde_json::Value = serde_json::from_str(&shaped).unwrap();
-    assert_eq!(
-        parsed["data"],
-        serde_json::json!({"unchanged":true,"reportIncomplete":true})
-    );
+    assert_eq!(parsed["data"]["messages"][0]["content"], "tail");
+    assert_eq!(parsed["data"]["reportIncomplete"], true);
+    assert_eq!(registry.lock().unwrap()["w1"].pending_message_ordinal, None);
 }
 
 #[test]
@@ -479,4 +478,48 @@ fn first_contact_backfill_not_needed_when_newest_page_has_assistant() {
 fn later_delta_backfill_needed_when_gap_before_newest_page() {
     let messages = vec![serde_json::json!({"role":"assistant","content":"later","ordinal":37})];
     assert!(super::needs_default_report_backfill(&messages, 10));
+}
+
+#[test]
+fn default_get_messages_strips_unbounded_payloads_to_fit_envelope_budget() {
+    let registry = new_registry();
+    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
+    entry.delivered_message_ordinal = Some(1);
+    registry.lock().unwrap().insert("w1".to_string(), entry);
+    let tool = AgentCmdTool::new(registry);
+    let shaped = tool.shape_default_get_messages_report(
+        "w1",
+        &json_response(serde_json::json!([
+            {"role":"assistant","content":"old","ordinal":1},
+            {"role":"assistant","content":"é".repeat(2000),"ordinal":2,
+             "tool_calls":[{"arguments":"x".repeat(20_000)}],"image_blocks":[{"data":"y".repeat(20_000)}]}
+        ])),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&shaped).unwrap();
+    assert!(
+        serde_json::to_vec(&parsed["data"]).unwrap().len()
+            <= crate::infrastructure::tools::agent_cmd_report::REPORT_BUDGET_BYTES
+    );
+    assert!(parsed["data"]["messages"][0].get("tool_calls").is_none());
+    assert!(parsed["data"]["messages"][0].get("image_blocks").is_none());
+}
+
+#[test]
+fn incomplete_backfill_returns_bounded_progress_without_advancing_cursor() {
+    let registry = new_registry();
+    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
+    entry.delivered_message_ordinal = Some(10);
+    registry.lock().unwrap().insert("w1".to_string(), entry);
+    let tool = AgentCmdTool::new(registry.clone());
+    let shaped = tool.shape_default_get_messages_report(
+        "w1",
+        &serde_json::json!({"success": true, "data": {"messages": [
+            {"role":"assistant","content":"progress","ordinal":37}
+        ], "reportIncomplete": true}})
+        .to_string(),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&shaped).unwrap();
+    assert_eq!(parsed["data"]["messages"][0]["content"], "progress");
+    assert_eq!(parsed["data"]["reportIncomplete"], true);
+    assert_eq!(registry.lock().unwrap()["w1"].pending_message_ordinal, None);
 }

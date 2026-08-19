@@ -345,10 +345,8 @@ impl AgentCmdTool {
         let Some(data) = envelope.get_mut("data") else {
             return response.to_string();
         };
-        if data.get("reportIncomplete").and_then(|v| v.as_bool()) == Some(true) {
-            *data = serde_json::json!({"unchanged": true, "reportIncomplete": true});
-            return envelope.to_string();
-        }
+        let report_incomplete =
+            data.get("reportIncomplete").and_then(|v| v.as_bool()) == Some(true);
         let Some(messages) = data.get_mut("messages").and_then(|v| v.as_array_mut()) else {
             return response.to_string();
         };
@@ -366,6 +364,28 @@ impl AgentCmdTool {
             .filter_map(|m| m.get("ordinal").and_then(|v| v.as_u64()))
             .max()
             .unwrap_or(0);
+        if report_incomplete {
+            if observed_max > delivered {
+                let (selected, _truncated) = bounded_report_messages(
+                    messages
+                        .iter()
+                        .filter(|m| {
+                            m.get("ordinal")
+                                .and_then(|v| v.as_u64())
+                                .is_some_and(|ord| ord > delivered)
+                        })
+                        .cloned()
+                        .collect(),
+                    observed_max,
+                );
+                if !selected.is_empty() {
+                    *data = serde_json::json!({"messages": selected, "truncated": true, "reportIncomplete": true});
+                    return envelope.to_string();
+                }
+            }
+            *data = serde_json::json!({"unchanged": true, "reportIncomplete": true});
+            return envelope.to_string();
+        }
         if observed_max < delivered {
             delivered = 0;
             entry.delivered_message_ordinal = None;
