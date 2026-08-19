@@ -585,7 +585,7 @@ async fn save_to_key_stamped_by_dead_process_reclaims_and_succeeds() {
 #[tokio::test]
 async fn append_time_ordinals_survive_reload_and_compaction_while_ids_regenerate() {
     let dir = TempDir::new().unwrap();
-    let store = FileSessionStore::new(dir.path().to_path_buf());
+    let store = FileSessionStore::new(dir.path());
     let session = Session {
         key: "ordinals:reload".into(),
         messages: vec![Message::user("one"), Message::assistant("two", vec![])],
