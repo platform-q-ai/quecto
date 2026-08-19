@@ -688,3 +688,27 @@ fn assert_phase_0_links_resolve() {
         report.missing
     );
 }
+
+#[test]
+fn agent_cmd_and_spawn_schema_guidance_stays_in_sync_for_get_messages() {
+    let agent_cmd = read_repo_file("src/infrastructure/tools/agent_cmd.rs");
+    let spawn = read_repo_file("src/infrastructure/tools/spawn.rs");
+    for (name, body) in [
+        ("agent_cmd.rs", agent_cmd.as_str()),
+        ("spawn.rs", spawn.as_str()),
+    ] {
+        assert!(
+            body.contains("Plain get_messages is the default unread report")
+                || body.contains("default unread report"),
+            "{name} must explain plain get_messages default unread report semantics"
+        );
+        assert!(
+            body.contains("count/before") || body.contains("count") && body.contains("before"),
+            "{name} must keep count/before paging guidance in schema text"
+        );
+        assert!(
+            !body.contains("get_messages (count 1-5)"),
+            "{name} must not contain stale count 1-5 completion guidance"
+        );
+    }
+}

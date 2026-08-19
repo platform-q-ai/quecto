@@ -581,3 +581,44 @@ async fn save_to_key_stamped_by_dead_process_reclaims_and_succeeds() {
     let contents = std::fs::read_to_string(&stamp).unwrap();
     assert!(contents.contains(&std::process::id().to_string()));
 }
+
+#[tokio::test]
+async fn append_time_ordinals_survive_reload_and_compaction_while_ids_regenerate() {
+    let dir = TempDir::new().unwrap();
+    let store = FileSessionStore::new(dir.path().to_path_buf());
+    let session = Session {
+        key: "ordinals:reload".into(),
+        messages: vec![Message::user("one"), Message::assistant("two", vec![])],
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    store.save(&session).await.unwrap();
+    let loaded = store.load("ordinals:reload").await.unwrap().unwrap();
+    assert_eq!(
+        loaded
+            .messages
+            .iter()
+            .map(|m| m.ordinal)
+            .collect::<Vec<_>>(),
+        vec![Some(1), Some(2)]
+    );
+    assert_ne!(loaded.messages[0].id(), session.messages[0].id());
+
+    let compacted = Session {
+        key: "ordinals:reload".into(),
+        messages: loaded.messages.clone(),
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    store.save(&compacted).await.unwrap();
+    let reloaded = store.load("ordinals:reload").await.unwrap().unwrap();
+    assert_eq!(
+        reloaded
+            .messages
+            .iter()
+            .map(|m| m.ordinal)
+            .collect::<Vec<_>>(),
+        vec![Some(1), Some(2)]
+    );
+    assert_ne!(reloaded.messages[0].id(), loaded.messages[0].id());
+}

@@ -378,12 +378,47 @@ fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
 }
 
 fn session_from_file(file: SessionFile) -> Session {
+    let messages =
+        assign_missing_ordinals(file.messages.into_iter().map(record_to_message).collect());
     Session {
         key: file.key,
-        messages: file.messages.into_iter().map(record_to_message).collect(),
+        messages,
         workflow_run: file.workflow_run,
         subagent_roster: file.subagent_roster,
     }
+}
+
+fn assign_missing_ordinals(mut messages: Vec<Message>) -> Vec<Message> {
+    let mut next = messages
+        .iter()
+        .filter_map(|m| m.ordinal)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+    for msg in &mut messages {
+        if msg.ordinal.is_none() {
+            msg.ordinal = Some(next);
+            next = next.saturating_add(1);
+        }
+    }
+    messages
+}
+
+fn messages_with_assigned_ordinals(messages: &[Message]) -> Vec<Message> {
+    let mut cloned = messages.to_vec();
+    let mut next = cloned
+        .iter()
+        .filter_map(|m| m.ordinal)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+    for msg in &mut cloned {
+        if msg.ordinal.is_none() {
+            msg.ordinal = Some(next);
+            next = next.saturating_add(1);
+        }
+    }
+    cloned
 }
 
 async fn is_jsonl_session_file(path: &Path) -> Result<bool, DomainError> {
@@ -419,7 +454,7 @@ async fn persisted_prefix_changed(
     }
     Ok(persisted.messages[..previously_persisted]
         .iter()
-        .zip(&messages[..previously_persisted])
+        .zip(messages_with_assigned_ordinals(&messages[..previously_persisted]).iter())
         .any(|(left, right)| message_to_record(left) != message_to_record(right)))
 }
 
@@ -462,15 +497,16 @@ async fn compact_or_append_delta(
             .unwrap_or_default();
         let session = Session {
             key: key.to_string(),
-            messages: messages.to_vec(),
+            messages: messages_with_assigned_ordinals(messages),
             workflow_run: workflow_run.cloned(),
             subagent_roster,
         };
         return write_compacted(path, &session).await;
     }
+    let assigned = messages_with_assigned_ordinals(messages);
     let record = SessionRecordRef::Append {
         start_index: Some(previously_persisted),
-        messages: messages[previously_persisted..]
+        messages: assigned[previously_persisted..]
             .iter()
             .map(message_to_record_ref)
             .collect(),
@@ -482,6 +518,14 @@ async fn compact_or_append_delta(
 }
 
 async fn append_or_compact(path: &Path, session: &Session) -> Result<(), DomainError> {
+    let mut assigned_session;
+    let session = if session.messages.iter().any(|m| m.ordinal.is_none()) {
+        assigned_session = session.clone();
+        assigned_session.messages = messages_with_assigned_ordinals(&assigned_session.messages);
+        &assigned_session
+    } else {
+        session
+    };
     if !path.exists() || !is_jsonl_session_file(path).await? {
         return write_compacted(path, session).await;
     }
@@ -602,6 +646,7 @@ fn first_user_message(messages: &[MessageHeader<'_>]) -> String {
 
 fn message_to_record_ref(msg: &Message) -> MessageRecordRef<'_> {
     MessageRecordRef {
+        ordinal: msg.ordinal,
         role: role_to_str(&msg.role),
         content: &msg.content,
         tool_calls: msg
@@ -642,6 +687,7 @@ fn message_to_record_ref(msg: &Message) -> MessageRecordRef<'_> {
 
 fn message_to_record(msg: &Message) -> MessageRecord {
     MessageRecord {
+        ordinal: msg.ordinal,
         role: role_to_str(&msg.role).to_string(),
         content: msg.content.clone(),
         tool_calls: msg
@@ -699,6 +745,7 @@ fn record_to_message(rec: MessageRecord) -> Message {
         Role::Assistant => Message::assistant(rec.content, tool_calls),
         Role::Tool => Message::tool(rec.tool_call_id.unwrap_or_default(), rec.content),
     };
+    msg.ordinal = rec.ordinal;
     msg.turn = rec.turn;
     msg.is_manifest = rec.is_manifest;
     msg.is_collapsed = rec.is_collapsed;

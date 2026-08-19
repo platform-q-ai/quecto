@@ -57,6 +57,7 @@ pub(crate) fn snapshot_subagent_roster(
             read_only: entry.read_only,
             status: Some(entry.status.to_wire_str().to_string()),
             delivered_message_ordinal: entry.delivered_message_ordinal,
+            pending_message_reports: entry.pending_message_reports.clone(),
         })
         .collect();
     roster.sort_by(|a, b| a.agent_uuid.cmp(&b.agent_uuid));
@@ -152,6 +153,8 @@ pub(crate) fn restore_persisted_subagent_roster(
         entry.parent_id = persisted.parent_id;
         entry.read_only = persisted.read_only;
         entry.delivered_message_ordinal = persisted.delivered_message_ordinal;
+        entry.pending_message_ordinal = persisted.pending_message_reports.back().map(|p| p.ordinal);
+        entry.pending_message_reports = persisted.pending_message_reports;
         live_entries.push((persisted.agent_uuid, entry));
     }
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());

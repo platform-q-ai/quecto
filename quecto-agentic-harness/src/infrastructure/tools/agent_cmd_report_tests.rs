@@ -146,7 +146,7 @@ fn first_contact_commits_through_later_non_assistant_ordinals() {
 }
 
 #[test]
-fn rebased_ordinals_reset_cursor_and_report_new_assistant() {
+fn stale_lower_ordinals_do_not_reset_cursor_or_report_duplicate_assistant() {
     let registry = new_registry();
     let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
     entry.delivered_message_ordinal = Some(100);
@@ -159,11 +159,8 @@ fn rebased_ordinals_reset_cursor_and_report_new_assistant() {
         ])),
     );
     let parsed: serde_json::Value = serde_json::from_str(&shaped).unwrap();
-    assert_eq!(parsed["data"]["messages"][0]["content"], "new after prune");
-    assert_eq!(
-        registry.lock().unwrap()["w1"].pending_message_ordinal,
-        Some(25)
-    );
+    assert_eq!(parsed["data"], serde_json::json!({"unchanged": true}));
+    assert_eq!(registry.lock().unwrap()["w1"].pending_message_ordinal, None);
 }
 
 #[test]
@@ -440,10 +437,8 @@ fn incomplete_default_backfill_returns_uncommitted_marker() {
         .to_string(),
     );
     let parsed: serde_json::Value = serde_json::from_str(&shaped).unwrap();
-    assert_eq!(
-        parsed["data"],
-        serde_json::json!({"unchanged": true, "reportIncomplete": true})
-    );
+    assert_eq!(parsed["data"]["messages"][0]["content"], "later");
+    assert_eq!(parsed["data"]["reportIncomplete"], true);
     assert_eq!(registry.lock().unwrap()["w1"].pending_message_ordinal, None);
 }
 
@@ -521,5 +516,61 @@ fn incomplete_backfill_returns_bounded_progress_without_advancing_cursor() {
     let parsed: serde_json::Value = serde_json::from_str(&shaped).unwrap();
     assert_eq!(parsed["data"]["messages"][0]["content"], "progress");
     assert_eq!(parsed["data"]["reportIncomplete"], true);
+    assert_eq!(registry.lock().unwrap()["w1"].pending_message_ordinal, None);
+}
+
+#[test]
+fn pending_delivery_correlates_to_each_shaped_get_messages_result() {
+    let registry = new_registry();
+    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
+    entry.delivered_message_ordinal = Some(1);
+    registry.lock().unwrap().insert("w1".to_string(), entry);
+    let tool = AgentCmdTool::new(registry.clone());
+
+    let first = tool.shape_default_get_messages_report(
+        "w1",
+        &json_response(serde_json::json!([
+            {"role":"assistant","content":"old","ordinal":1},
+            {"role":"assistant","content":"first","ordinal":2}
+        ])),
+    );
+    let second = tool.shape_default_get_messages_report(
+        "w1",
+        &json_response(serde_json::json!([
+            {"role":"assistant","content":"old","ordinal":1},
+            {"role":"assistant","content":"first","ordinal":2},
+            {"role":"assistant","content":"second","ordinal":3}
+        ])),
+    );
+
+    tool.result_delivered(
+        r#"{"agent_id":"w1","command":"get_messages"}"#,
+        &crate::domain::tool::ToolResult {
+            content: first,
+            is_error: false,
+            image_blocks: Vec::new(),
+        },
+    );
+    assert_eq!(
+        registry.lock().unwrap()["w1"].delivered_message_ordinal,
+        Some(2)
+    );
+    assert_eq!(
+        registry.lock().unwrap()["w1"].pending_message_ordinal,
+        Some(3)
+    );
+
+    tool.result_delivered(
+        r#"{"agent_id":"w1","command":"get_messages"}"#,
+        &crate::domain::tool::ToolResult {
+            content: second,
+            is_error: false,
+            image_blocks: Vec::new(),
+        },
+    );
+    assert_eq!(
+        registry.lock().unwrap()["w1"].delivered_message_ordinal,
+        Some(3)
+    );
     assert_eq!(registry.lock().unwrap()["w1"].pending_message_ordinal, None);
 }

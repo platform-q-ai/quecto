@@ -432,10 +432,15 @@ impl serde::Serialize for MessageView<'_> {
         // 8 base fields: stable id (#1060) + role/content/tools + isError + collapsed
         // (a demoted stub the client recalls by id; #1061 / ADR-0008 part 3).
         // Assistant thinking is an additive, display-safe recovery field (#1231).
-        let field_count = if msg.thinking_blocks.is_empty() { 8 } else { 9 };
+        let field_count = if msg.thinking_blocks.is_empty() {
+            9
+        } else {
+            10
+        };
         let mut s = serializer.serialize_struct("Message", field_count)?;
         // Domain UUID as a round-trippable string key (AC6).
         s.serialize_field("id", &msg.id().to_string())?;
+        s.serialize_field("ordinal", &msg.ordinal)?;
         s.serialize_field("role", role_wire_name(&msg.role))?;
         s.serialize_field("content", &msg.content)?;
         s.serialize_field("toolCalls", &ToolCallsView(&msg.tool_calls))?;

@@ -257,6 +257,7 @@ impl AgentCmdTool {
 #[cfg(test)]
 use super::agent_cmd_parse::SUPPORTED_COMMANDS;
 use super::agent_cmd_report::{bounded_report_messages, needs_default_report_backfill};
+use super::subagent_registry::PendingMessageReport;
 
 impl AgentCmdTool {
     async fn expand_default_get_messages_response(
@@ -358,7 +359,7 @@ impl AgentCmdTool {
             return response.to_string();
         };
         entry.pending_message_ordinal = None;
-        let mut delivered = entry.delivered_message_ordinal.unwrap_or(0);
+        let delivered = entry.delivered_message_ordinal.unwrap_or(0);
         let observed_max = messages
             .iter()
             .filter_map(|m| m.get("ordinal").and_then(|v| v.as_u64()))
@@ -387,8 +388,11 @@ impl AgentCmdTool {
             return envelope.to_string();
         }
         if observed_max < delivered {
-            delivered = 0;
-            entry.delivered_message_ordinal = None;
+            // Durable append-time ordinals must not reset after reload or compaction.
+            // A stale/partial child response with only lower ordinals is therefore
+            // treated as no new default report rather than rewinding the cursor.
+            *data = serde_json::json!({"unchanged": true});
+            return envelope.to_string();
         }
         let mut max_ord = delivered;
         let mut latest_assistant: Option<usize> = None;
@@ -437,8 +441,15 @@ impl AgentCmdTool {
                 .unwrap_or(delivered)
         };
         *data = serde_json::json!({"messages": selected, "truncated": truncated});
+        let shaped = envelope.to_string();
+        entry
+            .pending_message_reports
+            .push_back(PendingMessageReport {
+                response: shaped.clone(),
+                ordinal: new_cursor,
+            });
         entry.pending_message_ordinal = Some(new_cursor);
-        envelope.to_string()
+        shaped
     }
 }
 
@@ -475,6 +486,7 @@ impl Tool for AgentCmdTool {
             if succeeded {
                 entry.delivered_message_ordinal = None;
                 entry.pending_message_ordinal = None;
+                entry.pending_message_reports.clear();
             }
             return;
         }
@@ -494,13 +506,26 @@ impl Tool for AgentCmdTool {
             .and_then(|v| v.as_bool())
             == Some(true);
         if !delivered_success || report_incomplete {
-            entry.pending_message_ordinal = None;
+            entry
+                .pending_message_reports
+                .retain(|pending| pending.response != result.content);
+            entry.pending_message_ordinal = entry.pending_message_reports.back().map(|p| p.ordinal);
             return;
         }
-        if let Some(pending) = entry.pending_message_ordinal.take() {
-            entry.delivered_message_ordinal =
-                Some(entry.delivered_message_ordinal.unwrap_or(0).max(pending));
+        let pending = entry
+            .pending_message_reports
+            .iter()
+            .position(|pending| pending.response == result.content)
+            .and_then(|idx| entry.pending_message_reports.remove(idx));
+        if let Some(pending) = pending {
+            entry.delivered_message_ordinal = Some(
+                entry
+                    .delivered_message_ordinal
+                    .unwrap_or(0)
+                    .max(pending.ordinal),
+            );
         }
+        entry.pending_message_ordinal = entry.pending_message_reports.back().map(|p| p.ordinal);
     }
 
     fn definition(&self) -> ToolDefinition {
