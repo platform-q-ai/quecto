@@ -5,7 +5,6 @@ use crate::domain::workflow::WorkflowRunPersisted;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-
 #[derive(Debug)]
 pub struct FileSessionStore {
     sessions_dir: PathBuf,
