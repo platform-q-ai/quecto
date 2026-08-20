@@ -127,7 +127,7 @@ fn delivery_receipts_are_opaque_unique_tokens() {
 }
 
 #[test]
-fn duplicate_legacy_pending_responses_acknowledge_first_legacy_match() {
+fn duplicate_legacy_pending_responses_are_ambiguous_and_do_not_ack() {
     let registry = new_registry();
     let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
     entry
@@ -157,10 +157,9 @@ fn duplicate_legacy_pending_responses_acknowledge_first_legacy_match() {
         },
     );
     let entry = &registry.lock().unwrap()["w1"];
-    assert_eq!(entry.delivered_message_ordinal, Some(5));
+    assert_eq!(entry.delivered_message_ordinal, None);
     assert_eq!(entry.pending_message_ordinal, Some(9));
-    assert_eq!(entry.pending_message_reports.len(), 1);
-    assert_eq!(entry.pending_message_reports[0].ordinal, 9);
+    assert_eq!(entry.pending_message_reports.len(), 2);
 }
 
 #[test]

@@ -21,9 +21,15 @@ pub(crate) fn pending_delivery_match_index(
             .iter()
             .position(|pending| !pending.receipt.is_empty() && pending.receipt == receipt);
     }
-    pending
+    let mut matches = pending
         .iter()
-        .position(|pending| pending.receipt.is_empty() && pending.response == delivered_content)
+        .enumerate()
+        .filter(|(_, pending)| pending.receipt.is_empty() && pending.response == delivered_content);
+    let (index, _) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    Some(index)
 }
 
 pub(crate) fn needs_default_report_backfill(
