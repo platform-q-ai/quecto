@@ -21,6 +21,7 @@ pub const DEFAULT_MANIFEST_FILE_NAME: &str = "workspace-manifests.json";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceTabEntry {
     pub tab_id: u32,
+    #[serde(default, alias = "sessionKey", alias = "session")]
     pub session_key: Option<String>,
     pub name: Option<String>,
     /// Human-recognizable conversation snippet for `/resume` (#1466 fix pass

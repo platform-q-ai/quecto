@@ -125,6 +125,27 @@ fn unknown_workspace_notifies_without_changing_tabs() {
 }
 
 #[test]
+fn restore_workspace_counts_legacy_session_key_rows() {
+    let mut a = app();
+    a.ac_mut().agent_connected = true;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("workspace-manifests.json");
+    std::fs::write(
+        &path,
+        r#"{"version":1,"workspaces":[{"workspace_id":"ws","label":"legacy","last_active_unix_s":0,"active_index":0,"tabs":[{"tab_id":0,"session":"legacy-main","name":"one"}],"updated_unix_s":1}]}"#,
+    )
+    .unwrap();
+
+    a.restore_workspace_from_path("ws", &path);
+
+    let msgs = a.notifications.messages().join("\n");
+    assert!(
+        msgs.contains("Workspace 'ws' restored (1 resumed, 0 deferred/failed)"),
+        "legacy workspace tab session keys must be resumable, not report 0/0: {msgs:?}"
+    );
+}
+
+#[test]
 fn apply_workspace_manifest_queues_deferred_resume_for_disconnected_tabs() {
     let mut a = app();
     // MASTER stays disconnected; restore must queue deferred resume instead of
