@@ -179,6 +179,7 @@ impl App {
             agent_id: None,
             id: Some(id),
             before: None,
+            count: None,
         });
     }
 
@@ -314,6 +315,7 @@ impl App {
                 self.send_command(Command::GetMessages {
                     id: Some(refresh_id),
                     before: None,
+                    count: None,
                     agent_id: None,
                 });
             }
@@ -577,6 +579,11 @@ impl App {
             agent_id: None,
             id: Some(id),
             before: None,
+            // `/resume` must restore the full newest transcript. The backend's
+            // no-count get_messages default is now a bounded page, so request a
+            // large explicit compat count while keeping `before: None`; older
+            // history beyond that page remains available via the published cursor.
+            count: Some(usize::MAX),
         });
         self.send_session_stats();
         // The agent resets session-scoped state (e.g. the effort override,

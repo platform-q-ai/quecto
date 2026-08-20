@@ -34,6 +34,7 @@ impl App {
                 agent_id: None,
                 id: Some(id),
                 before: None,
+                count: None,
             });
         } else {
             self.ac_mut().rewind.last_idle_escape = Some(now);

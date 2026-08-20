@@ -309,6 +309,7 @@ fn command_get_messages_serializes() {
         agent_id: None,
         id: None,
         before: None,
+        count: None,
     };
     let json = serde_json::to_string(&cmd).unwrap();
     assert!(json.contains("\"type\":\"get_messages\""));

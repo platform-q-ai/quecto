@@ -34,9 +34,12 @@ pub(crate) fn with_inspection_agent_id(cmd: &Command, agent_id: &str, ns: &str) 
             id: subagent_inspection_id(ns, "state", agent_id, id),
             agent_id: routed_agent_id.clone(),
         },
-        Command::GetMessages { id, before, .. } => Command::GetMessages {
+        Command::GetMessages {
+            id, before, count, ..
+        } => Command::GetMessages {
             id: subagent_inspection_id(ns, "messages", agent_id, id),
             before,
+            count,
             agent_id: routed_agent_id.clone(),
         },
         Command::GetMessagesTail { id, count, .. } => Command::GetMessagesTail {

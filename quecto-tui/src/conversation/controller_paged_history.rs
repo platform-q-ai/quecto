@@ -76,6 +76,7 @@ impl App {
             agent_id: None,
             id: Some(id),
             before: Some(before),
+            count: None,
         });
     }
 

@@ -415,7 +415,7 @@ fn resume_chat_text(app: &mut super::App) -> String {
 }
 
 #[tokio::test]
-async fn successful_resume_requests_full_messages_before_stats() {
+async fn successful_resume_requests_explicit_messages_before_stats() {
     let mut h = resume_harness().await;
     let data = serde_json::json!({"session": "chat-1"});
     let a = h.app_mut();
@@ -435,8 +435,10 @@ async fn successful_resume_requests_full_messages_before_stats() {
         "expected get_messages, stats, and state resync: {cmds:?}"
     );
     assert!(
-        cmds[0].contains("\"type\":\"get_messages\"") && !cmds[0].contains("\"count\""),
-        "resume should request the full restored transcript, not a tail: {cmds:?}"
+        cmds[0].contains("\"type\":\"get_messages\"")
+            && cmds[0].contains("\"count\":")
+            && !cmds[0].contains("\"before\""),
+        "resume should request an explicit newest transcript page, not the backend's bounded default: {cmds:?}"
     );
     let resume_id = serde_json::from_str::<serde_json::Value>(&cmds[0])
         .ok()

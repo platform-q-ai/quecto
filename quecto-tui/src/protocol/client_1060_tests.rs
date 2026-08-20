@@ -140,6 +140,7 @@ fn get_message_command_is_available_for_on_demand_lookup() {
             agent_id: None,
             id: None,
             before: None,
+            count: None,
         },
         Command::GetMessagesTail {
             id: None,
