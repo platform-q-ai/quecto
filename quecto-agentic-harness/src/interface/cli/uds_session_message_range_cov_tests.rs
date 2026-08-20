@@ -2,6 +2,20 @@ use super::*;
 use crate::domain::message::ToolCall;
 
 #[test]
+fn clear_thinking_page_removes_all_thinking_metadata() {
+    let mut value = serde_json::json!({
+        "content": "answer",
+        "thinking": "private",
+        "thinkingOffset": 3,
+        "thinkingLength": 9,
+        "thinkingHasMore": true,
+        "thinkingNextOffset": 6
+    });
+    clear_thinking_page(&mut value);
+    assert_eq!(value, serde_json::json!({"content": "answer"}));
+}
+
+#[test]
 fn message_to_json_range_returns_full_message_without_range_args() {
     let msg = Message::assistant("hello", vec![]);
     let json = message_to_json_range(&msg, None, None);
