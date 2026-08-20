@@ -48,6 +48,14 @@ pub enum SubagentLiveness {
     Dead,
 }
 
+/// Pending default get_messages delivery awaiting parent-context acknowledgement.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingMessageReport {
+    pub response: String,
+    pub ordinal: u64,
+}
+
 /// Durable, read-only summary of a sub-agent spawned by this session.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,6 +74,8 @@ pub struct PersistedSubagentRosterEntry {
     pub status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivered_message_ordinal: Option<u64>,
+    #[serde(default, skip_serializing_if = "std::collections::VecDeque::is_empty")]
+    pub pending_message_reports: std::collections::VecDeque<PendingMessageReport>,
 }
 
 /// A conversation session identified by a unique key.

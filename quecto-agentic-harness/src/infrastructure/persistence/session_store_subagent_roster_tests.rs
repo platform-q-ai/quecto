@@ -24,6 +24,7 @@ fn roster_entry(
         parent_id: Some("root".to_string()),
         read_only: id == "dead",
         delivered_message_ordinal: None,
+        pending_message_reports: std::collections::VecDeque::new(),
         status: Some(
             match liveness {
                 crate::domain::session::SubagentLiveness::Live => "idle",

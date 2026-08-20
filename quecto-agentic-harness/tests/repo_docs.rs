@@ -614,6 +614,13 @@ fn readmes_document_cold_start_and_mitigations() {
 #[test]
 fn obsolete_development_planning_artifacts_are_removed() {
     const OBSOLETE_DOCS: &[&str] = &[
+        "../.quecto-planning/1196-conformance.md",
+        "../.quecto-planning/1196-scope-lock.md",
+        "../.quecto-planning/1196-semantic-matrix.md",
+        "../.quecto-planning/1196-test-design.md",
+        "../.quecto-planning/1513-scope-lock.md",
+        "../.quecto-planning/1513-semantic-matrix.md",
+        "../.quecto-planning/1513-test-design.md",
         "docs/quecto-mcp-prd.md",
         "docs/scenarios/architecture_contract_guardrails.md",
         "docs/scenarios/gpt54_1m_context.md",
@@ -687,4 +694,28 @@ fn assert_phase_0_links_resolve() {
         "Phase 0 documentation links should resolve; missing: {:?}",
         report.missing
     );
+}
+
+#[test]
+fn agent_cmd_and_spawn_schema_guidance_stays_in_sync_for_get_messages() {
+    let agent_cmd = read_repo_file("src/infrastructure/tools/agent_cmd.rs");
+    let spawn = read_repo_file("src/infrastructure/tools/spawn.rs");
+    for (name, body) in [
+        ("agent_cmd.rs", agent_cmd.as_str()),
+        ("spawn.rs", spawn.as_str()),
+    ] {
+        assert!(
+            body.contains("Plain get_messages is the default unread report")
+                || body.contains("default unread report"),
+            "{name} must explain plain get_messages default unread report semantics"
+        );
+        assert!(
+            body.contains("count/before") || body.contains("count") && body.contains("before"),
+            "{name} must keep count/before paging guidance in schema text"
+        );
+        assert!(
+            !body.contains("get_messages (count 1-5)"),
+            "{name} must not contain stale count 1-5 completion guidance"
+        );
+    }
 }

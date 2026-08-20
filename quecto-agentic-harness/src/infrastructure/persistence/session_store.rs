@@ -1,21 +1,21 @@
-use std::future::Future;
-use std::path::{Path, PathBuf};
-use std::pin::Pin;
-
 use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role, StopReason, ThinkingBlock, ToolCall};
 use crate::domain::session::{Session, SessionStore, SessionSummary};
 use crate::domain::workflow::WorkflowRunPersisted;
-
+use std::future::Future;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
 #[derive(Debug)]
 pub struct FileSessionStore {
     sessions_dir: PathBuf,
-    /// Cross-process single-writer ownership of session keys (#1460).
     ownership: super::session_ownership::SessionOwnershipRegistry,
 }
 
+#[path = "session_store_ordinals.rs"]
+pub(crate) mod session_store_ordinals;
 #[path = "session_store_records.rs"]
 mod session_store_records;
+use session_store_ordinals::{assign_missing_ordinals, messages_with_assigned_ordinals};
 use session_store_records::*;
 
 impl FileSessionStore {
@@ -30,7 +30,6 @@ impl FileSessionStore {
         self.ownership.claim(&self.sessions_dir, key)
     }
 
-    /// Convert a session key to a safe filename with `.json` extension.
     fn key_to_filename(key: &str) -> String {
         format!("{}.json", super::filename::sanitize_session_key(key))
     }
@@ -39,9 +38,6 @@ impl FileSessionStore {
         self.sessions_dir.join(Self::key_to_filename(key))
     }
 
-    /// Append a caller-known clean delta without reading/parsing durable history.
-    /// Callers must reset the watermark whenever the persisted prefix may have
-    /// been removed, replaced, or reordered.
     pub async fn save_clean_delta(
         &self,
         key: &str,
@@ -80,7 +76,6 @@ impl FileSessionStore {
         }
     }
 
-    /// Ensure the sessions directory exists.
     async fn ensure_dir(&self) -> Result<(), DomainError> {
         tokio::fs::create_dir_all(&self.sessions_dir)
             .await
@@ -213,8 +208,6 @@ impl SessionStore for FileSessionStore {
                 if path.extension().is_none_or(|ext| ext != "json") {
                     continue;
                 }
-                // Cheap filename-level filter: skip files outside the requested
-                // namespace before the costly read + parse.
                 if let Some(ref fp) = file_prefix {
                     if !entry.file_name().to_string_lossy().starts_with(fp.as_str()) {
                         continue;
@@ -248,7 +241,6 @@ impl SessionStore for FileSessionStore {
                         continue;
                     }
                 };
-                // Authoritative backstop on the real key.
                 if let Some(ref prefix) = key_prefix {
                     if !header.key.starts_with(prefix.as_str()) {
                         continue;
@@ -276,8 +268,6 @@ impl SessionStore for FileSessionStore {
         })
     }
 }
-
-// -- Conversion helpers --
 
 fn parse_session_header(data: &str) -> Result<SessionHeader<'_>, serde_json::Error> {
     if let Ok(header) = serde_json::from_str::<SessionHeader<'_>>(data) {
@@ -374,13 +364,17 @@ fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
             }
         }
     }
-    Ok(session.unwrap_or_else(|| Session::new("")))
+    Ok(session
+        .map(session_store_ordinals::with_assigned_ordinals)
+        .unwrap_or_else(|| Session::new("")))
 }
 
 fn session_from_file(file: SessionFile) -> Session {
+    let messages =
+        assign_missing_ordinals(file.messages.into_iter().map(record_to_message).collect());
     Session {
         key: file.key,
-        messages: file.messages.into_iter().map(record_to_message).collect(),
+        messages,
         workflow_run: file.workflow_run,
         subagent_roster: file.subagent_roster,
     }
@@ -419,7 +413,7 @@ async fn persisted_prefix_changed(
     }
     Ok(persisted.messages[..previously_persisted]
         .iter()
-        .zip(&messages[..previously_persisted])
+        .zip(messages_with_assigned_ordinals(&messages[..previously_persisted]).iter())
         .any(|(left, right)| message_to_record(left) != message_to_record(right)))
 }
 
@@ -462,15 +456,16 @@ async fn compact_or_append_delta(
             .unwrap_or_default();
         let session = Session {
             key: key.to_string(),
-            messages: messages.to_vec(),
+            messages: messages_with_assigned_ordinals(messages),
             workflow_run: workflow_run.cloned(),
             subagent_roster,
         };
         return write_compacted(path, &session).await;
     }
+    let assigned = messages_with_assigned_ordinals(messages);
     let record = SessionRecordRef::Append {
         start_index: Some(previously_persisted),
-        messages: messages[previously_persisted..]
+        messages: assigned[previously_persisted..]
             .iter()
             .map(message_to_record_ref)
             .collect(),
@@ -482,6 +477,14 @@ async fn compact_or_append_delta(
 }
 
 async fn append_or_compact(path: &Path, session: &Session) -> Result<(), DomainError> {
+    let mut assigned_session;
+    let session = if session.messages.iter().any(|m| m.ordinal.is_none()) {
+        assigned_session = session.clone();
+        assigned_session.messages = messages_with_assigned_ordinals(&assigned_session.messages);
+        &assigned_session
+    } else {
+        session
+    };
     if !path.exists() || !is_jsonl_session_file(path).await? {
         return write_compacted(path, session).await;
     }
@@ -602,6 +605,7 @@ fn first_user_message(messages: &[MessageHeader<'_>]) -> String {
 
 fn message_to_record_ref(msg: &Message) -> MessageRecordRef<'_> {
     MessageRecordRef {
+        ordinal: msg.ordinal,
         role: role_to_str(&msg.role),
         content: &msg.content,
         tool_calls: msg
@@ -642,6 +646,7 @@ fn message_to_record_ref(msg: &Message) -> MessageRecordRef<'_> {
 
 fn message_to_record(msg: &Message) -> MessageRecord {
     MessageRecord {
+        ordinal: msg.ordinal,
         role: role_to_str(&msg.role).to_string(),
         content: msg.content.clone(),
         tool_calls: msg
@@ -699,15 +704,13 @@ fn record_to_message(rec: MessageRecord) -> Message {
         Role::Assistant => Message::assistant(rec.content, tool_calls),
         Role::Tool => Message::tool(rec.tool_call_id.unwrap_or_default(), rec.content),
     };
+    msg.ordinal = rec.ordinal;
     msg.turn = rec.turn;
     msg.is_manifest = rec.is_manifest;
     msg.is_collapsed = rec.is_collapsed;
     msg.tool_name = rec.tool_name;
     msg.input_preview = rec.input_preview;
     msg.spill_id = rec.spill_id;
-    // is_pinned: `Some(v)` = explicitly persisted, use it.
-    // `None` = absent (old session file), keep constructor default
-    // (true for System, false for others).
     msg.is_error = rec.is_error;
     msg.stop_reason = rec.stop_reason.as_deref().map(StopReason::parse);
     if let Some(pinned) = rec.is_pinned {

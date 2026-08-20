@@ -32,8 +32,13 @@ impl Clone for TokenCache {
 #[derive(Debug, Default)]
 pub struct Message {
     /// Runtime identity for locating this message while in-memory history is pruned.
-    /// It is intentionally not persisted; loaded messages receive fresh identities.
+    /// It is intentionally regenerated on load so old wire cursors cannot alias
+    /// a new process's message ledger after reload/compaction.
     id: uuid::Uuid,
+    /// Durable append-time sequence assigned by persistence. Unlike vector
+    /// positions, this survives reload and compaction and never resets when the
+    /// in-memory context window prunes older messages.
+    pub ordinal: Option<u64>,
     pub role: Role,
     pub content: String,
     pub tool_calls: Vec<ToolCall>,
@@ -129,6 +134,7 @@ impl Clone for Message {
     fn clone(&self) -> Self {
         Self {
             id: self.id,
+            ordinal: self.ordinal,
             role: self.role.clone(),
             content: self.content.clone(),
             tool_calls: self.tool_calls.clone(),

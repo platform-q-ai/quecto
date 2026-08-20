@@ -1,7 +1,7 @@
 use crate::domain::ids::AgentUuid;
 use crate::domain::session::SubagentLiveness;
 use crate::domain::subagent::{DisplayNameResolutionEntry, resolve_live_display_name};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -81,13 +81,13 @@ pub struct SubagentEntry {
     /// Last lifecycle event for race-focused tests.
     #[cfg(test)]
     pub last_lifecycle_event: Option<SubagentLifecycleEvent>,
-    /// Parent-scoped delivered get_messages report cursor (#1513).
     pub delivered_message_ordinal: Option<u64>,
-    /// Prepared cursor awaiting parent-context delivery acknowledgment (#1513).
     pub pending_message_ordinal: Option<u64>,
-    /// Persisted cross-process liveness for historical/resumed entries (#1461).
+    pub pending_message_reports: VecDeque<PendingMessageReport>,
     pub persisted_liveness: SubagentLiveness,
 }
+
+pub use crate::domain::session::PendingMessageReport;
 
 pub(super) fn seed_bound_workflow(
     entry: &mut SubagentEntry,
@@ -165,6 +165,7 @@ impl SubagentEntry {
             last_lifecycle_event: None,
             delivered_message_ordinal: None,
             pending_message_ordinal: None,
+            pending_message_reports: VecDeque::new(),
             persisted_liveness: SubagentLiveness::Live,
         }
     }
