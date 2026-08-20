@@ -104,6 +104,10 @@ fn agent_cmd_allowlist_is_closed() {
         Some(RoutableInspectionCommand::GetMessages)
     );
     assert_eq!(
+        RoutableInspectionCommand::from_agent_cmd("get_message"),
+        Some(RoutableInspectionCommand::GetMessage)
+    );
+    assert_eq!(
         RoutableInspectionCommand::from_agent_cmd("get_state"),
         Some(RoutableInspectionCommand::GetState)
     );

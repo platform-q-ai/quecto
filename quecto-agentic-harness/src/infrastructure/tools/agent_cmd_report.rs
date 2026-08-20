@@ -136,12 +136,16 @@ fn truncate_message_to_fit(msg: &mut serde_json::Value, selected: &[serde_json::
             msg["contentLength"] = serde_json::json!(len);
         }
         msg["truncated"] = serde_json::json!(true);
-        if let Some(id) = msg.get("id").and_then(|v| v.as_str()).map(str::to_owned) {
-            msg["contentRecovery"] = serde_json::json!({
-                "command": "get_message",
-                "messageId": id,
-                "offset": end,
-            });
+        if end > 0 {
+            if let Some(id) = msg.get("id").and_then(|v| v.as_str()).map(str::to_owned) {
+                msg["contentRecovery"] = serde_json::json!({
+                    "command": "get_message",
+                    "messageId": id,
+                    "offset": end,
+                });
+            }
+        } else if let Some(obj) = msg.as_object_mut() {
+            obj.remove("contentRecovery");
         }
         if report_envelope_size(selected, Some(msg)) <= REPORT_BUDGET_BYTES {
             best = end;
@@ -153,11 +157,15 @@ fn truncate_message_to_fit(msg: &mut serde_json::Value, selected: &[serde_json::
         }
     }
     msg["content"] = serde_json::Value::String(original[..best].to_string());
-    if let Some(id) = msg.get("id").and_then(|v| v.as_str()).map(str::to_owned) {
-        msg["contentRecovery"] = serde_json::json!({
-            "command": "get_message",
-            "messageId": id,
-            "offset": best,
-        });
+    if best > 0 {
+        if let Some(id) = msg.get("id").and_then(|v| v.as_str()).map(str::to_owned) {
+            msg["contentRecovery"] = serde_json::json!({
+                "command": "get_message",
+                "messageId": id,
+                "offset": best,
+            });
+        }
+    } else if let Some(obj) = msg.as_object_mut() {
+        obj.remove("contentRecovery");
     }
 }

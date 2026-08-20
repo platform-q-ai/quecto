@@ -467,3 +467,21 @@ async fn test_kill_known_agent_removes_from_registry() {
 
 #[path = "agent_cmd_kill_tests.rs"]
 mod kill_tests;
+
+#[test]
+fn parse_get_message_builds_recovery_command() {
+    let tool = empty_tool();
+    let (agent_id, cmd, command) = tool
+        .parse_and_build(
+            r#"{"agent_id":"w1","command":"get_message","messageId":"m1","offset":42,"limit":7,"toolCallId":"tc1"}"#,
+        )
+        .unwrap();
+    assert_eq!(agent_id, "w1");
+    assert_eq!(command, "get_message");
+    let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
+    assert_eq!(parsed["type"], "get_message");
+    assert_eq!(parsed["messageId"], "m1");
+    assert_eq!(parsed["offset"], 42);
+    assert_eq!(parsed["limit"], 7);
+    assert_eq!(parsed["toolCallId"], "tc1");
+}
