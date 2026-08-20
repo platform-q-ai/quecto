@@ -9,6 +9,7 @@ pub(super) const SUPPORTED_COMMANDS: &[&str] = &[
     "kill",
     "get_state",
     "get_messages",
+    "get_message",
     "get_session_stats",
     "get_subagents",
     "get_subagents_all",
@@ -117,6 +118,39 @@ pub(super) fn build_command(args: &serde_json::Value) -> Result<(String, String,
         "get_messages_tail" => {
             let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(1);
             serde_json::json!({"type": "get_messages", "count": count})
+        }
+        "get_message" => {
+            let message_id = args
+                .get("messageId")
+                .or_else(|| args.get("message_id"))
+                .and_then(|v| v.as_str())
+                .ok_or("get_message requires messageId")?;
+            let mut cmd = serde_json::json!({"type": "get_message", "messageId": message_id});
+            if let Some(agent_id) = args.get("agent_id").and_then(|v| v.as_str()) {
+                cmd["agent_id"] = serde_json::json!(agent_id);
+            }
+            if let Some(tool_call_id) = args
+                .get("toolCallId")
+                .or_else(|| args.get("tool_call_id"))
+                .and_then(|v| v.as_str())
+            {
+                cmd["toolCallId"] = serde_json::json!(tool_call_id);
+            }
+            for field in ["offset", "limit"] {
+                match args.get(field) {
+                    Some(v) if v.is_null() => {}
+                    Some(v) => {
+                        let n = v.as_u64().ok_or_else(|| {
+                            format!("get_message {field} must be a non-negative integer")
+                        })?;
+                        let n = usize::try_from(n)
+                            .map_err(|_| format!("get_message {field} is too large"))?;
+                        cmd[field] = serde_json::json!(n);
+                    }
+                    None => {}
+                }
+            }
+            cmd
         }
         "abort" => serde_json::json!({"type": "abort", "ack": "accept"}),
         "get_session_stats" => serde_json::json!({"type": "get_session_stats"}),

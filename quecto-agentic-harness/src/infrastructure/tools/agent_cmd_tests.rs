@@ -6,6 +6,44 @@ fn empty_tool() -> AgentCmdTool {
 }
 
 #[test]
+fn constructor_helpers_cover_optional_runtime_wiring() {
+    let (tx, _) = tokio::sync::broadcast::channel(1);
+    let _tool = empty_tool().with_broadcast(Some(tx));
+    assert!(AgentCmdTool::is_control_command("prompt"));
+    assert!(!AgentCmdTool::is_control_command("get_messages"));
+}
+
+#[test]
+fn local_get_subagents_all_lists_registry_without_socket_io() {
+    let registry = new_registry();
+    registry.lock().unwrap().insert(
+        "w1".to_string(),
+        SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0),
+    );
+    let tool = AgentCmdTool::new(registry);
+    let result = tool
+        .try_local_command(&serde_json::json!({"command":"get_subagents_all"}))
+        .expect("get_subagents_all is local");
+    assert!(!result.is_error);
+    assert!(result.content.contains("w1"));
+}
+
+#[test]
+fn malformed_local_and_kill_commands_fall_through_or_error_without_socket_io() {
+    let tool = empty_tool();
+    assert!(
+        tool.try_local_command(&serde_json::json!({"command":"get_state"}))
+            .is_none()
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let missing_agent = rt
+        .block_on(tool.try_kill_command(&serde_json::json!({"command":"kill"})))
+        .expect("kill is local");
+    assert!(missing_agent.is_error);
+    assert!(missing_agent.content.contains("agent_id"));
+}
+
+#[test]
 fn test_definition_name() {
     let tool = empty_tool();
     assert_eq!(tool.definition().name, "agent_cmd");
@@ -169,23 +207,65 @@ fn test_parse_get_messages_tail_aliases_to_get_messages_count() {
 }
 
 #[test]
-fn test_parse_abort() {
-    let tool = empty_tool();
-    let (_, cmd, _) = tool
-        .parse_and_build(r#"{"agent_id":"w1","command":"abort"}"#)
+fn parse_get_message_accepts_aliases_and_range_fields() {
+    let (_, cmd, _) = empty_tool()
+        .parse_and_build(
+            r#"{"agent_id":"w1","command":"get_message","message_id":"m1","tool_call_id":"t1","offset":2,"limit":3}"#,
+        )
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
-    assert_eq!(parsed["type"], "abort");
+    assert_eq!(parsed["messageId"], "m1");
+    assert_eq!(parsed["toolCallId"], "t1");
+    assert_eq!(parsed["offset"], 2);
+    assert_eq!(parsed["limit"], 3);
 }
 
 #[test]
-fn test_parse_get_session_stats() {
-    let tool = empty_tool();
-    let (_, cmd, _) = tool
-        .parse_and_build(r#"{"agent_id":"w1","command":"get_session_stats"}"#)
+fn parse_set_model_and_effort_cover_validation_paths() {
+    let (_, cmd, _) = empty_tool()
+        .parse_and_build(
+            r#"{"agent_id":"w1","command":"set_model","provider":"openai","model_id":"gpt-5"}"#,
+        )
         .unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
-    assert_eq!(parsed["type"], "get_session_stats");
+    assert_eq!(parsed["provider"], "openai");
+    assert_eq!(parsed["modelId"], "gpt-5");
+    assert!(
+        empty_tool()
+            .parse_and_build(r#"{"agent_id":"w1","command":"set_model"}"#)
+            .unwrap_err()
+            .contains("requires")
+    );
+    assert!(
+        empty_tool()
+            .parse_and_build(r#"{"agent_id":"w1","command":"set_effort","effort":"invalid"}"#)
+            .unwrap_err()
+            .contains("invalid effort")
+    );
+    let (_, cmd, _) = empty_tool()
+        .parse_and_build(r#"{"agent_id":"w1","command":"set_effort","effort":"high"}"#)
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&cmd).unwrap()["effort"],
+        "high"
+    );
+}
+
+#[test]
+fn parse_simple_control_and_inspection_commands_cover_wire_types() {
+    for (command, wire_type) in [
+        ("abort", "abort"),
+        ("get_session_stats", "get_session_stats"),
+        ("clear_history", "clear_history"),
+        ("get_subagents", "get_subagents"),
+        ("get_tool_catalogue", "get_tool_catalogue"),
+    ] {
+        let (_, cmd, _) = empty_tool()
+            .parse_and_build(&format!(r#"{{"agent_id":"w1","command":"{command}"}}"#))
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
+        assert_eq!(parsed["type"], wire_type);
+    }
 }
 
 #[test]
@@ -467,3 +547,21 @@ async fn test_kill_known_agent_removes_from_registry() {
 
 #[path = "agent_cmd_kill_tests.rs"]
 mod kill_tests;
+
+#[test]
+fn parse_get_message_builds_recovery_command() {
+    let tool = empty_tool();
+    let (agent_id, cmd, command) = tool
+        .parse_and_build(
+            r#"{"agent_id":"w1","command":"get_message","messageId":"m1","offset":42,"limit":7,"toolCallId":"tc1"}"#,
+        )
+        .unwrap();
+    assert_eq!(agent_id, "w1");
+    assert_eq!(command, "get_message");
+    let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
+    assert_eq!(parsed["type"], "get_message");
+    assert_eq!(parsed["messageId"], "m1");
+    assert_eq!(parsed["offset"], 42);
+    assert_eq!(parsed["limit"], 7);
+    assert_eq!(parsed["toolCallId"], "tc1");
+}

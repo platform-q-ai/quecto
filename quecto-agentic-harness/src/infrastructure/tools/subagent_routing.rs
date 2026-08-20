@@ -51,6 +51,7 @@ impl RoutableInspectionCommand {
     pub fn from_agent_cmd(command: &str) -> Option<Self> {
         match command {
             "get_messages" => Some(Self::GetMessages),
+            "get_message" => Some(Self::GetMessage),
             "get_state" => Some(Self::GetState),
             _ => None,
         }

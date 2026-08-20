@@ -256,7 +256,9 @@ impl AgentCmdTool {
 
 #[cfg(test)]
 use super::agent_cmd_parse::SUPPORTED_COMMANDS;
-use super::agent_cmd_report::{bounded_report_messages, needs_default_report_backfill};
+use super::agent_cmd_report::{
+    bounded_report_messages, is_substantive_assistant, needs_default_report_backfill,
+};
 use super::subagent_registry::PendingMessageReport;
 
 impl AgentCmdTool {
@@ -367,7 +369,7 @@ impl AgentCmdTool {
             .unwrap_or(0);
         if report_incomplete {
             if observed_max > delivered {
-                let (selected, _truncated) = bounded_report_messages(
+                let report = bounded_report_messages(
                     messages
                         .iter()
                         .filter(|m| {
@@ -379,8 +381,8 @@ impl AgentCmdTool {
                         .collect(),
                     observed_max,
                 );
-                if !selected.is_empty() {
-                    *data = serde_json::json!({"messages": selected, "truncated": true, "reportIncomplete": true});
+                if !report.messages.is_empty() {
+                    *data = serde_json::json!({"messages": report.messages, "truncated": true, "hasMoreMessages": report.has_more_messages, "messageContentTruncated": report.message_content_truncated, "reportIncomplete": true});
                     return envelope.to_string();
                 }
             }
@@ -409,7 +411,7 @@ impl AgentCmdTool {
             max_ord = max_ord.max(ord);
             if ord > delivered {
                 unread.push(idx);
-                if msg.get("role").and_then(|v| v.as_str()) == Some("assistant") {
+                if is_substantive_assistant(msg) {
                     latest_assistant = Some(idx);
                 }
             }
@@ -430,17 +432,34 @@ impl AgentCmdTool {
             *data = serde_json::json!({"unchanged": true});
             return envelope.to_string();
         }
-        let (selected, truncated) = bounded_report_messages(candidates, max_ord);
-        let new_cursor = if delivered == 0 {
-            max_ord
-        } else {
-            selected
-                .iter()
-                .filter_map(|m| m.get("ordinal").and_then(|v| v.as_u64()))
-                .max()
-                .unwrap_or(delivered)
-        };
-        *data = serde_json::json!({"messages": selected, "truncated": truncated});
+        let report = bounded_report_messages(candidates, max_ord);
+        if report.messages.is_empty() {
+            if max_ord > delivered {
+                *data = serde_json::json!({
+                    "messages": [],
+                    "truncated": true,
+                    "hasMoreMessages": true,
+                    "messageContentTruncated": false,
+                    "reportIncomplete": true
+                });
+            } else {
+                *data = serde_json::json!({"unchanged": true});
+            }
+            return envelope.to_string();
+        }
+        let new_cursor = report
+            .messages
+            .iter()
+            .filter_map(|m| m.get("ordinal").and_then(|v| v.as_u64()))
+            .max()
+            .unwrap_or(delivered);
+        let truncated = report.has_more_messages || report.message_content_truncated;
+        *data = serde_json::json!({
+            "messages": report.messages,
+            "truncated": truncated,
+            "hasMoreMessages": report.has_more_messages,
+            "messageContentTruncated": report.message_content_truncated
+        });
         let shaped = envelope.to_string();
         entry
             .pending_message_reports
@@ -531,9 +550,9 @@ impl Tool for AgentCmdTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "agent_cmd".into(),
-            description: "Send a command to a spawned subagent.                 Supported commands: prompt, steer, follow_up, abort, kill,                 get_state, get_messages, get_session_stats,                 get_subagents, get_subagents_all, get_containers, kill_container,                 get_tool_catalogue, set_model, set_effort, clear_history.                 COMPLETION SEQUENCE (required): (1) spawn returns when the socket is ready —                 do not wait in this turn. (2) End your turn or do other non-blocking parent                 work; do NOT poll get_subagents/get_subagents_all/get_state in a loop, do NOT                 sleep/bash-wait for the child. (3) On your NEXT turn a passive one-line                 completion note arrives automatically. (4) Then agent_cmd get_messages                 for the default unread report — the note is not the report.                 get_subagents_all is for inventory/cleanup after work, not completion waiting.                 get_state is the live/in-flight supervision API (occasional progress/debug,                 not a wait loop). Plain get_messages is the default unread report; explicit count/before                 request cursor-neutral history pages. Busy get_messages may be snapshot:true and lag."
+            description: "Send a command to a spawned subagent.                 Supported commands: prompt, steer, follow_up, abort, kill,                 get_state, get_messages, get_message, get_session_stats,                 get_subagents, get_subagents_all, get_containers, kill_container,                 get_tool_catalogue, set_model, set_effort, clear_history.                 COMPLETION SEQUENCE (required): (1) spawn returns when the socket is ready —                 do not wait in this turn. (2) End your turn or do other non-blocking parent                 work; do NOT poll get_subagents/get_subagents_all/get_state in a loop, do NOT                 sleep/bash-wait for the child. (3) On your NEXT turn a passive one-line                 completion note arrives automatically. (4) Then agent_cmd get_messages                 for the default unread report — the note is not the report.                 get_subagents_all is for inventory/cleanup after work, not completion waiting.                 get_state is the live/in-flight supervision API (occasional progress/debug,                 not a wait loop). Plain get_messages is the default unread report; explicit count/before                 request cursor-neutral history pages. Busy get_messages may be snapshot:true and lag."
                 .into(),
-            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent; use '*' for command=get_subagents_all"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","get_state","get_messages","get_session_stats","get_subagents","get_subagents_all","get_containers","kill_container","get_tool_catalogue","set_model","set_effort","clear_history"],"description":"Command to send. After spawn, wait for the passive completion note on a later turn — do not poll get_subagents* or sleep. Then get_messages for the default unread report. get_subagents_all is inventory/cleanup (agent_id '*'), not a wait loop. kill terminates the child process."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Explicit history page size for get_messages; omit/null for the default unread report; does not move the report cursor"},"since":{"type":"integer","description":"Optional get_state generation cursor. If unchanged, the child returns only {\"unchanged\":true,\"generation\":N}."},"before":{"type":"string","description":"Paging cursor for get_messages (#1061): a message id from a prior response's before field; returns the adjacent older page"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"},"ref":{"type":"string","description":"Environment ref (e.g. C1) for kill_container (agent_id '*')"},"name":{"type":"string","description":"Environment name for kill_container (alternative to ref)"}},"required":["agent_id","command"]}"#
+            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent; use '*' for command=get_subagents_all"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","get_state","get_messages","get_message","get_session_stats","get_subagents","get_subagents_all","get_containers","kill_container","get_tool_catalogue","set_model","set_effort","clear_history"],"description":"Command to send. After spawn, wait for the passive completion note on a later turn — do not poll get_subagents* or sleep. Then get_messages for the default unread report. get_subagents_all is inventory/cleanup (agent_id '*'), not a wait loop. kill terminates the child process."},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Explicit history page size for get_messages; omit/null for the default unread report; does not move the report cursor"},"since":{"type":"integer","description":"Optional get_state generation cursor. If unchanged, the child returns only {\"unchanged\":true,\"generation\":N}."},"before":{"type":"string","description":"Paging cursor for get_messages (#1061): a message id from a prior response's before field; returns the adjacent older page"},"messageId":{"type":"string","description":"Stable message id for get_message/contentRecovery"},"offset":{"type":"integer","description":"Byte offset for get_message content recovery"},"limit":{"type":"integer","description":"Optional byte limit for get_message content recovery"},"toolCallId":{"type":"string","description":"Optional tool call id for get_message"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"effort":{"type":"string","description":"Effort level for set_effort: none, low, medium, high, xhigh, max"},"ref":{"type":"string","description":"Environment ref (e.g. C1) for kill_container (agent_id '*')"},"name":{"type":"string","description":"Environment name for kill_container (alternative to ref)"}},"required":["agent_id","command"]}"#
                 .into(),
         }
     }
@@ -602,6 +621,7 @@ impl Tool for AgentCmdTool {
                 debug_assert!(matches!(
                     routable,
                     super::subagent_routing::RoutableInspectionCommand::GetMessages
+                        | super::subagent_routing::RoutableInspectionCommand::GetMessage
                         | super::subagent_routing::RoutableInspectionCommand::GetState
                 ));
                 super::subagent_routing::resolve_inspection_route(&self.registry, &agent_id)
@@ -698,6 +718,9 @@ mod definition_tests;
 #[cfg(test)]
 #[path = "agent_cmd_get_subagents_all_tests.rs"]
 mod get_subagents_all_tests;
+#[cfg(test)]
+#[path = "agent_cmd_recovery_tests.rs"]
+mod recovery_tests;
 #[cfg(test)]
 #[path = "agent_cmd_report_tests.rs"]
 mod report_tests;

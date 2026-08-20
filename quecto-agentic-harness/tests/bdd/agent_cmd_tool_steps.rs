@@ -671,6 +671,48 @@ fn given_agent_cmd_with_completed_transcript(world: &mut QuectoWorld, agent_id: 
     world.agent_cmd_last_command = Some(last_cmd);
 }
 
+#[given(expr = "an AgentCmdTool whose child {string} has an unrecoverable final transcript")]
+fn given_agent_cmd_with_unrecoverable_final_transcript(world: &mut QuectoWorld, agent_id: String) {
+    let registry = AgentCmdTool::new_registry();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sock_path = tmp.path().join("unrecoverable-final.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+    let last_cmd: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let last_cmd_clone = last_cmd.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let last_cmd_inner = last_cmd_clone.clone();
+            std::thread::spawn(move || {
+                use std::io::Write;
+                while let Some(line) =
+                    quecto::infrastructure::test_support::read_framed_command(&stream)
+                {
+                    *last_cmd_inner.lock().unwrap() = line.clone();
+                    let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+                    let id = request.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    let response = serde_json::json!({
+                        "type": "response", "id": id, "command": "get_messages",
+                        "success": true,
+                        "data": {"messages": [
+                            {"role": "assistant", "content": "old", "ordinal": 1},
+                            {"role": "assistant", "content": "FINAL ".repeat(10_000), "ordinal": 2}
+                        ]}
+                    });
+                    let _ = writeln!(stream, "{response}");
+                }
+            });
+        }
+    });
+    let mut entry = SubagentEntry::new(sock_path, 0);
+    entry.delivered_message_ordinal = Some(1);
+    registry.lock().unwrap().insert(agent_id, entry);
+    world.agent_cmd_tool = Some(AgentCmdTool::new(registry.clone()));
+    world.agent_cmd_registry = Some(registry);
+    world._agent_cmd_mock_tmp = Some(tmp);
+    world.agent_cmd_last_command = Some(last_cmd);
+}
+
 // --- When ---
 
 #[when(expr = "I execute agent_cmd with {string}")]
@@ -820,6 +862,18 @@ fn then_agent_cmd_not_contains(world: &mut QuectoWorld, unexpected: String) {
         "expected content to NOT contain '{}', got: {}",
         unexpected,
         result.content
+    );
+}
+
+#[then(expr = "the agent_cmd delivered ordinal for {string} should be {int}")]
+fn then_agent_cmd_delivered_ordinal(world: &mut QuectoWorld, agent_id: String, expected: u64) {
+    let registry = world
+        .agent_cmd_registry
+        .as_ref()
+        .expect("agent_cmd_registry not set");
+    assert_eq!(
+        registry.lock().unwrap()[&agent_id].delivered_message_ordinal,
+        Some(expected)
     );
 }
 
