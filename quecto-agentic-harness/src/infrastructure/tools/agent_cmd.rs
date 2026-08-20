@@ -367,7 +367,7 @@ impl AgentCmdTool {
             .unwrap_or(0);
         if report_incomplete {
             if observed_max > delivered {
-                let (selected, _truncated) = bounded_report_messages(
+                let report = bounded_report_messages(
                     messages
                         .iter()
                         .filter(|m| {
@@ -379,8 +379,8 @@ impl AgentCmdTool {
                         .collect(),
                     observed_max,
                 );
-                if !selected.is_empty() {
-                    *data = serde_json::json!({"messages": selected, "truncated": true, "reportIncomplete": true});
+                if !report.messages.is_empty() {
+                    *data = serde_json::json!({"messages": report.messages, "truncated": true, "hasMoreMessages": report.has_more_messages, "messageContentTruncated": report.message_content_truncated, "reportIncomplete": true});
                     return envelope.to_string();
                 }
             }
@@ -430,17 +430,20 @@ impl AgentCmdTool {
             *data = serde_json::json!({"unchanged": true});
             return envelope.to_string();
         }
-        let (selected, truncated) = bounded_report_messages(candidates, max_ord);
-        let new_cursor = if delivered == 0 {
-            max_ord
-        } else {
-            selected
-                .iter()
-                .filter_map(|m| m.get("ordinal").and_then(|v| v.as_u64()))
-                .max()
-                .unwrap_or(delivered)
-        };
-        *data = serde_json::json!({"messages": selected, "truncated": truncated});
+        let report = bounded_report_messages(candidates, max_ord);
+        let new_cursor = report
+            .messages
+            .iter()
+            .filter_map(|m| m.get("ordinal").and_then(|v| v.as_u64()))
+            .max()
+            .unwrap_or(delivered);
+        let truncated = report.has_more_messages || report.message_content_truncated;
+        *data = serde_json::json!({
+            "messages": report.messages,
+            "truncated": truncated,
+            "hasMoreMessages": report.has_more_messages,
+            "messageContentTruncated": report.message_content_truncated
+        });
         let shaped = envelope.to_string();
         entry
             .pending_message_reports

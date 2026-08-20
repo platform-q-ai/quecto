@@ -116,7 +116,7 @@ fn default_get_messages_first_call_latest_assistant_then_ack_advances() {
 }
 
 #[test]
-fn first_contact_commits_through_later_non_assistant_ordinals() {
+fn first_contact_does_not_commit_omitted_later_non_assistant_ordinals() {
     let registry = new_registry();
     registry.lock().unwrap().insert(
         "w1".to_string(),
@@ -141,7 +141,7 @@ fn first_contact_commits_through_later_non_assistant_ordinals() {
     );
     assert_eq!(
         registry.lock().unwrap()["w1"].delivered_message_ordinal,
-        Some(3)
+        Some(2)
     );
 }
 
@@ -268,7 +268,42 @@ fn default_get_messages_unchanged_marker_is_exact_data_shape() {
 }
 
 #[test]
-fn default_get_messages_bounds_large_delta_and_keeps_tail_uncommitted() {
+fn completed_final_response_survives_intermediate_tool_output_crowding() {
+    let registry = new_registry();
+    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
+    entry.delivered_message_ordinal = Some(1);
+    registry.lock().unwrap().insert("w1".to_string(), entry);
+    let tool = AgentCmdTool::new(registry.clone());
+    let shaped = tool.shape_default_get_messages_report(
+        "w1",
+        &json_response(serde_json::json!([
+            {"role":"user","content":"work","ordinal":1},
+            {"role":"assistant","content":"","thinking":[{"kind":"text","text":"planning"}],"toolCalls":[{"name":"search"}],"ordinal":2},
+            {"role":"tool","content":"x".repeat(10_000),"ordinal":3},
+            {"id":"00000000-0000-0000-0000-000000000004","role":"assistant","content":"the completed final response ".repeat(300),"ordinal":4}
+        ])),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&shaped).unwrap();
+    let messages = parsed["data"]["messages"].as_array().unwrap();
+    assert!(messages.iter().any(|message| {
+        message["ordinal"] == 4
+            && message["content"]
+                .as_str()
+                .is_some_and(|content| !content.is_empty())
+    }));
+    assert_eq!(parsed["data"]["messageContentTruncated"], true);
+    assert!(parsed["data"]["hasMoreMessages"].is_boolean());
+    assert!(
+        messages
+            .iter()
+            .find(|message| message["ordinal"] == 4)
+            .unwrap()["contentRecovery"]
+            .is_object()
+    );
+}
+
+#[test]
+fn default_get_messages_bounds_large_delta_and_prioritizes_final_tail() {
     let registry = new_registry();
     let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
     entry.delivered_message_ordinal = Some(1);
@@ -284,10 +319,11 @@ fn default_get_messages_bounds_large_delta_and_keeps_tail_uncommitted() {
     );
     let parsed: serde_json::Value = serde_json::from_str(&shaped).unwrap();
     assert_eq!(parsed["data"]["truncated"], true);
-    assert_eq!(parsed["data"]["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(parsed["data"]["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(parsed["data"]["messages"][1]["content"], "tail");
     assert_eq!(
         registry.lock().unwrap()["w1"].pending_message_ordinal,
-        Some(2)
+        Some(3)
     );
 }
 
