@@ -865,6 +865,18 @@ fn then_agent_cmd_not_contains(world: &mut QuectoWorld, unexpected: String) {
     );
 }
 
+#[then(expr = "the agent_cmd delivered ordinal for {string} should be unset")]
+fn then_agent_cmd_delivered_ordinal_unset(world: &mut QuectoWorld, agent_id: String) {
+    let registry = world
+        .agent_cmd_registry
+        .as_ref()
+        .expect("agent_cmd_registry not set");
+    assert_eq!(
+        registry.lock().unwrap()[&agent_id].delivered_message_ordinal,
+        None
+    );
+}
+
 #[then(expr = "the agent_cmd delivered ordinal for {string} should be {int}")]
 fn then_agent_cmd_delivered_ordinal(world: &mut QuectoWorld, agent_id: String, expected: u64) {
     let registry = world

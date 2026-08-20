@@ -160,6 +160,21 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     And the agent_cmd result should contain '"unchanged":true'
     And the agent_cmd result should not contain "FINAL REPORT"
 
+  Scenario: successful clear_history delivery resets default unread report state
+    Given an AgentCmdTool whose child "w1" has a completed transcript
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages"}'
+    And I acknowledge delivery of agent_cmd result for '{"agent_id":"w1","command":"get_messages"}'
+    And I execute agent_cmd with '{"agent_id":"w1","command":"clear_history"}'
+    And I acknowledge delivery of agent_cmd result for '{"agent_id":"w1","command":"clear_history"}'
+    And I execute agent_cmd with '{"agent_id":"w1","command":"get_messages"}'
+    Then the agent_cmd result should contain "FINAL REPORT"
+
+  Scenario: explicit history delivery remains cursor-neutral
+    Given an AgentCmdTool whose child "w1" has a completed transcript
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages","count":5}'
+    And I acknowledge delivery of agent_cmd result for '{"agent_id":"w1","command":"get_messages","count":5}'
+    Then the agent_cmd delivered ordinal for "w1" should be unset
+
   Scenario: unrecoverable plain get_messages is incomplete and not acknowledged
     Given an AgentCmdTool whose child "w1" has an unrecoverable final transcript
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages"}'
