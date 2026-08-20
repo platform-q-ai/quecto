@@ -263,10 +263,8 @@ impl AgentCmdTool {
 #[cfg(test)]
 use super::agent_cmd_parse::SUPPORTED_COMMANDS;
 use super::agent_cmd_report::{
-    bounded_report_messages, delivery_receipt, is_substantive_assistant,
-    mint_default_report_receipt, needs_default_report_backfill, pending_delivery_match_index,
+    DeliveryDecision, needs_default_report_backfill, plan_default_report, plan_delivery,
 };
-use super::subagent_registry::PendingMessageReport;
 
 impl AgentCmdTool {
     async fn expand_default_get_messages_response(
@@ -350,20 +348,6 @@ impl AgentCmdTool {
         agent_id: &str,
         response: &str,
     ) -> (String, Option<String>) {
-        let Ok(mut envelope) = serde_json::from_str::<serde_json::Value>(response) else {
-            return (response.to_string(), None);
-        };
-        if envelope.get("success").and_then(|v| v.as_bool()) == Some(false) {
-            return (response.to_string(), None);
-        }
-        let Some(data) = envelope.get_mut("data") else {
-            return (response.to_string(), None);
-        };
-        let report_incomplete =
-            data.get("reportIncomplete").and_then(|v| v.as_bool()) == Some(true);
-        let Some(messages) = data.get_mut("messages").and_then(|v| v.as_array_mut()) else {
-            return (response.to_string(), None);
-        };
         let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
         let Ok(key) = super::subagent_registry::resolve_registry_key(&entries, agent_id) else {
             return (response.to_string(), None);
@@ -371,113 +355,13 @@ impl AgentCmdTool {
         let Some(entry) = entries.get_mut(&key) else {
             return (response.to_string(), None);
         };
-        let delivered = entry.delivered_message_ordinal.unwrap_or(0);
-        let observed_max = messages
-            .iter()
-            .filter_map(|m| m.get("ordinal").and_then(|v| v.as_u64()))
-            .max()
-            .unwrap_or(0);
-        if report_incomplete {
-            if observed_max > delivered {
-                let report = bounded_report_messages(
-                    messages
-                        .iter()
-                        .filter(|m| {
-                            m.get("ordinal")
-                                .and_then(|v| v.as_u64())
-                                .is_some_and(|ord| ord > delivered)
-                        })
-                        .cloned()
-                        .collect(),
-                    observed_max,
-                );
-                if !report.messages.is_empty() {
-                    *data = serde_json::json!({"messages": report.messages, "truncated": true, "hasMoreMessages": report.has_more_messages, "messageContentTruncated": report.message_content_truncated, "reportIncomplete": true});
-                    return (envelope.to_string(), None);
-                }
-            }
-            *data = serde_json::json!({"unchanged": true, "reportIncomplete": true});
-            return (envelope.to_string(), None);
+        let plan = plan_default_report(response, entry.delivered_message_ordinal.unwrap_or(0));
+        let receipt = plan.pending.as_ref().map(|pending| pending.receipt.clone());
+        if let Some(pending) = plan.pending {
+            entry.pending_message_ordinal = Some(pending.ordinal);
+            entry.pending_message_reports.push_back(pending);
         }
-        if observed_max < delivered {
-            *data = serde_json::json!({"unchanged": true});
-            return (envelope.to_string(), None);
-        }
-        let mut max_ord = delivered;
-        let mut latest_assistant: Option<usize> = None;
-        let mut unread = Vec::new();
-        for (idx, msg) in messages.iter_mut().enumerate() {
-            let ord = msg
-                .get("ordinal")
-                .and_then(|v| v.as_u64())
-                .unwrap_or_else(|| {
-                    let next = max_ord.saturating_add(1);
-                    msg["ordinal"] = serde_json::json!(next);
-                    next
-                });
-            max_ord = max_ord.max(ord);
-            if ord > delivered {
-                unread.push(idx);
-                if is_substantive_assistant(msg) {
-                    latest_assistant = Some(idx);
-                }
-            }
-        }
-        if unread.is_empty() {
-            *data = serde_json::json!({"unchanged": true});
-            return (envelope.to_string(), None);
-        }
-        let candidates: Vec<_> = if delivered == 0 {
-            latest_assistant
-                .into_iter()
-                .map(|i| messages[i].clone())
-                .collect()
-        } else {
-            unread.into_iter().map(|i| messages[i].clone()).collect()
-        };
-        if candidates.is_empty() {
-            *data = serde_json::json!({"unchanged": true});
-            return (envelope.to_string(), None);
-        }
-        let report = bounded_report_messages(candidates, max_ord);
-        if report.messages.is_empty() {
-            if max_ord > delivered {
-                *data = serde_json::json!({
-                    "messages": [],
-                    "truncated": true,
-                    "hasMoreMessages": true,
-                    "messageContentTruncated": false,
-                    "reportIncomplete": true
-                });
-            } else {
-                *data = serde_json::json!({"unchanged": true});
-            }
-            return (envelope.to_string(), None);
-        }
-        let new_cursor = report
-            .messages
-            .iter()
-            .filter_map(|m| m.get("ordinal").and_then(|v| v.as_u64()))
-            .max()
-            .unwrap_or(delivered);
-        let truncated = report.has_more_messages || report.message_content_truncated;
-        let receipt = mint_default_report_receipt();
-        *data = serde_json::json!({
-            "messages": report.messages,
-            "truncated": truncated,
-            "hasMoreMessages": report.has_more_messages,
-            "messageContentTruncated": report.message_content_truncated
-        });
-        let shaped = envelope.to_string();
-        entry
-            .pending_message_reports
-            .push_back(PendingMessageReport {
-                receipt: receipt.clone(),
-                response: shaped.clone(),
-                ordinal: new_cursor,
-            });
-        entry.pending_message_ordinal = Some(new_cursor);
-        (shaped, Some(receipt))
+        (plan.content, receipt)
     }
 }
 
@@ -506,52 +390,37 @@ impl Tool for AgentCmdTool {
         let Some(entry) = entries.get_mut(&key) else {
             return;
         };
-        if command == Some("clear_history") {
-            let succeeded = serde_json::from_str::<serde_json::Value>(&result.content)
-                .ok()
-                .and_then(|value| value.get("success").and_then(|v| v.as_bool()))
-                == Some(true);
-            if succeeded {
+        let explicit_page = !args.get("count").is_none_or(|v| v.is_null())
+            || !args.get("before").is_none_or(|v| v.is_null());
+        match plan_delivery(
+            command,
+            explicit_page,
+            result.is_error,
+            &result.content,
+            result.delivery_metadata.as_deref(),
+            &entry.pending_message_reports,
+        ) {
+            DeliveryDecision::Ignore => {}
+            DeliveryDecision::Clear => {
                 entry.delivered_message_ordinal = None;
                 entry.pending_message_ordinal = None;
                 entry.pending_message_reports.clear();
             }
-            return;
+            DeliveryDecision::Acknowledge(index) => {
+                if let Some(pending) = entry.pending_message_reports.remove(index) {
+                    entry.delivered_message_ordinal = Some(
+                        entry
+                            .delivered_message_ordinal
+                            .unwrap_or(0)
+                            .max(pending.ordinal),
+                    );
+                }
+                entry.pending_message_ordinal = entry
+                    .pending_message_reports
+                    .back()
+                    .map(|pending| pending.ordinal);
+            }
         }
-        if !args.get("count").is_none_or(|v| v.is_null())
-            || !args.get("before").is_none_or(|v| v.is_null())
-        {
-            return;
-        }
-        let delivered = serde_json::from_str::<serde_json::Value>(&result.content).ok();
-        let delivered_success = delivered
-            .as_ref()
-            .and_then(|value| value.get("success").and_then(|v| v.as_bool()))
-            == Some(true);
-        let report_incomplete = delivered
-            .as_ref()
-            .and_then(|value| value.pointer("/data/reportIncomplete"))
-            .and_then(|v| v.as_bool())
-            == Some(true);
-        let receipt = result
-            .delivery_metadata
-            .as_deref()
-            .or_else(|| delivered.as_ref().and_then(delivery_receipt));
-        if !delivered_success || report_incomplete {
-            return;
-        }
-        let pending =
-            pending_delivery_match_index(&entry.pending_message_reports, receipt, &result.content)
-                .and_then(|idx| entry.pending_message_reports.remove(idx));
-        if let Some(pending) = pending {
-            entry.delivered_message_ordinal = Some(
-                entry
-                    .delivered_message_ordinal
-                    .unwrap_or(0)
-                    .max(pending.ordinal),
-            );
-        }
-        entry.pending_message_ordinal = entry.pending_message_reports.back().map(|p| p.ordinal);
     }
 
     fn definition(&self) -> ToolDefinition {

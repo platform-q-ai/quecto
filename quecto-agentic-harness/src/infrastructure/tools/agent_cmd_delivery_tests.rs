@@ -1,7 +1,42 @@
 use crate::domain::tool::{Tool, ToolResult};
 use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
 use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+use std::collections::VecDeque;
 use std::path::PathBuf;
+
+#[test]
+fn report_planning_is_pure_and_returns_pending_transition() {
+    let response = json_response(serde_json::json!([
+        {"role":"assistant","content":"old","ordinal":1},
+        {"role":"assistant","content":"new","ordinal":2}
+    ]));
+    let plan = crate::infrastructure::tools::agent_cmd_report::plan_default_report(&response, 1);
+    let pending = plan.pending.expect("new unread report should be pending");
+    assert_eq!(pending.ordinal, 2);
+    assert!(!pending.receipt.is_empty());
+    assert_eq!(pending.response, plan.content);
+}
+
+#[test]
+fn delivery_planning_is_pure_and_returns_acknowledgement_transition() {
+    let pending = VecDeque::from([crate::domain::session::PendingMessageReport {
+        receipt: "receipt-1".into(),
+        response: "content".into(),
+        ordinal: 2,
+    }]);
+    let decision = crate::infrastructure::tools::agent_cmd_report::plan_delivery(
+        Some("get_messages"),
+        false,
+        false,
+        r#"{"success":true,"data":{"messages":[]}}"#,
+        Some("receipt-1"),
+        &pending,
+    );
+    assert_eq!(
+        decision,
+        crate::infrastructure::tools::agent_cmd_report::DeliveryDecision::Acknowledge(0)
+    );
+}
 
 fn json_response(messages: serde_json::Value) -> String {
     serde_json::json!({"success": true, "data": {"messages": messages}}).to_string()
