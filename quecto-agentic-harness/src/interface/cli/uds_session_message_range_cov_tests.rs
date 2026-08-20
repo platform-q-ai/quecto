@@ -8,8 +8,8 @@ fn clear_thinking_page_removes_all_thinking_metadata() {
         "thinking": "private",
         "thinkingOffset": 3,
         "thinkingLength": 9,
-        "thinkingHasMore": true,
-        "thinkingNextOffset": 6
+        "hasMoreThinking": true,
+        "nextThinkingOffset": 6
     });
     clear_thinking_page(&mut value);
     assert_eq!(value, serde_json::json!({"content": "answer"}));
