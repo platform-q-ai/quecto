@@ -228,6 +228,33 @@ async fn test_execute_invalid_json_returns_error() {
 }
 
 #[tokio::test]
+async fn execute_validates_model_selection_before_agent_lookup() {
+    let tool = empty_tool();
+    for (arguments, expected) in [
+        (
+            r#"{"agent_id":"missing","command":"set_model"}"#,
+            "requires model, or provider + model_id",
+        ),
+        (
+            r#"{"agent_id":"missing","command":"set_model","provider":"openai"}"#,
+            "provider requires model_id",
+        ),
+        (
+            r#"{"agent_id":"missing","command":"set_model","model":"openai/gpt-5"}"#,
+            "no live subagent named 'missing'",
+        ),
+        (
+            r#"{"agent_id":"missing","command":"set_model","provider":"openai","model_id":"gpt-5"}"#,
+            "no live subagent named 'missing'",
+        ),
+    ] {
+        let result = tool.execute(arguments).await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains(expected), "{}", result.content);
+    }
+}
+
+#[tokio::test]
 async fn test_execute_missing_fields_returns_error() {
     let tool = empty_tool();
     let result = tool.execute(r#"{"agent_id":"w1"}"#).await.unwrap();
