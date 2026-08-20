@@ -307,6 +307,55 @@ fn get_messages_rejects_malformed_paging_arguments() {
 }
 
 #[test]
+fn command_builder_preserves_control_and_model_command_contracts() {
+    let tool = empty_tool();
+    let cases = [
+        (
+            r#"{"agent_id":"w1","command":"prompt","message":"do it"}"#,
+            serde_json::json!({"type":"prompt","message":"do it","ack":"accept"}),
+        ),
+        (
+            r#"{"agent_id":"w1","command":"steer","message":"turn left"}"#,
+            serde_json::json!({"type":"prompt","message":"turn left","streamingBehavior":"steer","ack":"accept"}),
+        ),
+        (
+            r#"{"agent_id":"w1","command":"follow_up","message":"more"}"#,
+            serde_json::json!({"type":"follow_up","message":"more","ack":"accept"}),
+        ),
+        (
+            r#"{"agent_id":"w1","command":"set_model","model":"provider/model"}"#,
+            serde_json::json!({"type":"set_model","model":"provider/model","ack":"accept"}),
+        ),
+        (
+            r#"{"agent_id":"w1","command":"set_model","provider":"provider","model_id":"model"}"#,
+            serde_json::json!({"type":"set_model","provider":"provider","modelId":"model","ack":"accept"}),
+        ),
+    ];
+
+    for (args, expected) in cases {
+        let (_, command, _) = tool.parse_and_build(args).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&command).unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn command_builder_reports_missing_or_invalid_model_selection() {
+    let tool = empty_tool();
+    let missing = tool
+        .parse_and_build(r#"{"agent_id":"w1","command":"set_model"}"#)
+        .unwrap_err();
+    assert!(missing.contains("requires model, or provider + model_id"));
+
+    let incomplete = tool
+        .parse_and_build(r#"{"agent_id":"w1","command":"set_model","provider":"provider"}"#)
+        .unwrap_err();
+    assert!(incomplete.contains("provider requires model_id"));
+}
+
+#[test]
 fn get_messages_null_paging_arguments_select_plain_report_mode() {
     let tool = empty_tool();
     let (_, cmd, _) = tool
