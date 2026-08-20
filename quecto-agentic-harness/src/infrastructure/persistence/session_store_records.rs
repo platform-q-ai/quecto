@@ -61,6 +61,8 @@ pub(super) enum SessionRecordRef<'a> {
 
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub(super) struct MessageRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) ordinal: Option<u64>,
     pub(super) role: String,
     pub(super) content: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -96,6 +98,8 @@ pub(super) struct MessageRecord {
 
 #[derive(serde::Serialize)]
 pub(super) struct MessageRecordRef<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) ordinal: Option<u64>,
     pub(super) role: &'a str,
     pub(super) content: &'a str,
     #[serde(skip_serializing_if = "Vec::is_empty")]

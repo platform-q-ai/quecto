@@ -228,6 +228,33 @@ async fn test_execute_invalid_json_returns_error() {
 }
 
 #[tokio::test]
+async fn execute_validates_model_selection_before_agent_lookup() {
+    let tool = empty_tool();
+    for (arguments, expected) in [
+        (
+            r#"{"agent_id":"missing","command":"set_model"}"#,
+            "requires model, or provider + model_id",
+        ),
+        (
+            r#"{"agent_id":"missing","command":"set_model","provider":"openai"}"#,
+            "provider requires model_id",
+        ),
+        (
+            r#"{"agent_id":"missing","command":"set_model","model":"openai/gpt-5"}"#,
+            "no live subagent named 'missing'",
+        ),
+        (
+            r#"{"agent_id":"missing","command":"set_model","provider":"openai","model_id":"gpt-5"}"#,
+            "no live subagent named 'missing'",
+        ),
+    ] {
+        let result = tool.execute(arguments).await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains(expected), "{}", result.content);
+    }
+}
+
+#[tokio::test]
 async fn test_execute_missing_fields_returns_error() {
     let tool = empty_tool();
     let result = tool.execute(r#"{"agent_id":"w1"}"#).await.unwrap();
@@ -371,6 +398,32 @@ fn test_definition_lists_new_commands() {
 }
 
 // ── Kill command tests (#559) ────────────────────────────────────
+
+#[test]
+fn agent_cmd_preserves_stateless_spawn_policy_defaults() {
+    use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+    use std::collections::BTreeMap;
+
+    let tool = empty_tool();
+    let result = ToolResult {
+        content: "delivered".into(),
+        is_error: false,
+        image_blocks: vec![],
+    };
+    <AgentCmdTool as Tool>::result_delivered(&tool, r#"{"command":"get_state"}"#, &result);
+    assert_eq!(
+        <AgentCmdTool as Tool>::inherited_child_policy_snapshot_for_spawn(&tool),
+        None
+    );
+
+    let mut snapshot = BTreeMap::new();
+    snapshot.insert("bash".to_string(), ProfileAvailabilityScope::Both);
+    <AgentCmdTool as Tool>::set_inherited_child_policy_snapshot_for_spawn(&tool, snapshot);
+    assert_eq!(
+        <AgentCmdTool as Tool>::inherited_child_policy_snapshot_for_spawn(&tool),
+        None
+    );
+}
 
 #[test]
 fn test_parse_kill_command() {

@@ -628,6 +628,49 @@ fn given_agent_cmd_with_busy_remaining_snapshots_and_echo_entry(
     world.agent_cmd_last_command = Some(last_cmd);
 }
 
+#[given(expr = "an AgentCmdTool whose child {string} has a completed transcript")]
+fn given_agent_cmd_with_completed_transcript(world: &mut QuectoWorld, agent_id: String) {
+    let registry = AgentCmdTool::new_registry();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sock_path = tmp.path().join("completed-transcript.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+    let last_cmd: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let last_cmd_clone = last_cmd.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let last_cmd_inner = last_cmd_clone.clone();
+            std::thread::spawn(move || {
+                use std::io::Write;
+                while let Some(line) =
+                    quecto::infrastructure::test_support::read_framed_command(&stream)
+                {
+                    *last_cmd_inner.lock().unwrap() = line.clone();
+                    let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+                    let id = request.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    let response = serde_json::json!({
+                        "type": "response", "id": id, "command": "get_messages",
+                        "success": true,
+                        "data": {"messages": [
+                            {"role": "user", "content": "investigate", "ordinal": 1},
+                            {"role": "assistant", "content": "FINAL REPORT", "ordinal": 2}
+                        ]}
+                    });
+                    let _ = writeln!(stream, "{response}");
+                }
+            });
+        }
+    });
+    registry
+        .lock()
+        .unwrap()
+        .insert(agent_id, SubagentEntry::new(sock_path, 0));
+    world.agent_cmd_tool = Some(AgentCmdTool::new(registry.clone()));
+    world.agent_cmd_registry = Some(registry);
+    world._agent_cmd_mock_tmp = Some(tmp);
+    world.agent_cmd_last_command = Some(last_cmd);
+}
+
 // --- When ---
 
 #[when(expr = "I execute agent_cmd with {string}")]
@@ -644,6 +687,19 @@ fn when_execute_agent_cmd(world: &mut QuectoWorld, arguments: String) {
         .expect("agent_cmd should return promptly")
         .unwrap();
     world.agent_cmd_result = Some(result);
+}
+
+#[when(expr = "I acknowledge delivery of agent_cmd result for {string}")]
+fn when_acknowledge_agent_cmd_result(world: &mut QuectoWorld, arguments: String) {
+    let tool = world
+        .agent_cmd_tool
+        .as_ref()
+        .expect("agent_cmd_tool not set");
+    let result = world
+        .agent_cmd_result
+        .as_ref()
+        .expect("no agent_cmd result");
+    tool.result_delivered(&arguments, result);
 }
 
 // --- Then ---

@@ -120,5 +120,6 @@ fn guidance_distinguishes_contracts(world: &mut QuectoWorld) {
         .definition()
         .description;
     assert!(description.contains("get_state is the live/in-flight supervision API"));
-    assert!(description.contains("get_messages is the stable committed transcript API"));
+    assert!(description.contains("Plain get_messages is the default unread report"));
+    assert!(description.contains("explicit count/before"));
 }

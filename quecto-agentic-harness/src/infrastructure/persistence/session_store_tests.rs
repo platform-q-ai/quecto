@@ -581,3 +581,88 @@ async fn save_to_key_stamped_by_dead_process_reclaims_and_succeeds() {
     let contents = std::fs::read_to_string(&stamp).unwrap();
     assert!(contents.contains(&std::process::id().to_string()));
 }
+
+#[tokio::test]
+async fn legacy_jsonl_append_ordinals_survive_replay_compaction_and_reload() {
+    let dir = TempDir::new().unwrap();
+    let sessions = dir.path().join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let path = sessions.join("ordinals_legacy-append.json");
+    std::fs::write(
+        &path,
+        concat!(
+            r#"{"type":"snapshot","key":"ordinals:legacy-append","messages":[{"ordinal":7,"role":"user","content":"assigned"}]}"#,
+            "\n",
+            r#"{"type":"append","start_index":1,"messages":[{"role":"assistant","content":"legacy missing"},{"ordinal":11,"role":"user","content":"preserved"},{"role":"assistant","content":"second missing"}]}"#,
+            "\n"
+        ),
+    )
+    .unwrap();
+    let store = FileSessionStore::new(dir.path());
+
+    let replayed = store.load("ordinals:legacy-append").await.unwrap().unwrap();
+    assert_eq!(
+        replayed
+            .messages
+            .iter()
+            .map(|m| m.ordinal)
+            .collect::<Vec<_>>(),
+        vec![Some(7), Some(12), Some(11), Some(13)]
+    );
+
+    let compacted = Session {
+        messages: replayed.messages.clone(),
+        ..replayed
+    };
+    store.save(&compacted).await.unwrap();
+    let reloaded = store.load("ordinals:legacy-append").await.unwrap().unwrap();
+    assert_eq!(
+        reloaded
+            .messages
+            .iter()
+            .map(|m| m.ordinal)
+            .collect::<Vec<_>>(),
+        vec![Some(7), Some(12), Some(11), Some(13)]
+    );
+}
+
+#[tokio::test]
+async fn append_time_ordinals_survive_reload_and_compaction_while_ids_regenerate() {
+    let dir = TempDir::new().unwrap();
+    let store = FileSessionStore::new(dir.path());
+    let session = Session {
+        key: "ordinals:reload".into(),
+        messages: vec![Message::user("one"), Message::assistant("two", vec![])],
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    store.save(&session).await.unwrap();
+    let loaded = store.load("ordinals:reload").await.unwrap().unwrap();
+    assert_eq!(
+        loaded
+            .messages
+            .iter()
+            .map(|m| m.ordinal)
+            .collect::<Vec<_>>(),
+        vec![Some(1), Some(2)]
+    );
+    assert_ne!(loaded.messages[0].id(), session.messages[0].id());
+
+    let compacted = Session {
+        key: "ordinals:reload".into(),
+        messages: loaded.messages.clone(),
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    store.save(&compacted).await.unwrap();
+    let reloaded = store.load("ordinals:reload").await.unwrap().unwrap();
+    assert_eq!(
+        reloaded
+            .messages
+            .iter()
+            .map(|m| m.ordinal)
+            .collect::<Vec<_>>(),
+        vec![Some(1), Some(2)]
+    );
+    assert_ne!(reloaded.messages[0].id(), loaded.messages[0].id());
+}

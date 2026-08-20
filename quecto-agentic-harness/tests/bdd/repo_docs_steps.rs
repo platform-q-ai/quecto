@@ -3,6 +3,13 @@ use cucumber::{then, when};
 use std::path::Path;
 
 const OBSOLETE_PLANNING_DOCS: &[&str] = &[
+    "../.quecto-planning/1196-conformance.md",
+    "../.quecto-planning/1196-scope-lock.md",
+    "../.quecto-planning/1196-semantic-matrix.md",
+    "../.quecto-planning/1196-test-design.md",
+    "../.quecto-planning/1513-scope-lock.md",
+    "../.quecto-planning/1513-semantic-matrix.md",
+    "../.quecto-planning/1513-test-design.md",
     "docs/quecto-mcp-prd.md",
     "docs/scenarios/architecture_contract_guardrails.md",
     "docs/scenarios/gpt54_1m_context.md",

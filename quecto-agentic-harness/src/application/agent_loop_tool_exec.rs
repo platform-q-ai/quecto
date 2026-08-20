@@ -32,6 +32,8 @@ impl AgentLoopImpl {
 
         for idx in 0..tool_call_count {
             let tc = &messages[assistant_index].tool_calls[idx];
+            let delivered_tool_name = tc.name.clone();
+            let delivered_tool_arguments = tc.arguments.clone();
             // Audit: ToolCall (guarded — avoid clones when audit is disabled)
             if self.audit_log.is_some() {
                 self.audit(
@@ -76,6 +78,24 @@ impl AgentLoopImpl {
             self.spill_tool_message(&mut tool_msg, spill_id).await;
             run_ledger.push(tool_msg.clone());
             messages.push(tool_msg);
+            if !is_error {
+                let delivered = crate::domain::tool::ToolResult {
+                    content: messages
+                        .last()
+                        .map(|m| m.content.clone())
+                        .unwrap_or_default(),
+                    image_blocks: messages
+                        .last()
+                        .map(|m| m.image_blocks.clone())
+                        .unwrap_or_default(),
+                    is_error,
+                };
+                self.tool_executor().result_delivered(
+                    &delivered_tool_name,
+                    &delivered_tool_arguments,
+                    &delivered,
+                );
+            }
         }
     }
 

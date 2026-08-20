@@ -355,10 +355,15 @@ Use this for full/end-of-turn output inspection; use `get_state` for live
 in-flight supervision. While a turn is active, a busy snapshot may lag the
 mutable in-flight conversation and is marked `snapshot: true`.
 
-Omit `count` and
+This UDS protocol command remains a history paging primitive: omit `count` and
 `before` for the newest page (up to the protocol page size of 64 messages);
 pass `count: N` for the last N messages; pass `before: <messageId>` (a message
 id from a prior response's `before` field) to fetch the adjacent older page.
+
+The model-facing `agent_cmd get_messages` tool layers report semantics on top:
+omitting/nulling both `count` and `before` requests the parent-scoped unread
+report and may advance that parent's report cursor only after delivery;
+providing either field selects this cursor-neutral history paging behavior.
 Without an explicit `count`, history is never returned unbounded — walk
 `before` cursors until `hasMoreBefore` is `false` to reach the beginning of
 the session. An explicit `count` keeps the legacy last-N contract (it may
@@ -369,7 +374,7 @@ cursor advertised for anything the cap removes.
 |---|---|---|---|
 | `type` | `"get_messages"` | yes | |
 | `id` | string | no | Correlation ID |
-| `count` | integer | no | Maximum number of trailing messages to return (omit for the newest page) |
+| `count` | integer | no | Maximum number of trailing messages to return for the UDS history primitive; in model-facing `agent_cmd`, omit/null with no `before` for the unread report |
 | `before` | string | no | Paging cursor: return messages strictly before this message id. An unknown/stale cursor is an error, not a silent restart |
 
 **Response data:**

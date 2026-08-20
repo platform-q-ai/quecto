@@ -15,6 +15,8 @@ fn roster_entry(id: &str, socket_path: std::path::PathBuf) -> PersistedSubagentR
         liveness: SubagentLiveness::Live,
         parent_id: Some("parent".to_string()),
         read_only: true,
+        delivered_message_ordinal: None,
+        pending_message_reports: std::collections::VecDeque::new(),
         status: Some("idle".to_string()),
     }
 }

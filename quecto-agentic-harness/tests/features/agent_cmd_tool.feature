@@ -70,11 +70,27 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     Then the agent_cmd should have sent command type "get_state"
     And the agent_cmd should have sent since 42
 
-  Scenario: get_messages command uses count parameter for tail reads
+  Scenario: get_messages command uses count parameter for cursor-neutral history reads
     Given an AgentCmdTool with a mock registry entry "w1"
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages","count":5}'
     Then the agent_cmd should have sent command type "get_messages"
     And the agent_cmd should have sent count 5
+
+  Scenario: get_messages null paging arguments select the default unread report
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages","count":null,"before":null}'
+    Then the agent_cmd should have sent command type "get_messages"
+
+  Scenario: get_messages rejects malformed paging arguments
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages","count":"5"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "count must be a non-negative integer"
+
+  Scenario: get_subagents_all accepts the synthetic star target locally
+    Given an AgentCmdTool with an empty registry
+    When I execute agent_cmd with '{"agent_id":"*","command":"get_subagents_all"}'
+    Then the agent_cmd result should not be an error
 
   Scenario: deprecated get_messages_tail aliases to get_messages count
     Given an AgentCmdTool with a mock registry entry "w1"
@@ -128,10 +144,21 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     When I execute agent_cmd with '{"agent_id":"w1","command":"follow_up","message":"After you finish"}'
     Then the agent_cmd should have sent command type "follow_up"
 
-  Scenario: get_messages command is built correctly
-    Given an AgentCmdTool with a mock registry entry "w1"
+  Scenario: first plain get_messages returns only the child's final assistant report
+    Given an AgentCmdTool whose child "w1" has a completed transcript
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages"}'
-    Then the agent_cmd should have sent command type "get_messages"
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain "FINAL REPORT"
+    And the agent_cmd result should not contain "investigate"
+
+  Scenario: acknowledged plain get_messages is unchanged until the child adds messages
+    Given an AgentCmdTool whose child "w1" has a completed transcript
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages"}'
+    And I acknowledge delivery of agent_cmd result for '{"agent_id":"w1","command":"get_messages"}'
+    And I execute agent_cmd with '{"agent_id":"w1","command":"get_messages"}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain '"unchanged":true'
+    And the agent_cmd result should not contain "FINAL REPORT"
 
   Scenario: tool description presents one conversation inspection command
     Given an AgentCmdTool with an empty registry

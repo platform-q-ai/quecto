@@ -247,7 +247,15 @@ fn get_messages_snapshot_line_matches_agent_event_envelope() {
     assert_eq!(tool_calls[0]["id"], "tc-9");
     assert_eq!(tool_calls[0]["name"], "bash");
 
-    let msgs_json: Vec<serde_json::Value> = messages.iter().map(message_to_json).collect();
+    let msgs_json: Vec<serde_json::Value> = messages
+        .iter()
+        .enumerate()
+        .map(|(idx, message)| {
+            let mut value = message_to_json(message);
+            value["ordinal"] = serde_json::json!(idx + 1);
+            value
+        })
+        .collect();
     let canonical = AgentEvent::ok(
         None,
         "get_messages",

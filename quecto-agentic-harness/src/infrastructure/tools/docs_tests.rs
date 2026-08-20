@@ -22,6 +22,13 @@ fn doc_title_reads_first_h1() {
     assert_eq!(doc_title("no title\n## Section"), None);
 }
 
+#[test]
+fn default_constructs_the_parent_docs_tool() {
+    let tool = DocsTool::default();
+    assert_eq!(tool.definition().name.as_ref(), "docs");
+    assert!(!tool.definition().description.is_empty());
+}
+
 #[tokio::test]
 async fn execute_without_name_lists_toc_with_titles() {
     let tool = DocsTool::new();

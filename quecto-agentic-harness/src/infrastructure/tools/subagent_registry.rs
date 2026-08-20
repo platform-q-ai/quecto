@@ -1,7 +1,7 @@
 use crate::domain::ids::AgentUuid;
 use crate::domain::session::SubagentLiveness;
 use crate::domain::subagent::{DisplayNameResolutionEntry, resolve_live_display_name};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -71,26 +71,23 @@ pub struct SubagentEntry {
     pub read_only: bool,
     pub cleanup_environment_id: Option<String>,
     pub cleanup_argv: Vec<String>,
-    /// Session environment-registry handle plus the minted `CN` ref, taken
-    /// together with the cleanup plan so the environment entry is uncommitted
-    /// exactly once when this agent's cleanup runs.
+    /// Session environment-registry handle and minted `CN` ref for cleanup.
     pub environment_registry: Option<crate::domain::environment_registry::EnvironmentRegistry>,
     pub environment_ref: Option<String>,
-    /// Execution backend reported by a child's forwarded snapshot for a merged
-    /// descendant entry (#1369 slice 4). `None` for entries this session
-    /// launched itself, whose backend derives from `environment_registry`.
+    /// Forwarded execution backend for a merged descendant entry (#1369).
     pub forwarded_execution_backend: Option<String>,
-    /// Environment wire object reported by a child's forwarded snapshot for a
-    /// merged descendant entry (#1369 slice 4); re-broadcast verbatim so
-    /// grandchild environment metadata survives every ancestor hop.
+    /// Forwarded environment wire for a merged descendant entry (#1369).
     pub forwarded_environment: Option<super::subagent_environment_wire::SubagentEnvironmentWire>,
-    /// Last lifecycle event applied to this entry. This is internal observability
-    /// for race-focused tests; parent-facing behavior continues to use `status`.
+    /// Last lifecycle event for race-focused tests.
     #[cfg(test)]
     pub last_lifecycle_event: Option<SubagentLifecycleEvent>,
-    /// Persisted cross-process liveness for historical/resumed entries (#1461).
+    pub delivered_message_ordinal: Option<u64>,
+    pub pending_message_ordinal: Option<u64>,
+    pub pending_message_reports: VecDeque<PendingMessageReport>,
     pub persisted_liveness: SubagentLiveness,
 }
+
+pub use crate::domain::session::PendingMessageReport;
 
 pub(super) fn seed_bound_workflow(
     entry: &mut SubagentEntry,
@@ -166,6 +163,9 @@ impl SubagentEntry {
             forwarded_environment: None,
             #[cfg(test)]
             last_lifecycle_event: None,
+            delivered_message_ordinal: None,
+            pending_message_ordinal: None,
+            pending_message_reports: VecDeque::new(),
             persisted_liveness: SubagentLiveness::Live,
         }
     }
