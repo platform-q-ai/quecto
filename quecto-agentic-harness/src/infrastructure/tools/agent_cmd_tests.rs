@@ -373,6 +373,32 @@ fn test_definition_lists_new_commands() {
 // ── Kill command tests (#559) ────────────────────────────────────
 
 #[test]
+fn agent_cmd_preserves_stateless_spawn_policy_defaults() {
+    use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+    use std::collections::BTreeMap;
+
+    let tool = empty_tool();
+    let result = ToolResult {
+        content: "delivered".into(),
+        is_error: false,
+        image_blocks: vec![],
+    };
+    <AgentCmdTool as Tool>::result_delivered(&tool, r#"{"command":"get_state"}"#, &result);
+    assert_eq!(
+        <AgentCmdTool as Tool>::inherited_child_policy_snapshot_for_spawn(&tool),
+        None
+    );
+
+    let mut snapshot = BTreeMap::new();
+    snapshot.insert("bash".to_string(), ProfileAvailabilityScope::Both);
+    <AgentCmdTool as Tool>::set_inherited_child_policy_snapshot_for_spawn(&tool, snapshot);
+    assert_eq!(
+        <AgentCmdTool as Tool>::inherited_child_policy_snapshot_for_spawn(&tool),
+        None
+    );
+}
+
+#[test]
 fn test_parse_kill_command() {
     let _tool = empty_tool();
     // kill is handled locally — parse_and_build should not produce a JSON command.

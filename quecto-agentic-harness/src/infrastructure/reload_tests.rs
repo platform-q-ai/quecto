@@ -37,6 +37,17 @@ fn seeded_source_detects_content_change_and_runtime_reload_keeps_last_good_on_fa
 }
 
 #[test]
+fn record_reloaded_updates_last_good_for_multiple_value_types() {
+    let mut numbers = RuntimeReload::<i32>::new(vec![]);
+    assert_eq!(numbers.record_reloaded(7), ReloadResult::Reloaded(7));
+    assert_eq!(numbers.last_good(), Some(&7));
+
+    let mut unsigned = RuntimeReload::<u32>::new(vec![]);
+    assert_eq!(unsigned.record_reloaded(9), ReloadResult::Reloaded(9));
+    assert_eq!(unsigned.last_good(), Some(&9));
+}
+
+#[test]
 fn missing_source_is_fail_safe_unchanged_for_runtime_reload() {
     let missing = tempfile::tempdir().unwrap().path().join("missing.json");
     let mut source = ReloadSource::new(&missing);

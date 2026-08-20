@@ -138,6 +138,16 @@ fn redact_mid_line_key_leaves_surrounding_text() {
 }
 
 #[test]
+fn stderr_writer_factory_produces_a_writable_redacting_sink() {
+    use tracing_subscriber::fmt::MakeWriter;
+
+    let factory = RedactingMakeWriter;
+    let mut writer = factory.make_writer();
+    assert_eq!(writer.write(b"").unwrap(), 0);
+    writer.flush().unwrap();
+}
+
+#[test]
 fn redacting_writer_flush_delegates() {
     let mut buf: Vec<u8> = Vec::new();
     {

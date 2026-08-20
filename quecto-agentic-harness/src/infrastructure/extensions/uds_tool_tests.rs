@@ -8,6 +8,26 @@ fn test_def(name: &str) -> ToolDefinition {
     }
 }
 
+#[test]
+fn extension_tool_preserves_stateless_delivery_and_spawn_policy_contracts() {
+    use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+    use std::collections::BTreeMap;
+
+    let (tool, _rx) = create_uds_tool(test_def("weather"), std::time::Duration::from_secs(5));
+    let result = ToolResult {
+        content: "delivered".into(),
+        is_error: false,
+        image_blocks: vec![],
+    };
+    tool.result_delivered("{}", &result);
+    assert_eq!(tool.inherited_child_policy_snapshot_for_spawn(), None);
+
+    let mut snapshot = BTreeMap::new();
+    snapshot.insert("bash".to_string(), ProfileAvailabilityScope::Both);
+    tool.set_inherited_child_policy_snapshot_for_spawn(snapshot);
+    assert_eq!(tool.inherited_child_policy_snapshot_for_spawn(), None);
+}
+
 #[tokio::test]
 async fn test_execute_returns_result_from_extension() {
     let (tool, mut rx) = create_uds_tool(test_def("weather"), std::time::Duration::from_secs(5));
