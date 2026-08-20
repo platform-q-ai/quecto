@@ -25,11 +25,7 @@ pub(super) async fn dispatch_fieldless_command(
     let id = cmd.id();
     let tn = cmd.type_name();
     if matches!(cmd, AgentCommand::ListSessions { .. }) {
-        let event = match ctx
-            .session_store
-            .list(Some(crate::domain::session::USER_CHAT_PREFIX))
-            .await
-        {
+        let event = match ctx.session_store.list(None).await {
             Ok(sessions) => AgentEvent::ok(
                 id,
                 tn,
