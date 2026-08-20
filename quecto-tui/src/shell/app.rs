@@ -617,6 +617,9 @@ mod app_fix_pass_1466_tests;
 #[path = "app_fix_pass_1485_review_tests.rs"]
 mod app_fix_pass_1485_review_tests;
 #[cfg(test)]
+#[path = "app_get_state_session_key_tests.rs"]
+mod app_get_state_session_key_tests;
+#[cfg(test)]
 #[path = "../workspace/app_git_tests.rs"]
 mod app_git_tests;
 #[cfg(test)]
