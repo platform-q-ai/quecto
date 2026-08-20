@@ -338,6 +338,7 @@ pub fn handle_tool_result(args: ToolResultArgs<'_>) {
                 content: content.to_string(),
                 is_error,
                 image_blocks: vec![],
+                delivery_metadata: None,
             });
         }
         // Reclaim any other entries whose caller has already timed out — e.g.
@@ -393,6 +394,7 @@ pub fn handle_client_disconnect(client_id: u64, registry: &ClientToolRegistry) -
             content: "Extension disconnected".to_string(),
             is_error: true,
             image_blocks: vec![],
+            delivery_metadata: None,
         });
     }
 
@@ -420,6 +422,7 @@ fn resolve_pending_for_tool(state: &mut ClientToolState, tool_name: &str, reason
                 content: reason.to_string(),
                 is_error: true,
                 image_blocks: vec![],
+                delivery_metadata: None,
             });
         }
     }

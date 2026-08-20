@@ -63,6 +63,7 @@ impl Tool for TinyExtensionTool {
                 content: "ok".into(),
                 is_error: false,
                 image_blocks: Vec::new(),
+                delivery_metadata: None,
             })
         })
     }

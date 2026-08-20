@@ -53,6 +53,7 @@ impl Tool for DummyTool {
                 content: "ok".to_string(),
                 is_error: false,
                 image_blocks: vec![],
+                delivery_metadata: None,
             })
         })
     }

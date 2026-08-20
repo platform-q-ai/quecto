@@ -52,6 +52,9 @@ pub enum SubagentLiveness {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingMessageReport {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub receipt: String,
+    #[serde(default)]
     pub response: String,
     pub ordinal: u64,
 }

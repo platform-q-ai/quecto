@@ -5,6 +5,23 @@ use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registr
 use std::io::Write;
 use std::path::PathBuf;
 
+impl AgentCmdTool {
+    fn shape_default_get_messages_report(&self, agent_id: &str, response: &str) -> String {
+        let (content, receipt) =
+            self.shape_default_get_messages_report_with_metadata(agent_id, response);
+        let Some(receipt) = receipt else {
+            return content;
+        };
+        let Ok(mut envelope) = serde_json::from_str::<serde_json::Value>(&content) else {
+            return content;
+        };
+        if let Some(data) = envelope.get_mut("data") {
+            data["deliveryReceipt"] = serde_json::json!(receipt);
+        }
+        envelope.to_string()
+    }
+}
+
 fn empty_tool() -> AgentCmdTool {
     AgentCmdTool::new(new_registry())
 }
@@ -110,6 +127,7 @@ fn default_get_messages_first_call_latest_substantive_assistant_then_ack_advance
             content: shaped,
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         },
     );
     assert_eq!(
@@ -140,6 +158,7 @@ fn first_contact_does_not_commit_omitted_later_non_assistant_ordinals() {
             content: shaped,
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         },
     );
     assert_eq!(
@@ -215,6 +234,13 @@ fn clear_history_delivery_resets_default_get_messages_cursor() {
     let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
     entry.delivered_message_ordinal = Some(50);
     entry.pending_message_ordinal = Some(60);
+    entry
+        .pending_message_reports
+        .push_back(crate::domain::session::PendingMessageReport {
+            receipt: "stale".into(),
+            response: "stale-response".into(),
+            ordinal: 60,
+        });
     registry.lock().unwrap().insert("w1".to_string(), entry);
     let tool = AgentCmdTool::new(registry.clone());
     tool.result_delivered(
@@ -223,11 +249,13 @@ fn clear_history_delivery_resets_default_get_messages_cursor() {
             content: r#"{"success":true}"#.into(),
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         },
     );
     let entry = &registry.lock().unwrap()["w1"];
     assert_eq!(entry.delivered_message_ordinal, None);
     assert_eq!(entry.pending_message_ordinal, None);
+    assert!(entry.pending_message_reports.is_empty());
 }
 
 #[test]
@@ -244,6 +272,7 @@ fn failed_clear_history_delivery_keeps_default_get_messages_cursor() {
             content: r#"{"success":false,"error":"busy"}"#.into(),
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         },
     );
     let entry = &registry.lock().unwrap()["w1"];
@@ -264,6 +293,7 @@ fn malformed_clear_history_delivery_keeps_default_get_messages_cursor() {
             content: "ok".into(),
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         },
     );
     assert_eq!(
@@ -335,6 +365,7 @@ fn completed_final_response_survives_intermediate_tool_output_crowding() {
             content: shaped,
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         },
     );
     assert_eq!(
@@ -501,7 +532,7 @@ fn default_get_messages_truncates_multibyte_content_safely() {
 }
 
 #[test]
-fn unchanged_default_get_messages_does_not_commit_stale_pending() {
+fn unchanged_default_get_messages_keeps_pending_without_commit() {
     let registry = new_registry();
     let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
     entry.delivered_message_ordinal = Some(1);
@@ -516,13 +547,17 @@ fn unchanged_default_get_messages_does_not_commit_stale_pending() {
     );
     let parsed: serde_json::Value = serde_json::from_str(&shaped).unwrap();
     assert_eq!(parsed["data"], serde_json::json!({"unchanged": true}));
-    assert_eq!(registry.lock().unwrap()["w1"].pending_message_ordinal, None);
+    assert_eq!(
+        registry.lock().unwrap()["w1"].pending_message_ordinal,
+        Some(2)
+    );
     tool.result_delivered(
         r#"{"agent_id":"w1","command":"get_messages"}"#,
         &ToolResult {
             content: shaped,
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         },
     );
     assert_eq!(
@@ -532,7 +567,7 @@ fn unchanged_default_get_messages_does_not_commit_stale_pending() {
 }
 
 #[test]
-fn failed_default_get_messages_delivery_clears_stale_pending_without_commit() {
+fn failed_default_get_messages_delivery_keeps_pending_without_commit() {
     let registry = new_registry();
     let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
     entry.delivered_message_ordinal = Some(1);
@@ -545,11 +580,12 @@ fn failed_default_get_messages_delivery_clears_stale_pending_without_commit() {
             content: r#"{"success":false,"error":"busy"}"#.into(),
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         },
     );
     let entry = &registry.lock().unwrap()["w1"];
     assert_eq!(entry.delivered_message_ordinal, Some(1));
-    assert_eq!(entry.pending_message_ordinal, None);
+    assert_eq!(entry.pending_message_ordinal, Some(10));
 }
 
 #[test]
@@ -577,7 +613,7 @@ fn incomplete_default_backfill_returns_uncommitted_marker() {
 }
 
 #[test]
-fn incomplete_default_get_messages_delivery_clears_stale_pending_without_commit() {
+fn incomplete_default_get_messages_delivery_keeps_pending_without_commit() {
     let registry = new_registry();
     let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
     entry.delivered_message_ordinal = Some(1);
@@ -590,11 +626,12 @@ fn incomplete_default_get_messages_delivery_clears_stale_pending_without_commit(
             content: r#"{"success":true,"data":{"unchanged":true,"reportIncomplete":true}}"#.into(),
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         },
     );
     let entry = &registry.lock().unwrap()["w1"];
     assert_eq!(entry.delivered_message_ordinal, Some(1));
-    assert_eq!(entry.pending_message_ordinal, None);
+    assert_eq!(entry.pending_message_ordinal, Some(10));
 }
 
 #[test]
@@ -654,61 +691,5 @@ fn incomplete_backfill_returns_bounded_progress_without_advancing_cursor() {
     let parsed: serde_json::Value = serde_json::from_str(&shaped).unwrap();
     assert_eq!(parsed["data"]["messages"][0]["content"], "progress");
     assert_eq!(parsed["data"]["reportIncomplete"], true);
-    assert_eq!(registry.lock().unwrap()["w1"].pending_message_ordinal, None);
-}
-
-#[test]
-fn pending_delivery_correlates_to_each_shaped_get_messages_result() {
-    let registry = new_registry();
-    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
-    entry.delivered_message_ordinal = Some(1);
-    registry.lock().unwrap().insert("w1".to_string(), entry);
-    let tool = AgentCmdTool::new(registry.clone());
-
-    let first = tool.shape_default_get_messages_report(
-        "w1",
-        &json_response(serde_json::json!([
-            {"role":"assistant","content":"old","ordinal":1},
-            {"role":"assistant","content":"first","ordinal":2}
-        ])),
-    );
-    let second = tool.shape_default_get_messages_report(
-        "w1",
-        &json_response(serde_json::json!([
-            {"role":"assistant","content":"old","ordinal":1},
-            {"role":"assistant","content":"first","ordinal":2},
-            {"role":"assistant","content":"second","ordinal":3}
-        ])),
-    );
-
-    tool.result_delivered(
-        r#"{"agent_id":"w1","command":"get_messages"}"#,
-        &ToolResult {
-            content: first,
-            is_error: false,
-            image_blocks: Vec::new(),
-        },
-    );
-    assert_eq!(
-        registry.lock().unwrap()["w1"].delivered_message_ordinal,
-        Some(2)
-    );
-    assert_eq!(
-        registry.lock().unwrap()["w1"].pending_message_ordinal,
-        Some(3)
-    );
-
-    tool.result_delivered(
-        r#"{"agent_id":"w1","command":"get_messages"}"#,
-        &ToolResult {
-            content: second,
-            is_error: false,
-            image_blocks: Vec::new(),
-        },
-    );
-    assert_eq!(
-        registry.lock().unwrap()["w1"].delivered_message_ordinal,
-        Some(3)
-    );
     assert_eq!(registry.lock().unwrap()["w1"].pending_message_ordinal, None);
 }

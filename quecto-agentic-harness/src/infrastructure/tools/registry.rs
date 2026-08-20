@@ -646,6 +646,7 @@ impl ToolRegistryImpl {
                 content: format!("tool '{}' is disabled by runtime policy", name),
                 is_error: true,
                 image_blocks: vec![],
+                delivery_metadata: None,
             });
         }
         if let Some(context) = self.execution_profile_context {
@@ -666,6 +667,7 @@ impl ToolRegistryImpl {
                     ),
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 });
             }
         }
@@ -677,6 +679,7 @@ impl ToolRegistryImpl {
                     content: reason,
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 });
             }
         }

@@ -110,6 +110,7 @@ impl Tool for GrepTool {
                         ),
                         is_error: true,
                         image_blocks: vec![],
+                        delivery_metadata: None,
                     });
                 }
             };
@@ -120,6 +121,7 @@ impl Tool for GrepTool {
                         .to_string(),
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 });
             };
 
@@ -168,6 +170,7 @@ impl Tool for GrepTool {
                     content: msg,
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 });
             }
 
@@ -187,6 +190,7 @@ impl Tool for GrepTool {
                 content: result,
                 is_error: false,
                 image_blocks: vec![],
+                delivery_metadata: None,
             })
         })
     }

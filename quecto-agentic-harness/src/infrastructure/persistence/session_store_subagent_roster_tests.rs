@@ -40,12 +40,20 @@ fn roster_entry(
 async fn subagent_roster_roundtrips_and_legacy_files_load_empty_roster() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
+    let mut live = roster_entry("live", crate::domain::session::SubagentLiveness::Live);
+    live.delivered_message_ordinal = Some(4);
+    live.pending_message_reports
+        .push_back(crate::domain::session::PendingMessageReport {
+            receipt: "receipt-1".into(),
+            response: "response-1".into(),
+            ordinal: 8,
+        });
     let session = Session {
         key: "cli:roster".to_string(),
         messages: vec![make_message(Role::User, "hello")],
         workflow_run: None,
         subagent_roster: vec![
-            roster_entry("live", crate::domain::session::SubagentLiveness::Live),
+            live,
             roster_entry(
                 "detached",
                 crate::domain::session::SubagentLiveness::Detached,

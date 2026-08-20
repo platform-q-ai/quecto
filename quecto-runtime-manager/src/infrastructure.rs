@@ -68,6 +68,12 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
     Json(json!({ "healthy": true, "runtimes": runtimes }))
 }
 
+type ManagerResponseResult<T> = Result<T, Box<Response>>;
+
+fn boxed_json_error(status: StatusCode, message: String) -> Box<Response> {
+    Box::new(json_error(status, message))
+}
+
 enum EnsureStartClaim {
     Existing,
     Claimed(PendingStartGuard),
@@ -76,7 +82,7 @@ enum EnsureStartClaim {
 async fn claim_ensure_start(
     state: &AppState,
     runtime_ref: &str,
-) -> Result<EnsureStartClaim, Response> {
+) -> ManagerResponseResult<EnsureStartClaim> {
     loop {
         {
             let mut registry = state.registry.lock().await;
@@ -94,7 +100,7 @@ async fn claim_ensure_start(
                 && active_count == 0
                 && pending.len() >= state.config.max_runtimes
             {
-                return Err(json_error(
+                return Err(boxed_json_error(
                     StatusCode::SERVICE_UNAVAILABLE,
                     ManagerError::RuntimeLimitReached.to_string(),
                 ));
@@ -115,7 +121,7 @@ async fn claim_ensure_start(
 async fn reap_for_pending_capacity(
     state: &AppState,
     pending_guard: &PendingStartGuard,
-) -> Result<Option<String>, Response> {
+) -> ManagerResponseResult<Option<String>> {
     let mut registry = state.registry.lock().await;
     let pending_count = state.pending_starts.lock().await.len();
     if registry.active_count() + pending_count <= state.config.max_runtimes {
@@ -127,7 +133,7 @@ async fn reap_for_pending_capacity(
         && registry.active_count() + pending_count > state.config.max_runtimes
     {
         pending_guard.release().await;
-        return Err(json_error(
+        return Err(boxed_json_error(
             StatusCode::SERVICE_UNAVAILABLE,
             ManagerError::RuntimeLimitReached.to_string(),
         ));
@@ -139,13 +145,13 @@ async fn allocate_runtime_port(
     state: &AppState,
     runtime_ref: &str,
     pending_guard: &PendingStartGuard,
-) -> Result<u16, Response> {
+) -> ManagerResponseResult<u16> {
     let mut registry = state.registry.lock().await;
     match registry.allocate_port(&state.config, runtime_ref) {
         Ok(port) => Ok(port),
         Err(error) => {
             pending_guard.release().await;
-            Err(json_error(
+            Err(boxed_json_error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 error.to_string(),
             ))
@@ -188,12 +194,12 @@ async fn ensure_runtime(
     let pending_guard = match claim_ensure_start(&state, &runtime_ref).await {
         Ok(EnsureStartClaim::Existing) => return (StatusCode::OK, Json(envelope)).into_response(),
         Ok(EnsureStartClaim::Claimed(guard)) => guard,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
 
     let reaped_pod_name = match reap_for_pending_capacity(&state, &pending_guard).await {
         Ok(pod_name) => pod_name,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
 
     if let Some(pod_name) = reaped_pod_name {
@@ -208,7 +214,7 @@ async fn ensure_runtime(
 
     let port = match allocate_runtime_port(&state, &runtime_ref, &pending_guard).await {
         Ok(port) => port,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
 
     match state

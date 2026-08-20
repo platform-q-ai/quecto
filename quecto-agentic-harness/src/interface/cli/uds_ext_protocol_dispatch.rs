@@ -230,6 +230,7 @@ pub(crate) async fn forward_tool_requests(
             content: drain_reason.to_string(),
             is_error: true,
             image_blocks: vec![],
+            delivery_metadata: None,
         });
     }
 }

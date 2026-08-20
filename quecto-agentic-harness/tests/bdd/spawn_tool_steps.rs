@@ -686,6 +686,7 @@ fn when_live_spawn_subagent_with_task(world: &mut QuectoWorld, agent_id: String,
             content: e.to_string(),
             is_error: true,
             image_blocks: vec![],
+            delivery_metadata: None,
         },
     });
 }
@@ -1002,6 +1003,7 @@ fn execute_spawn_json_without_config(world: &mut QuectoWorld, args: serde_json::
             content: e.to_string(),
             is_error: true,
             image_blocks: vec![],
+            delivery_metadata: None,
         },
     });
 }

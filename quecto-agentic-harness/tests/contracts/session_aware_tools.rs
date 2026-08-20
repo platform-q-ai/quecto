@@ -41,6 +41,7 @@ impl Tool for SessionRecordingTool {
                 content: String::new(),
                 is_error: false,
                 image_blocks: vec![],
+                delivery_metadata: None,
             })
         })
     }

@@ -56,6 +56,7 @@ fn run(world: &mut QuectoWorld, args: serde_json::Value) {
             content: e.to_string(),
             is_error: true,
             image_blocks: vec![],
+            delivery_metadata: None,
         });
     world.python_lab_result = Some(result);
 }

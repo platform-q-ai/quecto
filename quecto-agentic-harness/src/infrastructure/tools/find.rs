@@ -71,6 +71,7 @@ fn missing_pattern_error() -> ToolResult {
         content: "missing 'pattern' argument. Example: {\"pattern\": \"*.rs\"}".to_string(),
         is_error: true,
         image_blocks: vec![],
+        delivery_metadata: None,
     }
 }
 
@@ -151,6 +152,7 @@ impl Tool for FindTool {
                         ),
                         is_error: true,
                         image_blocks: vec![],
+                        delivery_metadata: None,
                     });
                 }
             };
@@ -200,6 +202,7 @@ impl Tool for FindTool {
                     content: msg,
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 });
             }
 
@@ -208,6 +211,7 @@ impl Tool for FindTool {
                 content: result,
                 is_error: false,
                 image_blocks: vec![],
+                delivery_metadata: None,
             })
         })
     }

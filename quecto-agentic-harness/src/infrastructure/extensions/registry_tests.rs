@@ -29,6 +29,7 @@ impl Tool for DummyTool {
                 content: "ok".into(),
                 is_error: false,
                 image_blocks: vec![],
+                delivery_metadata: None,
             })
         })
     }

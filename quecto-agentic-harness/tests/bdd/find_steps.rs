@@ -56,6 +56,7 @@ fn run_find(tool: FindTool, args: serde_json::Value) -> quecto::domain::tool::To
             content: e.to_string(),
             is_error: true,
             image_blocks: vec![],
+            delivery_metadata: None,
         })
 }
 
@@ -132,6 +133,7 @@ fn when_find_pattern(world: &mut QuectoWorld, pattern: String) {
             content: "fd not available — skipping".to_string(),
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         });
         return;
     }
@@ -147,6 +149,7 @@ fn when_find_default_path(world: &mut QuectoWorld, pattern: String) {
             content: "fd not available — skipping".to_string(),
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         });
         return;
     }
@@ -164,6 +167,7 @@ fn when_find_with_limit(world: &mut QuectoWorld, pattern: String, limit: usize) 
                 .to_string(),
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         });
         return;
     }
@@ -181,6 +185,7 @@ fn when_find_with_float_limit(world: &mut QuectoWorld, pattern: String, limit: f
                 .to_string(),
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         });
         return;
     }
@@ -211,6 +216,7 @@ fn when_find_with_path(world: &mut QuectoWorld, pattern: String, path: String) {
             content: "fd not available — skipping".to_string(),
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         });
         return;
     }
