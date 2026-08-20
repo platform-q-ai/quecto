@@ -96,11 +96,22 @@ pub(crate) fn is_substantive_assistant(msg: &serde_json::Value) -> bool {
 
 fn is_unrecoverably_truncated(msg: &serde_json::Value) -> bool {
     msg.get("truncated").and_then(|v| v.as_bool()) == Some(true)
-        && msg.get("contentRecovery").is_none()
-        && msg
-            .get("content")
+        && !has_usable_content_recovery(msg)
+}
+
+fn has_usable_content_recovery(msg: &serde_json::Value) -> bool {
+    let Some(recovery) = msg.get("contentRecovery") else {
+        return false;
+    };
+    recovery.get("command").and_then(|v| v.as_str()) == Some("get_message")
+        && recovery
+            .get("messageId")
             .and_then(|v| v.as_str())
-            .is_none_or(str::is_empty)
+            .is_some_and(|id| !id.is_empty())
+        && recovery
+            .get("offset")
+            .and_then(|v| v.as_u64())
+            .is_some_and(|offset| offset > 0)
 }
 
 fn report_envelope_size(selected: &[serde_json::Value], next: Option<&serde_json::Value>) -> usize {

@@ -434,7 +434,17 @@ impl AgentCmdTool {
         }
         let report = bounded_report_messages(candidates, max_ord);
         if report.messages.is_empty() {
-            *data = serde_json::json!({"unchanged": true});
+            if max_ord > delivered {
+                *data = serde_json::json!({
+                    "messages": [],
+                    "truncated": true,
+                    "hasMoreMessages": true,
+                    "messageContentTruncated": false,
+                    "reportIncomplete": true
+                });
+            } else {
+                *data = serde_json::json!({"unchanged": true});
+            }
             return envelope.to_string();
         }
         let new_cursor = report
@@ -707,6 +717,9 @@ mod definition_tests;
 #[cfg(test)]
 #[path = "agent_cmd_get_subagents_all_tests.rs"]
 mod get_subagents_all_tests;
+#[cfg(test)]
+#[path = "agent_cmd_recovery_tests.rs"]
+mod recovery_tests;
 #[cfg(test)]
 #[path = "agent_cmd_report_tests.rs"]
 mod report_tests;
