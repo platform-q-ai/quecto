@@ -451,6 +451,9 @@ mod ordinal_tests;
 #[path = "uds_dispatch_policy_tests.rs"]
 mod policy_tests;
 #[cfg(test)]
+#[path = "uds_dispatch_resume_e2e_tests.rs"]
+mod resume_e2e_tests;
+#[cfg(test)]
 #[path = "uds_dispatch_resume_persist_tests.rs"]
 mod resume_persist_tests;
 #[cfg(test)]
