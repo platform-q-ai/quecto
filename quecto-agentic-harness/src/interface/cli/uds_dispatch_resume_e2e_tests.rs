@@ -34,4 +34,15 @@ async fn e2e_resume_picker_lists_persisted_default_tui_chat_session() {
         )
         .await
     );
+    assert!(
+        !super::handle_resume_session(
+            &mut ctx,
+            Some("resume-select"),
+            "resume_session",
+            persisted_key.clone(),
+        )
+        .await
+    );
+    assert_eq!(*ctx.session_key, persisted_key);
+    assert_eq!(ctx.messages.len(), 1);
 }

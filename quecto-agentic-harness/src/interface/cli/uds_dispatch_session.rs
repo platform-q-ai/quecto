@@ -309,7 +309,10 @@ pub(super) async fn handle_resume_session(
         return false;
     }
     let name = session.trim();
-    if !crate::interface::cli::is_valid_session_name(name) {
+    let legacy_cli_name = name
+        .strip_prefix("cli:")
+        .filter(|suffix| crate::interface::cli::is_valid_session_name(suffix));
+    if legacy_cli_name.is_none() && !crate::interface::cli::is_valid_session_name(name) {
         let ev = AgentEvent::err(
             id,
             type_name,
@@ -319,9 +322,12 @@ pub(super) async fn handle_resume_session(
         return false;
     }
     // The /resume picker selects by full session key (e.g. a `chat-…` user
-    // chat); a typed `/resume <name>` refers to a legacy `cli:<name>` session.
-    // Don't re-prefix an already-qualified user-chat key.
-    let new_key = if name.starts_with(crate::domain::session::USER_CHAT_PREFIX) {
+    // chat or legacy `cli:<name>` row); a typed `/resume <name>` refers to a
+    // legacy `cli:<name>` session. Don't re-prefix an already-qualified picker
+    // key.
+    let new_key = if name.starts_with(crate::domain::session::USER_CHAT_PREFIX)
+        || legacy_cli_name.is_some()
+    {
         name.to_string()
     } else {
         Session::build_key("cli", name)
