@@ -489,6 +489,7 @@ fn agent_cmd_preserves_stateless_spawn_policy_defaults() {
         content: "delivered".into(),
         is_error: false,
         image_blocks: vec![],
+        delivery_metadata: None,
     };
     <AgentCmdTool as Tool>::result_delivered(&tool, r#"{"command":"get_state"}"#, &result);
     assert_eq!(

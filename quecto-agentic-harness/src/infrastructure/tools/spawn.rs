@@ -391,6 +391,7 @@ impl SpawnTool {
                 ),
                 is_error: true,
                 image_blocks: vec![],
+                delivery_metadata: None,
             });
         }
         SubagentLaunchUseCase::new(super::spawn_launch_ports::SpawnLaunchPorts::new(self))
@@ -525,6 +526,7 @@ impl Tool for SpawnTool {
                                     ),
                                     is_error: true,
                                     image_blocks: vec![],
+                                    delivery_metadata: None,
                                 });
                             }
                         }
@@ -558,6 +560,7 @@ impl Tool for SpawnTool {
                                 content: format!("Failed to spawn subagent: {e}"),
                                 is_error: true,
                                 image_blocks: vec![],
+                                delivery_metadata: None,
                             });
                         }
 
@@ -569,6 +572,7 @@ impl Tool for SpawnTool {
                             content: msg,
                             is_error: false,
                             image_blocks: vec![],
+                            delivery_metadata: None,
                         })
                     } else {
                         self.launch_uds_agent(&config).await
@@ -578,6 +582,7 @@ impl Tool for SpawnTool {
                     content: format!("Failed to spawn subagent: {}", e),
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 }),
             }
         })

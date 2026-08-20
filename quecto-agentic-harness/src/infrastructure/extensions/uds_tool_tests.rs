@@ -18,6 +18,7 @@ fn extension_tool_preserves_stateless_delivery_and_spawn_policy_contracts() {
         content: "delivered".into(),
         is_error: false,
         image_blocks: vec![],
+        delivery_metadata: None,
     };
     tool.result_delivered("{}", &result);
     assert_eq!(tool.inherited_child_policy_snapshot_for_spawn(), None);
@@ -49,6 +50,7 @@ async fn test_execute_returns_result_from_extension() {
             content: "22°C, sunny".into(),
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         });
     });
 

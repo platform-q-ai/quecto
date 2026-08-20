@@ -50,6 +50,7 @@ impl Tool for WriteTool {
                         ),
                         is_error: true,
                         image_blocks: vec![],
+                        delivery_metadata: None,
                     });
                 }
             };
@@ -60,6 +61,7 @@ impl Tool for WriteTool {
                             .to_string(),
                     is_error: true,
                     image_blocks: vec![],
+            delivery_metadata: None,
                 });
             };
             let Some(content) = args["content"].as_str() else {
@@ -69,6 +71,7 @@ impl Tool for WriteTool {
                             .to_string(),
                     is_error: true,
                     image_blocks: vec![],
+            delivery_metadata: None,
                 });
             };
 
@@ -88,6 +91,7 @@ impl Tool for WriteTool {
                 content: format!("Successfully wrote {} bytes to {}", content.len(), path),
                 is_error: false,
                 image_blocks: vec![],
+                delivery_metadata: None,
             })
         })
     }

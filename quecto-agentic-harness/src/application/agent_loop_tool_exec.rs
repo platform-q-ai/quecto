@@ -47,7 +47,8 @@ impl AgentLoopImpl {
                 .await;
             }
 
-            let (content, image_blocks, is_error) = self.execute_single_tool_call(tc).await;
+            let (content, image_blocks, delivery_metadata, is_error) =
+                self.execute_single_tool_call(tc).await;
 
             // Audit: ToolResult (guarded — avoid estimate_tokens/preview when disabled)
             if self.audit_log.is_some() {
@@ -88,6 +89,7 @@ impl AgentLoopImpl {
                         .last()
                         .map(|m| m.image_blocks.clone())
                         .unwrap_or_default(),
+                    delivery_metadata,
                     is_error,
                 };
                 self.tool_executor().result_delivered(
@@ -102,7 +104,12 @@ impl AgentLoopImpl {
     async fn execute_single_tool_call(
         &self,
         tc: &ToolCall,
-    ) -> (String, Vec<crate::domain::tool::ImageBlock>, bool) {
+    ) -> (
+        String,
+        Vec<crate::domain::tool::ImageBlock>,
+        Option<String>,
+        bool,
+    ) {
         // Emit ToolStarted before executing so the REPL can show the tool name
         // immediately, even if the tool itself takes a long time.
         // Clones inside the closure are only evaluated when a callback is
@@ -123,6 +130,7 @@ impl AgentLoopImpl {
             Ok(crate::domain::tool::ToolResult {
                 content: format!("tool '{}' is disabled by runtime policy", tc.name),
                 image_blocks: vec![],
+                delivery_metadata: None,
                 is_error: true,
             })
         } else {
@@ -130,9 +138,14 @@ impl AgentLoopImpl {
         };
         let duration_ms = start.elapsed().as_millis() as u64;
 
-        let (content, image_blocks, is_err) = match tool_result {
-            Ok(tr) => (tr.content, tr.image_blocks, tr.is_error),
-            Err(e) => (format!("Error: {}", e), vec![], true),
+        let (content, image_blocks, delivery_metadata, is_err) = match tool_result {
+            Ok(tr) => (
+                tr.content,
+                tr.image_blocks,
+                tr.delivery_metadata,
+                tr.is_error,
+            ),
+            Err(e) => (format!("Error: {}", e), vec![], None, true),
         };
 
         // Emit ToolFinished so the REPL can replace the spinner line.
@@ -153,6 +166,6 @@ impl AgentLoopImpl {
             is_error = is_err,
             "tool executed"
         );
-        (content, image_blocks, is_err)
+        (content, image_blocks, delivery_metadata, is_err)
     }
 }

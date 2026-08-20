@@ -1,3 +1,31 @@
+use crate::domain::session::PendingMessageReport;
+
+pub(crate) fn mint_default_report_receipt() -> String {
+    format!("agent-cmd-report-{}", uuid::Uuid::new_v4())
+}
+
+pub(crate) fn delivery_receipt(response: &serde_json::Value) -> Option<&str> {
+    response
+        .pointer("/data/deliveryReceipt")
+        .and_then(|v| v.as_str())
+        .filter(|receipt| !receipt.is_empty())
+}
+
+pub(crate) fn pending_delivery_match_index(
+    pending: &std::collections::VecDeque<PendingMessageReport>,
+    receipt: Option<&str>,
+    delivered_content: &str,
+) -> Option<usize> {
+    if let Some(receipt) = receipt {
+        return pending
+            .iter()
+            .position(|pending| !pending.receipt.is_empty() && pending.receipt == receipt);
+    }
+    pending
+        .iter()
+        .position(|pending| pending.receipt.is_empty() && pending.response == delivered_content)
+}
+
 pub(crate) fn needs_default_report_backfill(
     messages: &[serde_json::Value],
     delivered: u64,

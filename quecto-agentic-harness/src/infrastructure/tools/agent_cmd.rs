@@ -106,6 +106,7 @@ impl AgentCmdTool {
                     content: "agent_cmd error: missing required field: agent_id".into(),
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 });
             }
         };
@@ -114,6 +115,7 @@ impl AgentCmdTool {
                 content: format!("agent_cmd error: {e}"),
                 is_error: true,
                 image_blocks: vec![],
+                delivery_metadata: None,
             });
         }
         Some(self.kill_agent(agent_id).await)
@@ -138,6 +140,7 @@ impl AgentCmdTool {
             content: serde_json::json!({"subagents": subagents}).to_string(),
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         }
     }
 
@@ -163,6 +166,7 @@ impl AgentCmdTool {
                 ),
                 is_error: true,
                 image_blocks: vec![],
+                delivery_metadata: None,
             };
         };
 
@@ -183,6 +187,7 @@ impl AgentCmdTool {
                 ),
                 is_error: true,
                 image_blocks: vec![],
+                delivery_metadata: None,
             };
         }
 
@@ -245,6 +250,7 @@ impl AgentCmdTool {
             content: format!("Subagent '{}' killed (pid={}).", agent_id, killed_pid),
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         }
     }
 
@@ -257,7 +263,8 @@ impl AgentCmdTool {
 #[cfg(test)]
 use super::agent_cmd_parse::SUPPORTED_COMMANDS;
 use super::agent_cmd_report::{
-    bounded_report_messages, is_substantive_assistant, needs_default_report_backfill,
+    bounded_report_messages, delivery_receipt, is_substantive_assistant,
+    mint_default_report_receipt, needs_default_report_backfill, pending_delivery_match_index,
 };
 use super::subagent_registry::PendingMessageReport;
 
@@ -338,29 +345,32 @@ impl AgentCmdTool {
         envelope.to_string()
     }
 
-    fn shape_default_get_messages_report(&self, agent_id: &str, response: &str) -> String {
+    fn shape_default_get_messages_report_with_metadata(
+        &self,
+        agent_id: &str,
+        response: &str,
+    ) -> (String, Option<String>) {
         let Ok(mut envelope) = serde_json::from_str::<serde_json::Value>(response) else {
-            return response.to_string();
+            return (response.to_string(), None);
         };
         if envelope.get("success").and_then(|v| v.as_bool()) == Some(false) {
-            return response.to_string();
+            return (response.to_string(), None);
         }
         let Some(data) = envelope.get_mut("data") else {
-            return response.to_string();
+            return (response.to_string(), None);
         };
         let report_incomplete =
             data.get("reportIncomplete").and_then(|v| v.as_bool()) == Some(true);
         let Some(messages) = data.get_mut("messages").and_then(|v| v.as_array_mut()) else {
-            return response.to_string();
+            return (response.to_string(), None);
         };
         let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
         let Ok(key) = super::subagent_registry::resolve_registry_key(&entries, agent_id) else {
-            return response.to_string();
+            return (response.to_string(), None);
         };
         let Some(entry) = entries.get_mut(&key) else {
-            return response.to_string();
+            return (response.to_string(), None);
         };
-        entry.pending_message_ordinal = None;
         let delivered = entry.delivered_message_ordinal.unwrap_or(0);
         let observed_max = messages
             .iter()
@@ -383,18 +393,15 @@ impl AgentCmdTool {
                 );
                 if !report.messages.is_empty() {
                     *data = serde_json::json!({"messages": report.messages, "truncated": true, "hasMoreMessages": report.has_more_messages, "messageContentTruncated": report.message_content_truncated, "reportIncomplete": true});
-                    return envelope.to_string();
+                    return (envelope.to_string(), None);
                 }
             }
             *data = serde_json::json!({"unchanged": true, "reportIncomplete": true});
-            return envelope.to_string();
+            return (envelope.to_string(), None);
         }
         if observed_max < delivered {
-            // Durable append-time ordinals must not reset after reload or compaction.
-            // A stale/partial child response with only lower ordinals is therefore
-            // treated as no new default report rather than rewinding the cursor.
             *data = serde_json::json!({"unchanged": true});
-            return envelope.to_string();
+            return (envelope.to_string(), None);
         }
         let mut max_ord = delivered;
         let mut latest_assistant: Option<usize> = None;
@@ -418,7 +425,7 @@ impl AgentCmdTool {
         }
         if unread.is_empty() {
             *data = serde_json::json!({"unchanged": true});
-            return envelope.to_string();
+            return (envelope.to_string(), None);
         }
         let candidates: Vec<_> = if delivered == 0 {
             latest_assistant
@@ -430,7 +437,7 @@ impl AgentCmdTool {
         };
         if candidates.is_empty() {
             *data = serde_json::json!({"unchanged": true});
-            return envelope.to_string();
+            return (envelope.to_string(), None);
         }
         let report = bounded_report_messages(candidates, max_ord);
         if report.messages.is_empty() {
@@ -445,7 +452,7 @@ impl AgentCmdTool {
             } else {
                 *data = serde_json::json!({"unchanged": true});
             }
-            return envelope.to_string();
+            return (envelope.to_string(), None);
         }
         let new_cursor = report
             .messages
@@ -454,6 +461,7 @@ impl AgentCmdTool {
             .max()
             .unwrap_or(delivered);
         let truncated = report.has_more_messages || report.message_content_truncated;
+        let receipt = mint_default_report_receipt();
         *data = serde_json::json!({
             "messages": report.messages,
             "truncated": truncated,
@@ -464,11 +472,12 @@ impl AgentCmdTool {
         entry
             .pending_message_reports
             .push_back(PendingMessageReport {
+                receipt: receipt.clone(),
                 response: shaped.clone(),
                 ordinal: new_cursor,
             });
         entry.pending_message_ordinal = Some(new_cursor);
-        shaped
+        (shaped, Some(receipt))
     }
 }
 
@@ -524,18 +533,16 @@ impl Tool for AgentCmdTool {
             .and_then(|value| value.pointer("/data/reportIncomplete"))
             .and_then(|v| v.as_bool())
             == Some(true);
+        let receipt = result
+            .delivery_metadata
+            .as_deref()
+            .or_else(|| delivered.as_ref().and_then(delivery_receipt));
         if !delivered_success || report_incomplete {
-            entry
-                .pending_message_reports
-                .retain(|pending| pending.response != result.content);
-            entry.pending_message_ordinal = entry.pending_message_reports.back().map(|p| p.ordinal);
             return;
         }
-        let pending = entry
-            .pending_message_reports
-            .iter()
-            .position(|pending| pending.response == result.content)
-            .and_then(|idx| entry.pending_message_reports.remove(idx));
+        let pending =
+            pending_delivery_match_index(&entry.pending_message_reports, receipt, &result.content)
+                .and_then(|idx| entry.pending_message_reports.remove(idx));
         if let Some(pending) = pending {
             entry.delivered_message_ordinal = Some(
                 entry
@@ -597,6 +604,7 @@ impl Tool for AgentCmdTool {
                             content: format!("agent_cmd error: {e}"),
                             is_error: true,
                             image_blocks: vec![],
+                            delivery_metadata: None,
                         });
                     }
                 },
@@ -605,6 +613,7 @@ impl Tool for AgentCmdTool {
                         content: format!("agent_cmd error: invalid JSON: {e}"),
                         is_error: true,
                         image_blocks: vec![],
+                        delivery_metadata: None,
                     });
                 }
             };
@@ -638,6 +647,7 @@ impl Tool for AgentCmdTool {
                         content: format!("agent_cmd error: {e}"),
                         is_error: true,
                         image_blocks: vec![],
+                        delivery_metadata: None,
                     });
                 }
             };
@@ -691,21 +701,23 @@ impl Tool for AgentCmdTool {
                     } else {
                         response
                     };
-                    let content = if default_get_messages_report {
-                        self.shape_default_get_messages_report(&agent_id, &response)
+                    let (content, delivery_metadata) = if default_get_messages_report {
+                        self.shape_default_get_messages_report_with_metadata(&agent_id, &response)
                     } else {
-                        response
+                        (response, None)
                     };
                     Ok(ToolResult {
                         content,
                         is_error: false,
                         image_blocks: vec![],
+                        delivery_metadata,
                     })
                 }
                 Err(e) => Ok(ToolResult {
                     content: format!("agent_cmd error: {e}"),
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 }),
             }
         })
@@ -715,6 +727,9 @@ impl Tool for AgentCmdTool {
 #[cfg(test)]
 #[path = "agent_cmd_definition_tests.rs"]
 mod definition_tests;
+#[cfg(test)]
+#[path = "agent_cmd_delivery_tests.rs"]
+mod delivery_tests;
 #[cfg(test)]
 #[path = "agent_cmd_get_subagents_all_tests.rs"]
 mod get_subagents_all_tests;

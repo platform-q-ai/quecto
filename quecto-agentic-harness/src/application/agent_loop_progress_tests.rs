@@ -165,6 +165,7 @@ async fn ok_tool_result_is_error_propagates_to_message_and_progress() {
                     content,
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 })
             })
         }

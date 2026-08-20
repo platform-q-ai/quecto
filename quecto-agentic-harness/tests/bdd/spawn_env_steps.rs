@@ -230,6 +230,7 @@ pub(crate) fn execute_env_spawn(
             content: e.to_string(),
             is_error: true,
             image_blocks: vec![],
+            delivery_metadata: None,
         },
     };
     if !result.is_error {
@@ -281,6 +282,7 @@ pub(crate) fn run_container_command(
             content: e.to_string(),
             is_error: true,
             image_blocks: vec![],
+            delivery_metadata: None,
         },
     }
 }
@@ -765,6 +767,7 @@ printf '{{"environment_id":"%s","workspace_path":"%s","metadata":{{}},"socket_pa
                 content: e.to_string(),
                 is_error: true,
                 image_blocks: vec![],
+                delivery_metadata: None,
             },
         };
         (tool, result)

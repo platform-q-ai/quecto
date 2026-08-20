@@ -47,6 +47,7 @@ impl Tool for Echo {
                 content,
                 is_error: false,
                 image_blocks: vec![],
+                delivery_metadata: None,
             })
         })
     }

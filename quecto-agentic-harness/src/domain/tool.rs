@@ -38,6 +38,9 @@ pub struct ToolResult {
     /// Optional image blocks (e.g. when `read` is called on an image file).
     /// Empty for all non-image tools — zero-cost default.
     pub image_blocks: Vec<ImageBlock>,
+    /// Internal delivery metadata passed to `Tool::result_delivered` after
+    /// `content` has been appended. This is never surfaced to the model.
+    pub delivery_metadata: Option<String>,
 }
 
 /// Port: a tool the agent can invoke.

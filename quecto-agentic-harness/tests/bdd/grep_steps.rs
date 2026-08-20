@@ -37,6 +37,7 @@ fn run_tool(tool: GrepTool, args: serde_json::Value) -> quecto::domain::tool::To
             content: e.to_string(),
             is_error: true,
             image_blocks: vec![],
+            delivery_metadata: None,
         })
 }
 

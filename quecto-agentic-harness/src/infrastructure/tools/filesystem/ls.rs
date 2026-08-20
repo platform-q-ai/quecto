@@ -74,6 +74,7 @@ impl Tool for LsTool {
                         ),
                         is_error: true,
                         image_blocks: vec![],
+                        delivery_metadata: None,
                     });
                 }
             };
@@ -124,6 +125,7 @@ impl Tool for LsTool {
                     content: "(empty directory)".to_string(),
                     is_error: false,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 });
             }
 
@@ -162,6 +164,7 @@ impl Tool for LsTool {
                 content: output,
                 is_error: false,
                 image_blocks: vec![],
+                delivery_metadata: None,
             })
         })
     }

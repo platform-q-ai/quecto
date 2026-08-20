@@ -55,6 +55,7 @@ impl Tool for ReadTool {
                         ),
                         is_error: true,
                         image_blocks: vec![],
+                        delivery_metadata: None,
                     });
                 }
             };
@@ -64,6 +65,7 @@ impl Tool for ReadTool {
                         .to_string(),
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 });
             };
 
@@ -101,6 +103,7 @@ impl Tool for ReadTool {
                         ),
                         is_error: true,
                         image_blocks: vec![],
+                        delivery_metadata: None,
                     });
                 }
             }
@@ -124,6 +127,7 @@ impl Tool for ReadTool {
                         ),
                         is_error: true,
                         image_blocks: vec![],
+                        delivery_metadata: None,
                     });
                 }
                 use base64::Engine as _;
@@ -137,6 +141,7 @@ impl Tool for ReadTool {
                         mime_type: orig_mime,
                         data,
                     }],
+                    delivery_metadata: None,
                 });
             }
 
@@ -150,6 +155,7 @@ impl Tool for ReadTool {
                 content: output,
                 is_error: false,
                 image_blocks: vec![],
+                delivery_metadata: None,
             })
         })
     }

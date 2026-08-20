@@ -120,6 +120,7 @@ impl ExecTool {
                     ),
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 });
             }
         };
@@ -129,6 +130,7 @@ impl ExecTool {
                     .to_string(),
                 is_error: true,
                 image_blocks: vec![],
+                delivery_metadata: None,
             });
         };
         let per_invocation_timeout = parse_timeout(&args);
@@ -398,12 +400,14 @@ fn make_exit_result(status: std::process::ExitStatus, content: String) -> ToolRe
             content,
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         }
     } else {
         ToolResult {
             content: format!("exit code {}\n{}", status.code().unwrap_or(-1), content),
             is_error: true,
             image_blocks: vec![],
+            delivery_metadata: None,
         }
     }
 }
@@ -430,6 +434,7 @@ async fn handle_timeout(
         content: format!("command timed out after {}s", timeout_dur.as_secs()),
         is_error: true,
         image_blocks: vec![],
+        delivery_metadata: None,
     }
 }
 

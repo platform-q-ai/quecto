@@ -481,6 +481,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             ),
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         }
     }
 }

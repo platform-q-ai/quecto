@@ -27,6 +27,7 @@ fn missing_edit_arg(param: &str) -> ToolResult {
         content: format!("missing '{}' argument. Example: {}", param, EDIT_EXAMPLE),
         is_error: true,
         image_blocks: vec![],
+        delivery_metadata: None,
     }
 }
 
@@ -92,6 +93,7 @@ impl Tool for EditTool {
                         ),
                         is_error: true,
                         image_blocks: vec![],
+                        delivery_metadata: None,
                     });
                 }
             };
@@ -144,6 +146,7 @@ impl Tool for EditTool {
                     content: format!("oldText not found in {}", path),
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 });
             }
             if splice_count > 1 {
@@ -155,6 +158,7 @@ impl Tool for EditTool {
                     ),
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 });
             }
 
@@ -181,6 +185,7 @@ impl Tool for EditTool {
                     ),
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 });
             }
 
@@ -198,6 +203,7 @@ impl Tool for EditTool {
                 content: diff,
                 is_error: false,
                 image_blocks: vec![],
+                delivery_metadata: None,
             })
         })
     }

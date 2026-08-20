@@ -22,6 +22,7 @@ impl ToolExecutor for EmptyRegistry {
                 content: String::new(),
                 is_error: false,
                 image_blocks: vec![],
+                delivery_metadata: None,
             })
         })
     }
@@ -82,6 +83,7 @@ impl Tool for NoopTool {
                 content: String::new(),
                 is_error: false,
                 image_blocks: vec![],
+                delivery_metadata: None,
             })
         })
     }
@@ -145,6 +147,7 @@ fn tool_result_and_image_block_construct() {
             mime_type: "image/png",
             data: "AAAA".into(),
         }],
+        delivery_metadata: None,
     };
     assert!(!r.is_error);
     assert_eq!(r.image_blocks[0].mime_type, "image/png");

@@ -214,6 +214,7 @@ impl Tool for DocsTool {
                     content: available_listing(content_policy),
                     is_error: false,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 });
             };
             let key = normalize_name(&name);
@@ -225,6 +226,7 @@ impl Tool for DocsTool {
                     ),
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 });
             }
             if let Some(body) = lookup_embedded_doc(&key) {
@@ -232,6 +234,7 @@ impl Tool for DocsTool {
                     content: body.to_string(),
                     is_error: false,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 });
             }
             Ok(ToolResult {
@@ -241,6 +244,7 @@ impl Tool for DocsTool {
                 ),
                 is_error: true,
                 image_blocks: vec![],
+                delivery_metadata: None,
             })
         })
     }

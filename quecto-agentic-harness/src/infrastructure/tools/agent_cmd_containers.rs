@@ -35,6 +35,7 @@ pub(super) async fn execute_container_command(
                     content: serde_json::json!({"killed": target_text(&target)}).to_string(),
                     is_error: false,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 },
                 Err(e) => error(e),
             },
@@ -90,6 +91,7 @@ fn encode_listing(records: Vec<EnvironmentRecord>) -> ToolResult {
         content: serde_json::json!({"containers": containers}).to_string(),
         is_error: false,
         image_blocks: vec![],
+        delivery_metadata: None,
     }
 }
 
@@ -98,6 +100,7 @@ fn error(message: String) -> ToolResult {
         content: format!("agent_cmd error: {message}"),
         is_error: true,
         image_blocks: vec![],
+        delivery_metadata: None,
     }
 }
 

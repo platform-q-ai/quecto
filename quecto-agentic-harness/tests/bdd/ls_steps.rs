@@ -38,6 +38,7 @@ fn run_ls(tool: LsTool, args: serde_json::Value) -> quecto::domain::tool::ToolRe
             content: e.to_string(),
             is_error: true,
             image_blocks: vec![],
+            delivery_metadata: None,
         })
 }
 

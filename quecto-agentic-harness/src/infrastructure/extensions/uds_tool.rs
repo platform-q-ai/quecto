@@ -83,6 +83,7 @@ impl Tool for UdsExtensionTool {
                     ),
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 });
             }
 
@@ -96,6 +97,7 @@ impl Tool for UdsExtensionTool {
                     ),
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 }),
                 Err(_) => Ok(ToolResult {
                     content: format!(
@@ -105,6 +107,7 @@ impl Tool for UdsExtensionTool {
                     ),
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 }),
             }
         })

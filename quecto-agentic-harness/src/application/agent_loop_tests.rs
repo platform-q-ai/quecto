@@ -235,6 +235,7 @@ impl crate::domain::tool::Tool for MockTool {
                 content,
                 is_error: false,
                 image_blocks: vec![],
+                delivery_metadata: None,
             })
         })
     }

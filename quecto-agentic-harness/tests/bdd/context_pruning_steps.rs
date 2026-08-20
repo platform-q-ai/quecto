@@ -323,6 +323,7 @@ fn when_agent_calls_recall(world: &mut QuectoWorld, id: String) {
                     content: "No spilled outputs in this session.".to_string(),
                     is_error: false,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 };
             }
             let mut output = format!("Spilled outputs ({} entries):\n", entries.len());
@@ -336,6 +337,7 @@ fn when_agent_calls_recall(world: &mut QuectoWorld, id: String) {
                 content: output,
                 is_error: false,
                 image_blocks: vec![],
+                delivery_metadata: None,
             }
         } else {
             match store.recall("test-session", &id).await.unwrap() {
@@ -343,11 +345,13 @@ fn when_agent_calls_recall(world: &mut QuectoWorld, id: String) {
                     content: entry.content,
                     is_error: false,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 },
                 None => ToolResult {
                     content: format!("No spilled output found for id: {}", id),
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 },
             }
         }

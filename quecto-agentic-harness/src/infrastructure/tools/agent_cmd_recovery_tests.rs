@@ -14,7 +14,7 @@ fn unrecoverable_default_get_messages_reports_are_incomplete_and_not_acknowledge
     entry.delivered_message_ordinal = Some(1);
     registry.lock().unwrap().insert("w1".to_string(), entry);
     let tool = AgentCmdTool::new(registry.clone());
-    let shaped = tool.shape_default_get_messages_report(
+    let (shaped, _) = tool.shape_default_get_messages_report_with_metadata(
         "w1",
         &json_response(serde_json::json!([
             {"role":"assistant","content":"old","ordinal":1},
@@ -32,6 +32,7 @@ fn unrecoverable_default_get_messages_reports_are_incomplete_and_not_acknowledge
             content: shaped,
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         },
     );
     assert_eq!(
@@ -42,7 +43,7 @@ fn unrecoverable_default_get_messages_reports_are_incomplete_and_not_acknowledge
     let mut entry = registry.lock().unwrap().get("w1").unwrap().clone();
     entry.delivered_message_ordinal = Some(1);
     registry.lock().unwrap().insert("w1".to_string(), entry);
-    let shaped = tool.shape_default_get_messages_report(
+    let (shaped, _) = tool.shape_default_get_messages_report_with_metadata(
         "w1",
         &json_response(serde_json::json!([
             {"role":"assistant","content":"old","ordinal":1},
@@ -60,6 +61,7 @@ fn unrecoverable_default_get_messages_reports_are_incomplete_and_not_acknowledge
             content: shaped,
             is_error: false,
             image_blocks: vec![],
+            delivery_metadata: None,
         },
     );
     assert_eq!(
@@ -77,7 +79,7 @@ fn recoverable_truncated_default_report_metadata_maps_to_get_message_command() {
     let tool = AgentCmdTool::new(registry.clone());
     let message_id = "00000000-0000-0000-0000-000000000002";
     let full = "final ".repeat(10_000);
-    let shaped = tool.shape_default_get_messages_report(
+    let (shaped, _) = tool.shape_default_get_messages_report_with_metadata(
         "w1",
         &json_response(serde_json::json!([
             {"role":"assistant","content":"old","ordinal":1},

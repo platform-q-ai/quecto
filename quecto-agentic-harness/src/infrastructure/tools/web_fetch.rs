@@ -112,6 +112,7 @@ impl Tool for WebFetchTool {
                     ),
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 });
             }
 
@@ -144,6 +145,7 @@ impl Tool for WebFetchTool {
                             ),
                             is_error: true,
                             image_blocks: vec![],
+                            delivery_metadata: None,
                         });
                     }
                 }
@@ -172,6 +174,7 @@ impl Tool for WebFetchTool {
                     content: format!("HTTP {} fetching {url}", resp.status()),
                     is_error: true,
                     image_blocks: vec![],
+                    delivery_metadata: None,
                 });
             }
 
@@ -203,6 +206,7 @@ impl Tool for WebFetchTool {
                 content,
                 is_error: false,
                 image_blocks: vec![],
+                delivery_metadata: None,
             })
         })
     }

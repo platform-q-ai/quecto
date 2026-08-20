@@ -166,6 +166,7 @@ impl quecto::domain::tool::Tool for MockBddTool {
                 content,
                 is_error: false,
                 image_blocks: vec![],
+                delivery_metadata: None,
             })
         })
     }
