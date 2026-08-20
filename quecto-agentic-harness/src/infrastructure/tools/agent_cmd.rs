@@ -621,6 +621,7 @@ impl Tool for AgentCmdTool {
                 debug_assert!(matches!(
                     routable,
                     super::subagent_routing::RoutableInspectionCommand::GetMessages
+                        | super::subagent_routing::RoutableInspectionCommand::GetMessage
                         | super::subagent_routing::RoutableInspectionCommand::GetState
                 ));
                 super::subagent_routing::resolve_inspection_route(&self.registry, &agent_id)
