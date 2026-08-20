@@ -80,7 +80,7 @@ async fn default_get_messages_backfill_failure_is_marked_incomplete() {
 }
 
 #[test]
-fn default_get_messages_first_call_latest_assistant_then_ack_advances() {
+fn default_get_messages_first_call_latest_substantive_assistant_then_ack_advances() {
     let registry = new_registry();
     registry.lock().unwrap().insert(
         "w1".to_string(),
@@ -91,7 +91,8 @@ fn default_get_messages_first_call_latest_assistant_then_ack_advances() {
         {"role":"user","content":"u","ordinal":1},
         {"role":"assistant","content":"a1","ordinal":2},
         {"role":"tool","content":"t","ordinal":3},
-        {"role":"assistant","content":"a2","ordinal":4}
+        {"role":"assistant","content":"a2","ordinal":4},
+        {"role":"assistant","content":"","toolCalls":[{"name":"next"}],"ordinal":5}
     ]));
     let shaped = tool.shape_default_get_messages_report("w1", &response);
     let parsed: serde_json::Value = serde_json::from_str(&shaped).unwrap();
@@ -280,13 +281,17 @@ fn completed_final_response_survives_intermediate_tool_output_crowding() {
             {"role":"user","content":"work","ordinal":1},
             {"role":"assistant","content":"","thinking":[{"kind":"text","text":"planning"}],"toolCalls":[{"name":"search"}],"ordinal":2},
             {"role":"tool","content":"x".repeat(10_000),"ordinal":3},
-            {"id":"00000000-0000-0000-0000-000000000004","role":"assistant","content":"the completed final response ".repeat(300),"ordinal":4}
+            {"role":"assistant","content":"","thinking":[{"kind":"text","text":"revise"}],"toolCalls":[{"name":"read"}],"ordinal":4},
+        {"role":"tool","content":"error: missing file","isError":true,"ordinal":5},
+        {"role":"assistant","content":"","thinking":[{"kind":"text","text":"try alternate"}],"toolCalls":[{"name":"bash"}],"ordinal":6},
+        {"role":"tool","content":"x".repeat(10_000),"ordinal":7},
+        {"id":"00000000-0000-0000-0000-000000000008","role":"assistant","content":"the completed final response ".repeat(300),"ordinal":8}
         ])),
     );
     let parsed: serde_json::Value = serde_json::from_str(&shaped).unwrap();
     let messages = parsed["data"]["messages"].as_array().unwrap();
     assert!(messages.iter().any(|message| {
-        message["ordinal"] == 4
+        message["ordinal"] == 8
             && message["content"]
                 .as_str()
                 .is_some_and(|content| !content.is_empty())
@@ -296,9 +301,59 @@ fn completed_final_response_survives_intermediate_tool_output_crowding() {
     assert!(
         messages
             .iter()
-            .find(|message| message["ordinal"] == 4)
+            .find(|message| message["ordinal"] == 8)
             .unwrap()["contentRecovery"]
             .is_object()
+    );
+    tool.result_delivered(
+        r#"{"agent_id":"w1","command":"get_messages"}"#,
+        &ToolResult {
+            content: shaped,
+            is_error: false,
+            image_blocks: vec![],
+        },
+    );
+    assert_eq!(
+        registry.lock().unwrap()["w1"].delivered_message_ordinal,
+        Some(8)
+    );
+    let repeat = tool.shape_default_get_messages_report(
+        "w1",
+        &json_response(serde_json::json!([
+            {"id":"00000000-0000-0000-0000-000000000008","role":"assistant","content":"the completed final response ","ordinal":8}
+        ])),
+    );
+    let repeat: serde_json::Value = serde_json::from_str(&repeat).unwrap();
+    assert_eq!(repeat["data"], serde_json::json!({"unchanged": true}));
+}
+
+#[test]
+fn default_get_messages_does_not_ack_unrecoverable_zero_fit_message() {
+    let registry = new_registry();
+    let mut entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0);
+    entry.delivered_message_ordinal = Some(1);
+    registry.lock().unwrap().insert("w1".to_string(), entry);
+    let tool = AgentCmdTool::new(registry.clone());
+    let shaped = tool.shape_default_get_messages_report(
+        "w1",
+        &json_response(serde_json::json!([
+            {"role":"assistant","content":"old","ordinal":1},
+            {"role":"assistant","content":{"omitted":"x".repeat(20_000)},"ordinal":2}
+        ])),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&shaped).unwrap();
+    assert_eq!(parsed["data"], serde_json::json!({"unchanged": true}));
+    tool.result_delivered(
+        r#"{"agent_id":"w1","command":"get_messages"}"#,
+        &ToolResult {
+            content: shaped,
+            is_error: false,
+            image_blocks: vec![],
+        },
+    );
+    assert_eq!(
+        registry.lock().unwrap()["w1"].delivered_message_ordinal,
+        Some(1)
     );
 }
 

@@ -256,7 +256,9 @@ impl AgentCmdTool {
 
 #[cfg(test)]
 use super::agent_cmd_parse::SUPPORTED_COMMANDS;
-use super::agent_cmd_report::{bounded_report_messages, needs_default_report_backfill};
+use super::agent_cmd_report::{
+    bounded_report_messages, is_substantive_assistant, needs_default_report_backfill,
+};
 use super::subagent_registry::PendingMessageReport;
 
 impl AgentCmdTool {
@@ -409,7 +411,7 @@ impl AgentCmdTool {
             max_ord = max_ord.max(ord);
             if ord > delivered {
                 unread.push(idx);
-                if msg.get("role").and_then(|v| v.as_str()) == Some("assistant") {
+                if is_substantive_assistant(msg) {
                     latest_assistant = Some(idx);
                 }
             }
@@ -431,6 +433,10 @@ impl AgentCmdTool {
             return envelope.to_string();
         }
         let report = bounded_report_messages(candidates, max_ord);
+        if report.messages.is_empty() {
+            *data = serde_json::json!({"unchanged": true});
+            return envelope.to_string();
+        }
         let new_cursor = report
             .messages
             .iter()

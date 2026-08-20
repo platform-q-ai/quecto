@@ -51,8 +51,10 @@ pub(crate) fn bounded_report_messages(
         if report_envelope_size(&selected, Some(&msg)) > REPORT_BUDGET_BYTES {
             truncate_message_to_fit(&mut msg, &selected);
         }
-        if report_envelope_size(&selected, Some(&msg)) <= REPORT_BUDGET_BYTES || selected.is_empty()
-        {
+        if is_unrecoverably_truncated(&msg) {
+            break;
+        }
+        if report_envelope_size(&selected, Some(&msg)) <= REPORT_BUDGET_BYTES {
             selected.push(msg);
         } else {
             break;
@@ -76,7 +78,7 @@ pub(crate) fn bounded_report_messages(
     }
 }
 
-fn is_substantive_assistant(msg: &serde_json::Value) -> bool {
+pub(crate) fn is_substantive_assistant(msg: &serde_json::Value) -> bool {
     msg.get("role").and_then(|v| v.as_str()) == Some("assistant")
         && msg
             .get("content")
@@ -90,6 +92,15 @@ fn is_substantive_assistant(msg: &serde_json::Value) -> bool {
             .get("tool_calls")
             .and_then(|v| v.as_array())
             .is_none_or(Vec::is_empty)
+}
+
+fn is_unrecoverably_truncated(msg: &serde_json::Value) -> bool {
+    msg.get("truncated").and_then(|v| v.as_bool()) == Some(true)
+        && msg.get("contentRecovery").is_none()
+        && msg
+            .get("content")
+            .and_then(|v| v.as_str())
+            .is_none_or(str::is_empty)
 }
 
 fn report_envelope_size(selected: &[serde_json::Value], next: Option<&serde_json::Value>) -> usize {
