@@ -312,6 +312,7 @@ impl App {
             status: "starting".to_string(),
             last_tool: None,
             last_error: None,
+            compact: false,
             pid: 0,
             socket_path: None,
             parent_id: None,

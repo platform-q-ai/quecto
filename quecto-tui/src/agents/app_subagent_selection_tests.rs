@@ -10,6 +10,7 @@ fn make_tracked(id: &str, status: &str) -> (String, super::TrackedSubagent) {
             status: status.to_string(),
             last_tool: None,
             last_error: None,
+            compact: false,
             pid: 0,
             socket_path: None,
             parent_id: None,
@@ -130,6 +131,7 @@ fn tracked_subagent_new_sets_exited_at_for_exited() {
         status: "exited".into(),
         last_tool: None,
         last_error: None,
+        compact: false,
         pid: 0,
         socket_path: None,
         parent_id: None,
@@ -150,6 +152,7 @@ fn tracked_subagent_new_no_exited_at_for_running() {
         status: "running".into(),
         last_tool: None,
         last_error: None,
+        compact: false,
         pid: 0,
         socket_path: None,
         parent_id: None,
@@ -170,6 +173,7 @@ fn tracked_subagent_update_sets_exited_at_on_transition() {
         status: "running".into(),
         last_tool: None,
         last_error: None,
+        compact: false,
         pid: 0,
         socket_path: None,
         parent_id: None,
@@ -187,6 +191,7 @@ fn tracked_subagent_update_sets_exited_at_on_transition() {
         status: "exited".into(),
         last_tool: None,
         last_error: None,
+        compact: false,
         pid: 0,
         socket_path: None,
         parent_id: None,
@@ -207,6 +212,7 @@ fn tracked_subagent_update_clears_exited_at_on_revival() {
         status: "exited".into(),
         last_tool: None,
         last_error: None,
+        compact: false,
         pid: 0,
         socket_path: None,
         parent_id: None,
@@ -224,6 +230,7 @@ fn tracked_subagent_update_clears_exited_at_on_revival() {
         status: "running".into(),
         last_tool: None,
         last_error: None,
+        compact: false,
         pid: 0,
         socket_path: None,
         parent_id: None,
@@ -244,6 +251,7 @@ fn tracked_subagent_update_clears_read_only_marker_on_authoritative_read_write_u
         status: "running".into(),
         last_tool: None,
         last_error: None,
+        compact: false,
         pid: 0,
         socket_path: None,
         parent_id: None,
@@ -260,6 +268,7 @@ fn tracked_subagent_update_clears_read_only_marker_on_authoritative_read_write_u
         status: "running".into(),
         last_tool: None,
         last_error: None,
+        compact: false,
         pid: 0,
         socket_path: None,
         parent_id: None,
@@ -370,6 +379,7 @@ fn mk_info(id: &str, status: &str) -> crate::protocol::client::SubagentInfoEvent
         status: status.to_string(),
         last_tool: None,
         last_error: None,
+        compact: false,
         pid: 0,
         socket_path: None,
         parent_id: None,
@@ -416,4 +426,46 @@ fn idle_then_exit_keeps_timer_frozen_at_idle() {
     // Timer stays frozen at the idle moment; exited_at is recorded for GC.
     assert_eq!(e.elapsed_secs(start + Duration::from_secs(30)), 10);
     assert!(e.exited_at.is_some());
+}
+
+#[test]
+fn dead_status_enters_terminal_gc_lifecycle_like_exited() {
+    let mut entry = super::TrackedSubagent::new(crate::protocol::client::SubagentInfoEvent {
+        agent_uuid: None,
+        display_name: None,
+        agent_id: "w1".into(),
+        status: "running".into(),
+        last_tool: None,
+        last_error: None,
+        compact: false,
+        pid: 0,
+        socket_path: None,
+        parent_id: None,
+        workflow: None,
+        read_only: false,
+        execution_backend: None,
+        environment: None,
+    });
+
+    entry.update_info(crate::protocol::client::SubagentInfoEvent {
+        agent_uuid: None,
+        display_name: None,
+        agent_id: "w1".into(),
+        status: "dead".into(),
+        last_tool: None,
+        last_error: None,
+        compact: false,
+        pid: 0,
+        socket_path: None,
+        parent_id: None,
+        workflow: None,
+        read_only: false,
+        execution_backend: None,
+        environment: None,
+    });
+
+    assert!(
+        entry.exited_at.is_some(),
+        "dead is a compact terminal status and must start the same GC clock as exited"
+    );
 }

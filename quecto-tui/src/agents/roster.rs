@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-const STATUS_EXITED: &str = "exited";
-
 /// Minimal policy-facing view of a roster entry. Implementations adapt concrete
 /// transport payloads outside this pure module.
 pub(crate) trait RosterInfo: Clone {
     fn status(&self) -> &str;
     fn parent_id(&self) -> Option<&str>;
+    fn agent_uuid(&self) -> Option<&str>;
+    fn display_label(&self) -> &str;
 
     /// Preserve sticky metadata when lossy roster polls omit it.
     fn merge_sticky_fields(&mut self, previous: &Self);
@@ -72,7 +72,7 @@ impl<I: RosterInfo> TrackedSubagent<I> {
     /// timestamps come from the caller's single `now` reading.
     pub(crate) fn new_at(info: I, now: tokio::time::Instant) -> Self {
         let active = subagent_status_is_active(info.status());
-        let exited_at = (info.status() == STATUS_EXITED).then_some(now);
+        let exited_at = subagent_status_is_terminal(info.status()).then_some(now);
         Self {
             info,
             started_at: now,
@@ -106,9 +106,11 @@ impl<I: RosterInfo> TrackedSubagent<I> {
             // First transition into a stopped state — freeze the timer here.
             self.stopped_at = Some(now);
         }
-        if new_info.status() == STATUS_EXITED && self.exited_at.is_none() {
-            self.exited_at = Some(now);
-        } else if new_info.status() != STATUS_EXITED {
+        if subagent_status_is_terminal(new_info.status()) {
+            if self.exited_at.is_none() {
+                self.exited_at = Some(now);
+            }
+        } else {
             self.exited_at = None;
         }
         self.info = new_info;

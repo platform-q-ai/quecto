@@ -10,6 +10,7 @@ fn tracked_child() -> SubagentInfoEvent {
         status: "running".into(),
         last_tool: None,
         last_error: None,
+        compact: false,
         pid: 0,
         socket_path: None,
         parent_id: None,

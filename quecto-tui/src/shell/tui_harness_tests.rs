@@ -453,6 +453,7 @@ mod workflow_display_regression {
             status: status.into(),
             last_tool: None,
             last_error: None,
+            compact: false,
             pid: 0,
             socket_path: None,
             parent_id: parent.map(|s| s.to_string()),

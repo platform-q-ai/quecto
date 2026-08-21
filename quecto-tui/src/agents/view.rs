@@ -24,6 +24,17 @@ impl RosterInfo for SubagentInfoEvent {
         self.parent_id.as_deref()
     }
 
+    fn agent_uuid(&self) -> Option<&str> {
+        self.agent_uuid.as_deref()
+    }
+
+    fn display_label(&self) -> &str {
+        self.display_name
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .unwrap_or(self.agent_id.as_str())
+    }
+
     fn merge_sticky_fields(&mut self, previous: &Self) {
         // Preserve last-known workflow + parent_id when an update omits them
         // (get_subagents carries neither, and would otherwise erase the n/n).
@@ -33,19 +44,50 @@ impl RosterInfo for SubagentInfoEvent {
         if self.parent_id.is_none() {
             self.parent_id = previous.parent_id.clone();
         }
+        if self.agent_uuid.is_none() {
+            self.agent_uuid = previous.agent_uuid.clone();
+        }
+        if self.display_name.is_none() {
+            self.display_name = previous.display_name.clone();
+        }
+        if self.socket_path.is_none() {
+            self.socket_path = previous.socket_path.clone();
+        }
+        if self.pid == 0 && previous.pid != 0 {
+            self.pid = previous.pid;
+        }
+        if self.is_compact() {
+            self.last_tool = previous.last_tool.clone();
+            self.last_error = previous.last_error.clone();
+            self.read_only = previous.read_only;
+        }
         // Sparse `get_subagents` refreshes omit the environment metadata a
-        // live event reported; keep the last-known backend/environment so
-        // badges, grouping and details survive roster polls (#1369 slice 4).
-        // An update that DOES carry an execution backend is authoritative for
-        // environment membership too: `executionBackend: "local"` with no
-        // environment means the environment was removed (the harness strips
-        // membership on cleanup), so restoring the stale object would pin the
-        // agent under a dead environment forever (review #1392).
+        // live event reported; keep sticky backend/environment only when the
+        // compact row did not make environment membership observable. A compact
+        // row with an `environmentRef` is authoritative for that ref; enrich it
+        // only from a previous rich environment with the SAME ref. A compact row
+        // with no ref represents a removal and must not resurrect stale C1/C2
+        // metadata from a richer but older event.
         let sparse = self.execution_backend.is_none();
         if sparse {
-            self.execution_backend = previous.execution_backend.clone();
-            if self.environment.is_none() {
-                self.environment = previous.environment.clone();
+            let same_environment_ref = self.environment.as_ref().and_then(|current_env| {
+                previous.environment.as_ref().filter(|previous_env| {
+                    current_env.environment_ref == previous_env.environment_ref
+                })
+            });
+            if !self.is_compact() || same_environment_ref.is_some() {
+                self.execution_backend = previous.execution_backend.clone();
+            }
+            match (&self.environment, &previous.environment) {
+                (None, Some(previous_env)) if !self.is_compact() => {
+                    self.environment = Some(previous_env.clone());
+                }
+                (Some(current_env), Some(previous_env))
+                    if current_env.environment_ref == previous_env.environment_ref =>
+                {
+                    self.environment = Some(previous_env.clone());
+                }
+                _ => {}
             }
         }
     }

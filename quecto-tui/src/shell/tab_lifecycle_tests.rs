@@ -219,6 +219,7 @@ fn switch_tab_resyncs_panel_nav_to_active_roster() {
             status: "running".into(),
             last_tool: None,
             last_error: None,
+            compact: false,
             pid: 0,
             socket_path: None,
             parent_id: None,

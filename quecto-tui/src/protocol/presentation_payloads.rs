@@ -50,11 +50,23 @@ impl RecoveredMessagePayload {
 
 /// Parse a `get_subagents` response at the protocol boundary.
 pub fn subagents(value: &Value) -> Vec<crate::protocol::client::SubagentInfoEvent> {
-    value
-        .get("subagents")
-        .cloned()
-        .and_then(|items| serde_json::from_value(items).ok())
-        .unwrap_or_default()
+    subagent_roster(value).subagents
+}
+
+/// Compact/full `get_subagents` payload, including the `unchanged` cursor flag.
+#[derive(Debug, Default, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentRosterPayload {
+    #[serde(default)]
+    pub subagents: Vec<crate::protocol::client::SubagentInfoEvent>,
+    #[serde(default)]
+    pub unchanged: bool,
+}
+
+/// Parse a `get_subagents` / `get_subagents_all` response, including compact
+/// rows (`agentId`/`status`/`environmentRef`) and `unchanged` cursor replies.
+pub fn subagent_roster(value: &Value) -> SubagentRosterPayload {
+    serde_json::from_value(value.clone()).unwrap_or_default()
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

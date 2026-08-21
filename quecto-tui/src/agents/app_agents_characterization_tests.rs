@@ -15,6 +15,7 @@ fn subagent(id: &str, status: &str) -> crate::protocol::client::SubagentInfoEven
         status: status.to_string(),
         last_tool: None,
         last_error: None,
+        compact: false,
         pid: 0,
         socket_path: None,
         parent_id: None,

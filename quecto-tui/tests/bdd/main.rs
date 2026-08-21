@@ -347,6 +347,7 @@ mod tui_chat_render_cache_steps;
 mod tui_chat_spacing_steps;
 mod tui_child_feed_liveness_steps;
 mod tui_cold_start_steps;
+mod tui_compact_roster_refresh_steps;
 mod tui_ctrl_c_clear_steps;
 mod tui_ctrl_d_exit_steps;
 mod tui_end_of_turn_refs_steps;

@@ -299,6 +299,8 @@ pub struct ToolResultContent {
 #[serde(rename_all = "camelCase")]
 pub struct CompactSubagentRow {
     pub agent_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_uuid: Option<String>,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment_ref: Option<String>,
@@ -376,6 +378,7 @@ pub fn build_compact_subagent_roster(
             });
             rows.push(CompactSubagentRow {
                 agent_id: display_name,
+                agent_uuid: Some(entry.agent_uuid.to_string()),
                 status,
                 environment_ref,
             });

@@ -151,8 +151,9 @@ impl App {
             if !usable_socket_path(s.socket_path.as_deref()) {
                 s.socket_path = None;
             }
-            let identity = s.agent_uuid.as_deref().unwrap_or(&s.agent_id);
-            candidates.insert(sanitize_agent_id(identity), s);
+            for (identity, info) in resolve_roster_identities(&self.ac().roster.tracked, s) {
+                candidates.insert(identity, info);
+            }
         }
 
         // #1378: if an optimistic spawn row is still keyed by display label
@@ -247,5 +248,51 @@ impl App {
             tokio::time::Instant::now(),
             EXITED_SUBAGENT_GRACE,
         )
+    }
+}
+
+/// Compact `get_subagents` rows are keyed by display `agentId` on legacy
+/// kernels and by `agentUuid` on current kernels. Rematch a legacy compact
+/// label onto existing tracked UUIDs. When a legacy label is ambiguous, apply
+/// the sparse status update to each matching row instead of collapsing multiple
+/// durable identities into one display-name key.
+fn resolve_roster_identities<I: crate::agents::roster::RosterInfo>(
+    tracked: &std::collections::BTreeMap<String, crate::agents::roster::TrackedSubagent<I>>,
+    info: I,
+) -> Vec<(String, I)> {
+    if let Some(uuid) = info
+        .agent_uuid()
+        .map(sanitize_agent_id)
+        .filter(|value| !value.is_empty())
+    {
+        return vec![(uuid, info)];
+    }
+    let label = sanitize_agent_id(info.display_label());
+    let is_live_match = |entry: &crate::agents::roster::TrackedSubagent<I>| {
+        !crate::agents::roster::subagent_status_is_terminal(entry.info.status())
+    };
+    if tracked.get(&label).is_some_and(is_live_match) {
+        return vec![(label, info)];
+    }
+    let matches = tracked
+        .iter()
+        .filter(|(_, entry)| {
+            is_live_match(entry) && sanitize_agent_id(entry.info.display_label()) == label
+        })
+        .map(|(id, _)| id.clone())
+        .collect::<Vec<_>>();
+    if !matches.is_empty() {
+        return matches
+            .into_iter()
+            .map(|id| (id, info.clone()))
+            .collect::<Vec<_>>();
+    }
+    if tracked.values().any(|entry| {
+        crate::agents::roster::subagent_status_is_terminal(entry.info.status())
+            && sanitize_agent_id(entry.info.display_label()) == label
+    }) {
+        Vec::new()
+    } else {
+        vec![(label, info)]
     }
 }
