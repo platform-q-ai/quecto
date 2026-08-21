@@ -163,6 +163,7 @@ async fn rollback_from_non_master_connection_does_not_clear_master_resume_pendin
             agent_id: None,
             id: Some("resume-messages-owned".into()),
             before: None,
+            count: None,
         },
         error: "tab channel full".into(),
         connection: "tab-2".into(),

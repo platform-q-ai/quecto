@@ -163,7 +163,14 @@ async fn real_multi_client_loop_answers_read_command_then_exits_on_disconnect() 
     assert_eq!(event["success"], true);
     assert_eq!(event["data"]["model"], "stub");
     assert_eq!(event["data"]["state"], "idle");
-    assert!(event["data"].get("sessionKey").is_none());
+    // #1534: `sessionKey` must survive the slim projection — the TUI persists
+    // it into workspace manifests so `/resume` can restore the conversation.
+    assert!(
+        event["data"]["sessionKey"]
+            .as_str()
+            .is_some_and(|k| !k.is_empty()),
+        "get_state must report the durable session key: {event}"
+    );
 
     drop(write_half);
     drop(lines);

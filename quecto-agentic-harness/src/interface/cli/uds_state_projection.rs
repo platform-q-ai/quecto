@@ -52,6 +52,10 @@ pub(crate) fn slim_state_projection(state: &SessionState) -> serde_json::Value {
         "effort": state.effort,
         "model": state.model,
         "progress": slim_progress(state),
+        // The TUI's only source for its agent's durable session key: it is
+        // persisted into workspace manifests / the tab registry so `/resume`
+        // can restore the conversation (#1534). Must survive slimming.
+        "sessionKey": state.session_key,
     });
     if let Some(workflow) = state.workflow.as_ref().and_then(slim_workflow) {
         data["workflow"] = workflow;

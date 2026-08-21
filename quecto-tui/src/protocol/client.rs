@@ -1,12 +1,8 @@
 //! UDS client — connects to a quecto agent over a Unix domain socket.
 //!
-//! Sends JSON commands and receives JSON events. Since #1059 (ADR-0008
-//! part 1) messages travel as length-prefixed frames; during the NDJSON
-//! deprecation window the reader sniffs each incoming message so legacy
-//! agents still interoperate, and [`Client::connect_legacy`] keeps the writer
-//! on newline framing for agents that did not announce protocol v2. The
-//! client is async (tokio) and designed to run in a background task, feeding
-//! events to the TUI's main render loop.
+//! Sends JSON commands and receives JSON events. Since #1059 (ADR-0008)
+//! messages travel as length-prefixed frames; legacy agents still interoperate
+//! via sniffing and [`Client::connect_legacy`].
 use quecto_line_io::{FrameError, WireMode, read_frame_or_legacy_line_into, write_message};
 use serde::{Deserialize, Serialize};
 #[path = "client_policy_types.rs"]
@@ -68,6 +64,8 @@ pub enum Command {
         id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         before: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        count: Option<usize>,
         #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
         agent_id: Option<String>,
     },

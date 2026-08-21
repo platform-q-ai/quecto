@@ -73,6 +73,36 @@ fn active_index_clamped_when_out_of_range_on_load() {
 }
 
 #[test]
+fn load_accepts_legacy_session_key_aliases() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("m.json");
+    fs::write(
+        &path,
+        br#"{"version":1,"workspaces":[{"workspace_id":"w","label":"","last_active_unix_s":0,"active_index":0,"tabs":[{"tab_id":0,"sessionKey":"legacy-session","name":"main"}],"updated_unix_s":1}]}"#,
+    )
+    .unwrap();
+
+    let loaded = WorkspaceManifestStore::load(&path);
+    assert_eq!(
+        loaded.workspaces[0].tabs[0].session_key.as_deref(),
+        Some("legacy-session"),
+        "legacy manifests using sessionKey must remain resumable"
+    );
+
+    fs::write(
+        &path,
+        br#"{"version":1,"workspaces":[{"workspace_id":"w","label":"","last_active_unix_s":0,"active_index":0,"tabs":[{"tab_id":0,"session":"older-session","name":"main"}],"updated_unix_s":1}]}"#,
+    )
+    .unwrap();
+    let loaded = WorkspaceManifestStore::load(&path);
+    assert_eq!(
+        loaded.workspaces[0].tabs[0].session_key.as_deref(),
+        Some("older-session"),
+        "older manifests using session must remain resumable"
+    );
+}
+
+#[test]
 fn upsert_and_remove() {
     let mut store = WorkspaceManifestStore::new();
     store.upsert(ws("a", vec![], 0));

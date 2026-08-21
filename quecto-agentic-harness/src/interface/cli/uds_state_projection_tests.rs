@@ -210,3 +210,19 @@ fn since_equal_to_combined_streaming_generation_returns_unchanged_marker() {
         serde_json::json!({"unchanged": true, "generation": generation})
     );
 }
+
+#[test]
+fn projection_reports_the_durable_session_key() {
+    // The TUI learns its agent's durable session key exclusively from
+    // `get_state` (`sessionKey`), and persists it into workspace manifests /
+    // the tab registry so `/resume` can restore the conversation. Slimming
+    // this field away (#1512 regression) makes every saved tab
+    // `session_key: null` — tabs restore but their transcripts never reload.
+    let mut state = state_with_execution(1, "quiet");
+    state.session_key = "chat-1787000000-deadbeef00000".into();
+    let data = slim_state_projection(&state);
+    assert_eq!(
+        data["sessionKey"], "chat-1787000000-deadbeef00000",
+        "get_state must always report the session key: {data}"
+    );
+}

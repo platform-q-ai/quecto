@@ -474,6 +474,10 @@ fn build_get_state_line_serializes_status_snapshot() {
     assert!(v["data"].get("isStreaming").is_none());
     assert!(v["data"].get("messageCount").is_none());
     assert!(v["data"].get("pendingMessageCount").is_none());
+    assert_eq!(
+        v["data"]["sessionKey"], "cli:test",
+        "the TUI persists this key into workspace manifests for /resume: {line}"
+    );
 }
 
 #[test]
