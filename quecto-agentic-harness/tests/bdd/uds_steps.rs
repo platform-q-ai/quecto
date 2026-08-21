@@ -455,9 +455,13 @@ fn uds_event_types_from_lines(events: &[String]) -> Vec<String> {
     events
         .iter()
         .filter_map(|line| {
-            serde_json::from_str::<serde_json::Value>(line)
-                .ok()
-                .and_then(|v| v["type"].as_str().map(str::to_owned))
+            let v = serde_json::from_str::<serde_json::Value>(line).ok()?;
+            // Connect-time inspector snapshots are id-less `response`s. They
+            // are a point-in-time read, not part of the prompt event stream.
+            if v["type"] == "response" && v.get("id").is_none() {
+                return None;
+            }
+            v["type"].as_str().map(str::to_owned)
         })
         .collect()
 }

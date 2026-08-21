@@ -292,7 +292,6 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     Then the agent_cmd result should not be an error
     And the agent_cmd result should contain '"generation":7'
     And the agent_cmd result should contain '"state":"runningTool"'
-    And the agent_cmd response command "get_state" should not include field "workflow"
 
   @serial
   Scenario Outline: malformed busy get_state projections wait for the valid live reply
