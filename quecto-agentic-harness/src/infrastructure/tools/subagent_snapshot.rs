@@ -114,6 +114,7 @@ fn get_state_data_is_slim_snapshot(data: Option<&serde_json::Value>) -> bool {
     let allowed_top_level = [
         "state",
         "effort",
+        "effortLevels",
         "model",
         "sessionKey",
         "progress",
