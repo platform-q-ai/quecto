@@ -265,7 +265,10 @@ fn registry_lookup_and_request_id_helpers_cover_success_and_fallbacks() {
     assert!(invalid_id.is_none());
 }
 
-async fn busy_get_state_snapshot_without_live_reply(command: &str) -> serde_json::Value {
+async fn busy_get_state_snapshot_without_live_reply_for(
+    command: &str,
+    snapshot: serde_json::Value,
+) -> serde_json::Value {
     use tokio::io::{AsyncWriteExt, BufReader};
     let dir = tempfile::tempdir().unwrap();
     let sock = dir.path().join("busy-state.sock");
@@ -274,18 +277,6 @@ async fn busy_get_state_snapshot_without_live_reply(command: &str) -> serde_json
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         let (read_half, mut write_half) = tokio::io::split(stream);
-        let snapshot = serde_json::json!({
-            "type": "response",
-            "command": "get_state",
-            "data": {
-                "state": "runningTool",
-                "effort": null,
-                "model": "mock",
-                "sessionKey": "cli:dog-story-writer",
-                "progress": { "state": "advancing", "reason": "tool activity" },
-                "generation": 9
-            }
-        });
         let mut snapshot_line = snapshot.to_string();
         snapshot_line.push('\n');
         write_half
@@ -313,6 +304,25 @@ async fn busy_get_state_snapshot_without_live_reply(command: &str) -> serde_json
     serde_json::from_str(&reply).unwrap()
 }
 
+fn busy_get_state_changed_snapshot() -> serde_json::Value {
+    serde_json::json!({
+        "type": "response",
+        "command": "get_state",
+        "data": {
+            "state": "runningTool",
+            "effort": null,
+            "model": "mock",
+            "sessionKey": "cli:dog-story-writer",
+            "progress": { "state": "advancing", "reason": "tool activity" },
+            "generation": 9
+        }
+    })
+}
+
+async fn busy_get_state_snapshot_without_live_reply(command: &str) -> serde_json::Value {
+    busy_get_state_snapshot_without_live_reply_for(command, busy_get_state_changed_snapshot()).await
+}
+
 #[tokio::test]
 async fn command_reader_returns_busy_get_state_snapshot_without_waiting_for_live_reply() {
     let json = busy_get_state_snapshot_without_live_reply(r#"{"type":"get_state"}"#).await;
@@ -327,5 +337,23 @@ async fn command_reader_finalizes_older_busy_get_state_snapshot_to_unchanged() {
     assert_eq!(
         json["data"],
         serde_json::json!({ "unchanged": true, "generation": 10 })
+    );
+}
+
+#[tokio::test]
+async fn command_reader_finalizes_older_unchanged_get_state_snapshot_to_caller_cursor() {
+    let snapshot = serde_json::json!({
+        "type": "response",
+        "command": "get_state",
+        "data": { "unchanged": true, "generation": 7 }
+    });
+    let json = busy_get_state_snapshot_without_live_reply_for(
+        r#"{"type":"get_state","since":8}"#,
+        snapshot,
+    )
+    .await;
+    assert_eq!(
+        json["data"],
+        serde_json::json!({ "unchanged": true, "generation": 8 })
     );
 }

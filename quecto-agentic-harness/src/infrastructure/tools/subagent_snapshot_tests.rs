@@ -96,3 +96,27 @@ fn older_get_state_snapshot_finalizes_to_unchanged_at_caller_cursor() {
         serde_json::json!({ "unchanged": true, "generation": 8 })
     );
 }
+
+#[test]
+fn older_unchanged_get_state_snapshot_finalizes_to_caller_cursor() {
+    let snapshot = serde_json::json!({
+        "type": "response",
+        "command": "get_state",
+        "data": { "unchanged": true, "generation": 7 }
+    });
+    let command = r#"{"type":"get_state","since":8}"#;
+    assert!(response_is_valid_answer(&snapshot, command));
+    let finalized = finalize_snapshot_answer(snapshot.to_string(), snapshot.clone(), command);
+    let json: serde_json::Value = serde_json::from_str(&finalized).unwrap();
+    assert_eq!(
+        json["data"],
+        serde_json::json!({ "unchanged": true, "generation": 8 })
+    );
+    let matching = r#"{"type":"get_state","since":7}"#;
+    assert!(response_is_valid_answer(&snapshot, matching));
+    let original = snapshot.to_string();
+    assert_eq!(
+        finalize_snapshot_answer(original.clone(), snapshot, matching),
+        original
+    );
+}

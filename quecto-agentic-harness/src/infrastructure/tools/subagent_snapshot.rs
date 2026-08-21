@@ -46,9 +46,10 @@ pub(super) fn response_is_valid_answer(json: &serde_json::Value, command: &str) 
             // only the slim projection (or unchanged cursor response), never the
             // legacy bulky snapshot marker/message-count shape. `get_state` is
             // best-effort and must not wait for a live reply: a `since` cursor
-            // may use any slim snapshot with a generation. Older snapshots are
-            // finalized to the bounded unchanged marker at the caller's cursor
-            // instead of answering with a rewind or waiting for a live reply.
+            // may use any slim snapshot with a generation, including an older
+            // unchanged marker. Older snapshots are finalized to the bounded
+            // unchanged marker at the caller's cursor instead of answering
+            // with a rewind or waiting for a live reply.
             cmd.get("count").is_none()
                 && json.get("command").and_then(|v| v.as_str()) == Some("get_state")
                 && get_state_data_is_slim_snapshot(json.pointer("/data"))
@@ -85,20 +86,17 @@ fn get_state_snapshot_honors_since(
     data: Option<&serde_json::Value>,
     since: Option<&serde_json::Value>,
 ) -> bool {
-    let Some(since) = since.and_then(|v| v.as_u64()) else {
+    if since.and_then(|v| v.as_u64()).is_none() {
         return true;
-    };
+    }
     let Some(data) = data else {
         return false;
     };
-    let generation = data.get("generation").and_then(|v| v.as_u64());
-    if data.get("unchanged").and_then(|v| v.as_bool()) == Some(true) {
-        return generation == Some(since);
-    }
     // Best-effort and non-blocking: any slim snapshot with a generation can
-    // answer immediately. Finalize converts equal/older generations into the
-    // bounded unchanged marker so a newer cursor never rewinds.
-    generation.is_some()
+    // answer immediately, including an older `{unchanged:true}` marker.
+    // Finalize converts equal/older generations into the bounded unchanged
+    // marker at the caller's cursor so a newer cursor never rewinds.
+    data.get("generation").and_then(|v| v.as_u64()).is_some()
 }
 
 fn get_state_data_is_slim_snapshot(data: Option<&serde_json::Value>) -> bool {
@@ -206,9 +204,12 @@ pub(super) fn finalize_snapshot_answer(
                 .and_then(|v| v.as_u64()),
             json.pointer("/data/generation").and_then(|v| v.as_u64()),
         ) {
-            if generation <= since
-                && json.pointer("/data/unchanged").and_then(|v| v.as_bool()) != Some(true)
-            {
+            if generation <= since {
+                if generation == since
+                    && json.pointer("/data/unchanged").and_then(|v| v.as_bool()) == Some(true)
+                {
+                    return line;
+                }
                 if let Some(data) = json.pointer_mut("/data") {
                     *data = serde_json::json!({"unchanged": true, "generation": since});
                 }
