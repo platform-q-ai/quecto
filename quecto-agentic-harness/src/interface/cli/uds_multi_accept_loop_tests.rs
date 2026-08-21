@@ -192,11 +192,11 @@ async fn busy_accept_loop_pushes_session_stats_and_extensions_snapshots() {
     assert_eq!(list[0]["name"], "weather");
 }
 
-/// IDLE accept loop: a newly connected client receives the workspace event but
-/// no busy-only snapshot bytes, so the dispatch loop still answers explicit
-/// requests in FIFO order after the connect-time prelude.
+/// IDLE accept loop: a newly connected client receives workspace plus the
+/// canonical state projection. `get_state` therefore never depends on the
+/// serialized dispatch loop, even when the busy flag races a new turn.
 #[tokio::test]
-async fn idle_accept_loop_pushes_workspace_before_client_input() {
+async fn idle_accept_loop_pushes_workspace_and_state_before_client_input() {
     let dir = tempfile::tempdir().expect("tempdir");
     let socket_path = dir.path().join("idle.sock");
 
@@ -210,23 +210,27 @@ async fn idle_accept_loop_pushes_workspace_before_client_input() {
     let mut client = tokio::net::UnixStream::connect(&socket_path)
         .await
         .expect("connect to idle accept loop");
-    // Send nothing; the idle loop must still announce the workspace before any
-    // client input, but must not include busy-only snapshot responses.
+    // Send nothing; the idle loop must still announce workspace and state
+    // before any client input, but not the other busy-only snapshots.
     let received = read_available(&mut client, std::time::Duration::from_millis(300)).await;
 
-    // Keep the writer half from triggering an early EOF-driven read.
     let _ = client.flush().await;
     handle.abort();
 
     let lines: Vec<_> = received.lines().collect();
     assert_eq!(
         lines.len(),
-        1,
+        2,
         "idle client got unexpected events: {received}"
     );
     let workspace: serde_json::Value = serde_json::from_str(lines[0]).expect("workspace json");
     assert_eq!(workspace["type"], "workspace");
     assert!(workspace["path"].as_str().is_some());
+    let state: serde_json::Value = serde_json::from_str(lines[1]).expect("state json");
+    assert_eq!(state["command"], "get_state");
+    assert_eq!(state["data"]["state"], "idle");
+    assert!(state["data"]["sessionKey"].as_str().is_some());
+    assert!(!received.contains("\"command\":\"get_messages\""));
 }
 
 // --- bounded read at read time (#1003) ---

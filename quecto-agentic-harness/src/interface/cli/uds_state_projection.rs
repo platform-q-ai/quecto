@@ -50,6 +50,7 @@ pub(crate) fn slim_state_projection(state: &SessionState) -> serde_json::Value {
             .map(|e| e.phase.as_str())
             .unwrap_or(if state.is_streaming { "thinking" } else { "idle" }),
         "effort": state.effort,
+        "effortLevels": state.effort_levels,
         "model": state.model,
         "progress": slim_progress(state),
         // The TUI's only source for its agent's durable session key: it is

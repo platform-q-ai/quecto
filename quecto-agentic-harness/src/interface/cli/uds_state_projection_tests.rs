@@ -34,6 +34,26 @@ fn state_with_execution(activity_generation: u64, progress_state: &str) -> Sessi
 }
 
 #[test]
+fn get_state_effort_contract_fixture_matches_real_projection() {
+    let mut state = state_with_execution(7, "quiet");
+    state.model = "openai-oauth/gpt-5.5".into();
+    state.is_streaming = false;
+    state.session_key = "cli:contract-worker".into();
+    state.effort = Some("high".into());
+    state.effort_levels = vec!["none", "low", "medium", "high", "xhigh"]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    state.generation = 12;
+    state.execution = None;
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/get_state_effort_contract.json"
+    ))
+    .unwrap();
+    assert_eq!(slim_state_projection(&state), fixture);
+}
+
+#[test]
 fn progress_uses_state_key_not_verdict() {
     let data = slim_state_projection(&state_with_execution(7, "advancing"));
     assert_eq!(data["progress"]["state"], "advancing");
