@@ -96,23 +96,42 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                             continue;
                         }
                     }
-                    if busy.load(std::sync::atomic::Ordering::SeqCst) {
+                    let is_busy = busy.load(std::sync::atomic::Ordering::SeqCst);
+                    {
                         use tokio::io::AsyncWriteExt;
-                        let snapshot_lines = super::uds_snapshots::busy_connect_snapshot_lines(
-                            super::uds_snapshots::BusySnapshotSources {
-                                state: &state_snapshot,
-                                conversation: &conversation_snapshot,
-                                session_stats: &session_stats_snapshot,
-                                tool_catalogue: &tool_catalogue_snapshot,
-                                subagents: &subagent_registry,
-                                workflow: &workflow_state,
-                                execution: &execution_state,
-                            },
-                        )
-                        .await;
-                        for line in snapshot_lines {
-                            if let Err(e) = stream.write_all(line.as_bytes()).await {
-                                tracing::debug!("connect-time snapshot not delivered: {e}");
+                        // `get_state` is a pure inspector read. Always publish the
+                        // current point-in-time projection on connect so callers
+                        // never depend on the serialized command loop replying.
+                        let live = state_snapshot.read().await.clone();
+                        let state_line = super::uds_snapshots::build_connect_get_state_line(
+                            &live,
+                            &workflow_state,
+                            &execution_state,
+                            is_busy,
+                        );
+                        if let Err(e) = stream.write_all(state_line.as_bytes()).await {
+                            tracing::debug!("connect-time state snapshot not delivered: {e}");
+                            continue;
+                        }
+                        if is_busy {
+                            let snapshot_lines = super::uds_snapshots::busy_connect_snapshot_lines(
+                                super::uds_snapshots::BusySnapshotSources {
+                                    state: &state_snapshot,
+                                    conversation: &conversation_snapshot,
+                                    session_stats: &session_stats_snapshot,
+                                    tool_catalogue: &tool_catalogue_snapshot,
+                                    subagents: &subagent_registry,
+                                    workflow: &workflow_state,
+                                    execution: &execution_state,
+                                },
+                            )
+                            .await;
+                            // State was already sent above; publish the other busy
+                            // inspector snapshots without duplicating it.
+                            for line in snapshot_lines.into_iter().skip(1) {
+                                if let Err(e) = stream.write_all(line.as_bytes()).await {
+                                    tracing::debug!("connect-time snapshot not delivered: {e}");
+                                }
                             }
                         }
                     }

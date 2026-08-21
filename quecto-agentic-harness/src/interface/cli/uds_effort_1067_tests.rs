@@ -166,7 +166,7 @@ fn get_state_exposes_null_effort_when_unset() {
 }
 
 #[test]
-fn get_state_omits_provider_effort_vocabulary_from_slim_projection() {
+fn get_state_includes_provider_effort_vocabulary_in_slim_projection() {
     let mut fx = EffortFx::new(None);
     let ctx = fx.ctx();
     let state = crate::interface::cli::uds_query::query_response_data(
@@ -178,14 +178,15 @@ fn get_state_omits_provider_effort_vocabulary_from_slim_projection() {
         &ctx,
     )
     .expect("get_state must return data");
-    assert!(
-        state.get("effortLevels").is_none(),
-        "slim get_state must omit effortLevels, got: {state}"
+    assert_eq!(
+        state["effortLevels"],
+        serde_json::json!(["none", "low", "medium", "high", "xhigh"]),
+        "get_state must carry the vocabulary consumed by /effort, got: {state}"
     );
 }
 
 #[tokio::test]
-async fn busy_snapshot_get_state_carries_effort_but_not_vocabulary() {
+async fn busy_snapshot_get_state_carries_effort_and_vocabulary() {
     // A TUI connecting mid-turn is served the frozen snapshot instead of the
     // live query; it must carry effort while preserving the slim #1512 shape.
     let mut fx = EffortFx::new(Some(EffortLevel::XHigh));
@@ -198,9 +199,10 @@ async fn busy_snapshot_get_state_carries_effort_but_not_vocabulary() {
         value["data"]["effort"], "xhigh",
         "busy-connect snapshot get_state must carry the active effort, got: {value}"
     );
-    assert!(
-        value["data"].get("effortLevels").is_none(),
-        "busy-connect snapshot get_state must omit effortLevels, got: {value}"
+    assert_eq!(
+        value["data"]["effortLevels"],
+        serde_json::json!(["none", "low", "medium", "high", "xhigh"]),
+        "busy-connect state must carry the vocabulary consumed by /effort, got: {value}"
     );
 }
 

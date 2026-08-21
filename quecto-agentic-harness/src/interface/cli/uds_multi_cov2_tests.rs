@@ -158,6 +158,13 @@ async fn real_multi_client_loop_answers_read_command_then_exits_on_disconnect() 
     assert_eq!(event["type"], "workspace");
     let event = next_json_line(&mut lines).await;
     assert_eq!(event["type"], "response");
+    assert_eq!(event["command"], "get_state");
+    assert!(event.get("id").is_none());
+    assert_eq!(event["data"]["model"], "stub");
+    assert_eq!(event["data"]["state"], "idle");
+
+    let event = next_json_line(&mut lines).await;
+    assert_eq!(event["type"], "response");
     assert_eq!(event["id"], "s1");
     assert_eq!(event["command"], "get_state");
     assert_eq!(event["success"], true);

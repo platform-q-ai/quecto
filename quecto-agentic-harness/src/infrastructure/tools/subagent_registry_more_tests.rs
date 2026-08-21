@@ -264,3 +264,96 @@ fn registry_lookup_and_request_id_helpers_cover_success_and_fallbacks() {
     assert_eq!(unchanged_invalid, "not json");
     assert!(invalid_id.is_none());
 }
+
+async fn busy_get_state_snapshot_without_live_reply_for(
+    command: &str,
+    snapshot: serde_json::Value,
+) -> serde_json::Value {
+    use tokio::io::{AsyncWriteExt, BufReader};
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("busy-state.sock");
+    let listener = tokio::net::UnixListener::bind(&sock).unwrap();
+
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read_half, mut write_half) = tokio::io::split(stream);
+        let mut snapshot_line = snapshot.to_string();
+        snapshot_line.push('\n');
+        write_half
+            .write_all(snapshot_line.as_bytes())
+            .await
+            .unwrap();
+
+        let mut reader = BufReader::new(read_half);
+        let _payload =
+            quecto_line_io::read_frame(&mut reader, quecto_line_io::PROTOCOL_FRAME_CAP_BYTES)
+                .await
+                .expect("parent command should be framed")
+                .expect("parent should send get_state");
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    });
+
+    let reply = tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        send_subagent_uds_command_with_timeout(&sock, command, std::time::Duration::from_secs(10)),
+    )
+    .await
+    .expect("get_state must return the id-less snapshot immediately")
+    .expect("snapshot should be accepted");
+    server.abort();
+    serde_json::from_str(&reply).unwrap()
+}
+
+fn busy_get_state_changed_snapshot() -> serde_json::Value {
+    serde_json::json!({
+        "type": "response",
+        "command": "get_state",
+        "data": {
+            "state": "runningTool",
+            "effort": null,
+            "model": "mock",
+            "sessionKey": "cli:dog-story-writer",
+            "progress": { "state": "advancing", "reason": "tool activity" },
+            "generation": 9
+        }
+    })
+}
+
+async fn busy_get_state_snapshot_without_live_reply(command: &str) -> serde_json::Value {
+    busy_get_state_snapshot_without_live_reply_for(command, busy_get_state_changed_snapshot()).await
+}
+
+#[tokio::test]
+async fn command_reader_returns_busy_get_state_snapshot_without_waiting_for_live_reply() {
+    let json = busy_get_state_snapshot_without_live_reply(r#"{"type":"get_state"}"#).await;
+    assert_eq!(json["data"]["sessionKey"], "cli:dog-story-writer");
+    assert_eq!(json["data"]["generation"], 9);
+}
+
+#[tokio::test]
+async fn command_reader_finalizes_older_busy_get_state_snapshot_to_unchanged() {
+    let json =
+        busy_get_state_snapshot_without_live_reply(r#"{"type":"get_state","since":10}"#).await;
+    assert_eq!(
+        json["data"],
+        serde_json::json!({ "unchanged": true, "generation": 10 })
+    );
+}
+
+#[tokio::test]
+async fn command_reader_finalizes_older_unchanged_get_state_snapshot_to_caller_cursor() {
+    let snapshot = serde_json::json!({
+        "type": "response",
+        "command": "get_state",
+        "data": { "unchanged": true, "generation": 7 }
+    });
+    let json = busy_get_state_snapshot_without_live_reply_for(
+        r#"{"type":"get_state","since":8}"#,
+        snapshot,
+    )
+    .await;
+    assert_eq!(
+        json["data"],
+        serde_json::json!({ "unchanged": true, "generation": 8 })
+    );
+}
