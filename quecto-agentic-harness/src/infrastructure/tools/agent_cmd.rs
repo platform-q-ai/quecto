@@ -87,6 +87,14 @@ impl AgentCmdTool {
     fn try_local_command(&self, args: &serde_json::Value) -> Option<ToolResult> {
         let command = args.get("command").and_then(|v| v.as_str())?;
         if command == "get_subagents_all" {
+            if args.get("agent_id").and_then(|v| v.as_str()) != Some("*") {
+                return Some(ToolResult {
+                    content: "agent_cmd error: get_subagents_all requires agent_id \"*\"".into(),
+                    is_error: true,
+                    image_blocks: vec![],
+                    delivery_metadata: None,
+                });
+            }
             return Some(self.list_all_subagents(args));
         }
         None

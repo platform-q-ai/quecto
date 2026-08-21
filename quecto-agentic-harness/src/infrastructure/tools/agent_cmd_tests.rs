@@ -23,7 +23,7 @@ fn local_get_subagents_all_lists_registry_without_socket_io() {
     );
     let tool = AgentCmdTool::new(registry);
     let result = tool
-        .try_local_command(&serde_json::json!({"command":"get_subagents_all"}))
+        .try_local_command(&serde_json::json!({"agent_id":"*","command":"get_subagents_all"}))
         .expect("get_subagents_all is local");
     assert!(!result.is_error);
     assert!(result.content.contains("w1"));

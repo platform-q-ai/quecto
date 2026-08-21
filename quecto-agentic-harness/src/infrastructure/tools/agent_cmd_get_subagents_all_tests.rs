@@ -29,3 +29,19 @@ async fn test_get_subagents_all_lists_parent_registry_with_star_agent_id() {
             .contains_key("pid")
     );
 }
+
+#[tokio::test]
+async fn get_subagents_all_rejects_non_star_agent_id_before_local_dispatch() {
+    let registry = new_registry();
+    registry.lock().unwrap().insert(
+        "w1".to_string(),
+        SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 123),
+    );
+    let tool = AgentCmdTool::new(registry);
+    let result = tool
+        .execute(r#"{"agent_id":"w1","command":"get_subagents_all"}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(result.content.contains("requires agent_id \"*\""));
+}

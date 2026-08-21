@@ -191,7 +191,12 @@ fn merge_descendants(
         .filter(|id| !pushed_ids.contains(id))
         .collect();
     for id in stale {
-        guard.remove(&id);
+        if let Some(entry) = guard.get_mut(&id) {
+            super::subagent_cascade::mark_entry_dead(entry, next_sequence);
+            super::subagent_cascade::clear_cleanup_ownership(entry);
+            next_sequence = next_sequence.saturating_add(1);
+            entry.updated_at = Instant::now();
+        }
     }
 }
 

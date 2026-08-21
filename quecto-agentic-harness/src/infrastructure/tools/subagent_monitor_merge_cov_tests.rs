@@ -39,7 +39,7 @@ fn merge_descendants_upserts_updates_and_scoped_prunes_omitted_descendants() {
     // Legacy snapshots without agentUuid still key by agentId for back-compat.
     assert!(guard.contains_key("grand"));
     assert!(guard.contains_key("sibling"));
-    assert!(!guard.contains_key("old-grand"));
+    assert_eq!(guard["old-grand"].status, SubagentStatus::Exited);
     assert_eq!(guard["grand"].status, SubagentStatus::Running);
     assert_eq!(
         guard["grand"].lifecycle,
@@ -293,4 +293,24 @@ fn forwarded_environment_ref_is_preserved_in_compact_roster() {
         .find(|row| row.agent_id == "grand")
         .unwrap();
     assert_eq!(grand.environment_ref.as_deref(), Some("C9"));
+}
+
+#[test]
+fn omitted_forwarded_descendant_becomes_dead_delta_instead_of_disappearing() {
+    let registry = new_registry();
+    add(&registry, "child", None);
+    let first = serde_json::json!({"type":"subagent_state_changed","subagents":[{
+        "agentId":"grand","parentId":"child","status":"running","pid":42,"socketPath":"/tmp/grand.sock"
+    }]});
+    merge_and_forward_state_changed(&first, &registry, "child").unwrap();
+    let seen = compact_roster(&registry, None).sequence;
+
+    let empty = serde_json::json!({"type":"subagent_state_changed","subagents":[]});
+    merge_and_forward_state_changed(&empty, &registry, "child").unwrap();
+    let delta = compact_roster(&registry, Some(seen));
+
+    assert_eq!(delta.subagents.len(), 1);
+    assert_eq!(delta.subagents[0].agent_id, "grand");
+    assert_eq!(delta.subagents[0].status, "dead");
+    assert!(delta.sequence > seen);
 }

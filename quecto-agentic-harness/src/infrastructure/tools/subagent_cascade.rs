@@ -60,6 +60,13 @@ pub fn mark_entry_dead(entry: &mut SubagentEntry, sequence: u64) {
     entry.notification_sequence = sequence;
 }
 
+pub fn clear_cleanup_ownership(entry: &mut SubagentEntry) {
+    entry.cleanup_environment_id = None;
+    entry.cleanup_argv.clear();
+    entry.environment_registry = None;
+    entry.environment_ref = None;
+}
+
 pub fn cascade_remove_locked(
     guard: &mut HashMap<String, SubagentEntry>,
     agent_id: &str,
@@ -91,7 +98,10 @@ pub fn cascade_remove_locked(
         next_sequence = next_sequence.saturating_add(1);
         removed.push((id, entry));
     }
-    guard.extend(removed.iter().cloned());
+    guard.extend(removed.iter().cloned().map(|(id, mut entry)| {
+        clear_cleanup_ownership(&mut entry);
+        (id, entry)
+    }));
     removed
 }
 
