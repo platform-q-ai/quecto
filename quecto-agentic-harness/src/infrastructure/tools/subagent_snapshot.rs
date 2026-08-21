@@ -86,17 +86,19 @@ fn get_state_snapshot_honors_since(
     data: Option<&serde_json::Value>,
     since: Option<&serde_json::Value>,
 ) -> bool {
-    if since.and_then(|v| v.as_u64()).is_none() {
+    let Some(since) = since.and_then(|v| v.as_u64()) else {
         return true;
-    }
+    };
     let Some(data) = data else {
         return false;
     };
-    // Best-effort and non-blocking: any slim snapshot with a generation can
-    // answer immediately, including an older `{unchanged:true}` marker.
-    // Finalize converts equal/older generations into the bounded unchanged
-    // marker at the caller's cursor so a newer cursor never rewinds.
-    data.get("generation").and_then(|v| v.as_u64()).is_some()
+    let Some(generation) = data.get("generation").and_then(|v| v.as_u64()) else {
+        return false;
+    };
+    // A canonical connect snapshot is always a changed projection. Retain
+    // compatibility with older unchanged snapshots only when they do not claim
+    // knowledge beyond the caller's cursor; finalization bounds them locally.
+    data.get("unchanged").and_then(|v| v.as_bool()) != Some(true) || generation <= since
 }
 
 fn get_state_data_is_slim_snapshot(data: Option<&serde_json::Value>) -> bool {

@@ -61,7 +61,6 @@ fn message_bytes(m: &Message) -> usize {
             .map(thinking_block_bytes)
             .sum::<usize>()
 }
-
 fn thinking_block_bytes(tb: &ThinkingBlock) -> usize {
     match tb {
         ThinkingBlock::Normal {
@@ -350,7 +349,6 @@ impl ConversationSnapshotData {
         })
     }
 }
-
 pub(crate) enum GetMessageResolution {
     Found(Message),
     Recall {
@@ -362,7 +360,6 @@ pub(crate) enum GetMessageResolution {
     },
     NotFound,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RecallIdentity {
     pub message_id: String,
@@ -370,7 +367,6 @@ pub(crate) struct RecallIdentity {
     pub spill_id: String,
     pub generation: u64,
 }
-
 impl GetMessageResolution {
     /// Finish the best-effort lookup outside the snapshot read-lock. Spill
     /// misses/errors gracefully fall back to the live collapsed stub. A
@@ -418,7 +414,6 @@ impl GetMessageResolution {
         }
     }
 }
-
 pub(crate) struct ResolvedGetMessage {
     pub message: Option<Message>,
     pub recalled: Option<RecallIdentity>,
@@ -664,9 +659,15 @@ pub(crate) fn build_busy_get_state_line(
     workflow_state: &Option<crate::interface::shared::WorkflowStateHandle>,
     execution_state: &super::uds_execution_state::ExecutionStateHandle,
 ) -> String {
+    build_connect_get_state_line(state, workflow_state, execution_state, true)
+}
+pub(crate) fn build_connect_get_state_line(
+    state: &SessionState,
+    workflow_state: &Option<crate::interface::shared::WorkflowStateHandle>,
+    execution_state: &super::uds_execution_state::ExecutionStateHandle,
+    is_busy: bool,
+) -> String {
     let mut live = state.clone();
-    // Projection and revision come from one workflow critical section. Drop it
-    // before execution to keep a single, non-nested lock order.
     let workflow_revision = if let Some(workflow) = workflow_state {
         let engine = workflow
             .lock()
@@ -684,7 +685,7 @@ pub(crate) fn build_busy_get_state_line(
     live.message_count = execution.message_count();
     live.execution = Some(execution.snapshot());
     drop(execution);
-    build_get_state_line_live(&live, &None, true)
+    build_get_state_line_live(&live, &None, is_busy)
 }
 
 #[cfg(test)]

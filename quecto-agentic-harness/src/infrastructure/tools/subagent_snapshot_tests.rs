@@ -112,6 +112,10 @@ fn older_unchanged_get_state_snapshot_finalizes_to_caller_cursor() {
         json["data"],
         serde_json::json!({ "unchanged": true, "generation": 8 })
     );
+    assert!(!response_is_valid_answer(
+        &snapshot,
+        r#"{"type":"get_state","since":6}"#
+    ));
     let matching = r#"{"type":"get_state","since":7}"#;
     assert!(response_is_valid_answer(&snapshot, matching));
     let original = snapshot.to_string();
