@@ -100,10 +100,9 @@ await agent(
   `STEP — Bump semver for every crate this change touches. Determine which crates have modified source ` +
   `(e.g. 'git diff --name-only master...HEAD' plus unstaged changes) and, for EACH changed crate, bump ` +
   `its version in that crate's Cargo.toml — patch by default, minor for a notable feature. Do NOT bump ` +
-  `crates you did not change. Keep version docs in lockstep: for the 'quecto' kernel update README.md ` +
-  `'Current version: **x.y.z**' and the matching assertion in ` +
-  `quecto-agentic-harness/tests/features/repo_docs.feature so both equal the new version; for any other ` +
-  `crate, update whatever doc/test asserts its version. Report the old→new version for each bumped crate.`,
+  `crates you did not change. Keep version docs in lockstep: for changed crates, update whatever doc/test asserts ` +
+  `that crate's version; do not add or update a workspace README version line. Report the old→new ` +
+  `version for each bumped crate.`,
   { label: 'version-bump', phase: 'Version' }
 )
 
