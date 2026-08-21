@@ -1269,14 +1269,25 @@ fn assert_slim_get_state_data(data: &serde_json::Value, workflow: bool) {
             "model",
             "progress",
             "generation",
+            "sessionKey",
             "workflow",
         ]
         .into_iter()
         .collect()
     } else {
-        ["state", "effort", "model", "progress", "generation"]
-            .into_iter()
-            .collect()
+        // `sessionKey` stays in the slim projection: it is the TUI's only
+        // source for the durable key persisted into workspace manifests so
+        // `/resume` can restore the conversation (#1534).
+        [
+            "state",
+            "effort",
+            "model",
+            "progress",
+            "generation",
+            "sessionKey",
+        ]
+        .into_iter()
+        .collect()
     };
     let actual: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
     assert_eq!(
