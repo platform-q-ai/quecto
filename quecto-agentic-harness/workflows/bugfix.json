@@ -26,7 +26,7 @@
       "key": "repro",
       "label": "Reproduce the bug in a failing test (RED)",
       "phase": "red",
-      "guidance": "Read the issue (`gh issue view <N> --json title,body,comments`) and reproduce the reported behaviour BEFORE touching any production code. Capture it as the narrowest failing automated test that asserts the CORRECT behaviour and fails now for the reported reason (show the failure output). If you cannot reproduce it, stop and report that instead of guessing at a fix. Done when the failing test and its failure output are recorded."
+      "guidance": "Read the originating request before touching production code: it may be a GitHub issue (`gh issue view <N> --json title,body,comments`), PR review/comment thread, CI failure, direct user instruction, or other bug report. Extract the reported wrong behaviour and any acceptance criteria/instructions into a brief checklist. Reproduce the reported behaviour BEFORE touching any production code. Capture it as the smallest behaviorally meaningful failing automated test (or tests) that exercises the affected contract/path, asserts the CORRECT behaviour, and fails now for the reported reason (show the failure output). Prove the repro is falsifiable: it must fail if the fix is removed or inverted, and it must not merely mirror the implementation detail you plan to change. If you cannot reproduce it, stop and report that instead of guessing at a fix. Done when the checklist, failing test(s), failure output, and falsifiability rationale are recorded."
     },
     {
       "key": "fix",
