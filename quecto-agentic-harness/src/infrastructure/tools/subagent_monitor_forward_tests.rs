@@ -328,16 +328,19 @@ fn forward_child_state_changed_prunes_grandchild_absent_from_push() {
         .iter()
         .filter_map(|s| s["agentId"].as_str())
         .collect();
-    // Grandchild pruned; the child itself and the unrelated tree are untouched.
+    // Grandchild omitted from legacy full event but retained as a tombstone for compact deltas.
     assert!(
         !ids.contains(&"grandchild"),
-        "dead grandchild must be pruned"
+        "dead grandchild must be omitted from legacy event"
     );
     assert!(ids.contains(&"child"));
     assert!(ids.contains(&"sibling"), "unrelated sub-tree must survive");
     assert!(ids.contains(&"other"));
     let g = registry.lock().unwrap();
-    assert!(!g.contains_key("grandchild"));
+    assert_eq!(
+        g["grandchild"].status,
+        super::super::subagent_registry::SubagentStatus::Exited
+    );
     assert!(g.contains_key("sibling"));
 }
 

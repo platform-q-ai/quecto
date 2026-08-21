@@ -139,7 +139,7 @@ Feature: Persistent subagent monitor — live event stream from child agents
     Given a root registry with child "child" and a previously-merged grandchild "gc" under it
     When the child "child" forwards a subagent_state_changed with no descendants
     Then the forwarded event should not list "gc"
-    And the registry should no longer contain "gc"
+    And the registry should contain dead tombstone "gc"
     And the registry should still contain "child"
 
   Scenario: a descendant push preserves root siblings while adding grandchildren
