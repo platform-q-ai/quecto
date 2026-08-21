@@ -58,13 +58,3 @@ MCP tools and extension bridges may call third-party services or perform actions
 ### HTTP/WebSocket and runtime deployments
 
 Do not expose `quecto-api` or `quecto-runtime-manager` to untrusted networks without an appropriate authentication, authorization, TLS, and network-isolation layer. Review CORS, bearer-token, proxy, and credential-sync behavior before deployment.
-
-## Secret scanning
-
-Before making the repository public or cutting a release, run a secret scanner such as:
-
-```bash
-gitleaks detect --source . --redact
-```
-
-Treat scanner results as release blockers until each finding is confirmed fake/test-only, removed, allowlisted with a narrow rule, or rotated and purged from history.
