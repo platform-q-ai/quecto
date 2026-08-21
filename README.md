@@ -2,7 +2,7 @@
 
 Quecto is a Rust workspace for running AI coding agents locally, connecting them to terminal, HTTP/WebSocket, MCP, and managed-runtime surfaces. The core `quecto` binary owns model sessions, credentials, tools, workflows, subagents, and the Unix-domain-socket (UDS) protocol; the companion crates are clients, bridges, and infrastructure around that kernel.
 
-Current version: **0.106.6** (harness / `quecto` binary). Companion crate versions are declared in each package `Cargo.toml`.
+Companion crate versions are declared in each package `Cargo.toml`.
 
 ## Workspace projects
 

@@ -62,7 +62,7 @@
       "key": "version_bump",
       "label": "Bump changed crate versions and sync docs",
       "phase": "ci_cd",
-      "guidance": "Bump only crates whose source changed, normally PATCH unless the change warrants MINOR. Keep version docs/assertions in sync for each changed crate. Do not bump unchanged crates. Done when version files, README/version assertions, and tests agree."
+      "guidance": "Bump only crates whose source changed, normally PATCH unless the change warrants MINOR. Keep crate-specific version docs/assertions in sync for each changed crate; do not add or update a workspace README version line. Do not bump unchanged crates. Done when version files, crate-specific version assertions, and tests agree."
     },
     {
       "key": "commit",
