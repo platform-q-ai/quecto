@@ -37,11 +37,7 @@ async fn execute_without_name_lists_toc_with_titles() {
     assert!(result.content.contains("operating manual"));
     assert!(result.content.contains("Table of contents:"));
     assert!(result.content.contains("quick-start — "));
-    assert!(
-        result
-            .content
-            .contains("Quecto parent-agent quick start and workflows playbook")
-    );
+    assert!(result.content.contains("Quecto parent-agent quick start"));
     assert!(result.content.contains("subagents — "));
     assert!(result.content.contains("workflow — "));
     assert!(result.content.contains("extensions — "));
@@ -55,7 +51,7 @@ async fn execute_with_name_returns_doc_body() {
     let tool = DocsTool::new();
     let result = tool.execute(r#"{"name":"quick-start"}"#).await.unwrap();
     assert!(!result.is_error);
-    assert!(result.content.contains("Parent versus subagent"));
+    assert!(result.content.contains("Route the work"));
     assert!(result.content.contains("get_messages"));
 }
 
@@ -78,7 +74,7 @@ async fn execute_accepts_md_suffix_and_docs_prefix() {
         .await
         .unwrap();
     assert!(!result.is_error);
-    assert!(result.content.contains("Parent versus subagent"));
+    assert!(result.content.contains("Route the work"));
 }
 
 #[tokio::test]
@@ -133,7 +129,7 @@ async fn spawned_rejects_direct_quick_start() {
     assert!(result.is_error);
     assert!(result.content.contains("No embedded doc named"));
     assert!(
-        !result.content.contains("Parent versus subagent"),
+        !result.content.contains("Route the work"),
         "must not return quick-start body"
     );
 }
@@ -156,7 +152,7 @@ async fn spawned_rejects_quick_start_aliases() {
             result.content
         );
         assert!(
-            !result.content.contains("Parent versus subagent"),
+            !result.content.contains("Route the work"),
             "alias {name} must not return quick-start body"
         );
     }
@@ -177,7 +173,7 @@ async fn top_level_quick_start_still_available() {
     let tool = DocsTool::with_content_policy(DocsContentPolicy::Parent);
     let result = tool.execute(r#"{"name":"quick-start"}"#).await.unwrap();
     assert!(!result.is_error);
-    assert!(result.content.contains("Parent versus subagent"));
+    assert!(result.content.contains("Route the work"));
 }
 
 #[test]

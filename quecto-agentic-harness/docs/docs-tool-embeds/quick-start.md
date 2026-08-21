@@ -1,177 +1,84 @@
-# Quecto parent-agent quick start and workflows playbook
+# Quecto parent-agent quick start
 
-Parent-agent identity is already in the system prompt. This page is the rest of the coordination manual: when to stay in the parent, how to delegate, recover child results, and which workflow to bind for common tasks.
+Parent-agent identity is already in the system prompt. This page is the hot-path reminder for coordination; open deep dives for details.
 
-## Parent versus subagent routing
+## Route the work
 
-Use subagents deliberately, not as the default for every non-trivial request. Decide according to the shape and context cost of the work, not merely whether it sounds complex.
+Handle directly in the parent when the task is focused, short-lived, low-context, already localized, or requires user-facing synthesis/judgment.
 
-### Handle directly in the parent
+Delegate to a subagent when the work is broad, noisy, long-running, independently parallelizable, review-shaped, or likely to produce lots of intermediate evidence while the parent only needs conclusions.
 
-Keep work in the parent when it is focused, short-lived, and low-context, especially when:
+Once delegated, do not repeat the same investigation in the parent. Verify critical citations or surprising claims, then synthesize.
 
-- the relevant file, symbol, command, or value is already known;
-- a single-fact lookup or answer should require only a few targeted tool calls;
-- the expected tool output is small and directly useful to the final answer;
-- the task is a small, bounded edit or verification;
-- the work is clarification, synthesis, final judgment, or user-facing coordination;
-- delegating, briefing a child, and retrieving its result would cost more than executing directly.
+## Spawn and recover results
 
-If the scope is uncertain, begin with a focused parent search. Delegate only when that probe shows the work is broader, longer, noisier, or more context-heavy than expected.
+`spawn` returns when the child **socket is ready**, not when work is done.
 
-### Delegate to a subagent
+Required sequence:
 
-Delegate when one or more of these applies:
+1. Spawn and brief the child with goal, boundaries, and expected concise report.
+2. End this parent turn, or do other non-blocking, non-duplicative work.
+3. On the next turn, wait for the passive one-line completion note.
+4. Then call plain `agent_cmd get_messages` with `count`/`before` omitted or null to receive the unread report.
+5. Verify, synthesize, and answer the user. The passive note is not the report.
 
-- answering requires a broad or uncertain search across several files, directories, subsystems, or naming conventions;
-- the work will produce substantial file excerpts, command output, or intermediate evidence while the parent needs only the conclusion and concise supporting evidence;
-- the task is long-running or likely to require many tool calls;
-- the work is independently separable and can run in parallel with other useful work;
-- a specialized research, implementation, debugging, or review perspective would materially help;
-- an available workflow provides useful sequencing, verification, evidence gates, or review structure.
+Do **not** poll `get_subagents`, `get_subagents_all`, or `get_state` in a wait loop. Do not sleep/bash-wait for child completion.
 
-The number of files alone is not an absolute rule. Read several small, known files directly when that is cheaper; delegate when the search is broad, uncertain, noisy, or likely to consume substantial parent context.
+## Delegation defaults
 
-Once a scope is delegated, do not repeat the same investigation in the parent. Continue distinct coordination, synthesis, user interaction, or independent work. Checking a critical citation or running a focused command to verify a child's conclusion is not duplication; repeating the child's full search is.
-
-## Delegation ownership
-
-Give each child one clear goal, ownership boundary, and expected deliverable. Do not create redundant children for the same question. Parallelize only across distinct workstreams or review dimensions.
-
-A child should absorb the detailed working context and return a concise report containing the conclusions, material evidence, uncertainty, and relevant file:line citations. Do not ask it to return raw file dumps unless those are the requested deliverable.
-
-The parent retains responsibility for:
-
-- the user conversation and clarification of intent;
-- coordination across workstreams;
-- checking that a child's report answers its assigned scope;
-- verifying important or surprising claims where appropriate;
-- deduplicating and reconciling conflicting child results;
-- making the final judgment;
-- synthesizing and relaying what matters to the user.
-
-A child's report is input to the parent's answer, not a substitute for the parent's judgment.
-
-## Choosing how to delegate
-
-- Use a plain child task for substantial but focused or exploratory work that does not benefit from a prescribed multi-step process.
-- Use `workflow: true` when the work is workflow-shaped and the child should inspect the workflow templates available in its configuration and select the best match.
-- If a specific existing template is clearly appropriate, instruct the child to select that template, or bind it with `workflow_spec` when exact step adherence matters.
-- Use `workflow_spec` when the child must follow an exact, observable, auditable sequence, whether that sequence is a known appropriate workflow or a new one not covered by existing templates. Bind the full template rather than relying on prose to enforce its steps.
+- Give each child one clear goal, ownership boundary, and expected deliverable.
+- Children have separate LLM contexts; brief them with needed context.
+- Ask for concise conclusions, evidence, uncertainty, and relevant `file:line` citations.
 - Spawn reviewers, researchers, and other non-editing children with `read_only: true`.
+- `read_only: true` hides write/edit tools but is not a hard sandbox because `bash` remains.
+- Prefer minimal, purpose-aligned changes; follow repo conventions; verify appropriately; never bypass hooks with `--no-verify`.
 
-## ALWAYS prefer to delegate coding tasks and use these workflows
+## Workflow selection
 
-For multi-step coding, diagnosis, planning, or review, spawn a child with `workflow: true` (or bind `workflow_spec` / tell the child a template id). Confirm live ids with the child’s `workflow` `list_templates` if unsure — do not invent names.
+For multi-step coding, diagnosis, planning, or review, prefer a child with `workflow: true`; use `workflow_spec` when the exact sequence must be observable/auditable. Confirm live template ids if unsure.
 
-### Pick a template (common asks)
+| Task shape | Template |
+|---|---|
+| Existing PR review | `adversarial-review` + `read_only: true` |
+| Diagnosis/root cause only | `investigate` |
+| Bug fix with repro | `bugfix` |
+| Feature/change | `feature` |
+| No-behavior restructuring | `refactor` |
+| Small docs/tooling/config hygiene | `chore` |
+| Deletion/removal | `remove` |
+| Flaky CI/tests | `flake-hunt` |
+| Execution plan | `plan` |
+| Design doc / PRD | `prd` |
 
-| User / task shape | Template | Notes |
-|---|---|---|
-| Implement a behaviour change, feature, or acceptance criteria | `feature` | Full build path (scenarios → red/green → PR → review). |
-| Fix a bug with a known or discoverable repro | `bugfix` | Repro-first; don’t use for pure investigation with no fix. |
-| Restructure with **zero** intended behaviour change | `refactor` | Characterization / parity heavy. |
-| Delete code or surface area safely | `remove` | Staged removal. |
-| Small docs, tooling, config, or repo hygiene | `chore` | Prefer over `feature` when there’s no product behaviour change. |
-| **Review an existing PR** (findings only, no code changes) | **`adversarial-review`** | Read-only. Fetch `gh pr diff <N>` yourself. Parallel finders → refute wave → **one** submitted GitHub review. Spawn with `read_only: true`. |
-| Understand / root-cause **without** changing code | `investigate` | Diagnosis only — not PR review, not implement-a-fix. |
-| Flaky CI or intermittent tests | `flake-hunt` | |
-| Execution plan before coding | `plan` | |
-| Design doc / PRD | `prd` | Docs-oriented; adversarial pass on the doc. |
+Do not mix these up: PR review uses `adversarial-review`; diagnosis without fixing uses `investigate`; behavior-preserving cleanup uses `refactor` or `chore`.
 
-### How to launch
+## Common loops
 
-- **Default:** `spawn` with `workflow: true` so the child selects the best template (or instruct “use template `…`”).
-- **Exact sequence required:** bind full template via spawn `workflow_spec` (Active, no picker).
-- **PR review / research / other non-editors:** always `read_only: true` (not a hard sandbox — `bash` remains).
-- Nested finders inside `adversarial-review` should also be `read_only: true` and must not post to GitHub except the final single review step.
+When the user says to "loop review/fix until the PR is clean" or similar, use an adversarial review ↔ bugfix loop:
 
-### Do not mix these up
+1. Run an `adversarial-review` child with `read_only: true` against the PR.
+2. If it reports real findings, run a `bugfix` child to fix them.
+3. Re-run `adversarial-review` on the updated PR/diff.
+4. Repeat until review finds no blocking issues, or until remaining issues are explicitly accepted/deferred.
 
-- “Review this PR” → **`adversarial-review`**, not `feature` / `investigate`.
-- “Why is this broken?” with no fix yet → **`investigate`**, not `bugfix`.
-- “Clean up / rename / move only” → **`refactor`** or **`chore`**, not `feature`.
+Keep roles separate: reviewers do not edit; fixers do not waive findings. The parent adjudicates whether findings are real, whether fixes are sufficient, and when the PR is clean enough to merge.
 
-## Briefing children
+## Reuse and inventory
 
-Quecto children have separate LLM contexts and do not automatically inherit the parent's conversation. Give each child the context required to work independently.
+Reuse a live child only when it already owns relevant context:
 
-Give relevant children the same engineering constraints as the parent: prefer minimal, purpose-aligned changes; follow repository conventions; apply YAGNI, BDD/TDD, and Clean Architecture principles where practical; run appropriate verification; and never bypass hooks with `--no-verify`.
+- idle child: `prompt`
+- active child: `steer` or `follow_up`
+- exited child: same `agent_id` label starts a fresh session, not a resume
 
-Children should execute their assigned work directly unless instructed otherwise by an attached workflow.
+Inventory distinction:
 
-## Reusing child context
+- `get_subagents_all` with `agent_id: "*"` lists the parent/session-wide subagent inventory; use for inventory/cleanup, not waiting.
+- `get_subagents` targets one specific live subagent and lists only that agent's nested children.
 
-Reuse a child that already owns the relevant context instead of starting redundant work:
+## Deep links
 
-- use `prompt` to give a live idle child related work;
-- use `follow_up` to queue related work after its current run;
-- use `steer` to interrupt and redirect active work;
-- spawn a new child for a new independent scope;
-- `agent_id` is a user-facing display label, not durable identity; after a child has exited, reusing the same `agent_id` starts a fresh hidden UUID / clean child session rather than resuming prior context.
-
-Do not expect stale child context to carry over across label reuse; pass needed context explicitly in the new task.
-
-## Non-blocking execution and result recovery
-
-`spawn` returns when the child **socket** is ready — not when the task is done. Completion is multi-turn.
-
-### Required sequence
-
-1. **Spawn** (and brief the child). Returns immediately.
-2. **End this parent turn** (or do other *non-duplicative* work that does not need the child’s answer). Stay available to the user.
-3. **Next turn:** a passive one-line completion note arrives automatically when the child finishes/errors/exits.
-4. **Then** plain `agent_cmd get_messages` (omit/null `count` and `before`) for the default unread report.
-5. Verify, synthesize, and answer the user. Relay conclusions — not raw child dumps unless asked.
-
-### Do not
-
-- Poll `get_subagents`, `get_subagents_all`, or `get_state` in a loop waiting for idle.
-- `sleep` / bash-wait / busy-wait for the child in the same turn.
-- Treat the passive note (or any lifecycle line) as the child’s report — always `get_messages` for content.
-
-### Optional tools (not wait loops)
-
-- `get_state` — occasional live progress/debug.
-- `get_subagents_all` — inventory and cleanup **after** coordination, not completion waiting.
-- `abort` / `kill` — stop work or the process when needed.
-
-If you need the child’s answer before you can help the user, **yield the turn** and continue when the note arrives; do not invent a same-turn wait.
-
-## General operating principles
-
-- Prefer minimal, purpose-aligned changes: YAGNI, repository conventions, BDD/TDD, and Clean Architecture principles where practical.
-- Never bypass project hooks or verification, including with `--no-verify`.
-- Keep final synthesis, user communication, cross-cutting coordination, and consequential decisions in the parent.
-
-## On-demand capability docs
-
-The `docs` tool is Quecto's operating manual (list with no name). Start here (`quick-start`). Deep dives assume you already have tool schemas:
-
-- Subagents coordination: `docs {"name":"subagents"}`
-- Workflow usage: `docs {"name":"workflow"}`
-- Extensions: `docs {"name":"extensions"}`
-- Models / `models.json`: `docs {"name":"models"}`
-
-## Example workflow template for reviewers
-
-```json
-{
-  "id": "focused-review",
-  "label": "Focused Review",
-  "description": "Read-only single-dimension review with evidence-backed findings.",
-  "steps": [
-    { "key": "scope", "label": "Confirm assigned scope and review dimension", "phase": "review", "guidance": "Identify files, diff, commands, or documents in scope. Do not expand scope without evidence. Confirm this is a read-only review." },
-    { "key": "inspect", "label": "Inspect the relevant code, tests, and docs", "phase": "review", "guidance": "Gather concrete evidence. Prefer file:line citations. Do not modify files or mutate local/remote state." },
-    { "key": "analyze", "label": "Analyze only the assigned dimension", "phase": "review", "guidance": "Be skeptical. Report real, actionable issues only. Avoid style nitpicks unless they affect maintainability, correctness, security, or user outcomes." },
-    { "key": "report", "label": "Return findings and confidence", "phase": "review", "guidance": "For each finding include severity, file:line when possible, problem, evidence, and a concrete fix. If no findings, say so explicitly and summarize what was checked." }
-  ]
-}
-```
-
-## Safety
-
-- Children inherit the parent's credentials and tool policy. Do not broaden a child's practical authority beyond the user's intent.
-- `read_only: true` disables and hides the `write` and `edit` tools from the child's model-visible definitions but is not a hard sandbox because the child retains `bash`. Explicitly prohibit mutation and verify the workspace diff after read-only children finish before trusting that they made no changes.
-- Never print secrets. Have children use configured local tools without echoing credentials.
-- Avoid redundant agents, but use parallelism across genuinely distinct workstreams when it provides value.
+- `docs {"name":"subagents"}`: full delegation, lifecycle, reuse, safety, containers, inventory details.
+- `docs {"name":"workflow"}`: full template guidance and workflow operation.
+- `docs {"name":"extensions"}`: extensions.
+- `docs {"name":"models"}`: model configuration.

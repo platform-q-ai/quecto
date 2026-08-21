@@ -9,11 +9,11 @@ Feature: Embedded operating manual reachable from any directory
     Then the docs listing should include "quick-start"
     And the docs listing should include "subagents"
     And the docs listing should include "workflow"
-    And the docs listing should include "Quecto parent-agent quick start and workflows playbook"
+    And the docs listing should include "Quecto parent-agent quick start"
 
   Scenario: the docs tool returns the quick-start entry page
     When I read the embedded doc "quick-start"
-    Then the embedded doc content should contain "Parent versus subagent"
+    Then the embedded doc content should contain "Route the work"
     And the embedded doc content should contain "get_messages"
 
   Scenario: the docs tool returns a concise subagents deep dive
@@ -23,7 +23,7 @@ Feature: Embedded operating manual reachable from any directory
 
   Scenario: the docs tool tolerates a .md suffix and docs/ prefix
     When I read the embedded doc "docs/quick-start.md"
-    Then the embedded doc content should contain "Parent versus subagent"
+    Then the embedded doc content should contain "Route the work"
 
   Scenario: an unknown doc name reports the table of contents
     When I read the embedded doc "nonexistent"

@@ -14,6 +14,7 @@ You already have `spawn` and `agent_cmd` tool schemas — use those for paramete
 
 - Never poll `get_subagents` / `get_subagents_all` / `get_state` as a wait loop; never bash-sleep for the child.
 - `get_state` = occasional live state/effort/model/progress (+ slim workflow identity/current step if selected), with `generation`. Pass `since` to get `{ "unchanged": true, "generation": N }` when nothing changed. plain `get_messages` = default unread report; explicit `count`/`before` = cursor-neutral committed transcript pages (may lag while busy; `snapshot: true`).
+- `get_subagents_all` with `agent_id: "*"` is parent/session-wide inventory for top-level children. `get_subagents` must target a specific live subagent and lists only that agent's nested children (often `subagents: []`).
 - Reviewers / non-editors: `read_only: true` (**not a hard sandbox** — child can still mutate via `bash`).
 - Exact multi-step process: bind `workflow_spec` or `workflow: true` (see `docs {"name":"workflow"}`).
 

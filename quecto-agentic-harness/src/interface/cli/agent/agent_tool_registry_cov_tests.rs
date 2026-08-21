@@ -155,7 +155,7 @@ async fn build_tool_registry_forwards_spawned_flag_to_docs_tool() {
         direct.content
     );
     assert!(
-        !direct.content.contains("Parent versus subagent"),
+        !direct.content.contains("Route the work"),
         "spawned registry must not return quick-start body"
     );
 
@@ -189,7 +189,7 @@ async fn build_tool_registry_forwards_spawned_flag_to_docs_tool() {
         .unwrap();
     assert!(!top_direct.is_error);
     assert!(
-        top_direct.content.contains("Parent versus subagent"),
+        top_direct.content.contains("Route the work"),
         "top-level registry must still serve quick-start body"
     );
 }
