@@ -1,4 +1,4 @@
-use super::super::uds_query::{GetMessageLookup, query_response_data};
+use super::super::uds_query::{GetMessageLookup, query_response_data_result};
 use super::{
     AgentCommand, AgentEvent, DispatchCtx, emit_event_to_broadcast_or_writer,
     emit_response_or_frame_limit_error, emit_response_or_frame_limit_error_with_message,
@@ -128,9 +128,18 @@ pub(super) async fn dispatch_fieldless_command(
         .await;
         return Some(false);
     }
-    if let Some(data) = query_response_data(cmd, ctx) {
-        emit_response_or_frame_limit_error(ctx, id, tn, AgentEvent::ok(id, tn, Some(data))).await;
-        return Some(false);
+    match query_response_data_result(cmd, ctx) {
+        Ok(Some(data)) => {
+            emit_response_or_frame_limit_error(ctx, id, tn, AgentEvent::ok(id, tn, Some(data)))
+                .await;
+            return Some(false);
+        }
+        Err(e) => {
+            let ev = AgentEvent::err(id, tn, &e);
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
+            return Some(false);
+        }
+        Ok(None) => {}
     }
     if matches!(cmd, AgentCommand::ClearHistory { .. }) {
         return Some(super::uds_dispatch_session::handle_clear_history(ctx, id, tn).await);

@@ -349,6 +349,7 @@ fn execute_tool_event_roundtrip() {
 fn get_subagents_command_serializes() {
     let cmd = AgentCommand::GetSubagents {
         id: Some("gs-1".into()),
+        since: None,
     };
     let j = round_trip(&cmd);
     assert_eq!(j["type"], "get_subagents");
@@ -575,7 +576,11 @@ fn core_command_type_names() {
         "clear_history"
     );
     assert_eq!(
-        AgentCommand::GetSubagents { id: None }.type_name(),
+        AgentCommand::GetSubagents {
+            id: None,
+            since: None
+        }
+        .type_name(),
         "get_subagents"
     );
     assert_eq!(

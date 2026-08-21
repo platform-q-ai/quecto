@@ -669,7 +669,14 @@ fn query_metadata_commands_are_shaped_or_deferred() {
             .is_array()
     );
     assert!(
-        query_response_data(&AgentCommand::GetSubagents { id: None }, &ctx).unwrap()["subagents"]
+        query_response_data(
+            &AgentCommand::GetSubagents {
+                id: None,
+                since: None
+            },
+            &ctx
+        )
+        .unwrap()["subagents"]
             .is_array()
     );
 }

@@ -10,7 +10,9 @@
 
 use std::collections::HashMap;
 
-use super::subagent_registry::{SubagentEntry, SubagentRegistry};
+use crate::domain::session::SubagentLiveness;
+
+use super::subagent_registry::{SubagentEntry, SubagentRegistry, SubagentStatus};
 
 /// Outcome of a cascade-remove on the registry (#831).
 pub struct CascadeOutcome {
@@ -43,6 +45,28 @@ pub fn cascade_remove(registry: &SubagentRegistry, agent_id: &str) -> Vec<(Strin
 /// [`cascade_remove`] operating on an already-held registry guard, so a caller
 /// can prune the dead sub-tree AND snapshot the survivors in a SINGLE critical
 /// section (perf review: avoids re-locking + the prune/snapshot race window).
+pub fn next_roster_sequence(guard: &HashMap<String, SubagentEntry>) -> u64 {
+    guard
+        .values()
+        .map(|entry| entry.notification_sequence)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1)
+}
+
+pub fn mark_entry_dead(entry: &mut SubagentEntry, sequence: u64) {
+    entry.status = SubagentStatus::Exited;
+    entry.persisted_liveness = SubagentLiveness::Dead;
+    entry.notification_sequence = sequence;
+}
+
+pub fn clear_cleanup_ownership(entry: &mut SubagentEntry) {
+    entry.cleanup_environment_id = None;
+    entry.cleanup_argv.clear();
+    entry.environment_registry = None;
+    entry.environment_ref = None;
+}
+
 pub fn cascade_remove_locked(
     guard: &mut HashMap<String, SubagentEntry>,
     agent_id: &str,
@@ -62,15 +86,22 @@ pub fn cascade_remove_locked(
     }
     let mut removed = Vec::new();
     let mut frontier = vec![agent_id.to_string()];
+    let mut next_sequence = next_roster_sequence(guard);
     while let Some(id) = frontier.pop() {
-        let Some(entry) = guard.remove(&id) else {
+        let Some(mut entry) = guard.remove(&id) else {
             continue;
         };
         if let Some(kids) = children.get(&id) {
             frontier.extend(kids.iter().cloned());
         }
+        mark_entry_dead(&mut entry, next_sequence);
+        next_sequence = next_sequence.saturating_add(1);
         removed.push((id, entry));
     }
+    guard.extend(removed.iter().cloned().map(|(id, mut entry)| {
+        clear_cleanup_ownership(&mut entry);
+        (id, entry)
+    }));
     removed
 }
 
@@ -150,6 +181,10 @@ pub fn build_state_changed_event_locked(guard: &HashMap<String, SubagentEntry>) 
         entries.sort_by(|a, b| a.0.cmp(b.0));
         entries
             .into_iter()
+            .filter(|(_, entry)| {
+                entry.persisted_liveness != SubagentLiveness::Dead
+                    && entry.status != SubagentStatus::Exited
+            })
             .map(|(id, entry)| {
                 let mut obj = serde_json::Map::new();
                 let display_name = entry.effective_display_name(id);

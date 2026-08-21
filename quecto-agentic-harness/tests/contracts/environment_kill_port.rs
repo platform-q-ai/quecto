@@ -75,8 +75,11 @@ async fn script_kill_port_terminates_members_and_runs_retained_kill_once() {
     );
     port.kill_environment(&rec).await.unwrap();
 
-    // Member entry is gone from the subagent registry.
-    assert!(subagents.lock().unwrap().is_empty());
+    // Member entry is retained as a compact-roster tombstone so since-cursor clients see deletion.
+    assert_eq!(
+        subagents.lock().unwrap()["member-uuid"].status,
+        quecto::infrastructure::tools::subagent_registry::SubagentStatus::Exited
+    );
     // The retained kill ran exactly once against the runtime environment id.
     let logged = std::fs::read_to_string(&log).unwrap();
     assert_eq!(logged.lines().collect::<Vec<_>>(), vec!["env-contract"]);

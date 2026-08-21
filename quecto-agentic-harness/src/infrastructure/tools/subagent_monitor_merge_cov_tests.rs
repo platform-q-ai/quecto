@@ -3,6 +3,14 @@ use crate::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentStatus, new_registry,
 };
 
+fn compact_roster(
+    registry: &crate::infrastructure::tools::subagent_registry::SubagentRegistry,
+    since: Option<u64>,
+) -> crate::interface::cli::protocol::CompactSubagentRoster {
+    crate::interface::cli::protocol::build_compact_subagent_roster(&Some(registry.clone()), since)
+        .unwrap()
+}
+
 fn add(
     registry: &crate::infrastructure::tools::subagent_registry::SubagentRegistry,
     id: &str,
@@ -31,7 +39,7 @@ fn merge_descendants_upserts_updates_and_scoped_prunes_omitted_descendants() {
     // Legacy snapshots without agentUuid still key by agentId for back-compat.
     assert!(guard.contains_key("grand"));
     assert!(guard.contains_key("sibling"));
-    assert!(!guard.contains_key("old-grand"));
+    assert_eq!(guard["old-grand"].status, SubagentStatus::Exited);
     assert_eq!(guard["grand"].status, SubagentStatus::Running);
     assert_eq!(
         guard["grand"].lifecycle,
@@ -240,4 +248,117 @@ fn merge_caps_large_descendant_lists() {
         .filter(|id| id.starts_with('g'))
         .count();
     assert_eq!(count, 256);
+}
+
+#[test]
+fn forwarded_descendant_merge_advances_compact_roster_delta_sequence() {
+    let registry = new_registry();
+    add(&registry, "child", None);
+    registry
+        .lock()
+        .unwrap()
+        .get_mut("child")
+        .unwrap()
+        .notification_sequence = 1;
+    let current = compact_roster(&registry, None);
+    assert_eq!(current.sequence, 1);
+
+    let event = serde_json::json!({"type":"subagent_state_changed","subagents":[{
+        "agentId":"grand","parentId":"child","status":"running","pid":42
+    }]});
+    merge_and_forward_state_changed(&event, &registry, "child").unwrap();
+
+    let delta = compact_roster(&registry, Some(current.sequence));
+    assert_eq!(delta.sequence, 2);
+    assert_eq!(delta.subagents.len(), 1);
+    assert_eq!(delta.subagents[0].agent_id, "grand");
+}
+
+#[test]
+fn forwarded_environment_ref_is_preserved_in_compact_roster() {
+    let registry = new_registry();
+    add(&registry, "child", None);
+    let event = serde_json::json!({"type":"subagent_state_changed","subagents":[{
+        "agentId":"grand",
+        "parentId":"child",
+        "status":"idle",
+        "environment":{"ref":"C9","uuid":"env-9","status":"running"}
+    }]});
+    merge_and_forward_state_changed(&event, &registry, "child").unwrap();
+
+    let full = compact_roster(&registry, None);
+    let grand = full
+        .subagents
+        .iter()
+        .find(|row| row.agent_id == "grand")
+        .unwrap();
+    assert_eq!(grand.environment_ref.as_deref(), Some("C9"));
+}
+
+#[test]
+fn omitted_forwarded_descendant_becomes_dead_delta_instead_of_disappearing() {
+    let registry = new_registry();
+    add(&registry, "child", None);
+    let first = serde_json::json!({"type":"subagent_state_changed","subagents":[{
+        "agentId":"grand","parentId":"child","status":"running","pid":42,"socketPath":"/tmp/grand.sock"
+    }]});
+    merge_and_forward_state_changed(&first, &registry, "child").unwrap();
+    let seen = compact_roster(&registry, None).sequence;
+
+    let empty = serde_json::json!({"type":"subagent_state_changed","subagents":[]});
+    merge_and_forward_state_changed(&empty, &registry, "child").unwrap();
+    let delta = compact_roster(&registry, Some(seen));
+
+    assert_eq!(delta.subagents.len(), 1);
+    assert_eq!(delta.subagents[0].agent_id, "grand");
+    assert_eq!(delta.subagents[0].status, "dead");
+    assert!(delta.sequence > seen);
+}
+
+#[test]
+fn resurrected_forwarded_descendant_returns_to_live_in_compact_roster() {
+    let registry = new_registry();
+    add(&registry, "child", None);
+    let live = serde_json::json!({"type":"subagent_state_changed","subagents":[{
+        "agentId":"grand","parentId":"child","status":"running","pid":42
+    }]});
+    merge_and_forward_state_changed(&live, &registry, "child").unwrap();
+    let seen_live = compact_roster(&registry, None).sequence;
+
+    let empty = serde_json::json!({"type":"subagent_state_changed","subagents":[]});
+    merge_and_forward_state_changed(&empty, &registry, "child").unwrap();
+    let dead_delta = compact_roster(&registry, Some(seen_live));
+    assert_eq!(dead_delta.subagents[0].status, "dead");
+
+    merge_and_forward_state_changed(&live, &registry, "child").unwrap();
+    let full = compact_roster(&registry, None);
+    let grand = full
+        .subagents
+        .iter()
+        .find(|row| row.agent_id == "grand")
+        .unwrap();
+    assert_eq!(grand.status, "running");
+}
+
+#[test]
+fn repeated_omitted_snapshot_does_not_resequence_retained_dead_descendant() {
+    let registry = new_registry();
+    add(&registry, "child", None);
+    let live = serde_json::json!({"type":"subagent_state_changed","subagents":[{
+        "agentId":"grand","parentId":"child","status":"running","pid":42
+    }]});
+    merge_and_forward_state_changed(&live, &registry, "child").unwrap();
+    let seen_live = compact_roster(&registry, None).sequence;
+
+    let empty = serde_json::json!({"type":"subagent_state_changed","subagents":[]});
+    merge_and_forward_state_changed(&empty, &registry, "child").unwrap();
+    let deletion = compact_roster(&registry, Some(seen_live));
+    assert_eq!(deletion.subagents.len(), 1);
+    let deletion_sequence = deletion.sequence;
+
+    merge_and_forward_state_changed(&empty, &registry, "child").unwrap();
+    let repeated = compact_roster(&registry, Some(deletion_sequence));
+    assert_eq!(repeated.unchanged, Some(true));
+    assert!(repeated.subagents.is_empty());
+    assert_eq!(repeated.sequence, deletion_sequence);
 }

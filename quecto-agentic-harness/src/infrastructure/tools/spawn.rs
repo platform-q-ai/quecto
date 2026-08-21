@@ -590,6 +590,10 @@ impl Tool for SpawnTool {
 }
 
 #[cfg(test)]
+#[path = "tests/spawn_roster_tests.rs"]
+mod roster_tests;
+
+#[cfg(test)]
 #[path = "tests/spawn_tests.rs"]
 mod tests;
 

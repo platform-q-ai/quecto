@@ -556,7 +556,7 @@ fn then_live_event_reports_exited(world: &mut QuectoWorld, agent_id: String) {
                 if let Some(subagents) = parsed["subagents"].as_array() {
                     let exited = subagents.iter().any(|s| {
                         s["agentId"].as_str() == Some(agent_id.as_str())
-                            && s["status"].as_str() == Some("exited")
+                            && matches!(s["status"].as_str(), Some("exited") | Some("dead"))
                     });
                     let absent = subagents
                         .iter()
@@ -594,7 +594,7 @@ fn then_snapshot_reports_exited(world: &mut QuectoWorld, agent_id: String) {
         let exited = subagents.is_some_and(|subagents| {
             subagents.iter().any(|s| {
                 s["agentId"].as_str() == Some(agent_id.as_str())
-                    && s["status"].as_str() == Some("exited")
+                    && matches!(s["status"].as_str(), Some("exited") | Some("dead"))
             })
         });
         let absent = subagents.is_some_and(|subagents| {

@@ -32,13 +32,31 @@ pub(super) async fn intercept(
         Some("get_subagents") => {
             // Registry-only read; same data as the dispatch path plus the
             // #842-style snapshot marker (the view may lag the in-flight turn).
-            let data = serde_json::json!({
-                "subagents": serde_json::to_value(super::protocol::build_subagent_info_list(
-                    subagents
-                ))
-                .unwrap_or_default(),
-                "snapshot": true,
-            });
+            let since = match value.get("since") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(v) => match v.as_u64() {
+                    Some(s) => Some(s),
+                    None => {
+                        let ev =
+                            AgentEvent::err(id.as_deref(), "get_subagents", "invalid since cursor");
+                        write_event(clients, client_id, id.as_deref(), "get_subagents", &ev).await;
+                        return true;
+                    }
+                },
+            };
+            let mut data = match super::protocol::build_compact_subagent_roster(subagents, since)
+                .and_then(|roster| serde_json::to_value(roster).map_err(|e| e.to_string()))
+            {
+                Ok(data) => data,
+                Err(e) => {
+                    let ev = AgentEvent::err(id.as_deref(), "get_subagents", &e);
+                    write_event(clients, client_id, id.as_deref(), "get_subagents", &ev).await;
+                    return true;
+                }
+            };
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("snapshot".to_string(), serde_json::Value::Bool(true));
+            }
             let ev = AgentEvent::ok(id.as_deref(), "get_subagents", Some(data));
             write_event(clients, client_id, id.as_deref(), "get_subagents", &ev).await;
             true

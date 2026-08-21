@@ -42,9 +42,9 @@ fn cascade_remove_drops_agent_and_transitive_descendants() {
         vec!["c".to_string(), "gc".to_string(), "p".to_string()]
     );
     let g = r.lock().unwrap();
-    assert!(!g.contains_key("p"));
-    assert!(!g.contains_key("c"));
-    assert!(!g.contains_key("gc"));
+    assert_eq!(g["p"].status, super::SubagentStatus::Exited);
+    assert_eq!(g["c"].status, super::SubagentStatus::Exited);
+    assert_eq!(g["gc"].status, super::SubagentStatus::Exited);
     // Unrelated subtree is NEVER removed.
     assert!(g.contains_key("other"));
     assert!(g.contains_key("other-c"));
@@ -78,7 +78,9 @@ fn cascade_remove_and_state_changed_emits_survivors_only() {
     // The whole dead subtree is gone; the unrelated live agent remains.
     assert_eq!(ids, vec!["live"], "broadcast must list only survivors");
     let g = r.lock().unwrap();
-    assert!(!g.contains_key("p") && !g.contains_key("c") && !g.contains_key("gc"));
+    assert_eq!(g["p"].status, super::SubagentStatus::Exited);
+    assert_eq!(g["c"].status, super::SubagentStatus::Exited);
+    assert_eq!(g["gc"].status, super::SubagentStatus::Exited);
     assert!(g.contains_key("live"));
 }
 

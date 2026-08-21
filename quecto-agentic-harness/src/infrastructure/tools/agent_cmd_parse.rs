@@ -192,7 +192,18 @@ pub(super) fn build_command(args: &serde_json::Value) -> Result<(String, String,
             serde_json::json!({"type": "set_effort", "effort": effort, "ack": "accept"})
         }
         "clear_history" => serde_json::json!({"type": "clear_history", "ack": "accept"}),
-        "get_subagents" => serde_json::json!({"type": "get_subagents"}),
+        "get_subagents" => {
+            let mut cmd = serde_json::json!({"type": "get_subagents"});
+            if let Some(v) = args.get("since") {
+                if !v.is_null() {
+                    cmd["since"] = serde_json::json!(
+                        v.as_u64()
+                            .ok_or("get_subagents since must be a non-negative integer")?
+                    );
+                }
+            }
+            cmd
+        }
         "get_subagents_all" => {
             return Err("get_subagents_all is handled locally, not via UDS".to_string());
         }

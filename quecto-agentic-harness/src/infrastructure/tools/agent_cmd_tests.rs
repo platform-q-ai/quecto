@@ -1,4 +1,5 @@
 use super::*;
+use crate::infrastructure::tools::subagent_registry::SubagentStatus;
 use std::path::PathBuf;
 
 fn empty_tool() -> AgentCmdTool {
@@ -22,7 +23,7 @@ fn local_get_subagents_all_lists_registry_without_socket_io() {
     );
     let tool = AgentCmdTool::new(registry);
     let result = tool
-        .try_local_command(&serde_json::json!({"command":"get_subagents_all"}))
+        .try_local_command(&serde_json::json!({"agent_id":"*","command":"get_subagents_all"}))
         .expect("get_subagents_all is local");
     assert!(!result.is_error);
     assert!(result.content.contains("w1"));
@@ -540,9 +541,10 @@ async fn test_kill_known_agent_removes_from_registry() {
         .unwrap();
     assert!(!result.is_error, "kill should succeed: {}", result.content);
     assert!(result.content.contains("killed"));
-    assert!(
-        registry.lock().unwrap().get("w1").is_none(),
-        "agent should be removed from registry"
+    assert_eq!(
+        registry.lock().unwrap()["w1"].status,
+        SubagentStatus::Exited,
+        "agent should be retained as a tombstone"
     );
 }
 

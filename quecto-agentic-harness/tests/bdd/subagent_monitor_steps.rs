@@ -387,7 +387,13 @@ fn then_registry_lacks_three(world: &mut QuectoWorld, a: String, b: String, c: S
         .expect("no cascade registry");
     let g = r.lock().unwrap();
     for id in [a.as_str(), b.as_str(), c.as_str()] {
-        assert!(!g.contains_key(id), "registry must not contain {id}");
+        let entry = g
+            .get(id)
+            .unwrap_or_else(|| panic!("registry must retain tombstone for {id}"));
+        assert_eq!(
+            entry.status,
+            quecto::infrastructure::tools::subagent_registry::SubagentStatus::Exited
+        );
     }
 }
 
@@ -453,15 +459,20 @@ fn then_forwarded_omits(world: &mut QuectoWorld, id: String) {
     assert!(!listed, "forwarded event must not list pruned {id}");
 }
 
-#[then(expr = "the registry should no longer contain {string}")]
-fn then_registry_lacks_one(world: &mut QuectoWorld, id: String) {
+#[then(expr = "the registry should contain dead tombstone {string}")]
+fn then_registry_has_dead_tombstone(world: &mut QuectoWorld, id: String) {
     let r = world
         .cascade_registry
         .as_ref()
         .expect("no cascade registry");
-    assert!(
-        !r.lock().unwrap().contains_key(&id),
-        "registry must not contain {id}"
+    let guard = r.lock().unwrap();
+    let entry = guard
+        .get(&id)
+        .unwrap_or_else(|| panic!("registry must contain {id}"));
+    assert_eq!(
+        entry.status,
+        quecto::infrastructure::tools::subagent_registry::SubagentStatus::Exited,
+        "registry tombstone must be dead for {id}"
     );
 }
 

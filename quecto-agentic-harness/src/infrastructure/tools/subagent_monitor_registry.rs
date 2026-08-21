@@ -19,9 +19,15 @@ pub fn update_entry_next_sequence(
     f: impl FnOnce(&mut SubagentEntry),
 ) -> u64 {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let next = entries
+        .values()
+        .map(|entry| entry.notification_sequence)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
     if let Some(entry) = entries.get_mut(agent_id) {
         f(entry);
-        entry.notification_sequence = entry.notification_sequence.saturating_add(1);
+        entry.notification_sequence = next;
         entry.notification_sequence
     } else {
         0

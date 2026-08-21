@@ -72,8 +72,12 @@ fn cascade_remove_and_state_changed_returns_survivor_event_only_when_removed() {
     assert!(event.contains("live"));
     assert!(!event.contains("dead"));
     let none = cascade_remove_and_state_changed(&registry, "dead");
-    assert!(none.removed.is_empty());
-    assert!(none.event.is_none());
+    assert_eq!(none.removed.len(), 1);
+    assert!(none.event.is_some());
+    assert_eq!(
+        registry.lock().unwrap()["dead"].status,
+        SubagentStatus::Exited
+    );
 }
 
 fn poison(registry: &crate::infrastructure::tools::subagent_registry::SubagentRegistry) {
@@ -100,6 +104,29 @@ fn cascade_helpers_recover_from_poisoned_registry_lock() {
     assert_eq!(removed.len(), 1);
 
     let out = cascade_remove_and_state_changed(&registry, "root");
-    assert_eq!(out.removed.len(), 1);
+    assert_eq!(out.removed.len(), 2);
     assert!(out.event.unwrap().contains("subagent_state_changed"));
+}
+
+#[test]
+fn cascade_tombstone_retained_in_registry_releases_cleanup_ownership() {
+    let registry = new_registry();
+    let mut entry = SubagentEntry::new("/tmp/dead.sock".into(), 7);
+    entry.cleanup_environment_id = Some("env-owned".into());
+    entry.cleanup_argv = vec!["cleanup".into()];
+    entry.environment_ref = Some("C1".into());
+    entry.environment_registry =
+        Some(crate::domain::environment_registry::EnvironmentRegistry::new());
+    registry.lock().unwrap().insert("dead".into(), entry);
+
+    let removed = cascade_remove(&registry, "dead");
+    assert_eq!(
+        removed[0].1.cleanup_environment_id.as_deref(),
+        Some("env-owned")
+    );
+    let retained = registry.lock().unwrap().get("dead").unwrap().clone();
+    assert!(retained.cleanup_environment_id.is_none());
+    assert!(retained.cleanup_argv.is_empty());
+    assert!(retained.environment_ref.is_none());
+    assert!(retained.environment_registry.is_none());
 }
