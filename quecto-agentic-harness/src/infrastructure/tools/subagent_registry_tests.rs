@@ -377,8 +377,6 @@ async fn command_reader_skips_connect_time_snapshot_and_returns_matching_reply()
     server.await.unwrap();
 }
 
-// --- notification channel ---
-
 #[tokio::test]
 async fn test_notification_channel_bounded() {
     let (tx, _rx) = new_notification_channel();
@@ -465,6 +463,7 @@ fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
             "state": "runningTool",
             "effort": null,
             "model": "mock",
+            "sessionKey": "cli:dog-story-writer",
             "progress": { "state": "advancing", "reason": "tool activity" },
             "generation": 7
         }
@@ -473,7 +472,7 @@ fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
         &state_snapshot,
         r#"{"type":"get_state"}"#
     ));
-    assert!(!subagent_snapshot::response_is_valid_answer(
+    assert!(subagent_snapshot::response_is_valid_answer(
         &state_snapshot,
         r#"{"type":"get_state","since":6}"#
     ));
@@ -481,7 +480,7 @@ fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
         &state_snapshot,
         r#"{"type":"get_state","since":7}"#
     ));
-    assert!(!subagent_snapshot::response_is_valid_answer(
+    assert!(subagent_snapshot::response_is_valid_answer(
         &state_snapshot,
         r#"{"type":"get_state","since":8}"#
     ));

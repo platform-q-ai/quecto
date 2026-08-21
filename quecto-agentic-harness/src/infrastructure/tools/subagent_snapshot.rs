@@ -95,11 +95,10 @@ fn get_state_snapshot_honors_since(
     if data.get("unchanged").and_then(|v| v.as_bool()) == Some(true) {
         return generation == Some(since);
     }
-    // A changed connect-time snapshot is only a point-in-time observation and
-    // cannot prove that its projection is still current when a correlated live
-    // reply would be newer. Equality is safe because finalization converts it to
-    // the bounded unchanged marker; older cursors wait for the real reply.
-    generation == Some(since)
+    // `get_state` is best-effort supervision: even a cursor request must not
+    // wait behind a busy child's live correlated reply. Any slim changed
+    // snapshot with a generation is therefore an acceptable immediate answer.
+    generation.is_some()
 }
 
 fn get_state_data_is_slim_snapshot(data: Option<&serde_json::Value>) -> bool {
@@ -116,6 +115,7 @@ fn get_state_data_is_slim_snapshot(data: Option<&serde_json::Value>) -> bool {
         "state",
         "effort",
         "model",
+        "sessionKey",
         "progress",
         "generation",
         "workflow",

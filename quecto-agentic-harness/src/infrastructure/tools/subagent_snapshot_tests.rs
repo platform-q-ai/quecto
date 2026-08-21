@@ -7,6 +7,7 @@ fn slim_get_state_snapshot_validation_rejects_malformed_projections() {
         "type": "response", "command": "get_state",
         "data": {
             "state": "runningTool", "effort": null, "model": "mock",
+            "sessionKey": "cli:dog-story-writer",
             "progress": { "state": "active", "reason": "busy" },
             "generation": 7,
             "workflow": {
