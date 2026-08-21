@@ -314,3 +314,51 @@ fn omitted_forwarded_descendant_becomes_dead_delta_instead_of_disappearing() {
     assert_eq!(delta.subagents[0].status, "dead");
     assert!(delta.sequence > seen);
 }
+
+#[test]
+fn resurrected_forwarded_descendant_returns_to_live_in_compact_roster() {
+    let registry = new_registry();
+    add(&registry, "child", None);
+    let live = serde_json::json!({"type":"subagent_state_changed","subagents":[{
+        "agentId":"grand","parentId":"child","status":"running","pid":42
+    }]});
+    merge_and_forward_state_changed(&live, &registry, "child").unwrap();
+    let seen_live = compact_roster(&registry, None).sequence;
+
+    let empty = serde_json::json!({"type":"subagent_state_changed","subagents":[]});
+    merge_and_forward_state_changed(&empty, &registry, "child").unwrap();
+    let dead_delta = compact_roster(&registry, Some(seen_live));
+    assert_eq!(dead_delta.subagents[0].status, "dead");
+
+    merge_and_forward_state_changed(&live, &registry, "child").unwrap();
+    let full = compact_roster(&registry, None);
+    let grand = full
+        .subagents
+        .iter()
+        .find(|row| row.agent_id == "grand")
+        .unwrap();
+    assert_eq!(grand.status, "running");
+}
+
+#[test]
+fn repeated_omitted_snapshot_does_not_resequence_retained_dead_descendant() {
+    let registry = new_registry();
+    add(&registry, "child", None);
+    let live = serde_json::json!({"type":"subagent_state_changed","subagents":[{
+        "agentId":"grand","parentId":"child","status":"running","pid":42
+    }]});
+    merge_and_forward_state_changed(&live, &registry, "child").unwrap();
+    let seen_live = compact_roster(&registry, None).sequence;
+
+    let empty = serde_json::json!({"type":"subagent_state_changed","subagents":[]});
+    merge_and_forward_state_changed(&empty, &registry, "child").unwrap();
+    let deletion = compact_roster(&registry, Some(seen_live));
+    assert_eq!(deletion.subagents.len(), 1);
+    let deletion_sequence = deletion.sequence;
+
+    merge_and_forward_state_changed(&empty, &registry, "child").unwrap();
+    let repeated = compact_roster(&registry, Some(deletion_sequence));
+    assert_eq!(repeated.unchanged, Some(true));
+    assert!(repeated.subagents.is_empty());
+    assert_eq!(repeated.sequence, deletion_sequence);
+}

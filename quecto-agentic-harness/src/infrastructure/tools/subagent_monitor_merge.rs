@@ -5,6 +5,8 @@
 
 use std::time::Instant;
 
+use crate::domain::session::SubagentLiveness;
+
 use super::subagent_lifecycle::SubagentLifecycleState;
 use super::subagent_registry::{SubagentEntry, SubagentRegistry, SubagentStatus};
 
@@ -147,6 +149,7 @@ fn merge_descendants(
         {
             entry.lifecycle = SubagentLifecycleState::from_status(&status);
             entry.status = status;
+            entry.persisted_liveness = SubagentLiveness::Live;
         }
         entry.last_tool = d
             .get("lastTool")
@@ -192,6 +195,9 @@ fn merge_descendants(
         .collect();
     for id in stale {
         if let Some(entry) = guard.get_mut(&id) {
+            if entry.persisted_liveness == SubagentLiveness::Dead {
+                continue;
+            }
             super::subagent_cascade::mark_entry_dead(entry, next_sequence);
             super::subagent_cascade::clear_cleanup_ownership(entry);
             next_sequence = next_sequence.saturating_add(1);
