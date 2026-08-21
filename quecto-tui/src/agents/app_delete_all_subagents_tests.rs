@@ -17,6 +17,7 @@ fn subagent(id: &str) -> SubagentInfoEvent {
         status: "running".into(),
         last_tool: None,
         last_error: None,
+        compact: false,
         pid: 1,
         socket_path: None,
         parent_id: None,

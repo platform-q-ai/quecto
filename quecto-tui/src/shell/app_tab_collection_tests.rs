@@ -158,6 +158,7 @@ fn route_sourced_subagent_same_agent_id_isolated_per_tab() {
                 status: "running".into(),
                 last_tool: None,
                 last_error: None,
+                compact: false,
                 pid: 0,
                 socket_path: None,
                 parent_id: None,

@@ -561,6 +561,7 @@ async fn routed_subagent_feed_ids_carry_connection_namespace() {
             status: "running".into(),
             last_tool: None,
             last_error: None,
+            compact: false,
             pid: 1,
             socket_path: None,
             parent_id: None,

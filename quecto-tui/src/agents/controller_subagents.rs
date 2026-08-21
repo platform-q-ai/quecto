@@ -151,8 +151,9 @@ impl App {
             if !usable_socket_path(s.socket_path.as_deref()) {
                 s.socket_path = None;
             }
-            let identity = resolve_roster_identity(&self.ac().roster.tracked, &s);
-            candidates.insert(identity, s);
+            for (identity, info) in resolve_roster_identities(&self.ac().roster.tracked, s) {
+                candidates.insert(identity, info);
+            }
         }
 
         // #1378: if an optimistic spawn row is still keyed by display label
@@ -250,31 +251,37 @@ impl App {
     }
 }
 
-/// Compact `get_subagents` rows are keyed by display `agentId`. Live events
-/// are keyed by `agentUuid`. Rematch the compact label onto an existing
-/// tracked UUID so a poll cannot evict the live row and insert a nameless
-/// stand-in.
-fn resolve_roster_identity<I: crate::agents::roster::RosterInfo>(
+/// Compact `get_subagents` rows are keyed by display `agentId` on legacy
+/// kernels and by `agentUuid` on current kernels. Rematch a legacy compact
+/// label onto existing tracked UUIDs. When a legacy label is ambiguous, apply
+/// the sparse status update to each matching row instead of collapsing multiple
+/// durable identities into one display-name key.
+fn resolve_roster_identities<I: crate::agents::roster::RosterInfo>(
     tracked: &std::collections::BTreeMap<String, crate::agents::roster::TrackedSubagent<I>>,
-    info: &I,
-) -> String {
+    info: I,
+) -> Vec<(String, I)> {
     if let Some(uuid) = info
         .agent_uuid()
         .map(sanitize_agent_id)
         .filter(|value| !value.is_empty())
     {
-        return uuid;
+        return vec![(uuid, info)];
     }
     let label = sanitize_agent_id(info.display_label());
     if tracked.contains_key(&label) {
-        return label;
+        return vec![(label, info)];
     }
-    let mut matches = tracked
+    let matches = tracked
         .iter()
         .filter(|(_, entry)| sanitize_agent_id(entry.info.display_label()) == label)
-        .map(|(id, _)| id.clone());
-    match (matches.next(), matches.next()) {
-        (Some(id), None) => id,
-        _ => label,
+        .map(|(id, _)| id.clone())
+        .collect::<Vec<_>>();
+    if matches.is_empty() {
+        vec![(label, info)]
+    } else {
+        matches
+            .into_iter()
+            .map(|id| (id, info.clone()))
+            .collect::<Vec<_>>()
     }
 }

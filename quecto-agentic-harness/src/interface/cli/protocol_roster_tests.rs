@@ -32,11 +32,10 @@ fn compact_roster_rows_have_exact_shape_and_no_rich_leaks() {
     let value = serde_json::to_value(&rows.subagents[0]).unwrap();
     assert_eq!(
         row_keys(&value),
-        vec!["agentId", "environmentRef", "status"]
+        vec!["agentId", "agentUuid", "environmentRef", "status"]
     );
     for forbidden in [
         "environment",
-        "agentUuid",
         "displayName",
         "lastTool",
         "lastError",
@@ -180,4 +179,40 @@ fn compact_roster_since_old_returns_changed_rows_only() {
     assert_eq!(delta.sequence, 3);
     assert_eq!(delta.subagents.len(), 1);
     assert_eq!(delta.subagents[0].agent_id, "b");
+}
+
+#[test]
+fn compact_roster_rows_carry_durable_uuid_for_duplicate_display_names() {
+    let reg = new_registry();
+    {
+        let mut guard = reg.lock().unwrap();
+        let mut first = SubagentEntry::with_identity(
+            crate::domain::ids::AgentUuid::new("uuid-dup-a"),
+            "dup".to_string(),
+            "/tmp/dup-a.sock".into(),
+            11,
+        );
+        first.notification_sequence = 1;
+        let mut second = SubagentEntry::with_identity(
+            crate::domain::ids::AgentUuid::new("uuid-dup-b"),
+            "dup".to_string(),
+            "/tmp/dup-b.sock".into(),
+            22,
+        );
+        second.notification_sequence = 2;
+        guard.insert(first.agent_uuid.to_string(), first);
+        guard.insert(second.agent_uuid.to_string(), second);
+    }
+
+    let rows = build_compact_subagent_roster(&Some(reg), None).unwrap();
+    assert_eq!(rows.subagents.len(), 2);
+    assert_eq!(rows.subagents[0].agent_id, "dup");
+    assert_eq!(rows.subagents[1].agent_id, "dup");
+    let mut uuids = rows
+        .subagents
+        .iter()
+        .map(|row| row.agent_uuid.as_deref())
+        .collect::<Vec<_>>();
+    uuids.sort_unstable();
+    assert_eq!(uuids, vec![Some("uuid-dup-a"), Some("uuid-dup-b")]);
 }

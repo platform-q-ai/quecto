@@ -207,3 +207,120 @@ async fn compact_poll_keeps_rich_environment_identity() {
     assert_eq!(env.name.as_deref(), Some("pr-env"));
     assert_eq!(env.workspace, "/work/pr-42");
 }
+
+fn rich_agent_with_sticky_fields(id: &str, uuid: &str, socket: &str) -> serde_json::Value {
+    serde_json::json!({
+        "agentId": id,
+        "displayName": id,
+        "agentUuid": uuid,
+        "status": "running",
+        "lastTool": "bash",
+        "lastError": "boom",
+        "pid": 4242,
+        "socketPath": socket,
+        "readOnly": true,
+    })
+}
+
+#[tokio::test]
+async fn compact_status_refresh_preserves_presence_sensitive_sticky_fields() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    let uuid = "uuid-reviewer";
+    let socket = spawn_subagent_socket("reviewer-sticky");
+    let socket_path = socket.to_string_lossy().to_string();
+    h.event_line(&state_changed_line(vec![rich_agent_with_sticky_fields(
+        "reviewer",
+        uuid,
+        &socket_path,
+    )]));
+
+    h.event_line(&compact_get_subagents_response_line(vec![compact_row(
+        "reviewer", "idle", None,
+    )]));
+
+    let tracked = &h.app_mut().ac().roster.tracked[uuid];
+    assert_eq!(tracked.info.status, "idle");
+    assert!(
+        tracked.info.read_only,
+        "absent compact readOnly must preserve observer state"
+    );
+    assert_eq!(tracked.info.last_tool.as_deref(), Some("bash"));
+    assert_eq!(tracked.info.last_error.as_deref(), Some("boom"));
+}
+
+#[tokio::test]
+async fn legacy_ambiguous_compact_row_does_not_collapse_duplicate_display_names() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event_line(&state_changed_line(vec![
+        rich_local_agent(
+            "dup",
+            "uuid-dup-a",
+            &spawn_subagent_socket("dup-a").to_string_lossy(),
+        ),
+        rich_local_agent(
+            "dup",
+            "uuid-dup-b",
+            &spawn_subagent_socket("dup-b").to_string_lossy(),
+        ),
+    ]));
+
+    h.event_line(&compact_get_subagents_response_line(vec![compact_row(
+        "dup", "idle", None,
+    )]));
+
+    let tracked = &h.app_mut().ac().roster.tracked;
+    assert!(tracked.contains_key("uuid-dup-a"));
+    assert!(tracked.contains_key("uuid-dup-b"));
+    assert_eq!(
+        tracked.len(),
+        2,
+        "ambiguous legacy compact row must not collapse UUID rows"
+    );
+    assert_eq!(tracked["uuid-dup-a"].info.status, "idle");
+    assert_eq!(tracked["uuid-dup-b"].info.status, "idle");
+}
+
+#[tokio::test]
+async fn compact_environment_ref_change_does_not_restore_stale_rich_environment() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event_line(&state_changed_line(vec![env_agent_json("impl", "C1")]));
+
+    h.event_line(&compact_get_subagents_response_line(vec![compact_row(
+        "impl",
+        "running",
+        Some("C2"),
+    )]));
+
+    let tracked = &h.app_mut().ac().roster.tracked["uuid-impl"];
+    let env = tracked
+        .info
+        .environment
+        .as_ref()
+        .expect("new compact ref must remain present");
+    assert_eq!(env.environment_ref, "C2");
+    assert_ne!(
+        env.name.as_deref(),
+        Some("pr-env"),
+        "rich C1 metadata must not enrich a C2 row"
+    );
+}
+
+#[tokio::test]
+async fn compact_environment_ref_removal_clears_stale_environment() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event_line(&state_changed_line(vec![env_agent_json("impl", "C1")]));
+
+    h.event_line(&compact_get_subagents_response_line(vec![compact_row(
+        "impl", "running", None,
+    )]));
+
+    let tracked = &h.app_mut().ac().roster.tracked["uuid-impl"];
+    assert!(
+        tracked.info.environment.is_none(),
+        "compact removal without environmentRef must not keep stale C1 metadata"
+    );
+}

@@ -6,65 +6,125 @@
 //! sub-agents. Additive camelCase fields with lenient defaults keep older
 //! kernels parseable.
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 /// Wire-format subagent info from `subagent_state_changed` events and
 /// `get_subagents` responses (#524/#525).
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct SubagentInfoEvent {
     /// Compatibility display label from legacy `agentId`.
     pub agent_id: String,
-    #[serde(default)]
     pub agent_uuid: Option<String>,
-    #[serde(default)]
     pub display_name: Option<String>,
     pub status: String,
-    #[serde(default)]
     pub last_tool: Option<String>,
-    #[serde(default)]
     pub last_error: Option<String>,
+    /// True for sparse compact `get_subagents` DTO rows. Not wire-serialised;
+    /// deserialization marks rows so sticky merge can distinguish absent compact
+    /// fields from explicit full-event false/none.
+    pub compact: bool,
     /// Compact `get_subagents` rows omit `pid`; treat that as unknown (0)
     /// instead of failing the whole roster parse and wiping the left panel.
-    #[serde(default)]
     pub pid: u32,
     /// Path to this sub-agent's own UDS socket, used to open a direct
     /// connect-on-select connection to its live stream (#800). `None` when the
     /// kernel did not surface it (older servers / non-local agents).
-    #[serde(default)]
     pub socket_path: Option<String>,
     /// Spawning agent's id, for reconstructing the unit tree (PRD Stage B).
-    #[serde(default)]
     pub parent_id: Option<String>,
     /// Latest workflow snapshot for this subagent, if any (PRD Stage B).
-    #[serde(default)]
     pub workflow: Option<SubagentWorkflow>,
     /// Whether this sub-agent was spawned read-only (`write` + `edit` disabled).
     /// Drives the observer marker in the left panel (#966). Defaults to `false`
     /// for older kernels that did not surface the field.
-    #[serde(default)]
     pub read_only: bool,
     /// How the sub-agent runs: `local` process or script-managed (`script`).
     /// Additive versioned field (#1369 slice 4); `None` on sparse refreshes and
     /// older kernels, preserved through sticky merge.
-    #[serde(default)]
     pub execution_backend: Option<String>,
     /// Environment metadata for script-managed sub-agents; `None` for local
     /// ones. Additive versioned field (#1369 slice 4), preserved through
     /// sticky merge on sparse refreshes.
-    #[serde(
-        default,
-        alias = "environmentRef",
-        deserialize_with = "deserialize_environment"
-    )]
     pub environment: Option<SubagentEnvironmentInfo>,
+}
+
+impl SubagentInfoEvent {
+    pub fn is_compact(&self) -> bool {
+        self.compact
+    }
+}
+
+impl<'de> Deserialize<'de> for SubagentInfoEvent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Wire {
+            agent_id: String,
+            #[serde(default)]
+            agent_uuid: Option<String>,
+            #[serde(default)]
+            display_name: Option<String>,
+            status: String,
+            #[serde(default)]
+            last_tool: Option<String>,
+            #[serde(default)]
+            last_error: Option<String>,
+            #[serde(default)]
+            pid: Option<u32>,
+            #[serde(default)]
+            socket_path: Option<String>,
+            #[serde(default)]
+            parent_id: Option<String>,
+            #[serde(default)]
+            workflow: Option<SubagentWorkflow>,
+            #[serde(default)]
+            read_only: Option<bool>,
+            #[serde(default)]
+            execution_backend: Option<String>,
+            #[serde(
+                default,
+                alias = "environmentRef",
+                deserialize_with = "deserialize_environment"
+            )]
+            environment: Option<SubagentEnvironmentInfo>,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        let compact = wire.pid.is_none()
+            && wire.socket_path.is_none()
+            && wire.parent_id.is_none()
+            && wire.workflow.is_none()
+            && wire.read_only.is_none()
+            && wire.execution_backend.is_none()
+            && wire.last_tool.is_none()
+            && wire.last_error.is_none();
+        Ok(Self {
+            agent_id: wire.agent_id,
+            agent_uuid: wire.agent_uuid,
+            display_name: wire.display_name,
+            status: wire.status,
+            last_tool: wire.last_tool,
+            last_error: wire.last_error,
+            compact,
+            pid: wire.pid.unwrap_or(0),
+            socket_path: wire.socket_path,
+            parent_id: wire.parent_id,
+            workflow: wire.workflow,
+            read_only: wire.read_only.unwrap_or(false),
+            execution_backend: wire.execution_backend,
+            environment: wire.environment,
+        })
+    }
 }
 
 fn deserialize_environment<'de, D>(
     deserializer: D,
 ) -> Result<Option<SubagentEnvironmentInfo>, D::Error>
 where
-    D: serde::Deserializer<'de>,
+    D: Deserializer<'de>,
 {
     #[derive(Deserialize)]
     #[serde(untagged)]

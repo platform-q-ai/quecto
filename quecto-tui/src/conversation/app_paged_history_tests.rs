@@ -155,6 +155,7 @@ async fn subagent_older_history_request_is_disabled_after_legacy_backfill_remova
             status: "idle".into(),
             last_tool: None,
             last_error: None,
+            compact: false,
             pid: 7,
             socket_path: Some("/tmp/worker.sock".into()),
             parent_id: None,
