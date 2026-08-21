@@ -42,6 +42,21 @@ fn parse_get_state_footer_strips_control_characters() {
 }
 
 #[test]
+fn real_harness_get_state_contract_drives_effort_and_resume() {
+    let data: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../quecto-agentic-harness/tests/fixtures/get_state_effort_contract.json"
+    ))
+    .unwrap();
+    let snap = parse_get_state(&data, &sanitize);
+    assert_eq!(
+        snap.effort_levels,
+        vec!["none", "low", "medium", "high", "xhigh"]
+    );
+    assert_eq!(snap.footer.effort.as_deref(), Some("high"));
+    assert_eq!(snap.session_key.as_deref(), Some("cli:contract-worker"));
+}
+
+#[test]
 fn parse_get_state_collects_effort_levels_and_session_key() {
     let snap = parse_get_state(
         &json!({

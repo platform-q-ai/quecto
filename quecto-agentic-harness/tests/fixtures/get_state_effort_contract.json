@@ -1,0 +1,12 @@
+{
+  "state": "idle",
+  "effort": "high",
+  "effortLevels": ["none", "low", "medium", "high", "xhigh"],
+  "model": "openai-oauth/gpt-5.5",
+  "sessionKey": "cli:contract-worker",
+  "progress": {
+    "state": "quiet",
+    "reason": "no tool activity in the last 120 seconds"
+  },
+  "generation": 12
+}
