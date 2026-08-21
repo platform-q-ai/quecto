@@ -70,7 +70,14 @@ impl RosterInfo for SubagentInfoEvent {
         // metadata from a richer but older event.
         let sparse = self.execution_backend.is_none();
         if sparse {
-            self.execution_backend = previous.execution_backend.clone();
+            let same_environment_ref = self.environment.as_ref().and_then(|current_env| {
+                previous.environment.as_ref().filter(|previous_env| {
+                    current_env.environment_ref == previous_env.environment_ref
+                })
+            });
+            if !self.is_compact() || same_environment_ref.is_some() {
+                self.execution_backend = previous.execution_backend.clone();
+            }
             match (&self.environment, &previous.environment) {
                 (None, Some(previous_env)) if !self.is_compact() => {
                     self.environment = Some(previous_env.clone());

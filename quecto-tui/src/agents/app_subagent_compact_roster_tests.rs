@@ -309,7 +309,7 @@ async fn compact_environment_ref_change_does_not_restore_stale_rich_environment(
 }
 
 #[tokio::test]
-async fn compact_environment_ref_removal_clears_stale_environment() {
+async fn compact_environment_ref_removal_clears_stale_environment_and_backend() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
     h.event_line(&state_changed_line(vec![env_agent_json("impl", "C1")]));
@@ -323,4 +323,63 @@ async fn compact_environment_ref_removal_clears_stale_environment() {
         tracked.info.environment.is_none(),
         "compact removal without environmentRef must not keep stale C1 metadata"
     );
+    assert_eq!(
+        tracked.info.execution_backend, None,
+        "compact removal without environmentRef must not keep stale script backend"
+    );
+}
+
+#[tokio::test]
+async fn compact_environment_ref_change_clears_stale_backend() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event_line(&state_changed_line(vec![env_agent_json("impl", "C1")]));
+
+    h.event_line(&compact_get_subagents_response_line(vec![compact_row(
+        "impl",
+        "running",
+        Some("C2"),
+    )]));
+
+    let tracked = &h.app_mut().ac().roster.tracked["uuid-impl"];
+    assert_eq!(
+        tracked
+            .info
+            .environment
+            .as_ref()
+            .map(|e| e.environment_ref.as_str()),
+        Some("C2")
+    );
+    assert_eq!(
+        tracked.info.execution_backend, None,
+        "compact ref change must not keep stale script backend from C1"
+    );
+}
+
+#[tokio::test]
+async fn legacy_compact_duplicate_name_does_not_revive_retained_terminal_row_before_gc() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event_line(&state_changed_line(vec![rich_local_agent(
+        "dup",
+        "uuid-dup-old",
+        &spawn_subagent_socket("dup-old").to_string_lossy(),
+    )]));
+    h.event_line(&compact_get_subagents_response_line(vec![compact_row(
+        "dup", "exited", None,
+    )]));
+
+    h.event_line(&compact_get_subagents_response_line(vec![compact_row(
+        "dup", "idle", None,
+    )]));
+
+    let tracked = &h.app_mut().ac().roster.tracked;
+    assert_eq!(tracked.len(), 1);
+    assert_eq!(tracked["uuid-dup-old"].info.status, "exited");
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    assert!(
+        h.app_mut().gc_exited_subagents(),
+        "terminal duplicate-name row must stay terminal so normal GC can reclaim it"
+    );
+    assert!(h.app_mut().ac().roster.tracked.is_empty());
 }

@@ -268,20 +268,31 @@ fn resolve_roster_identities<I: crate::agents::roster::RosterInfo>(
         return vec![(uuid, info)];
     }
     let label = sanitize_agent_id(info.display_label());
-    if tracked.contains_key(&label) {
+    let is_live_match = |entry: &crate::agents::roster::TrackedSubagent<I>| {
+        !crate::agents::roster::subagent_status_is_terminal(entry.info.status())
+    };
+    if tracked.get(&label).is_some_and(is_live_match) {
         return vec![(label, info)];
     }
     let matches = tracked
         .iter()
-        .filter(|(_, entry)| sanitize_agent_id(entry.info.display_label()) == label)
+        .filter(|(_, entry)| {
+            is_live_match(entry) && sanitize_agent_id(entry.info.display_label()) == label
+        })
         .map(|(id, _)| id.clone())
         .collect::<Vec<_>>();
-    if matches.is_empty() {
-        vec![(label, info)]
-    } else {
-        matches
+    if !matches.is_empty() {
+        return matches
             .into_iter()
             .map(|id| (id, info.clone()))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+    }
+    if tracked.values().any(|entry| {
+        crate::agents::roster::subagent_status_is_terminal(entry.info.status())
+            && sanitize_agent_id(entry.info.display_label()) == label
+    }) {
+        Vec::new()
+    } else {
+        vec![(label, info)]
     }
 }
