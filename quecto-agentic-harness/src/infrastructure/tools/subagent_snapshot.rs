@@ -46,7 +46,9 @@ pub(super) fn response_is_valid_answer(json: &serde_json::Value, command: &str) 
             // only the slim projection (or unchanged cursor response), never the
             // legacy bulky snapshot marker/message-count shape. A request carrying
             // `since` can use an id-less snapshot only at exactly that generation,
-            // where finalization turns it into the bounded unchanged marker.
+            // where finalization turns it into the bounded unchanged marker; older
+            // cursors wait for the correlated live reply so a connect-time
+            // projection cannot hide a fresher generation.
             cmd.get("count").is_none()
                 && json.get("command").and_then(|v| v.as_str()) == Some("get_state")
                 && get_state_data_is_slim_snapshot(json.pointer("/data"))
@@ -93,12 +95,11 @@ fn get_state_snapshot_honors_since(
     if data.get("unchanged").and_then(|v| v.as_bool()) == Some(true) {
         return generation == Some(since);
     }
-    // A busy child cannot answer a correlated `get_state` until its running
-    // turn yields, so the connect-time slim projection is the prompt answer for
-    // cursors at or behind the snapshot generation. Equality is finalized into
-    // the bounded unchanged marker; a newer generation is a valid changed
-    // snapshot and must not wait behind the running turn.
-    generation.is_some_and(|generation| generation >= since)
+    // A changed connect-time snapshot is only a point-in-time observation and
+    // cannot prove that its projection is still current when a correlated live
+    // reply would be newer. Equality is safe because finalization converts it to
+    // the bounded unchanged marker; older cursors wait for the real reply.
+    generation == Some(since)
 }
 
 fn get_state_data_is_slim_snapshot(data: Option<&serde_json::Value>) -> bool {

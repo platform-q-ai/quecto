@@ -473,7 +473,7 @@ fn snapshot_response_is_valid_for_uncounted_get_messages_and_get_state_only() {
         &state_snapshot,
         r#"{"type":"get_state"}"#
     ));
-    assert!(subagent_snapshot::response_is_valid_answer(
+    assert!(!subagent_snapshot::response_is_valid_answer(
         &state_snapshot,
         r#"{"type":"get_state","since":6}"#
     ));
