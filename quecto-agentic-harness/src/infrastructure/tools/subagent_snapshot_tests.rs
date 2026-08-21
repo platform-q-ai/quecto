@@ -72,3 +72,27 @@ fn slim_get_state_snapshot_validation_rejects_malformed_projections() {
         assert!(!response_is_valid_answer(&malformed, command));
     }
 }
+
+#[test]
+fn older_get_state_snapshot_finalizes_to_unchanged_at_caller_cursor() {
+    let snapshot = serde_json::json!({
+        "type": "response",
+        "command": "get_state",
+        "data": {
+            "state": "runningTool",
+            "effort": null,
+            "model": "mock",
+            "sessionKey": "cli:dog-story-writer",
+            "progress": { "state": "active", "reason": "busy" },
+            "generation": 7
+        }
+    });
+    let command = r#"{"type":"get_state","since":8}"#;
+    assert!(response_is_valid_answer(&snapshot, command));
+    let finalized = finalize_snapshot_answer(snapshot.to_string(), snapshot, command);
+    let json: serde_json::Value = serde_json::from_str(&finalized).unwrap();
+    assert_eq!(
+        json["data"],
+        serde_json::json!({ "unchanged": true, "generation": 8 })
+    );
+}

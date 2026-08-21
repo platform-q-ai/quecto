@@ -44,11 +44,11 @@ pub(super) fn response_is_valid_answer(json: &serde_json::Value, command: &str) 
             // command shape can never be silently answered by the snapshot. #1512
             // slim busy snapshots are intentionally id-less and unmarked: accept
             // only the slim projection (or unchanged cursor response), never the
-            // legacy bulky snapshot marker/message-count shape. A request carrying
-            // `since` can use an id-less snapshot only at exactly that generation,
-            // where finalization turns it into the bounded unchanged marker; older
-            // cursors wait for the correlated live reply so a connect-time
-            // projection cannot hide a fresher generation.
+            // legacy bulky snapshot marker/message-count shape. `get_state` is
+            // best-effort and must not wait for a live reply: a `since` cursor
+            // may use any slim snapshot with a generation. Older snapshots are
+            // finalized to the bounded unchanged marker at the caller's cursor
+            // instead of answering with a rewind or waiting for a live reply.
             cmd.get("count").is_none()
                 && json.get("command").and_then(|v| v.as_str()) == Some("get_state")
                 && get_state_data_is_slim_snapshot(json.pointer("/data"))
@@ -95,9 +95,9 @@ fn get_state_snapshot_honors_since(
     if data.get("unchanged").and_then(|v| v.as_bool()) == Some(true) {
         return generation == Some(since);
     }
-    // `get_state` is best-effort supervision: even a cursor request must not
-    // wait behind a busy child's live correlated reply. Any slim changed
-    // snapshot with a generation is therefore an acceptable immediate answer.
+    // Best-effort and non-blocking: any slim snapshot with a generation can
+    // answer immediately. Finalize converts equal/older generations into the
+    // bounded unchanged marker so a newer cursor never rewinds.
     generation.is_some()
 }
 
@@ -206,11 +206,11 @@ pub(super) fn finalize_snapshot_answer(
                 .and_then(|v| v.as_u64()),
             json.pointer("/data/generation").and_then(|v| v.as_u64()),
         ) {
-            if generation == since
+            if generation <= since
                 && json.pointer("/data/unchanged").and_then(|v| v.as_bool()) != Some(true)
             {
                 if let Some(data) = json.pointer_mut("/data") {
-                    *data = serde_json::json!({"unchanged": true, "generation": generation});
+                    *data = serde_json::json!({"unchanged": true, "generation": since});
                 }
                 return json.to_string();
             }

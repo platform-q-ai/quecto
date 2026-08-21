@@ -265,8 +265,7 @@ fn registry_lookup_and_request_id_helpers_cover_success_and_fallbacks() {
     assert!(invalid_id.is_none());
 }
 
-#[tokio::test]
-async fn command_reader_returns_busy_get_state_snapshot_without_waiting_for_live_reply() {
+async fn busy_get_state_snapshot_without_live_reply(command: &str) -> serde_json::Value {
     use tokio::io::{AsyncWriteExt, BufReader};
     let dir = tempfile::tempdir().unwrap();
     let sock = dir.path().join("busy-state.sock");
@@ -305,18 +304,28 @@ async fn command_reader_returns_busy_get_state_snapshot_without_waiting_for_live
 
     let reply = tokio::time::timeout(
         std::time::Duration::from_millis(250),
-        send_subagent_uds_command_with_timeout(
-            &sock,
-            r#"{"type":"get_state"}"#,
-            std::time::Duration::from_secs(10),
-        ),
+        send_subagent_uds_command_with_timeout(&sock, command, std::time::Duration::from_secs(10)),
     )
     .await
     .expect("get_state must return the id-less snapshot immediately")
     .expect("snapshot should be accepted");
-    let json: serde_json::Value = serde_json::from_str(&reply).unwrap();
+    server.abort();
+    serde_json::from_str(&reply).unwrap()
+}
+
+#[tokio::test]
+async fn command_reader_returns_busy_get_state_snapshot_without_waiting_for_live_reply() {
+    let json = busy_get_state_snapshot_without_live_reply(r#"{"type":"get_state"}"#).await;
     assert_eq!(json["data"]["sessionKey"], "cli:dog-story-writer");
     assert_eq!(json["data"]["generation"], 9);
+}
 
-    server.abort();
+#[tokio::test]
+async fn command_reader_finalizes_older_busy_get_state_snapshot_to_unchanged() {
+    let json =
+        busy_get_state_snapshot_without_live_reply(r#"{"type":"get_state","since":10}"#).await;
+    assert_eq!(
+        json["data"],
+        serde_json::json!({ "unchanged": true, "generation": 10 })
+    );
 }

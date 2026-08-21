@@ -286,12 +286,12 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     And the agent_cmd response command "get_state" should not include field "state"
 
   @done @serial
-  Scenario: get_state since waits for the fresher live reply instead of returning a stale busy snapshot
+  Scenario: get_state since returns the busy snapshot immediately instead of waiting for a fresher live reply
     Given an AgentCmdTool with a stale busy state snapshot registry entry "busy-state-since-slow-live"
     When I execute agent_cmd with '{"agent_id":"busy-state-since-slow-live","command":"get_state","since":6}'
     Then the agent_cmd result should not be an error
-    And the agent_cmd result should contain '"generation":8'
-    And the agent_cmd result should contain '"state":"idle"'
+    And the agent_cmd result should contain '"generation":7'
+    And the agent_cmd result should contain '"state":"runningTool"'
     And the agent_cmd response command "get_state" should not include field "workflow"
 
   @serial
