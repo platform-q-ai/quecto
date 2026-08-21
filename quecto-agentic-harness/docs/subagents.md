@@ -150,7 +150,8 @@ Completion is **multi-turn**. The `agent_cmd await` command has been removed; us
 #### Optional tools (not wait loops)
 
 - `get_state` — occasional live progress/debug.
-- `get_subagents_all` — inventory and cleanup **after** coordination, not completion waiting.
+- `get_subagents_all` with `agent_id: "*"` — parent/session-wide inventory and cleanup **after** coordination, not completion waiting.
+- `get_subagents` — send to a specific live subagent to list only that agent's nested children; a child with no nested agents returns `subagents: []`.
 - `abort` / `kill` — stop work or the process when needed.
 
 If you need the child’s answer before you can help the user, **yield the turn**
@@ -413,7 +414,8 @@ output (see [Notification model](#notification-model)).
 | `get_state` | Inspect live/in-flight supervision state: slim state/effort/model/progress, generation cursor, and selected workflow identity/current step. Pass `since` for an unchanged marker | No |
 | `get_messages` | Default report mode: omit/null `count` and `before` after the completion note to receive the unread report. Explicit `count` and/or `before` requests cursor-neutral history pages; `before` pages older history. A busy snapshot can lag the active turn | No |
 | `get_session_stats` | Get token usage and cost | No |
-| `get_subagents` | List subagents spawned by this agent | No |
+| `get_subagents` | List nested subagents spawned by the targeted live subagent; not parent/session-wide inventory | No |
+| `get_subagents_all` | With `agent_id: "*"`, list parent/session-wide subagent inventory for cleanup/inspection | No |
 | `get_tool_catalogue` / `list_tools` | Return rich tool catalogue snapshot | No |
 | `set_model` | Change the LLM model | No |
 | `set_effort` | Change the reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`, validated against the child's active model; invalid values are rejected with the valid list) | No |
