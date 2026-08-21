@@ -367,6 +367,9 @@ fn install_busy_state_snapshot_entry(
                     response["data"]["progress"] =
                         serde_json::json!({"state": "idle", "reason": "completed"});
                     response["data"].as_object_mut().unwrap().remove("workflow");
+                    if snapshot_shape.contains("slow-live") {
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                    }
                     let _ = writeln!(stream, "{}", response);
                     let _ = stream.flush();
                 }
