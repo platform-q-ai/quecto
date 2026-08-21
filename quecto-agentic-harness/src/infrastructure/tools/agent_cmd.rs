@@ -87,7 +87,7 @@ impl AgentCmdTool {
     fn try_local_command(&self, args: &serde_json::Value) -> Option<ToolResult> {
         let command = args.get("command").and_then(|v| v.as_str())?;
         if command == "get_subagents_all" {
-            return Some(self.list_all_subagents());
+            return Some(self.list_all_subagents(args));
         }
         None
     }
@@ -133,11 +133,38 @@ impl AgentCmdTool {
     }
 
     /// List every subagent currently tracked by this parent agent's registry.
-    fn list_all_subagents(&self) -> ToolResult {
-        let subagents =
-            crate::interface::cli::protocol::build_subagent_info_list(&Some(self.registry.clone()));
+    fn list_all_subagents(&self, args: &serde_json::Value) -> ToolResult {
+        let since = match args.get("since") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(v) => match v.as_u64() {
+                Some(s) => Some(s),
+                None => {
+                    return ToolResult {
+                        content: "agent_cmd error: invalid since cursor".into(),
+                        is_error: true,
+                        image_blocks: vec![],
+                        delivery_metadata: None,
+                    };
+                }
+            },
+        };
+        let roster = crate::interface::cli::protocol::build_compact_subagent_roster(
+            &Some(self.registry.clone()),
+            since,
+        );
+        let content = match roster {
+            Ok(roster) => serde_json::to_string(&roster).unwrap_or_else(|_| "{}".to_string()),
+            Err(e) => {
+                return ToolResult {
+                    content: format!("agent_cmd error: {e}"),
+                    is_error: true,
+                    image_blocks: vec![],
+                    delivery_metadata: None,
+                };
+            }
+        };
         ToolResult {
-            content: serde_json::json!({"subagents": subagents}).to_string(),
+            content,
             is_error: false,
             image_blocks: vec![],
             delivery_metadata: None,

@@ -2,6 +2,7 @@
 // the survivor-only `subagent_state_changed` so connected clients (the TUI
 // panel) drop the whole dead sub-tree promptly instead of letting it linger.
 use super::*;
+use crate::infrastructure::tools::subagent_registry::SubagentStatus;
 use std::path::PathBuf;
 
 fn child_entry(parent: &str) -> SubagentEntry {
@@ -35,9 +36,9 @@ async fn kill_cascade_removes_subtree_and_broadcasts_survivors() {
 
     // Whole dead sub-tree pruned; the live sibling is untouched.
     let g = registry.lock().unwrap();
-    assert!(!g.contains_key("parent"));
-    assert!(!g.contains_key("child"));
-    assert!(!g.contains_key("gchild"));
+    assert_eq!(g["parent"].status, SubagentStatus::Exited);
+    assert_eq!(g["child"].status, SubagentStatus::Exited);
+    assert_eq!(g["gchild"].status, SubagentStatus::Exited);
     assert!(g.contains_key("live"), "live agent must never be removed");
     drop(g);
 
@@ -99,7 +100,13 @@ async fn kill_signals_await_aborts_monitor_and_sigterms_live_pid() {
         tokio::task::yield_now().await;
     }
     assert!(monitor.is_finished(), "monitor task should be aborted");
-    assert!(registry.lock().unwrap().is_empty());
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .values()
+            .all(|e| e.status == SubagentStatus::Exited)
+    );
 
     // Reap the sleep child (kill_agent SIGTERMed it; ensure no zombie).
     let mut child = child;
@@ -141,7 +148,13 @@ async fn kill_parent_sigterms_descendant_processes_not_just_named_agent() {
 
     let result = tool.kill_agent("parent").await;
     assert!(!result.is_error);
-    assert!(registry.lock().unwrap().is_empty());
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .values()
+            .all(|e| e.status == SubagentStatus::Exited)
+    );
 
     // Both the parent AND the descendant process received SIGTERM and exit.
     // (Reap to confirm; without the descendant SIGTERM, gchild would still be

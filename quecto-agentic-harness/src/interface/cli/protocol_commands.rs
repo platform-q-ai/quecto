@@ -211,6 +211,8 @@ pub enum AgentCommand {
     GetSubagents {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        since: Option<u64>,
     },
     /// Terminate and remove every tracked sub-agent.
     DeleteAllSubagents {
@@ -329,7 +331,7 @@ impl AgentCommand {
             Self::ClearHistory { id } => id.as_deref(),
             Self::RewindTo { id, .. } => id.as_deref(),
             Self::SetWorkflowAutomation { id, .. } => id.as_deref(),
-            Self::GetSubagents { id } => id.as_deref(),
+            Self::GetSubagents { id, .. } => id.as_deref(),
             Self::DeleteAllSubagents { id } => id.as_deref(),
             Self::GetMessage { id, .. } => id.as_deref(),
         }

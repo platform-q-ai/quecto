@@ -21,5 +21,11 @@ async fn test_get_subagents_all_lists_parent_registry_with_star_agent_id() {
     assert!(!result.is_error, "list should succeed: {}", result.content);
     let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
     assert_eq!(parsed["subagents"][0]["agentId"], "w1");
-    assert_eq!(parsed["subagents"][0]["pid"], 123);
+    assert_eq!(parsed["subagents"][0]["status"], "running");
+    assert!(
+        !parsed["subagents"][0]
+            .as_object()
+            .unwrap()
+            .contains_key("pid")
+    );
 }

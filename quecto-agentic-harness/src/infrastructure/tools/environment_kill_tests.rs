@@ -4,7 +4,9 @@ use crate::domain::environment_registry::{
 use crate::environment_control_app::EnvironmentKillPort;
 
 use super::ScriptEnvironmentKill;
-use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+use crate::infrastructure::tools::subagent_registry::{
+    SubagentEntry, SubagentStatus, new_registry,
+};
 
 fn record(retained_kill_argv: Vec<String>) -> EnvironmentRecord {
     record_with_members(retained_kill_argv, vec![])
@@ -68,7 +70,10 @@ fn kill_environment_terminates_members_broadcasts_state_and_runs_retained_kill()
     )));
 
     assert!(result.is_ok(), "{result:?}");
-    assert!(!registry.lock().unwrap().contains_key("parent"));
+    assert_eq!(
+        registry.lock().unwrap()["parent"].status,
+        SubagentStatus::Exited
+    );
     assert!(registry.lock().unwrap().contains_key("child"));
     assert_eq!(
         parent_exit_rx.borrow_and_update().as_ref().unwrap().signal,

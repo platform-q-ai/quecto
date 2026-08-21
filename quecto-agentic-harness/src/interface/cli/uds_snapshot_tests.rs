@@ -548,7 +548,7 @@ fn build_get_subagents_line_serializes_registry_view() {
     assert_eq!(agents.len(), 1, "one registered subagent: {line}");
     assert_eq!(agents[0]["agentId"], "grandchild-worker");
     assert_eq!(agents[0]["status"], "running");
-    assert_eq!(agents[0]["pid"], 4321);
+    assert!(!agents[0].as_object().unwrap().contains_key("pid"));
 }
 
 /// The connect-time `get_subagents` snapshot is tagged `snapshot: true` so a

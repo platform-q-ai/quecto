@@ -387,7 +387,13 @@ fn then_registry_lacks_three(world: &mut QuectoWorld, a: String, b: String, c: S
         .expect("no cascade registry");
     let g = r.lock().unwrap();
     for id in [a.as_str(), b.as_str(), c.as_str()] {
-        assert!(!g.contains_key(id), "registry must not contain {id}");
+        let entry = g
+            .get(id)
+            .unwrap_or_else(|| panic!("registry must retain tombstone for {id}"));
+        assert_eq!(
+            entry.status,
+            quecto::infrastructure::tools::subagent_registry::SubagentStatus::Exited
+        );
     }
 }
 

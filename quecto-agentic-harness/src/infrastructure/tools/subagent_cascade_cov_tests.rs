@@ -72,8 +72,12 @@ fn cascade_remove_and_state_changed_returns_survivor_event_only_when_removed() {
     assert!(event.contains("live"));
     assert!(!event.contains("dead"));
     let none = cascade_remove_and_state_changed(&registry, "dead");
-    assert!(none.removed.is_empty());
-    assert!(none.event.is_none());
+    assert_eq!(none.removed.len(), 1);
+    assert!(none.event.is_some());
+    assert_eq!(
+        registry.lock().unwrap()["dead"].status,
+        SubagentStatus::Exited
+    );
 }
 
 fn poison(registry: &crate::infrastructure::tools::subagent_registry::SubagentRegistry) {
@@ -100,6 +104,6 @@ fn cascade_helpers_recover_from_poisoned_registry_lock() {
     assert_eq!(removed.len(), 1);
 
     let out = cascade_remove_and_state_changed(&registry, "root");
-    assert_eq!(out.removed.len(), 1);
+    assert_eq!(out.removed.len(), 2);
     assert!(out.event.unwrap().contains("subagent_state_changed"));
 }

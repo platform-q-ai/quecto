@@ -54,11 +54,19 @@ pub(super) fn get_message_response_data(
     }
 }
 
+#[cfg(test)]
 pub(super) fn query_response_data(
     cmd: &AgentCommand,
     ctx: &DispatchCtx<'_>,
 ) -> Option<serde_json::Value> {
-    match cmd {
+    query_response_data_result(cmd, ctx).ok().flatten()
+}
+
+pub(super) fn query_response_data_result(
+    cmd: &AgentCommand,
+    ctx: &DispatchCtx<'_>,
+) -> Result<Option<serde_json::Value>, String> {
+    let data = match cmd {
         AgentCommand::GetState { since, .. } => {
             let (workflow, workflow_revision) =
                 ctx.workflow_state.as_ref().map_or((None, 0), |ws| {
@@ -135,10 +143,13 @@ pub(super) fn query_response_data(
             "tools": ctx.agent.tool_catalogue_entries(),
         })),
         AgentCommand::ListModels { .. } => Some(super::uds_models::list_models_response(ctx)),
-        AgentCommand::GetSubagents { .. } => {
-            let list = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
-            Some(serde_json::json!({ "subagents": list }))
-        }
+        AgentCommand::GetSubagents { since, .. } => Some(
+            serde_json::to_value(super::protocol::build_compact_subagent_roster(
+                &ctx.subagent_registry,
+                *since,
+            )?)
+            .map_err(|e| e.to_string())?,
+        ),
         AgentCommand::DeleteAllSubagents { .. } => {
             Some(super::uds_delete_all_subagents::response_data(ctx))
         }
@@ -162,7 +173,8 @@ pub(super) fn query_response_data(
             ctx,
         }),
         _ => None,
-    }
+    };
+    Ok(data)
 }
 
 #[cfg(test)]

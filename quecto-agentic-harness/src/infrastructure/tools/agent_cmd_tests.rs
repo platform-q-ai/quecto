@@ -1,4 +1,5 @@
 use super::*;
+use crate::infrastructure::tools::subagent_registry::SubagentStatus;
 use std::path::PathBuf;
 
 fn empty_tool() -> AgentCmdTool {
@@ -540,9 +541,10 @@ async fn test_kill_known_agent_removes_from_registry() {
         .unwrap();
     assert!(!result.is_error, "kill should succeed: {}", result.content);
     assert!(result.content.contains("killed"));
-    assert!(
-        registry.lock().unwrap().get("w1").is_none(),
-        "agent should be removed from registry"
+    assert_eq!(
+        registry.lock().unwrap()["w1"].status,
+        SubagentStatus::Exited,
+        "agent should be retained as a tombstone"
     );
 }
 

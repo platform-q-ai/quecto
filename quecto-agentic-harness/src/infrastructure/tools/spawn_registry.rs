@@ -22,6 +22,12 @@ pub fn register_and_broadcast(
         let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
         let mut entry = entry;
         entry.display_name = session_name.to_string();
+        entry.notification_sequence = guard
+            .values()
+            .map(|existing| existing.notification_sequence)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
         match guard.entry(entry.agent_uuid.to_string()) {
             Entry::Vacant(slot) => {
                 slot.insert(entry);

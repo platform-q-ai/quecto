@@ -3,6 +3,14 @@ use crate::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentStatus, new_registry,
 };
 
+fn compact_roster(
+    registry: &crate::infrastructure::tools::subagent_registry::SubagentRegistry,
+    since: Option<u64>,
+) -> crate::interface::cli::protocol::CompactSubagentRoster {
+    crate::interface::cli::protocol::build_compact_subagent_roster(&Some(registry.clone()), since)
+        .unwrap()
+}
+
 fn add(
     registry: &crate::infrastructure::tools::subagent_registry::SubagentRegistry,
     id: &str,
@@ -240,4 +248,49 @@ fn merge_caps_large_descendant_lists() {
         .filter(|id| id.starts_with('g'))
         .count();
     assert_eq!(count, 256);
+}
+
+#[test]
+fn forwarded_descendant_merge_advances_compact_roster_delta_sequence() {
+    let registry = new_registry();
+    add(&registry, "child", None);
+    registry
+        .lock()
+        .unwrap()
+        .get_mut("child")
+        .unwrap()
+        .notification_sequence = 1;
+    let current = compact_roster(&registry, None);
+    assert_eq!(current.sequence, 1);
+
+    let event = serde_json::json!({"type":"subagent_state_changed","subagents":[{
+        "agentId":"grand","parentId":"child","status":"running","pid":42
+    }]});
+    merge_and_forward_state_changed(&event, &registry, "child").unwrap();
+
+    let delta = compact_roster(&registry, Some(current.sequence));
+    assert_eq!(delta.sequence, 2);
+    assert_eq!(delta.subagents.len(), 1);
+    assert_eq!(delta.subagents[0].agent_id, "grand");
+}
+
+#[test]
+fn forwarded_environment_ref_is_preserved_in_compact_roster() {
+    let registry = new_registry();
+    add(&registry, "child", None);
+    let event = serde_json::json!({"type":"subagent_state_changed","subagents":[{
+        "agentId":"grand",
+        "parentId":"child",
+        "status":"idle",
+        "environment":{"ref":"C9","uuid":"env-9","status":"running"}
+    }]});
+    merge_and_forward_state_changed(&event, &registry, "child").unwrap();
+
+    let full = compact_roster(&registry, None);
+    let grand = full
+        .subagents
+        .iter()
+        .find(|row| row.agent_id == "grand")
+        .unwrap();
+    assert_eq!(grand.environment_ref.as_deref(), Some("C9"));
 }

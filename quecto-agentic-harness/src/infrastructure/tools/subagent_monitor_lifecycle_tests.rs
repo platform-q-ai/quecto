@@ -26,7 +26,12 @@ async fn monitor_connect_failure_marks_socket_readiness_failure() {
 
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
-            if !registry.lock().unwrap().contains_key("child") {
+            if registry
+                .lock()
+                .unwrap()
+                .get("child")
+                .is_some_and(|entry| entry.status == SubagentStatus::Exited)
+            {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -35,7 +40,10 @@ async fn monitor_connect_failure_marks_socket_readiness_failure() {
     .await
     .expect("monitor should give up connecting to the missing socket and prune the child");
 
-    assert!(!registry.lock().unwrap().contains_key("child"));
+    assert_eq!(
+        registry.lock().unwrap()["child"].status,
+        SubagentStatus::Exited
+    );
     assert!(
         rx.try_recv().is_ok(),
         "connect failure should notify parent"

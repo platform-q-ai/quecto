@@ -84,6 +84,12 @@ fn merge_descendants(
             entry.environment_ref.is_some() || entry.forwarded_environment.is_some()
         });
     let mut pushed_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut next_sequence = guard
+        .values()
+        .map(|entry| entry.notification_sequence)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
     for d in descendants.iter().take(MAX_FORWARDED_SUBAGENTS) {
         // Prefer additive agentUuid for durable registry keys; wire agentId is
         // the display label only (#1378). Fall back to agentId for legacy
@@ -171,6 +177,8 @@ fn merge_descendants(
         entry.forwarded_environment = d
             .get("environment")
             .and_then(|e| serde_json::from_value(e.clone()).ok());
+        entry.notification_sequence = next_sequence;
+        next_sequence = next_sequence.saturating_add(1);
         entry.updated_at = Instant::now();
     }
 

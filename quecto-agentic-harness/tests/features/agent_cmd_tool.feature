@@ -70,6 +70,20 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     Then the agent_cmd should have sent command type "get_state"
     And the agent_cmd should have sent since 42
 
+  @issue-1514
+  Scenario: get_subagents forwards a since cursor
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_subagents","since":7}'
+    Then the agent_cmd should have sent command type "get_subagents"
+    And the agent_cmd should have sent since 7
+
+  @issue-1514
+  Scenario: get_subagents rejects malformed since cursor
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_subagents","since":"bad"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "since must be a non-negative integer"
+
   Scenario: get_messages command uses count parameter for cursor-neutral history reads
     Given an AgentCmdTool with a mock registry entry "w1"
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages","count":5}'
@@ -91,6 +105,37 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     Given an AgentCmdTool with an empty registry
     When I execute agent_cmd with '{"agent_id":"*","command":"get_subagents_all"}'
     Then the agent_cmd result should not be an error
+
+  @issue-1514
+  Scenario: get_subagents_all returns compact roster sequence data
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"*","command":"get_subagents_all"}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain "sequence"
+    And the agent_cmd result should contain "agentId"
+    And the agent_cmd result should contain "status"
+    And the agent_cmd result should not contain "pid"
+
+  @issue-1514
+  Scenario: get_subagents_all current since cursor reports unchanged
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"*","command":"get_subagents_all","since":1}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain "unchanged"
+
+  @issue-1514
+  Scenario: get_subagents_all rejects future since cursor
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"*","command":"get_subagents_all","since":2}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "future since cursor"
+
+  @issue-1514
+  Scenario: get_subagents_all rejects malformed since cursor
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"*","command":"get_subagents_all","since":"bad"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "invalid since cursor"
 
   Scenario: deprecated get_messages_tail aliases to get_messages count
     Given an AgentCmdTool with a mock registry entry "w1"

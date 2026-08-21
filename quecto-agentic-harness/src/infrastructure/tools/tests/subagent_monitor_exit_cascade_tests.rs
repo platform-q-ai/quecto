@@ -45,9 +45,9 @@ async fn notify_child_exited_cascades_descendants_and_reports_reason() {
     .await;
 
     let entries = registry.lock().unwrap();
-    assert!(!entries.contains_key("parent"));
-    assert!(!entries.contains_key("child"));
-    assert!(!entries.contains_key("grandchild"));
+    assert_eq!(entries["parent"].status, SubagentStatus::Exited);
+    assert_eq!(entries["child"].status, SubagentStatus::Exited);
+    assert_eq!(entries["grandchild"].status, SubagentStatus::Exited);
     assert!(entries.contains_key("sibling"));
     drop(entries);
     let event: serde_json::Value = serde_json::from_str(&broadcast_rx.try_recv().unwrap()).unwrap();
