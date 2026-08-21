@@ -24,6 +24,17 @@ impl RosterInfo for SubagentInfoEvent {
         self.parent_id.as_deref()
     }
 
+    fn agent_uuid(&self) -> Option<&str> {
+        self.agent_uuid.as_deref()
+    }
+
+    fn display_label(&self) -> &str {
+        self.display_name
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .unwrap_or(self.agent_id.as_str())
+    }
+
     fn merge_sticky_fields(&mut self, previous: &Self) {
         // Preserve last-known workflow + parent_id when an update omits them
         // (get_subagents carries neither, and would otherwise erase the n/n).
@@ -32,6 +43,18 @@ impl RosterInfo for SubagentInfoEvent {
         }
         if self.parent_id.is_none() {
             self.parent_id = previous.parent_id.clone();
+        }
+        if self.agent_uuid.is_none() {
+            self.agent_uuid = previous.agent_uuid.clone();
+        }
+        if self.display_name.is_none() {
+            self.display_name = previous.display_name.clone();
+        }
+        if self.socket_path.is_none() {
+            self.socket_path = previous.socket_path.clone();
+        }
+        if self.pid == 0 && previous.pid != 0 {
+            self.pid = previous.pid;
         }
         // Sparse `get_subagents` refreshes omit the environment metadata a
         // live event reported; keep the last-known backend/environment so
@@ -44,7 +67,9 @@ impl RosterInfo for SubagentInfoEvent {
         let sparse = self.execution_backend.is_none();
         if sparse {
             self.execution_backend = previous.execution_backend.clone();
-            if self.environment.is_none() {
+            // Compact rows may carry only `environmentRef`, which projects to a
+            // stub. A previous live event is richer and stays authoritative.
+            if previous.environment.is_some() {
                 self.environment = previous.environment.clone();
             }
         }

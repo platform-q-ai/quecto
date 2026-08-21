@@ -1,6 +1,6 @@
 //! Unit tests for `presentation_payloads` mappings.
 
-use super::{is_subagent_note, recovered_thinking_page};
+use super::{is_subagent_note, recovered_thinking_page, subagent_roster, subagents};
 
 #[test]
 fn recovered_thinking_page_projects_blocks_and_pagination() {
@@ -92,4 +92,65 @@ fn subagents_parses_execution_backend_and_environment_from_snapshot() {
     assert_eq!(env.runtime_id, "rt-9001");
     assert_eq!(env.workspace, "/work/pr-42");
     assert_eq!(env.socket_mode, "proxy");
+}
+
+/// Compact `get_subagents` rows omit `pid`/`socketPath`/`parentId`. The
+/// protocol mapper must not treat that as an empty roster — that is the
+/// parse failure that wipes the left panel after every spawn/agent_cmd poll.
+#[test]
+fn compact_get_subagents_rows_do_not_parse_as_empty() {
+    let data = serde_json::json!({
+        "subagents": [{
+            "agentId": "worker-1",
+            "status": "running",
+            "environmentRef": "C1",
+        }],
+        "sequence": 3,
+    });
+
+    let parsed = subagents(&data);
+    assert_eq!(
+        parsed.len(),
+        1,
+        "compact get_subagents rows must survive protocol parse, got {parsed:?}"
+    );
+    assert_eq!(parsed[0].agent_id, "worker-1");
+    assert_eq!(parsed[0].status, "running");
+    assert_eq!(
+        parsed[0]
+            .environment
+            .as_ref()
+            .map(|env| env.environment_ref.as_str()),
+        Some("C1"),
+        "compact environmentRef must project onto the existing environment slot"
+    );
+}
+
+/// A `since`-cursor compact poll can legally return an empty `subagents`
+/// array with `unchanged: true`. That is a no-op, not a wipe.
+#[test]
+fn compact_unchanged_roster_is_a_no_op_not_an_empty_snapshot() {
+    let roster = subagent_roster(&serde_json::json!({
+        "subagents": [],
+        "sequence": 4,
+        "unchanged": true,
+    }));
+    assert!(roster.unchanged, "unchanged compact poll must stay a no-op");
+    assert!(
+        roster.subagents.is_empty(),
+        "unchanged compact poll carries no rows to apply"
+    );
+}
+
+/// Compact rows must still parse when they only carry `agentId` + `status`.
+#[test]
+fn compact_local_rows_without_environment_ref_still_parse() {
+    let parsed = subagents(&serde_json::json!({
+        "subagents": [{ "agentId": "solo", "status": "idle" }],
+        "sequence": 1,
+    }));
+    assert_eq!(parsed.len(), 1);
+    assert_eq!(parsed[0].agent_id, "solo");
+    assert_eq!(parsed[0].status, "idle");
+    assert!(parsed[0].environment.is_none());
 }

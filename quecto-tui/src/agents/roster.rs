@@ -8,6 +8,8 @@ const STATUS_EXITED: &str = "exited";
 pub(crate) trait RosterInfo: Clone {
     fn status(&self) -> &str;
     fn parent_id(&self) -> Option<&str>;
+    fn agent_uuid(&self) -> Option<&str>;
+    fn display_label(&self) -> &str;
 
     /// Preserve sticky metadata when lossy roster polls omit it.
     fn merge_sticky_fields(&mut self, previous: &Self);

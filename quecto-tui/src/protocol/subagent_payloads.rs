@@ -20,8 +20,13 @@ pub struct SubagentInfoEvent {
     #[serde(default)]
     pub display_name: Option<String>,
     pub status: String,
+    #[serde(default)]
     pub last_tool: Option<String>,
+    #[serde(default)]
     pub last_error: Option<String>,
+    /// Compact `get_subagents` rows omit `pid`; treat that as unknown (0)
+    /// instead of failing the whole roster parse and wiping the left panel.
+    #[serde(default)]
     pub pid: u32,
     /// Path to this sub-agent's own UDS socket, used to open a direct
     /// connect-on-select connection to its live stream (#800). `None` when the
@@ -47,8 +52,38 @@ pub struct SubagentInfoEvent {
     /// Environment metadata for script-managed sub-agents; `None` for local
     /// ones. Additive versioned field (#1369 slice 4), preserved through
     /// sticky merge on sparse refreshes.
-    #[serde(default)]
+    #[serde(
+        default,
+        alias = "environmentRef",
+        deserialize_with = "deserialize_environment"
+    )]
     pub environment: Option<SubagentEnvironmentInfo>,
+}
+
+fn deserialize_environment<'de, D>(
+    deserializer: D,
+) -> Result<Option<SubagentEnvironmentInfo>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum EnvironmentWire {
+        Rich(SubagentEnvironmentInfo),
+        Compact(String),
+    }
+    Ok(
+        match Option::<EnvironmentWire>::deserialize(deserializer)? {
+            Some(EnvironmentWire::Rich(info)) => Some(info),
+            Some(EnvironmentWire::Compact(environment_ref)) if !environment_ref.is_empty() => {
+                Some(SubagentEnvironmentInfo {
+                    environment_ref,
+                    ..SubagentEnvironmentInfo::default()
+                })
+            }
+            Some(EnvironmentWire::Compact(_)) | None => None,
+        },
+    )
 }
 
 /// Workflow snapshot mirror carried on a subagent entry (PRD Stage B).
@@ -63,7 +98,7 @@ pub struct SubagentWorkflow {
 /// Environment metadata carried on the subagent wire for script-managed
 /// entries (#1369 slice 4). Every field defaults so a sparser producer cannot
 /// fail the whole event parse.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentEnvironmentInfo {
     /// Session-scoped `CN` ref minted by the harness environment registry.

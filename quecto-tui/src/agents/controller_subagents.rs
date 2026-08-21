@@ -151,8 +151,8 @@ impl App {
             if !usable_socket_path(s.socket_path.as_deref()) {
                 s.socket_path = None;
             }
-            let identity = s.agent_uuid.as_deref().unwrap_or(&s.agent_id);
-            candidates.insert(sanitize_agent_id(identity), s);
+            let identity = resolve_roster_identity(&self.ac().roster.tracked, &s);
+            candidates.insert(identity, s);
         }
 
         // #1378: if an optimistic spawn row is still keyed by display label
@@ -247,5 +247,34 @@ impl App {
             tokio::time::Instant::now(),
             EXITED_SUBAGENT_GRACE,
         )
+    }
+}
+
+/// Compact `get_subagents` rows are keyed by display `agentId`. Live events
+/// are keyed by `agentUuid`. Rematch the compact label onto an existing
+/// tracked UUID so a poll cannot evict the live row and insert a nameless
+/// stand-in.
+fn resolve_roster_identity<I: crate::agents::roster::RosterInfo>(
+    tracked: &std::collections::BTreeMap<String, crate::agents::roster::TrackedSubagent<I>>,
+    info: &I,
+) -> String {
+    if let Some(uuid) = info
+        .agent_uuid()
+        .map(sanitize_agent_id)
+        .filter(|value| !value.is_empty())
+    {
+        return uuid;
+    }
+    let label = sanitize_agent_id(info.display_label());
+    if tracked.contains_key(&label) {
+        return label;
+    }
+    let mut matches = tracked
+        .iter()
+        .filter(|(_, entry)| sanitize_agent_id(entry.info.display_label()) == label)
+        .map(|(id, _)| id.clone());
+    match (matches.next(), matches.next()) {
+        (Some(id), None) => id,
+        _ => label,
     }
 }

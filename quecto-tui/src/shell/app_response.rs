@@ -593,7 +593,13 @@ impl App {
 
     fn handle_get_subagents(&mut self, data: Option<serde_json::Value>) {
         let Some(data) = data else { return };
-        self.update_subagent_bar(crate::protocol::presentation_payloads::subagents(&data));
+        let roster = crate::protocol::presentation_payloads::subagent_roster(&data);
+        // A `since`-cursor compact poll can legally return no rows with
+        // `unchanged: true`. That is a no-op, not a full-replace wipe.
+        if roster.unchanged {
+            return;
+        }
+        self.update_subagent_bar(roster.subagents);
     }
 
     fn handle_get_message_response(
