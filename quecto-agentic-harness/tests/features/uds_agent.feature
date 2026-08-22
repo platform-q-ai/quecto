@@ -881,6 +881,20 @@ Feature: UDS mode for headless agent operation
     And the registered tool "weather" should have a UDS client owner
 
   @done @multi-client @uds-ext
+  Scenario: list_tools alias returns extension catalogue entries for control clients
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 1 sends register_tools with tool "weather" described as "Get weather"
+    And client 1 sends command "list_tools" with id "ge-alias-ext"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received a response command "register_tools" with success true
+    And the tool catalogue response "ge-alias-ext" should list tool "weather"
+    And the tool catalogue response "ge-alias-ext" should list tool "weather" from source "uds"
+
+  @done @multi-client @uds-ext
   Scenario: register_tools rejects tool that shadows a core tool
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
