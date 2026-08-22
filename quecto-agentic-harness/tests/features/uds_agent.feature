@@ -809,6 +809,19 @@ Feature: UDS mode for headless agent operation
     And the get_tool_catalogue response should not list tool "mock_ext_tool"
     And the get_tool_catalogue response should have 9 tools
 
+  @done @tools
+  Scenario: list_tools alias accepts omitted control-client ids
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the UDS agent with no [session]
+    And I send command "list_tools" with no id
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the agent output should contain a response command "get_tool_catalogue" with success true
+    And the get_tool_catalogue response should list tool "bash"
+    And the get_tool_catalogue response should not list tool "mock_ext_tool"
+    And the get_tool_catalogue response should have 9 tools
+
   # ─── --persist flag (#348) ───────────────────────────────────────────────────
 
   @done @multi-client @persist
