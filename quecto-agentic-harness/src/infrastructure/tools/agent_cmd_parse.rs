@@ -15,7 +15,6 @@ pub(super) const SUPPORTED_COMMANDS: &[&str] = &[
     "get_subagents_all",
     "get_containers",
     "kill_container",
-    "get_tool_catalogue",
     "set_model",
     "set_effort",
     "clear_history",
@@ -46,7 +45,11 @@ pub(super) fn build_command(args: &serde_json::Value) -> Result<(String, String,
         validate_agent_id_format(&agent_id)?;
     }
 
-    if !SUPPORTED_COMMANDS.contains(&command.as_str()) && command != "get_messages_tail" {
+    if !SUPPORTED_COMMANDS.contains(&command.as_str())
+        && command != "get_messages_tail"
+        && command != "get_tool_catalogue"
+        && command != "list_tools"
+    {
         return Err(format!(
             "unsupported command '{}'; supported: {}",
             command,
@@ -208,7 +211,10 @@ pub(super) fn build_command(args: &serde_json::Value) -> Result<(String, String,
             return Err("get_subagents_all is handled locally, not via UDS".to_string());
         }
         "get_tool_catalogue" | "list_tools" => {
-            serde_json::json!({"type": "get_tool_catalogue"})
+            return Err(
+                "get_tool_catalogue/list_tools is not available via model-facing agent_cmd"
+                    .to_string(),
+            );
         }
         "kill" => return Err("kill command is handled locally, not via UDS".to_string()),
         _ => unreachable!(), // Covered by SUPPORTED_COMMANDS check above.

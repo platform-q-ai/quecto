@@ -259,7 +259,6 @@ fn parse_simple_control_and_inspection_commands_cover_wire_types() {
         ("get_session_stats", "get_session_stats"),
         ("clear_history", "clear_history"),
         ("get_subagents", "get_subagents"),
-        ("get_tool_catalogue", "get_tool_catalogue"),
     ] {
         let (_, cmd, _) = empty_tool()
             .parse_and_build(&format!(r#"{{"agent_id":"w1","command":"{command}"}}"#))
@@ -429,13 +428,18 @@ fn test_parse_get_subagents() {
 }
 
 #[test]
-fn test_parse_get_tool_catalogue() {
+fn model_facing_agent_cmd_rejects_tool_catalogue_commands() {
     let tool = empty_tool();
-    let (_, cmd, _) = tool
-        .parse_and_build(r#"{"agent_id":"w1","command":"get_tool_catalogue"}"#)
-        .unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
-    assert_eq!(parsed["type"], "get_tool_catalogue");
+    for command in ["get_tool_catalogue", "list_tools"] {
+        let result = tool.parse_and_build(&format!(r#"{{"agent_id":"w1","command":"{command}"}}"#));
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .contains("not available via model-facing agent_cmd"),
+            "{command} should be rejected"
+        );
+    }
 }
 
 #[test]
