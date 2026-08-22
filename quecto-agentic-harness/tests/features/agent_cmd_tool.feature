@@ -48,6 +48,16 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     Then the agent_cmd result should be an error
     And the agent_cmd result should contain "unsupported command"
 
+  @issue-1515
+  Scenario: Model-facing agent_cmd rejects tool catalogue control commands
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_tool_catalogue"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "not available via model-facing agent_cmd"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"list_tools"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "not available via model-facing agent_cmd"
+
   # --- Registry lookup ---
 
   Scenario: Unknown agent_id returns error
