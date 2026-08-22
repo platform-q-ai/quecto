@@ -326,9 +326,11 @@ pub fn build_native_extensions(
             None
         };
         web_tools.push(Arc::new(
-            crate::infrastructure::tools::web_search::WebSearchTool::with_client(
+            crate::infrastructure::tools::web_search::WebSearchTool::with_client_and_limits(
                 api_key,
                 http_client.clone(),
+                web_config.brave.max_results,
+                web_config.duckduckgo.max_results,
             ),
         ));
     }
