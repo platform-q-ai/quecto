@@ -135,7 +135,11 @@ fn compact_unchanged_roster_is_a_no_op_not_an_empty_snapshot() {
         "sequence": 4,
         "unchanged": true,
     }));
-    assert!(roster.unchanged, "unchanged compact poll must stay a no-op");
+    assert_eq!(
+        roster.unchanged,
+        Some(true),
+        "unchanged compact poll must stay a no-op"
+    );
     assert!(
         roster.subagents.is_empty(),
         "unchanged compact poll carries no rows to apply"

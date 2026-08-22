@@ -393,7 +393,7 @@ pub fn build_compact_subagent_roster(
     Ok(CompactSubagentRoster {
         subagents: rows,
         sequence: current,
-        unchanged: None,
+        unchanged: since.map(|_| false),
     })
 }
 

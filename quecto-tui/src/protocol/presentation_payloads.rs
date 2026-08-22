@@ -59,8 +59,10 @@ pub fn subagents(value: &Value) -> Vec<crate::protocol::client::SubagentInfoEven
 pub struct SubagentRosterPayload {
     #[serde(default)]
     pub subagents: Vec<crate::protocol::client::SubagentInfoEvent>,
+    /// Cursor response marker: `Some(true)` is unchanged/no-op, `Some(false)` is
+    /// a sparse delta to merge, and `None` is a full authoritative snapshot.
     #[serde(default)]
-    pub unchanged: bool,
+    pub unchanged: Option<bool>,
 }
 
 /// Parse a `get_subagents` / `get_subagents_all` response, including compact

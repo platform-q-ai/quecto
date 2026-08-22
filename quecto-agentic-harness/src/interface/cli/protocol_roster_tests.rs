@@ -139,8 +139,15 @@ fn registry_updates_allocate_roster_global_sequence() {
     );
     let delta = build_compact_subagent_roster(&Some(reg), Some(full.sequence)).unwrap();
     assert_eq!(delta.sequence, 2);
+    assert_eq!(delta.unchanged, Some(false));
     assert_eq!(delta.subagents.len(), 1);
     assert_eq!(delta.subagents[0].agent_id, "b");
+    let value = serde_json::to_value(&delta).unwrap();
+    assert_eq!(value["unchanged"], false);
+    assert!(
+        value.get("delta").is_none() && value.get("full").is_none(),
+        "delta semantics must use the existing compact cursor marker only: {value}"
+    );
 }
 
 #[test]
