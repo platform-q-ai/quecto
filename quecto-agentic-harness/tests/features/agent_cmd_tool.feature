@@ -276,10 +276,17 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_subagents"}'
     Then the agent_cmd should have sent command type "get_subagents"
 
-  Scenario: get_tool_catalogue command is built correctly
+  Scenario: get_tool_catalogue command is rejected on the model-facing agent_cmd surface
     Given an AgentCmdTool with a mock registry entry "w1"
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_tool_catalogue"}'
-    Then the agent_cmd should have sent command type "get_tool_catalogue"
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "not available via model-facing agent_cmd"
+
+  Scenario: list_tools alias is rejected on the model-facing agent_cmd surface
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"list_tools"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "not available via model-facing agent_cmd"
 
   # --- Kill command (#559) ---
 
@@ -483,13 +490,11 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     And the agent_cmd response command "get_session_stats" should include boolean field "snapshot" set to "true"
     And the agent_cmd result should contain "cli:busy-stats"
 
-  Scenario: get_tool_catalogue against a busy child accepts the connect-time snapshot
+  Scenario: get_tool_catalogue against a busy child is rejected on the model-facing agent_cmd surface
     Given an AgentCmdTool with a busy extensions snapshot registry entry "busy-tools880"
     When I execute agent_cmd with '{"agent_id":"busy-tools880","command":"get_tool_catalogue"}'
-    Then the agent_cmd result should not be an error
-    And the agent_cmd response command "get_tool_catalogue" should include a "tools" array
-    And the agent_cmd response command "get_tool_catalogue" should include boolean field "snapshot" set to "true"
-    And the agent_cmd result should contain "mock_ext_tool"
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "not available via model-facing agent_cmd"
 
   Scenario: set_model against a busy child returns on acceptance
     Given an AgentCmdTool with a fast-ack busy registry entry "busy-set-model880"
