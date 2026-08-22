@@ -1244,7 +1244,9 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// #1231 adds two protocol `Event::Thinking` routing arms in the same TUI
 /// shell/subagent seams where answer `Token` events are already handled —
 /// additive stream event usage, not feature/view DTO spread (152 → 154).
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 154;
+/// #1550 adds one subagent compact-delta merge seam next to the existing full
+/// roster replace seam; this is the scoped bugfix path, not DTO spread.
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 155;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///
