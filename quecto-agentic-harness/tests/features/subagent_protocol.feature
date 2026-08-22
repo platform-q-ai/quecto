@@ -141,6 +141,7 @@ Feature: Subagent protocol commands (#524)
     When I parse the command
     Then the command type should be "get_tool_catalogue"
     And the command id should be "lt-1"
+    And the parsed command should be a get_tool_catalogue request with id "lt-1"
 
   @done
   Scenario: get_tool_catalogue command id is optional
@@ -148,6 +149,7 @@ Feature: Subagent protocol commands (#524)
     When I parse the command
     Then the command type should be "get_tool_catalogue"
     And the command id should be absent
+    And the parsed command should be a get_tool_catalogue request with no id
 
   # ─── socket_path exposure for connect-on-select (#800) ───────────────────────
   # The TUI lazily opens a direct UDS connection to a SELECTED sub-agent's own
