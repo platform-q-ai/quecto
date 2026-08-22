@@ -796,6 +796,17 @@ Feature: UDS mode for headless agent operation
     And the agent output should contain a response command "get_tool_catalogue" with success true
     And the get_tool_catalogue response should list tool "bash"
 
+  @done @tools
+  Scenario: get_tool_catalogue accepts omitted control-client ids
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the UDS agent with no [session]
+    And I send command "get_tool_catalogue" with no id
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the agent output should contain a response command "get_tool_catalogue" with success true
+    And the get_tool_catalogue response should list tool "bash"
+
   # ─── --persist flag (#348) ───────────────────────────────────────────────────
 
   @done @multi-client @persist
