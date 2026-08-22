@@ -167,6 +167,15 @@ impl App {
                 s.socket_path = None;
             }
             for (identity, info) in resolve_roster_identities(&self.ac().roster.tracked, s) {
+                // Compact inventories include historical dead rows. They may
+                // update an entry still inside its terminal grace window, but
+                // must not recreate one that lifecycle GC already removed.
+                if info.is_compact()
+                    && crate::agents::roster::subagent_status_is_terminal(&info.status)
+                    && !self.ac().roster.tracked.contains_key(&identity)
+                {
+                    continue;
+                }
                 candidates.insert(identity, info);
             }
         }

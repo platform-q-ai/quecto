@@ -423,6 +423,37 @@ async fn compact_environment_ref_change_clears_stale_backend() {
 }
 
 #[tokio::test]
+async fn compact_dead_inventory_row_does_not_recreate_agent_after_terminal_gc() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event_line(&state_changed_line(vec![rich_local_agent(
+        "killed",
+        "uuid-killed",
+        &spawn_subagent_socket("killed").to_string_lossy(),
+    )]));
+    h.event_line(&compact_get_subagents_response_line(vec![compact_row(
+        "killed", "dead", None,
+    )]));
+
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    assert!(h.app_mut().gc_exited_subagents());
+    assert!(!h.left_panel().contains("killed"));
+
+    // Every later agent_cmd operation causes another compact inventory refresh.
+    // A dead catalogue row is historical state, not a newly visible agent.
+    h.event_line(&compact_get_subagents_response_line(vec![compact_row(
+        "killed", "dead", None,
+    )]));
+
+    assert!(
+        !h.left_panel().contains("killed"),
+        "a later compact inventory refresh must not recreate a killed panel row:\n{}",
+        h.left_panel()
+    );
+    assert!(h.app_mut().ac().roster.tracked.is_empty());
+}
+
+#[tokio::test]
 async fn legacy_compact_duplicate_name_does_not_revive_retained_terminal_row_before_gc() {
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
