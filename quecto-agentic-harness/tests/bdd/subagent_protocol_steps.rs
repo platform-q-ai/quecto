@@ -410,24 +410,6 @@ fn then_command_id_absent(world: &mut QuectoWorld) {
     assert!(cmd.id().is_none());
 }
 
-#[then(expr = "the parsed command should be a get_tool_catalogue request with id {string}")]
-fn then_get_tool_catalogue_command_has_id(world: &mut QuectoWorld, expected: String) {
-    let cmd = world.parsed_command.as_ref().unwrap();
-    let AgentCommand::GetToolCatalogue { id } = cmd else {
-        panic!("expected GetToolCatalogue command, got {cmd:?}");
-    };
-    assert_eq!(id.as_deref(), Some(expected.as_str()));
-}
-
-#[then("the parsed command should be a get_tool_catalogue request with no id")]
-fn then_get_tool_catalogue_command_has_no_id(world: &mut QuectoWorld) {
-    let cmd = world.parsed_command.as_ref().unwrap();
-    let AgentCommand::GetToolCatalogue { id } = cmd else {
-        panic!("expected GetToolCatalogue command, got {cmd:?}");
-    };
-    assert!(id.is_none(), "expected no command id, got {id:?}");
-}
-
 // ─── subagent_state_changed event steps ─────────────────────────────────────
 
 #[given(expr = "a SubagentStateChanged event with {int} subagents")]
