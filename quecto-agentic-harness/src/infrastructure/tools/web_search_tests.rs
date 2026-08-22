@@ -93,7 +93,10 @@ async fn test_brave_search_oversized_output_is_bounded() {
 
     assert!(!result.is_error);
     assert!(result.content.len() <= MAX_WEB_SEARCH_OUTPUT_BYTES);
-    assert!(result.content.ends_with(WEB_SEARCH_TRUNCATION_MARKER));
+    assert!(result.content.contains(&format!(
+        "{}…",
+        "a".repeat(MAX_WEB_SEARCH_RESULT_TEXT_CHARS - 1)
+    )));
 }
 
 #[tokio::test]
@@ -104,6 +107,89 @@ async fn test_brave_search_exact_cap_is_not_marked_truncated() {
     assert_eq!(result.len(), MAX_WEB_SEARCH_OUTPUT_BYTES);
     assert_eq!(result, content);
     assert!(!result.ends_with(WEB_SEARCH_TRUNCATION_MARKER));
+}
+
+#[tokio::test]
+async fn test_brave_search_honors_max_results_and_truncates_each_description() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let response = serde_json::json!({
+        "web": {"results": (0..4).map(|i| serde_json::json!({
+            "title": format!("Result {i}"),
+            "url": format!("https://example.com/{i}"),
+            "description": "d".repeat(MAX_WEB_SEARCH_RESULT_TEXT_CHARS + 20)
+        })).collect::<Vec<_>>()}
+    });
+
+    Mock::given(method("GET"))
+        .and(path("/res/v1/web/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+        .mount(&server)
+        .await;
+
+    let tool = WebSearchTool::with_base_urls_and_limits(
+        Some("test-key".to_string()),
+        &server.uri(),
+        "http://unused",
+        2,
+        5,
+    );
+    let result = tool.execute(r#"{"query":"rust"}"#).await.unwrap();
+
+    assert!(!result.is_error);
+    assert!(result.content.contains("1. Result 0"));
+    assert!(result.content.contains("2. Result 1"));
+    assert!(!result.content.contains("3. Result 2"));
+    assert!(result.content.contains(&format!(
+        "{}…",
+        "d".repeat(MAX_WEB_SEARCH_RESULT_TEXT_CHARS - 1)
+    )));
+}
+
+#[tokio::test]
+async fn test_ddg_search_honors_max_results_and_truncates_each_topic() {
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let response = serde_json::json!({
+        "AbstractText": "",
+        "AbstractURL": "",
+        "RelatedTopics": (0..4).map(|i| serde_json::json!({
+            "Text": format!("{} topic {i}", "t".repeat(MAX_WEB_SEARCH_RESULT_TEXT_CHARS + 20)),
+            "FirstURL": format!("https://example.com/{i}")
+        })).collect::<Vec<_>>()
+    });
+
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+        .mount(&server)
+        .await;
+
+    let tool = WebSearchTool::with_base_urls_and_limits(None, "http://unused", &server.uri(), 5, 2);
+    let result = tool.execute(r#"{"query":"rust"}"#).await.unwrap();
+
+    assert!(!result.is_error);
+    assert!(result.content.contains("1. "));
+    assert!(result.content.contains("2. "));
+    assert!(!result.content.contains("3. "));
+    assert!(result.content.contains(&format!(
+        "{}…",
+        "t".repeat(MAX_WEB_SEARCH_RESULT_TEXT_CHARS - 1)
+    )));
+}
+
+#[tokio::test]
+async fn test_search_error_output_is_bounded() {
+    let content = format!(
+        "Search failed: {}",
+        "e".repeat(MAX_WEB_SEARCH_OUTPUT_BYTES * 2)
+    );
+    let result = truncate_web_search_output(&content);
+    assert!(result.len() <= MAX_WEB_SEARCH_OUTPUT_BYTES);
+    assert!(result.ends_with(WEB_SEARCH_TRUNCATION_MARKER));
 }
 
 #[tokio::test]
@@ -252,7 +338,10 @@ async fn test_ddg_search_oversized_related_topics_are_bounded_at_utf8_boundary()
 
     assert!(!result.is_error);
     assert!(result.content.len() <= MAX_WEB_SEARCH_OUTPUT_BYTES);
-    assert!(result.content.ends_with(WEB_SEARCH_TRUNCATION_MARKER));
+    assert!(result.content.contains(&format!(
+        "{}…",
+        "🦀".repeat(MAX_WEB_SEARCH_RESULT_TEXT_CHARS - 1)
+    )));
     assert!(!result.content.contains('\u{FFFD}'));
 }
 

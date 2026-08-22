@@ -8,6 +8,8 @@ use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 
 const MAX_WEB_SEARCH_OUTPUT_BYTES: usize = 16 * 1024;
+const MAX_WEB_SEARCH_RESULT_TEXT_CHARS: usize = 500;
+const DEFAULT_WEB_SEARCH_MAX_RESULTS: u32 = 5;
 const WEB_SEARCH_TRUNCATION_MARKER: &str = "\n[web_search output truncated]";
 
 /// Web search tool that queries the Brave Search API.
@@ -18,6 +20,8 @@ pub struct WebSearchTool {
     client: reqwest::Client,
     brave_base: Cow<'static, str>,
     ddg_base: Cow<'static, str>,
+    brave_max_results: u32,
+    ddg_max_results: u32,
 }
 
 impl WebSearchTool {
@@ -32,16 +36,53 @@ impl WebSearchTool {
             client,
             brave_base: Cow::Borrowed("https://api.search.brave.com"),
             ddg_base: Cow::Borrowed("https://api.duckduckgo.com"),
+            brave_max_results: DEFAULT_WEB_SEARCH_MAX_RESULTS,
+            ddg_max_results: DEFAULT_WEB_SEARCH_MAX_RESULTS,
         }
     }
 
     /// Create a tool with custom base URLs (for testing with wiremock).
     pub fn with_base_urls(api_key: Option<String>, brave_base: &str, ddg_base: &str) -> Self {
+        Self::with_base_urls_and_limits(
+            api_key,
+            brave_base,
+            ddg_base,
+            DEFAULT_WEB_SEARCH_MAX_RESULTS,
+            DEFAULT_WEB_SEARCH_MAX_RESULTS,
+        )
+    }
+
+    pub fn with_client_and_limits(
+        api_key: Option<String>,
+        client: reqwest::Client,
+        brave_max_results: u32,
+        ddg_max_results: u32,
+    ) -> Self {
+        Self {
+            api_key,
+            client,
+            brave_base: Cow::Borrowed("https://api.search.brave.com"),
+            ddg_base: Cow::Borrowed("https://api.duckduckgo.com"),
+            brave_max_results,
+            ddg_max_results,
+        }
+    }
+
+    /// Create a tool with custom base URLs and limits (for testing with wiremock).
+    pub fn with_base_urls_and_limits(
+        api_key: Option<String>,
+        brave_base: &str,
+        ddg_base: &str,
+        brave_max_results: u32,
+        ddg_max_results: u32,
+    ) -> Self {
         Self {
             api_key,
             client: reqwest::Client::new(),
             brave_base: Cow::Owned(brave_base.to_string()),
             ddg_base: Cow::Owned(ddg_base.to_string()),
+            brave_max_results,
+            ddg_max_results,
         }
     }
 
@@ -81,13 +122,18 @@ impl WebSearchTool {
         match results {
             Some(items) => {
                 let mut output = String::new();
-                for (i, item) in items.iter().take(5).enumerate() {
+                for (i, item) in items
+                    .iter()
+                    .take(self.brave_max_results as usize)
+                    .enumerate()
+                {
                     let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("?");
                     let url = item.get("url").and_then(|v| v.as_str()).unwrap_or("?");
                     let desc = item
                         .get("description")
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
+                    let desc = truncate_result_text(desc);
                     output.push_str(&format!("{}. {} - {}\n   {}\n", i + 1, title, url, desc));
                 }
                 Ok(output)
@@ -133,9 +179,10 @@ impl WebSearchTool {
             match topics {
                 Some(items) if !items.is_empty() => {
                     let mut output = String::new();
-                    for (i, item) in items.iter().take(5).enumerate() {
+                    for (i, item) in items.iter().take(self.ddg_max_results as usize).enumerate() {
                         if let Some(text) = item.get("Text").and_then(|v| v.as_str()) {
                             let url = item.get("FirstURL").and_then(|v| v.as_str()).unwrap_or("");
+                            let text = truncate_result_text(text);
                             output.push_str(&format!("{}. {} ({})\n", i + 1, text, url));
                         }
                     }
@@ -185,7 +232,7 @@ impl Tool for WebSearchTool {
                     delivery_metadata: None,
                 }),
                 Err(e) => Ok(ToolResult {
-                    content: format!("Search failed: {}", e),
+                    content: truncate_web_search_output(&format!("Search failed: {}", e)),
                     is_error: true,
                     image_blocks: vec![],
                     delivery_metadata: None,
@@ -201,6 +248,15 @@ impl Tool for WebSearchTool {
 /// rather than `%20` (RFC 3986). Search engine query parameters conventionally
 /// use `+` encoding. This differs from the `urlencoding` crate in `Cargo.toml`
 /// which uses `%20`.
+fn truncate_result_text(content: &str) -> Cow<'_, str> {
+    crate::domain::text::truncate_chars(
+        content,
+        MAX_WEB_SEARCH_RESULT_TEXT_CHARS,
+        MAX_WEB_SEARCH_RESULT_TEXT_CHARS.saturating_sub(1),
+        "…",
+    )
+}
+
 fn truncate_web_search_output(content: &str) -> String {
     if content.len() <= MAX_WEB_SEARCH_OUTPUT_BYTES {
         return content.to_string();
