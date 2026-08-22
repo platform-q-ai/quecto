@@ -68,6 +68,45 @@ async fn test_brave_search_success() {
 }
 
 #[tokio::test]
+async fn test_brave_search_oversized_output_is_bounded() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let response = serde_json::json!({
+        "web": {"results": [{
+            "title": "Oversized",
+            "url": "https://example.com/oversized",
+            "description": "a".repeat(MAX_WEB_SEARCH_OUTPUT_BYTES * 2)
+        }]}
+    });
+
+    Mock::given(method("GET"))
+        .and(path("/res/v1/web/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+        .mount(&server)
+        .await;
+
+    let tool =
+        WebSearchTool::with_base_urls(Some("test-key".to_string()), &server.uri(), "http://unused");
+    let result = tool.execute(r#"{"query":"oversized"}"#).await.unwrap();
+
+    assert!(!result.is_error);
+    assert!(result.content.len() <= MAX_WEB_SEARCH_OUTPUT_BYTES);
+    assert!(result.content.ends_with(WEB_SEARCH_TRUNCATION_MARKER));
+}
+
+#[tokio::test]
+async fn test_brave_search_exact_cap_is_not_marked_truncated() {
+    let content = "a".repeat(MAX_WEB_SEARCH_OUTPUT_BYTES);
+    let result = truncate_web_search_output(&content);
+
+    assert_eq!(result.len(), MAX_WEB_SEARCH_OUTPUT_BYTES);
+    assert_eq!(result, content);
+    assert!(!result.ends_with(WEB_SEARCH_TRUNCATION_MARKER));
+}
+
+#[tokio::test]
 async fn test_brave_search_no_results() {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -137,6 +176,31 @@ async fn test_ddg_search_abstract() {
 }
 
 #[tokio::test]
+async fn test_ddg_search_oversized_abstract_is_bounded() {
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let response = serde_json::json!({
+        "AbstractText": "b".repeat(MAX_WEB_SEARCH_OUTPUT_BYTES * 2),
+        "AbstractURL": "https://example.com/source",
+        "RelatedTopics": []
+    });
+
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+        .mount(&server)
+        .await;
+
+    let tool = WebSearchTool::with_base_urls(None, "http://unused", &server.uri());
+    let result = tool.execute(r#"{"query":"oversized"}"#).await.unwrap();
+
+    assert!(!result.is_error);
+    assert!(result.content.len() <= MAX_WEB_SEARCH_OUTPUT_BYTES);
+    assert!(result.content.ends_with(WEB_SEARCH_TRUNCATION_MARKER));
+}
+
+#[tokio::test]
 async fn test_ddg_search_related_topics() {
     use wiremock::matchers::method;
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -161,6 +225,35 @@ async fn test_ddg_search_related_topics() {
     assert!(!result.is_error);
     assert!(result.content.contains("Rust (programming language)"));
     assert!(result.content.contains("Iron oxide"));
+}
+
+#[tokio::test]
+async fn test_ddg_search_oversized_related_topics_are_bounded_at_utf8_boundary() {
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let response = serde_json::json!({
+        "AbstractText": "",
+        "AbstractURL": "",
+        "RelatedTopics": [{
+            "Text": "🦀".repeat(MAX_WEB_SEARCH_OUTPUT_BYTES),
+            "FirstURL": "https://example.com/crab"
+        }]
+    });
+
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+        .mount(&server)
+        .await;
+
+    let tool = WebSearchTool::with_base_urls(None, "http://unused", &server.uri());
+    let result = tool.execute(r#"{"query":"crab"}"#).await.unwrap();
+
+    assert!(!result.is_error);
+    assert!(result.content.len() <= MAX_WEB_SEARCH_OUTPUT_BYTES);
+    assert!(result.content.ends_with(WEB_SEARCH_TRUNCATION_MARKER));
+    assert!(!result.content.contains('\u{FFFD}'));
 }
 
 #[tokio::test]

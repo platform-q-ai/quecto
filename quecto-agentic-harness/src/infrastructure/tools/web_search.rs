@@ -7,6 +7,9 @@ use std::pin::Pin;
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 
+const MAX_WEB_SEARCH_OUTPUT_BYTES: usize = 16 * 1024;
+const WEB_SEARCH_TRUNCATION_MARKER: &str = "\n[web_search output truncated]";
+
 /// Web search tool that queries the Brave Search API.
 /// Falls back to DuckDuckGo HTML API if no Brave key is configured.
 #[derive(Debug)]
@@ -176,7 +179,7 @@ impl Tool for WebSearchTool {
 
             match result {
                 Ok(content) => Ok(ToolResult {
-                    content,
+                    content: truncate_web_search_output(&content),
                     is_error: false,
                     image_blocks: vec![],
                     delivery_metadata: None,
@@ -198,6 +201,37 @@ impl Tool for WebSearchTool {
 /// rather than `%20` (RFC 3986). Search engine query parameters conventionally
 /// use `+` encoding. This differs from the `urlencoding` crate in `Cargo.toml`
 /// which uses `%20`.
+fn truncate_web_search_output(content: &str) -> String {
+    if content.len() <= MAX_WEB_SEARCH_OUTPUT_BYTES {
+        return content.to_string();
+    }
+
+    let marker_len = WEB_SEARCH_TRUNCATION_MARKER.len();
+    if marker_len >= MAX_WEB_SEARCH_OUTPUT_BYTES {
+        return WEB_SEARCH_TRUNCATION_MARKER
+            .chars()
+            .take(MAX_WEB_SEARCH_OUTPUT_BYTES)
+            .collect();
+    }
+
+    let prefix_limit = MAX_WEB_SEARCH_OUTPUT_BYTES - marker_len;
+    let mut prefix_end = 0;
+    for (idx, _) in content.char_indices() {
+        if idx > prefix_limit {
+            break;
+        }
+        prefix_end = idx;
+    }
+    if content.len() >= prefix_limit && content.is_char_boundary(prefix_limit) {
+        prefix_end = prefix_limit;
+    }
+
+    let mut output = String::with_capacity(MAX_WEB_SEARCH_OUTPUT_BYTES);
+    output.push_str(&content[..prefix_end]);
+    output.push_str(WEB_SEARCH_TRUNCATION_MARKER);
+    output
+}
+
 fn encode_query_param(input: &str) -> String {
     use std::fmt::Write;
     let mut output = String::with_capacity(input.len());
