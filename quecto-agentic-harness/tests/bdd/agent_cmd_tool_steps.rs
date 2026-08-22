@@ -814,6 +814,21 @@ fn then_agent_cmd_schema_requires(world: &mut QuectoWorld, field: String) {
     );
 }
 
+#[then(expr = "the agent_cmd tool definition command enum should not contain {string}")]
+fn then_agent_cmd_command_enum_excludes(world: &mut QuectoWorld, unexpected: String) {
+    let tool = world
+        .agent_cmd_tool
+        .as_ref()
+        .expect("agent_cmd_tool not set");
+    let def = tool.definition();
+    let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
+    let commands = schema["properties"]["command"]["enum"].as_array().unwrap();
+    assert!(
+        !commands.iter().any(|v| v.as_str() == Some(&unexpected)),
+        "expected command enum not to contain {unexpected:?}: {commands:?}"
+    );
+}
+
 #[then("the agent_cmd result should not be an error")]
 fn then_agent_cmd_ok(world: &mut QuectoWorld) {
     let result = world

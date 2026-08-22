@@ -16,6 +16,14 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     Then the agent_cmd tool definition schema should require "agent_id"
     And the agent_cmd tool definition schema should require "command"
 
+  @issue-1515
+  Scenario: Tool definition hides tool catalogue control commands from model-facing agent_cmd
+    Given an AgentCmdTool with an empty registry
+    Then the agent_cmd tool definition description should not contain "get_tool_catalogue"
+    And the agent_cmd tool definition description should not contain "list_tools"
+    And the agent_cmd tool definition command enum should not contain "get_tool_catalogue"
+    And the agent_cmd tool definition command enum should not contain "list_tools"
+
   # --- Argument parsing ---
 
   Scenario: Parse valid get_state command
