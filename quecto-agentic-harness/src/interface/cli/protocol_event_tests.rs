@@ -80,3 +80,45 @@ fn build_subagent_info_list_reports_liveness_without_changing_legacy_status() {
     assert_eq!(detached.status, "exited");
     assert_eq!(detached.liveness.as_deref(), Some("detached"));
 }
+
+#[test]
+fn build_live_subagent_info_list_omits_dead_detached_and_effectively_exited_tombstones() {
+    use crate::domain::session::SubagentLiveness;
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+    let reg = new_registry();
+    {
+        let mut guard = reg.lock().unwrap();
+        let mut live = SubagentEntry::new("/tmp/live.sock".into(), 1);
+        live.status = SubagentStatus::Idle;
+        guard.insert("live".to_string(), live);
+
+        let mut exited = SubagentEntry::new("/tmp/exited.sock".into(), 2);
+        exited.status = SubagentStatus::Exited;
+        guard.insert("exited".to_string(), exited);
+
+        let mut dead = SubagentEntry::new("/tmp/dead.sock".into(), 3);
+        dead.status = SubagentStatus::Idle;
+        dead.persisted_liveness = SubagentLiveness::Dead;
+        guard.insert("dead".to_string(), dead);
+
+        let mut detached = SubagentEntry::new("/tmp/detached.sock".into(), 4);
+        detached.status = SubagentStatus::Running;
+        detached.persisted_liveness = SubagentLiveness::Detached;
+        guard.insert("detached".to_string(), detached);
+    }
+
+    let snapshot = build_subagent_info_list(&Some(reg.clone()));
+    assert_eq!(
+        snapshot.len(),
+        4,
+        "legacy snapshot helper retains tombstones"
+    );
+
+    let live = build_live_subagent_info_list(&Some(reg));
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].agent_id, "live");
+    assert_eq!(live[0].status, "idle");
+    assert_eq!(live[0].liveness.as_deref(), Some("live"));
+}
