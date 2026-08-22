@@ -113,6 +113,18 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages","count":null,"before":null}'
     Then the agent_cmd should have sent command type "get_messages"
 
+  @issue-1515
+  Scenario: get_message preserves model-facing recovery arguments
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_message","messageId":"msg-1","toolCallId":"call-1","offset":2,"limit":8}'
+    Then the agent_cmd should have sent command type "get_message"
+
+  @issue-1515
+  Scenario: set_model accepts the provider and model_id form
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"set_model","provider":"openai","model_id":"gpt-5"}'
+    Then the agent_cmd should have sent command type "set_model"
+
   Scenario: get_messages rejects malformed paging arguments
     Given an AgentCmdTool with a mock registry entry "w1"
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages","count":"5"}'
