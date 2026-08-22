@@ -359,13 +359,15 @@ pub fn build_compact_subagent_roster(
             let effective =
                 crate::infrastructure::tools::subagent_registry::effective_status(&guard, id)
                     .unwrap_or_else(|| entry.status.clone());
-            if entry.persisted_liveness != SubagentLiveness::Live
-                || effective == SubagentStatus::Exited
-            {
+            let terminal = entry.persisted_liveness != SubagentLiveness::Live
+                || effective == SubagentStatus::Exited;
+            if terminal && (since.is_none() || entry.parent_id.is_none()) {
                 continue;
             }
             let display_name = entry.effective_display_name(id).to_string();
-            let status = if entry.run_error.is_some() || effective == SubagentStatus::Error {
+            let status = if terminal {
+                "dead"
+            } else if entry.run_error.is_some() || effective == SubagentStatus::Error {
                 "errored"
             } else if effective == SubagentStatus::Idle {
                 "idle"
