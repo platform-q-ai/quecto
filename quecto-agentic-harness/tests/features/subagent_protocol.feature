@@ -133,6 +133,22 @@ Feature: Subagent protocol commands (#524)
     Then the first subagent info should have agentId "alpha"
     And the second subagent info should have agentId "zebra"
 
+  # ─── tool catalogue command parsing (#1515) ─────────────────────────────────
+
+  @done
+  Scenario: list_tools alias normalizes to get_tool_catalogue command
+    Given the JSON command '{"type":"list_tools","id":"lt-1"}'
+    When I parse the command
+    Then the command type should be "get_tool_catalogue"
+    And the command id should be "lt-1"
+
+  @done
+  Scenario: get_tool_catalogue command id is optional
+    Given the JSON command '{"type":"get_tool_catalogue"}'
+    When I parse the command
+    Then the command type should be "get_tool_catalogue"
+    And the command id should be absent
+
   # ─── socket_path exposure for connect-on-select (#800) ───────────────────────
   # The TUI lazily opens a direct UDS connection to a SELECTED sub-agent's own
   # socket. #1442 routes inspection via the root/ancestor instead, so public
