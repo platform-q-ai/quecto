@@ -428,6 +428,30 @@ fn then_get_tool_catalogue_command_has_no_id(world: &mut QuectoWorld) {
     assert!(id.is_none(), "expected no command id, got {id:?}");
 }
 
+#[then(expr = "the parsed command should serialize as type {string}")]
+fn then_parsed_command_serializes_type(world: &mut QuectoWorld, expected: String) {
+    let cmd = world.parsed_command.as_ref().unwrap();
+    let json = serde_json::to_value(cmd).expect("command should serialize");
+    assert_eq!(json["type"].as_str(), Some(expected.as_str()));
+}
+
+#[then(expr = "the parsed command should serialize with id {string}")]
+fn then_parsed_command_serializes_id(world: &mut QuectoWorld, expected: String) {
+    let cmd = world.parsed_command.as_ref().unwrap();
+    let json = serde_json::to_value(cmd).expect("command should serialize");
+    assert_eq!(json["id"].as_str(), Some(expected.as_str()));
+}
+
+#[then("the parsed command should serialize without id")]
+fn then_parsed_command_serializes_without_id(world: &mut QuectoWorld) {
+    let cmd = world.parsed_command.as_ref().unwrap();
+    let json = serde_json::to_value(cmd).expect("command should serialize");
+    assert!(
+        json.get("id").is_none() || json["id"].is_null(),
+        "expected absent/null id, got {json:?}"
+    );
+}
+
 // ─── subagent_state_changed event steps ─────────────────────────────────────
 
 #[given(expr = "a SubagentStateChanged event with {int} subagents")]
