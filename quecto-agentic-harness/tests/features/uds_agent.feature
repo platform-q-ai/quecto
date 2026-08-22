@@ -806,6 +806,8 @@ Feature: UDS mode for headless agent operation
     Then the UDS agent exits with code 0
     And the agent output should contain a response command "get_tool_catalogue" with success true
     And the get_tool_catalogue response should list tool "bash"
+    And the get_tool_catalogue response should not list tool "mock_ext_tool"
+    And the get_tool_catalogue response should have 9 tools
 
   # ─── --persist flag (#348) ───────────────────────────────────────────────────
 
