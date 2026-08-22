@@ -11,6 +11,10 @@ use super::tui_harness::*;
 use crate::protocol::client::Event;
 
 fn compact_get_subagents_response_line(agents: Vec<serde_json::Value>) -> String {
+    full_compact_get_subagents_response_line(agents)
+}
+
+fn full_compact_get_subagents_response_line(agents: Vec<serde_json::Value>) -> String {
     serde_json::json!({
         "type": "response",
         "command": "get_subagents",
@@ -18,6 +22,20 @@ fn compact_get_subagents_response_line(agents: Vec<serde_json::Value>) -> String
         "data": {
             "subagents": agents,
             "sequence": 3,
+        },
+    })
+    .to_string()
+}
+
+fn delta_compact_get_subagents_response_line(agents: Vec<serde_json::Value>) -> String {
+    serde_json::json!({
+        "type": "response",
+        "command": "get_subagents",
+        "success": true,
+        "data": {
+            "subagents": agents,
+            "sequence": 4,
+            "unchanged": false,
         },
     })
     .to_string()
@@ -126,6 +144,54 @@ async fn compact_get_subagents_poll_preserves_uuid_identity_and_socket() {
         h.left_panel().contains("impl"),
         "the painted name must stay after a compact poll:\n{}",
         h.left_panel()
+    );
+}
+
+#[tokio::test]
+async fn delta_compact_get_subagents_merges_without_deleting_omitted_live_rows() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event_line(&state_changed_line(vec![
+        env_agent_json("impl-a", "C1"),
+        env_agent_json("impl-b", "C2"),
+    ]));
+
+    h.event_line(&delta_compact_get_subagents_response_line(vec![
+        compact_row("impl-a", "idle", Some("C1")),
+    ]));
+
+    let tracked = &h.app_mut().ac().roster.tracked;
+    assert_eq!(tracked["uuid-impl-a"].info.status, "idle");
+    assert!(tracked.contains_key("uuid-impl-b"));
+    let panel = h.left_panel();
+    assert!(
+        panel.contains("impl-a"),
+        "changed row remains visible:\n{panel}"
+    );
+    assert!(
+        panel.contains("impl-b"),
+        "delta must not delete omitted live row:\n{panel}"
+    );
+}
+
+#[tokio::test]
+async fn full_compact_get_subagents_snapshot_omitting_row_still_reconciles_removal() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event_line(&state_changed_line(vec![
+        env_agent_json("impl-a", "C1"),
+        env_agent_json("impl-b", "C2"),
+    ]));
+
+    h.event_line(&full_compact_get_subagents_response_line(vec![
+        compact_row("impl-a", "running", Some("C1")),
+    ]));
+
+    let panel = h.left_panel();
+    assert!(panel.contains("impl-a"));
+    assert!(
+        !panel.contains("impl-b"),
+        "full snapshot remains authoritative and removes omitted rows:\n{panel}"
     );
 }
 

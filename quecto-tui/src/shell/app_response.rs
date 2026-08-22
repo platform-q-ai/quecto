@@ -594,12 +594,15 @@ impl App {
     fn handle_get_subagents(&mut self, data: Option<serde_json::Value>) {
         let Some(data) = data else { return };
         let roster = crate::protocol::presentation_payloads::subagent_roster(&data);
-        // A `since`-cursor compact poll can legally return no rows with
-        // `unchanged: true`. That is a no-op, not a full-replace wipe.
-        if roster.unchanged {
-            return;
+        // Cursor responses are sparse deltas: `unchanged:true` is a no-op and
+        // `unchanged:false` merges the changed rows without deleting omitted
+        // live agents. Responses without the cursor marker remain authoritative
+        // full snapshots and keep the existing replace/reconcile semantics.
+        match roster.unchanged {
+            Some(true) => (),
+            Some(false) => self.merge_subagent_bar_delta(roster.subagents),
+            None => self.update_subagent_bar(roster.subagents),
         }
-        self.update_subagent_bar(roster.subagents);
     }
 
     fn handle_get_message_response(

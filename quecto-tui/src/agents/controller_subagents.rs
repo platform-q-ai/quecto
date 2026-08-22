@@ -140,6 +140,21 @@ impl App {
         self.update_subagent_bar_from_source(None, subagents);
     }
 
+    pub(super) fn merge_subagent_bar_delta(
+        &mut self,
+        subagents: Vec<crate::protocol::client::SubagentInfoEvent>,
+    ) {
+        let mut snapshot = self
+            .ac()
+            .roster
+            .tracked
+            .values()
+            .map(|tracked| tracked.info.clone())
+            .collect::<Vec<_>>();
+        snapshot.extend(subagents);
+        self.update_subagent_bar(snapshot);
+    }
+
     pub(super) fn update_subagent_bar_from_source(
         &mut self,
         source_agent_id: Option<&str>,
