@@ -79,14 +79,6 @@ fn compact_roster_maps_status_and_liveness_to_four_words() {
                 SubagentLiveness::Live,
                 "errored",
             ),
-            ("e", SubagentStatus::Exited, SubagentLiveness::Live, "dead"),
-            (
-                "f",
-                SubagentStatus::Idle,
-                SubagentLiveness::Detached,
-                "dead",
-            ),
-            ("g", SubagentStatus::Running, SubagentLiveness::Dead, "dead"),
         ] {
             let mut entry = SubagentEntry::new(format!("/tmp/{id}.sock").into(), 1);
             entry.status = status;
@@ -167,6 +159,47 @@ fn get_subagents_command_round_trips_since_cursor() {
         }
         _ => panic!("expected get_subagents"),
     }
+}
+
+#[test]
+fn compact_roster_omits_dead_and_exited_subagents_retained_in_registry() {
+    let reg = new_registry();
+    {
+        let mut guard = reg.lock().unwrap();
+        let mut live = SubagentEntry::new("/tmp/live.sock".into(), 1);
+        live.status = SubagentStatus::Idle;
+        live.notification_sequence = 1;
+        guard.insert("live".into(), live);
+
+        let mut exited = SubagentEntry::new("/tmp/exited.sock".into(), 2);
+        exited.status = SubagentStatus::Exited;
+        exited.notification_sequence = 2;
+        guard.insert("exited".into(), exited);
+
+        let mut dead = SubagentEntry::new("/tmp/dead.sock".into(), 3);
+        dead.persisted_liveness = SubagentLiveness::Dead;
+        dead.notification_sequence = 3;
+        guard.insert("dead".into(), dead);
+
+        let mut detached = SubagentEntry::new("/tmp/detached.sock".into(), 4);
+        detached.persisted_liveness = SubagentLiveness::Detached;
+        detached.notification_sequence = 4;
+        guard.insert("detached".into(), detached);
+    }
+
+    let rows = build_compact_subagent_roster(&Some(reg), None).unwrap();
+    assert_eq!(
+        rows.sequence, 4,
+        "cursor still reflects the retained registry"
+    );
+    assert_eq!(
+        rows.subagents
+            .iter()
+            .map(|row| row.agent_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["live"],
+        "compact roster must expose only surviving subagents"
+    );
 }
 
 #[test]

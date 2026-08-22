@@ -296,7 +296,7 @@ fn forwarded_environment_ref_is_preserved_in_compact_roster() {
 }
 
 #[test]
-fn omitted_forwarded_descendant_becomes_dead_delta_instead_of_disappearing() {
+fn omitted_forwarded_descendant_is_omitted_from_compact_roster_delta() {
     let registry = new_registry();
     add(&registry, "child", None);
     let first = serde_json::json!({"type":"subagent_state_changed","subagents":[{
@@ -309,9 +309,7 @@ fn omitted_forwarded_descendant_becomes_dead_delta_instead_of_disappearing() {
     merge_and_forward_state_changed(&empty, &registry, "child").unwrap();
     let delta = compact_roster(&registry, Some(seen));
 
-    assert_eq!(delta.subagents.len(), 1);
-    assert_eq!(delta.subagents[0].agent_id, "grand");
-    assert_eq!(delta.subagents[0].status, "dead");
+    assert!(delta.subagents.is_empty());
     assert!(delta.sequence > seen);
 }
 
@@ -328,7 +326,7 @@ fn resurrected_forwarded_descendant_returns_to_live_in_compact_roster() {
     let empty = serde_json::json!({"type":"subagent_state_changed","subagents":[]});
     merge_and_forward_state_changed(&empty, &registry, "child").unwrap();
     let dead_delta = compact_roster(&registry, Some(seen_live));
-    assert_eq!(dead_delta.subagents[0].status, "dead");
+    assert!(dead_delta.subagents.is_empty());
 
     merge_and_forward_state_changed(&live, &registry, "child").unwrap();
     let full = compact_roster(&registry, None);
@@ -353,7 +351,7 @@ fn repeated_omitted_snapshot_does_not_resequence_retained_dead_descendant() {
     let empty = serde_json::json!({"type":"subagent_state_changed","subagents":[]});
     merge_and_forward_state_changed(&empty, &registry, "child").unwrap();
     let deletion = compact_roster(&registry, Some(seen_live));
-    assert_eq!(deletion.subagents.len(), 1);
+    assert!(deletion.subagents.is_empty());
     let deletion_sequence = deletion.sequence;
 
     merge_and_forward_state_changed(&empty, &registry, "child").unwrap();
