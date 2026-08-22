@@ -377,8 +377,8 @@ output (see [Notification model](#notification-model)).
       "type": "string",
       "enum": ["prompt", "steer", "follow_up", "abort", "kill",
                "get_state", "get_messages",
-               "get_session_stats", "get_subagents", "get_tool_catalogue",
-               "list_tools", "set_model", "set_effort", "clear_history"],
+               "get_session_stats", "get_subagents",
+               "set_model", "set_effort", "clear_history"],
       "description": "Command to send"
     },
     "message": {
@@ -416,10 +416,11 @@ output (see [Notification model](#notification-model)).
 | `get_session_stats` | Get token usage and cost | No |
 | `get_subagents` | List nested subagents spawned by the targeted live subagent; not parent/session-wide inventory | No |
 | `get_subagents_all` | With `agent_id: "*"`, list parent/session-wide subagent inventory for cleanup/inspection | No |
-| `get_tool_catalogue` / `list_tools` | Return rich tool catalogue snapshot | No |
 | `set_model` | Change the LLM model | No |
 | `set_effort` | Change the reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`, validated against the child's active model; invalid values are rejected with the valid list) | No |
 | `clear_history` | Clear conversation history | No |
+
+Tool catalogue commands (`get_tool_catalogue` / `list_tools`) remain available only on the UDS/control-plane protocol; they are not model-facing `agent_cmd` commands.
 
 **Examples:**
 
