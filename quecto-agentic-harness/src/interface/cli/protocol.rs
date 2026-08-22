@@ -356,13 +356,16 @@ pub fn build_compact_subagent_roster(
             if since.is_some_and(|s| entry.notification_sequence <= s) {
                 continue;
             }
-            let display_name = entry.effective_display_name(id).to_string();
             let effective =
                 crate::infrastructure::tools::subagent_registry::effective_status(&guard, id)
                     .unwrap_or_else(|| entry.status.clone());
-            let status = if entry.persisted_liveness != SubagentLiveness::Live
-                || effective == SubagentStatus::Exited
-            {
+            let terminal = entry.persisted_liveness != SubagentLiveness::Live
+                || effective == SubagentStatus::Exited;
+            if terminal && (since.is_none() || entry.parent_id.is_none()) {
+                continue;
+            }
+            let display_name = entry.effective_display_name(id).to_string();
+            let status = if terminal {
                 "dead"
             } else if entry.run_error.is_some() || effective == SubagentStatus::Error {
                 "errored"
@@ -404,6 +407,30 @@ pub fn build_compact_subagent_roster(
 pub fn build_subagent_info_list(
     registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 ) -> Vec<SubagentInfo> {
+    build_subagent_info_list_filtered(registry, |_| true)
+}
+
+/// Build a sorted list of live/surviving [`SubagentInfo`] rows for authoritative
+/// live roster broadcasts.
+///
+/// Retained dead/exited tombstones remain visible through [`build_subagent_info_list`]
+/// for existing snapshot/query contracts, but live `subagent_state_changed`
+/// broadcasts must not resurrect them in clients that treat the event as the
+/// root roster snapshot.
+pub fn build_live_subagent_info_list(
+    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+) -> Vec<SubagentInfo> {
+    build_subagent_info_list_filtered(registry, |effective| {
+        effective.persisted_liveness == crate::domain::session::SubagentLiveness::Live
+            && *effective.status
+                != crate::infrastructure::tools::subagent_registry::SubagentStatus::Exited
+    })
+}
+
+fn build_subagent_info_list_filtered(
+    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    include: impl Fn(&SubagentInfoBuildEntry<'_>) -> bool,
+) -> Vec<SubagentInfo> {
     let Some(reg) = registry else {
         return Vec::new();
     };
@@ -411,7 +438,16 @@ pub fn build_subagent_info_list(
         let guard = reg.lock().unwrap_or_else(|e| e.into_inner());
         guard
             .iter()
-            .map(|(id, entry)| {
+            .filter_map(|(id, entry)| {
+                let status =
+                    crate::infrastructure::tools::subagent_registry::effective_status(&guard, id)
+                        .unwrap_or_else(|| entry.status.clone());
+                if !include(&SubagentInfoBuildEntry {
+                    persisted_liveness: entry.persisted_liveness,
+                    status: &status,
+                }) {
+                    return None;
+                }
                 let display_name = entry.effective_display_name(id).to_string();
                 let environment =
                     crate::infrastructure::tools::subagent_environment_wire::environment_wire(
@@ -422,16 +458,11 @@ pub fn build_subagent_info_list(
                         entry,
                         environment.as_ref(),
                     );
-                SubagentInfo {
+                Some(SubagentInfo {
                     agent_id: display_name.clone(),
                     agent_uuid: Some(entry.agent_uuid.to_string()),
                     display_name: Some(display_name),
-                    status: crate::infrastructure::tools::subagent_registry::effective_status(
-                        &guard, id,
-                    )
-                    .unwrap_or_else(|| entry.status.clone())
-                    .to_wire_str()
-                    .to_string(),
+                    status: status.to_wire_str().to_string(),
                     liveness: Some(match entry.persisted_liveness {
                         crate::domain::session::SubagentLiveness::Live => "live".to_string(),
                         crate::domain::session::SubagentLiveness::Detached => {
@@ -448,12 +479,17 @@ pub fn build_subagent_info_list(
                     read_only: entry.read_only,
                     execution_backend,
                     environment,
-                }
+                })
             })
             .collect()
     }; // guard dropped here — sort happens outside critical section
     list.sort_by(|a, b| a.agent_id.cmp(&b.agent_id));
     list
+}
+
+struct SubagentInfoBuildEntry<'a> {
+    persisted_liveness: crate::domain::session::SubagentLiveness,
+    status: &'a crate::infrastructure::tools::subagent_registry::SubagentStatus,
 }
 
 /// The unit tree reconstructed purely from an identity-tagged event stream

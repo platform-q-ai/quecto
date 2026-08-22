@@ -377,7 +377,7 @@ async fn run_dispatch_loop(
                     }
                 }
                 // Broadcast state_changed event to all UDS clients (#524).
-                let list = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
+                let list = super::protocol::build_live_subagent_info_list(&ctx.subagent_registry);
                 let ev = AgentEvent::SubagentStateChanged { subagents: list };
                 emit_event_to_broadcast_or_writer(ctx, &ev).await;
                 // Auto-await (#816): this branch runs only while the parent is IDLE

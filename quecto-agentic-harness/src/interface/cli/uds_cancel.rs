@@ -651,8 +651,8 @@ pub(in crate::interface::cli) fn forward_notification_broadcast(
         line.push('\n');
         let _ = broadcast_tx.send(line);
     }
-    // Build full subagent info list from registry for the state-changed event.
-    let list = crate::interface::cli::protocol::build_subagent_info_list(subagent_registry);
+    // Build survivor-only subagent info list for the authoritative live state-changed event.
+    let list = crate::interface::cli::protocol::build_live_subagent_info_list(subagent_registry);
     let ev = AgentEvent::SubagentStateChanged { subagents: list };
     let mut line = ev.to_json_line();
     line.push('\n');
