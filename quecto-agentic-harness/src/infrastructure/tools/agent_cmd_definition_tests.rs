@@ -8,6 +8,14 @@ fn definition_does_not_expose_await() {
     let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
     let commands = schema["properties"]["command"]["enum"].as_array().unwrap();
     assert!(!commands.iter().any(|v| v.as_str() == Some("await")));
+    assert!(
+        !commands
+            .iter()
+            .any(|v| v.as_str() == Some("get_tool_catalogue"))
+    );
+    assert!(!commands.iter().any(|v| v.as_str() == Some("list_tools")));
+    assert!(!def.description.contains("get_tool_catalogue"));
+    assert!(!def.description.contains("list_tools"));
     assert!(schema["properties"].get("timeout").is_none());
     assert!(schema["properties"].get("idle_timeout").is_none());
 }

@@ -795,6 +795,12 @@ fn when_send_command_with_id(world: &mut QuectoWorld, command: String, id: Strin
     world.uds_commands.push(cmd.to_string());
 }
 
+#[when(expr = "I send command {string} with no id")]
+fn when_send_command_without_id(world: &mut QuectoWorld, command: String) {
+    let cmd = serde_json::json!({"type": command});
+    world.uds_commands.push(cmd.to_string());
+}
+
 #[when(expr = "I send get_state with id {string}")]
 fn when_send_get_state_with_id(world: &mut QuectoWorld, id: String) {
     let cmd = serde_json::json!({"type": "get_state", "id": id});

@@ -15,6 +15,11 @@ fn list_tools_alias_parses_to_get_tool_catalogue() {
     let cmd = parse_command_line(r#"{"type":"list_tools","id":"lt-1"}"#).unwrap();
     assert_eq!(cmd.type_name(), "get_tool_catalogue");
     assert_eq!(cmd.id(), Some("lt-1"));
+
+    let AgentCommand::GetToolCatalogue { id } = cmd else {
+        panic!("list_tools should normalize to the GetToolCatalogue command")
+    };
+    assert_eq!(id.as_deref(), Some("lt-1"));
 }
 
 #[test]

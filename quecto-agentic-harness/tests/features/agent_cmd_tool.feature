@@ -16,6 +16,14 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     Then the agent_cmd tool definition schema should require "agent_id"
     And the agent_cmd tool definition schema should require "command"
 
+  @issue-1515
+  Scenario: Tool definition hides tool catalogue control commands from model-facing agent_cmd
+    Given an AgentCmdTool with an empty registry
+    Then the agent_cmd tool definition description should not contain "get_tool_catalogue"
+    And the agent_cmd tool definition description should not contain "list_tools"
+    And the agent_cmd tool definition command enum should not contain "get_tool_catalogue"
+    And the agent_cmd tool definition command enum should not contain "list_tools"
+
   # --- Argument parsing ---
 
   Scenario: Parse valid get_state command
@@ -47,6 +55,16 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     When I execute agent_cmd with '{"agent_id":"worker-1","command":"unknown_cmd"}'
     Then the agent_cmd result should be an error
     And the agent_cmd result should contain "unsupported command"
+
+  @issue-1515
+  Scenario: Model-facing agent_cmd rejects tool catalogue control commands
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_tool_catalogue"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "not available via model-facing agent_cmd"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"list_tools"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "not available via model-facing agent_cmd"
 
   # --- Registry lookup ---
 
@@ -94,6 +112,18 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     Given an AgentCmdTool with a mock registry entry "w1"
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages","count":null,"before":null}'
     Then the agent_cmd should have sent command type "get_messages"
+
+  @issue-1515
+  Scenario: get_message preserves model-facing recovery arguments
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_message","messageId":"msg-1","toolCallId":"call-1","offset":2,"limit":8}'
+    Then the agent_cmd should have sent command type "get_message"
+
+  @issue-1515
+  Scenario: set_model accepts the provider and model_id form
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"set_model","provider":"openai","model_id":"gpt-5"}'
+    Then the agent_cmd should have sent command type "set_model"
 
   Scenario: get_messages rejects malformed paging arguments
     Given an AgentCmdTool with a mock registry entry "w1"
@@ -276,10 +306,17 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_subagents"}'
     Then the agent_cmd should have sent command type "get_subagents"
 
-  Scenario: get_tool_catalogue command is built correctly
+  Scenario: get_tool_catalogue command is rejected on the model-facing agent_cmd surface
     Given an AgentCmdTool with a mock registry entry "w1"
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_tool_catalogue"}'
-    Then the agent_cmd should have sent command type "get_tool_catalogue"
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "not available via model-facing agent_cmd"
+
+  Scenario: list_tools alias is rejected on the model-facing agent_cmd surface
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"list_tools"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "not available via model-facing agent_cmd"
 
   # --- Kill command (#559) ---
 
@@ -483,13 +520,11 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     And the agent_cmd response command "get_session_stats" should include boolean field "snapshot" set to "true"
     And the agent_cmd result should contain "cli:busy-stats"
 
-  Scenario: get_tool_catalogue against a busy child accepts the connect-time snapshot
+  Scenario: get_tool_catalogue against a busy child is rejected on the model-facing agent_cmd surface
     Given an AgentCmdTool with a busy extensions snapshot registry entry "busy-tools880"
     When I execute agent_cmd with '{"agent_id":"busy-tools880","command":"get_tool_catalogue"}'
-    Then the agent_cmd result should not be an error
-    And the agent_cmd response command "get_tool_catalogue" should include a "tools" array
-    And the agent_cmd response command "get_tool_catalogue" should include boolean field "snapshot" set to "true"
-    And the agent_cmd result should contain "mock_ext_tool"
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "not available via model-facing agent_cmd"
 
   Scenario: set_model against a busy child returns on acceptance
     Given an AgentCmdTool with a fast-ack busy registry entry "busy-set-model880"

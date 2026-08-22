@@ -64,7 +64,6 @@ fn non_control_commands_do_not_carry_accept_marker() {
         r#"{"agent_id":"w1","command":"get_state"}"#,
         r#"{"agent_id":"w1","command":"get_messages"}"#,
         r#"{"agent_id":"w1","command":"get_session_stats"}"#,
-        r#"{"agent_id":"w1","command":"get_tool_catalogue"}"#,
     ] {
         let v = parsed(&tool, args);
         assert!(
@@ -86,13 +85,7 @@ fn is_control_command_matches_queueable_agent_cmd_forwards() {
     ] {
         assert!(AgentCmdTool::is_control_command(c), "{c} is control");
     }
-    for c in [
-        "get_state",
-        "get_messages",
-        "get_session_stats",
-        "get_tool_catalogue",
-        "kill",
-    ] {
+    for c in ["get_state", "get_messages", "get_session_stats", "kill"] {
         assert!(!AgentCmdTool::is_control_command(c), "{c} is not control");
     }
 }

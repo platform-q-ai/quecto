@@ -785,6 +785,43 @@ Feature: UDS mode for headless agent operation
     And the get_tool_catalogue response should list tool "bash"
     And the get_tool_catalogue response for "bash" should include rich catalogue state
 
+  @done @tools
+  Scenario: list_tools remains a UDS alias for control clients
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the UDS agent with no [session]
+    And I send command "list_tools" with id "tc-alias-1"
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the agent output should contain a response command "get_tool_catalogue" with success true
+    And the get_tool_catalogue response should list tool "bash"
+
+  @done @tools
+  Scenario: get_tool_catalogue accepts omitted control-client ids
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the UDS agent with no [session]
+    And I send command "get_tool_catalogue" with no id
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the agent output should contain a response command "get_tool_catalogue" with success true
+    And the get_tool_catalogue response should list tool "bash"
+    And the get_tool_catalogue response should not list tool "mock_ext_tool"
+    And the get_tool_catalogue response should have 9 tools
+
+  @done @tools
+  Scenario: list_tools alias accepts omitted control-client ids
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the UDS agent with no [session]
+    And I send command "list_tools" with no id
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the agent output should contain a response command "get_tool_catalogue" with success true
+    And the get_tool_catalogue response should list tool "bash"
+    And the get_tool_catalogue response should not list tool "mock_ext_tool"
+    And the get_tool_catalogue response should have 9 tools
+
   # ─── --persist flag (#348) ───────────────────────────────────────────────────
 
   @done @multi-client @persist
@@ -842,6 +879,20 @@ Feature: UDS mode for headless agent operation
     And the tool catalogue response "ge-reg" should list tool "weather"
     And the tool catalogue response "ge-reg" should list tool "weather" from source "uds"
     And the registered tool "weather" should have a UDS client owner
+
+  @done @multi-client @uds-ext
+  Scenario: list_tools alias returns extension catalogue entries for control clients
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 1 sends register_tools with tool "weather" described as "Get weather"
+    And client 1 sends command "list_tools" with id "ge-alias-ext"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received a response command "register_tools" with success true
+    And the tool catalogue response "ge-alias-ext" should list tool "weather"
+    And the tool catalogue response "ge-alias-ext" should list tool "weather" from source "uds"
 
   @done @multi-client @uds-ext
   Scenario: register_tools rejects tool that shadows a core tool

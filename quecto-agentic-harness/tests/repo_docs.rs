@@ -315,6 +315,16 @@ fn agent_cmd_docs_match_tool_schema() {
         subagents.contains("get_messages"),
         "docs/subagents.md should document get_messages"
     );
+    let agent_cmd_section = subagents
+        .split("### `agent_cmd` — interact with a subagent")
+        .nth(1)
+        .and_then(|rest| rest.split("Tool catalogue commands").next())
+        .expect("docs/subagents.md must include the agent_cmd schema/table before catalogue note");
+    assert!(
+        !agent_cmd_section.contains("get_tool_catalogue")
+            && !agent_cmd_section.contains("list_tools"),
+        "docs/subagents.md must not present UDS-only catalogue commands as model-facing agent_cmd commands"
+    );
     // #1513: model-facing agent_cmd omits/nulls count+before for the default
     // unread report; explicit count/before remain cursor-neutral history paging.
     let subagents_lower = subagents.to_lowercase();

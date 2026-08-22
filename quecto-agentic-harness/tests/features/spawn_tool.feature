@@ -441,14 +441,12 @@ Feature: SpawnTool — child agent process spawning
     Then live agent_cmd get_messages for "live-steer-e2e" should contain "LIVE_STEER_MARKER"
 
   @mock-llm
-  Scenario: Live agent_cmd state stats catalogue history and kill work end-to-end
+  Scenario: Live agent_cmd state stats history and kill work end-to-end
     Given a live SpawnTool and AgentCmdTool backed by a mock LLM child
     When I live-spawn subagent "live-control-e2e" with initial task "LIVE_CONTROL_BOOTSTRAP"
     And I run live agent_cmd for "live-control-e2e" with '{"command":"get_state"}'
     Then the agent_cmd result should not be an error
     When I run live agent_cmd for "live-control-e2e" with '{"command":"get_session_stats"}'
-    Then the agent_cmd result should not be an error
-    When I run live agent_cmd for "live-control-e2e" with '{"command":"get_tool_catalogue"}'
     Then the agent_cmd result should not be an error
     When I run live agent_cmd for "live-control-e2e" with '{"command":"clear_history"}'
     Then the agent_cmd result should not be an error
