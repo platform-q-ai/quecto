@@ -473,13 +473,25 @@ fn test_parse_set_model_model_id_without_provider() {
 fn test_definition_lists_new_commands() {
     let tool = empty_tool();
     let def = tool.definition();
-    assert!(def.description.contains("follow_up"));
-    assert!(def.description.contains("set_model"));
-    assert!(def.description.contains("clear_history"));
-    assert!(def.description.contains("get_messages"));
-    assert!(def.description.contains("get_subagents"));
-    assert!(def.description.contains("get_subagents_all"));
-    assert!(def.description.contains("kill"));
+    let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
+    let command = &schema["properties"]["command"];
+    let commands = command["enum"].as_array().expect("command enum");
+    for expected in [
+        "follow_up",
+        "set_model",
+        "clear_history",
+        "get_messages",
+        "get_subagents",
+        "get_subagents_all",
+        "kill",
+    ] {
+        assert!(
+            commands
+                .iter()
+                .any(|value| value.as_str() == Some(expected)),
+            "command enum misses {expected}"
+        );
+    }
 }
 
 // ── Kill command tests (#559) ────────────────────────────────────
