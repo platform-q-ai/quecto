@@ -6,7 +6,7 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.105.21**.
+Current version: **0.105.22**.
 
 ## Quick Start
 
@@ -614,7 +614,7 @@ Runtime policy:
 - **Interpreter** — `python3` resolved from `PATH`, started with `-I` (isolated mode) directly via argv. No shell is involved, so arguments are never word-split or expanded.
 - **Working directory** — the agent's workspace. Files a program writes persist for the lifetime of the task and are reported back in `files_created_or_modified`.
 - **Path handling** — a `path` argument is joined to the workspace before execution. Because filesystem sandbox mode has been removed, `Sandbox::validate_path` no longer rejects traversal, absolute paths, or symlink escapes for agent entrypoints; file-mode `python_lab` can execute any script path the Quecto process user can read, except the reserved `.quecto/python_lab` artifact tree.
-- **Output** — the inline result carries a preview capped at `max_output_bytes` for the call; the complete output is written to `.quecto/python_lab/<execution_id>/{stdout,stderr}.txt` and listed in `artifact_paths` when the preview was truncated. Output beyond the configured `max_output_bytes` hard cap is dropped and flagged. That cap applies per stream, so an execution can retain up to twice it in total.
+- **Output** — the inline result carries a slim success envelope: `status`, `exit_code`, `execution_id`, `stdout`, `stderr`, and `duration_ms`. Extra metadata is included only when informative: truncation flags and `artifact_paths` when output is truncated, changed-file lists when non-empty, timeout/cancel fields on timeout or cancellation, and resource fields when configured limits are relevant. Full execution metadata remains available for background jobs via `op=status` and `job_id`. The preview is capped at `max_output_bytes` for the call; complete output is written to `.quecto/python_lab/<execution_id>/{stdout,stderr}.txt` and listed in `artifact_paths` when the preview was truncated. Output beyond the configured `max_output_bytes` hard cap is dropped and flagged. That cap applies per stream, so an execution can retain up to twice it in total.
 - **Artifact retention** — every execution leaves a `.quecto/python_lab/<execution_id>/` directory. The 32 most recent are kept and older ones are deleted as new runs start; a directory belonging to a job that has not finished is never removed. Paging a job's output re-reads these files, so `output` also reports `artifacts_modified` if their size no longer matches what was captured at completion.
 - **Resource limits** — memory, CPU, and process limits are applied with `setrlimit` in the child before `exec`, on Unix only. On non-Unix platforms these keys are accepted but not enforced. Two caveats worth knowing: `max_processes` maps to `RLIMIT_NPROC`, which the kernel counts **per user**, not per process — so it is only meaningful as the default `1` (block subprocess creation entirely), it is silently ineffective when the harness runs as root, and any larger value will behave unpredictably on a busy machine. `max_memory_bytes` maps to `RLIMIT_AS`, which bounds virtual address space rather than resident memory; CPython reserves far more address space than it resides, so set it generously or a program will fail to start at all.
 - **Background jobs** — live for the session. Cancellation, timeout, and dropping the tool kill the process group and its descendants.

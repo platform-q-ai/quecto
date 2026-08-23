@@ -9,7 +9,10 @@ use serde_json::json;
 
 #[path = "python_lab_process.rs"]
 mod python_lab_process;
+#[path = "python_lab_result.rs"]
+mod python_lab_result;
 use python_lab_process::{interpreter_version, kill_pid, kill_pid_tree_best_effort, run_child};
+use python_lab_result::{ResultContext, artifacts_diverged, build_result, file_len};
 
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
@@ -159,6 +162,7 @@ pub(crate) struct JobState {
     pub(crate) invocation_type: String,
     pub(crate) timeout_seconds: u64,
     pub(crate) resource_limits: serde_json::Value,
+    pub(crate) inherit_environment: bool,
 }
 
 impl PythonLabTool {
@@ -240,7 +244,7 @@ impl Tool for PythonLabTool {
                     )
                     .await
                 }
-                "status" => status_op(&v, jobs).await,
+                "status" => status_op(&v, workspace, jobs).await,
                 "output" => output_op(&v, workspace, jobs).await,
                 "cancel" => cancel_op(&v, jobs).await,
                 op => ok_json(
@@ -325,6 +329,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
             invocation_type: spec.invocation_type.clone(),
             timeout_seconds: spec.timeout_secs,
             resource_limits: json!({"memory_bytes":cfg.max_memory_bytes,"cpu_seconds":cfg.max_cpu_seconds,"processes":cfg.max_processes}),
+            inherit_environment: cfg.inherit_environment,
         }));
         {
             let mut registry = jobs.lock().unwrap();
@@ -385,8 +390,9 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
                 status: &final_status,
                 exit_code,
                 exec_id: &exec_id_bg,
-                session_key: &session_key_bg,
-                invocation_type: &spec_bg.invocation_type,
+                _session_key: &session_key_bg,
+                _invocation_type: &spec_bg.invocation_type,
+                background: true,
                 start,
                 end: completed_ms,
                 timeout: spec_bg.timeout_secs,
@@ -414,7 +420,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
             }
         });
         return ok_json(
-            json!({"status":"running","job_id":job_id,"execution_id":exec_id,"session_id":session_key,"start_time_ms":start,"timeout_seconds":spec.timeout_secs}),
+            json!({"status":"running","job_id":job_id,"execution_id":exec_id}),
             false,
         );
     }
@@ -431,8 +437,9 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
         status: &status,
         exit_code: code,
         exec_id: &exec_id,
-        session_key: &session_key,
-        invocation_type: &spec.invocation_type,
+        _session_key: &session_key,
+        _invocation_type: &spec.invocation_type,
+        background: false,
         start,
         end,
         timeout: spec.timeout_secs,
@@ -553,14 +560,84 @@ fn parse_run(
     })
 }
 
-async fn status_op(v: &serde_json::Value, jobs: JobRegistry) -> Result<ToolResult, DomainError> {
+async fn status_op(
+    v: &serde_json::Value,
+    workspace: Arc<PathBuf>,
+    jobs: JobRegistry,
+) -> Result<ToolResult, DomainError> {
     let id = job_id(v)?;
     let Some(job) = jobs.lock().unwrap().get(id).cloned() else {
         return ok_json(json!({"status":"not_found","job_id":id}), true);
     };
-    let s = job.lock().unwrap();
+    let (
+        status,
+        execution_id,
+        session_id,
+        invocation_type,
+        exit_code,
+        started_ms,
+        completed_ms,
+        timeout_seconds,
+        resource_limits,
+        inherit_environment,
+        stdout_path,
+        stderr_path,
+        max_output_bytes,
+        terminal_result,
+    ) = {
+        let s = job.lock().unwrap();
+        (
+            s.status.clone(),
+            s.execution_id.clone(),
+            s.session_id.clone(),
+            s.invocation_type.clone(),
+            s.exit_code,
+            s.started_ms,
+            s.completed_ms,
+            s.timeout_seconds,
+            s.resource_limits.clone(),
+            s.inherit_environment,
+            s.stdout_path.clone(),
+            s.stderr_path.clone(),
+            s.max_output_bytes,
+            s.result.clone(),
+        )
+    };
+    let mut detail = json!({"status":status,"job_id":id,"execution_id":execution_id,"session_id":session_id,"invocation_type":invocation_type,"interpreter":"python3","interpreter_version":interpreter_version(inherit_environment),"exit_code":exit_code,"start_time_ms":started_ms,"completion_time_ms":completed_ms,"duration_ms":completed_ms.unwrap_or_else(now_ms).saturating_sub(started_ms),"timeout_seconds":timeout_seconds,"timeout_or_cancel_reason": if status=="timed_out" {"timeout"} else if status=="cancelled" || status=="cancelling" {"cancelled"} else {""},"resource_limits":resource_limits,"resource_usage":{"stdout_bytes_retained":file_len(&stdout_path).await,"stderr_bytes_retained":file_len(&stderr_path).await,"cpu_time_ms":serde_json::Value::Null,"max_rss_bytes":serde_json::Value::Null}});
+    if let Some(result) = terminal_result {
+        if let Some(obj) = detail.as_object_mut() {
+            obj.insert("resource_usage".into(), json!({"stdout_bytes_retained":file_len(&stdout_path).await,"stderr_bytes_retained":file_len(&stderr_path).await,"cpu_time_ms":serde_json::Value::Null,"max_rss_bytes":serde_json::Value::Null}));
+            if let Some(files) = result.get("files_created_or_modified") {
+                obj.insert("files_created_or_modified".into(), files.clone());
+            }
+            if let Some(paths) = result.get("artifact_paths") {
+                obj.insert("artifact_paths".into(), paths.clone());
+            }
+            obj.entry("files_created_or_modified")
+                .or_insert_with(|| json!([]));
+            for key in ["output_truncated", "stdout_truncated", "stderr_truncated"] {
+                if let Some(value) = result.get(key) {
+                    obj.insert(key.into(), value.clone());
+                }
+            }
+        }
+    } else {
+        let artifacts = [stdout_path.as_path(), stderr_path.as_path()]
+            .into_iter()
+            .filter(|p| p.exists())
+            .map(artifact_rel)
+            .collect::<Vec<_>>();
+        if let Some(obj) = detail.as_object_mut() {
+            obj.insert("artifact_paths".into(), json!(artifacts));
+        }
+    }
+    if let Some(obj) = detail.as_object_mut() {
+        let artifact_root = workspace.join(format!(".quecto/python_lab/{execution_id}"));
+        obj.insert("artifact_dir".into(), json!(artifact_rel(&artifact_root)));
+        obj.insert("max_output_bytes".into(), json!(max_output_bytes));
+    }
     ok_json(
-        json!({"status":s.status,"job_id":id,"execution_id":s.execution_id,"session_id":s.session_id,"invocation_type":s.invocation_type,"exit_code":s.exit_code,"start_time_ms":s.started_ms,"completion_time_ms":s.completed_ms,"duration_ms":s.completed_ms.unwrap_or_else(now_ms).saturating_sub(s.started_ms),"timeout_seconds":s.timeout_seconds,"timeout_or_cancel_reason": if s.status=="timed_out" {"timeout"} else if s.status=="cancelled" || s.status=="cancelling" {"cancelled"} else {""},"resource_limits":s.resource_limits}),
+        detail,
         // The missing-job case already returned above, so a reported status is
         // never an error here.
         false,
@@ -601,33 +678,6 @@ async fn output_op(
         is_err,
     )
 }
-/// True when an artifact's size no longer matches what was captured when the
-/// job completed, which means something rewrote it after the fact. Reports
-/// false while the job is still running and has no captured sizes yet.
-async fn artifacts_diverged(
-    result: Option<&serde_json::Value>,
-    stdout_path: &Path,
-    stderr_path: &Path,
-) -> bool {
-    let Some(usage) = result.and_then(|r| r.get("resource_usage")) else {
-        return false;
-    };
-    for (key, path) in [
-        ("stdout_bytes_retained", stdout_path),
-        ("stderr_bytes_retained", stderr_path),
-    ] {
-        let Some(captured) = usage.get(key).and_then(|v| v.as_u64()) else {
-            // Nothing was captured for this stream, so there is nothing to
-            // compare — check the other one rather than giving up on both.
-            continue;
-        };
-        if file_len(path).await != Some(captured) {
-            return true;
-        }
-    }
-    false
-}
-
 async fn cancel_op(v: &serde_json::Value, jobs: JobRegistry) -> Result<ToolResult, DomainError> {
     let id = job_id(v)?;
     let Some(job) = jobs.lock().unwrap().get(id).cloned() else {
@@ -658,58 +708,6 @@ fn job_id(v: &serde_json::Value) -> Result<&str, DomainError> {
         .ok_or_else(|| DomainError::Other("job_id is required".into()))
 }
 
-struct ResultContext<'a> {
-    status: &'a str,
-    exit_code: Option<i32>,
-    exec_id: &'a str,
-    session_key: &'a str,
-    invocation_type: &'a str,
-    start: u128,
-    end: u128,
-    timeout: u64,
-    stdout_path: &'a Path,
-    stderr_path: &'a Path,
-    max_out: usize,
-    changed: Vec<String>,
-    cfg: &'a PythonLabConfig,
-}
-
-async fn build_result(ctx: ResultContext<'_>) -> Result<serde_json::Value, DomainError> {
-    let (stdout, stdout_full) = read_preview(ctx.stdout_path, ctx.max_out).await?;
-    let (stderr, stderr_full) = read_preview(ctx.stderr_path, ctx.max_out).await?;
-    let stdout_marker = truncation_marker_exists(ctx.stdout_path).await?;
-    let stderr_marker = truncation_marker_exists(ctx.stderr_path).await?;
-    let st = stdout_full || stdout_marker;
-    let et = stderr_full || stderr_marker;
-    let artifact_paths = [(st, ctx.stdout_path), (et, ctx.stderr_path)]
-        .into_iter()
-        .filter(|(t, _)| *t)
-        .map(|(_, p)| artifact_rel(p))
-        .collect::<Vec<_>>();
-    // Per-process CPU and peak-RSS accounting would need wait4(2) rusage, which
-    // tokio::process reaps internally and does not expose. Those fields are
-    // reported as null rather than omitted so consumers can tell "not measured"
-    // apart from "measured as zero".
-    // Byte counts are what was RETAINED after the cap clipped the streams, not
-    // what the program produced — named accordingly so they are not read as
-    // output volume. A missing artifact reports null rather than 0, so "no file"
-    // stays distinguishable from "wrote nothing". Wall-clock time is already
-    // reported as `duration_ms` on the enclosing object and is not repeated.
-    let resource_usage = json!({
-        "stdout_bytes_retained": file_len(ctx.stdout_path).await,
-        "stderr_bytes_retained": file_len(ctx.stderr_path).await,
-        "cpu_time_ms": serde_json::Value::Null,
-        "max_rss_bytes": serde_json::Value::Null,
-    });
-    Ok(
-        json!({"status":ctx.status,"exit_code":ctx.exit_code,"execution_id":ctx.exec_id,"session_id":ctx.session_key,"invocation_type":ctx.invocation_type,"interpreter":"python3","interpreter_version":interpreter_version(ctx.cfg.inherit_environment),"start_time_ms":ctx.start,"completion_time_ms":ctx.end,"duration_ms":ctx.end.saturating_sub(ctx.start),"timeout_seconds":ctx.timeout,"timeout_or_cancel_reason": if ctx.status=="timed_out" {"timeout"} else if ctx.status=="cancelled" {"cancelled"} else {""},"stdout":stdout,"stderr":stderr,"output_truncated":st||et,"stdout_truncated":st,"stderr_truncated":et,"artifact_paths":artifact_paths,"files_created_or_modified":ctx.changed,"resource_limits":{"memory_bytes":ctx.cfg.max_memory_bytes,"cpu_seconds":ctx.cfg.max_cpu_seconds,"processes":ctx.cfg.max_processes},"resource_usage":resource_usage}),
-    )
-}
-/// `None` when the artifact is absent or unreadable, so a missing file is not
-/// reported as a zero-byte one.
-async fn file_len(path: &Path) -> Option<u64> {
-    tokio::fs::metadata(path).await.ok().map(|m| m.len())
-}
 fn tool_err(content: String) -> Result<ToolResult, DomainError> {
     Ok(ToolResult {
         content,

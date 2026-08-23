@@ -327,6 +327,30 @@ fn then_workspace_lacks(world: &mut QuectoWorld, name: String) {
     );
 }
 
+#[then("the python lab result should be a slim successful envelope")]
+fn then_slim_success_envelope(world: &mut QuectoWorld) {
+    let json = result_json(world);
+    let keys = json.as_object().expect("result should be an object");
+    let actual = keys
+        .keys()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected = [
+        "status",
+        "exit_code",
+        "execution_id",
+        "stdout",
+        "stderr",
+        "duration_ms",
+    ]
+    .into_iter()
+    .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        actual, expected,
+        "clean success should use only slim-envelope fields: {json}"
+    );
+}
+
 #[then("the python lab result should include audit metadata")]
 fn then_audit_metadata(world: &mut QuectoWorld) {
     let json = result_json(world);

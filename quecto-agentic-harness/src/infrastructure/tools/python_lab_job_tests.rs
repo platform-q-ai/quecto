@@ -158,6 +158,35 @@ async fn background_completion_retains_result_and_output_pages() {
     // "abcdef\n" is 7 bytes, so a 3-byte page from offset 2 leaves more to read.
     assert_eq!(out["stdout_more"], true);
     assert!(out["result"]["output_truncated"].as_bool().unwrap());
+    assert_eq!(out["artifacts_modified"], false);
+}
+
+#[tokio::test]
+async fn background_output_does_not_flag_lossy_utf8_as_artifact_tampering() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lab = tool(tmp.path());
+    let started = lab
+        .execute(r#"{"op":"run","code":"import sys; sys.stdout.buffer.write(b'\\xff')","background":true}"#)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&started.content).unwrap();
+    let job_id = v["job_id"].as_str().unwrap();
+    for _ in 0..20 {
+        let status = lab
+            .execute(&format!(r#"{{"op":"status","job_id":"{}"}}"#, job_id))
+            .await
+            .unwrap();
+        if status.content.contains("completed") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let page = lab
+        .execute(&format!(r#"{{"op":"output","job_id":"{}"}}"#, job_id))
+        .await
+        .unwrap();
+    let out: serde_json::Value = serde_json::from_str(&page.content).unwrap();
+    assert_eq!(out["artifacts_modified"], false, "{out}");
 }
 
 #[tokio::test]
