@@ -134,6 +134,7 @@ impl ExecTool {
             });
         };
         let per_invocation_timeout = parse_timeout(&args);
+        let output_file = args["output_file"].as_str().map(str::to_string);
 
         // Per-invocation timeout is capped at the configured maximum.
         let effective_timeout = match per_invocation_timeout {
@@ -153,7 +154,7 @@ impl ExecTool {
             None => command,
         };
 
-        self.spawn_and_wait(&full_command, env_overrides, effective_timeout)
+        self.spawn_and_wait(&full_command, env_overrides, effective_timeout, output_file)
             .await
     }
 
@@ -162,12 +163,31 @@ impl ExecTool {
         command: &str,
         source_env: Option<&HashMap<String, String>>,
         timeout_dur: Duration,
+        output_file: Option<String>,
     ) -> Result<ToolResult, DomainError> {
         let mut cmd = build_shell_command(&self.workspace, command, source_env);
 
+        let output_target = match output_file.as_deref() {
+            Some(path) => Some(prepare_output_file(&self.workspace, path).await?),
+            None => None,
+        };
+        if let Some(target) = &output_target {
+            let stdout = target
+                .file
+                .try_clone()
+                .map_err(|e| DomainError::Tool(format!("bash output_file failed: {}", e)))?;
+            let stderr = target
+                .file
+                .try_clone()
+                .map_err(|e| DomainError::Tool(format!("bash output_file failed: {}", e)))?;
+            cmd.stdout(std::process::Stdio::from(stdout))
+                .stderr(std::process::Stdio::from(stderr));
+        } else {
+            cmd.stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+        }
+
         let mut child = cmd
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| DomainError::Tool(format!("bash failed: {}", e)))?;
 
@@ -190,7 +210,14 @@ impl ExecTool {
         // so no grandchild outlives the cancel. Disarmed once the child is fully
         // awaited (normal completion or timeout already reaped it).
         let mut group_guard = ProcessGroupGuard::new(child.id());
-        let result = run_child_with_timeout(child, stream_tasks, timeout_dur).await;
+        let result = run_child_with_timeout(
+            child,
+            stream_tasks,
+            timeout_dur,
+            self.workspace.clone(),
+            output_target,
+        )
+        .await;
         group_guard.disarm();
         result
     }
@@ -327,14 +354,22 @@ async fn run_child_with_timeout(
     mut child: tokio::process::Child,
     mut stream_tasks: StreamTasks,
     timeout_dur: Duration,
+    workspace: Arc<PathBuf>,
+    output_target: Option<OutputTarget>,
 ) -> Result<ToolResult, DomainError> {
     match tokio::time::timeout(timeout_dur, child.wait()).await {
         Ok(Ok(status)) => {
-            let output = collect_and_truncate_output(&mut stream_tasks).await;
-            Ok(make_exit_result(status, output))
+            let output = collect_raw_output(&mut stream_tasks).await;
+            if let Some(target) = output_target {
+                Ok(make_exit_result(status, output_file_summary(&target, None)))
+            } else {
+                Ok(make_exit_result(status, truncate_output(output).await))
+            }
         }
         Ok(Err(e)) => Err(DomainError::Tool(format!("bash failed: {}", e))),
-        Err(_) => Ok(handle_timeout(child, stream_tasks, timeout_dur).await),
+        Err(_) => {
+            Ok(handle_timeout(child, stream_tasks, timeout_dur, workspace, output_target).await)
+        }
     }
 }
 
@@ -344,20 +379,27 @@ async fn run_child_with_timeout(
 /// - Byte-truncated:  `[Showing lines X-Y of Z (50KB limit). Full output: PATH]`
 /// - Line-truncated:  `[Showing lines X-Y of Z. Full output: PATH]`
 /// - Save fails:      `[Output truncated to last N lines / N bytes]`
+#[cfg(test)]
 async fn collect_and_truncate_output(stream_tasks: &mut StreamTasks) -> String {
-    const TAIL_MAX_LINES: usize = 2000;
-    const TAIL_MAX_BYTES: usize = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
+    truncate_output(collect_raw_output(stream_tasks).await).await
+}
 
+async fn collect_raw_output(stream_tasks: &mut StreamTasks) -> String {
     let (stdout_raw, _) = await_stream_output(stream_tasks.stdout_task.take()).await;
     let (stderr_raw, _) = await_stream_output(stream_tasks.stderr_task.take()).await;
 
-    let combined = if stderr_raw.is_empty() {
+    if stderr_raw.is_empty() {
         stdout_raw
     } else if stdout_raw.is_empty() {
         stderr_raw
     } else {
         format!("{}\n{}", stdout_raw, stderr_raw)
-    };
+    }
+}
+
+async fn truncate_output(combined: String) -> String {
+    const TAIL_MAX_LINES: usize = 2000;
+    const TAIL_MAX_BYTES: usize = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
 
     let tr = truncate_tail(&combined, TAIL_MAX_LINES, TAIL_MAX_BYTES);
     if !tr.truncated {
@@ -393,6 +435,56 @@ async fn collect_and_truncate_output(stream_tasks: &mut StreamTasks) -> String {
     output
 }
 
+struct OutputTarget {
+    path: PathBuf,
+    file: std::fs::File,
+}
+
+async fn prepare_output_file(
+    workspace: &std::path::Path,
+    path: &str,
+) -> Result<OutputTarget, DomainError> {
+    let target = {
+        let p = PathBuf::from(path);
+        if p.is_absolute() {
+            p
+        } else {
+            workspace.join(p)
+        }
+    };
+    let file = tokio::task::spawn_blocking({
+        let target = target.clone();
+        move || -> std::io::Result<std::fs::File> {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::File::create(&target)
+        }
+    })
+    .await
+    .map_err(|e| DomainError::Tool(format!("bash output_file failed: {}", e)))?
+    .map_err(|e| DomainError::Tool(format!("bash output_file failed: {}", e)))?;
+    Ok(OutputTarget { path: target, file })
+}
+
+fn output_file_summary(target: &OutputTarget, qualifier: Option<&str>) -> String {
+    let (bytes, lines) = match std::fs::read_to_string(&target.path) {
+        Ok(content) => (content.len(), content.lines().count()),
+        Err(_) => (
+            target.file.metadata().map(|m| m.len()).unwrap_or(0) as usize,
+            0,
+        ),
+    };
+    let qualifier = qualifier.unwrap_or("");
+    format!(
+        "output saved to: {}{}\nbytes: {}\nlines: {}",
+        target.path.display(),
+        qualifier,
+        bytes,
+        lines
+    )
+}
+
 /// Build a ToolResult from a process exit status.
 fn make_exit_result(status: std::process::ExitStatus, content: String) -> ToolResult {
     if status.success() {
@@ -417,21 +509,69 @@ async fn handle_timeout(
     mut child: tokio::process::Child,
     mut stream_tasks: StreamTasks,
     timeout_dur: Duration,
+    _workspace: Arc<PathBuf>,
+    output_target: Option<OutputTarget>,
 ) -> ToolResult {
+    #[cfg(unix)]
+    if let Some(pid) = child.id() {
+        // Timeout must reap the whole process group so grandchildren holding
+        // stdout/stderr open do not prevent draining captured output.
+        // SAFETY: FFI call to `libc::kill` with owned-pid + constant signal; stale/dead pids yield ESRCH.
+        unsafe {
+            libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
+        }
+    }
+    #[cfg(not(unix))]
     let _ = child.kill().await;
     let _ = child.wait().await;
-    let _ = await_stream_output_with_timeout(
+    let (stdout_raw, _) = await_stream_output_with_timeout(
         stream_tasks.stdout_task.take(),
         STREAM_DRAIN_TIMEOUT_ON_KILL,
     )
     .await;
-    let _ = await_stream_output_with_timeout(
+    let (stderr_raw, _) = await_stream_output_with_timeout(
         stream_tasks.stderr_task.take(),
         STREAM_DRAIN_TIMEOUT_ON_KILL,
     )
     .await;
+    let combined = if stderr_raw.is_empty() {
+        stdout_raw
+    } else if stdout_raw.is_empty() {
+        stderr_raw
+    } else {
+        format!("{}\n{}", stdout_raw, stderr_raw)
+    };
+    let file_note = if let Some(target) = &output_target {
+        format!(
+            "\n{}",
+            output_file_summary(
+                target,
+                Some(" (captured before timeout; may be incomplete)")
+            )
+            .lines()
+            .next()
+            .unwrap_or("")
+        )
+    } else {
+        String::new()
+    };
+    let tail = truncate_output(combined).await;
+    let content = if tail.is_empty() {
+        format!(
+            "command timed out after {}s{}",
+            timeout_dur.as_secs(),
+            file_note
+        )
+    } else {
+        format!(
+            "command timed out after {}s{}\n{}",
+            timeout_dur.as_secs(),
+            file_note,
+            tail
+        )
+    };
     ToolResult {
-        content: format!("command timed out after {}s", timeout_dur.as_secs()),
+        content,
         is_error: true,
         image_blocks: vec![],
         delivery_metadata: None,
@@ -499,7 +639,13 @@ async fn await_stream_output_with_timeout(
 async fn save_to_temp_file(content: String) -> Option<String> {
     tokio::task::spawn_blocking(move || {
         use std::io::Write;
-        let mut f = tempfile::NamedTempFile::new().ok()?;
+        let dir = std::env::temp_dir().join("quecto-bash-output");
+        std::fs::create_dir_all(&dir).ok()?;
+        let mut f = tempfile::Builder::new()
+            .prefix("bash-output-")
+            .suffix(".log")
+            .tempfile_in(&dir)
+            .ok()?;
         f.write_all(content.as_bytes()).ok()?;
         let (_, path) = f.keep().ok()?;
         Some(path.display().to_string())
@@ -514,11 +660,12 @@ impl Tool for ExecTool {
             name: "bash".into(),
             description: "Execute a bash command in the current working directory. Returns stdout \
                           and stderr. Output is truncated to last 2000 lines or 50KB (whichever is \
-                          hit first). If truncated, full output is saved to a temp file. \
-                          Optionally provide a timeout in seconds. \
+                          hit first). If truncated, full output is saved to a stable temp file. \
+                          Optionally provide a timeout in seconds or output_file to write full \
+                          combined output to a file and return a concise summary. \
                           Example: {\"command\": \"ls -la\"}"
                 .into(),
-            parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string","description":"Bash command to execute"},"timeout":{"type":"number","description":"Timeout in seconds (optional, capped at configured maximum)"}},"required":["command"]}"#.into(),
+            parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string","description":"Bash command to execute"},"timeout":{"type":"number","description":"Timeout in seconds (optional, capped at configured maximum)"},"output_file":{"type":"string","description":"Path to write full combined stdout/stderr; inline result is a concise summary"}},"required":["command"]}"#.into(),
         }
     }
 
@@ -535,3 +682,7 @@ impl Tool for ExecTool {
 #[cfg(test)]
 #[path = "../bash_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../bash_output_file_tests.rs"]
+mod output_file_tests;

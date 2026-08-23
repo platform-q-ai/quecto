@@ -61,3 +61,33 @@ Feature: ExecTool (bash) — Quecto compatibility
     When the agent executes that command via the bash tool
     Then the [ToolResult] should contain "Showing lines"
     And the [ToolResult] should not contain "50KB limit"
+
+  @done
+  Scenario: output_file writes full combined output and returns a summary
+    When the agent executes bash with output_file "snapshots/out.txt" and command "printf 'out\\n'; printf 'err\\n' >&2; exit 7"
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "exit code 7"
+    And the [ToolResult] should contain "output saved to:"
+    And bash output_file "snapshots/out.txt" should contain "out\nerr\n"
+
+  @done
+  Scenario: output_file keeps large output out of the inline result
+    When the agent executes bash with output_file "large.txt" and command "python3 - <<'PY'\nprint('A' * 12000000)\nPY"
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] should contain "bytes:"
+    And the [ToolResult] should be shorter than 4096 characters
+    And bash output_file "large.txt" should contain 12000000 "A" characters
+
+  @done
+  Scenario: timeout returns captured tail
+    When the agent executes bash with timeout 1 and command "printf 'before-timeout\\n'; sleep 60"
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "timed out"
+    And the [ToolResult] should contain "before-timeout"
+
+  @done
+  Scenario: timeout with output_file marks saved output incomplete
+    When the agent executes bash with timeout 1 output_file "timeout.txt" and command "printf 'before-timeout\\n'; sleep 60"
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "may be incomplete"
+    And bash output_file "timeout.txt" should contain "before-timeout\n"
