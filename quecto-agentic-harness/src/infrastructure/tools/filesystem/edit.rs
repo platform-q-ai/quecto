@@ -330,8 +330,9 @@ fn count_occurrences_capped(haystack: &str, needle: &str, cap: usize) -> (usize,
 /// Produce a unified-diff snippet using LCS-based line diffing via `similar`.
 ///
 /// Context window is [`DIFF_CONTEXT_LINES`] lines on each side of each hunk.
-/// If the diff exceeds [`DIFF_MAX_BYTES`] the full diff is omitted and only
-/// the success message is returned.
+/// If the rendered diff exceeds [`DIFF_MAX_BYTES`], a bounded prefix of concrete
+/// diff lines is returned with a truncation notice instead of dropping all diff
+/// context.
 /// Generate a Quecto-style diff with per-line numbers and context ellipsis.
 ///
 /// Output format (matching Quecto's `generateDiffString`):
@@ -350,19 +351,24 @@ fn make_edit_diff(path: &str, old_content: &str, new_content: &str) -> String {
         max_line.to_string().len()
     };
 
-    let mut output = Vec::new();
-
     let ops = diff.grouped_ops(DIFF_CONTEXT_LINES);
+    let total_hunks = ops.len();
+    let mut changed_lines_total = 0usize;
+    let mut output = Vec::new();
+    let mut hunk_end_line_indexes = Vec::new();
+
     for (group_idx, group) in ops.iter().enumerate() {
         for op in group {
             for change in diff.iter_changes(op) {
                 let line = change.value().trim_end_matches('\n');
                 match change.tag() {
                     ChangeTag::Delete => {
+                        changed_lines_total += 1;
                         let n = change.old_index().unwrap_or(0) + 1;
                         output.push(format!("-{:>width$} {}", n, line, width = num_width));
                     }
                     ChangeTag::Insert => {
+                        changed_lines_total += 1;
                         let n = change.new_index().unwrap_or(0) + 1;
                         output.push(format!("+{:>width$} {}", n, line, width = num_width));
                     }
@@ -373,19 +379,130 @@ fn make_edit_diff(path: &str, old_content: &str, new_content: &str) -> String {
                 }
             }
         }
+        hunk_end_line_indexes.push(output.len());
         // Add ellipsis between hunks (not after the last one).
-        if group_idx + 1 < ops.len() {
+        if group_idx + 1 < total_hunks {
             output.push(format!(" {:>width$} ...", "", width = num_width));
         }
     }
 
-    let diff_body = format!("Successfully edited {}\n\n{}", path, output.join("\n"));
+    render_bounded_edit_diff(
+        path,
+        output,
+        hunk_end_line_indexes,
+        total_hunks,
+        changed_lines_total,
+    )
+}
 
-    if diff_body.len() > DIFF_MAX_BYTES {
-        format!("Successfully edited {}", path)
-    } else {
-        diff_body
+fn render_bounded_edit_diff(
+    path: &str,
+    diff_lines: Vec<String>,
+    hunk_end_line_indexes: Vec<usize>,
+    total_hunks: usize,
+    changed_lines_total: usize,
+) -> String {
+    let full = format!("Successfully edited {}\n\n{}", path, diff_lines.join("\n"));
+    if full.len() <= DIFF_MAX_BYTES {
+        return full;
     }
+
+    let mut shown = Vec::new();
+    for line in &diff_lines {
+        shown.push(line.clone());
+        let hunks_shown = count_complete_hunks_shown(shown.len(), &hunk_end_line_indexes);
+        let notice = diff_truncated_notice(hunks_shown, total_hunks, changed_lines_total);
+        let prefix = truncated_success_prefix(path, notice.len(), 1);
+        let candidate = format!("{}{}\n{}", prefix, shown.join("\n"), notice);
+        if candidate.len() > DIFF_MAX_BYTES {
+            shown.pop();
+            break;
+        }
+    }
+
+    let mut hunks_shown = count_complete_hunks_shown(shown.len(), &hunk_end_line_indexes);
+    let notice = diff_truncated_notice(hunks_shown, total_hunks, changed_lines_total);
+    if shown.is_empty() {
+        shown = truncated_first_change_pair(path, &diff_lines, notice.len());
+        hunks_shown = count_complete_hunks_shown(shown.len(), &hunk_end_line_indexes);
+    }
+    let notice = diff_truncated_notice(hunks_shown, total_hunks, changed_lines_total);
+    let prefix = truncated_success_prefix(path, notice.len(), shown.join("\n").len());
+    format!("{}{}\n{}", prefix, shown.join("\n"), notice)
+}
+
+fn truncated_first_change_pair(
+    path: &str,
+    diff_lines: &[String],
+    notice_len: usize,
+) -> Vec<String> {
+    let Some(first_line) = diff_lines.first() else {
+        return Vec::new();
+    };
+    let second_change_line = diff_lines
+        .iter()
+        .skip(1)
+        .find(|line| line.starts_with('+') || line.starts_with('-'));
+    let reserved_second_len = second_change_line
+        .map(|line| line.len().min(8))
+        .unwrap_or_default();
+    let reserved_diff_len =
+        first_line.len().min(16) + reserved_second_len + usize::from(second_change_line.is_some());
+    let prefix = truncated_success_prefix(path, notice_len, reserved_diff_len);
+    let mut budget = DIFF_MAX_BYTES.saturating_sub(prefix.len() + notice_len + 1);
+
+    let mut shown = Vec::new();
+    let first_budget =
+        budget.saturating_sub(reserved_second_len + usize::from(second_change_line.is_some()));
+    shown.push(truncate_to_byte_budget(first_line, first_budget));
+    budget = budget.saturating_sub(shown[0].len());
+
+    if let Some(second_line) = second_change_line {
+        budget = budget.saturating_sub(1);
+        let second = truncate_to_byte_budget(second_line, budget);
+        if !second.is_empty() {
+            shown.push(second);
+        }
+    }
+
+    shown
+}
+
+fn truncated_success_prefix(path: &str, notice_len: usize, diff_len: usize) -> String {
+    let boilerplate_len = "Successfully edited \n\n\n".len();
+    let path_budget = DIFF_MAX_BYTES.saturating_sub(boilerplate_len + notice_len + diff_len);
+    format!(
+        "Successfully edited {}\n\n",
+        truncate_to_byte_budget(path, path_budget)
+    )
+}
+
+fn count_complete_hunks_shown(shown_lines: usize, hunk_end_line_indexes: &[usize]) -> usize {
+    hunk_end_line_indexes
+        .iter()
+        .take_while(|end| shown_lines >= **end)
+        .count()
+}
+
+fn truncate_to_byte_budget(line: &str, budget: usize) -> String {
+    line.char_indices()
+        .map(|(idx, _)| idx)
+        .chain(std::iter::once(line.len()))
+        .take_while(|idx| *idx <= budget)
+        .last()
+        .map(|end| line[..end].to_string())
+        .unwrap_or_default()
+}
+
+fn diff_truncated_notice(
+    hunks_shown: usize,
+    total_hunks: usize,
+    changed_lines_total: usize,
+) -> String {
+    format!(
+        "[diff truncated: {} of {} hunks shown, {} lines changed total]",
+        hunks_shown, total_hunks, changed_lines_total
+    )
 }
 
 #[cfg(test)]

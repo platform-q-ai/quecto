@@ -81,6 +81,19 @@ fn given_large_file(world: &mut QuectoWorld, filename: String, lines: usize) {
     std::fs::write(ws.join(&filename), content).expect("write large file");
 }
 
+#[given(expr = "a large over-cap diff fixture {string} exists")]
+fn given_large_over_cap_diff_fixture(world: &mut QuectoWorld, filename: String) {
+    let ws = world
+        .tool_workspace
+        .as_ref()
+        .expect("tool workspace not set");
+    let content = (0..900)
+        .map(|i| format!("old line {i:03}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(ws.join(&filename), content).expect("write large over-cap diff fixture");
+}
+
 #[given(expr = "a file {string} exists with content {string}")]
 fn given_file_exists(world: &mut QuectoWorld, filename: String, content: String) {
     let ws = world
@@ -164,6 +177,31 @@ fn when_agent_executes_tool(world: &mut QuectoWorld, tool_name: String, step: &g
     world.tool_result = Some(result.map_err(|e| e.to_string()));
 }
 
+#[when(expr = "the agent executes an over-cap edit on {string}")]
+fn when_agent_executes_over_cap_edit(world: &mut QuectoWorld, filename: String) {
+    let old_text = (0..900)
+        .map(|i| format!("old line {i:03}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let new_text = (0..900)
+        .map(|i| format!("new line {i:03}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let args_json = serde_json::json!({
+        "path": filename,
+        "oldText": old_text,
+        "newText": new_text,
+    })
+    .to_string();
+
+    let registry = world.tool_registry.as_ref().expect("tool registry not set");
+    let result = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(registry.execute("edit", &args_json));
+
+    world.tool_result = Some(result.map_err(|e| e.to_string()));
+}
+
 #[then(expr = "the tool result should contain {string}")]
 fn then_tool_result_contains(world: &mut QuectoWorld, expected: String) {
     let expected = interpret_escapes(&expected);
@@ -176,6 +214,20 @@ fn then_tool_result_contains(world: &mut QuectoWorld, expected: String) {
             tr.content
         ),
         Err(e) => panic!("tool returned error: {}", e),
+    }
+}
+
+#[then(expr = "the tool result should be at most {int} bytes")]
+fn then_tool_result_should_be_at_most_bytes(world: &mut QuectoWorld, max_bytes: usize) {
+    let result = world.tool_result.as_ref().expect("no tool result");
+    match result {
+        Ok(tr) => assert!(
+            tr.content.len() <= max_bytes,
+            "expected tool result to be at most {} bytes, got {} bytes",
+            max_bytes,
+            tr.content.len()
+        ),
+        Err(e) => panic!("tool returned DomainError: {}", e),
     }
 }
 
