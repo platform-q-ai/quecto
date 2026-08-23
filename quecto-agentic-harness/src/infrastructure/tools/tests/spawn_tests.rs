@@ -131,6 +131,11 @@ fn test_definition() {
     assert!(!def.description.is_empty());
     assert!(def.description.contains("agent_cmd"));
     assert!(def.description.contains("get_messages"));
+    assert!(def.description.contains("agent_cmd get_state"));
+    assert!(
+        def.description
+            .contains("apparent failure, disconnect, or provider-error recovery")
+    );
     assert!(!def.description.contains("get_messages_tail"));
 }
 
