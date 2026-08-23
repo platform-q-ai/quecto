@@ -8,6 +8,17 @@ fn test_exec() -> (ExecTool, TempDir) {
     (tool, tmp)
 }
 
+fn test_exec_with_timeout(seconds: u64) -> (ExecTool, TempDir) {
+    let tmp = TempDir::new().unwrap();
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
+    let tool = ExecTool::with_timeout(
+        Arc::new(tmp.path().to_path_buf()),
+        Arc::new(sandbox),
+        Duration::from_secs(seconds),
+    );
+    (tool, tmp)
+}
+
 #[tokio::test]
 async fn test_exec_echo() {
     let (tool, _tmp) = test_exec();
@@ -41,13 +52,7 @@ async fn test_exec_missing_command_arg() {
 
 #[tokio::test]
 async fn test_exec_timeout_kills_long_command() {
-    let tmp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
-    let tool = ExecTool::with_timeout(
-        Arc::new(tmp.path().to_path_buf()),
-        Arc::new(sandbox),
-        Duration::from_secs(1),
-    );
+    let (tool, _tmp) = test_exec_with_timeout(1);
 
     let result = tool.execute(r#"{"command": "sleep 60"}"#).await.unwrap();
     assert!(result.is_error);
@@ -557,6 +562,13 @@ async fn test_collect_output_byte_truncation_includes_50kb_hint() {
     );
     assert!(out.contains("(50KB limit)"));
     assert!(out.contains("Full output"));
+    let path = out
+        .split("Full output: ")
+        .nth(1)
+        .or_else(|| out.split("Full output saved to: ").nth(1))
+        .unwrap_or_else(|| out.rsplit(' ').next().unwrap())
+        .trim_end_matches(']');
+    assert!(std::path::Path::new(path).exists(), "{}", path);
 }
 
 #[tokio::test]
