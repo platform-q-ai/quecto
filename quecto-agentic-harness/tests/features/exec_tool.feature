@@ -91,3 +91,8 @@ Feature: ExecTool (bash) — Quecto compatibility
     Then the [ToolResult] should be an error
     And the [ToolResult] should contain "may be incomplete"
     And bash output_file "timeout.txt" should contain "before-timeout\n"
+
+  @done
+  Scenario: invalid output_file path returns a tool error
+    When the agent executes bash with output_file "." and command "printf 'not-written'"
+    Then the tool call should fail with "bash output_file failed"

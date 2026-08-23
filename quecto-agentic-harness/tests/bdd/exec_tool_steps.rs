@@ -116,6 +116,7 @@ fn execute_bash_with_optional_output_file(
     output_file: Option<String>,
 ) {
     let registry = world.tool_registry.as_ref().expect("tool registry not set");
+    let command = interpret_escapes(&command);
     let mut args = serde_json::json!({"command": command});
     if let Some(timeout) = timeout {
         args["timeout"] = serde_json::json!(timeout);
@@ -168,4 +169,23 @@ fn then_bash_output_file_repeated_characters(
         .expect("tool workspace not set");
     let content = std::fs::read_to_string(ws.join(output_file)).expect("output_file should exist");
     assert_eq!(content.trim(), value.repeat(count));
+}
+
+#[then(expr = "the tool call should fail with {string}")]
+fn then_tool_call_should_fail_with(world: &mut QuectoWorld, expected: String) {
+    let result = world.tool_result.as_ref().expect("no tool result");
+    match result {
+        Ok(tr) => assert!(
+            tr.is_error && tr.content.contains(&expected),
+            "expected tool error containing '{}', got: {}",
+            expected,
+            tr.content
+        ),
+        Err(e) => assert!(
+            e.contains(&expected),
+            "expected domain error containing '{}', got: {}",
+            expected,
+            e
+        ),
+    }
 }

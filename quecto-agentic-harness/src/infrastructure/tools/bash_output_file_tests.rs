@@ -1,6 +1,91 @@
 use super::*;
 use tempfile::TempDir;
 
+#[test]
+fn test_output_file_summary_includes_timeout_qualifier() {
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("summary.txt");
+    std::fs::write(&path, "one\ntwo\n").unwrap();
+    let file = std::fs::OpenOptions::new().read(true).open(&path).unwrap();
+    let target = OutputTarget { path, file };
+
+    let summary = output_file_summary(&target, Some(" (partial)"));
+
+    assert!(summary.contains(" (partial)"));
+    assert!(summary.contains("bytes: 8"));
+    assert!(summary.contains("lines: 2"));
+}
+
+#[test]
+fn test_output_file_summary_falls_back_to_metadata_for_non_utf8() {
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("binary.bin");
+    std::fs::write(&path, [0xff, 0xfe, b'a']).unwrap();
+    let file = std::fs::OpenOptions::new().read(true).open(&path).unwrap();
+    let target = OutputTarget { path, file };
+
+    let summary = output_file_summary(&target, None);
+
+    assert!(summary.contains("bytes: 3"));
+    assert!(summary.contains("lines: 0"));
+}
+
+#[tokio::test]
+async fn test_prepare_output_file_creates_parent_directories() {
+    let tmp = TempDir::new().unwrap();
+    let target = prepare_output_file(tmp.path(), "nested/out.txt")
+        .await
+        .unwrap();
+
+    assert_eq!(target.path, tmp.path().join("nested/out.txt"));
+    assert!(target.path.parent().unwrap().exists());
+}
+
+#[tokio::test]
+async fn test_prepare_output_file_reports_directory_write_failure() {
+    let tmp = TempDir::new().unwrap();
+
+    let result = prepare_output_file(tmp.path(), ".").await;
+
+    assert!(
+        result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("bash output_file failed")
+    );
+}
+
+#[tokio::test]
+async fn test_save_to_temp_file_uses_named_stable_location() {
+    let path = save_to_temp_file("saved body".to_string()).await.unwrap();
+
+    assert!(path.contains("quecto-bash-output"), "{}", path);
+    assert!(path.contains("bash-output-"), "{}", path);
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "saved body");
+}
+
+#[tokio::test]
+async fn test_exec_output_file_with_env_overrides() {
+    let (tool, tmp) = test_exec();
+    let mut env = HashMap::new();
+    env.insert("ISSUE_1518_VALUE".to_string(), "from-env".to_string());
+
+    let result = tool
+        .execute_with_env(
+            r#"{"command": "printf \"$ISSUE_1518_VALUE\"", "output_file": "env.txt"}"#,
+            &env,
+        )
+        .await
+        .unwrap();
+
+    assert!(!result.is_error);
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join("env.txt")).unwrap(),
+        "from-env"
+    );
+}
+
 fn test_exec() -> (ExecTool, TempDir) {
     let tmp = TempDir::new().unwrap();
     let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
