@@ -1329,7 +1329,11 @@ fn table_to_json(table: &gherkin::Table) -> String {
             // as_u64()/as_i64(). NOTE: string-only table values (e.g. paths) are not
             // affected since paths never parse as i64. If a future test needs a string
             // that looks numeric (e.g. "10"), use a Gherkin docstring instead of a table.
-            let val = if let Ok(n) = raw.parse::<i64>() {
+            let val = if raw.eq_ignore_ascii_case("true") {
+                serde_json::json!(true)
+            } else if raw.eq_ignore_ascii_case("false") {
+                serde_json::json!(false)
+            } else if let Ok(n) = raw.parse::<i64>() {
                 serde_json::json!(n)
             } else if let Ok(f) = raw.parse::<f64>() {
                 serde_json::json!(f)

@@ -6,7 +6,7 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.105.23**.
+Current version: **0.105.25**.
 
 ## Quick Start
 
@@ -648,7 +648,7 @@ External tool binaries (`rg`, `fd`) are resolved from `PATH`; missing binaries r
 | Tool | Description |
 |---|---|
 | `bash` | Execute a shell command. Per-invocation timeout, 1 MiB stdout/stderr capture, dangerous commands blocked. Supports `commandPrefix` for environment setup. Output truncated with compatible notices |
-| `read` | Read file contents (text or image). Text: 2000-line / 50KB truncation with offset/limit pagination. Images (jpg/png/gif/webp): base64-encoded, auto-resized to 2000px max dimension. Magic-byte MIME detection |
+| `read` | Read file contents (text or image). Text: 2000-line / 50KB truncation with offset/limit pagination; repeated unchanged same-path/same-scope text reads may return an unchanged marker unless `force: true` is passed. Images (jpg/png/gif/webp): base64-encoded. Magic-byte MIME detection |
 | `write` | Create or overwrite a file (auto-creates parent directories) |
 | `edit` | Replace text in a file. Two-stage exact→fuzzy matching, CRLF/BOM preservation, no-op detection, LCS-based unified diff output |
 | `ls` | List directory contents. Case-insensitive sort, `/` suffix for directories, configurable limit (default 500, max 5000), 50KB output cap |
