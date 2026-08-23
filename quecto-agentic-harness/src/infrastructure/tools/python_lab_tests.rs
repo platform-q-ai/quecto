@@ -30,7 +30,6 @@ async fn inline_executes_and_reports_metadata() {
     let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
     assert_eq!(v["status"], "completed");
     assert_eq!(v["stdout"], "10\n");
-    assert_eq!(v["invocation_type"], "inline");
     assert!(v["execution_id"].as_str().unwrap().starts_with("py_"));
 }
 
@@ -102,6 +101,16 @@ async fn timeout_reports_timed_out() {
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
     assert_eq!(v["status"], "timed_out");
+    assert_eq!(v["timeout_or_cancel_reason"], "timeout");
+    assert_eq!(v["timeout_seconds"], 1);
+    assert!(
+        v.get("resource_limits").is_some(),
+        "timeout should report relevant limits: {v}"
+    );
+    assert!(
+        v.get("resource_usage").is_some(),
+        "timeout should report retained output usage: {v}"
+    );
     assert!(result.is_error);
 }
 
@@ -251,11 +260,87 @@ async fn session_key_and_limit_clamping_are_reported() {
         .unwrap();
     assert!(!result.is_error, "{}", result.content);
     let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
-    assert_eq!(v["session_id"], "session-a");
-    assert_eq!(v["timeout_seconds"], 2);
     assert_eq!(v["stdout"], "ok\n");
-    assert_eq!(v["output_truncated"], false);
-    assert!(v["artifact_paths"].as_array().unwrap().is_empty());
+    assert!(v.get("output_truncated").is_none());
+    assert!(v.get("artifact_paths").is_none());
+}
+
+#[tokio::test]
+async fn configured_resource_limit_success_reports_resource_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lab = PythonLabTool::new(
+        Arc::new(tmp.path().to_path_buf()),
+        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()))),
+        PythonLabConfig {
+            max_cpu_seconds: Some(5),
+            ..Default::default()
+        },
+    );
+    let result = lab
+        .execute(r#"{"op":"run","code":"print('limited')"}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(v["status"], "completed");
+    assert_eq!(v["resource_limits"]["cpu_seconds"], 5);
+    assert!(
+        v.get("resource_usage").is_some(),
+        "configured limit should make usage informative: {v}"
+    );
+    assert!(
+        v.get("timeout_or_cancel_reason").is_none(),
+        "successful limit-configured run is not a timeout: {v}"
+    );
+}
+
+#[tokio::test]
+async fn non_timeout_failure_uses_slim_error_envelope() {
+    let tmp = tempfile::tempdir().unwrap();
+    let result = tool(tmp.path())
+        .execute(r#"{"op":"run","code":"import sys; sys.stderr.write('boom'); sys.exit(7)"}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error, "{}", result.content);
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(v["status"], "completed");
+    assert_eq!(v["exit_code"], 7);
+    assert_eq!(v["stderr"], "boom");
+    assert!(
+        v.get("timeout_seconds").is_none(),
+        "non-timeout failure should not report timeout metadata: {v}"
+    );
+    assert!(
+        v.get("timeout_or_cancel_reason").is_none(),
+        "non-timeout failure should not report timeout metadata: {v}"
+    );
+    assert!(
+        v.get("resource_limits").is_none(),
+        "default non-timeout failure should remain slim: {v}"
+    );
+}
+
+#[tokio::test]
+async fn stderr_only_truncation_reports_stderr_artifact() {
+    let tmp = tempfile::tempdir().unwrap();
+    let result = tool(tmp.path())
+        .execute(r#"{"op":"run","code":"import sys; sys.stderr.write('abcdefghijklmnop')","max_output_bytes":4}"#)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(v["output_truncated"], true);
+    assert_eq!(v["stderr_truncated"], true);
+    assert!(
+        v.get("stdout_truncated").is_none(),
+        "stdout was not truncated: {v}"
+    );
+    let artifacts = v["artifact_paths"].as_array().unwrap();
+    assert!(
+        artifacts
+            .iter()
+            .any(|p| p.as_str().is_some_and(|p| p.ends_with("stderr.txt"))),
+        "stderr artifact should be listed: {v}"
+    );
 }
 
 #[tokio::test]
@@ -406,9 +491,9 @@ async fn exact_cap_stdout_is_not_reported_truncated() {
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
     assert_eq!(v["stdout"], "abcd");
-    assert_eq!(v["output_truncated"], false);
-    assert_eq!(v["stdout_truncated"], false);
-    assert!(v["artifact_paths"].as_array().unwrap().is_empty());
+    assert!(v.get("output_truncated").is_none());
+    assert!(v.get("stdout_truncated").is_none());
+    assert!(v.get("artifact_paths").is_none());
 }
 
 #[tokio::test]
@@ -422,9 +507,9 @@ async fn exact_cap_stderr_is_not_reported_truncated() {
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
     assert_eq!(v["stderr"], "wxyz");
-    assert_eq!(v["output_truncated"], false);
-    assert_eq!(v["stderr_truncated"], false);
-    assert!(v["artifact_paths"].as_array().unwrap().is_empty());
+    assert!(v.get("output_truncated").is_none());
+    assert!(v.get("stderr_truncated").is_none());
+    assert!(v.get("artifact_paths").is_none());
 }
 
 #[tokio::test]
@@ -435,10 +520,10 @@ async fn exact_combined_stdout_stderr_cap_is_not_reported_truncated() {
         .await
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
-    assert_eq!(v["output_truncated"], false);
-    assert_eq!(v["stdout_truncated"], false);
-    assert_eq!(v["stderr_truncated"], false);
-    assert!(v["artifact_paths"].as_array().unwrap().is_empty());
+    assert!(v.get("output_truncated").is_none());
+    assert!(v.get("stdout_truncated").is_none());
+    assert!(v.get("stderr_truncated").is_none());
+    assert!(v.get("artifact_paths").is_none());
 }
 
 #[tokio::test]
@@ -576,7 +661,7 @@ async fn preview_larger_than_one_read_is_returned_whole() {
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
     assert_eq!(v["stdout"].as_str().unwrap().len(), 3_000_000);
-    assert_eq!(v["output_truncated"], false);
+    assert!(v.get("output_truncated").is_none());
 }
 
 #[tokio::test]
@@ -592,12 +677,11 @@ async fn snapshot_depth_cap_bounds_reported_changes() {
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
     assert_eq!(v["status"], "completed", "{}", result.content);
-    let changed: Vec<&str> = v["files_created_or_modified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|x| x.as_str())
-        .collect();
+    let changed: Vec<&str> = v
+        .get("files_created_or_modified")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
+        .unwrap_or_default();
     assert!(
         !changed.iter().any(|p| p.ends_with("deep.txt")),
         "a file below the depth cap should not be walked: {changed:?}"

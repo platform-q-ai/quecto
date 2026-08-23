@@ -22,11 +22,19 @@ fn tool(dir: &std::path::Path) -> PythonLabTool {
 #[tokio::test]
 async fn reports_actual_interpreter_version() {
     let tmp = tempfile::tempdir().unwrap();
-    let result = tool(tmp.path())
-        .execute(r#"{"op":"run","code":"1"}"#)
+    let lab = tool(tmp.path());
+    let result = lab
+        .execute(r#"{"op":"run","code":"1","background":true}"#)
         .await
         .unwrap();
-    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    let started: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    let job_id = started["job_id"].as_str().unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let status = lab
+        .execute(&format!(r#"{{"op":"status","job_id":"{job_id}"}}"#))
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&status.content).unwrap();
     let reported = v["interpreter_version"].as_str().unwrap();
     assert_ne!(reported, "python3");
     assert!(reported.starts_with("Python "), "{reported}");

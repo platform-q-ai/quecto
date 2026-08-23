@@ -86,9 +86,15 @@ Feature: Python Lab Tool
     Then the python lab result should contain "got:$(touch pwned.txt)"
     And the python lab workspace should not contain "pwned.txt"
 
-  Scenario: Result carries audit metadata
+  Scenario: Clean successful run returns a slim envelope
     When I run python lab inline code "print('meta')"
-    Then the python lab result should include audit metadata
+    Then the python lab result should be a slim successful envelope
+
+  Scenario: Status returns full metadata for a background execution
+    When I run python lab inline code "print('meta')" in the background
+    Then the python lab result should report a job id
+    And the background python lab job should reach status "completed"
+    And the python lab result should include audit metadata
 
   Scenario: Only an explicit minimal environment reaches the interpreter
     When I run python lab inline code "import os; print('PATH=' + os.environ.get('PATH','') + ' HOME=' + os.environ.get('HOME','absent'))"
