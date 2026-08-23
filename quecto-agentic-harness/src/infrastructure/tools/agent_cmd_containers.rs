@@ -31,8 +31,8 @@ pub(super) async fn execute_container_command(
         Some("get_containers") => encode_listing(uc.get_containers()),
         Some("kill_container") => match decode_target(args) {
             Ok(target) => match uc.kill_container(&target).await {
-                Ok(()) => ToolResult {
-                    content: serde_json::json!({"killed": target_text(&target)}).to_string(),
+                Ok(record) => ToolResult {
+                    content: kill_container_result_json(&record).to_string(),
                     is_error: false,
                     image_blocks: vec![],
                     delivery_metadata: None,
@@ -63,11 +63,24 @@ fn optional_str(args: &serde_json::Value, key: &str) -> Result<Option<String>, S
     }
 }
 
-fn target_text(target: &EnvironmentTarget) -> &str {
-    match target {
-        EnvironmentTarget::Ref(r) => r,
-        EnvironmentTarget::Name(n) => n,
+fn capped_agents_json(agent_ids: &[String]) -> serde_json::Value {
+    const MAX_REPORTED_AGENTS: usize = 20;
+    let shown: Vec<_> = agent_ids
+        .iter()
+        .take(MAX_REPORTED_AGENTS)
+        .cloned()
+        .collect();
+    let mut result = serde_json::json!({"agents": shown});
+    if agent_ids.len() > MAX_REPORTED_AGENTS {
+        result["omitted_agents"] = serde_json::json!(agent_ids.len() - MAX_REPORTED_AGENTS);
     }
+    result
+}
+
+fn kill_container_result_json(record: &EnvironmentRecord) -> serde_json::Value {
+    let mut result = capped_agents_json(&record.members);
+    result["killed"] = serde_json::json!(record.environment_ref);
+    result
 }
 
 fn encode_listing(records: Vec<EnvironmentRecord>) -> ToolResult {

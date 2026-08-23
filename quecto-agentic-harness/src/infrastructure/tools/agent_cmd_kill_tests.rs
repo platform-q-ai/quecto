@@ -11,6 +11,14 @@ fn child_entry(parent: &str) -> SubagentEntry {
     e
 }
 
+#[test]
+fn killed_agents_json_caps_long_lists() {
+    let agents: Vec<String> = (1..=22).map(|n| format!("a{n}")).collect();
+    let parsed = killed_agents_result_json(&agents);
+    assert_eq!(parsed["killed"].as_array().unwrap().len(), 20);
+    assert_eq!(parsed["omitted_agents"], 2);
+}
+
 #[tokio::test]
 async fn kill_cascade_removes_subtree_and_broadcasts_survivors() {
     let registry = new_registry();
@@ -33,6 +41,11 @@ async fn kill_cascade_removes_subtree_and_broadcasts_survivors() {
 
     let result = tool.kill_agent("parent").await;
     assert!(!result.is_error, "kill should succeed: {}", result.content);
+    let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(
+        parsed,
+        serde_json::json!({"killed":["parent","child","gchild"]})
+    );
 
     // Whole dead sub-tree pruned; the live sibling is untouched.
     let g = registry.lock().unwrap();
@@ -87,7 +100,11 @@ async fn kill_signals_await_aborts_monitor_and_sigterms_live_pid() {
 
     let result = tool.kill_agent("solo").await;
     assert!(!result.is_error);
-    assert!(result.content.contains(&pid.to_string()));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&result.content).unwrap(),
+        serde_json::json!({"killed":["solo"]})
+    );
+    assert!(!result.content.contains(&pid.to_string()));
 
     // await was signalled with the SIGTERM exit, the monitor was aborted.
     let signal = await_rx.borrow_and_update().clone();

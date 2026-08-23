@@ -31,7 +31,7 @@ When a config file defines `container_configs`, `spawn` can place a child in an 
 - New-container spawns load `container_configs` from a trusted config file: an explicit `config` argument in the spawn call wins; when omitted, the spawn falls back to the parent's own effective config path — so you normally need no `config` at all. Whichever path applies must be an absolute path. Joins (`mode: "existing"`) use the container's retained config and never need `config`.
 - Success returns `environment_ref=C1` (session-scoped, never reused). The child is a normal subagent — the whole completion sequence above applies unchanged.
 - Add a teammate to a running environment: `container: {"mode":"existing","ref":"C1"}` (or `"name"`). Members share the environment's workspace but keep their own agent identity.
-- `agent_cmd get_containers` (`agent_id: "*"`) lists every environment with status (`running`/`empty`/`killing`/`stopped`/`cleanup-failed`), workspace, and members. `kill_container` with `ref` or `name` stops one: all members are terminated and the container config's kill operation runs exactly once; a failed kill is retryable by calling it again.
+- `agent_cmd get_containers` (`agent_id: "*"`) lists every environment with status (`running`/`empty`/`killing`/`stopped`/`cleanup-failed`), workspace, and members. `kill_container` with `ref` or `name` stops one: all members are terminated and the container config's kill operation runs exactly once; the JSON result includes the environment ref and up to 20 terminated member agent ids/names (`omitted_agents` reports any cap overflow); a failed kill is retryable by calling it again.
 - When the final member exits, the environment tears itself down — no explicit kill needed for the happy path.
 
 ## See also
