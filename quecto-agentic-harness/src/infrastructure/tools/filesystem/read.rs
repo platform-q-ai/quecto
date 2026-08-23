@@ -1,10 +1,13 @@
 // ReadTool — tool name: "read"
 // Supports text files with offset/limit pagination and image files as base64.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+use sha2::{Digest, Sha256};
 
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
@@ -17,11 +20,35 @@ use crate::infrastructure::tools::truncate::{
 pub struct ReadTool {
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
+    cache: Arc<Mutex<ReadCache>>,
+}
+
+#[derive(Default)]
+struct ReadCache {
+    entries: HashMap<ReadCacheKey, ReadCacheEntry>,
+    next_sequence: u64,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct ReadCacheKey {
+    path: PathBuf,
+    offset: Option<usize>,
+    limit: Option<usize>,
+}
+
+struct ReadCacheEntry {
+    hash: String,
+    line_count: usize,
+    sequence: u64,
 }
 
 impl ReadTool {
     pub fn new(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>) -> Self {
-        Self { workspace, sandbox }
+        Self {
+            workspace,
+            sandbox,
+            cache: Arc::new(Mutex::new(ReadCache::default())),
+        }
     }
 }
 
@@ -29,8 +56,8 @@ impl Tool for ReadTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "read".into(),
-            description: "Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. Example: {\"path\": \"src/main.rs\"}".into(),
-            parameters_schema: r#"{"type":"object","properties":{"path":{"type":"string","description":"Path to the file to read (relative or absolute)"},"offset":{"type":"number","description":"Line number to start reading from (1-indexed)"},"limit":{"type":"number","description":"Maximum number of lines to read"}},"required":["path"]}"#.into(),
+            description: "Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. Unchanged repeated same-scope text reads may return a short marker; pass force:true to return content. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. Example: {\"path\": \"src/main.rs\"}".into(),
+            parameters_schema: r#"{"type":"object","properties":{"path":{"type":"string","description":"Path to the file to read (relative or absolute)"},"offset":{"type":"number","description":"Line number to start reading from (1-indexed)"},"limit":{"type":"number","description":"Maximum number of lines to read"},"force":{"type":"boolean","description":"Bypass unchanged-file cache and return current text content"}},"required":["path"]}"#.into(),
         }
     }
 
@@ -41,6 +68,7 @@ impl Tool for ReadTool {
         let args: Result<serde_json::Value, _> = serde_json::from_str(arguments);
         let workspace = self.workspace.clone();
         let sandbox = self.sandbox.clone();
+        let cache = self.cache.clone();
 
         Box::pin(async move {
             // LLM-addressable: malformed JSON → ToolResult { is_error: true }
@@ -75,6 +103,9 @@ impl Tool for ReadTool {
             sandbox
                 .validate_path(&validated_str)
                 .map_err(|e| DomainError::Security(e.to_string()))?;
+            let cache_path = tokio::fs::canonicalize(&resolved)
+                .await
+                .unwrap_or_else(|_| resolved.clone());
 
             // Parse optional offset (1-indexed) and limit. Models often emit integral
             // JSON floats (e.g. 370.0) for schema "number"; honor those and
@@ -89,6 +120,7 @@ impl Tool for ReadTool {
                 Some(v) if v.is_null() => None,
                 Some(v) => parse_optional_usize_arg(v, "limit").map_err(DomainError::Tool)?,
             };
+            let force = args.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
 
             // Safety cap: reject reads > 10 MiB before loading into memory.
             const MAX_READ_BYTES: u64 = 10 * 1024 * 1024;
@@ -149,7 +181,36 @@ impl Tool for ReadTool {
             let content = String::from_utf8(raw_bytes)
                 .map_err(|e| DomainError::Tool(format!("read failed (not valid UTF-8): {}", e)))?;
 
+            let selected = select_read_text(&content, offset, limit)?;
+            let hash = sha256_hex(selected.as_bytes());
+            let line_count = selected.lines().count();
+            let key = ReadCacheKey {
+                path: cache_path,
+                offset: Some(offset.unwrap_or(1)),
+                limit,
+            };
+
+            if !force {
+                let cache_guard = cache
+                    .lock()
+                    .map_err(|_| DomainError::Tool("read cache lock poisoned".to_string()))?;
+                if let Some(entry) = cache_guard.entries.get(&key) {
+                    if entry.hash == hash {
+                        return Ok(ToolResult {
+                            content: format!(
+                                "[unchanged since read {}, hash match, {} lines]",
+                                entry.sequence, entry.line_count
+                            ),
+                            is_error: false,
+                            image_blocks: vec![],
+                            delivery_metadata: None,
+                        });
+                    }
+                }
+            }
+
             let output = apply_read_truncation(&content, path, offset, limit)?;
+            update_read_cache(cache, key, hash, line_count)?;
 
             Ok(ToolResult {
                 content: output,
@@ -263,6 +324,100 @@ fn detect_mime_by_magic(bytes: &[u8]) -> Option<&'static str> {
         return Some("image/webp");
     }
     None
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn update_read_cache(
+    cache: Arc<Mutex<ReadCache>>,
+    key: ReadCacheKey,
+    hash: String,
+    line_count: usize,
+) -> Result<(), DomainError> {
+    let mut cache = cache
+        .lock()
+        .map_err(|_| DomainError::Tool("read cache lock poisoned".to_string()))?;
+    let sequence = match cache.entries.get(&key) {
+        Some(entry) if entry.hash == hash => entry.sequence,
+        _ => {
+            cache.next_sequence += 1;
+            cache.next_sequence
+        }
+    };
+    cache.entries.insert(
+        key,
+        ReadCacheEntry {
+            hash,
+            line_count,
+            sequence,
+        },
+    );
+    Ok(())
+}
+
+fn select_read_text(
+    content: &str,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> Result<String, DomainError> {
+    if offset == Some(0) {
+        return Err(DomainError::Tool(
+            "offset is 1-indexed; 0 is not valid. Use offset=1 for the first line.".to_string(),
+        ));
+    }
+    if limit == Some(0) {
+        return Err(DomainError::Tool(
+            "limit must be at least 1 when provided.".to_string(),
+        ));
+    }
+
+    let total_lines = content.lines().count();
+    let start_line = match offset {
+        None => 0,
+        Some(n) => {
+            if n > total_lines {
+                return Err(DomainError::Tool(format!(
+                    "Offset {} is beyond end of file ({} lines total)",
+                    n, total_lines
+                )));
+            }
+            n - 1
+        }
+    };
+    let start_byte = byte_offset_for_line(content, start_line);
+    let max_lines = limit.unwrap_or(usize::MAX);
+    let end_byte = byte_offset_after_lines(&content[start_byte..], max_lines)
+        .map(|relative| start_byte + relative)
+        .unwrap_or(content.len());
+    Ok(content[start_byte..end_byte].to_string())
+}
+
+fn byte_offset_for_line(content: &str, zero_indexed_line: usize) -> usize {
+    if zero_indexed_line == 0 {
+        return 0;
+    }
+    content
+        .match_indices('\n')
+        .nth(zero_indexed_line - 1)
+        .map(|(idx, _)| idx + 1)
+        .unwrap_or(content.len())
+}
+
+fn byte_offset_after_lines(content: &str, line_count: usize) -> Option<usize> {
+    if line_count == usize::MAX {
+        return None;
+    }
+    if line_count == 0 {
+        return Some(0);
+    }
+    content
+        .match_indices('\n')
+        .nth(line_count - 1)
+        .map(|(idx, _)| idx + 1)
 }
 
 /// Apply offset/limit pagination and head-truncation to text file content.
@@ -412,6 +567,9 @@ fn truncate_head_from_offset(
     }
 }
 
+#[cfg(test)]
+#[path = "read_cache_tests.rs"]
+mod cache_tests;
 #[cfg(test)]
 #[path = "read_tests.rs"]
 mod tests;
