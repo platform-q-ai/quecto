@@ -253,8 +253,11 @@ impl AgentCmdTool {
         // one (#831 security review): otherwise killing a parent would drop its
         // descendants from the registry while leaving their OS processes running
         // as untracked orphans that `shutdown_all` can no longer reach.
-        let mut killed_pid = 0;
-        for (id, entry) in &removed {
+        let killed_agents: Vec<String> = removed
+            .iter()
+            .map(|(id, entry)| entry.effective_display_name(id).to_string())
+            .collect();
+        for (_id, entry) in &removed {
             let mut lifecycle = entry.lifecycle;
             let killed_status = super::subagent_lifecycle::apply_lifecycle_event(
                 &mut lifecycle,
@@ -265,9 +268,6 @@ impl AgentCmdTool {
                 super::subagent_registry::SubagentStatus::Exited,
                 "kill must project to the existing exited status"
             );
-            if id == &registry_key {
-                killed_pid = entry.pid;
-            }
             // Signal any lifecycle observers that the process exited.
             if let Some(ref tx) = entry.exit_signal_tx {
                 let _ = tx.send(Some(super::subagent_registry::ExitSignal {
@@ -282,7 +282,7 @@ impl AgentCmdTool {
         }
 
         ToolResult {
-            content: format!("Subagent '{}' killed (pid={}).", agent_id, killed_pid),
+            content: killed_agents_result_json(&killed_agents).to_string(),
             is_error: false,
             image_blocks: vec![],
             delivery_metadata: None,
@@ -293,6 +293,20 @@ impl AgentCmdTool {
     fn lookup_socket(&self, agent_id: &str) -> Result<std::path::PathBuf, String> {
         super::subagent_registry::lookup_subagent_socket(&self.registry, agent_id)
     }
+}
+
+fn killed_agents_result_json(agent_ids: &[String]) -> serde_json::Value {
+    const MAX_REPORTED_AGENTS: usize = 20;
+    let shown: Vec<_> = agent_ids
+        .iter()
+        .take(MAX_REPORTED_AGENTS)
+        .cloned()
+        .collect();
+    let mut result = serde_json::json!({"killed": shown});
+    if agent_ids.len() > MAX_REPORTED_AGENTS {
+        result["omitted_agents"] = serde_json::json!(agent_ids.len() - MAX_REPORTED_AGENTS);
+    }
+    result
 }
 
 #[cfg(test)]

@@ -53,7 +53,10 @@ impl EnvironmentControlUseCase {
     /// Kill one environment by ref or name: claim exclusively (no
     /// double-kill), run the retained kill exactly once, and commit stopped
     /// only after success. Failure persists a retryable cleanup-failed state.
-    pub async fn kill_container(&self, target: &EnvironmentTarget) -> Result<(), String> {
+    pub async fn kill_container(
+        &self,
+        target: &EnvironmentTarget,
+    ) -> Result<EnvironmentRecord, String> {
         let resolved = self.registry.resolve(target).map_err(|e| e.to_string())?;
         // Refuse before claiming: a script set with no `kill` must leave the
         // environment Running and its members untouched, so joins keep working
@@ -77,7 +80,7 @@ impl EnvironmentControlUseCase {
         match self.kill_port.kill_environment(&record).await {
             Ok(()) => {
                 self.registry.complete_kill(claim);
-                Ok(())
+                Ok(record)
             }
             Err(e) => {
                 self.registry.fail_kill(claim, &e);

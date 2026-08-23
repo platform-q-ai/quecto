@@ -29,7 +29,7 @@ fn committed_registry() -> EnvironmentRegistry {
         retained_kill_argv: vec!["true".into()],
         retained_cleanup_argv: vec![],
         retained_inspect_argv: vec![],
-        members: vec![],
+        members: vec!["impl-1517".into(), "rev-a".into()],
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
@@ -97,19 +97,34 @@ fn listing_and_kill_round_trip_through_the_use_case() {
     assert!(!listing.is_error);
     let parsed: serde_json::Value = serde_json::from_str(&listing.content).unwrap();
     assert_eq!(parsed["containers"][0]["ref"], "C1");
-    assert_eq!(parsed["containers"][0]["status"], "empty");
+    assert_eq!(parsed["containers"][0]["status"], "running");
 
     let killed = block_on(execute_container_command(
         Some(&uc),
         &serde_json::json!({"agent_id":"*","command":"kill_container","name":"tool-env"}),
     ));
     assert!(!killed.is_error, "{}", killed.content);
+    let parsed: serde_json::Value = serde_json::from_str(&killed.content).unwrap();
+    assert_eq!(
+        parsed,
+        serde_json::json!({"killed":"C1","agents":["impl-1517","rev-a"]})
+    );
 
     let unknown = block_on(execute_container_command(
         Some(&uc),
         &serde_json::json!({"agent_id":"*","command":"kill_container","ref":"C9"}),
     ));
     assert!(unknown.is_error && unknown.content.contains("unknown"));
+}
+
+#[test]
+fn kill_container_json_caps_long_member_lists() {
+    let mut record = committed_registry().get("C1").unwrap();
+    record.members = (1..=25).map(|n| format!("a{n}")).collect();
+    let parsed = kill_container_result_json(&record);
+    assert_eq!(parsed["killed"], "C1");
+    assert_eq!(parsed["agents"].as_array().unwrap().len(), 20);
+    assert_eq!(parsed["omitted_agents"], 5);
 }
 
 #[test]

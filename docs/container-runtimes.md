@@ -57,8 +57,10 @@ commands expose it (use `agent_id: "*"`):
   `cleanup-failed` (with its `last_error`), plus workspace and members.
 - `kill_container` with `ref` or `name` — terminates every member agent,
   runs the environment's retained `kill` argv exactly once, and commits
-  `stopped` only after the script succeeds. A failed kill persists a
-  retryable `cleanup-failed` state; run `kill_container` again to retry.
+  `stopped` only after the script succeeds. Its JSON result includes the
+  environment ref and up to 20 terminated member agent ids/names, with
+  `omitted_agents` when capped. A failed kill persists a retryable
+  `cleanup-failed` state; run `kill_container` again to retry.
 
 When the final member of a live environment exits or is killed, the same
 retained `kill` operation runs exactly once (concurrent final exits cannot
