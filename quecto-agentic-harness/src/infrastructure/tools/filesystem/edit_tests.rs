@@ -321,6 +321,116 @@ async fn test_edit_diff_uses_minus_plus_markers() {
     );
 }
 
+#[test]
+fn test_over_cap_edit_diff_returns_bounded_concrete_context_and_notice() {
+    let old = (0..900)
+        .map(|i| format!("old line {i:03}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let new = (0..900)
+        .map(|i| format!("new line {i:03}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let diff = make_edit_diff("large.txt", &old, &new);
+
+    assert!(
+        diff.len() <= DIFF_MAX_BYTES,
+        "diff exceeded cap: {}",
+        diff.len()
+    );
+    assert!(diff.starts_with("Successfully edited large.txt\n\n-  1 old line 000"));
+    assert!(diff.contains("-  2 old line 001"));
+    assert!(diff.contains("[diff truncated: 0 of 1 hunks shown, 1800 lines changed total]"));
+    assert_ne!(diff, "Successfully edited large.txt");
+}
+
+#[test]
+fn test_over_cap_multihunk_notice_counts_completed_hunks() {
+    let old_lines = (0..240).map(|i| format!("line {i:03}")).collect::<Vec<_>>();
+    let mut new_lines = old_lines.clone();
+    new_lines[10] = "changed first hunk".to_string();
+    new_lines[80] = "changed second hunk".to_string();
+    new_lines[160] = format!("changed large hunk {}", "z".repeat(DIFF_MAX_BYTES));
+
+    let diff = make_edit_diff("multi.txt", &old_lines.join("\n"), &new_lines.join("\n"));
+
+    assert!(
+        diff.len() <= DIFF_MAX_BYTES,
+        "diff exceeded cap: {}",
+        diff.len()
+    );
+    assert!(diff.contains("- 11 line 010"));
+    assert!(diff.contains("+ 11 changed first hunk"));
+    assert!(diff.contains("[diff truncated: 2 of 3 hunks shown, 6 lines changed total]"));
+}
+
+#[test]
+fn test_single_over_cap_line_still_shows_concrete_diff_prefix() {
+    let old = format!("old {}\n", "x".repeat(DIFF_MAX_BYTES));
+    let new = format!("new {}\n", "y".repeat(DIFF_MAX_BYTES));
+
+    let diff = make_edit_diff("long-line.txt", &old, &new);
+
+    assert!(
+        diff.len() <= DIFF_MAX_BYTES,
+        "diff exceeded cap: {}",
+        diff.len()
+    );
+    assert!(diff.starts_with("Successfully edited long-line.txt\n\n-1 old xxx"));
+    assert!(diff.contains("\n+1 new y"));
+    assert!(diff.contains("[diff truncated: 1 of 1 hunks shown, 2 lines changed total]"));
+    assert_ne!(diff, "Successfully edited long-line.txt");
+}
+
+#[test]
+fn test_multibyte_over_cap_diff_truncates_on_char_boundary() {
+    let multibyte = "界".repeat(DIFF_MAX_BYTES);
+    let old = format!("old {multibyte}\n");
+    let new = format!("new {multibyte}\n");
+    let path = format!("emoji-{}", "🚀".repeat(DIFF_MAX_BYTES));
+
+    let diff = make_edit_diff(&path, &old, &new);
+
+    assert!(
+        diff.len() <= DIFF_MAX_BYTES,
+        "diff exceeded cap: {}",
+        diff.len()
+    );
+    assert!(diff.is_char_boundary(diff.len()));
+    assert!(diff.contains("\n\n-1 old 界"));
+    assert!(diff.contains("\n+1 new"));
+    assert!(diff.contains("[diff truncated: 1 of 1 hunks shown, 2 lines changed total]"));
+}
+
+#[test]
+fn test_long_path_over_cap_diff_stays_bounded_with_notice() {
+    let long_path = "p".repeat(DIFF_MAX_BYTES);
+    let old = format!("old {}\n", "x".repeat(DIFF_MAX_BYTES));
+    let new = format!("new {}\n", "y".repeat(DIFF_MAX_BYTES));
+
+    let diff = make_edit_diff(&long_path, &old, &new);
+
+    assert!(
+        diff.len() <= DIFF_MAX_BYTES,
+        "diff exceeded cap: {}",
+        diff.len()
+    );
+    assert!(diff.starts_with("Successfully edited ppp"));
+    assert!(diff.contains("\n\n-1 old x"));
+    assert!(diff.contains("[diff truncated: 1 of 1 hunks shown, 2 lines changed total]"));
+}
+
+#[test]
+fn test_small_edit_diff_behavior_is_unchanged_without_truncation_notice() {
+    let diff = make_edit_diff("small.txt", "line1\nline2\n", "line1\nCHANGED\n");
+
+    assert_eq!(
+        diff,
+        "Successfully edited small.txt\n\n 1 line1\n-2 line2\n+2 CHANGED"
+    );
+}
+
 // --- normalize_for_fuzzy_match unit tests ---
 
 #[test]

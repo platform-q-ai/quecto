@@ -153,3 +153,17 @@ Feature: EditTool — Quecto compatibility
     And the [ToolResult] should contain "d"
     And the [ToolResult] should contain "e"
     And the [ToolResult] should not be an error
+
+  @done
+  Scenario: Over-cap diff output is bounded but still verifiable
+    Given a tool workspace
+    And a large over-cap diff fixture "large-diff.txt" exists
+    When the agent executes an over-cap edit on "large-diff.txt"
+    Then the [ToolResult] should contain "Successfully edited large-diff.txt"
+    And the [ToolResult] should contain "-  1 old line 000"
+    And the [ToolResult] should contain "-  2 old line 001"
+    And the [ToolResult] should contain "[diff truncated:"
+    And the [ToolResult] should contain "hunks shown"
+    And the [ToolResult] should contain "lines changed total"
+    And the tool result should be at most 4096 bytes
+    And the [ToolResult] should not be an error
