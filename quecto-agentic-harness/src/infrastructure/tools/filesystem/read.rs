@@ -181,14 +181,13 @@ impl Tool for ReadTool {
             let content = String::from_utf8(raw_bytes)
                 .map_err(|e| DomainError::Tool(format!("read failed (not valid UTF-8): {}", e)))?;
 
-            let effective_limit = Some(limit.unwrap_or(DEFAULT_MAX_LINES));
-            let selected = select_read_text(&content, offset, effective_limit)?;
+            let selected = select_read_text(&content, offset, limit)?;
             let hash = sha256_hex(selected.as_bytes());
             let line_count = selected.lines().count();
             let key = ReadCacheKey {
                 path: cache_path,
                 offset: Some(offset.unwrap_or(1)),
-                limit: effective_limit,
+                limit,
             };
 
             if !force {

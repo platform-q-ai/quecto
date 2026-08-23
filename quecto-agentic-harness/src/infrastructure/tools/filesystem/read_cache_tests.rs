@@ -179,7 +179,7 @@ async fn test_read_limit_only_scope_short_circuits_on_repeat() {
 }
 
 #[tokio::test]
-async fn test_read_default_limit_and_explicit_default_limit_share_cache_scope() {
+async fn test_read_default_limit_and_explicit_default_limit_do_not_share_cache_scope() {
     let (ws, sb, tmp) = test_tools();
     let tool = ReadTool::new(ws, sb);
     let content: String = (1..=100).map(|i| format!("line{i}\n")).collect();
@@ -192,15 +192,12 @@ async fn test_read_default_limit_and_explicit_default_limit_share_cache_scope() 
         .execute(r#"{"path":"default-limit.txt","offset":1,"limit":2000}"#)
         .await
         .unwrap();
-    assert!(
-        second.content.contains("unchanged since read"),
-        "{}",
-        second.content
-    );
+    assert!(!second.content.contains("unchanged since read"));
+    assert!(second.content.contains("line1"));
 }
 
 #[tokio::test]
-async fn test_read_default_scope_ignores_changes_beyond_default_window() {
+async fn test_read_default_scope_detects_changes_beyond_displayed_window() {
     let (ws, sb, tmp) = test_tools();
     let tool = ReadTool::new(ws, sb);
     let path = tmp.path().join("beyond-window.txt");
@@ -219,7 +216,8 @@ async fn test_read_default_scope_ignores_changes_beyond_default_window() {
         .execute(r#"{"path":"beyond-window.txt"}"#)
         .await
         .unwrap();
-    assert!(second.content.contains("unchanged since read"));
+    assert!(!second.content.contains("unchanged since read"));
+    assert!(second.content.contains("Use offset="));
 }
 
 #[tokio::test]
