@@ -94,12 +94,34 @@ pub(super) async fn handle_refresh_models(
         .await;
         return false;
     };
-    let refresh_port = ModelsJsonCatalogueRefreshAdapter::new(&inputs.base_dir);
-    let use_case = RefreshCatalogueSourceUseCase::new();
-    let outcomes = if let Some(provider) = provider.filter(|p| !p.trim().is_empty()) {
-        vec![use_case.refresh(&refresh_port, provider)]
-    } else {
-        use_case.refresh_all(&refresh_port)
+    let base_dir = inputs.base_dir.clone();
+    let provider = provider
+        .filter(|p| !p.trim().is_empty())
+        .map(str::to_string);
+    let outcomes = match tokio::task::spawn_blocking(move || {
+        let refresh_port = ModelsJsonCatalogueRefreshAdapter::new(base_dir);
+        let use_case = RefreshCatalogueSourceUseCase::new();
+        if let Some(provider) = provider {
+            vec![use_case.refresh(&refresh_port, &provider)]
+        } else {
+            use_case.refresh_all(&refresh_port)
+        }
+    })
+    .await
+    {
+        Ok(outcomes) => outcomes,
+        Err(err) => {
+            emit_event_to_broadcast_or_writer(
+                ctx,
+                &AgentEvent::err(
+                    id,
+                    type_name,
+                    format!("catalogue refresh task failed: {err}"),
+                ),
+            )
+            .await;
+            return false;
+        }
     };
     let data = serde_json::json!({
         "sources": outcomes.iter().map(|outcome| serde_json::json!({

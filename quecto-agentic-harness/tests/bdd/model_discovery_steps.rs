@@ -153,6 +153,7 @@ fn mount_catalog(world: &mut QuectoWorld, provider: &str, response: serde_json::
     registry["providers"][provider]["baseUrl"] = serde_json::json!(format!("{}/v1", server.uri()));
     std::fs::write(base_path(world).join("models.json"), registry.to_string()).unwrap();
     world._model_discovery_mock_server = Some(Box::leak(Box::new(server)));
+    std::mem::forget(rt);
 }
 
 fn read_registry(world: &QuectoWorld) -> serde_json::Value {

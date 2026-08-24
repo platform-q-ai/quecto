@@ -25,6 +25,18 @@ Feature: Runtime model registry for discoverable models
     And I close the UDS connection
     Then the agent output should contain a response command "list_models" with model "fireworks/accounts/fireworks/models/glm-5p2"
 
+  Scenario: refresh_models reloads a discovered provider catalog for UDS clients
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And provider "openrouter" has auth, custom settings, and an old model
+    And the OpenAI-compatible catalog for "openrouter" returns model "refreshed"
+    When I start the UDS agent with no session
+    And I send command "refresh_models" with id "refresh-1"
+    And I send command "list_models" with id "models-1"
+    And I close the UDS connection
+    Then the agent output should contain a response command "refresh_models" with success true
+    And the agent output should contain a response command "list_models" with model "openrouter/refreshed"
+
   Scenario: models.json provider can be selected and used without config restart
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server

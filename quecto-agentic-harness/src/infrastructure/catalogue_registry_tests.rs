@@ -80,6 +80,7 @@ fn registry_source_keeps_auth_identity_separate_and_marks_missing_runtime_capabi
     .unwrap();
     let registry = ModelRegistry::load_from_path(&tmp.path().join("models.json")).unwrap();
     let source = ModelRegistryCatalogueSource::new(registry);
+    assert_eq!(source.name(), "models-registry");
 
     let models = source.load().unwrap();
 
@@ -116,4 +117,26 @@ fn registry_source_keeps_auth_identity_separate_and_marks_missing_runtime_capabi
             ]
         }
     );
+
+    let custom_oauth_record = ModelRecord {
+        provider: "custom-oauth".to_string(),
+        id: "model".to_string(),
+        display_name: None,
+        api: ProviderApi::OpenAiCompletions,
+        base_url: None,
+        api_key: None,
+        auth_header: true,
+        allow_remote_http: false,
+        input: Vec::new(),
+        context_window: 0,
+        max_tokens: 0,
+        max_tokens_explicit: false,
+        context_window_explicit: false,
+        cost: crate::infrastructure::model_registry::ModelCost::default(),
+        reasoning: false,
+        auth: AuthMode::OAuth,
+        oauth_provider: Some("   ".to_string()),
+    };
+    let error = record_to_descriptor(&custom_oauth_record).unwrap_err();
+    assert!(error.contains("provider id must not be empty"));
 }

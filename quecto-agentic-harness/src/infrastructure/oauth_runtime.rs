@@ -160,6 +160,10 @@ pub(crate) async fn sync_credentials_to_manager(credentials_path: &std::path::Pa
     }
 }
 
+#[cfg(test)]
+#[path = "oauth_runtime_tests.rs"]
+mod tests;
+
 /// Build a [`ProviderFactory`] that re-creates a provider with a new API key.
 pub fn make_provider_factory(
     provider_name: &str,
