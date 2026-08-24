@@ -456,7 +456,7 @@ impl AnthropicProvider {
             return;
         }
 
-        let mut handler = AnthropicSseHandler::new(params.base.tool_defs);
+        let mut handler = AnthropicSseHandler::with_model(params.base.tool_defs, params.base.model);
         crate::infrastructure::providers::sse_common::pump_sse(&mut response, &tx, &mut handler)
             .await;
     }
@@ -469,6 +469,7 @@ pub(crate) struct AnthropicSseHandler {
     current_event: String,
     acc: SseAccumulator,
     saw_terminal: bool,
+    model: Option<String>,
 }
 
 impl AnthropicSseHandler {
@@ -480,7 +481,22 @@ impl AnthropicSseHandler {
                 None => SseAccumulator::default(),
             },
             saw_terminal: false,
+            model: None,
         }
+    }
+
+    fn with_model(tool_defs: Option<Vec<ToolDefinition>>, model: &str) -> Self {
+        let mut handler = Self::new(tool_defs);
+        handler.model = Some(model.to_string());
+        handler
+    }
+
+    fn take_response(&mut self) -> LlmResponse {
+        let mut response = std::mem::take(&mut self.acc).into_response();
+        if let Some(model) = &self.model {
+            crate::domain::usage_accounting::attach_cost(&mut response, model);
+        }
+        response
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -504,7 +520,15 @@ impl SseHandler for AnthropicSseHandler {
             self.current_event = event_type.to_string();
         } else if let Some(data) = line.strip_prefix("data: ") {
             let chunk_val: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
-            if dispatch_sse_event(&self.current_event, &chunk_val, &mut self.acc, tx).await {
+            if dispatch_sse_event(
+                &self.current_event,
+                &chunk_val,
+                &mut self.acc,
+                self.model.as_deref(),
+                tx,
+            )
+            .await
+            {
                 self.saw_terminal = true;
                 return SseLineOutcome::Done;
             }
@@ -521,11 +545,8 @@ impl SseHandler for AnthropicSseHandler {
                 .await;
             return;
         }
-        let _ = tx
-            .send(StreamEvent::Done(
-                std::mem::take(&mut self.acc).into_response(),
-            ))
-            .await;
+        let response = self.take_response();
+        let _ = tx.send(StreamEvent::Done(response)).await;
     }
 }
 
@@ -545,6 +566,7 @@ async fn dispatch_sse_event(
     event_type: &str,
     chunk: &serde_json::Value,
     acc: &mut SseAccumulator,
+    model: Option<&str>,
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
 ) -> bool {
     match event_type {
@@ -577,9 +599,11 @@ async fn dispatch_sse_event(
         }
         "message_delta" => acc.handle_message_delta(chunk),
         "message_stop" => {
-            let _ = tx
-                .send(StreamEvent::Done(std::mem::take(acc).into_response()))
-                .await;
+            let mut response = std::mem::take(acc).into_response();
+            if let Some(model) = model {
+                crate::domain::usage_accounting::attach_cost(&mut response, model);
+            }
+            let _ = tx.send(StreamEvent::Done(response)).await;
             return true;
         }
         "error" => {

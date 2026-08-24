@@ -15,6 +15,9 @@ pub struct Footer {
     context_used: Option<u64>,
     /// Cumulative session cost in USD. `None` until the first stats report.
     session_cost: Option<f64>,
+    session_cache_read: u64,
+    session_cache_write: u64,
+    session_cache_hit_ratio: Option<f64>,
     is_streaming: bool,
     /// Active reasoning-effort level (#1067); `None` = effective default.
     effort: Option<String>,
@@ -40,6 +43,9 @@ impl Footer {
             context_window: 0,
             context_used: None,
             session_cost: None,
+            session_cache_read: 0,
+            session_cache_write: 0,
+            session_cache_hit_ratio: None,
             is_streaming: false,
             effort: None,
             pwd,
@@ -96,6 +102,12 @@ impl Footer {
         // Callers using set_context don't supply a token count (None resets the
         // display to the percent-only / unknown form).
         self.context_used = None;
+        if percent.is_none() && window == 0 {
+            self.session_cost = None;
+            self.session_cache_read = 0;
+            self.session_cache_write = 0;
+            self.session_cache_hit_ratio = None;
+        }
     }
 
     pub fn set_context_window(&mut self, window: usize) {
@@ -123,7 +135,7 @@ impl Footer {
 
     /// Record cumulative session cost (USD). `None` hides the indicator.
     pub fn set_cost(&mut self, cost: Option<f64>) {
-        self.session_cost = cost;
+        self.session_cost = cost.filter(|c| c.is_finite() && *c > 0.0);
     }
 
     /// Apply typed `get_state` footer fields (model + context-window + effort).
@@ -169,6 +181,9 @@ impl Footer {
             self.update_context_usage(used, window);
         }
         self.set_cost((stats.cost > 0.0).then_some(stats.cost));
+        self.session_cache_read = stats.cache_read_tokens;
+        self.session_cache_write = stats.cache_write_tokens;
+        self.session_cache_hit_ratio = stats.cache_hit_ratio;
     }
 }
 
@@ -197,7 +212,21 @@ impl Component for Footer {
             (_, None) => format!("?/{}", window),
         };
 
-        let left = context_str;
+        let mut left_parts = vec![context_str];
+        if self.session_cache_read > 0 || self.session_cache_write > 0 {
+            left_parts.push(format!(
+                "cache {}/{}",
+                format_tokens(self.session_cache_read as usize),
+                format_tokens(self.session_cache_write as usize)
+            ));
+        }
+        if let Some(ratio) = self.session_cache_hit_ratio {
+            left_parts.push(format!("hit {:.1}%", ratio * 100.0));
+        }
+        if let Some(cost) = self.session_cost {
+            left_parts.push(format!("cost ${cost:.6}"));
+        }
+        let left = left_parts.join(" · ");
         // Prefix the model with a streaming indicator while a response is
         // streaming so the toggled flag is actually visible (issue #760), and
         // suffix the active effort level (#1067) — "default" when never set,

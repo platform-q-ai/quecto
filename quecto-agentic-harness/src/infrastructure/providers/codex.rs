@@ -487,6 +487,7 @@ impl CodexProvider {
         url: &str,
         body: serde_json::Value,
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
+        model: &str,
     ) {
         let mut response = match self
             .apply_headers(self.client.post(url))
@@ -516,7 +517,7 @@ impl CodexProvider {
                 .await;
             return;
         }
-        let mut handler = CodexSseHandler::new();
+        let mut handler = CodexSseHandler::with_model(model);
         super::sse_common::pump_sse(&mut response, &tx, &mut handler).await;
     }
 
@@ -549,6 +550,7 @@ impl LlmProvider for CodexProvider {
             return Box::pin(async move { Err(err) });
         }
 
+        let model = request.model.to_string();
         let body = Self::build_request_body(&request, &self.auth);
         let url = self.responses_url();
 
@@ -579,7 +581,9 @@ impl LlmProvider for CodexProvider {
                 .await
                 .map_err(|e| DomainError::Provider(format!("failed to read response: {}", e)))?;
 
-            Self::parse_sse_response(&raw)
+            let mut parsed = Self::parse_sse_response(&raw)?;
+            crate::domain::usage_accounting::attach_cost(&mut parsed, &model);
+            Ok(parsed)
         })
     }
 
@@ -601,13 +605,14 @@ impl LlmProvider for CodexProvider {
                 rx
             });
         }
+        let model = request.model.to_string();
         let body = Self::build_request_body(&request, &self.auth);
         let url = self.responses_url();
         let provider = self.clone();
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
             tokio::spawn(async move {
-                provider.pump_codex_sse(&url, body, tx).await;
+                provider.pump_codex_sse(&url, body, tx, &model).await;
             });
             rx
         })
@@ -620,6 +625,7 @@ use super::sse_common::{SseHandler, SseLineOutcome};
 struct CodexSseHandler {
     acc: SseAccumulator,
     saw_terminal: bool,
+    model: Option<String>,
 }
 
 impl CodexSseHandler {
@@ -627,11 +633,22 @@ impl CodexSseHandler {
         Self {
             acc: SseAccumulator::default(),
             saw_terminal: false,
+            model: None,
         }
     }
 
+    fn with_model(model: impl Into<String>) -> Self {
+        let mut handler = Self::new();
+        handler.model = Some(model.into());
+        handler
+    }
+
     fn take_response(&mut self) -> LlmResponse {
-        std::mem::take(&mut self.acc).into_response()
+        let mut response = std::mem::take(&mut self.acc).into_response();
+        if let Some(model) = &self.model {
+            crate::domain::usage_accounting::attach_cost(&mut response, model);
+        }
+        response
     }
 }
 

@@ -350,9 +350,10 @@ fn test_parse_response_text() {
     assert_eq!(resp.content.unwrap(), "Hello!");
     assert!(resp.tool_calls.is_empty());
     let usage = resp.usage.unwrap();
-    assert_eq!(usage.prompt_tokens, 10);
+    assert_eq!(usage.prompt_tokens, 3);
     assert_eq!(usage.completion_tokens, 5);
     assert_eq!(usage.cache_read_tokens, Some(7));
+    assert_eq!(usage.context_tokens, Some(10));
 }
 
 #[test]
@@ -400,14 +401,16 @@ fn test_parse_response_tool_call() {
 fn test_parse_sse_text_response() {
     let sse = r#"data: {"type":"response.output_text.delta","delta":"Hello"}
 data: {"type":"response.output_text.delta","delta":" world"}
-data: {"type":"response.completed","response":{"usage":{"input_tokens":8,"output_tokens":2}}}
+data: {"type":"response.completed","response":{"usage":{"input_tokens":8,"output_tokens":2,"input_tokens_details":{"cached_tokens":3}}}}
 data: [DONE]
 "#;
     let resp = CodexProvider::parse_sse_response(sse).unwrap();
     assert_eq!(resp.content.unwrap(), "Hello world");
     let usage = resp.usage.unwrap();
-    assert_eq!(usage.prompt_tokens, 8);
+    assert_eq!(usage.prompt_tokens, 5);
     assert_eq!(usage.completion_tokens, 2);
+    assert_eq!(usage.cache_read_tokens, Some(3));
+    assert_eq!(usage.context_tokens, Some(8));
 }
 
 #[test]
@@ -456,7 +459,7 @@ async fn test_codex_provider_http_error() {
         .chat(ChatRequest {
             messages: &messages,
             tools: &[],
-            model: "gpt-5.1-codex",
+            model: "gpt-5.6-luna",
             max_tokens: 1024,
             temperature: 0.7,
             session_id: None,
@@ -470,42 +473,6 @@ async fn test_codex_provider_http_error() {
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(err.contains("401"), "expected 401 in error: {}", err);
-}
-
-#[tokio::test]
-async fn test_codex_provider_success() {
-    let server = wiremock::MockServer::start().await;
-    let sse_body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi!\"}\n\
-                         data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n\
-                         data: [DONE]\n";
-    wiremock::Mock::given(wiremock::matchers::method("POST"))
-        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(sse_body))
-        .mount(&server)
-        .await;
-
-    let provider = CodexProvider::new(
-        "test-token".to_string(),
-        "acct-123".to_string(),
-        Some(server.uri()),
-    );
-    let messages = vec![Message::system("You are helpful."), Message::user("hello")];
-    let result = provider
-        .chat(ChatRequest {
-            messages: &messages,
-            tools: &[],
-            model: "gpt-5.1-codex",
-            max_tokens: 1024,
-            temperature: 0.7,
-            session_id: None,
-            tool_choice: None,
-            metadata: None,
-            thinking_level: None,
-            cancel_flag: None,
-            effort: None,
-        })
-        .await;
-    let resp = result.unwrap();
-    assert_eq!(resp.content.unwrap(), "Hi!");
 }
 
 #[tokio::test]
@@ -740,3 +707,6 @@ fn codex_streaming_task_clone_preserves_all_fields() {
 
 #[path = "codex_1338_tests.rs"]
 mod issue_1338_tests;
+
+#[path = "codex_issue1567_tests.rs"]
+mod issue1567_tests;

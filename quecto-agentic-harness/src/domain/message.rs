@@ -421,21 +421,20 @@ impl std::fmt::Display for StopReason {
 pub struct UsageInfo {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
-    /// Tokens served from prompt cache (Anthropic `cache_read_input_tokens`).
+    /// Tokens served from prompt cache, normalized across providers.
     pub cache_read_tokens: Option<u32>,
-    /// Tokens written to prompt cache (Anthropic `cache_creation_input_tokens`).
+    /// Tokens written to prompt cache, normalized across providers.
     pub cache_write_tokens: Option<u32>,
     /// True context-window occupancy for this turn, normalized across providers.
     ///
     /// This exists because providers report prompt size differently when prompt
-    /// caching is active:
-    ///   - OpenAI/Codex: `prompt_tokens`/`input_tokens` already counts the full
-    ///     prompt (cached tokens are a *subset*), so this is left `None` and the
-    ///     context gauge falls back to `prompt_tokens`.
-    ///   - Anthropic: `input_tokens` counts only the *non-cached* delta; the
-    ///     cached portion is reported separately in `cache_read_input_tokens`
-    ///     and `cache_creation_input_tokens`. True occupancy is the sum, set
-    ///     here so the context gauge does not undercount on warm sessions.
+    /// caching is active. Adapters normalize `prompt_tokens` to full-price,
+    /// non-cache billable input and set this to the provider full prompt/input
+    /// occupancy when that differs or when the provider reports an explicit
+    /// prompt/input count. Some providers report cached input as a subset of
+    /// the prompt/input count, while others report cache reads and writes as
+    /// separate token buckets; adapters set true occupancy here so gauges do
+    /// not undercount warm sessions.
     ///
     /// Billing (`prompt_tokens` + the discounted cache fields, via
     /// [`ModelPricing::cost_for`]) intentionally does *not* use this field.
@@ -447,9 +446,10 @@ pub struct UsageInfo {
 impl UsageInfo {
     /// Tokens occupying the model context window for this turn.
     ///
-    /// Providers that report cached prompt tokens outside `prompt_tokens` set
-    /// `context_tokens`; providers whose `prompt_tokens` already includes the
-    /// full prompt leave it unset and use `prompt_tokens` as the context gauge.
+    /// Adapters set `context_tokens` when the provider reports an explicit
+    /// prompt/input occupancy or when cached prompt tokens are represented
+    /// outside normalized billable `prompt_tokens`; otherwise this falls back to
+    /// `prompt_tokens`.
     pub fn context_input_tokens(&self) -> u32 {
         self.context_tokens.unwrap_or(self.prompt_tokens)
     }
@@ -555,11 +555,16 @@ pub(crate) fn starts_with_ci(model: &str, prefix: &str) -> bool {
 /// Rates are expressed as micro-USD per million tokens (integer arithmetic, no f64 drift).
 /// Cache write = 1.25× base input (5-minute TTL). Cache read = 0.1× base input.
 ///
-/// Sources (https://www.anthropic.com/news/claude-sonnet-5):
-///   Sonnet 5: $3 in / $15 out / $3.75 cache-write / $0.30 cache-read per MTok
-///   Opus 4.6 / 4.5: $5 in / $25 out / $6.25 cache-write / $0.50 cache-read per MTok
-///   Sonnet 4.6 / 4.5 / 4: $3 in / $15 out / $3.75 cache-write / $0.30 cache-read per MTok
-///   Haiku 4.5: $1 in / $5 out / $1.25 cache-write / $0.10 cache-read per MTok
+/// Sources:
+///   Anthropic (https://www.anthropic.com/news/claude-sonnet-5):
+///     Sonnet 5: $3 in / $15 out / $3.75 cache-write / $0.30 cache-read per MTok
+///     Opus 4.6 / 4.5: $5 in / $25 out / $6.25 cache-write / $0.50 cache-read per MTok
+///     Sonnet 4.6 / 4.5 / 4: $3 in / $15 out / $3.75 cache-write / $0.30 cache-read per MTok
+///     Haiku 4.5: $1 in / $5 out / $1.25 cache-write / $0.10 cache-read per MTok
+///   OpenAI GPT-5.6 tiers mirror the registry pricing in `model_registry_gpt56_pricing.rs`:
+///     Sol: $5 in / $30 out / $6.25 cache-write / $0.50 cache-read per MTok
+///     Terra: $2.50 in / $15 out / $3.125 cache-write / $0.25 cache-read per MTok
+///     Luna: $1 in / $6 out / $1.25 cache-write / $0.10 cache-read per MTok
 pub(crate) fn claude_sonnet_5_pricing() -> ModelPricing {
     // Flat standard Sonnet 5 rate (deterministic, no clock-based intro switch).
     ModelPricing {
@@ -595,6 +600,27 @@ pub fn model_pricing(model: &str) -> Option<ModelPricing> {
         Some(ModelPricing {
             input_micro_usd_per_million: 1_000_000,
             output_micro_usd_per_million: 5_000_000,
+            cache_read_micro_usd_per_million: 100_000,
+            cache_write_micro_usd_per_million: 1_250_000,
+        })
+    } else if starts_with_ci(model, "gpt-5.6-sol") {
+        Some(ModelPricing {
+            input_micro_usd_per_million: 5_000_000,
+            output_micro_usd_per_million: 30_000_000,
+            cache_read_micro_usd_per_million: 500_000,
+            cache_write_micro_usd_per_million: 6_250_000,
+        })
+    } else if starts_with_ci(model, "gpt-5.6-terra") {
+        Some(ModelPricing {
+            input_micro_usd_per_million: 2_500_000,
+            output_micro_usd_per_million: 15_000_000,
+            cache_read_micro_usd_per_million: 250_000,
+            cache_write_micro_usd_per_million: 3_125_000,
+        })
+    } else if starts_with_ci(model, "gpt-5.6-luna") {
+        Some(ModelPricing {
+            input_micro_usd_per_million: 1_000_000,
+            output_micro_usd_per_million: 6_000_000,
             cache_read_micro_usd_per_million: 100_000,
             cache_write_micro_usd_per_million: 1_250_000,
         })

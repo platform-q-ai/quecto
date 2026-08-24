@@ -65,7 +65,7 @@ fn format_tokens_edge_cases() {
 }
 
 #[test]
-fn footer_does_not_show_monetary_cost_after_context() {
+fn footer_shows_monetary_cost_after_context() {
     let mut f = Footer::new();
     f.update_context_usage(120_000, 200_000);
     f.set_cost(Some(0.0421));
@@ -73,8 +73,8 @@ fn footer_does_not_show_monetary_cost_after_context() {
     let joined = lines.join("\n");
     assert!(joined.contains("120k/200k"), "context first: {joined}");
     assert!(
-        !joined.contains('$'),
-        "footer must not show misleading monetary cost: {joined}"
+        joined.contains("cost $0.042100"),
+        "footer should show normalized monetary cost: {joined}"
     );
 }
 
@@ -85,6 +85,7 @@ fn footer_hides_zero_cost() {
     f.set_cost(Some(0.0));
     let joined = f.render(120).join("\n");
     assert!(!joined.contains('$'), "zero cost hidden: {joined}");
+    assert!(!joined.contains("cost"), "zero cost label hidden: {joined}");
 }
 
 #[test]

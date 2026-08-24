@@ -135,9 +135,11 @@ fn make_test_stats() -> SessionStats {
             output: 10000,
             cache_read: 40000,
             cache_write: 5000,
-            total: 105000,
+            total: 60000,
         },
         cost: 0.45,
+        cost_micro_usd: 450_000,
+        cache_hit_ratio: Some(40_000.0 / 95_000.0),
         context_tokens: 12_345,
         max_context_tokens: 200_000,
     }
@@ -159,11 +161,14 @@ fn get_session_stats_tokens_camel_case() {
     assert_eq!(j["tokens"]["output"], 10000);
     assert_eq!(j["tokens"]["cacheRead"], 40000);
     assert_eq!(j["tokens"]["cacheWrite"], 5000);
-    assert_eq!(j["tokens"]["total"], 105000);
+    assert_eq!(j["tokens"]["total"], 60000);
     assert!(
         j.get("cost").is_none(),
-        "get_session_stats must not report misleading monetary cost: {j}"
+        "legacy float cost must stay hidden: {j}"
     );
+    assert_eq!(j["costMicroUsd"], 450_000);
+    let ratio = j["cacheHitRatio"].as_f64().expect("ratio serialized");
+    assert!((ratio - (40_000.0 / 95_000.0)).abs() < 1e-9);
     assert_eq!(j["maxContextTokens"], 200_000);
 }
 #[test]

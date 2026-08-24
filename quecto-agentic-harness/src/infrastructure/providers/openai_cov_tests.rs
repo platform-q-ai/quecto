@@ -270,14 +270,16 @@ data: [DONE]\n";
 fn parse_sse_response_extracts_usage_chunk() {
     let sse = concat!(
         "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n",
-        "data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n\n",
+        "data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15,\"prompt_tokens_details\":{\"cached_tokens\":3}}}\n\n",
         "data: [DONE]\n\n",
     );
     let response = OpenAiProvider::parse_sse_response(sse).unwrap();
     assert_eq!(response.content.as_deref(), Some("Hello"));
     let usage = response.usage.expect("usage chunk should be captured");
-    assert_eq!(usage.prompt_tokens, 10);
+    assert_eq!(usage.prompt_tokens, 7);
     assert_eq!(usage.completion_tokens, 5);
+    assert_eq!(usage.cache_read_tokens, Some(3));
+    assert_eq!(usage.context_tokens, Some(10));
 }
 
 // --- apply_auth_headers (no network; inspect via build()) ---

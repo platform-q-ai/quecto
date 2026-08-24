@@ -725,6 +725,9 @@ mod dispatch_test_env;
 #[path = "uds_effort_1067_tests.rs"]
 mod effort_1067_tests;
 #[cfg(test)]
+#[path = "uds_issue1567_tests.rs"]
+mod issue1567_tests;
+#[cfg(test)]
 #[path = "uds_926_act_tests.rs"]
 mod issue_926_act_tests;
 #[cfg(test)]

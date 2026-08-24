@@ -5,6 +5,7 @@
 //! process, child watch) that touch the OS.
 
 pub mod app;
+mod app_session_stats_text;
 pub(crate) mod atomic_file;
 pub mod child_watch;
 pub mod cli;

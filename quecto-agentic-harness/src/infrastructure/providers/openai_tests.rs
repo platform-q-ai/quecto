@@ -111,7 +111,7 @@ async fn test_chat_text_response() {
     let req = ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "gpt-4",
+        model: "gpt-5.6-luna",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -130,10 +130,12 @@ async fn test_chat_text_response() {
     let usage = response.usage.unwrap();
     assert_eq!(usage.prompt_tokens, 10);
     assert_eq!(usage.completion_tokens, 5);
-    // Non-streaming chat reports `context_tokens: None` (gauge falls back to
-    // `prompt_tokens`) even though `total_tokens` is present — only the SSE
-    // paths surface `total_tokens`. Locks the #996/PR-999 behaviour parity.
-    assert_eq!(usage.context_tokens, None);
+    // Context occupancy is provider prompt/input, not total prompt+completion.
+    assert_eq!(usage.context_tokens, Some(10));
+    assert_eq!(
+        usage.cost.expect("gpt-5.6 pricing").total_cost_micro_usd,
+        40
+    );
 }
 
 #[tokio::test]

@@ -420,14 +420,6 @@ impl AnthropicProvider {
             .collect()
     }
 
-    fn attach_cost(response: &mut LlmResponse, model: &str) {
-        if let Some(ref mut usage) = response.usage {
-            if let Some(pricing) = crate::domain::message::model_pricing(model) {
-                usage.cost = Some(pricing.cost_for(usage));
-            }
-        }
-    }
-
     fn parse_response(
         body: &serde_json::Value,
         is_oauth: bool,
@@ -568,7 +560,7 @@ impl LlmProvider for AnthropicProvider {
                 })?;
 
             let mut resp = Self::parse_response(&response_json, is_oauth, &tools_snapshot)?;
-            Self::attach_cost(&mut resp, &model);
+            crate::domain::usage_accounting::attach_cost(&mut resp, &model);
             Ok(resp)
         })
     }
@@ -601,7 +593,7 @@ impl LlmProvider for AnthropicProvider {
                     tool_defs: tools_snapshot,
                 })
                 .await?;
-            Self::attach_cost(&mut resp, &model);
+            crate::domain::usage_accounting::attach_cost(&mut resp, &model);
             Ok(resp)
         })
     }

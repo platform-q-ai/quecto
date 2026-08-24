@@ -10,8 +10,9 @@ fn parse_session_stats_extracts_typed_values() {
     let stats = parse_session_stats(&json!({
         "sessionKey": "cli:issue-741",
         "totalMessages": 7,
-        "tokens": {"input": 123, "output": 456},
-        "cost": 0.125,
+        "tokens": {"input": 123, "output": 456, "cacheRead": 30, "cacheWrite": 5, "total": 579},
+        "costMicroUsd": 125000,
+        "cacheHitRatio": 30.0 / 158.0,
         "contextTokens": 3000,
         "maxContextTokens": 12000
     }));
@@ -20,8 +21,43 @@ fn parse_session_stats_extracts_typed_values() {
     assert_eq!(stats.total_messages, 7);
     assert_eq!(stats.input_tokens, 123);
     assert_eq!(stats.output_tokens, 456);
+    assert_eq!(stats.cache_read_tokens, 30);
+    assert_eq!(stats.cache_write_tokens, 5);
+    assert_eq!(stats.total_tokens, 579);
+    assert_eq!(stats.cost_micro_usd, 125_000);
     assert_eq!(stats.cost, 0.125);
+    assert!((stats.cache_hit_ratio.unwrap() - (30.0 / 158.0)).abs() < 1e-9);
     assert_eq!(stats.context_usage, Some((3000, 12000)));
+}
+
+#[test]
+fn parse_session_stats_cost_micro_usd_precedes_legacy_cost() {
+    let stats = parse_session_stats(&json!({
+        "costMicroUsd": 1234,
+        "cost": 99.0
+    }));
+
+    assert_eq!(stats.cost_micro_usd, 1234);
+    assert_eq!(stats.cost, 0.001234);
+}
+
+#[test]
+fn parse_session_stats_malformed_cost_micro_usd_blocks_legacy_cost() {
+    let stats = parse_session_stats(&json!({
+        "costMicroUsd": null,
+        "cost": 99.0
+    }));
+
+    assert_eq!(stats.cost_micro_usd, 0);
+    assert_eq!(stats.cost, 0.0);
+}
+
+#[test]
+fn parse_session_stats_converts_legacy_cost_when_micros_absent() {
+    let stats = parse_session_stats(&json!({ "cost": 0.001234 }));
+
+    assert_eq!(stats.cost_micro_usd, 1234);
+    assert_eq!(stats.cost, 0.001234);
 }
 
 #[test]
@@ -32,7 +68,12 @@ fn parse_session_stats_defaults_malformed_fields() {
     assert_eq!(stats.total_messages, 0);
     assert_eq!(stats.input_tokens, 0);
     assert_eq!(stats.output_tokens, 0);
+    assert_eq!(stats.cache_read_tokens, 0);
+    assert_eq!(stats.cache_write_tokens, 0);
+    assert_eq!(stats.total_tokens, 0);
+    assert_eq!(stats.cost_micro_usd, 0);
     assert_eq!(stats.cost, 0.0);
+    assert_eq!(stats.cache_hit_ratio, None);
     assert_eq!(stats.context_usage, None);
 }
 

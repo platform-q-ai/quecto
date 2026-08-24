@@ -610,6 +610,10 @@ pub struct SessionStats {
     pub tokens: TokenStats,
     #[serde(skip_serializing, default)]
     pub cost: f64,
+    #[serde(default)]
+    pub cost_micro_usd: u64,
+    #[serde(default)]
+    pub cache_hit_ratio: Option<f64>,
     /// User-facing context occupancy: provider-reported prompt tokens when
     /// available, otherwise the local active-message estimate fallback.
     pub context_tokens: usize,

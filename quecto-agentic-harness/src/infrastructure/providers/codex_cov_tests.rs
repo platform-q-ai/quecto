@@ -35,7 +35,7 @@ fn req<'a>(
 #[tokio::test]
 async fn handler_emits_text_delta_then_done_on_completed() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-    let mut handler = CodexSseHandler::new();
+    let mut handler = CodexSseHandler::with_model("gpt-5.6-luna");
 
     let out = handler
         .process_line(
@@ -51,7 +51,7 @@ async fn handler_emits_text_delta_then_done_on_completed() {
 
     let out = handler
         .process_line(
-            r#"data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":1}}}"#,
+            r#"data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":1,"input_tokens_details":{"cached_tokens":1}}}}"#,
             &tx,
         )
         .await;
@@ -59,7 +59,12 @@ async fn handler_emits_text_delta_then_done_on_completed() {
     match rx.recv().await.unwrap() {
         StreamEvent::Done(resp) => {
             assert_eq!(resp.content.as_deref(), Some("Hi"));
-            assert_eq!(resp.usage.unwrap().prompt_tokens, 3);
+            let usage = resp.usage.unwrap();
+            assert_eq!(usage.prompt_tokens, 2);
+            assert_eq!(usage.completion_tokens, 1);
+            assert_eq!(usage.cache_read_tokens, Some(1));
+            assert_eq!(usage.context_tokens, Some(3));
+            assert_eq!(usage.cost.expect("stream cost").total_cost_micro_usd, 8);
         }
         other => panic!("unexpected: {other:?}"),
     }

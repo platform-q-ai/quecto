@@ -509,7 +509,10 @@ Return token usage and cost statistics for the current session.
     "cacheWrite": 0,
     "total": 0
   },
-  "cost": 0.0
+  "costMicroUsd": 0,
+  "cacheHitRatio": null,
+  "contextTokens": 0,
+  "maxContextTokens": 0
 }
 ```
 
@@ -521,8 +524,9 @@ Return token usage and cost statistics for the current session.
 | `toolCalls` | integer | Number of tool calls made |
 | `toolResults` | integer | Number of tool results received |
 | `totalMessages` | integer | Total messages (including system, tool) |
-| `tokens` | object | Token usage breakdown (input, output, cache) |
-| `cost` | number | Estimated cost in USD |
+| `tokens` | object | Normalized token usage breakdown (`input` full-price input, `output`, `cacheRead`, `cacheWrite`, `total` = input + output) |
+| `costMicroUsd` | integer | Estimated cumulative cost in micro-USD |
+| `cacheHitRatio` | number or null | Shared cache-hit ratio (`cacheRead / (input + cacheRead + cacheWrite)`) or null when denominator is zero |
 | `contextTokens` | integer | Provider-reported prompt occupancy when available, else local estimate |
 | `maxContextTokens` | integer | Active model context-window limit (`0` when unknown) |
 

@@ -9,11 +9,13 @@ use crate::components::select_overlay::{
 };
 use crate::components::theme;
 use crate::protocol::session_payloads;
+use crate::shell::app_session_stats_text;
 
 // Wall-clock formatting helpers live in `app_time` (this module is at the
 // source line cap); re-exported so `app_methods::format_utc_minutes` and the
 // internal `format_unix_minutes` call sites stay put.
 use super::app_time::format_unix_minutes;
+
 // Only the unit tests reference these through `app_methods::…`; production reads
 // go straight to `app_time` (via `format_unix_minutes`), so gate the re-export.
 #[cfg(test)]
@@ -197,13 +199,7 @@ impl App {
             .master_session
             .chat
             .add_entry(ChatEntry::Status {
-                text: format!(
-                    "Session: {} | Messages: {} | Tokens: ↑{} ↓{}",
-                    stats.session_key,
-                    stats.total_messages,
-                    stats.input_tokens,
-                    stats.output_tokens
-                ),
+                text: app_session_stats_text::session_stats_text(&stats),
             });
     }
 

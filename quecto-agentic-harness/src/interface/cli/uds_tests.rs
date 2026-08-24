@@ -155,6 +155,8 @@ fn test_stats_include_session_usage_snapshot() {
     assert_eq!(stats.tokens.cache_write, 5);
     assert_eq!(stats.tokens.total, 125);
     assert!((stats.cost - 0.0123).abs() < f64::EPSILON);
+    assert_eq!(stats.cost_micro_usd, 12_300);
+    assert!((stats.cache_hit_ratio.unwrap() - (10.0 / 115.0)).abs() < 1e-9);
     assert_eq!(stats.context_tokens, 42);
 }
 

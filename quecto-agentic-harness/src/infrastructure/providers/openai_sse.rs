@@ -20,6 +20,7 @@ pub(crate) struct OpenAiSseHandler {
     /// Reused sink for `apply_delta`'s content extraction (which we ignore
     /// here, since content is accumulated into `content` directly).
     delta_scratch: String,
+    model: Option<String>,
 }
 
 impl OpenAiSseHandler {
@@ -30,7 +31,14 @@ impl OpenAiSseHandler {
             usage: None,
             reasoning: String::new(),
             delta_scratch: String::new(),
+            model: None,
         }
+    }
+
+    fn with_model(model: impl Into<String>) -> Self {
+        let mut handler = Self::new();
+        handler.model = Some(model.into());
+        handler
     }
 
     fn take_response(&mut self) -> LlmResponse {
@@ -47,13 +55,17 @@ impl OpenAiSseHandler {
                 signature: String::new(),
             }]
         };
-        LlmResponse {
+        let mut response = LlmResponse {
             content,
             tool_calls: std::mem::take(&mut self.tool_calls),
             usage: self.usage.take(),
             stop_reason: None,
             thinking_blocks,
+        };
+        if let Some(model) = &self.model {
+            crate::domain::usage_accounting::attach_cost(&mut response, model);
         }
+        response
     }
 }
 
@@ -133,11 +145,21 @@ impl SseHandler for OpenAiSseHandler {
 }
 
 /// Consume an OpenAI SSE byte stream, emitting `StreamEvent`s per delta.
+#[cfg(test)]
 pub(crate) async fn pump_sse_bytes(
     response: &mut reqwest::Response,
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
 ) {
     let mut handler = OpenAiSseHandler::new();
+    pump_sse(response, tx, &mut handler).await;
+}
+
+pub(crate) async fn pump_sse_bytes_for_model(
+    response: &mut reqwest::Response,
+    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+    model: &str,
+) {
+    let mut handler = OpenAiSseHandler::with_model(model);
     pump_sse(response, tx, &mut handler).await;
 }
 
@@ -147,11 +169,12 @@ pub(crate) async fn pump_sse_bytes(
 /// receiver while this pump runs in a task. Keeping the pump concurrent with the
 /// drain avoids deadlocking when a response has more deltas than the bounded
 /// channel capacity.
-pub(crate) async fn pump_sse_response(
+pub(crate) async fn pump_sse_response_for_model(
     mut response: reqwest::Response,
     tx: tokio::sync::mpsc::Sender<StreamEvent>,
+    model: String,
 ) {
-    pump_sse_bytes(&mut response, &tx).await;
+    pump_sse_bytes_for_model(&mut response, &tx, &model).await;
 }
 
 #[cfg(test)]
