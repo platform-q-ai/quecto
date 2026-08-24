@@ -135,7 +135,7 @@ impl Footer {
 
     /// Record cumulative session cost (USD). `None` hides the indicator.
     pub fn set_cost(&mut self, cost: Option<f64>) {
-        self.session_cost = cost;
+        self.session_cost = cost.filter(|c| c.is_finite() && *c > 0.0);
     }
 
     /// Apply typed `get_state` footer fields (model + context-window + effort).
