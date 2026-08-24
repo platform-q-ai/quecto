@@ -82,7 +82,7 @@ async fn handler_captures_usage_chunk_into_response() {
     // With stream_options.include_usage, OpenAI-compatible providers emit
     // a final chunk with empty choices and a populated usage object.
     let (tx, mut rx) = tokio::sync::mpsc::channel(4);
-    let mut handler = OpenAiSseHandler::new();
+    let mut handler = OpenAiSseHandler::with_model("gpt-5.6-luna");
 
     handler
         .process_line(r#"data: {"choices":[{"delta":{"content":"hi"}}]}"#, &tx)
@@ -105,6 +105,7 @@ async fn handler_captures_usage_chunk_into_response() {
             assert_eq!(usage.completion_tokens, 56);
             assert_eq!(usage.cache_read_tokens, Some(34));
             assert_eq!(usage.context_tokens, Some(1234));
+            assert_eq!(usage.cost.expect("stream cost").total_cost_micro_usd, 1539);
             assert_eq!(response.content.as_deref(), Some("hi"));
         }
         other => panic!("unexpected event: {other:?}"),

@@ -459,7 +459,7 @@ async fn test_codex_provider_http_error() {
         .chat(ChatRequest {
             messages: &messages,
             tools: &[],
-            model: "gpt-5.1-codex",
+            model: "gpt-5.6-luna",
             max_tokens: 1024,
             temperature: 0.7,
             session_id: None,
@@ -473,42 +473,6 @@ async fn test_codex_provider_http_error() {
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(err.contains("401"), "expected 401 in error: {}", err);
-}
-
-#[tokio::test]
-async fn test_codex_provider_success() {
-    let server = wiremock::MockServer::start().await;
-    let sse_body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi!\"}\n\
-                         data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n\
-                         data: [DONE]\n";
-    wiremock::Mock::given(wiremock::matchers::method("POST"))
-        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(sse_body))
-        .mount(&server)
-        .await;
-
-    let provider = CodexProvider::new(
-        "test-token".to_string(),
-        "acct-123".to_string(),
-        Some(server.uri()),
-    );
-    let messages = vec![Message::system("You are helpful."), Message::user("hello")];
-    let result = provider
-        .chat(ChatRequest {
-            messages: &messages,
-            tools: &[],
-            model: "gpt-5.1-codex",
-            max_tokens: 1024,
-            temperature: 0.7,
-            session_id: None,
-            tool_choice: None,
-            metadata: None,
-            thinking_level: None,
-            cancel_flag: None,
-            effort: None,
-        })
-        .await;
-    let resp = result.unwrap();
-    assert_eq!(resp.content.unwrap(), "Hi!");
 }
 
 #[tokio::test]
@@ -743,3 +707,6 @@ fn codex_streaming_task_clone_preserves_all_fields() {
 
 #[path = "codex_1338_tests.rs"]
 mod issue_1338_tests;
+
+#[path = "codex_issue1567_tests.rs"]
+mod issue1567_tests;

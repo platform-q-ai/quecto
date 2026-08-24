@@ -131,6 +131,38 @@ fn codex_normalizes_cached_tokens_as_subset_of_input() {
 }
 
 #[test]
+fn openai_and_codex_cached_subset_payloads_normalize_equivalently() {
+    let openai = serde_json::json!({
+        "prompt_tokens": 100,
+        "completion_tokens": 20,
+        "prompt_tokens_details": { "cached_tokens": 30 }
+    });
+    let codex = serde_json::json!({
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "input_tokens_details": { "cached_tokens": 30 }
+    });
+
+    let openai_usage = parse_openai_usage(openai.as_object().unwrap());
+    let codex_usage = parse_codex_usage(codex.as_object().unwrap());
+
+    assert_eq!(openai_usage.prompt_tokens, codex_usage.prompt_tokens);
+    assert_eq!(
+        openai_usage.completion_tokens,
+        codex_usage.completion_tokens
+    );
+    assert_eq!(
+        openai_usage.cache_read_tokens,
+        codex_usage.cache_read_tokens
+    );
+    assert_eq!(
+        openai_usage.cache_write_tokens,
+        codex_usage.cache_write_tokens
+    );
+    assert_eq!(openai_usage.context_tokens, codex_usage.context_tokens);
+}
+
+#[test]
 fn codex_preserves_reported_zero_cached_tokens() {
     let v = serde_json::json!({
         "input_tokens": 100,

@@ -263,6 +263,7 @@ impl OpenAiProvider {
         &self,
         body: serde_json::Value,
         url: &str,
+        model: &str,
     ) -> Result<LlmResponse, DomainError> {
         let request_builder = self
             .client
@@ -289,7 +290,11 @@ impl OpenAiProvider {
         }
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
-        let pump = AbortOnDrop::new(tokio::spawn(openai_sse::pump_sse_response(response, tx)));
+        let pump = AbortOnDrop::new(tokio::spawn(openai_sse::pump_sse_response_for_model(
+            response,
+            tx,
+            model.to_string(),
+        )));
         while let Some(event) = rx.recv().await {
             match event {
                 StreamEvent::Done(response) => {
@@ -324,6 +329,7 @@ impl OpenAiProvider {
         body: serde_json::Value,
         url: &str,
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
+        model: &str,
     ) {
         let request_builder = self
             .client
@@ -355,7 +361,7 @@ impl OpenAiProvider {
                 .await;
             return;
         }
-        openai_sse::pump_sse_bytes(&mut response, &tx).await;
+        openai_sse::pump_sse_bytes_for_model(&mut response, &tx, model).await;
     }
 
     fn apply_delta(
@@ -376,6 +382,7 @@ impl LlmProvider for OpenAiProvider {
         &self,
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        let model = request.model.to_string();
         let body = Self::build_request_body(&request);
         let url = format!("{}/chat/completions", self.api_base);
 
@@ -413,7 +420,9 @@ impl LlmProvider for OpenAiProvider {
                     DomainError::Provider(format!("failed to parse response JSON: {}", e))
                 })?;
 
-            Self::parse_response(&response_json)
+            let mut parsed = Self::parse_response(&response_json)?;
+            crate::domain::usage_accounting::attach_cost(&mut parsed, &model);
+            Ok(parsed)
         })
     }
 
@@ -421,6 +430,7 @@ impl LlmProvider for OpenAiProvider {
         &self,
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        let model = request.model.to_string();
         let mut body = Self::build_request_body(&request);
         body["stream"] = serde_json::Value::Bool(true);
         // Ask OpenAI-compatible providers (OpenAI, Fireworks, …) to emit a
@@ -428,13 +438,14 @@ impl LlmProvider for OpenAiProvider {
         // heuristic estimate.
         body["stream_options"] = serde_json::json!({ "include_usage": true });
         let url = format!("{}/chat/completions", self.api_base);
-        Box::pin(async move { self.stream_chat_with_body(body, &url).await })
+        Box::pin(async move { self.stream_chat_with_body(body, &url, &model).await })
     }
 
     fn chat_stream_incremental(
         &self,
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + '_>> {
+        let model = request.model.to_string();
         let mut body = Self::build_request_body(&request);
         body["stream"] = serde_json::Value::Bool(true);
         // Request a final usage chunk (see `chat_stream`).
@@ -444,7 +455,7 @@ impl LlmProvider for OpenAiProvider {
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
             tokio::spawn(async move {
-                provider.pump_sse_incremental(body, &url, tx).await;
+                provider.pump_sse_incremental(body, &url, tx, &model).await;
             });
             rx
         })

@@ -555,11 +555,16 @@ pub(crate) fn starts_with_ci(model: &str, prefix: &str) -> bool {
 /// Rates are expressed as micro-USD per million tokens (integer arithmetic, no f64 drift).
 /// Cache write = 1.25× base input (5-minute TTL). Cache read = 0.1× base input.
 ///
-/// Sources (https://www.anthropic.com/news/claude-sonnet-5):
-///   Sonnet 5: $3 in / $15 out / $3.75 cache-write / $0.30 cache-read per MTok
-///   Opus 4.6 / 4.5: $5 in / $25 out / $6.25 cache-write / $0.50 cache-read per MTok
-///   Sonnet 4.6 / 4.5 / 4: $3 in / $15 out / $3.75 cache-write / $0.30 cache-read per MTok
-///   Haiku 4.5: $1 in / $5 out / $1.25 cache-write / $0.10 cache-read per MTok
+/// Sources:
+///   Anthropic (https://www.anthropic.com/news/claude-sonnet-5):
+///     Sonnet 5: $3 in / $15 out / $3.75 cache-write / $0.30 cache-read per MTok
+///     Opus 4.6 / 4.5: $5 in / $25 out / $6.25 cache-write / $0.50 cache-read per MTok
+///     Sonnet 4.6 / 4.5 / 4: $3 in / $15 out / $3.75 cache-write / $0.30 cache-read per MTok
+///     Haiku 4.5: $1 in / $5 out / $1.25 cache-write / $0.10 cache-read per MTok
+///   OpenAI GPT-5.6 tiers mirror the registry pricing in `model_registry_gpt56_pricing.rs`:
+///     Sol: $5 in / $30 out / $6.25 cache-write / $0.50 cache-read per MTok
+///     Terra: $2.50 in / $15 out / $3.125 cache-write / $0.25 cache-read per MTok
+///     Luna: $1 in / $6 out / $1.25 cache-write / $0.10 cache-read per MTok
 pub(crate) fn claude_sonnet_5_pricing() -> ModelPricing {
     // Flat standard Sonnet 5 rate (deterministic, no clock-based intro switch).
     ModelPricing {
@@ -595,6 +600,27 @@ pub fn model_pricing(model: &str) -> Option<ModelPricing> {
         Some(ModelPricing {
             input_micro_usd_per_million: 1_000_000,
             output_micro_usd_per_million: 5_000_000,
+            cache_read_micro_usd_per_million: 100_000,
+            cache_write_micro_usd_per_million: 1_250_000,
+        })
+    } else if starts_with_ci(model, "gpt-5.6-sol") {
+        Some(ModelPricing {
+            input_micro_usd_per_million: 5_000_000,
+            output_micro_usd_per_million: 30_000_000,
+            cache_read_micro_usd_per_million: 500_000,
+            cache_write_micro_usd_per_million: 6_250_000,
+        })
+    } else if starts_with_ci(model, "gpt-5.6-terra") {
+        Some(ModelPricing {
+            input_micro_usd_per_million: 2_500_000,
+            output_micro_usd_per_million: 15_000_000,
+            cache_read_micro_usd_per_million: 250_000,
+            cache_write_micro_usd_per_million: 3_125_000,
+        })
+    } else if starts_with_ci(model, "gpt-5.6-luna") {
+        Some(ModelPricing {
+            input_micro_usd_per_million: 1_000_000,
+            output_micro_usd_per_million: 6_000_000,
             cache_read_micro_usd_per_million: 100_000,
             cache_write_micro_usd_per_million: 1_250_000,
         })

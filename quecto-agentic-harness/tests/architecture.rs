@@ -1191,9 +1191,9 @@ const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] = &[
 /// this as they migrate behind typed mappers. Never raise it.
 /// (#1257 Phase 5: raised only by genuine new mapper sites absorbed from
 /// feature/view — net feature-view burn-down is required when raising.)
-const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 137;
+const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 134;
 /// Measured with direct deserialization, key, indexed-value, and accessor-chain parsing all counted.
-const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 136;
+const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 134;
 /// Current combined feature/view + protocol ceiling. This prevents moving
 /// sites between buckets (and adjusting their individual seeds) from hiding
 /// growth in the total raw-JSON inventory; keep it exact when re-baselining.

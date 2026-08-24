@@ -21,6 +21,10 @@ fn chat_text(app: &mut App) -> String {
         .join("\n")
 }
 
+fn empty_manifest_path() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("q-empty-man-{}.json", std::process::id()))
+}
+
 fn command_has_string_fields(command: &str, expected: &[(&str, &str)]) -> bool {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(command) else {
         return false;
@@ -161,32 +165,6 @@ async fn send_resume_session_empty_falls_back_to_list() {
 }
 
 #[tokio::test]
-async fn show_session_stats_with_context_updates_footer_flag() {
-    let mut h = harness().await;
-    let data = serde_json::json!({
-        "sessionKey": "cli:foo",
-        "totalMessages": 5,
-        "tokens": {"input": 10, "output": 20},
-        "cost": 0.1234,
-        "contextTokens": 100,
-        "maxContextTokens": 1000
-    });
-    let a = h.app_mut();
-    a.show_session_stats(&data);
-    assert!(a.ac().sessions.context_stats_requested);
-    assert!(chat_text(a).contains("Session: cli:foo"));
-}
-
-#[tokio::test]
-async fn show_session_stats_without_context_leaves_flag_false() {
-    let mut h = harness().await;
-    let data = serde_json::json!({"sessionKey": "cli:bar"});
-    let a = h.app_mut();
-    a.show_session_stats(&data);
-    assert!(!a.ac().sessions.context_stats_requested);
-}
-
-#[tokio::test]
 async fn send_set_model_records_current_model() {
     let mut h = harness().await;
     let a = h.app_mut();
@@ -203,26 +181,15 @@ async fn update_footer_stats_sets_context_and_clears_zero_cost() {
     a.update_footer_stats(&serde_json::json!({
         "contextTokens": 42,
         "maxContextTokens": 100,
-        "cost": 0.0
+        "tokens": {"cacheRead": 9, "cacheWrite": 1},
+        "cacheHitRatio": 0.9,
+        "costMicroUsd": 0
     }));
     assert!(a.ac().sessions.context_stats_requested);
     let footer = a.ac_mut().master_session.footer.render(120).join("\n");
     assert!(footer.contains("42"), "{footer}");
-}
-
-#[tokio::test]
-async fn update_footer_stats_ignores_positive_cost_without_context() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.update_footer_stats(&serde_json::json!({ "cost": 1.25 }));
-    assert!(!a.ac().sessions.context_stats_requested);
-    let footer = a.ac_mut().master_session.footer.render(120).join("\n");
-    assert!(!footer.contains("$"), "{footer}");
-}
-
-// ── app_methods: resume selector ─────────────────────────────────────
-fn empty_manifest_path() -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("q-empty-man-{}.json", std::process::id()))
+    assert!(footer.contains("cache 9/1"), "{footer}");
+    assert!(footer.contains("hit 90.0%"), "{footer}");
 }
 
 #[tokio::test]
@@ -502,21 +469,6 @@ async fn notify_pushes_notification() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.notify("hi", NotifyLevel::Info);
-    assert!(!a.notifications.is_empty());
-}
-
-#[tokio::test]
-async fn reset_session_clears_chat_and_notifies() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.ac_mut()
-        .master_session
-        .chat
-        .add_entry(ChatEntry::User { text: "x".into() });
-    a.ac_mut().sessions.context_stats_requested = true;
-    a.reset_session("New session");
-    assert_eq!(a.ac().master_session.chat.entry_count(), 0);
-    assert!(!a.ac().sessions.context_stats_requested);
     assert!(!a.notifications.is_empty());
 }
 

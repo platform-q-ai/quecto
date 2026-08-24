@@ -21,5 +21,10 @@ pub mod text;
 pub mod tool;
 pub mod tool_descriptor;
 pub mod tool_id;
+pub mod usage_accounting;
+
+#[cfg(test)]
+#[path = "usage_accounting_tests.rs"]
+mod usage_accounting_tests;
 pub mod visible_thinking;
 pub mod workflow;

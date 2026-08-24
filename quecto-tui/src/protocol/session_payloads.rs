@@ -11,7 +11,12 @@ pub struct SessionStats {
     pub total_messages: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub total_tokens: u64,
+    pub cost_micro_usd: u64,
     pub cost: f64,
+    pub cache_hit_ratio: Option<f64>,
     pub context_usage: Option<(u64, usize)>,
 }
 
@@ -80,9 +85,36 @@ fn optional_usize_field(data: &serde_json::Value, key: &str) -> Option<usize> {
         .and_then(|n| usize::try_from(n).ok())
 }
 
+fn token_field(data: &serde_json::Value, key: &str) -> u64 {
+    data.get("tokens")
+        .and_then(|t| t.get(key))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
+}
+
+fn legacy_cost_to_micro_usd(dollars: f64) -> u64 {
+    if dollars.is_finite() && dollars > 0.0 {
+        (dollars * 1_000_000.0).round() as u64
+    } else {
+        0
+    }
+}
+
+fn cost_micro_usd(data: &serde_json::Value) -> u64 {
+    if let Some(value) = data.get("costMicroUsd") {
+        value.as_u64().unwrap_or(0)
+    } else {
+        data.get("cost")
+            .and_then(|v| v.as_f64())
+            .map(legacy_cost_to_micro_usd)
+            .unwrap_or(0)
+    }
+}
+
 pub fn parse_session_stats(data: &serde_json::Value) -> SessionStats {
     let context_tokens = data.get("contextTokens").and_then(|v| v.as_u64());
     let max_context_tokens = optional_usize_field(data, "maxContextTokens");
+    let cost_micro_usd = cost_micro_usd(data);
 
     SessionStats {
         session_key: data
@@ -94,17 +126,14 @@ pub fn parse_session_stats(data: &serde_json::Value) -> SessionStats {
             .get("totalMessages")
             .and_then(|v| v.as_u64())
             .unwrap_or(0),
-        input_tokens: data
-            .get("tokens")
-            .and_then(|t| t.get("input"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0),
-        output_tokens: data
-            .get("tokens")
-            .and_then(|t| t.get("output"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0),
-        cost: data.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0),
+        input_tokens: token_field(data, "input"),
+        output_tokens: token_field(data, "output"),
+        cache_read_tokens: token_field(data, "cacheRead"),
+        cache_write_tokens: token_field(data, "cacheWrite"),
+        total_tokens: token_field(data, "total"),
+        cost_micro_usd,
+        cost: cost_micro_usd as f64 / 1_000_000.0,
+        cache_hit_ratio: data.get("cacheHitRatio").and_then(|v| v.as_f64()),
         context_usage: context_tokens.zip(max_context_tokens),
     }
 }

@@ -111,7 +111,7 @@ async fn test_chat_text_response() {
     let req = ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "gpt-4",
+        model: "gpt-5.6-luna",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -132,6 +132,10 @@ async fn test_chat_text_response() {
     assert_eq!(usage.completion_tokens, 5);
     // Context occupancy is provider prompt/input, not total prompt+completion.
     assert_eq!(usage.context_tokens, Some(10));
+    assert_eq!(
+        usage.cost.expect("gpt-5.6 pricing").total_cost_micro_usd,
+        40
+    );
 }
 
 #[tokio::test]

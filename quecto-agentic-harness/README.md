@@ -6,7 +6,7 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.105.26**.
+Current version: **0.105.27**.
 
 ## Quick Start
 
@@ -302,7 +302,7 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `get_state` | optional `id` | Return live supervision state, including model, streaming, accurate in-flight message count, effort, context limit, execution phase/current tool/recent progress, and workflow snapshot when enabled |
 | `get_messages` | optional `count`, optional `before`, optional `agent_id`, optional `id` | Return stable committed transcript history (best used after the turn ends) as the newest bounded page; `count` requests an older-client newest slice, `before` pages backward, and `agent_id` targets a sub-agent. Responses include `messages`, `before`, and `hasMoreBefore` so older history is explicitly reachable. Oversized history entries are returned as recoverable summaries (`id`, role/tool metadata, preview `content`, `contentLength`, `collapsed: true`, `truncated: true`) and can be fetched deliberately with ranged `get_message`. |
 | `get_message` | `messageId`, optional `offset`, optional `limit`, optional `agent_id`, optional `toolCallId`, optional `id` | Return one stable message by id. With `offset`/`limit`, returns a bounded content byte range plus `nextOffset`, `contentLength`, and `hasMoreContent` so oversized messages can be paged without exceeding the frame cap; `agent_id` targets a sub-agent; `toolCallId` recovers tool-call arguments instead of message content |
-| `get_session_stats` | optional `id` | Return token usage and context occupancy (`contextTokens` / `maxContextTokens`); monetary cost is not reported |
+| `get_session_stats` | optional `id` | Return normalized token/cache usage, `costMicroUsd`, `cacheHitRatio`, and context occupancy (`contextTokens` / `maxContextTokens`); legacy float `cost` remains hidden from serialization |
 | `list_models` | optional `id` | Return configured and built-in models from the runtime registry |
 | `list_sessions` | optional `id` | Return persisted CLI sessions available for resume |
 | `new_session` | optional `id` | Switch to a fresh user-chat session (idle only) |

@@ -255,7 +255,7 @@ async fn dispatch_content_block_start_emits_tool_call_start() {
     let mut acc = SseAccumulator::default();
     let chunk =
         serde_json::json!({"content_block": {"type": "tool_use", "id": "tu1", "name": "bash"}});
-    let done = dispatch_sse_event("content_block_start", &chunk, &mut acc, &tx).await;
+    let done = dispatch_sse_event("content_block_start", &chunk, &mut acc, None, &tx).await;
     assert!(!done);
     let events = drain(&mut rx);
     assert!(matches!(
@@ -269,7 +269,7 @@ async fn dispatch_redacted_thinking_start_emits_live_placeholder_without_data() 
     let (tx, mut rx) = channel();
     let mut acc = SseAccumulator::default();
     let chunk = serde_json::json!({"content_block": {"type": "redacted_thinking", "data": "opaque-private"}});
-    let done = dispatch_sse_event("content_block_start", &chunk, &mut acc, &tx).await;
+    let done = dispatch_sse_event("content_block_start", &chunk, &mut acc, None, &tx).await;
     assert!(!done);
     let events = drain(&mut rx);
     assert!(
@@ -282,7 +282,7 @@ async fn dispatch_content_block_delta_emits_text_and_accumulates() {
     let (tx, mut rx) = channel();
     let mut acc = SseAccumulator::default();
     let chunk = serde_json::json!({"delta": {"type": "text_delta", "text": "hi"}});
-    assert!(!dispatch_sse_event("content_block_delta", &chunk, &mut acc, &tx).await);
+    assert!(!dispatch_sse_event("content_block_delta", &chunk, &mut acc, None, &tx).await);
     let events = drain(&mut rx);
     assert!(matches!(events.first(), Some(StreamEvent::TextDelta(t)) if t == "hi"));
     assert_eq!(acc.into_response().content.as_deref(), Some("hi"));
@@ -304,6 +304,7 @@ async fn dispatch_content_block_stop_emits_tool_call_end() {
             "content_block_stop",
             &serde_json::Value::Null,
             &mut acc,
+            None,
             &tx
         )
         .await
@@ -320,9 +321,9 @@ async fn dispatch_message_start_and_delta_no_events() {
     let (tx, mut rx) = channel();
     let mut acc = SseAccumulator::default();
     let start = serde_json::json!({"message": {"usage": {"input_tokens": 1}}});
-    assert!(!dispatch_sse_event("message_start", &start, &mut acc, &tx).await);
+    assert!(!dispatch_sse_event("message_start", &start, &mut acc, None, &tx).await);
     let delta = serde_json::json!({"delta": {"stop_reason": "end_turn"}});
-    assert!(!dispatch_sse_event("message_delta", &delta, &mut acc, &tx).await);
+    assert!(!dispatch_sse_event("message_delta", &delta, &mut acc, None, &tx).await);
     assert!(drain(&mut rx).is_empty());
 }
 
@@ -330,17 +331,65 @@ async fn dispatch_message_start_and_delta_no_events() {
 async fn dispatch_message_stop_emits_done_and_returns_true() {
     let (tx, mut rx) = channel();
     let mut acc = SseAccumulator::default();
-    let done = dispatch_sse_event("message_stop", &serde_json::Value::Null, &mut acc, &tx).await;
+    let done = dispatch_sse_event(
+        "message_stop",
+        &serde_json::Value::Null,
+        &mut acc,
+        None,
+        &tx,
+    )
+    .await;
     assert!(done);
     let events = drain(&mut rx);
     assert!(matches!(events.first(), Some(StreamEvent::Done(_))));
 }
 
 #[tokio::test]
+async fn dispatch_message_stop_attaches_shared_cost_when_model_present() {
+    let (tx, mut rx) = channel();
+    let mut acc = SseAccumulator::default();
+    acc.handle_message_start(&serde_json::json!({
+        "message": {"usage": {
+            "input_tokens": 70,
+            "output_tokens": 20,
+            "cache_read_input_tokens": 30,
+            "cache_creation_input_tokens": 5
+        }}
+    }));
+
+    let done = dispatch_sse_event(
+        "message_stop",
+        &serde_json::Value::Null,
+        &mut acc,
+        Some("claude-haiku-4-5-20251001"),
+        &tx,
+    )
+    .await;
+
+    assert!(done);
+    let events = drain(&mut rx);
+    match events.first() {
+        Some(StreamEvent::Done(resp)) => {
+            let cost = resp
+                .usage
+                .as_ref()
+                .and_then(|u| u.cost.as_ref())
+                .expect("shared cost attached");
+            assert_eq!(cost.input_cost_micro_usd, 70);
+            assert_eq!(cost.output_cost_micro_usd, 100);
+            assert_eq!(cost.cache_read_cost_micro_usd, 3);
+            assert_eq!(cost.cache_write_cost_micro_usd, 6);
+            assert_eq!(cost.total_cost_micro_usd, 179);
+        }
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn dispatch_unknown_event_is_noop() {
     let (tx, mut rx) = channel();
     let mut acc = SseAccumulator::default();
-    assert!(!dispatch_sse_event("ping", &serde_json::Value::Null, &mut acc, &tx).await);
+    assert!(!dispatch_sse_event("ping", &serde_json::Value::Null, &mut acc, None, &tx).await);
     assert!(drain(&mut rx).is_empty());
 }
 
@@ -558,6 +607,7 @@ async fn anthropic_live_thinking_uses_aggregate_cap() {
             "content_block_delta",
             &serde_json::json!({"delta": {"type": "thinking_delta", "thinking": first}}),
             &mut acc,
+            None,
             &tx,
         )
         .await
@@ -567,6 +617,7 @@ async fn anthropic_live_thinking_uses_aggregate_cap() {
             "content_block_delta",
             &serde_json::json!({"delta": {"type": "thinking_delta", "thinking": overflow}}),
             &mut acc,
+            None,
             &tx,
         )
         .await
@@ -609,6 +660,7 @@ async fn anthropic_live_thinking_persists_once() {
             "content_block_delta",
             &serde_json::json!({"delta": {"type": "thinking_delta", "thinking": "Let me think"}}),
             &mut acc,
+            None,
             &tx,
         )
         .await

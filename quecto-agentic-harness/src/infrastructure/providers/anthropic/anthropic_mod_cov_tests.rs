@@ -110,14 +110,14 @@ fn response_with_usage() -> LlmResponse {
 #[test]
 fn attach_cost_sets_cost_for_known_model() {
     let mut resp = response_with_usage();
-    AnthropicProvider::attach_cost(&mut resp, "claude-opus-4-6");
+    crate::domain::usage_accounting::attach_cost(&mut resp, "claude-opus-4-6");
     assert!(resp.usage.unwrap().cost.is_some());
 }
 
 #[test]
 fn attach_cost_leaves_none_for_unknown_model() {
     let mut resp = response_with_usage();
-    AnthropicProvider::attach_cost(&mut resp, "totally-unknown-model-xyz");
+    crate::domain::usage_accounting::attach_cost(&mut resp, "totally-unknown-model-xyz");
     assert!(resp.usage.unwrap().cost.is_none());
 }
 
@@ -130,7 +130,7 @@ fn attach_cost_noop_when_no_usage() {
         stop_reason: None,
         thinking_blocks: vec![],
     };
-    AnthropicProvider::attach_cost(&mut resp, "claude-opus-4-6");
+    crate::domain::usage_accounting::attach_cost(&mut resp, "claude-opus-4-6");
     assert!(resp.usage.is_none());
 }
 
@@ -364,5 +364,35 @@ async fn chat_invalid_json_reports_parse_context() {
     assert!(
         err.to_string().contains("failed to parse response JSON"),
         "{err}"
+    );
+}
+
+#[test]
+fn test_anthropic_cache_usage_matches_normalized_openai_equivalent() {
+    let body = serde_json::json!({
+        "content": [{"type": "text", "text": "Hello"}],
+        "stop_reason": "end_turn",
+        "usage": {
+            "input_tokens": 70,
+            "output_tokens": 20,
+            "cache_read_input_tokens": 30,
+            "cache_creation_input_tokens": 5
+        }
+    });
+    let response = AnthropicProvider::parse_response(&body, false, &[]).unwrap();
+    let usage = response.usage.expect("should have usage");
+
+    assert_eq!(usage.prompt_tokens, 70);
+    assert_eq!(usage.completion_tokens, 20);
+    assert_eq!(usage.cache_read_tokens, Some(30));
+    assert_eq!(usage.cache_write_tokens, Some(5));
+    assert_eq!(usage.context_tokens, Some(105));
+    assert_eq!(
+        crate::domain::usage_accounting::cache_hit_ratio(
+            usage.prompt_tokens as u64,
+            usage.cache_read_tokens.unwrap_or(0) as u64,
+            usage.cache_write_tokens.unwrap_or(0) as u64,
+        ),
+        Some(30.0 / 105.0)
     );
 }

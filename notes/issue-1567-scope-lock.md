@@ -1,39 +1,34 @@
-# Issue #1567 scope lock
+# Issue #1567 scope lock — full AC completion
 
-Implemented phase: provider usage normalization for OpenAI Chat Completions and OpenAI Responses/Codex cached-token payloads, plus directly affected protocol/test fixtures.
+Phase: continue PR #1568 from parser/protocol slice to complete all remaining issue #1567 acceptance criteria.
 
-Covered acceptance criteria in this slice:
-- OpenAI Chat Completions parses `prompt_tokens_details.cached_tokens` into normalized `UsageInfo`.
-- OpenAI Responses/Codex parses `input_tokens_details.cached_tokens` into the same normalized `UsageInfo` semantics.
+Covered in this run:
+- Shared cache-hit ratio/efficiency calculation outside provider adapters.
+- Normalized token/cache/cost stats exposed through `get_session_stats`.
+- Normalized token/cache/cost stats emitted in structured logs.
+- TUI `/session` displays normalized token/cache/cost stats.
+- TUI status/detail surfaces consume the same shared normalized session stats, not provider-specific fields.
+- Acceptance coverage proves selected surfaces use the shared accounting path.
+- PR #1568 body/notes updated so no #1567 ACs are deferred.
+
+Already covered by previous slice and preserved:
+- OpenAI Chat `prompt_tokens_details.cached_tokens` parsing.
+- OpenAI Responses/Codex `input_tokens_details.cached_tokens` parsing.
+- Normalized `UsageInfo` mapping for Anthropic/OpenAI/Codex.
 - Provider wire parsing remains infrastructure-local.
-- Normalized `UsageInfo.prompt_tokens` means full-price non-cache input; `context_tokens` carries provider prompt/input occupancy.
-- Existing protocol fixtures use normalized `tokens.total = input + output`, with cache buckets separate.
-- Tests preserve absent/zero/malformed/overflow/clamped cached-token boundaries and streaming final usage chunk extraction for OpenAI/Codex.
 
-Non-goals for this PR slice:
-- No provider request behaviour changes except retaining/parsing usage metadata already returned.
+Non-goals:
+- No provider request behavior changes except usage metadata already returned.
 - No billing dashboard.
-- No provider wire JSON types moved into domain/application.
-- No new end-to-end TUI/log/session aggregation feature work beyond fixtures directly touched by normalized parser outputs.
-- No new Anthropic wire-shape support beyond existing behaviour.
+- No provider wire JSON moved into domain/application.
 
-Expected touched surfaces/files:
-- `quecto-agentic-harness/src/infrastructure/providers/usage.rs` for OpenAI/Codex usage parsing normalization.
-- OpenAI/Codex parser/SSE tests and stale compatibility tests using the changed normalized semantics.
-- `quecto-agentic-harness/src/domain/message.rs` comments documenting normalized cache/context semantics.
-- Protocol fixture tests whose total/cache semantics were stale.
-- Issue notes for scope, matrix, test design, and RED/falsifiability evidence.
+Expected touched surfaces:
+- `quecto-agentic-harness/src/application/agent_usage.rs` and stats/session aggregation helpers.
+- `quecto-agentic-harness/src/interface/cli/protocol.rs`, command handling, logs.
+- TUI session/status/detail handling/rendering paths.
+- Acceptance/unit tests for stats, logs, TUI/session/status, architecture/docs.
+- PR/issue notes and developer docs.
 
-Architecture ownership:
-- Infrastructure adapters parse provider-native JSON into normalized `UsageInfo`.
-- Domain/application owns aggregation/cost/cache-hit meaning over normalized usage; this slice avoids moving provider-native fields upward.
-- Interface/TUI/API surfaces consume normalized stats DTOs; this slice only corrects stale protocol fixtures, not UI behaviour.
-
-Verification evidence:
-- RED evidence for parser cached-token behavior is summarized in `notes/issue-1567-red-evidence.md`.
-- Targeted GREEN commands run locally included usage parser tests, OpenAI/Codex SSE tests, issue_996 compatibility tests, and protocol fixture tests.
-
-Deferred work:
-- Additional providers beyond currently supported adapters.
-- Rich billing dashboard/analytics beyond exposed normalized stats.
-- Broader end-to-end log/session/TUI coverage and any changes required by that coverage.
+Verification evidence planned:
+- RED tests for shared cache-hit stats, `get_session_stats`, structured logs, TUI `/session`/status shared DTO consumption.
+- GREEN targeted tests plus fmt/clippy/push gate.

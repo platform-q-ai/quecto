@@ -284,6 +284,38 @@ fn query_get_state_messages_and_stats_are_shaped() {
 
     let stats = query_response_data(&AgentCommand::GetSessionStats { id: None }, &ctx).unwrap();
     assert_eq!(stats["sessionKey"], "cli:test");
+    assert_eq!(stats["tokens"]["input"], 0);
+    assert_eq!(stats["tokens"]["output"], 0);
+    assert_eq!(stats["tokens"]["cacheRead"], 0);
+    assert_eq!(stats["tokens"]["cacheWrite"], 0);
+    assert_eq!(stats["tokens"]["total"], 0);
+    assert_eq!(stats["costMicroUsd"], 0);
+    assert_eq!(stats["cacheHitRatio"], serde_json::Value::Null);
+    assert!(stats.get("prompt_tokens_details").is_none());
+    assert!(stats.get("input_tokens_details").is_none());
+}
+
+#[test]
+fn query_get_session_stats_returns_shared_usage_accounting_fields() {
+    let mut fx = Fx::new();
+    fx.session.record_usage(70, 20, 30, 5, 1_234);
+    fx.session.set_context_tokens(105);
+    let ctx = fx.ctx();
+
+    let stats = query_response_data(&AgentCommand::GetSessionStats { id: None }, &ctx).unwrap();
+
+    assert_eq!(stats["sessionKey"], "cli:test");
+    assert_eq!(stats["tokens"]["input"], 70);
+    assert_eq!(stats["tokens"]["output"], 20);
+    assert_eq!(stats["tokens"]["cacheRead"], 30);
+    assert_eq!(stats["tokens"]["cacheWrite"], 5);
+    assert_eq!(stats["tokens"]["total"], 90);
+    assert_eq!(stats["contextTokens"], 105);
+    assert_eq!(stats["costMicroUsd"], 1_234);
+    let ratio = stats["cacheHitRatio"].as_f64().expect("ratio serialized");
+    assert!((ratio - (30.0 / 105.0)).abs() < 1e-9, "{ratio}");
+    assert!(stats.get("prompt_tokens_details").is_none());
+    assert!(stats.get("input_tokens_details").is_none());
 }
 
 fn assert_page_metadata(data: &serde_json::Value, has_more: bool) {
