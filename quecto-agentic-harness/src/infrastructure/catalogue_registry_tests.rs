@@ -40,6 +40,36 @@ fn registry_source_translates_legacy_models_to_secret_free_domain_descriptors() 
 }
 
 #[test]
+fn registry_source_skips_records_with_blank_provider_or_model_ids() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"openish":{"api":"openai-completions","models":[{"id":"valid"},{"id":"   "}]},"   ":{"api":"openai-completions","models":[{"id":"blank-provider"}]}}}"#,
+    )
+    .unwrap();
+    let source =
+        ModelRegistryCatalogueSource::load_from_path(&tmp.path().join("models.json")).unwrap();
+
+    let models = source.load().unwrap();
+
+    assert!(
+        models
+            .iter()
+            .any(|model| model.qualified_id() == "openish/valid")
+    );
+    assert!(
+        !models
+            .iter()
+            .any(|model| model.qualified_id() == "   /blank-provider")
+    );
+    assert!(
+        !models
+            .iter()
+            .any(|model| model.qualified_id() == "openish/   ")
+    );
+}
+
+#[test]
 fn registry_source_keeps_auth_identity_separate_and_marks_missing_runtime_capability_structurally()
 {
     let tmp = tempfile::TempDir::new().unwrap();

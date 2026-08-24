@@ -190,6 +190,11 @@ fn infrastructure_has_no_interface_imports() {
 }
 
 #[test]
+fn application_layer_has_no_external_http_client_dependencies() {
+    assert_no_imports("application", Path::new("src/application"), &["reqwest::"]);
+}
+
+#[test]
 fn application_layer_has_no_runtime_io_calls() {
     assert_no_imports(
         "application",

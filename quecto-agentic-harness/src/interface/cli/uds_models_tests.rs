@@ -53,6 +53,51 @@ fn list_models_data_serializes_registry_models() {
 }
 
 #[test]
+fn list_models_data_skips_blank_identifier_records_without_hiding_valid_models() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{
+          "providers": {
+            "openish": {
+              "api": "openai-completions",
+              "models": [{"id":"valid-model"}]
+            },
+            "   ": {
+              "api": "openai-completions",
+              "models": [{"id":"blank-provider-model"}]
+            },
+            "anthropicish": {
+              "api": "anthropic-messages",
+              "models": [{"id":"   "}]
+            }
+          }
+        }"#,
+    )
+    .unwrap();
+
+    let data = list_models_data(tmp.path());
+
+    assert!(data.get("error").is_none(), "unexpected error: {data}");
+    let models = data["models"].as_array().unwrap();
+    assert!(
+        models
+            .iter()
+            .any(|model| model["model"] == "openish/valid-model")
+    );
+    assert!(
+        !models
+            .iter()
+            .any(|model| model["model"] == "   /blank-provider-model")
+    );
+    assert!(
+        !models
+            .iter()
+            .any(|model| model["model"] == "anthropicish/   ")
+    );
+}
+
+#[test]
 fn list_models_data_reports_registry_errors() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(tmp.path().join("models.json"), "not json").unwrap();

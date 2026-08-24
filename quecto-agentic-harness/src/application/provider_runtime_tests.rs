@@ -60,36 +60,37 @@ impl LlmProvider for StubProvider {
     }
 }
 
+struct RuntimeInputs {
+    root_name: &'static str,
+    client_marker: &'static str,
+}
+
 struct CapturingFactory;
 
-impl ProviderRuntimeFactory<Config> for CapturingFactory {
+impl ProviderRuntimeFactory<Config, RuntimeInputs> for CapturingFactory {
     fn compose_runtime(
         &self,
         config: &Config,
-        base_dir: &std::path::Path,
-        _http_client: &reqwest::Client,
+        runtime_inputs: &RuntimeInputs,
     ) -> Result<Arc<dyn LlmProvider>, String> {
         assert_eq!(config.providers.openai.api_key, "sk-test");
-        assert!(base_dir.ends_with("runtime-root"));
+        assert_eq!(runtime_inputs.root_name, "runtime-root");
+        assert_eq!(runtime_inputs.client_marker, "test-client");
         Ok(Arc::new(StubProvider))
     }
 }
 
 #[test]
 fn compose_provider_runtime_use_case_delegates_through_application_owned_port() {
-    let root = tempfile::TempDir::new().unwrap();
-    let base_dir = root.path().join("runtime-root");
-    std::fs::create_dir(&base_dir).unwrap();
     let mut config = Config::default();
     config.providers.openai.api_key = "sk-test".to_string();
+    let runtime_inputs = RuntimeInputs {
+        root_name: "runtime-root",
+        client_marker: "test-client",
+    };
 
     let provider = ComposeProviderRuntimeUseCase::new()
-        .compose(
-            &CapturingFactory,
-            &config,
-            &base_dir,
-            &reqwest::Client::new(),
-        )
+        .compose(&CapturingFactory, &config, &runtime_inputs)
         .unwrap();
 
     assert_eq!(provider.name(), "stub-runtime");

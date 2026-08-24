@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 use crate::domain::provider::LlmProvider;
 use crate::infrastructure::config::Config;
-use crate::infrastructure::provider_runtime::InfrastructureProviderRuntimeFactory;
+use crate::infrastructure::provider_runtime::{
+    InfrastructureProviderRuntimeFactory, ProviderRuntimeInputs,
+};
 
 /// Build the agent provider runtime through the application composition use case.
 pub fn build_agent_provider(
@@ -16,10 +18,13 @@ pub fn build_agent_provider(
     base_dir: &std::path::Path,
     http_client: &reqwest::Client,
 ) -> Result<Arc<dyn LlmProvider>, String> {
+    let runtime_inputs = ProviderRuntimeInputs {
+        base_dir,
+        http_client,
+    };
     crate::application::provider_runtime::ComposeProviderRuntimeUseCase::new().compose(
         &InfrastructureProviderRuntimeFactory,
         config,
-        base_dir,
-        http_client,
+        &runtime_inputs,
     )
 }

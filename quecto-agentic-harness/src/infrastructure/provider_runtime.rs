@@ -20,16 +20,20 @@ const MAX_OPENAI_COMPATIBLE_ENDPOINTS: usize = 32;
 #[derive(Debug, Default, Clone, Copy)]
 pub struct InfrastructureProviderRuntimeFactory;
 
-impl crate::provider_runtime_app::ProviderRuntimeFactory<Config>
+pub struct ProviderRuntimeInputs<'a> {
+    pub base_dir: &'a std::path::Path,
+    pub http_client: &'a reqwest::Client,
+}
+
+impl<'a> crate::provider_runtime_app::ProviderRuntimeFactory<Config, ProviderRuntimeInputs<'a>>
     for InfrastructureProviderRuntimeFactory
 {
     fn compose_runtime(
         &self,
         config: &Config,
-        base_dir: &std::path::Path,
-        http_client: &reqwest::Client,
+        runtime_inputs: &ProviderRuntimeInputs<'a>,
     ) -> Result<Arc<dyn LlmProvider>, String> {
-        build_agent_provider(config, base_dir, http_client)
+        build_agent_provider(config, runtime_inputs.base_dir, runtime_inputs.http_client)
     }
 }
 

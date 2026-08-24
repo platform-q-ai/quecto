@@ -30,15 +30,27 @@ impl CatalogueSource for ModelRegistryCatalogueSource {
     }
 
     fn load(&self) -> Result<Vec<ModelDescriptor>, String> {
-        self.registry
-            .models()
-            .iter()
-            .map(record_to_descriptor)
-            .collect()
+        self.load_valid_descriptors()
     }
 }
 
-pub fn record_to_descriptor(record: &ModelRecord) -> Result<ModelDescriptor, String> {
+impl ModelRegistryCatalogueSource {
+    pub fn load_valid_descriptors(&self) -> Result<Vec<ModelDescriptor>, String> {
+        let mut descriptors = Vec::new();
+        for record in self.registry.models() {
+            if let Some(descriptor) = record_to_descriptor(record)? {
+                descriptors.push(descriptor);
+            }
+        }
+        Ok(descriptors)
+    }
+}
+
+pub fn record_to_descriptor(record: &ModelRecord) -> Result<Option<ModelDescriptor>, String> {
+    if record.provider.trim().is_empty() || record.id.trim().is_empty() {
+        return Ok(None);
+    }
+
     let provider = ProviderId::new(record.provider.clone()).map_err(|e| e.to_string())?;
     let model =
         crate::domain::catalogue::ModelId::new(record.id.clone()).map_err(|e| e.to_string())?;
@@ -66,7 +78,7 @@ pub fn record_to_descriptor(record: &ModelRecord) -> Result<ModelDescriptor, Str
     let adapter_supported = !matches!(record.api, ProviderApi::GoogleGenerativeAi);
     let configured = credential_available || record.base_url.is_some();
 
-    Ok(ModelDescriptor {
+    Ok(Some(ModelDescriptor {
         reference,
         display_name: record.display_name.clone(),
         transport,
@@ -90,7 +102,7 @@ pub fn record_to_descriptor(record: &ModelRecord) -> Result<ModelDescriptor, Str
             },
         },
         availability: derive_availability(transport, adapter_supported, credential_available),
-    })
+    }))
 }
 
 pub fn transport_from_provider_api(api: ProviderApi) -> TransportKind {

@@ -67,34 +67,35 @@ struct Config {
     marker: &'static str,
 }
 
+struct RuntimeInputs {
+    workspace_name: &'static str,
+    client_marker: &'static str,
+}
+
 struct Factory;
 
-impl ProviderRuntimeFactory<Config> for Factory {
+impl ProviderRuntimeFactory<Config, RuntimeInputs> for Factory {
     fn compose_runtime(
         &self,
         config: &Config,
-        base_dir: &std::path::Path,
-        _http_client: &reqwest::Client,
+        runtime_inputs: &RuntimeInputs,
     ) -> Result<Arc<dyn LlmProvider>, String> {
         assert_eq!(config.marker, "contract");
-        assert!(base_dir.ends_with("workspace"));
+        assert_eq!(runtime_inputs.workspace_name, "workspace");
+        assert_eq!(runtime_inputs.client_marker, "test-client");
         Ok(Arc::new(Provider))
     }
 }
 
 #[test]
 fn provider_runtime_factory_composes_through_application_use_case() {
-    let tmp = tempfile::tempdir().unwrap();
-    let workspace = tmp.path().join("workspace");
-    std::fs::create_dir(&workspace).unwrap();
+    let runtime_inputs = RuntimeInputs {
+        workspace_name: "workspace",
+        client_marker: "test-client",
+    };
 
     let provider = ComposeProviderRuntimeUseCase::new()
-        .compose(
-            &Factory,
-            &Config { marker: "contract" },
-            &workspace,
-            &reqwest::Client::new(),
-        )
+        .compose(&Factory, &Config { marker: "contract" }, &runtime_inputs)
         .unwrap();
 
     assert_eq!(provider.name(), "runtime-factory-provider");
