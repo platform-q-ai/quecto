@@ -19,11 +19,8 @@ use tokio::sync::mpsc;
 /// Public so out-of-crate tests (the harness BDD suite) can build boundary
 /// frames against the real cap instead of a duplicated literal.
 pub const MAX_LINE_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
-/// Bound on the ordered outbound command writer FIFO (`Client::connect`).
-///
-/// Sized for bursty fan-in (subagent polls, recovery `get_message` batches)
-/// while staying bounded. Entries are owned serialized `String`s; the wire
-/// per-message cap is still [`MAX_LINE_BYTES`] at write time (#1238).
+/// Bound on the ordered outbound command writer FIFO (`Client::connect`). Sized
+/// for bursty bounded fan-in; the wire cap remains [`MAX_LINE_BYTES`] (#1238).
 pub const COMMAND_WRITER_QUEUE_CAPACITY: usize = 4096;
 pub use client_classes::{COMMAND_WRITER_INTERACTIVE_FLOOR, COMMAND_WRITER_USER_RESERVED};
 // ─── Protocol types (subset matching quecto's wire format) ────────────────────
@@ -116,6 +113,10 @@ pub enum Command {
         persist: bool,
     },
     ListModels {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+    RefreshModels {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
@@ -409,6 +410,7 @@ impl Command {
             Self::GetToolCatalogue { .. } => "get_tool_catalogue",
             Self::SetToolPolicy { .. } => "set_tool_policy",
             Self::ListModels { .. } => "list_models",
+            Self::RefreshModels { .. } => "refresh_models",
             Self::ListSessions { .. } => "list_sessions",
             Self::NewSession { .. } => "new_session",
             Self::ResumeSession { .. } => "resume_session",

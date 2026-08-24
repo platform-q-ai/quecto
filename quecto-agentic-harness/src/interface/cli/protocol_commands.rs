@@ -156,6 +156,13 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Explicitly refresh configured catalogue sources.
+    RefreshModels {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider: Option<String>,
+    },
     /// Register tools provided by an extension client.
     RegisterTools {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -317,6 +324,7 @@ impl AgentCommand {
             Self::GetToolCatalogue { id } => id.as_deref(),
             Self::SetToolPolicy { id, .. } => id.as_deref(),
             Self::Reload { id } => id.as_deref(),
+            Self::RefreshModels { id, .. } => id.as_deref(),
             Self::GetMessagesTail { id, .. } => id.as_deref(),
             Self::GetSessionStats { id } => id.as_deref(),
             Self::ListModels { id } => id.as_deref(),
@@ -357,6 +365,7 @@ impl AgentCommand {
             Self::GetToolCatalogue { .. } => "get_tool_catalogue",
             Self::SetToolPolicy { .. } => "set_tool_policy",
             Self::Reload { .. } => "reload",
+            Self::RefreshModels { .. } => "refresh_models",
             Self::RegisterTools { .. } => "register_tools",
             Self::UnregisterTools { .. } => "unregister_tools",
             Self::ToolResult { .. } => "tool_result",

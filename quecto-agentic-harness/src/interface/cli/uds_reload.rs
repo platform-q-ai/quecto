@@ -1,4 +1,8 @@
+use crate::application::catalogue_refresh::{
+    CatalogueRefreshStatus, RefreshCatalogueSourceUseCase,
+};
 use crate::domain::provider::LlmProvider;
+use crate::infrastructure::catalogue_discovery::ModelsJsonCatalogueRefreshAdapter;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::reload::ReloadResult;
 
@@ -72,6 +76,58 @@ pub(super) async fn handle_reload(
             )
             .await;
         }
+    }
+    false
+}
+
+pub(super) async fn handle_refresh_models(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    type_name: &str,
+    provider: Option<&str>,
+) -> bool {
+    let Some(inputs) = ctx.provider_reload_inputs else {
+        emit_event_to_broadcast_or_writer(
+            ctx,
+            &AgentEvent::err(id, type_name, "provider reload is not configured"),
+        )
+        .await;
+        return false;
+    };
+    let refresh_port = ModelsJsonCatalogueRefreshAdapter::new(&inputs.base_dir);
+    let use_case = RefreshCatalogueSourceUseCase::new();
+    let outcomes = if let Some(provider) = provider.filter(|p| !p.trim().is_empty()) {
+        vec![use_case.refresh(&refresh_port, provider)]
+    } else {
+        use_case.refresh_all(&refresh_port)
+    };
+    let data = serde_json::json!({
+        "sources": outcomes.iter().map(|outcome| serde_json::json!({
+            "source": outcome.source,
+            "status": match &outcome.status {
+                CatalogueRefreshStatus::Refreshed { .. } => "refreshed",
+                CatalogueRefreshStatus::Skipped { .. } => "skipped",
+                CatalogueRefreshStatus::Failed { .. } => "failed",
+            },
+            "models": match &outcome.status {
+                CatalogueRefreshStatus::Refreshed { models } => Some(*models),
+                _ => None,
+            },
+            "reason": match &outcome.status {
+                CatalogueRefreshStatus::Skipped { reason } => Some(reason.as_str()),
+                CatalogueRefreshStatus::Failed { error } => Some(error.as_str()),
+                _ => None,
+            },
+        })).collect::<Vec<_>>()
+    });
+    let any_failed = outcomes
+        .iter()
+        .any(|outcome| matches!(outcome.status, CatalogueRefreshStatus::Failed { .. }));
+    if any_failed {
+        emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(id, type_name, data.to_string()))
+            .await;
+    } else {
+        emit_event_to_broadcast_or_writer(ctx, &AgentEvent::ok(id, type_name, Some(data))).await;
     }
     false
 }

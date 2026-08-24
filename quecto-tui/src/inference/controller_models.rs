@@ -52,6 +52,12 @@ impl App {
         self.ac_mut().sessions.context_stats_requested = false;
     }
 
+    pub(super) fn send_models_refresh(&mut self) {
+        self.send_command(Command::RefreshModels {
+            id: Some(self.ac().namespaced_id("models-refresh")),
+        });
+    }
+
     pub(super) fn open_model_selector(&mut self) {
         // On-consume reload (ADR-0002): always re-request the model list when the
         // selector is opened so edits to `models.json` are reflected, not just on

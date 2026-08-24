@@ -7,7 +7,6 @@ use crate::domain::message::Message;
 use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
-use crate::infrastructure::model_registry::ModelRegistry;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 
 /// Max byte length for `--socket` paths.  Linux allows 108, macOS 104;
@@ -400,7 +399,8 @@ pub(crate) fn build_agent_from_config(
     // #935/#1044: one registry load supplies the per-model output cap (clamps
     // max_tokens so low-limit models never get a larger value; set_model
     // re-derives on switch) and the known context window (bounds the budget).
-    let (cap, window) = ModelRegistry::model_limits_from_base_dir(base_dir, &model);
+    let (cap, window) =
+        crate::infrastructure::catalogue_limits::model_limits_from_base_dir(base_dir, &model);
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),

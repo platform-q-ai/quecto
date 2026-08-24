@@ -1,6 +1,5 @@
 use super::AgentEvent;
 use super::{DispatchCtx, emit_event_to_broadcast_or_writer};
-use crate::infrastructure::model_registry::ModelRegistry;
 
 pub(super) struct SetModelArgs {
     pub(super) id: Option<String>,
@@ -44,7 +43,10 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
     // model switch re-clamps subsequent turns and the pruning budget; one
     // registry load feeds both, and set_model takes them atomically so model,
     // cap, and window can never diverge.
-    let (cap, window) = ModelRegistry::model_limits_from_base_dir(ctx.base_dir, &resolved_model);
+    let (cap, window) = crate::infrastructure::catalogue_limits::model_limits_from_base_dir(
+        ctx.base_dir,
+        &resolved_model,
+    );
     ctx.agent.set_model(resolved_model.clone(), cap, window);
     ctx.session.set_model(resolved_model);
     // Every model switch resets the session effort to `low` (#1067): a level

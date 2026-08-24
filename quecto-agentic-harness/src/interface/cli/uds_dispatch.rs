@@ -127,6 +127,15 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         AgentCommand::Reload { .. } => {
             super::super::uds_reload::handle_reload(ctx, id.as_deref(), &type_name).await
         }
+        AgentCommand::RefreshModels { provider, .. } => {
+            super::super::uds_reload::handle_refresh_models(
+                ctx,
+                id.as_deref(),
+                &type_name,
+                provider.as_deref(),
+            )
+            .await
+        }
         AgentCommand::NewSession { .. } => handle_new_session(ctx, id.as_deref(), &type_name).await,
         AgentCommand::ResumeSession { session, .. } => {
             handle_resume_session(ctx, id.as_deref(), &type_name, session).await

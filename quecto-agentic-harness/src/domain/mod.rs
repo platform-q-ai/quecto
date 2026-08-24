@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod audit;
+pub mod catalogue;
 pub mod constants;
 pub mod environment_finalization;
 #[cfg(test)]

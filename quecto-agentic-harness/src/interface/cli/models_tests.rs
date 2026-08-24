@@ -1,4 +1,27 @@
 use super::*;
+use crate::infrastructure::catalogue_discovery::{
+    MAX_MODEL_DISCOVERY_MODELS, MAX_MODEL_DISCOVERY_RESPONSE_BYTES, discover_models_url,
+    discover_once as discovery_discover_once, discover_once_with as discovery_discover_once_with,
+    fetch_openai_models, format_reqwest_error, redact_url_for_error,
+};
+
+fn discover_once(ctx: &CliContext, provider_key: &str) -> Result<usize, String> {
+    discovery_discover_once(&ctx.base_dir(), provider_key)
+}
+
+fn discover_once_with<F, W>(
+    ctx: &CliContext,
+    provider_key: &str,
+    fetch: F,
+    publish: W,
+) -> Result<usize, String>
+where
+    F: FnOnce(&str, Option<&str>) -> Result<Vec<serde_json::Value>, String>,
+    W: FnOnce(&std::path::Path, &[u8]) -> Result<(), String>,
+{
+    discovery_discover_once_with(&ctx.base_dir(), provider_key, fetch, publish)
+}
+use serde_json::Value;
 use wiremock::matchers::{header, method, path};
 
 #[test]
@@ -531,7 +554,8 @@ fn discovery_merges_into_registry_reread_after_fetch_and_uses_publisher() {
         },
         |publish_path, bytes| {
             published.set(true);
-            atomic_write(publish_path, bytes, Some(0o600)).map_err(|e| e.to_string())
+            crate::infrastructure::atomic_write::atomic_write(publish_path, bytes, Some(0o600))
+                .map_err(|e| e.to_string())
         },
     )
     .unwrap();

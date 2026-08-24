@@ -145,7 +145,7 @@ async fn sync_credentials_to_manager_noop_when_env_unset() {
     let path = tmp.path().join("credentials.json");
     // Call unconditionally: with no sync URL configured this is a no-op, and the
     // function never writes to `path` regardless, so the file must not appear.
-    sync_credentials_to_manager(&path).await;
+    crate::infrastructure::oauth_runtime::sync_credentials_to_manager(&path).await;
     assert!(
         !path.exists(),
         "no-op credential sync must not create the credentials file"
