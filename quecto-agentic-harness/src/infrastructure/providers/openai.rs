@@ -5,7 +5,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
+use crate::domain::message::{LlmResponse, Role, ToolCall};
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 use crate::domain::visible_thinking::append_visible_thinking;
 
@@ -243,17 +243,9 @@ impl OpenAiProvider {
             }
         }
 
-        // Non-streaming chat historically reports `context_tokens: None` and lets
-        // the gauge fall back to `prompt_tokens` (which already counts the full
-        // prompt); only the streaming/SSE paths surface `total_tokens`. Preserve
-        // that per-path behaviour after consolidating onto the shared parser.
         let usage = body["usage"]
             .as_object()
-            .map(crate::infrastructure::providers::usage::parse_openai_usage)
-            .map(|u| UsageInfo {
-                context_tokens: None,
-                ..u
-            });
+            .map(crate::infrastructure::providers::usage::parse_openai_usage);
 
         Ok(LlmResponse {
             content,

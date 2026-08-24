@@ -649,7 +649,7 @@ fn test_session_stats_serializes() {
             output: 200,
             cache_read: 800,
             cache_write: 100,
-            total: 2100,
+            total: 1200,
         },
         cost: 0.42,
         context_tokens: 12_000,
@@ -676,7 +676,7 @@ fn test_session_stats_deserializes_without_cost() {
             "output": 200,
             "cacheRead": 800,
             "cacheWrite": 100,
-            "total": 2100
+            "total": 1200
         },
         "contextTokens": 12000,
         "maxContextTokens": 200000
@@ -686,7 +686,7 @@ fn test_session_stats_deserializes_without_cost() {
         .expect("SessionStats should deserialize no-cost get_session_stats JSON");
 
     assert_eq!(stats.session_key, "cli:test");
-    assert_eq!(stats.tokens.total, 2100);
+    assert_eq!(stats.tokens.total, 1200);
     assert_eq!(stats.cost, 0.0);
 }
 

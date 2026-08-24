@@ -63,8 +63,8 @@ fn record_uses_normalized_context_tokens_over_prompt_tokens() {
 
 #[test]
 fn record_falls_back_to_prompt_tokens_when_context_tokens_absent() {
-    // OpenAI-style: context_tokens is None because prompt_tokens already
-    // counts the full prompt.
+    // Compatibility fallback: providers without explicit context occupancy use
+    // prompt_tokens as the context gauge.
     let mut totals = UsageTotals::default();
     totals.record(&UsageInfo {
         prompt_tokens: 150,

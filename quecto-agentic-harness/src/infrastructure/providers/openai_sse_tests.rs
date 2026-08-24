@@ -91,7 +91,7 @@ async fn handler_captures_usage_chunk_into_response() {
 
     let outcome = handler
             .process_line(
-                r#"data: {"choices":[],"usage":{"prompt_tokens":1234,"completion_tokens":56,"total_tokens":1290}}"#,
+                r#"data: {"choices":[],"usage":{"prompt_tokens":1234,"completion_tokens":56,"total_tokens":1290,"prompt_tokens_details":{"cached_tokens":34}}}"#,
                 &tx,
             )
             .await;
@@ -101,8 +101,10 @@ async fn handler_captures_usage_chunk_into_response() {
     match rx.recv().await.unwrap() {
         StreamEvent::Done(response) => {
             let usage = response.usage.expect("usage should be captured");
-            assert_eq!(usage.prompt_tokens, 1234);
+            assert_eq!(usage.prompt_tokens, 1200);
             assert_eq!(usage.completion_tokens, 56);
+            assert_eq!(usage.cache_read_tokens, Some(34));
+            assert_eq!(usage.context_tokens, Some(1234));
             assert_eq!(response.content.as_deref(), Some("hi"));
         }
         other => panic!("unexpected event: {other:?}"),

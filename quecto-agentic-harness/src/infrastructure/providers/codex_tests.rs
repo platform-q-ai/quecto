@@ -350,9 +350,10 @@ fn test_parse_response_text() {
     assert_eq!(resp.content.unwrap(), "Hello!");
     assert!(resp.tool_calls.is_empty());
     let usage = resp.usage.unwrap();
-    assert_eq!(usage.prompt_tokens, 10);
+    assert_eq!(usage.prompt_tokens, 3);
     assert_eq!(usage.completion_tokens, 5);
     assert_eq!(usage.cache_read_tokens, Some(7));
+    assert_eq!(usage.context_tokens, Some(10));
 }
 
 #[test]
@@ -400,14 +401,16 @@ fn test_parse_response_tool_call() {
 fn test_parse_sse_text_response() {
     let sse = r#"data: {"type":"response.output_text.delta","delta":"Hello"}
 data: {"type":"response.output_text.delta","delta":" world"}
-data: {"type":"response.completed","response":{"usage":{"input_tokens":8,"output_tokens":2}}}
+data: {"type":"response.completed","response":{"usage":{"input_tokens":8,"output_tokens":2,"input_tokens_details":{"cached_tokens":3}}}}
 data: [DONE]
 "#;
     let resp = CodexProvider::parse_sse_response(sse).unwrap();
     assert_eq!(resp.content.unwrap(), "Hello world");
     let usage = resp.usage.unwrap();
-    assert_eq!(usage.prompt_tokens, 8);
+    assert_eq!(usage.prompt_tokens, 5);
     assert_eq!(usage.completion_tokens, 2);
+    assert_eq!(usage.cache_read_tokens, Some(3));
+    assert_eq!(usage.context_tokens, Some(8));
 }
 
 #[test]

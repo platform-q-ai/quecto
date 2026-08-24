@@ -130,10 +130,8 @@ async fn test_chat_text_response() {
     let usage = response.usage.unwrap();
     assert_eq!(usage.prompt_tokens, 10);
     assert_eq!(usage.completion_tokens, 5);
-    // Non-streaming chat reports `context_tokens: None` (gauge falls back to
-    // `prompt_tokens`) even though `total_tokens` is present — only the SSE
-    // paths surface `total_tokens`. Locks the #996/PR-999 behaviour parity.
-    assert_eq!(usage.context_tokens, None);
+    // Context occupancy is provider prompt/input, not total prompt+completion.
+    assert_eq!(usage.context_tokens, Some(10));
 }
 
 #[tokio::test]

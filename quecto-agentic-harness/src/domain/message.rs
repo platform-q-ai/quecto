@@ -421,21 +421,20 @@ impl std::fmt::Display for StopReason {
 pub struct UsageInfo {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
-    /// Tokens served from prompt cache (Anthropic `cache_read_input_tokens`).
+    /// Tokens served from prompt cache, normalized across providers.
     pub cache_read_tokens: Option<u32>,
-    /// Tokens written to prompt cache (Anthropic `cache_creation_input_tokens`).
+    /// Tokens written to prompt cache, normalized across providers.
     pub cache_write_tokens: Option<u32>,
     /// True context-window occupancy for this turn, normalized across providers.
     ///
     /// This exists because providers report prompt size differently when prompt
-    /// caching is active:
-    ///   - OpenAI/Codex: `prompt_tokens`/`input_tokens` already counts the full
-    ///     prompt (cached tokens are a *subset*), so this is left `None` and the
-    ///     context gauge falls back to `prompt_tokens`.
-    ///   - Anthropic: `input_tokens` counts only the *non-cached* delta; the
-    ///     cached portion is reported separately in `cache_read_input_tokens`
-    ///     and `cache_creation_input_tokens`. True occupancy is the sum, set
-    ///     here so the context gauge does not undercount on warm sessions.
+    /// caching is active. Adapters normalize `prompt_tokens` to full-price,
+    /// non-cache billable input and set this to the provider full prompt/input
+    /// occupancy when that differs or when the provider reports an explicit
+    /// prompt/input count. Some providers report cached input as a subset of
+    /// the prompt/input count, while others report cache reads and writes as
+    /// separate token buckets; adapters set true occupancy here so gauges do
+    /// not undercount warm sessions.
     ///
     /// Billing (`prompt_tokens` + the discounted cache fields, via
     /// [`ModelPricing::cost_for`]) intentionally does *not* use this field.
@@ -447,9 +446,10 @@ pub struct UsageInfo {
 impl UsageInfo {
     /// Tokens occupying the model context window for this turn.
     ///
-    /// Providers that report cached prompt tokens outside `prompt_tokens` set
-    /// `context_tokens`; providers whose `prompt_tokens` already includes the
-    /// full prompt leave it unset and use `prompt_tokens` as the context gauge.
+    /// Adapters set `context_tokens` when the provider reports an explicit
+    /// prompt/input occupancy or when cached prompt tokens are represented
+    /// outside normalized billable `prompt_tokens`; otherwise this falls back to
+    /// `prompt_tokens`.
     pub fn context_input_tokens(&self) -> u32 {
         self.context_tokens.unwrap_or(self.prompt_tokens)
     }

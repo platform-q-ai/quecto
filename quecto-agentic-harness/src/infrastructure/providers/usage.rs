@@ -16,45 +16,63 @@ fn u32_field(obj: &Map<String, Value>, key: &str) -> u32 {
         .unwrap_or(0)
 }
 
-/// Read an optional `u32` token count from a usage object.
-fn opt_u32_field(obj: &Map<String, Value>, key: &str) -> Option<u32> {
-    obj.get(key)
+fn cached_tokens(obj: &Map<String, Value>, details_key: &str) -> Option<u32> {
+    obj.get(details_key)
+        .and_then(|d| d.get("cached_tokens"))
         .and_then(Value::as_u64)
         .and_then(|n| u32::try_from(n).ok())
 }
 
+fn normalize_cached_input(
+    provider_input_tokens: u32,
+    cache_read_tokens: Option<u32>,
+) -> (u32, Option<u32>) {
+    let cache_read_tokens = cache_read_tokens.map(|n| n.min(provider_input_tokens));
+    (
+        provider_input_tokens.saturating_sub(cache_read_tokens.unwrap_or(0)),
+        cache_read_tokens,
+    )
+}
+
 /// Parse an OpenAI chat-completions `usage` object.
 ///
-/// OpenAI's `prompt_tokens` already counts the full prompt (cached tokens are
-/// a subset), so `context_tokens` is taken from `total_tokens` when present.
+/// OpenAI's `prompt_tokens` counts the full prompt and cached tokens are a
+/// subset. Normalize `prompt_tokens` to full-price, non-cache input for shared
+/// billing/cost accounting, and carry the provider full prompt as context.
 pub fn parse_openai_usage(obj: &Map<String, Value>) -> UsageInfo {
+    let provider_prompt_tokens = u32_field(obj, "prompt_tokens");
+    let (prompt_tokens, cache_read_tokens) = normalize_cached_input(
+        provider_prompt_tokens,
+        cached_tokens(obj, "prompt_tokens_details"),
+    );
     UsageInfo {
-        prompt_tokens: u32_field(obj, "prompt_tokens"),
+        prompt_tokens,
         completion_tokens: u32_field(obj, "completion_tokens"),
-        cache_read_tokens: None,
+        cache_read_tokens,
         cache_write_tokens: None,
-        context_tokens: opt_u32_field(obj, "total_tokens"),
+        context_tokens: Some(provider_prompt_tokens),
         cost: None,
     }
 }
 
 /// Parse a Codex/OpenAI Responses `usage` object.
 ///
-/// Codex `input_tokens` already counts the full prompt (cached tokens are a
-/// subset), so `context_tokens` is left `None` and the gauge falls back to
-/// `prompt_tokens`. Cached tokens are reported under `input_tokens_details`.
+/// Codex/OpenAI Responses `input_tokens` counts the full prompt and cached
+/// tokens are a subset. Normalize `prompt_tokens` to full-price, non-cache
+/// input for shared billing/cost accounting, and carry provider input as
+/// context occupancy.
 pub fn parse_codex_usage(obj: &Map<String, Value>) -> UsageInfo {
-    let cache_read_tokens = obj
-        .get("input_tokens_details")
-        .and_then(|d| d.get("cached_tokens"))
-        .and_then(Value::as_u64)
-        .and_then(|n| u32::try_from(n).ok());
+    let provider_input_tokens = u32_field(obj, "input_tokens");
+    let (prompt_tokens, cache_read_tokens) = normalize_cached_input(
+        provider_input_tokens,
+        cached_tokens(obj, "input_tokens_details"),
+    );
     UsageInfo {
-        prompt_tokens: u32_field(obj, "input_tokens"),
+        prompt_tokens,
         completion_tokens: u32_field(obj, "output_tokens"),
         cache_read_tokens,
         cache_write_tokens: None,
-        context_tokens: None,
+        context_tokens: Some(provider_input_tokens),
         cost: None,
     }
 }

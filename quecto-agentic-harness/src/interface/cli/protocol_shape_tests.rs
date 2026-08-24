@@ -135,7 +135,7 @@ fn make_test_stats() -> SessionStats {
             output: 10000,
             cache_read: 40000,
             cache_write: 5000,
-            total: 105000,
+            total: 60000,
         },
         cost: 0.45,
         context_tokens: 12_345,
@@ -159,7 +159,7 @@ fn get_session_stats_tokens_camel_case() {
     assert_eq!(j["tokens"]["output"], 10000);
     assert_eq!(j["tokens"]["cacheRead"], 40000);
     assert_eq!(j["tokens"]["cacheWrite"], 5000);
-    assert_eq!(j["tokens"]["total"], 105000);
+    assert_eq!(j["tokens"]["total"], 60000);
     assert!(
         j.get("cost").is_none(),
         "get_session_stats must not report misleading monetary cost: {j}"
