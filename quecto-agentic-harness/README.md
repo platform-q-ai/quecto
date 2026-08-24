@@ -235,6 +235,12 @@ Ctrl+D (EOF) also exits cleanly.
 
 Quectoped input is supported for scripting: `echo "hello" | quecto`.
 
+#### REPL model-visible tool surface
+
+The REPL intentionally exposes a narrower model-visible tool surface than `quecto agent` and UDS agents. It uses the same shared tool runtime and catalogue as the other entry points, but REPL entrypoint policy default-disables agent-control tools (`spawn`, `agent_cmd`) and web tools (`web_search`, `web_fetch`) after registration. Workflow tools are UDS-only and are not supported in the REPL.
+
+Disabled REPL tools remain present in the descriptor catalogue for policy/UI consumers, but they are hidden from model-visible tool definitions and reject execution. This keeps the interactive REPL focused on local chat and workspace tools while preserving a single registration path for catalogue and policy state.
+
 ### `quecto agent` — Talk to the agent
 
 ```bash
