@@ -334,8 +334,8 @@ async fn footer_reflects_active_session() {
         "active sub-agent footer must show its own model, got:\n{on_sub}"
     );
     assert!(
-        !on_sub.contains("$0.0777"),
-        "active sub-agent footer must not show misleading monetary cost, got:\n{on_sub}"
+        on_sub.contains("cost $0.077700"),
+        "active sub-agent footer must show its own normalized monetary cost, got:\n{on_sub}"
     );
     assert!(
         !on_sub.contains("mastrmdl"),
