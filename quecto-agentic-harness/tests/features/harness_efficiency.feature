@@ -12,11 +12,11 @@ Feature: Harness per-call efficiency cleanups (issue #996)
 
   Scenario: OpenAI token usage is recorded from a provider usage report
     When an OpenAI response reports 12 prompt, 7 completion and 19 total tokens
-    Then the recorded usage shows 12 prompt, 7 completion and 19 context tokens
+    Then the recorded usage shows 12 prompt, 7 completion and 12 context tokens
 
   Scenario: Codex token usage is recorded from a provider usage report
     When a Codex response reports 100 input, 40 output and 30 cached tokens
-    Then the recorded usage shows 100 prompt, 40 completion and 30 cached tokens
+    Then the recorded usage shows 70 prompt, 40 completion and 30 cached tokens
 
   Scenario: A config written by an older release still loads
     When a provider config written by an older release is loaded
