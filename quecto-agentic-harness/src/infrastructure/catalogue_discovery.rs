@@ -14,9 +14,7 @@ use std::time::Duration;
 use fs2::FileExt;
 use serde_json::{Value, json};
 
-use crate::catalogue_refresh_app::{
-    CatalogueRefreshAllPort, CatalogueRefreshOutcome, CatalogueRefreshPort, CatalogueRefreshStatus,
-};
+use crate::catalogue_refresh_app::{CatalogueRefreshOutcome, CatalogueRefreshStatus};
 use crate::infrastructure::atomic_write::atomic_write;
 use crate::infrastructure::model_registry::resolve_registry_value;
 use crate::infrastructure::providers::{
@@ -69,16 +67,8 @@ impl ModelsJsonCatalogueRefreshAdapter {
     pub fn refresh_all(&self) -> Vec<CatalogueRefreshOutcome> {
         refresh_all_from_models_json(self, &self.base_dir.join("models.json"))
     }
-}
 
-impl CatalogueRefreshAllPort for ModelsJsonCatalogueRefreshAdapter {
-    fn refresh_all_sources(&self) -> Vec<CatalogueRefreshOutcome> {
-        self.refresh_all()
-    }
-}
-
-impl CatalogueRefreshPort for ModelsJsonCatalogueRefreshAdapter {
-    fn refresh_source(&self, source: &str) -> CatalogueRefreshOutcome {
+    pub fn refresh_source(&self, source: &str) -> CatalogueRefreshOutcome {
         match discover_once(&self.base_dir, source) {
             Ok(models) => CatalogueRefreshOutcome {
                 source: source.to_string(),
@@ -97,7 +87,7 @@ impl CatalogueRefreshPort for ModelsJsonCatalogueRefreshAdapter {
 }
 
 fn refresh_all_from_models_json(
-    port: &dyn CatalogueRefreshPort,
+    port: &ModelsJsonCatalogueRefreshAdapter,
     path: &Path,
 ) -> Vec<CatalogueRefreshOutcome> {
     match provider_keys(path) {
