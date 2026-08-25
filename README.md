@@ -142,7 +142,7 @@ cargo test --workspace --lib --bins
 cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-support -- -D warnings
 ```
 
-Some crates also have BDD test targets and package-specific quality scripts. See [CONTRIBUTIONS.md](CONTRIBUTIONS.md) and the package READMEs for details.
+Some crates also have BDD test targets and package-specific quality scripts. Before requesting review, contributors must run at least two complete built-in Quecto adversarial-review workflow loops and include the evidence in the PR description. See [CONTRIBUTIONS.md](CONTRIBUTIONS.md) and the package READMEs for details.
 
 ## Documentation links
 

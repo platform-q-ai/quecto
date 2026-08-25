@@ -859,6 +859,10 @@ Human guides (full reference). The agent `docs` tool embeds a short **operating 
 | [Container runtimes](../docs/container-runtimes.md) | Script-managed subagent environments: the `container_configs` contract and the canonical reference runtime |
 | [Contributor Cookbooks](docs/contributor-cookbooks.md) | Change maps for common harness work: tools, UDS commands, providers, events, persistence, subagents, and context policy |
 
+## Contributing
+
+For contribution requirements, follow the root [`CONTRIBUTIONS.md`](../CONTRIBUTIONS.md). Before requesting review, run the built-in Quecto workflow through at least two complete adversarial-review loops on your change and include the workflow evidence in the PR description.
+
 ## Tech stack
 Rust 2024, Tokio, reqwest+rustls, serde/serde_json, uuid, tracing, dirs, thiserror, similar, base64, sha2, rand, urlencoding, macOS unicode-normalization. Dev: cucumber 0.21, futures, tempfile, wiremock 0.6, regex.
 
