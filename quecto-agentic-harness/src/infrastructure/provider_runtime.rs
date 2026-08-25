@@ -15,7 +15,7 @@ pub struct ProviderRuntimeInputs<'a> {
     pub base_dir: &'a std::path::Path,
     pub http_client: &'a reqwest::Client,
 }
-impl<'a> crate::provider_runtime_app::ProviderRuntimeFactory<Config, ProviderRuntimeInputs<'a>>
+impl<'a> crate::application::ports::ProviderRuntimeFactory<Config, ProviderRuntimeInputs<'a>>
     for InfrastructureProviderRuntimeFactory
 {
     fn compose_runtime(
@@ -26,6 +26,14 @@ impl<'a> crate::provider_runtime_app::ProviderRuntimeFactory<Config, ProviderRun
         build_agent_provider(config, runtime_inputs.base_dir, runtime_inputs.http_client)
     }
 }
+#[path = "provider_runtime_credentials.rs"]
+mod credentials;
+
+use credentials::{
+    explicit_endpoint_owns_registry_route, registry_api_key, registry_model_credential_available,
+    registry_provider_can_construct,
+};
+
 pub(crate) fn build_agent_provider(
     config: &Config,
     base_dir: &std::path::Path,
@@ -319,10 +327,10 @@ fn compose_agent_provider(
         provider_list.push(provider);
     }
     ensure_providers_configured(&provider_list)?;
-    let router: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::with_model_descriptors(
+    let router: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::try_with_model_descriptors(
         provider_list,
         runtime_model_descriptors,
-    ));
+    )?);
     Ok(Arc::new(RetryingProvider::new(
         router,
         RetryConfig::default(),
@@ -347,25 +355,6 @@ fn validate_endpoint_count(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
-fn explicit_endpoint_owns_registry_route(
-    model: &crate::infrastructure::model_registry::ModelRecord,
-    endpoint_prefixes: &HashSet<String>,
-    store: &CredentialStore,
-    config: &Config,
-) -> Result<bool, String> {
-    use crate::infrastructure::model_registry::ProviderApi;
-    let prefix = model.provider.to_ascii_lowercase();
-    if !endpoint_prefixes.contains(&prefix)
-        || matches!(model.api, ProviderApi::GoogleGenerativeAi)
-        || !model
-            .base_url
-            .as_ref()
-            .is_some_and(|base| !base.trim().is_empty())
-    {
-        return Ok(false);
-    }
-    registry_provider_can_construct(model, store, config)
-}
 fn canonical_registry_prefix_owners<'a>(
     models: impl IntoIterator<Item = &'a crate::infrastructure::model_registry::ModelRecord>,
 ) -> HashSet<String> {
@@ -503,98 +492,10 @@ fn sanitize_url_for_error(raw: &str) -> String {
         Err(_) => "<invalid url>".to_string(),
     }
 }
-fn registry_model_credential_available(
-    model: &crate::infrastructure::model_registry::ModelRecord,
-    store: &CredentialStore,
-    config: &Config,
-) -> Result<bool, String> {
-    use crate::infrastructure::auth::credential_store::AuthMethod;
-    use crate::infrastructure::model_registry::AuthMode;
-    if matches!(
-        model.api,
-        crate::infrastructure::model_registry::ProviderApi::GoogleGenerativeAi
-    ) {
-        return Ok(false);
-    }
-    match model.auth {
-        AuthMode::ApiKey => Ok(model.api_key.as_deref().is_some_and(|key| !key.is_empty())
-            || builtin_api_key_available(model, store, config)?),
-        AuthMode::OAuth => {
-            let oauth_provider = model.oauth_provider.as_deref().ok_or_else(|| {
-                format!(
-                    "models.json provider '{}' uses oauth auth but is missing oauthProvider",
-                    model.provider
-                )
-            })?;
-            Ok(store
-                .get(oauth_provider)
-                .map_err(|e| e.to_string())?
-                .is_some_and(|cred| cred.method == AuthMethod::OAuth && !cred.token.is_empty()))
-        }
-    }
-}
-fn builtin_api_key_available(
-    model: &crate::infrastructure::model_registry::ModelRecord,
-    store: &CredentialStore,
-    config: &Config,
-) -> Result<bool, String> {
-    use crate::infrastructure::auth::credential_store::AuthMethod;
-    let (config_key, credential_provider) = match model.provider.as_str() {
-        "openai-api" => (&config.providers.openai.api_key, "openai"),
-        "anthropic-api" => (&config.providers.anthropic.api_key, "anthropic"),
-        _ => return Ok(false),
-    };
-    if !config_key.is_empty() {
-        return Ok(true);
-    }
-    Ok(store
-        .get(credential_provider)
-        .map_err(|e| e.to_string())?
-        .is_some_and(|cred| {
-            cred.method == AuthMethod::Token && !cred.token.is_empty() && !cred.is_expired()
-        }))
-}
-#[cfg_attr(not(test), allow(dead_code))]
-fn registry_api_key(
-    model: &crate::infrastructure::model_registry::ModelRecord,
-    store: &CredentialStore,
-    config: &Config,
-) -> Result<Option<String>, String> {
-    if let Some(key) = model.api_key.as_ref().filter(|key| !key.is_empty()) {
-        return Ok(Some(key.clone()));
-    }
-    let (config_key, store_name) = match model.provider.as_str() {
-        "openai-api" => (config.providers.openai.api_key.as_str(), "openai"),
-        "anthropic-api" => (config.providers.anthropic.api_key.as_str(), "anthropic"),
-        _ => return Ok(None),
-    };
-    if !config_key.is_empty() {
-        return Ok(Some(config_key.to_string()));
-    }
-    let Some(cred) = store.get(store_name).map_err(|e| e.to_string())? else {
-        return Ok(None);
-    };
-    Ok((matches!(
-        cred.method,
-        crate::infrastructure::auth::credential_store::AuthMethod::Token
-    ) && !cred.token.is_empty()
-        && !cred.is_expired())
-    .then_some(cred.token))
-}
-fn registry_provider_can_construct(
-    model: &crate::infrastructure::model_registry::ModelRecord,
-    store: &CredentialStore,
-    config: &Config,
-) -> Result<bool, String> {
-    use crate::infrastructure::model_registry::{AuthMode, ProviderApi};
-    if matches!(model.api, ProviderApi::GoogleGenerativeAi) {
-        return Ok(false);
-    }
-    match model.auth {
-        AuthMode::ApiKey => registry_model_credential_available(model, store, config),
-        AuthMode::OAuth => registry_model_credential_available(model, store, config),
-    }
-}
+/// Whether a configured `openai_compatible` endpoint supplies the credential
+/// for this registry prefix. The endpoint carries both the base URL and the key,
+/// so a catalogue entry routed through it is credentialled even when the record
+/// itself declares no key (#1193).
 fn build_registry_provider(
     model: &crate::infrastructure::model_registry::ModelRecord,
     _base_dir: &std::path::Path,

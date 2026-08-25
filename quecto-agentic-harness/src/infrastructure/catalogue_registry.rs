@@ -1,7 +1,7 @@
 //! Infrastructure adapter from the legacy `models.json` registry format into
 //! the domain-owned catalogue descriptors.
 
-use crate::catalogue_app::derive_availability;
+use crate::application::ports::{CatalogueSource, derive_availability};
 use crate::domain::catalogue::{
     AuthIdentity, ModelCapabilities, ModelCost, ModelDescriptor, ModelRef, ProviderId,
     TransportKind,
@@ -39,7 +39,7 @@ impl ModelRegistryCatalogueSource {
 /// The built-in catalogue layer: the descriptors Quecto ships with.
 pub struct BuiltinCatalogueSource;
 
-impl crate::catalogue_app::CatalogueSource for BuiltinCatalogueSource {
+impl CatalogueSource for BuiltinCatalogueSource {
     fn id(&self) -> &str {
         "builtin"
     }
@@ -64,7 +64,7 @@ impl UserModelsJsonCatalogueSource {
     }
 }
 
-impl crate::catalogue_app::CatalogueSource for UserModelsJsonCatalogueSource {
+impl CatalogueSource for UserModelsJsonCatalogueSource {
     fn id(&self) -> &str {
         "models.json"
     }

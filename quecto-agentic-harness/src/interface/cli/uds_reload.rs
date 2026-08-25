@@ -48,7 +48,11 @@ pub(super) async fn poll_provider_reload_for_ctx(ctx: &mut DispatchCtx<'_>) {
         ctx.provider_reload_inputs,
     )
     .await;
-    apply_provider_reload_result(ctx, result);
+    match result {
+        Some(Ok(result)) => apply_provider_reload_result(ctx, Some(result)),
+        Some(Err(error)) => ctx.agent.set_catalogue_error(Some(error)),
+        None => {}
+    }
 }
 
 pub(super) async fn handle_reload(

@@ -195,3 +195,66 @@ fn resolve_sources_applies_layer_precedence_and_reports_skipped_layers() {
         }]
     );
 }
+
+#[test]
+fn a_configured_open_provider_routes_model_ids_the_catalogue_cannot_enumerate() {
+    use crate::domain::catalogue::ProviderId;
+
+    let snapshot = CatalogueSnapshot::new(2, vec![descriptor("openai-api", "gpt-5", true)])
+        .with_open_providers(vec![ProviderId::new("spark").unwrap()]);
+    let selection = ResolveModelSelectionUseCase::new(CatalogueSnapshotStore::new(snapshot));
+
+    let open = ModelRef::parse("spark", "qwen3").unwrap();
+    assert_eq!(
+        selection.resolve(&open).unwrap(),
+        ModelSelection::OpenRoute(open.clone()),
+        "an explicitly configured endpoint prefix stays selectable"
+    );
+    assert_eq!(
+        selection
+            .resolve(&ModelRef::parse("unconfigured", "model").unwrap())
+            .unwrap_err(),
+        SelectionFailure::UnknownModel
+    );
+    assert!(matches!(
+        selection
+            .resolve(&ModelRef::parse("openai-api", "gpt-5").unwrap())
+            .unwrap(),
+        ModelSelection::Known(_)
+    ));
+}
+
+#[test]
+fn bare_names_resolve_uniquely_and_report_ambiguity_with_candidates() {
+    let snapshot = CatalogueSnapshot::new(
+        1,
+        vec![
+            descriptor("openai-api", "gpt-5", true),
+            descriptor("openai-oauth", "gpt-5", true),
+            descriptor("fireworks", "glm", true),
+        ],
+    );
+
+    assert_eq!(
+        resolve_model_reference(&snapshot, "glm").unwrap(),
+        ModelRef::parse("fireworks", "glm").unwrap()
+    );
+    assert_eq!(
+        resolve_model_reference(&snapshot, "openai-api/gpt-5").unwrap(),
+        ModelRef::parse("openai-api", "gpt-5").unwrap()
+    );
+    assert_eq!(
+        resolve_model_reference(&snapshot, "gpt-5").unwrap_err(),
+        SelectionFailure::AmbiguousModel {
+            candidates: vec![
+                "openai-api/gpt-5".to_string(),
+                "openai-oauth/gpt-5".to_string()
+            ]
+        },
+        "an ambiguous bare name must name its candidates, not read as unknown"
+    );
+    assert_eq!(
+        resolve_model_reference(&snapshot, "nope").unwrap_err(),
+        SelectionFailure::UnknownModel
+    );
+}

@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::agent::AgentLoop;
 use crate::domain::message::StopReason;
 
 #[tokio::test]

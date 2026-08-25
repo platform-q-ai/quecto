@@ -6,9 +6,7 @@ use crate::application::agent_usage::UsageTotals;
 use crate::application::catalogue::CatalogueSnapshotStore;
 use crate::application::context::{ContextManager, ContextManagerConfig};
 use crate::application::context_pruning;
-use crate::domain::agent::{
-    AgentInfo, AgentLoop, AgentProgressEvent, AgentResult, ProgressCallback,
-};
+use crate::domain::agent::{AgentProgressEvent, AgentResult, ProgressCallback};
 use crate::domain::audit::{AuditEvent, AuditSink};
 use crate::domain::catalogue::CatalogueSnapshot;
 use crate::domain::error::DomainError;
@@ -20,7 +18,6 @@ use crate::domain::tool::{
     RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolProfileContext,
     ToolRegistry,
 };
-use std::pin::Pin;
 use std::sync::Arc;
 pub type ToolPolicyPersistence =
     Arc<dyn Fn(&crate::domain::tool::ToolPolicyReconciliation) -> Result<(), String> + Send + Sync>;
@@ -95,6 +92,10 @@ pub struct AgentLoopImpl {
     pub provider: Arc<dyn LlmProvider>,
     pub catalogue: CatalogueSnapshot,
     pub catalogue_store: CatalogueSnapshotStore,
+    /// Why the last catalogue reload failed, if it did. The published snapshot
+    /// stays the last valid one, so consumers listing models must be able to say
+    /// that the catalogue on disk is currently broken.
+    pub(super) catalogue_error: Option<String>,
     pub(super) tool_registry: Box<dyn ToolRegistry>,
     pub(super) model: String,
     max_tokens: u32,
@@ -162,6 +163,7 @@ impl AgentLoopImpl {
         );
         Self {
             catalogue_store: CatalogueSnapshotStore::new(catalogue.clone()),
+            catalogue_error: None,
             catalogue,
             provider: config.provider,
             tool_registry: config.tool_registry,
@@ -540,7 +542,10 @@ impl AgentLoopImpl {
     }
 
     /// Run the LLM-tool loop.
-    async fn run_loop(&mut self, messages: &mut Vec<Message>) -> Result<AgentResult, DomainError> {
+    pub(super) async fn run_loop(
+        &mut self,
+        messages: &mut Vec<Message>,
+    ) -> Result<AgentResult, DomainError> {
         self.mark_turn_in_flight();
         let mut tool_defs = self.current_tool_definitions();
         let mut iterations: u32 = 0;
@@ -703,21 +708,6 @@ impl AgentLoopImpl {
     }
 }
 
-impl AgentLoop for AgentLoopImpl {
-    fn process<'a>(
-        &'a mut self,
-        messages: &'a mut Vec<Message>,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<AgentResult, DomainError>> + Send + 'a>>
-    {
-        Box::pin(self.run_loop(messages))
-    }
-
-    fn info(&self) -> AgentInfo {
-        AgentInfo {
-            tool_count: self.tool_catalog().tool_count(),
-        }
-    }
-}
 #[cfg(test)]
 #[path = "agent_loop_catalogue_tests.rs"]
 mod catalogue_tests;

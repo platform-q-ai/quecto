@@ -87,24 +87,26 @@ pub fn seeded_provider_reload_with_base(
     reload
 }
 
+/// The last-good runtime is retained on failure; the error is returned so
+/// consumers can report that the catalogue on disk is currently unusable.
 pub async fn poll_provider_reload(
     reload: Option<&mut ProviderReload>,
     inputs: Option<&ProviderReloadInputs>,
-) -> Option<ReloadResult<CatalogueRuntimeSnapshot>> {
+) -> Option<Result<ReloadResult<CatalogueRuntimeSnapshot>, String>> {
     let (Some(reload), Some(inputs)) = (reload, inputs) else {
         return None;
     };
     if !reload.sources_changed() {
-        return Some(ReloadResult::Unchanged);
+        return Some(Ok(ReloadResult::Unchanged));
     }
     match inputs.rebuild_blocking().await {
         Ok(mut runtime) => {
             runtime.catalogue.generation = next_generation(reload);
-            Some(reload.record_reloaded(runtime))
+            Some(Ok(reload.record_reloaded(runtime)))
         }
         Err(err) => {
             tracing::warn!(target: "reload", error = %err, "reload rebuild failed; keeping last-good");
-            Some(ReloadResult::Unchanged)
+            Some(Err(err))
         }
     }
 }

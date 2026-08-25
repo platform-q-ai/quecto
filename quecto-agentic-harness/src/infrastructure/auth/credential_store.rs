@@ -90,6 +90,10 @@ struct CredentialsFile {
 #[derive(Debug)]
 pub struct CredentialStore {
     path: PathBuf,
+    /// Per-instance count of disk reads, so tests can assert that a hot path
+    /// (an ordinary provider call) performs no credential I/O.
+    #[cfg(test)]
+    reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl CredentialStore {
@@ -98,7 +102,15 @@ impl CredentialStore {
     pub fn new(base_dir: impl AsRef<Path>) -> Self {
         Self {
             path: base_dir.as_ref().join("credentials.json"),
+            #[cfg(test)]
+            reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
+    }
+
+    /// How many times this store has been read from disk.
+    #[cfg(test)]
+    pub(crate) fn read_count(&self) -> usize {
+        self.reads.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Load all credentials from disk as a snapshot.
@@ -107,6 +119,8 @@ impl CredentialStore {
     /// Correct for CLI (no stale state); for long-running processes, call once
     /// at startup and pass the snapshot to resolution functions.
     pub fn load_snapshot(&self) -> Result<HashMap<String, Credential>, DomainError> {
+        #[cfg(test)]
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if !self.path.exists() {
             return Ok(HashMap::new());
         }

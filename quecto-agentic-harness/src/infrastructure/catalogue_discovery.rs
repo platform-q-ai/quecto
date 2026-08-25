@@ -14,7 +14,7 @@ use std::time::Duration;
 use fs2::FileExt;
 use serde_json::{Value, json};
 
-use crate::catalogue_refresh_app::{
+use crate::application::ports::{
     CatalogueRefreshAllPort, CatalogueRefreshOutcome, CatalogueRefreshPort, CatalogueRefreshStatus,
 };
 use crate::infrastructure::atomic_write::atomic_write;

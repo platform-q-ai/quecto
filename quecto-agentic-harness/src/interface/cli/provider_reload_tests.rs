@@ -74,7 +74,8 @@ async fn changed_poll_reloads_new_provider() {
 
     let result = poll_provider_reload(Some(&mut reload), Some(&inputs))
         .await
-        .unwrap();
+        .unwrap()
+        .expect("a valid config must reload");
 
     assert!(matches!(
         result,
@@ -106,7 +107,8 @@ async fn unchanged_poll_does_not_rebuild() {
 
     let result = poll_provider_reload(Some(&mut reload), Some(&inputs))
         .await
-        .unwrap();
+        .unwrap()
+        .expect("an unchanged source must not fail");
 
     assert!(matches!(
         result,
@@ -173,6 +175,7 @@ async fn models_json_only_change_reloads_catalogue_and_runtime_together() {
         poll_provider_reload(Some(&mut reload), Some(&inputs))
             .await
             .unwrap()
+            .expect("models.json edit must reload")
     else {
         panic!("models.json-only edit should reload");
     };

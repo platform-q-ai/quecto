@@ -28,3 +28,39 @@ fn runtime_snapshot_reports_missing_provider_configuration() {
         .unwrap_err();
     assert!(error.contains("no LLM providers configured"));
 }
+
+#[test]
+fn configured_endpoints_are_published_as_open_providers() {
+    use crate::infrastructure::config::OpenAiCompatibleEndpoint;
+
+    let temp = TempDir::new().unwrap();
+    let (mut config, client) = configured_runtime(&temp);
+    config.providers.openai_compatible.endpoints = vec![
+        OpenAiCompatibleEndpoint {
+            prefix: " spark ".to_string(),
+            api_key: "sk-endpoint".to_string(),
+            api_base: "http://127.0.0.1:9/v1".to_string(),
+            allow_remote_http: true,
+        },
+        OpenAiCompatibleEndpoint {
+            prefix: "keyless".to_string(),
+            api_key: String::new(),
+            api_base: "http://127.0.0.1:9/v1".to_string(),
+            allow_remote_http: true,
+        },
+    ];
+
+    let snapshot = build_runtime_snapshot(&config, temp.path(), &client, 3).unwrap();
+
+    let open: Vec<_> = snapshot
+        .catalogue
+        .open_providers()
+        .iter()
+        .map(|provider| provider.as_str().to_string())
+        .collect();
+    assert_eq!(
+        open,
+        ["spark"],
+        "only endpoints that actually construct a provider route open model ids"
+    );
+}

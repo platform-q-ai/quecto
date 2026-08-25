@@ -34,23 +34,35 @@ impl ProviderRouter {
         Self::with_model_descriptors(providers, model_descriptors)
     }
 
+    /// Construction with the router's uniqueness invariant enforced as a panic.
+    /// Production composition uses [`Self::try_with_model_descriptors`], which
+    /// reports the collision as a startup error instead of aborting.
     pub fn with_model_descriptors(
         providers: Vec<Arc<dyn LlmProvider>>,
         model_descriptors: Vec<ModelDescriptor>,
     ) -> Self {
+        Self::try_with_model_descriptors(providers, model_descriptors)
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    pub fn try_with_model_descriptors(
+        providers: Vec<Arc<dyn LlmProvider>>,
+        model_descriptors: Vec<ModelDescriptor>,
+    ) -> Result<Self, String> {
         let mut seen = HashSet::new();
         for provider in &providers {
             let canonical = provider.name().to_ascii_lowercase();
-            assert!(
-                seen.insert(canonical),
-                "provider names must be unique case-insensitively: {}",
-                provider.name()
-            );
+            if !seen.insert(canonical) {
+                return Err(format!(
+                    "provider names must be unique case-insensitively: {}",
+                    provider.name()
+                ));
+            }
         }
-        Self {
+        Ok(Self {
             providers,
             model_descriptors,
-        }
+        })
     }
 
     /// Names of the configured providers, in routing order.
@@ -91,6 +103,9 @@ impl ProviderRouter {
     ) -> Result<(&'a Arc<dyn LlmProvider>, &'b str), DomainError> {
         if let Some((prefix, bare_model)) = parse_qualified_model(model) {
             if let Some(owner) = self.canonical_catalogue_owner(prefix) {
+                // Exact match on purpose: case-variant prefixes are distinct
+                // catalogue identities, so a losing variant must report itself
+                // unavailable rather than route to the winner's provider.
                 if let Some(provider) = self.providers.iter().find(|p| p.name() == owner) {
                     return Ok((provider, bare_model));
                 }

@@ -84,6 +84,37 @@ fn assert_no_imports(layer: &str, dir: &Path, forbidden: &[&str]) {
     }
 }
 
+/// Application references from infrastructure are allowed only through
+/// `crate::application::ports`, the module that names the inward-facing
+/// contracts. Anything else is a use-case dependency pointing the wrong way.
+fn assert_application_imports_are_ports_only(dir: &Path) {
+    let mut files = Vec::new();
+    collect_rs_files(dir, &mut files);
+
+    for file_content in &files {
+        let (file_path, _) = file_content.split_once(":\n").unwrap();
+        for line in file_content.lines().skip(1) {
+            let trimmed = line.trim();
+            if trimmed == "#[cfg(test)]" {
+                break;
+            }
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if trimmed.contains("crate::application::")
+                && !trimmed.contains("crate::application::ports")
+            {
+                panic!(
+                    "Architecture violation in infrastructure: {file_path}\n\
+                     Line: {trimmed}\n\
+                     Rule: infrastructure may depend on application only via \
+                     crate::application::ports"
+                );
+            }
+        }
+    }
+}
+
 fn assert_no_inline_test_modules(crate_src: &Path) {
     let mut offenders = Vec::new();
     collect_rs_files(crate_src, &mut offenders);
@@ -172,12 +203,22 @@ fn application_has_no_interface_imports() {
 }
 
 #[test]
-fn infrastructure_has_no_application_imports() {
+fn infrastructure_depends_on_application_ports_only() {
+    // Infrastructure implements application-defined ports (dependency
+    // inversion), and `application::ports` is the only surface that may cross
+    // that way. Alias re-exports are listed too: routing through
+    // `crate::catalogue_app::…` would otherwise satisfy this guard while
+    // depending on use cases directly.
     assert_no_imports(
         "infrastructure",
         Path::new("src/infrastructure"),
-        &["crate::application"],
+        &[
+            "crate::catalogue_app",
+            "crate::catalogue_refresh_app",
+            "crate::provider_runtime_app",
+        ],
     );
+    assert_application_imports_are_ports_only(Path::new("src/infrastructure"));
 }
 
 #[test]

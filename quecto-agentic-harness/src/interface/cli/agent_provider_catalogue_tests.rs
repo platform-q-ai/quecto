@@ -205,3 +205,119 @@ fn runtime_rejects_openai_compatible_collision_with_every_builtin_prefix() {
         );
     }
 }
+
+#[test]
+fn openai_compatible_endpoint_completes_a_credential_less_catalogue_route() {
+    use crate::infrastructure::config::{Config, OpenAiCompatibleEndpoint};
+    use crate::infrastructure::provider_runtime::build_agent_provider;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"spark":{"api":"openai-completions","baseUrl":"http://127.0.0.1:9/v1","models":[{"id":"qwen3"}]}}}"#,
+    )
+    .unwrap();
+    let mut config = Config::default();
+    config.providers.openai_compatible.endpoints = vec![OpenAiCompatibleEndpoint {
+        prefix: "spark".to_string(),
+        api_key: "sk-endpoint".to_string(),
+        api_base: "http://127.0.0.1:9/v1".to_string(),
+        allow_remote_http: true,
+    }];
+
+    let runtime = build_agent_provider(&config, tmp.path(), &reqwest::Client::new())
+        .expect("an endpoint may supply the credential for a credential-less catalogue route");
+    let descriptors = runtime.model_descriptors().expect("router descriptors");
+    let spark = descriptors
+        .iter()
+        .find(|model| model.qualified_id() == "spark/qwen3")
+        .expect("the catalogue route stays listed when an endpoint routes it");
+    assert_eq!(
+        spark.availability,
+        crate::domain::catalogue::Availability::Runnable,
+        "a model routed through a configured endpoint is runnable"
+    );
+}
+
+#[test]
+fn builtin_prefix_models_are_runnable_when_an_endpoint_supplies_the_key() {
+    use crate::infrastructure::config::{Config, OpenAiCompatibleEndpoint};
+    use crate::infrastructure::provider_runtime::build_agent_provider;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut config = Config::default();
+    config.providers.openai_compatible.endpoints = vec![OpenAiCompatibleEndpoint {
+        prefix: "fireworks".to_string(),
+        api_key: "sk-endpoint".to_string(),
+        api_base: "http://127.0.0.1:9/v1".to_string(),
+        allow_remote_http: true,
+    }];
+
+    let runtime = build_agent_provider(&config, tmp.path(), &reqwest::Client::new())
+        .expect("an endpoint keyed for a builtin prefix must compose");
+    let descriptors = runtime.model_descriptors().expect("router descriptors");
+    let fireworks: Vec<_> = descriptors
+        .iter()
+        .filter(|model| model.reference.provider().as_str() == "fireworks")
+        .collect();
+    assert!(!fireworks.is_empty(), "builtin fireworks models are listed");
+    for model in fireworks {
+        assert_eq!(
+            model.availability,
+            crate::domain::catalogue::Availability::Runnable,
+            "{} routes through the configured endpoint",
+            model.qualified_id()
+        );
+    }
+}
+
+#[test]
+fn an_endpoint_owns_a_same_prefix_route_that_carries_its_own_credential() {
+    use crate::infrastructure::config::{Config, OpenAiCompatibleEndpoint};
+    use crate::infrastructure::provider_runtime::build_agent_provider;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"spark":{"api":"openai-completions","baseUrl":"http://127.0.0.1:9/v1","auth":{"mode":"apiKey","apiKey":"sk-registry"},"models":[{"id":"qwen3"}]}}}"#,
+    )
+    .unwrap();
+    let mut config = Config::default();
+    config.providers.openai_compatible.endpoints = vec![OpenAiCompatibleEndpoint {
+        prefix: "spark".to_string(),
+        api_key: "sk-endpoint".to_string(),
+        api_base: "http://127.0.0.1:10/v1".to_string(),
+        allow_remote_http: true,
+    }];
+
+    // The explicitly configured endpoint is the single owner of the prefix: one
+    // provider is constructed, not two competing definitions of one route.
+    let runtime = build_agent_provider(&config, tmp.path(), &reqwest::Client::new())
+        .expect("an endpoint owns a catalogue route sharing its prefix");
+    // Two providers of the same name would be rejected by the router, so a
+    // successful composition already proves the prefix resolved to one owner;
+    // routing confirms which one: requests must reach the endpoint's base.
+    let request = crate::domain::provider::ChatRequest {
+        messages: &[],
+        tools: &[],
+        model: "spark/qwen3",
+        max_tokens: 16,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let error = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(runtime.chat(request))
+        .expect_err("nothing is listening on the endpoint base");
+    assert!(
+        error.to_string().contains("127.0.0.1:10"),
+        "the endpoint owns the route: {error}"
+    );
+}

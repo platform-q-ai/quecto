@@ -88,7 +88,24 @@ pub enum CatalogueQuery {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SelectionFailure {
     UnknownModel,
-    Unavailable { reasons: Vec<UnavailableReason> },
+    /// The bare model name matches more than one runnable provider, so the
+    /// caller must qualify it.
+    AmbiguousModel {
+        candidates: Vec<String>,
+    },
+    Unavailable {
+        reasons: Vec<UnavailableReason>,
+    },
+}
+
+/// What a model reference resolved to in the effective catalogue.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ModelSelection {
+    /// A catalogue entry with known capabilities.
+    Known(ModelDescriptor),
+    /// A provider that routes any model id under its prefix, so the catalogue
+    /// carries no descriptor and no capability limits are known.
+    OpenRoute(ModelRef),
 }
 
 #[derive(Debug, Clone)]
@@ -157,18 +174,54 @@ impl ResolveModelSelectionUseCase {
         Self { store }
     }
 
-    pub fn resolve(&self, reference: &ModelRef) -> Result<ModelDescriptor, SelectionFailure> {
+    pub fn resolve(&self, reference: &ModelRef) -> Result<ModelSelection, SelectionFailure> {
         let snapshot = self.store.current();
         let Some(model) = snapshot.find(reference) else {
-            return Err(SelectionFailure::UnknownModel);
+            // A configured endpoint routes ids the catalogue cannot enumerate;
+            // rejecting them would make explicitly configured providers
+            // unusable.
+            return if snapshot.accepts_any_model(reference.provider()) {
+                Ok(ModelSelection::OpenRoute(reference.clone()))
+            } else {
+                Err(SelectionFailure::UnknownModel)
+            };
         };
         if !model.availability.runnable() {
             return Err(SelectionFailure::Unavailable {
                 reasons: model.availability.reasons().to_vec(),
             });
         }
-        Ok(model.clone())
+        Ok(ModelSelection::Known(model.clone()))
     }
+}
+
+/// Resolve a user-supplied model string against one snapshot: a qualified
+/// `provider/model` reference is taken as written, while a bare name resolves
+/// only when exactly one runnable catalogue entry carries it.
+pub fn resolve_model_reference(
+    snapshot: &CatalogueSnapshot,
+    model: &str,
+) -> Result<ModelRef, SelectionFailure> {
+    if let Ok(reference) = ModelRef::parse_qualified(model) {
+        return Ok(reference);
+    }
+    let mut matches = snapshot
+        .models()
+        .iter()
+        .filter(|descriptor| {
+            descriptor.reference.model().as_str() == model && descriptor.availability.runnable()
+        })
+        .map(|descriptor| descriptor.reference.clone());
+    let Some(unique) = matches.next() else {
+        return Err(SelectionFailure::UnknownModel);
+    };
+    let rest: Vec<_> = matches.collect();
+    if rest.is_empty() {
+        return Ok(unique);
+    }
+    let mut candidates = vec![unique.qualified_id()];
+    candidates.extend(rest.iter().map(ModelRef::qualified_id));
+    Err(SelectionFailure::AmbiguousModel { candidates })
 }
 
 /// Application helper for translating adapter support into derived availability.

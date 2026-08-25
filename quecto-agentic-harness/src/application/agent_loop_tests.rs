@@ -1,9 +1,10 @@
 use super::*;
+use crate::domain::agent::AgentLoop;
 use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
 use crate::domain::tool::{
     Tool, ToolCatalog, ToolDefinition, ToolExecutor, ToolRegistry, ToolResult,
 };
-use std::sync::{Arc, Mutex};
+use std::{pin::Pin, sync::Arc, sync::Mutex};
 
 #[derive(Debug)]
 pub(super) struct MockProvider {

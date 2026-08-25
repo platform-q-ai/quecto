@@ -44,6 +44,7 @@ pub fn compose_catalogue_runtime<C, R, F: ProviderRuntimeFactory<C, R>>(
     runtime_inputs: &R,
     generation: u64,
     base_layers: &[&dyn CatalogueSource],
+    open_providers: Vec<crate::domain::catalogue::ProviderId>,
 ) -> Result<CatalogueRuntimeSnapshot, String> {
     let provider = ComposeProviderRuntimeUseCase::new().compose(factory, config, runtime_inputs)?;
     let runtime_layer = RuntimeDescriptorSource(provider.model_descriptors().unwrap_or(&[]));
@@ -59,7 +60,7 @@ pub fn compose_catalogue_runtime<C, R, F: ProviderRuntimeFactory<C, R>>(
     }
     Ok(CatalogueRuntimeSnapshot {
         provider,
-        catalogue: resolved.snapshot,
+        catalogue: resolved.snapshot.with_open_providers(open_providers),
     })
 }
 

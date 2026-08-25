@@ -46,6 +46,8 @@ Feature: Find Tool
     Then the find result should be an error
     And the find result should contain "fd"
 
+  # Workspace confinement was removed from the filesystem tools in #1494/#1495;
+  # a search path outside the workspace is accepted, not rejected.
   Scenario: Find fixture allows search path outside workspace
     When I find files matching "*.conf" outside workspace in path "/etc"
     Then the find result should not be an error

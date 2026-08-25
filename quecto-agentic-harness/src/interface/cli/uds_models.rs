@@ -5,11 +5,29 @@ use super::uds::DispatchCtx;
 
 pub(super) fn list_models_response(ctx: &DispatchCtx<'_>) -> serde_json::Value {
     let query = QueryCatalogueUseCase::new(ctx.agent.catalogue_store.clone());
-    list_catalogue_data(&query.query(CatalogueQuery::All))
+    list_catalogue_data(
+        &query.query(CatalogueQuery::All),
+        ctx.agent.catalogue_error(),
+    )
 }
 
-fn list_catalogue_data(catalogue: &CatalogueSnapshot) -> serde_json::Value {
-    list_models_slice(catalogue.models())
+fn list_catalogue_data(
+    catalogue: &CatalogueSnapshot,
+    catalogue_error: Option<&str>,
+) -> serde_json::Value {
+    let mut response = list_models_slice(catalogue.models());
+    // The published snapshot is the last valid one; a client listing models
+    // while the catalogue on disk is broken must be told, not handed a stale
+    // list that silently looks current.
+    if let Some(error) = catalogue_error
+        && let Some(object) = response.as_object_mut()
+    {
+        object.insert(
+            "error".to_string(),
+            serde_json::Value::String(error.to_string()),
+        );
+    }
+    response
 }
 
 #[cfg(test)]

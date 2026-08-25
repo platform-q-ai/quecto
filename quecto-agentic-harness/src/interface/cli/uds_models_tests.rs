@@ -195,3 +195,30 @@ fn list_models_data_uses_retrying_provider_descriptor_surface_without_downcasts(
     assert_eq!(models.len(), 1);
     assert_eq!(models[0]["model"], "child/m");
 }
+
+#[test]
+fn list_models_reports_a_failed_catalogue_reload_alongside_the_last_valid_list() {
+    use super::list_catalogue_data;
+    use crate::domain::catalogue::CatalogueSnapshot;
+
+    let snapshot = CatalogueSnapshot::new(
+        4,
+        vec![descriptor("openai-api", "gpt-5", AuthIdentity::ApiKey)],
+    );
+
+    let healthy = list_catalogue_data(&snapshot, None);
+    assert!(healthy.get("error").is_none());
+    assert_eq!(healthy["models"].as_array().unwrap().len(), 1);
+
+    let broken = list_catalogue_data(&snapshot, Some("failed to parse models.json"));
+    assert_eq!(
+        broken["error"].as_str(),
+        Some("failed to parse models.json"),
+        "a broken catalogue must not be projected as a healthy stale list"
+    );
+    assert_eq!(
+        broken["models"].as_array().unwrap().len(),
+        1,
+        "the last valid generation stays listed"
+    );
+}

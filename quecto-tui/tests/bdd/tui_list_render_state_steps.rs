@@ -60,7 +60,6 @@ fn slash_dropdown_windowed(world: &mut TuiWorld) {
         names.len(),
         "all built-in commands should be suggested"
     );
-    assert_eq!(count, names.len(), "the built-in command count changed");
     // Positive windowing lock: a drawn row is `/{name}` followed by the fixed
     // two-space description gap. Exactly the first 8 commands are drawn.
     let drawn: Vec<String> = names

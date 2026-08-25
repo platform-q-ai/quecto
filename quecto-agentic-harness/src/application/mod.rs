@@ -1,6 +1,7 @@
 pub mod agent_loop;
 mod agent_loop_lifecycle_compat;
 mod agent_loop_policy;
+mod agent_loop_port;
 mod agent_loop_reload;
 mod agent_loop_stream;
 #[cfg(any(test, feature = "test-support"))]
@@ -16,6 +17,7 @@ pub mod environment_control;
 mod environment_control_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod extension_tool;
+pub mod ports;
 pub mod provider_runtime;
 pub mod subagent;
 pub mod subagent_launch;

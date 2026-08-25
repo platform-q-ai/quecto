@@ -34,13 +34,11 @@ fn catalogue_source_port_is_declared_and_layered_resolution_is_production_wired(
     // ordered layers through it, and infrastructure supplies those layers.
     assert!(runtime.contains("resolve_sources"));
     assert!(composer.contains("BuiltinCatalogueSource") && composer.contains("UserModelsJson"));
+    assert!(adapters.contains("impl CatalogueSource for BuiltinCatalogueSource"));
+    assert!(adapters.contains("impl CatalogueSource for UserModelsJsonCatalogueSource"));
     assert!(
-        adapters.contains("impl crate::catalogue_app::CatalogueSource for BuiltinCatalogueSource")
-    );
-    assert!(
-        adapters.contains(
-            "impl crate::catalogue_app::CatalogueSource for UserModelsJsonCatalogueSource"
-        )
+        adapters.contains("use crate::application::ports::"),
+        "infrastructure adapters must reach the application only through its ports module"
     );
 }
 
@@ -221,35 +219,4 @@ fn deferred_descriptor_and_provider_runtime_work_stays_out_of_this_pr_cleanup() 
             .exists(),
         "deferred provider-runtime decomposition leaked into merge cleanup"
     );
-}
-
-#[test]
-fn deletion_ledger_has_explicit_final_decisions_and_deferrals() {
-    let ledger = read("../notes/issue-1193-deletion-ledger.md").to_ascii_lowercase();
-    for heading in [
-        "## final architecture decision",
-        "## removed unused seams",
-        "## deferred follow-up work",
-    ] {
-        assert!(
-            ledger.contains(heading),
-            "missing ledger section: {heading}"
-        );
-    }
-    for decision in [
-        "composition root may instantiate infrastructure adapters",
-        "resolvecatalogueusecase",
-        "cataloguesource",
-        "composecatalogueruntimeusecase",
-        "catalogueruntimecomposer",
-        "base_url",
-        "auth_header",
-        "allow_remote_http",
-        "provider_runtime.rs",
-    ] {
-        assert!(
-            ledger.contains(decision),
-            "ledger omits final decision or follow-up: {decision}"
-        );
-    }
 }

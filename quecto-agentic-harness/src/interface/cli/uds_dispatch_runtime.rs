@@ -1,7 +1,9 @@
 use super::AgentEvent;
 use super::{DispatchCtx, emit_event_to_broadcast_or_writer};
-use crate::application::catalogue::{ResolveModelSelectionUseCase, SelectionFailure};
-use crate::domain::catalogue::ModelRef;
+use crate::application::catalogue::{
+    ModelSelection, ResolveModelSelectionUseCase, SelectionFailure, resolve_model_reference,
+};
+use crate::domain::catalogue::UnavailableReason;
 
 pub(super) struct SetModelArgs {
     pub(super) id: Option<String>,
@@ -31,84 +33,105 @@ pub(super) fn resolve_set_model_target(
     }
 }
 
+/// One user-facing sentence for a model reference that did not resolve. An
+/// unknown provider prefix is a configuration problem; an unknown or ambiguous
+/// model id is a naming problem, and the two must not read the same.
+fn unresolved_model_message(model: &str, failure: SelectionFailure) -> String {
+    match failure {
+        SelectionFailure::AmbiguousModel { candidates } => format!(
+            "model '{model}' is ambiguous; qualify it as one of: {}",
+            candidates.join(", ")
+        ),
+        _ => match model.split_once('/') {
+            Some((provider, _)) => format!("no configured provider '{provider}'"),
+            None => format!("unknown model '{model}'"),
+        },
+    }
+}
+
+fn describe_unavailable_reasons(reasons: &[UnavailableReason]) -> String {
+    if reasons.is_empty() {
+        return "no reason recorded".to_string();
+    }
+    reasons
+        .iter()
+        .map(|reason| match reason {
+            UnavailableReason::MissingCredential => "no credential is configured".to_string(),
+            UnavailableReason::UnsupportedTransport { transport } => {
+                format!("no adapter for transport {transport:?}")
+            }
+            UnavailableReason::InvalidConfiguration(detail) => detail.clone(),
+            UnavailableReason::PolicyDenied(detail) => format!("policy denied: {detail}"),
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// Model-switch failures reach both the request's response and the session's
+/// error broadcast, so a TUI watching either surface reports the same cause.
+async fn emit_set_model_error(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    type_name: &str,
+    message: String,
+) {
+    let ev = AgentEvent::err(id, type_name, message.clone());
+    emit_event_to_broadcast_or_writer(ctx, &ev).await;
+    emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(None, "agent_error", message)).await;
+}
+
 pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'_>) -> bool {
     super::super::uds_reload::poll_provider_reload_for_ctx(ctx).await;
+    let request_id = args.id.clone();
+    let type_name = args.type_name.clone();
     let resolved_model = match resolve_set_model_target(args.model, args.provider, args.model_id) {
         Ok(m) => m,
         Err(msg) => {
-            let ev = AgentEvent::err(args.id.as_deref(), &args.type_name, msg);
+            let ev = AgentEvent::err(request_id.as_deref(), &type_name, msg);
             emit_event_to_broadcast_or_writer(ctx, &ev).await;
             return false;
         }
     };
-    let reference = ModelRef::parse_qualified(&resolved_model).ok().or_else(|| {
-        let mut matches = ctx
-            .agent
-            .catalogue
-            .models()
-            .iter()
-            .filter(|descriptor| {
-                descriptor.reference.model().as_str() == resolved_model
-                    && descriptor.availability.runnable()
-            })
-            .map(|descriptor| descriptor.reference.clone());
-        let unique = matches.next()?;
-        matches.next().is_none().then_some(unique)
-    });
-    let Some(reference) = reference else {
-        let message = resolved_model
-            .split_once('/')
-            .map(|(provider, _)| format!("no configured provider '{provider}'"))
-            .unwrap_or_else(|| "unknown model".to_string());
-        let ev = AgentEvent::err(args.id.as_deref(), &args.type_name, message.clone());
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
-        emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(None, "agent_error", message))
-            .await;
-        return false;
+    let snapshot = ctx.agent.catalogue_store.current();
+    let reference = match resolve_model_reference(&snapshot, &resolved_model) {
+        Ok(reference) => reference,
+        Err(failure) => {
+            let message = unresolved_model_message(&resolved_model, failure);
+            emit_set_model_error(ctx, request_id.as_deref(), &type_name, message).await;
+            return false;
+        }
     };
     let selection = ResolveModelSelectionUseCase::new(ctx.agent.catalogue_store.clone());
-    let descriptor = match selection.resolve(&reference) {
-        Ok(descriptor) => descriptor,
-        Err(SelectionFailure::UnknownModel) => {
-            // Distinguish an unknown provider prefix from an unknown model id
-            // within a configured provider: the former is a configuration
-            // problem the user must fix, the latter a typo in the model name.
-            let provider = reference.provider().as_str();
-            let provider_configured = ctx
-                .agent
-                .catalogue
-                .models()
-                .iter()
-                .any(|descriptor| descriptor.reference.provider().as_str() == provider);
-            let message = if provider_configured {
-                "unknown model".to_string()
-            } else {
-                format!("no configured provider '{provider}'")
-            };
-            let ev = AgentEvent::err(args.id.as_deref(), &args.type_name, message.clone());
-            emit_event_to_broadcast_or_writer(ctx, &ev).await;
-            emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(None, "agent_error", message))
-                .await;
+    let (cap, window) = match selection.resolve(&reference) {
+        Ok(ModelSelection::Known(descriptor)) => (
+            descriptor
+                .capabilities
+                .max_tokens_explicit
+                .then_some(descriptor.capabilities.max_tokens),
+            descriptor
+                .capabilities
+                .context_window_explicit
+                .then_some(descriptor.capabilities.context_window as usize),
+        ),
+        // A configured endpoint routes ids the catalogue cannot enumerate, so
+        // no per-model limits are known and none are clamped.
+        Ok(ModelSelection::OpenRoute(_)) => (None, None),
+        Err(
+            failure @ (SelectionFailure::UnknownModel | SelectionFailure::AmbiguousModel { .. }),
+        ) => {
+            let message = unresolved_model_message(reference.qualified_id().as_str(), failure);
+            emit_set_model_error(ctx, request_id.as_deref(), &type_name, message).await;
             return false;
         }
         Err(SelectionFailure::Unavailable { reasons }) => {
-            let ev = AgentEvent::err(
-                args.id.as_deref(),
-                &args.type_name,
-                format!("model is unavailable: {reasons:?}"),
+            let message = format!(
+                "model is unavailable: {}",
+                describe_unavailable_reasons(&reasons)
             );
-            emit_event_to_broadcast_or_writer(ctx, &ev).await;
+            emit_set_model_error(ctx, request_id.as_deref(), &type_name, message).await;
             return false;
         }
     };
-    let cap = descriptor
-        .capabilities
-        .max_tokens_explicit
-        .then_some(descriptor.capabilities.max_tokens);
-    let window = descriptor
-        .capabilities
-        .context_window_explicit
-        .then_some(descriptor.capabilities.context_window as usize);
     ctx.agent.set_model(resolved_model.clone(), cap, window);
     ctx.session.set_model(resolved_model);
     // Every model switch resets the session effort to `low` (#1067): a level
@@ -122,7 +145,7 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
         ctx.session.bump_visible_generation();
     }
     tracing::debug!(new_model = %ctx.session.model(), "UDS: model switched; effort reset to low");
-    let ev = AgentEvent::ok(args.id.as_deref(), &args.type_name, None);
+    let ev = AgentEvent::ok(request_id.as_deref(), &type_name, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
 }

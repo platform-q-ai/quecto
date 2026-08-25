@@ -216,18 +216,40 @@ impl ModelDescriptor {
 pub struct CatalogueSnapshot {
     pub generation: u64,
     models: Vec<ModelDescriptor>,
+    /// Providers that route any model id under their prefix (an explicitly
+    /// configured OpenAI-compatible endpoint), whose model list therefore
+    /// cannot be enumerated as descriptors.
+    open_providers: Vec<ProviderId>,
 }
 
 impl CatalogueSnapshot {
     pub fn new(generation: u64, models: Vec<ModelDescriptor>) -> Self {
-        Self { generation, models }
+        Self {
+            generation,
+            models,
+            open_providers: Vec::new(),
+        }
     }
 
     pub fn empty(generation: u64) -> Self {
-        Self {
-            generation,
-            models: Vec::new(),
-        }
+        Self::new(generation, Vec::new())
+    }
+
+    /// Declare the providers that accept any model id under their prefix.
+    pub fn with_open_providers(mut self, open_providers: Vec<ProviderId>) -> Self {
+        self.open_providers = open_providers;
+        self
+    }
+
+    pub fn open_providers(&self) -> &[ProviderId] {
+        &self.open_providers
+    }
+
+    /// Whether this provider routes model ids the catalogue cannot enumerate.
+    pub fn accepts_any_model(&self, provider: &ProviderId) -> bool {
+        self.open_providers
+            .iter()
+            .any(|open| open.as_str().eq_ignore_ascii_case(provider.as_str()))
     }
 
     pub fn models(&self) -> &[ModelDescriptor] {
@@ -248,6 +270,8 @@ impl CatalogueSnapshot {
     ) -> Self {
         let mut models = Vec::<ModelDescriptor>::new();
         let mut positions = HashMap::<ModelRef, usize>::new();
+        // Open providers are a property of the composed runtime, not of a source
+        // layer, so they are attached after resolution.
         for layer in layers {
             for model in layer {
                 if let Some(position) = positions.get(&model.reference).copied() {
@@ -258,7 +282,7 @@ impl CatalogueSnapshot {
                 }
             }
         }
-        Self { generation, models }
+        Self::new(generation, models)
     }
 }
 

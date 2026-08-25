@@ -68,6 +68,10 @@ pub struct RefreshableProvider {
     refresh_fn: RefreshFn,
     factory: ProviderFactory,
     refresh_lock: Mutex<()>,
+    /// The OAuth token `inner` was built from, so a 401 can tell "another task
+    /// already refreshed" from "this token is genuinely stale" without reading
+    /// the credential store on every request.
+    inner_token: RwLock<Option<String>>,
 }
 
 impl std::fmt::Debug for RefreshableProvider {
@@ -82,6 +86,13 @@ impl std::fmt::Debug for RefreshableProvider {
 impl RefreshableProvider {
     /// Create a new refreshable provider from a config.
     pub fn new(config: RefreshableConfig) -> Self {
+        let inner_token = config
+            .store
+            .get(&config.credential_provider)
+            .ok()
+            .flatten()
+            .filter(|cred| cred.method == AuthMethod::OAuth)
+            .map(|cred| cred.token);
         Self {
             inner: RwLock::new(config.inner),
             store: config.store,
@@ -90,7 +101,15 @@ impl RefreshableProvider {
             refresh_fn: config.refresh_fn,
             factory: config.factory,
             refresh_lock: Mutex::new(()),
+            inner_token: RwLock::new(inner_token),
         }
+    }
+
+    /// Install a rebuilt inner provider together with the token it was built
+    /// from, so both move as one state change.
+    async fn install_inner(&self, provider: Arc<dyn LlmProvider>, token: String) {
+        *self.inner.write().await = provider;
+        *self.inner_token.write().await = Some(token);
     }
 
     /// Check if the error is a 401 that might be fixable by refreshing.
@@ -161,7 +180,7 @@ impl RefreshableProvider {
                     "token refreshed — rebuilding provider for stream"
                 );
                 let new_inner = (self.factory)(&new_token);
-                *self.inner.write().await = new_inner;
+                self.install_inner(new_inner, new_token).await;
             }
             Err(refresh_err) => {
                 tracing::warn!(
@@ -300,9 +319,9 @@ impl RefreshableProvider {
         >,
     {
         let inner = self.inner.read().await.clone();
-        let credential_before_call = self.current_credential();
         // Happy path: shallow clone (copies slice pointers + small Option fields,
-        // not the underlying message/tool vecs).
+        // not the underlying message/tool vecs). No credential I/O happens here;
+        // the store is only read once a 401 proves the token needs attention.
         let result = call(&inner, request.clone()).await;
 
         match result {
@@ -319,28 +338,33 @@ impl RefreshableProvider {
                 // can use it independently of the original borrow.
                 let owned = OwnedRequest::from(&request);
 
-                let _guard = self.refresh_lock.lock().await;
-                if let (Some(before), Some(current)) =
-                    (credential_before_call.as_ref(), self.current_credential())
-                    && (current.token != before.token
-                        || current.refresh_token != before.refresh_token
-                        || current.provider != before.provider)
-                {
-                    let new_inner = (self.factory)(&current.token);
-                    let result = call(&new_inner, owned.as_request()).await;
-                    *self.inner.write().await = new_inner;
-                    return result;
-                }
+                // The lock serialises obtaining a fresh token, not the retried
+                // request: holding it across the call would block every other
+                // 401 for the length of a full generation.
+                let refreshed = {
+                    let _guard = self.refresh_lock.lock().await;
+                    let stored = self.current_credential().map(|cred| cred.token);
+                    let built_from = self.inner_token.read().await.clone();
+                    match stored {
+                        // Another task refreshed while this request was in
+                        // flight: adopt its token instead of refreshing again.
+                        Some(token) if Some(&token) != built_from.as_ref() => Ok(token),
+                        _ => (self.refresh_fn)(self.store.clone(), &self.credential_provider)
+                            .await
+                            .inspect(|_| {
+                                tracing::info!(
+                                    provider = self.provider_name.as_str(),
+                                    "token refreshed — rebuilding provider"
+                                );
+                            }),
+                    }
+                };
 
-                match (self.refresh_fn)(self.store.clone(), &self.credential_provider).await {
+                match refreshed {
                     Ok(new_token) => {
-                        tracing::info!(
-                            provider = self.provider_name.as_str(),
-                            "token refreshed — rebuilding provider"
-                        );
                         let new_inner = (self.factory)(&new_token);
                         let result = call(&new_inner, owned.as_request()).await;
-                        *self.inner.write().await = new_inner;
+                        self.install_inner(new_inner, new_token).await;
                         result
                     }
                     Err(refresh_err) => {
