@@ -273,6 +273,12 @@ fn compose_agent_provider(
         if model.api_key.is_some() || model.base_url.is_some() {
             custom_prefixes.insert(canonical_prefix);
         }
+        if matches!(
+            model.api,
+            crate::infrastructure::model_registry::ProviderApi::GoogleGenerativeAi
+        ) {
+            continue;
+        }
         let Some(provider) = build_registry_provider(
             model,
             base_dir,
@@ -467,6 +473,13 @@ fn registry_model_credential_available(
 ) -> Result<bool, String> {
     use crate::infrastructure::auth::credential_store::AuthMethod;
     use crate::infrastructure::model_registry::AuthMode;
+
+    if matches!(
+        model.api,
+        crate::infrastructure::model_registry::ProviderApi::GoogleGenerativeAi
+    ) {
+        return Ok(false);
+    }
 
     match model.auth {
         AuthMode::ApiKey => Ok(model.api_key.as_deref().is_some_and(|key| !key.is_empty())

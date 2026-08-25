@@ -76,3 +76,64 @@ fn runtime_catalogue_marks_oauth_model_configured_when_runtime_has_oauth_credent
         crate::domain::catalogue::Availability::Runnable
     );
 }
+
+#[test]
+fn runtime_catalogue_skips_unsupported_google_oauth_without_rejecting_valid_provider() {
+    use crate::domain::catalogue::{Availability, UnavailableReason};
+    use crate::infrastructure::config::Config;
+    use crate::infrastructure::provider_runtime::build_agent_provider;
+    use std::collections::HashMap;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{
+            "providers": {
+                "google-oauth": {
+                    "api": "google-generative-ai",
+                    "auth": { "mode": "oauth" },
+                    "models": [{ "id": "gemini-pro" }]
+                },
+                "valid-openai": {
+                    "api": "openai-completions",
+                    "baseUrl": "http://127.0.0.1:9/v1",
+                    "auth": { "mode": "apiKey", "apiKey": "sk-valid" },
+                    "models": [{ "id": "valid-model" }]
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let env = HashMap::new();
+    let config = Config::load_with_env(
+        tmp.path().join("missing-config.json").to_str().unwrap(),
+        &env,
+    )
+    .expect("valid provider key should load");
+
+    let runtime = build_agent_provider(&config, tmp.path(), &reqwest::Client::new())
+        .expect("unsupported Google row must not abort runtime composition");
+    let descriptors = runtime
+        .model_descriptors()
+        .expect("router should expose descriptors");
+
+    assert!(
+        descriptors
+            .iter()
+            .any(|model| model.qualified_id() == "valid-openai/valid-model" && model.configured)
+    );
+    let google = descriptors
+        .iter()
+        .find(|model| model.qualified_id() == "google-oauth/gemini-pro")
+        .expect("unsupported Google descriptor should be preserved");
+    assert!(!google.configured);
+    assert!(matches!(
+        &google.availability,
+        Availability::KnownButUnavailable { reasons }
+            if reasons.iter().any(|reason| matches!(
+                reason,
+                UnavailableReason::InvalidConfiguration(message)
+                    if message.contains("provider skipped during runtime construction")
+            ))
+    ));
+}
