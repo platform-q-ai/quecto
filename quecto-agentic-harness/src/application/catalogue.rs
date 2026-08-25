@@ -25,6 +25,11 @@ pub enum SelectionFailure {
     Unavailable { reasons: Vec<UnavailableReason> },
 }
 
+pub trait CatalogueSource {
+    fn name(&self) -> &str;
+    fn load(&self) -> Result<Vec<ModelDescriptor>, String>;
+}
+
 #[derive(Debug, Clone)]
 pub struct CatalogueSnapshotStore {
     current: Arc<RwLock<CatalogueSnapshot>>,
@@ -49,6 +54,28 @@ impl CatalogueSnapshotStore {
             .current
             .write()
             .expect("catalogue snapshot lock poisoned") = snapshot;
+    }
+}
+
+pub struct ResolveCatalogueUseCase<'a> {
+    sources: Vec<&'a dyn CatalogueSource>,
+}
+
+impl<'a> ResolveCatalogueUseCase<'a> {
+    pub fn new(sources: Vec<&'a dyn CatalogueSource>) -> Self {
+        Self { sources }
+    }
+
+    pub fn resolve(&self, generation: u64) -> Result<CatalogueSnapshot, String> {
+        let mut layers = Vec::with_capacity(self.sources.len());
+        for source in &self.sources {
+            layers.push(
+                source
+                    .load()
+                    .map_err(|e| format!("{}: {e}", source.name()))?,
+            );
+        }
+        Ok(CatalogueSnapshot::merge_layers(generation, layers))
     }
 }
 

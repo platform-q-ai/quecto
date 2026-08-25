@@ -1,7 +1,7 @@
 //! Infrastructure adapter from the legacy `models.json` registry format into
 //! the domain-owned catalogue descriptors.
 
-use crate::catalogue_app::derive_availability;
+use crate::catalogue_app::{CatalogueSource, derive_availability};
 use crate::domain::catalogue::{
     AuthIdentity, ModelCapabilities, ModelCost, ModelDescriptor, ModelRef, ProviderId,
     TransportKind,
@@ -21,6 +21,16 @@ impl ModelRegistryCatalogueSource {
         ModelRegistry::load_from_path(path)
             .map(Self::new)
             .map_err(|e| e.to_string())
+    }
+}
+
+impl CatalogueSource for ModelRegistryCatalogueSource {
+    fn name(&self) -> &str {
+        "models-registry"
+    }
+
+    fn load(&self) -> Result<Vec<ModelDescriptor>, String> {
+        self.load_valid_descriptors()
     }
 }
 

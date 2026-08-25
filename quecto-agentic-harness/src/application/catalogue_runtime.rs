@@ -10,6 +10,10 @@ use std::sync::Arc;
 use crate::domain::catalogue::CatalogueSnapshot;
 use crate::domain::provider::LlmProvider;
 
+pub trait CatalogueRuntimeComposer {
+    fn compose(&self, snapshot: &CatalogueSnapshot) -> Result<Arc<dyn LlmProvider>, String>;
+}
+
 #[derive(Debug, Clone)]
 pub struct CatalogueRuntimeSnapshot {
     pub catalogue: CatalogueSnapshot,
@@ -21,3 +25,25 @@ impl CatalogueRuntimeSnapshot {
         self.catalogue.generation
     }
 }
+
+pub struct ComposeCatalogueRuntimeUseCase<'a> {
+    composer: &'a dyn CatalogueRuntimeComposer,
+}
+
+impl<'a> ComposeCatalogueRuntimeUseCase<'a> {
+    pub fn new(composer: &'a dyn CatalogueRuntimeComposer) -> Self {
+        Self { composer }
+    }
+
+    pub fn compose(&self, snapshot: CatalogueSnapshot) -> Result<CatalogueRuntimeSnapshot, String> {
+        let provider = self.composer.compose(&snapshot)?;
+        Ok(CatalogueRuntimeSnapshot {
+            catalogue: snapshot,
+            provider,
+        })
+    }
+}
+
+#[cfg(test)]
+#[path = "catalogue_runtime_tests.rs"]
+mod tests;

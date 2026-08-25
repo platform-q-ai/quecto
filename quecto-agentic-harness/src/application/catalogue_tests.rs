@@ -30,6 +30,66 @@ fn descriptor(provider: &str, model: &str, runnable: bool) -> ModelDescriptor {
     }
 }
 
+struct StaticSource {
+    name: &'static str,
+    models: Vec<ModelDescriptor>,
+}
+
+impl CatalogueSource for StaticSource {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn load(&self) -> Result<Vec<ModelDescriptor>, String> {
+        Ok(self.models.clone())
+    }
+}
+
+struct FailingSource;
+
+impl CatalogueSource for FailingSource {
+    fn name(&self) -> &str {
+        "failing"
+    }
+    fn load(&self) -> Result<Vec<ModelDescriptor>, String> {
+        Err("boom".to_string())
+    }
+}
+
+#[test]
+fn resolve_catalogue_applies_sources_in_declared_precedence() {
+    let builtin = StaticSource {
+        name: "builtin",
+        models: vec![descriptor("openai-api", "gpt-5", true)],
+    };
+    let user = StaticSource {
+        name: "user",
+        models: vec![descriptor("openai-api", "gpt-5", false)],
+    };
+
+    let snapshot = ResolveCatalogueUseCase::new(vec![&builtin, &user])
+        .resolve(5)
+        .unwrap();
+
+    assert_eq!(snapshot.generation, 5);
+    let model = snapshot
+        .find(&ModelRef::parse("openai-api", "gpt-5").unwrap())
+        .unwrap();
+    assert!(!model.availability.runnable());
+    assert_eq!(
+        model.availability.reasons(),
+        &[UnavailableReason::MissingCredential]
+    );
+}
+
+#[test]
+fn resolve_catalogue_reports_source_failures_without_partial_snapshot() {
+    let err = ResolveCatalogueUseCase::new(vec![&FailingSource])
+        .resolve(1)
+        .unwrap_err();
+
+    assert_eq!(err, "failing: boom");
+}
+
 #[test]
 fn query_and_selection_read_only_the_published_snapshot() {
     let initial = CatalogueSnapshot::new(

@@ -1,7 +1,8 @@
 //! Infrastructure provider-runtime factory for agent execution.
 //!
 //! This module owns concrete credential lookup, provider adapter construction,
-//! OAuth refresh wrapping, retry decoration, and router composition.
+//! OAuth refresh wrapping, retry decoration, and router composition behind the
+//! application `ProviderRuntimeFactory` port.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -17,8 +18,30 @@ use crate::infrastructure::providers::router::ProviderRouter;
 
 const MAX_OPENAI_COMPATIBLE_ENDPOINTS: usize = 32;
 
-/// Concrete infrastructure provider-runtime composition.
-pub fn build_agent_provider(
+#[derive(Debug, Default, Clone, Copy)]
+pub struct InfrastructureProviderRuntimeFactory;
+
+pub struct ProviderRuntimeInputs<'a> {
+    pub base_dir: &'a std::path::Path,
+    pub http_client: &'a reqwest::Client,
+}
+
+impl<'a> crate::provider_runtime_app::ProviderRuntimeFactory<Config, ProviderRuntimeInputs<'a>>
+    for InfrastructureProviderRuntimeFactory
+{
+    fn compose_runtime(
+        &self,
+        config: &Config,
+        runtime_inputs: &ProviderRuntimeInputs<'a>,
+    ) -> Result<Arc<dyn LlmProvider>, String> {
+        build_agent_provider(config, runtime_inputs.base_dir, runtime_inputs.http_client)
+    }
+}
+
+/// Concrete infrastructure implementation behind the application runtime-composition port.
+/// Kept `pub(crate)` so legacy tests and temporary compatibility adapters can
+/// exercise the exact same path without reintroducing CLI ownership.
+pub(crate) fn build_agent_provider(
     config: &Config,
     base_dir: &std::path::Path,
     http_client: &reqwest::Client,

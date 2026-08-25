@@ -13,7 +13,7 @@ fn registry_source_translates_legacy_models_to_secret_free_domain_descriptors() 
     let source =
         ModelRegistryCatalogueSource::load_from_path(&tmp.path().join("models.json")).unwrap();
 
-    let models = source.load_valid_descriptors().unwrap();
+    let models = source.load().unwrap();
 
     let model = models
         .iter()
@@ -50,7 +50,7 @@ fn registry_source_skips_records_with_blank_provider_or_model_ids() {
     let source =
         ModelRegistryCatalogueSource::load_from_path(&tmp.path().join("models.json")).unwrap();
 
-    let models = source.load_valid_descriptors().unwrap();
+    let models = source.load().unwrap();
 
     assert!(
         models
@@ -80,7 +80,9 @@ fn registry_source_keeps_auth_identity_separate_and_marks_missing_runtime_capabi
     .unwrap();
     let registry = ModelRegistry::load_from_path(&tmp.path().join("models.json")).unwrap();
     let source = ModelRegistryCatalogueSource::new(registry);
-    let models = source.load_valid_descriptors().unwrap();
+    assert_eq!(source.name(), "models-registry");
+
+    let models = source.load().unwrap();
 
     let anthropic = models
         .iter()
