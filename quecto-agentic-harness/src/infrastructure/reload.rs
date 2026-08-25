@@ -178,7 +178,6 @@ impl<T: Clone> RuntimeReload<T> {
     }
 
     /// Last successfully rebuilt value.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn last_good(&self) -> Option<&T> {
         self.last_good.as_ref()
     }

@@ -11,10 +11,10 @@ use super::uds::{DispatchCtx, emit_event_to_broadcast_or_writer};
 
 pub(super) fn apply_provider_reload_result(
     ctx: &mut DispatchCtx<'_>,
-    result: Option<ReloadResult<crate::application::catalogue_runtime::CatalogueRuntimeSnapshot>>,
+    result: Option<ReloadResult<provider_reload::ReloadedProviderRuntime>>,
 ) {
     if let Some(ReloadResult::Reloaded(runtime)) = result {
-        ctx.agent.swap_runtime(runtime);
+        ctx.agent.swap_provider(runtime.provider);
         if let Some(inputs) = ctx.provider_reload_inputs {
             match Config::load_with_env(
                 inputs.config_path.to_str().unwrap_or(""),
@@ -77,14 +77,6 @@ pub(super) async fn handle_reload(
         }
     }
     false
-}
-
-fn refresh_outcomes_should_reload_runtime(
-    outcomes: &[crate::application::catalogue_refresh::CatalogueRefreshOutcome],
-) -> bool {
-    outcomes
-        .iter()
-        .any(|outcome| matches!(outcome.status, CatalogueRefreshStatus::Refreshed { .. }))
 }
 
 pub(super) async fn handle_refresh_models(
@@ -152,8 +144,7 @@ pub(super) async fn handle_refresh_models(
     let any_failed = outcomes
         .iter()
         .any(|outcome| matches!(outcome.status, CatalogueRefreshStatus::Failed { .. }));
-    let should_reload = refresh_outcomes_should_reload_runtime(&outcomes);
-    if !should_reload {
+    if any_failed {
         emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(id, type_name, data.to_string()))
             .await;
     } else {
@@ -165,12 +156,8 @@ pub(super) async fn handle_refresh_models(
         {
             Some(Ok(result)) => {
                 apply_provider_reload_result(ctx, Some(result));
-                let event = if any_failed {
-                    AgentEvent::err(id, type_name, data.to_string())
-                } else {
-                    AgentEvent::ok(id, type_name, Some(data))
-                };
-                emit_event_to_broadcast_or_writer(ctx, &event).await;
+                emit_event_to_broadcast_or_writer(ctx, &AgentEvent::ok(id, type_name, Some(data)))
+                    .await;
             }
             Some(Err(err)) => {
                 emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(id, type_name, err)).await;
@@ -185,52 +172,4 @@ pub(super) async fn handle_refresh_models(
         }
     }
     false
-}
-
-#[cfg(test)]
-mod refresh_tests {
-    use super::*;
-    use crate::application::catalogue_refresh::CatalogueRefreshOutcome;
-
-    #[test]
-    fn refresh_all_partial_success_triggers_reload_for_persisted_successes() {
-        let outcomes = vec![
-            CatalogueRefreshOutcome {
-                source: "provider-a".to_string(),
-                status: CatalogueRefreshStatus::Refreshed { models: 3 },
-            },
-            CatalogueRefreshOutcome {
-                source: "provider-b".to_string(),
-                status: CatalogueRefreshStatus::Failed {
-                    error: "network failed".to_string(),
-                },
-            },
-        ];
-
-        assert!(refresh_outcomes_should_reload_runtime(&outcomes));
-    }
-
-    #[test]
-    fn refresh_all_total_failure_does_not_reload_runtime() {
-        let outcomes = vec![CatalogueRefreshOutcome {
-            source: "provider-b".to_string(),
-            status: CatalogueRefreshStatus::Failed {
-                error: "network failed".to_string(),
-            },
-        }];
-
-        assert!(!refresh_outcomes_should_reload_runtime(&outcomes));
-    }
-
-    #[test]
-    fn refresh_all_all_skipped_does_not_reload_runtime() {
-        let outcomes = vec![CatalogueRefreshOutcome {
-            source: "provider-b".to_string(),
-            status: CatalogueRefreshStatus::Skipped {
-                reason: "not configured".to_string(),
-            },
-        }];
-
-        assert!(!refresh_outcomes_should_reload_runtime(&outcomes));
-    }
 }
