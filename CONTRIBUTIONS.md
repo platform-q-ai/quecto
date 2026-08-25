@@ -101,11 +101,14 @@ gitleaks detect --source . --redact
 
 ## Pull request checklist
 
+Before asking for review, contributors are expected to run the built-in Quecto workflow through at least two complete adversarial-review loops on their change. Each loop should use the repository workflow rather than an ad-hoc prompt: run the narrow read-only finders, adversarially verify every surviving finding, fix accepted issues, and repeat until two full cycles have completed. Record the workflow evidence in the PR description, including what each loop found or that no findings survived verification.
+
 Include in your PR description:
 
 - What changed and why.
 - How you tested it.
+- Evidence from at least two full built-in adversarial-review workflow loops.
 - Any user-facing docs/config updates.
 - Any security, migration, compatibility, or operational notes.
 
-A good PR is small enough to review, has evidence-backed tests/checks, and leaves the repository easier to understand than it found it.
+A good PR is small enough to review, has evidence-backed tests/checks, has survived repeated adversarial review, and leaves the repository easier to understand than it found it.
