@@ -1,21 +1,31 @@
 # Quecto
 
-Quecto aims to be the smallest, most efficient agentic harness; designed to run anywhere on any device for any length of time.
+Quecto is a small, efficient agentic harness for long-running software work. It is built around a simple belief: agents should be cheap to supervise, easy to interrupt, and able to delegate without forcing every integration to embed a heavyweight runtime.
+
+The core `quecto` process can run as a one-shot CLI, an interactive REPL, or a persistent Unix-domain-socket (UDS) event bus. Companion clients and extensions talk to that socket using bounded JSON frames, so the terminal UI, HTTP/WebSocket gateway, MCP bridge, runtime manager, and subagents stay loosely coupled while sharing the same conversation state, tools, workflow engine, and recovery model.
 
 ## Features at a glance
-- **Agentic kernel:** run `quecto` directly or as a persistent UDSSession and message recovery server.
-- **Master Agents:** (do we want to keep this terminology?)
-- **Subagents:** spawn background agent sessions for independent investigation or review work.
-- **Providers:**
-- **Workspaces:**
-- **Containers:** run within containers
-- **Workflows:**
-- **Token-saving conversation management:** (talk about how conversation management works)
-- **Keyboard shortcuts (planned):** config driven shortcut customisation, profile driven (default, vim, browser)
+
+- **Agentic kernel:** run `quecto` directly, in the REPL, or as a persistent UDS message and event server.
+- **Subagents:** spawn background UDS-mode agents for independent implementation, investigation, and adversarial review while the parent stays responsive.
+- **Provider support:** use OpenAI, Anthropic, ChatGPT Codex, or OpenAI-compatible endpoints through the same provider abstraction and credential store.
+- **Workspace-aware tools:** give agents shell, file editing, search, docs, recall, workflow, and extension tools rooted in the active workspace and governed by repository hooks.
+- **Container-capable delegation:** run subagents in configured container runtimes when isolation or reproducible environments matter.
+- **Built-in workflows:** drive feature, refactor, chore, and adversarial-review loops with explicit checkpoints, bash guards, and live workflow state events.
+- **Token-saving conversation management:** collapse older tool results and transcript history into recoverable stubs, then use `recall`/paged history when detail is needed again.
+- **Composable interfaces:** use the TUI locally, expose a running agent through HTTP/WebSocket, or register external MCP tools without changing the core harness.
+- **Keyboard shortcuts (planned):** profile-driven shortcut customization for default, Vim-like, and browser-like interaction styles.
 
 ## Principles
-- **Modular:** Quecto is extendable via .... 
-- **Micro-Service driven:** Terminal UI, MCP bridge, Runtime manager and the Agentic harness all speak via UDS.
+
+- **Small core, replaceable edges:** the harness owns model turns, tool execution, persistence, workflows, and UDS orchestration; user interfaces and remote integrations stay separate.
+- **Local-first and long-running:** Quecto is designed to run on a laptop, VPS, small Linux host, or container for extended sessions without a non-Rust application runtime.
+- **Inspectable agent work:** workflows, subagent lifecycle events, paged history, and recoverable context stubs make it possible to supervise and audit long agent runs.
+- **Review before trust:** the built-in development workflow expects tests, local review, PR review, and conformance checks rather than treating a single agent pass as sufficient.
+- **Protocol over embedding:** Terminal UI, MCP bridge, runtime manager, API gateway, and the agentic harness communicate over UDS/HTTP boundaries instead of sharing UI-specific internals.
+- **Secrets stay local:** credentials belong in the auth store, environment, or deployment secret manager — never in repository files, examples, logs, or screenshots.
+
+Companion crate versions are declared in each package `Cargo.toml`.
 
 ## Workspace projects
 
