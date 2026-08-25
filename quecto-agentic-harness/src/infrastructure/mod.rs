@@ -1,7 +1,6 @@
 pub mod atomic_write;
 pub mod auth;
 pub mod catalogue_discovery;
-pub mod catalogue_limits;
 pub mod catalogue_registry;
 pub mod config;
 pub mod extensions;

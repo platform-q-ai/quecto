@@ -138,7 +138,6 @@ fn reload_api_uses_catalogue_runtime_snapshot_directly_without_compatibility_ali
 fn production_used_application_seams_remain_declared_and_wired() {
     let provider_app = compact_rust(&read("src/application/provider_runtime.rs"));
     let refresh_app = compact_rust(&read("src/application/catalogue_refresh.rs"));
-    let limits_app = compact_rust(&read("src/application/catalogue_limits.rs"));
     let runtime_composer = compact_rust(&read("src/interface/catalogue_runtime.rs"));
     let models = compact_rust(&read("src/interface/cli/models.rs"));
     let uds_reload = compact_rust(&read("src/interface/cli/uds_reload.rs"));
@@ -152,7 +151,6 @@ fn production_used_application_seams_remain_declared_and_wired() {
     assert!(refresh_app.contains("pub struct RefreshCatalogueSourceUseCase"));
     assert!(models.contains("RefreshCatalogueSourceUseCase"));
     assert!(uds_reload.contains("RefreshCatalogueSourceUseCase"));
-    assert!(limits_app.contains("pub struct ResolveModelLimitsUseCase"));
     assert!(
         dispatch.contains("agent .catalogue")
             || dispatch.contains("agent. catalogue")
@@ -184,7 +182,6 @@ fn production_reload_installs_the_composed_snapshot_atomically() {
 fn behavioral_regression_suites_cover_every_retained_seam() {
     let provider_tests = read("src/application/provider_runtime_tests.rs");
     let refresh_tests = read("src/application/catalogue_refresh_tests.rs");
-    let limits_tests = read("src/application/catalogue_limits_tests.rs");
     let reload_tests = read("src/interface/cli/provider_reload_tests.rs");
     let swap_tests = read("src/application/agent_loop_swap_tests.rs");
 
@@ -194,7 +191,6 @@ fn behavioral_regression_suites_cover_every_retained_seam() {
             "compose_provider_runtime_use_case_delegates",
         ),
         (&refresh_tests, "refresh_use_case_delegates"),
-        (&limits_tests, "resolve"),
         (&reload_tests, "reload_generations_are_monotonic"),
         (&reload_tests, "catalogue_matches_runtime_descriptors"),
         (&swap_tests, "swap_runtime"),

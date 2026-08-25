@@ -21,8 +21,6 @@ mod environment_kill_port;
 mod extension;
 #[path = "contracts/llm_provider.rs"]
 mod llm_provider;
-#[path = "contracts/model_limit_source.rs"]
-mod model_limit_source;
 #[path = "contracts/provider_runtime_factory.rs"]
 mod provider_runtime_factory;
 #[path = "contracts/runtime_tool_lifecycle_registry.rs"]
