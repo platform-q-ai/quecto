@@ -49,13 +49,20 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
             .catalogue
             .models()
             .iter()
-            .filter(|descriptor| descriptor.reference.model().as_str() == resolved_model)
+            .filter(|descriptor| {
+                descriptor.reference.model().as_str() == resolved_model
+                    && descriptor.availability.runnable()
+            })
             .map(|descriptor| descriptor.reference.clone());
         let unique = matches.next()?;
         matches.next().is_none().then_some(unique)
     });
     let Some(reference) = reference else {
-        let ev = AgentEvent::err(args.id.as_deref(), &args.type_name, "unknown model");
+        let message = resolved_model
+            .split_once('/')
+            .map(|(provider, _)| format!("no configured provider '{provider}'"))
+            .unwrap_or_else(|| "unknown model".to_string());
+        let ev = AgentEvent::err(args.id.as_deref(), &args.type_name, message);
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     };

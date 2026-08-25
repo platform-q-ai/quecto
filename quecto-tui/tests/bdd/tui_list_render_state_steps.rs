@@ -15,7 +15,7 @@ use cucumber::{given, then, when};
 use quecto_tui::components::autocomplete::AutocompleteResult;
 use quecto_tui::components::component::Component;
 use quecto_tui::components::files_autocomplete::FilesAutocomplete;
-use quecto_tui::components::model_selector::ModelSelector;
+use quecto_tui::components::model_selector::{ModelEntry, ModelSelector};
 use quecto_tui::shell::app::tui_harness::{TuiHarness, subagent, subagents_changed};
 use quecto_tui::shell::keys::Key;
 
@@ -193,7 +193,29 @@ fn marker_fixture() -> ModelSelector {
 
 #[given("a model selector over the known models")]
 fn model_selector_known(world: &mut TuiWorld) {
-    world.tui_list_model_selector = Some(crate::DebugModelSelector(ModelSelector::new(None)));
+    let models = vec![
+        ModelEntry {
+            id: "fireworks/glm".into(),
+            provider: "Fireworks".into(),
+            auth: None,
+            is_current: false,
+        },
+        ModelEntry {
+            id: "fireworks/kimi".into(),
+            provider: "Fireworks".into(),
+            auth: None,
+            is_current: false,
+        },
+        ModelEntry {
+            id: "other/model".into(),
+            provider: "Other".into(),
+            auth: None,
+            is_current: false,
+        },
+    ];
+    world.tui_list_model_selector = Some(crate::DebugModelSelector(ModelSelector::with_models(
+        models, None,
+    )));
 }
 
 #[given("a model selector whose current model has the longest id")]

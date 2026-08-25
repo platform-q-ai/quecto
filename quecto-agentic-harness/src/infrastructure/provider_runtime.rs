@@ -1,9 +1,3 @@
-//! Infrastructure provider-runtime factory for agent execution.
-//!
-//! This module owns concrete credential lookup, provider adapter construction,
-//! OAuth refresh wrapping, retry decoration, and router composition behind the
-//! application `ProviderRuntimeFactory` port.
-
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -38,9 +32,6 @@ impl<'a> crate::provider_runtime_app::ProviderRuntimeFactory<Config, ProviderRun
     }
 }
 
-/// Concrete infrastructure implementation behind the application runtime-composition port.
-/// Kept `pub(crate)` so legacy tests and temporary compatibility adapters can
-/// exercise the exact same path without reintroducing CLI ownership.
 pub(crate) fn build_agent_provider(
     config: &Config,
     base_dir: &std::path::Path,
@@ -49,10 +40,6 @@ pub(crate) fn build_agent_provider(
     compose_agent_provider(config, base_dir, http_client)
 }
 
-/// Build a ProviderRouter from config + credential store.
-///
-/// OAuth-backed providers are wrapped in [`RefreshableProvider`] so that
-/// expired tokens are automatically refreshed mid-session on 401 (issue #255).
 fn compose_agent_provider(
     config: &Config,
     base_dir: &std::path::Path,
@@ -64,19 +51,11 @@ fn compose_agent_provider(
     let store_arc = Arc::new(CredentialStore::new(base_dir));
     let refresh_fn = crate::infrastructure::oauth_runtime::make_oauth_refresh_fn();
 
-    // #1066: the endpoint router needs the *effective* registry (builtin +
-    // ~/.quecto/models.json overrides) so user `reasoning` overrides steer
-    // Responses-vs-Chat-Completions routing. Loaded once, reused below.
     let model_registry = crate::infrastructure::model_registry::ModelRegistry::load_from_path(
         &base_dir.join("models.json"),
     )
     .map_err(|e| e.to_string())?;
 
-    // Built-in providers are explicit by billing/auth mode. We deliberately do
-    // not resolve a single `openai`/`anthropic` slot by precedence because that
-    // can silently switch a request between monthly-plan OAuth and token-billed
-    // API-key auth. Users select `openai-api`, `openai-oauth`, `anthropic-api`,
-    // or `anthropic-oauth` explicitly (or define their own keys in models.json).
     let openai_base = non_empty(config.providers.openai.api_base.clone());
     let openai_api_key = if !config.providers.openai.api_key.is_empty() {
         config.providers.openai.api_key.clone()
@@ -92,7 +71,8 @@ fn compose_agent_provider(
             .map(|c| c.token)
             .unwrap_or_default()
     };
-    if !openai_api_key.is_empty() {
+    let has_openai_api_key = !openai_api_key.is_empty();
+    if has_openai_api_key {
         provider_list.push(
             providers::create_named_openai_provider_with_client(
                 "openai-api",
@@ -115,9 +95,6 @@ fn compose_agent_provider(
             c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
         })
     {
-        // #811: construct from the stored (possibly stale) token — no eager
-        // network refresh on the pre-announce startup path. RefreshableProvider
-        // refreshes lazily on a 401 at first real request, after socket announce.
         let openai_oauth_key = openai_oauth_cred.token;
         if !openai_oauth_key.is_empty() {
             let inner = build_single_provider(
@@ -160,7 +137,8 @@ fn compose_agent_provider(
             .map(|c| c.token)
             .unwrap_or_default()
     };
-    if !anthropic_api_key.is_empty() {
+    let has_anthropic_api_key = !anthropic_api_key.is_empty();
+    if has_anthropic_api_key {
         provider_list.push(
             providers::create_anthropic_compatible_provider(
                 "anthropic-api",
@@ -189,9 +167,6 @@ fn compose_agent_provider(
             c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
         })
     {
-        // #811: construct from the stored (possibly stale) token — no eager
-        // network refresh on the pre-announce startup path. RefreshableProvider
-        // refreshes lazily on a 401 at first real request, after socket announce.
         let anthropic_oauth_key = anthropic_oauth_cred.token;
         if !anthropic_oauth_key.is_empty() {
             let inner = providers::create_anthropic_compatible_provider(
@@ -228,9 +203,6 @@ fn compose_agent_provider(
         ));
     }
     let mut custom_prefixes = HashSet::new();
-    // Build at most one provider per distinct registry provider key. Each key
-    // carries its own wire protocol (`api`) and explicit auth mode; we never
-    // silently switch a vendor between OAuth and API-key billing.
     let mut seen_registry_prefixes = HashSet::new();
     let builtin_registry_prefixes: HashSet<String> =
         crate::infrastructure::model_registry::ModelRegistry::builtin()
@@ -245,12 +217,29 @@ fn compose_agent_provider(
     );
     let canonical_registry_prefixes = canonical_registry_prefix_owners(model_registry.models());
     let mut runtime_model_descriptors = Vec::new();
-    let mut constructible_registry_prefixes = HashSet::new();
+    let configured_endpoint_prefixes: HashSet<String> = config
+        .providers
+        .openai_compatible
+        .endpoints
+        .iter()
+        .map(|endpoint| endpoint.prefix.to_ascii_lowercase())
+        .collect();
+    let mut constructible_registry_prefixes = configured_endpoint_prefixes.clone();
+    if has_openai_api_key {
+        constructible_registry_prefixes.insert("openai-api".to_string());
+    }
+    if has_anthropic_api_key {
+        constructible_registry_prefixes.insert("anthropic-api".to_string());
+    }
     for model in model_registry.models() {
+        let has_existing_provider = provider_list
+            .iter()
+            .any(|provider| provider.name().eq_ignore_ascii_case(&model.provider))
+            || configured_endpoint_prefixes.contains(&model.provider.to_ascii_lowercase());
         if canonical_registry_prefixes.contains(&model.provider)
-            && registry_provider_can_construct(model, &store, config)?
+            && (has_existing_provider || registry_provider_can_construct(model, &store, config)?)
         {
-            constructible_registry_prefixes.insert(model.provider.clone());
+            constructible_registry_prefixes.insert(model.provider.to_ascii_lowercase());
         }
     }
     for model in model_registry.models() {
@@ -258,7 +247,16 @@ fn compose_agent_provider(
         if let Some(mut descriptor) =
             record_to_descriptor_with_credential(model, Some(credential_available))?
         {
-            if !constructible_registry_prefixes.contains(&model.provider) {
+            let canonical_provider = model.provider.to_ascii_lowercase();
+            let is_canonical_owner = canonical_registry_prefixes.contains(&model.provider);
+            let has_direct_runtime = is_canonical_owner
+                && ((canonical_provider == "openai-api" && has_openai_api_key)
+                    || (canonical_provider == "anthropic-api" && has_anthropic_api_key)
+                    || configured_endpoint_prefixes.contains(&canonical_provider));
+            if !is_canonical_owner
+                || (!has_direct_runtime
+                    && !constructible_registry_prefixes.contains(&canonical_provider))
+            {
                 descriptor.availability =
                     crate::domain::catalogue::Availability::KnownButUnavailable {
                         reasons: vec![
@@ -282,8 +280,6 @@ fn compose_agent_provider(
             continue;
         }
         seen_registry_prefixes.insert(canonical_prefix.clone());
-        // Reserve user catalogue prefixes before construction/credential checks so
-        // unavailable/unsupported rows cannot be claimed by openai_compatible routes.
         if !builtin_registry_prefixes.contains(&canonical_prefix) {
             custom_prefixes.insert(canonical_prefix);
         }
@@ -338,11 +334,6 @@ fn compose_agent_provider(
         );
     }
 
-    // Wrap the router in the retry decorator so transient/retryable provider
-    // errors (429 / 5xx-529 / network) are retried with bounded backoff + jitter
-    // (honouring Retry-After) before the turn fails; Client/Auth/Cancelled pass
-    // straight through (#931). Composed outside refreshable so a refreshed-token
-    // retry still benefits from transient-error retries.
     let router: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::with_model_descriptors(
         provider_list,
         runtime_model_descriptors,
@@ -637,8 +628,6 @@ fn build_registry_provider(
                 return Ok(None);
             }
             api_base = oauth_registry_base_url(model, oauth_provider)?;
-            // #811: use the stored (possibly stale) token; no eager network
-            // refresh. RefreshableProvider refreshes lazily on 401 at first use.
             cred.token
         }
     };
@@ -700,7 +689,6 @@ fn non_empty(value: String) -> Option<String> {
     }
 }
 
-/// Build a single provider from name, key, and base URL.
 fn build_single_provider(
     name: &str,
     api_key: &str,

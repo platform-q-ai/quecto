@@ -320,6 +320,22 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
             serde_json::to_string_pretty(&config).expect("serialize config"),
         )
         .expect("write Fireworks config");
+        let registry = serde_json::json!({
+            "providers": {
+                "fireworks": {
+                    "baseUrl": fireworks_uri,
+                    "apiKey": "sk-fireworks",
+                    "api": "openai-completions",
+                    "allowRemoteHttp": true,
+                    "models": [{ "id": "accounts/fireworks/models/glm-5p2", "name": "Fireworks Test Model" }]
+                }
+            }
+        });
+        std::fs::write(
+            base.join("models.json"),
+            serde_json::to_string_pretty(&registry).expect("serialize registry"),
+        )
+        .expect("write Fireworks registry");
     }
     if world.uds_invalid_config_before_loop {
         std::fs::write(base.join("config.json"), "{ invalid json").expect("write invalid config");
@@ -1152,10 +1168,12 @@ fn then_agent_output_response_success(world: &mut QuectoWorld, command: String) 
         world.agent_stderr,
         world.uds_exit_code,
     );
+    let response = resp.unwrap();
     assert_eq!(
-        resp.unwrap()["success"],
+        response["success"],
         serde_json::Value::Bool(true),
-        "expected success=true for {command:?}"
+        "expected success=true for {command:?}; response: {response}; all events: {:#?}",
+        world.agent_events
     );
 }
 

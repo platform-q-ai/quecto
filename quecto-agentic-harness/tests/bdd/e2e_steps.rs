@@ -3233,7 +3233,7 @@ fn then_llm_request_did_not_include_tool(world: &mut QuectoWorld, tool_name: Str
 /// Prefers a static Anthropic API key (env `ANTHROPIC_API_KEY`) so these tests run in CI without a local
 /// `quecto auth login`. Falls back to copying `~/.quecto/credentials.json` and
 /// `auth_method: "oauth"` for subscription-based local runs. The default model
-/// is `anthropic/claude-haiku-4-5` for fast, cheap tests.
+/// is `anthropic-api/claude-haiku-4-5` for fast, cheap tests.
 #[given("a real LLM UDS workspace is configured")]
 fn given_real_llm_uds_workspace(world: &mut QuectoWorld) {
     if std::env::var("QUECTO_REAL_LLM").unwrap_or_default() != "1" {
@@ -3280,7 +3280,7 @@ fn given_real_llm_uds_workspace(world: &mut QuectoWorld) {
         "providers": { "anthropic": anthropic },
         "agents": {
             "defaults": {
-                "model": "anthropic/claude-haiku-4-5",
+                "model": "anthropic-api/claude-haiku-4-5",
                 "workspace": workspace.to_string_lossy()
             }
         }

@@ -143,7 +143,7 @@ Feature: UDS mode for headless agent operation
     When I start the UDS agent with no [session]
     And I send command "get_state" with id "gs-before"
     And I send get_state with id "gs-same" since generation from "gs-before"
-    And I send set_model "gpt-5-mini"
+    And I send set_model "gpt-5.5-mini"
     And I send get_state with id "gs-after" since generation from "gs-before"
     And I close the UDS connection
     Then the get_state response "gs-same" should be unchanged since "gs-before"
@@ -213,11 +213,11 @@ Feature: UDS mode for headless agent operation
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "ok"
     When I start the UDS agent with no [session]
-    And I send set_model "gpt-5-mini"
+    And I send set_model "gpt-5.5-mini"
     And I send command "get_state" with id "sm-2"
     And I close the UDS connection
     Then the agent output should contain a response command "set_model" with success true
-    And the get_state response model should be "gpt-5-mini"
+    And the get_state response model should be "gpt-5.5-mini"
 
   @done
   Scenario: set_model accepts compatible provider and modelId fields
@@ -225,11 +225,11 @@ Feature: UDS mode for headless agent operation
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "ok"
     When I start the UDS agent with no [session]
-    And I send set_model provider "openai-codex" modelId "gpt-5.3-codex"
+    And I send set_model provider "openai-api" modelId "gpt-5.3-codex"
     And I send command "get_state" with id "sm-3"
     And I close the UDS connection
     Then the agent output should contain a response command "set_model" with success true
-    And the get_state response model should be "openai-codex/gpt-5.3-codex"
+    And the get_state response model should be "openai-api/gpt-5.3-codex"
 
   # ─── set_effort command (#1067) ─────────────────────────────────────────────
 
@@ -250,7 +250,7 @@ Feature: UDS mode for headless agent operation
     And a config file with an OpenAI provider pointing at a mock server
     When I start the UDS agent with no [session]
     And I send set_effort "xhigh"
-    And I send set_model "anthropic-api/claude-sonnet-4-6"
+    And I send set_model "gpt-5.5-mini"
     And I send command "get_state" with id "gs-1"
     And I close the UDS connection
     Then the get_state response effort should be "low"

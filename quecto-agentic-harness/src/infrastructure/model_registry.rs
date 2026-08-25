@@ -217,6 +217,7 @@ impl ModelRegistry {
                 ("claude-sonnet-5", "Claude Sonnet 5 (API key)"),
                 ("claude-sonnet-4-6", "Claude Sonnet 4.6 (API key)"),
                 ("claude-sonnet-4-5", "Claude Sonnet 4.5 (API key)"),
+                ("claude-haiku-4-5", "Claude Haiku 4.5 (API key)"),
             ],
         );
         group(
@@ -234,6 +235,7 @@ impl ModelRegistry {
                 ("claude-sonnet-5", "Claude Sonnet 5 (OAuth)"),
                 ("claude-sonnet-4-6", "Claude Sonnet 4.6 (OAuth)"),
                 ("claude-sonnet-4-5", "Claude Sonnet 4.5 (OAuth)"),
+                ("claude-haiku-4-5", "Claude Haiku 4.5 (OAuth)"),
             ],
         );
         group(
