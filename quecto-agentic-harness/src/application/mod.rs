@@ -9,7 +9,6 @@ mod agent_usage;
 pub mod catalogue;
 pub mod catalogue_limits;
 pub mod catalogue_refresh;
-pub mod catalogue_runtime;
 pub mod context;
 pub mod context_pruning;
 pub mod environment_control;

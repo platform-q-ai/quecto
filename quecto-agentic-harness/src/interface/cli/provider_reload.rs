@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::application::catalogue_runtime::CatalogueRuntimeSnapshot;
+use crate::application::provider_runtime::CatalogueRuntimeSnapshot;
 use crate::domain::catalogue::{CatalogueSnapshot, ModelDescriptor};
 use crate::domain::provider::LlmProvider;
 use crate::infrastructure::config::Config;
@@ -12,8 +12,7 @@ use crate::infrastructure::reload::{ReloadResult, ReloadSource, RuntimeReload};
 
 use crate::infrastructure::provider_runtime_catalogue::build_agent_provider_with_descriptors;
 
-pub type ReloadedProviderRuntime = CatalogueRuntimeSnapshot;
-pub type ProviderReload = RuntimeReload<ReloadedProviderRuntime>;
+pub type ProviderReload = RuntimeReload<CatalogueRuntimeSnapshot>;
 
 /// Owned inputs used to rebuild the provider set after a config reload.
 ///
@@ -43,7 +42,7 @@ impl ProviderReloadInputs {
         }
     }
 
-    pub async fn rebuild_blocking(&self) -> Result<ReloadedProviderRuntime, String> {
+    pub async fn rebuild_blocking(&self) -> Result<CatalogueRuntimeSnapshot, String> {
         let inputs = self.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         std::thread::spawn(move || {
@@ -53,7 +52,7 @@ impl ProviderReloadInputs {
             .map_err(|_| "provider reload worker panicked".to_string())?
     }
 
-    fn rebuild_on_current_thread(&self) -> Result<ReloadedProviderRuntime, String> {
+    fn rebuild_on_current_thread(&self) -> Result<CatalogueRuntimeSnapshot, String> {
         let config =
             Config::load_with_env(self.config_path.to_str().unwrap_or(""), &self.env_overrides)
                 .map_err(|e| e.to_string())?;
@@ -94,7 +93,7 @@ pub fn seeded_provider_reload_with_base(
 pub async fn poll_provider_reload(
     reload: Option<&mut ProviderReload>,
     inputs: Option<&ProviderReloadInputs>,
-) -> Option<ReloadResult<ReloadedProviderRuntime>> {
+) -> Option<ReloadResult<CatalogueRuntimeSnapshot>> {
     let (Some(reload), Some(inputs)) = (reload, inputs) else {
         return None;
     };
@@ -116,7 +115,7 @@ pub async fn poll_provider_reload(
 fn next_generation(reload: &ProviderReload) -> u64 {
     reload
         .last_good()
-        .map(ReloadedProviderRuntime::generation)
+        .map(CatalogueRuntimeSnapshot::generation)
         .unwrap_or(0)
         .saturating_add(1)
 }
@@ -124,7 +123,7 @@ fn next_generation(reload: &ProviderReload) -> u64 {
 pub async fn force_provider_reload(
     reload: Option<&mut ProviderReload>,
     inputs: Option<&ProviderReloadInputs>,
-) -> Option<Result<ReloadResult<ReloadedProviderRuntime>, String>> {
+) -> Option<Result<ReloadResult<CatalogueRuntimeSnapshot>, String>> {
     let (Some(reload), Some(inputs)) = (reload, inputs) else {
         return None;
     };

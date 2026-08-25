@@ -359,7 +359,7 @@ fn swap_provider_rederives_active_model_limits_from_reloaded_generation() {
             descriptors: vec![descriptor_model(999, 9999)],
         });
     agent.swap_runtime(
-        crate::application::catalogue_runtime::CatalogueRuntimeSnapshot {
+        crate::application::provider_runtime::CatalogueRuntimeSnapshot {
             catalogue: crate::domain::catalogue::CatalogueSnapshot::new(
                 42,
                 vec![descriptor_model(250, 4000)],

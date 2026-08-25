@@ -47,3 +47,15 @@ No behaviour-enforcing production lines were deleted in this slice. The refactor
   - Removed unused `RefreshableCatalogueSource`, `RefreshCatalogueUseCase`, `SourceStatus`, `RefreshOutcome`, `RuntimeComposer`, `RuntimeSnapshot`, and `ComposeRuntimeUseCase` from `application/catalogue.rs`.
   - Re-established refresh in: `application/catalogue_refresh.rs`, consumed by CLI and UDS refresh paths.
   - Re-established generation-consistent runtime helper in: `application/catalogue_runtime.rs` with its own focused tests.
+
+## Final architecture decision
+
+The CLI is the outer composition root. The composition root may instantiate infrastructure adapters while invoking application-owned policy and use cases. Such composition-root infrastructure imports are intentional; dependency direction remains inward because domain and application do not import the interface layer.
+
+## Removed unused seams
+
+The production-unused `ResolveCatalogueUseCase`, `CatalogueSource`, `ComposeCatalogueRuntimeUseCase`, and `CatalogueRuntimeComposer` abstractions and their artificial contract tests were removed. The atomic `CatalogueRuntimeSnapshot` remains application-owned with provider runtime composition and is published through `AgentLoop::swap_runtime`.
+
+## Deferred follow-up work
+
+Separating runtime connection policy (`base_url`, `auth_header`, and `allow_remote_http`) from canonical model descriptors is deferred to a focused follow-up. Decomposing `infrastructure/provider_runtime.rs` into descriptor derivation, credential availability, provider construction, and router assembly is also deferred; neither structural redesign belongs in this merge-cleanup slice.

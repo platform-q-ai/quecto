@@ -7,7 +7,21 @@
 
 use std::sync::Arc;
 
+use crate::domain::catalogue::CatalogueSnapshot;
 use crate::domain::provider::LlmProvider;
+
+/// Provider runtime and catalogue published as one immutable generation.
+#[derive(Debug, Clone)]
+pub struct CatalogueRuntimeSnapshot {
+    pub catalogue: CatalogueSnapshot,
+    pub provider: Arc<dyn LlmProvider>,
+}
+
+impl CatalogueRuntimeSnapshot {
+    pub fn generation(&self) -> u64 {
+        self.catalogue.generation
+    }
+}
 
 pub trait ProviderRuntimeFactory<C, R> {
     fn compose_runtime(

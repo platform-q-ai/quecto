@@ -1,5 +1,5 @@
 use crate::application::agent_loop::AgentLoopImpl;
-use crate::application::catalogue_runtime::CatalogueRuntimeSnapshot;
+use crate::application::provider_runtime::CatalogueRuntimeSnapshot;
 #[cfg(any(test, feature = "test-support"))]
 use crate::domain::catalogue::CatalogueSnapshot;
 use crate::domain::catalogue::{Availability, ModelRef};
