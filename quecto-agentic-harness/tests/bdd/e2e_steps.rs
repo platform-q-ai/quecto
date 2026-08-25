@@ -910,6 +910,28 @@ pub(crate) fn rewrite_config_to_provider_uri(
     let config_json = serde_json::to_string_pretty(&config).expect("serialize config");
     std::fs::write(&config_path, &config_json).expect("rewrite config");
 
+    // Mock E2E model switching needs catalogue rows for both API-key providers.
+    // The runtime still derives availability from the configured credentials.
+    let registry = serde_json::json!({
+        "providers": {
+            "openai-api": {
+                "api": "openai-completions",
+                "baseUrl": new_uri,
+                "models": [{ "id": "gpt-5.5", "name": "Mock OpenAI" }]
+            },
+            "anthropic-api": {
+                "api": "anthropic-messages",
+                "baseUrl": new_uri,
+                "models": [{ "id": "claude-haiku-4-5", "name": "Mock Anthropic" }]
+            }
+        }
+    });
+    std::fs::write(
+        base.join("models.json"),
+        serde_json::to_string_pretty(&registry).expect("serialize mock registry"),
+    )
+    .expect("write mock registry");
+
     // Also update the custom config path if one was set (for --config flag scenarios).
     if let Some(ref custom_path) = world.custom_config_path {
         std::fs::write(custom_path, &config_json).expect("rewrite custom config");

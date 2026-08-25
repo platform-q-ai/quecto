@@ -22,3 +22,7 @@ pub fn build_runtime_snapshot(
         generation,
     )
 }
+
+#[cfg(test)]
+#[path = "catalogue_runtime_tests.rs"]
+mod tests;
