@@ -19,7 +19,7 @@ The core `quecto` process can run as a one-shot CLI, an interactive REPL, or a p
 ## Principles
 
 - **Small core, replaceable edges:** the harness owns model turns, tool execution, persistence, workflows, and UDS orchestration; user interfaces and remote integrations stay separate.
-- **Local-first and long-running:** Quecto is designed to run on a laptop, VPS, small Linux host, or container for extended sessions without a non-Rust application runtime.
+- **Local-first and long-running:** Quecto is designed for long-lived sessions on laptops, VPSes, small Linux hosts, and containers, without requiring Node.js, Python, or other application runtimes.
 - **Inspectable agent work:** workflows, subagent lifecycle events, paged history, and recoverable context stubs make it possible to supervise and audit long agent runs.
 - **Review before trust:** the built-in development workflow expects tests, local review, PR review, and conformance checks rather than treating a single agent pass as sufficient.
 - **Protocol over embedding:** Terminal UI, MCP bridge, runtime manager, API gateway, and the agentic harness communicate over UDS/HTTP boundaries instead of sharing UI-specific internals.
