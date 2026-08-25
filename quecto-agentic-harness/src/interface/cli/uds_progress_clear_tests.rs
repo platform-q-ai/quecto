@@ -386,3 +386,150 @@ async fn test_spill_store_clear_removes_entries_and_recall() {
     assert!(store.list_entries(key).await.unwrap().is_empty());
     assert!(store.recall(key, "turn1:bash:0").await.unwrap().is_none());
 }
+
+#[tokio::test]
+async fn test_forward_progress_event_emits_tool_catalogue_changed_payload() {
+    use std::borrow::Cow;
+
+    use crate::domain::agent::AgentProgressEvent;
+    use crate::domain::tool_descriptor::{
+        ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolHealth,
+        ToolLifecycleKind, ToolRestrictionReason, ToolSource,
+    };
+    use crate::interface::cli::uds_cancel::forward_progress_event;
+
+    fn entry(enabled: bool) -> ToolCatalogueEntry {
+        ToolCatalogueEntry {
+            stable_id: Cow::Borrowed("stable-bash"),
+            name: Cow::Borrowed("bash"),
+            label: Cow::Borrowed("Bash"),
+            description: Cow::Borrowed("run shell"),
+            input_schema: Cow::Borrowed("{}"),
+            source: ToolSource::BundledNative,
+            owner: Cow::Borrowed("quecto"),
+            provider_id: Cow::Borrowed("builtin"),
+            version: Some(Cow::Borrowed("1")),
+            lifecycle: ToolLifecycleKind::Bundled,
+            configurable: true,
+            default_enabled: true,
+            configured_enabled: Some(enabled),
+            profile_enabled: Some(enabled),
+            profile_scope: Some(ProfileAvailabilityScope::Both),
+            session_enabled: None,
+            explicit_restriction: if enabled {
+                None
+            } else {
+                Some(ToolRestrictionReason::Session)
+            },
+            runtime_availability: if enabled {
+                ToolAvailability::Enabled
+            } else {
+                ToolAvailability::Disabled
+            },
+            effective_enabled: enabled,
+            effective_scope: ProfileAvailabilityScope::Both,
+            effective_parent_enabled: enabled,
+            effective_child_enabled: enabled,
+            health: if enabled {
+                ToolHealth::Ok
+            } else {
+                ToolHealth::Disabled
+            },
+        }
+    }
+
+    let mut buf = Vec::new();
+    forward_progress_event(
+        AgentProgressEvent::ToolCatalogueChanged {
+            changed_tools: vec!["bash".into()],
+            before: vec![entry(false)],
+            after: vec![entry(true)],
+            reason: "policy changed".into(),
+        },
+        &mut buf,
+    )
+    .await;
+
+    let output = String::from_utf8(buf).unwrap();
+    let value: serde_json::Value = serde_json::from_str(output.lines().next().unwrap()).unwrap();
+    assert_eq!(value["type"], "tool_catalogue_changed");
+    assert_eq!(value["changedTools"][0], "bash");
+    assert_eq!(value["before"][0]["effectiveEnabled"], false);
+    assert_eq!(value["after"][0]["effectiveEnabled"], true);
+    assert_eq!(value["reason"], "policy changed");
+}
+
+#[tokio::test]
+async fn test_forward_progress_event_emits_tool_policy_changed_results() {
+    use std::borrow::Cow;
+
+    use crate::domain::agent::AgentProgressEvent;
+    use crate::domain::tool::{
+        ToolPolicyApplyMode, ToolPolicyMutationResult, ToolPolicyMutationStatus,
+        ToolPolicyReconciliation,
+    };
+    use crate::domain::tool_descriptor::{
+        ProfileAvailabilityScope, ToolAvailability, ToolCatalogueEntry, ToolHealth,
+        ToolLifecycleKind, ToolSource,
+    };
+    use crate::interface::cli::uds_cancel::forward_progress_event;
+
+    let entry = ToolCatalogueEntry {
+        stable_id: Cow::Borrowed("stable-bash"),
+        name: Cow::Borrowed("bash"),
+        label: Cow::Borrowed("Bash"),
+        description: Cow::Borrowed("run shell"),
+        input_schema: Cow::Borrowed("{}"),
+        source: ToolSource::BundledNative,
+        owner: Cow::Borrowed("quecto"),
+        provider_id: Cow::Borrowed("builtin"),
+        version: None,
+        lifecycle: ToolLifecycleKind::Bundled,
+        configurable: true,
+        default_enabled: true,
+        configured_enabled: Some(true),
+        profile_enabled: Some(true),
+        profile_scope: Some(ProfileAvailabilityScope::Both),
+        session_enabled: None,
+        explicit_restriction: None,
+        runtime_availability: ToolAvailability::Enabled,
+        effective_enabled: true,
+        effective_scope: ProfileAvailabilityScope::Both,
+        effective_parent_enabled: true,
+        effective_child_enabled: true,
+        health: ToolHealth::Ok,
+    };
+
+    let reconciliation = ToolPolicyReconciliation {
+        mode: ToolPolicyApplyMode::AtNextTurnBoundary,
+        results: vec![ToolPolicyMutationResult {
+            name: "bash".into(),
+            requested_identifier: Some("stable-bash".into()),
+            requested_availability: ToolAvailability::Enabled,
+            requested_scope: ProfileAvailabilityScope::Both,
+            status: ToolPolicyMutationStatus::Applied,
+            before: None,
+            after: Some(entry),
+            reason: "enabled".into(),
+        }],
+        correlation_id: Some("policy-1".into()),
+    };
+
+    let mut buf = Vec::new();
+    forward_progress_event(
+        AgentProgressEvent::ToolPolicyChanged {
+            reconciliation,
+            reason: "operator request".into(),
+        },
+        &mut buf,
+    )
+    .await;
+
+    let output = String::from_utf8(buf).unwrap();
+    let value: serde_json::Value = serde_json::from_str(output.lines().next().unwrap()).unwrap();
+    assert_eq!(value["type"], "tool_policy_changed");
+    assert_eq!(value["changedTools"][0], "bash");
+    assert_eq!(value["applyMode"], "atNextTurnBoundary");
+    assert_eq!(value["correlationId"], "policy-1");
+    assert_eq!(value["results"][0]["status"], "applied");
+}

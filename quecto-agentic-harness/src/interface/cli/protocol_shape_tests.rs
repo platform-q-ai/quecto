@@ -2,6 +2,7 @@
 // Loaded from protocol.rs via #[path = "protocol_shape_tests.rs"].
 #![allow(unused_imports)]
 use super::*;
+use crate::domain::tool_descriptor::ProfileAvailabilityScope;
 
 #[path = "protocol_shape_tool_catalogue_tests.rs"]
 mod tool_catalogue_shape_tests;
@@ -580,6 +581,21 @@ fn core_command_type_names() {
         AgentCommand::ClearHistory { id: None }.type_name(),
         "clear_history"
     );
+    let set_tool_policy = AgentCommand::SetToolPolicy {
+        id: Some("policy-1".into()),
+        mutations: vec![ToolPolicyMutationCommand {
+            tool_id: Some("stable-bash".into()),
+            name: None,
+            scope: ProfileAvailabilityScope::Both,
+            reason: Some("needed for tests".into()),
+        }],
+        mode: ToolPolicyApplyModeCommand::AtNextTurnBoundary,
+        operation: ToolPolicyOperationCommand::Replace,
+        unlisted_scope: Some(ProfileAvailabilityScope::Parent),
+        persist: true,
+    };
+    assert_eq!(set_tool_policy.type_name(), "set_tool_policy");
+    assert_eq!(set_tool_policy.id(), Some("policy-1"));
     assert_eq!(
         AgentCommand::GetSubagents {
             id: None,
@@ -592,14 +608,28 @@ fn core_command_type_names() {
         AgentCommand::ListSessions { id: None }.type_name(),
         "list_sessions"
     );
-    assert_eq!(
-        AgentCommand::ResumeSession {
-            id: None,
-            session: "work".into(),
-        }
-        .type_name(),
-        "resume_session"
-    );
+    let list_models = AgentCommand::ListModels {
+        id: Some("models-1".into()),
+    };
+    assert_eq!(list_models.type_name(), "list_models");
+    assert_eq!(list_models.id(), Some("models-1"));
+    let refresh = AgentCommand::RefreshModels {
+        id: Some("refresh-1".into()),
+        provider: None,
+    };
+    assert_eq!(refresh.type_name(), "refresh_models");
+    assert_eq!(refresh.id(), Some("refresh-1"));
+    let new_session = AgentCommand::NewSession {
+        id: Some("new-1".into()),
+    };
+    assert_eq!(new_session.type_name(), "new_session");
+    assert_eq!(new_session.id(), Some("new-1"));
+    let resume = AgentCommand::ResumeSession {
+        id: Some("resume-1".into()),
+        session: "work".into(),
+    };
+    assert_eq!(resume.type_name(), "resume_session");
+    assert_eq!(resume.id(), Some("resume-1"));
 }
 
 // ─── clear_history (#408) ────────────────────────────────────────────────────
@@ -636,4 +666,69 @@ fn clear_history_command_serializes_without_id() {
     let j = round_trip(&cmd);
     assert_eq!(j["type"], "clear_history");
     assert!(j.get("id").is_none());
+}
+
+#[test]
+fn list_models_command_round_trips_with_id() {
+    let cmd = AgentCommand::ListModels {
+        id: Some("models-1".into()),
+    };
+    let value = round_trip(&cmd);
+    assert_eq!(value["type"], "list_models");
+    assert_eq!(value["id"], "models-1");
+}
+
+#[test]
+fn refresh_models_command_round_trips_provider_filter() {
+    let cmd = AgentCommand::RefreshModels {
+        id: Some("refresh-1".into()),
+        provider: Some("anthropic".into()),
+    };
+    let value = round_trip(&cmd);
+    assert_eq!(value["type"], "refresh_models");
+    assert_eq!(value["provider"], "anthropic");
+}
+
+#[test]
+fn new_session_command_round_trips_with_id() {
+    let cmd = AgentCommand::NewSession {
+        id: Some("new-1".into()),
+    };
+    let value = round_trip(&cmd);
+    assert_eq!(value["type"], "new_session");
+    assert_eq!(value["id"], "new-1");
+}
+
+#[test]
+fn resume_session_command_round_trips_session_name() {
+    let cmd = AgentCommand::ResumeSession {
+        id: Some("resume-1".into()),
+        session: "work".into(),
+    };
+    let value = round_trip(&cmd);
+    assert_eq!(value["type"], "resume_session");
+    assert_eq!(value["session"], "work");
+}
+
+#[test]
+fn set_tool_policy_command_round_trips_replace_policy() {
+    let cmd = AgentCommand::SetToolPolicy {
+        id: Some("policy-1".into()),
+        mutations: vec![ToolPolicyMutationCommand {
+            tool_id: Some("stable-bash".into()),
+            name: None,
+            scope: ProfileAvailabilityScope::Both,
+            reason: Some("needed for tests".into()),
+        }],
+        mode: ToolPolicyApplyModeCommand::AtNextTurnBoundary,
+        operation: ToolPolicyOperationCommand::Replace,
+        unlisted_scope: Some(ProfileAvailabilityScope::Parent),
+        persist: true,
+    };
+    let value = round_trip(&cmd);
+    assert_eq!(value["type"], "set_tool_policy");
+    assert_eq!(value["mode"], "atNextTurnBoundary");
+    assert_eq!(value["operation"], "replace");
+    assert_eq!(value["unlistedScope"], "parent");
+    assert_eq!(value["persist"], true);
 }

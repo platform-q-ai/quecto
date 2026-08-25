@@ -2,20 +2,28 @@ use std::sync::Arc;
 
 use crate::domain::catalogue::{
     AuthIdentity, Availability, ModelCapabilities, ModelCost, ModelDescriptor, ModelRef,
-    TransportKind,
+    ProviderId, TransportKind,
 };
 use crate::domain::message::LlmResponse;
 use crate::domain::provider::{ChatRequest, LlmProvider};
+use crate::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
 use crate::infrastructure::providers::router::ProviderRouter;
 
 use super::list_models_data;
 
 #[derive(Debug)]
-struct NamedProvider(String);
+struct NamedProvider {
+    name: String,
+    descriptors: Vec<ModelDescriptor>,
+}
 
 impl LlmProvider for NamedProvider {
     fn name(&self) -> &str {
-        &self.0
+        &self.name
+    }
+
+    fn model_descriptors(&self) -> Option<&[ModelDescriptor]> {
+        Some(&self.descriptors)
     }
 
     fn chat<'a>(
@@ -33,7 +41,20 @@ impl LlmProvider for NamedProvider {
 }
 
 fn provider(name: &str) -> Arc<dyn LlmProvider> {
-    Arc::new(NamedProvider(name.to_string()))
+    Arc::new(NamedProvider {
+        name: name.to_string(),
+        descriptors: Vec::new(),
+    })
+}
+
+fn provider_with_descriptors(
+    name: &str,
+    descriptors: Vec<ModelDescriptor>,
+) -> Arc<dyn LlmProvider> {
+    Arc::new(NamedProvider {
+        name: name.to_string(),
+        descriptors,
+    })
 }
 
 fn descriptor(provider: &str, model: &str, auth: AuthIdentity) -> ModelDescriptor {
@@ -56,6 +77,17 @@ fn descriptor(provider: &str, model: &str, auth: AuthIdentity) -> ModelDescripto
         },
         configured: true,
         availability: Availability::Runnable,
+    }
+}
+
+trait DescriptorTestExt {
+    fn with_transport(self, transport: TransportKind) -> Self;
+}
+
+impl DescriptorTestExt for ModelDescriptor {
+    fn with_transport(mut self, transport: TransportKind) -> Self {
+        self.transport = transport;
+        self
     }
 }
 
@@ -97,4 +129,71 @@ fn list_models_data_reports_current_single_provider_snapshot() {
     assert_eq!(models[0]["provider"], "solo");
     assert_eq!(models[0]["model"], "solo/solo");
     assert_eq!(models[0]["configured"], true);
+}
+
+#[test]
+fn list_models_data_serializes_oauth_anthropic_and_google_metadata() {
+    let runtime: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::with_model_descriptors(
+        vec![provider("runtime")],
+        vec![
+            descriptor(
+                "anthropic-api",
+                "claude-oauth",
+                AuthIdentity::OAuth {
+                    provider: ProviderId::new("anthropic").unwrap(),
+                },
+            )
+            .with_transport(TransportKind::AnthropicMessages),
+            descriptor("google-api", "gemini", AuthIdentity::ApiKey)
+                .with_transport(TransportKind::GoogleGenerativeAi),
+        ],
+    ));
+
+    let data = list_models_data(&runtime);
+
+    let models = data["models"].as_array().unwrap();
+    let oauth = models
+        .iter()
+        .find(|model| model["model"] == "anthropic-api/claude-oauth")
+        .unwrap();
+    assert_eq!(oauth["api"], "anthropic-messages");
+    assert_eq!(oauth["auth"], "oauth");
+    assert_eq!(oauth["oauthProvider"], "anthropic");
+    let google = models
+        .iter()
+        .find(|model| model["model"] == "google-api/gemini")
+        .unwrap();
+    assert_eq!(google["api"], "google-generative-ai");
+}
+
+#[test]
+fn list_models_data_uses_direct_provider_descriptors_before_router_introspection() {
+    let runtime = provider_with_descriptors(
+        "direct",
+        vec![descriptor("direct", "m", AuthIdentity::ApiKey)],
+    );
+
+    let data = list_models_data(&runtime);
+
+    let models = data["models"].as_array().unwrap();
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0]["provider"], "direct");
+    assert_eq!(models[0]["model"], "direct/m");
+}
+
+#[test]
+fn list_models_data_unwraps_retrying_provider_to_router_children_when_router_snapshot_empty() {
+    let child_descriptor = descriptor("child", "m", AuthIdentity::ApiKey);
+    let router: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::with_model_descriptors(
+        vec![provider_with_descriptors("child", vec![child_descriptor])],
+        Vec::new(),
+    ));
+    let runtime: Arc<dyn LlmProvider> =
+        Arc::new(RetryingProvider::new(router, RetryConfig::no_delay(1)));
+
+    let data = list_models_data(&runtime);
+
+    let models = data["models"].as_array().unwrap();
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0]["model"], "child/m");
 }
