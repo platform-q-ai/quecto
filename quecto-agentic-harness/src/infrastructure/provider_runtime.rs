@@ -1,6 +1,3 @@
-use std::collections::HashSet;
-use std::sync::Arc;
-
 use crate::domain::provider::LlmProvider;
 use crate::infrastructure::auth::credential_store::CredentialStore;
 use crate::infrastructure::catalogue_registry::record_to_descriptor_with_credential;
@@ -9,17 +6,15 @@ use crate::infrastructure::providers;
 use crate::infrastructure::providers::refreshable::{RefreshableConfig, RefreshableProvider};
 use crate::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
 use crate::infrastructure::providers::router::ProviderRouter;
-
+use std::collections::HashSet;
+use std::sync::Arc;
 const MAX_OPENAI_COMPATIBLE_ENDPOINTS: usize = 32;
-
 #[derive(Debug, Default, Clone, Copy)]
 pub struct InfrastructureProviderRuntimeFactory;
-
 pub struct ProviderRuntimeInputs<'a> {
     pub base_dir: &'a std::path::Path,
     pub http_client: &'a reqwest::Client,
 }
-
 impl<'a> crate::provider_runtime_app::ProviderRuntimeFactory<Config, ProviderRuntimeInputs<'a>>
     for InfrastructureProviderRuntimeFactory
 {
@@ -31,7 +26,6 @@ impl<'a> crate::provider_runtime_app::ProviderRuntimeFactory<Config, ProviderRun
         build_agent_provider(config, runtime_inputs.base_dir, runtime_inputs.http_client)
     }
 }
-
 pub(crate) fn build_agent_provider(
     config: &Config,
     base_dir: &std::path::Path,
@@ -39,23 +33,19 @@ pub(crate) fn build_agent_provider(
 ) -> Result<Arc<dyn LlmProvider>, String> {
     compose_agent_provider(config, base_dir, http_client)
 }
-
 fn compose_agent_provider(
     config: &Config,
     base_dir: &std::path::Path,
     http_client: &reqwest::Client,
 ) -> Result<Arc<dyn LlmProvider>, String> {
     let store = CredentialStore::new(base_dir);
-
     let mut provider_list: Vec<Arc<dyn crate::domain::provider::LlmProvider>> = Vec::new();
     let store_arc = Arc::new(CredentialStore::new(base_dir));
     let refresh_fn = crate::infrastructure::oauth_runtime::make_oauth_refresh_fn();
-
     let model_registry = crate::infrastructure::model_registry::ModelRegistry::load_from_path(
         &base_dir.join("models.json"),
     )
     .map_err(|e| e.to_string())?;
-
     let openai_base = non_empty(config.providers.openai.api_base.clone());
     let openai_api_key = if !config.providers.openai.api_key.is_empty() {
         config.providers.openai.api_key.clone()
@@ -121,7 +111,6 @@ fn compose_agent_provider(
             })));
         }
     }
-
     let anthropic_base = non_empty(config.providers.anthropic.api_base.clone());
     let anthropic_api_key = if !config.providers.anthropic.api_key.is_empty() {
         config.providers.anthropic.api_key.clone()
@@ -194,14 +183,7 @@ fn compose_agent_provider(
             })));
         }
     }
-
-    if config.providers.openai_compatible.endpoints.len() > MAX_OPENAI_COMPATIBLE_ENDPOINTS {
-        return Err(format!(
-            "openai_compatible configures {} endpoints, exceeding the maximum of {}",
-            config.providers.openai_compatible.endpoints.len(),
-            MAX_OPENAI_COMPATIBLE_ENDPOINTS
-        ));
-    }
+    validate_endpoint_count(config)?;
     let mut custom_prefixes = HashSet::new();
     let mut seen_registry_prefixes = HashSet::new();
     let builtin_registry_prefixes: HashSet<String> =
@@ -252,7 +234,8 @@ fn compose_agent_provider(
             let has_direct_runtime = is_canonical_owner
                 && ((canonical_provider == "openai-api" && has_openai_api_key)
                     || (canonical_provider == "anthropic-api" && has_anthropic_api_key)
-                    || configured_endpoint_prefixes.contains(&canonical_provider));
+                    || configured_endpoint_prefixes.contains(&canonical_provider)
+                    || constructible_registry_prefixes.contains(&canonical_provider));
             if !is_canonical_owner
                 || (!has_direct_runtime
                     && !constructible_registry_prefixes.contains(&canonical_provider))
@@ -280,6 +263,14 @@ fn compose_agent_provider(
             continue;
         }
         seen_registry_prefixes.insert(canonical_prefix.clone());
+        if explicit_endpoint_owns_registry_route(
+            model,
+            &configured_endpoint_prefixes,
+            &store,
+            config,
+        )? {
+            continue;
+        }
         if !builtin_registry_prefixes.contains(&canonical_prefix) {
             custom_prefixes.insert(canonical_prefix);
         }
@@ -327,13 +318,7 @@ fn compose_agent_provider(
         .map_err(|e| format!("openai_compatible provider configuration error: {}", e))?;
         provider_list.push(provider);
     }
-
-    if provider_list.is_empty() {
-        return Err(
-            "no LLM providers configured (set an API key or run 'quecto auth login')".to_string(),
-        );
-    }
-
+    ensure_providers_configured(&provider_list)?;
     let router: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::with_model_descriptors(
         provider_list,
         runtime_model_descriptors,
@@ -343,7 +328,44 @@ fn compose_agent_provider(
         RetryConfig::default(),
     )))
 }
+fn ensure_providers_configured(providers: &[Arc<dyn LlmProvider>]) -> Result<(), String> {
+    if providers.is_empty() {
+        return Err(
+            "no LLM providers configured (set an API key or run 'quecto auth login')".to_string(),
+        );
+    }
+    Ok(())
+}
 
+fn validate_endpoint_count(config: &Config) -> Result<(), String> {
+    let count = config.providers.openai_compatible.endpoints.len();
+    if count > MAX_OPENAI_COMPATIBLE_ENDPOINTS {
+        return Err(format!(
+            "openai_compatible configures {count} endpoints, exceeding the maximum of {MAX_OPENAI_COMPATIBLE_ENDPOINTS}"
+        ));
+    }
+    Ok(())
+}
+
+fn explicit_endpoint_owns_registry_route(
+    model: &crate::infrastructure::model_registry::ModelRecord,
+    endpoint_prefixes: &HashSet<String>,
+    store: &CredentialStore,
+    config: &Config,
+) -> Result<bool, String> {
+    use crate::infrastructure::model_registry::ProviderApi;
+    let prefix = model.provider.to_ascii_lowercase();
+    if !endpoint_prefixes.contains(&prefix)
+        || matches!(model.api, ProviderApi::GoogleGenerativeAi)
+        || !model
+            .base_url
+            .as_ref()
+            .is_some_and(|base| !base.trim().is_empty())
+    {
+        return Ok(false);
+    }
+    registry_provider_can_construct(model, store, config)
+}
 fn canonical_registry_prefix_owners<'a>(
     models: impl IntoIterator<Item = &'a crate::infrastructure::model_registry::ModelRecord>,
 ) -> HashSet<String> {
@@ -360,7 +382,6 @@ fn canonical_registry_prefix_owners<'a>(
     }
     owners_by_canonical.into_values().collect()
 }
-
 #[cfg(feature = "test-support")]
 fn mock_llm_bare_anthropic_alias_enabled(api_base: &Option<String>) -> bool {
     std::env::var("QUECTO_TAG").ok().as_deref() == Some("mock-llm")
@@ -368,7 +389,6 @@ fn mock_llm_bare_anthropic_alias_enabled(api_base: &Option<String>) -> bool {
             base.starts_with("http://127.0.0.1:") || base.starts_with("http://localhost:")
         })
 }
-
 fn registry_provider_factory(
     provider_api: crate::infrastructure::model_registry::ProviderApi,
     provider_prefix: String,
@@ -404,13 +424,11 @@ fn registry_provider_factory(
         }
     })
 }
-
 fn oauth_registry_base_url(
     model: &crate::infrastructure::model_registry::ModelRecord,
     oauth_provider: &str,
 ) -> Result<Option<String>, String> {
     use crate::infrastructure::model_registry::ProviderApi;
-
     let configured = model.base_url.as_ref().filter(|b| !b.trim().is_empty());
     match (model.api, oauth_provider) {
         (ProviderApi::OpenAiCompletions, "openai") => validate_oauth_base_url(
@@ -441,7 +459,6 @@ fn oauth_registry_base_url(
         (ProviderApi::GoogleGenerativeAi, _) => Ok(configured.cloned()),
     }
 }
-
 fn validate_oauth_base_url(
     provider_key: &str,
     oauth_provider: &str,
@@ -474,7 +491,6 @@ fn validate_oauth_base_url(
         canonical
     ))
 }
-
 fn sanitize_url_for_error(raw: &str) -> String {
     match reqwest::Url::parse(raw) {
         Ok(mut url) => {
@@ -487,7 +503,6 @@ fn sanitize_url_for_error(raw: &str) -> String {
         Err(_) => "<invalid url>".to_string(),
     }
 }
-
 fn registry_model_credential_available(
     model: &crate::infrastructure::model_registry::ModelRecord,
     store: &CredentialStore,
@@ -495,14 +510,12 @@ fn registry_model_credential_available(
 ) -> Result<bool, String> {
     use crate::infrastructure::auth::credential_store::AuthMethod;
     use crate::infrastructure::model_registry::AuthMode;
-
     if matches!(
         model.api,
         crate::infrastructure::model_registry::ProviderApi::GoogleGenerativeAi
     ) {
         return Ok(false);
     }
-
     match model.auth {
         AuthMode::ApiKey => Ok(model.api_key.as_deref().is_some_and(|key| !key.is_empty())
             || builtin_api_key_available(model, store, config)?),
@@ -520,14 +533,12 @@ fn registry_model_credential_available(
         }
     }
 }
-
 fn builtin_api_key_available(
     model: &crate::infrastructure::model_registry::ModelRecord,
     store: &CredentialStore,
     config: &Config,
 ) -> Result<bool, String> {
     use crate::infrastructure::auth::credential_store::AuthMethod;
-
     let (config_key, credential_provider) = match model.provider.as_str() {
         "openai-api" => (&config.providers.openai.api_key, "openai"),
         "anthropic-api" => (&config.providers.anthropic.api_key, "anthropic"),
@@ -543,7 +554,6 @@ fn builtin_api_key_available(
             cred.method == AuthMethod::Token && !cred.token.is_empty() && !cred.is_expired()
         }))
 }
-
 #[cfg_attr(not(test), allow(dead_code))]
 fn registry_api_key(
     model: &crate::infrastructure::model_registry::ModelRecord,
@@ -571,7 +581,6 @@ fn registry_api_key(
         && !cred.is_expired())
     .then_some(cred.token))
 }
-
 fn registry_provider_can_construct(
     model: &crate::infrastructure::model_registry::ModelRecord,
     store: &CredentialStore,
@@ -586,7 +595,6 @@ fn registry_provider_can_construct(
         AuthMode::OAuth => registry_model_credential_available(model, store, config),
     }
 }
-
 fn build_registry_provider(
     model: &crate::infrastructure::model_registry::ModelRecord,
     _base_dir: &std::path::Path,

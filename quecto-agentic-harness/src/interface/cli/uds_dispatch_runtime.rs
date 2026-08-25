@@ -60,8 +60,10 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
             .split_once('/')
             .map(|(provider, _)| format!("no configured provider '{provider}'"))
             .unwrap_or_else(|| "unknown model".to_string());
-        let ev = AgentEvent::err(args.id.as_deref(), &args.type_name, message);
+        let ev = AgentEvent::err(args.id.as_deref(), &args.type_name, message.clone());
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(None, "agent_error", message))
+            .await;
         return false;
     };
     let selection = ResolveModelSelectionUseCase::new(ctx.agent.catalogue_store.clone());
