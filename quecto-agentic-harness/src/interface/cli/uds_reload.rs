@@ -149,7 +149,28 @@ pub(super) async fn handle_refresh_models(
         emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(id, type_name, data.to_string()))
             .await;
     } else {
-        emit_event_to_broadcast_or_writer(ctx, &AgentEvent::ok(id, type_name, Some(data))).await;
+        match provider_reload::force_provider_reload(
+            ctx.provider_reload.as_deref_mut(),
+            ctx.provider_reload_inputs,
+        )
+        .await
+        {
+            Some(Ok(result)) => {
+                apply_provider_reload_result(ctx, Some(result));
+                emit_event_to_broadcast_or_writer(ctx, &AgentEvent::ok(id, type_name, Some(data)))
+                    .await;
+            }
+            Some(Err(err)) => {
+                emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(id, type_name, err)).await;
+            }
+            None => {
+                emit_event_to_broadcast_or_writer(
+                    ctx,
+                    &AgentEvent::err(id, type_name, "provider reload is not configured"),
+                )
+                .await;
+            }
+        }
     }
     false
 }

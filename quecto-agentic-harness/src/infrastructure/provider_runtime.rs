@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use crate::domain::provider::LlmProvider;
 use crate::infrastructure::auth::credential_store::CredentialStore;
+use crate::infrastructure::catalogue_registry::record_to_descriptor;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::providers;
 use crate::infrastructure::providers::refreshable::{RefreshableConfig, RefreshableProvider};
@@ -229,6 +230,12 @@ fn compose_agent_provider(
     // carries its own wire protocol (`api`) and explicit auth mode; we never
     // silently switch a vendor between OAuth and API-key billing.
     let mut seen_registry_prefixes = HashSet::new();
+    let mut runtime_model_descriptors = Vec::new();
+    for model in model_registry.models() {
+        if let Some(descriptor) = record_to_descriptor(model)? {
+            runtime_model_descriptors.push(descriptor);
+        }
+    }
     for model in model_registry.models() {
         let canonical_prefix = model.provider.to_ascii_lowercase();
         if seen_registry_prefixes.contains(&canonical_prefix)
@@ -285,7 +292,10 @@ fn compose_agent_provider(
     // (honouring Retry-After) before the turn fails; Client/Auth/Cancelled pass
     // straight through (#931). Composed outside refreshable so a refreshed-token
     // retry still benefits from transient-error retries.
-    let router: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::new(provider_list));
+    let router: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::with_model_descriptors(
+        provider_list,
+        runtime_model_descriptors,
+    ));
     Ok(Arc::new(RetryingProvider::new(
         router,
         RetryConfig::default(),
@@ -385,7 +395,9 @@ fn validate_oauth_base_url(
     let configured_url = reqwest::Url::parse(configured).map_err(|e| {
         format!(
             "models.json provider '{}' has invalid OAuth baseUrl '{}': {}",
-            provider_key, configured, e
+            provider_key,
+            sanitize_url_for_error(configured),
+            e
         )
     })?;
     let canonical_url = reqwest::Url::parse(canonical).expect("canonical OAuth base URL is valid");
@@ -397,8 +409,24 @@ fn validate_oauth_base_url(
     }
     Err(format!(
         "models.json provider '{}' uses oauth auth for '{}' but baseUrl '{}' is not the canonical OAuth host '{}'",
-        provider_key, oauth_provider, configured, canonical
+        provider_key,
+        oauth_provider,
+        sanitize_url_for_error(configured),
+        canonical
     ))
+}
+
+fn sanitize_url_for_error(raw: &str) -> String {
+    match reqwest::Url::parse(raw) {
+        Ok(mut url) => {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            url.set_query(None);
+            url.set_fragment(None);
+            url.to_string()
+        }
+        Err(_) => "<invalid url>".to_string(),
+    }
 }
 
 fn build_registry_provider(

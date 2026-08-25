@@ -8,6 +8,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use crate::domain::catalogue::ModelDescriptor;
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
@@ -21,13 +22,24 @@ use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 #[derive(Debug)]
 pub struct ProviderRouter {
     providers: Vec<Arc<dyn LlmProvider>>,
+    model_descriptors: Vec<ModelDescriptor>,
 }
 
 impl ProviderRouter {
     /// Create a new router from an ordered list of providers.
     /// The first provider is the default for bare model names.
     pub fn new(providers: Vec<Arc<dyn LlmProvider>>) -> Self {
-        Self { providers }
+        Self::with_model_descriptors(providers, Vec::new())
+    }
+
+    pub fn with_model_descriptors(
+        providers: Vec<Arc<dyn LlmProvider>>,
+        model_descriptors: Vec<ModelDescriptor>,
+    ) -> Self {
+        Self {
+            providers,
+            model_descriptors,
+        }
     }
 
     /// Names of the configured providers, in routing order.
@@ -36,6 +48,10 @@ impl ProviderRouter {
     /// the router itself routes by prefix match against these names.
     pub fn provider_names(&self) -> Vec<&str> {
         self.providers.iter().map(|p| p.name()).collect()
+    }
+
+    pub fn providers(&self) -> &[Arc<dyn LlmProvider>] {
+        &self.providers
     }
 
     /// Resolve which provider and effective model to use for a request.
@@ -103,6 +119,10 @@ impl LlmProvider for ProviderRouter {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    fn model_descriptors(&self) -> Option<&[ModelDescriptor]> {
+        Some(&self.model_descriptors)
     }
 
     fn chat<'a>(

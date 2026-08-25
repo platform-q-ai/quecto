@@ -85,6 +85,24 @@ fn validate_oauth_base_url_rejects_malformed_configured_url() {
     .unwrap_err();
     assert!(err.contains("invalid OAuth baseUrl"), "got: {err}");
     assert!(err.contains("bad-provider"), "got: {err}");
+    assert!(!err.contains("not a url"), "got: {err}");
+}
+
+#[test]
+fn validate_oauth_base_url_redacts_credentials_query_and_fragment() {
+    let secret = "https://user:token@evil.example/v1?api_key=sk-secret#frag".to_string();
+    let err = validate_oauth_base_url(
+        "bad-provider",
+        "openai",
+        Some(&secret),
+        "https://api.openai.com/v1",
+    )
+    .unwrap_err();
+
+    assert!(err.contains("https://evil.example/v1"), "got: {err}");
+    for leaked in ["user:token", "token@", "api_key", "sk-secret", "frag"] {
+        assert!(!err.contains(leaked), "leaked {leaked}: {err}");
+    }
 }
 
 #[test]

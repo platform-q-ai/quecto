@@ -2,6 +2,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use super::{
+    catalogue::ModelDescriptor,
     error::DomainError,
     message::{LlmResponse, Message},
     tool::ToolDefinition,
@@ -249,6 +250,11 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
     /// that downcasts to nothing useful.
     fn as_any(&self) -> &dyn std::any::Any {
         &()
+    }
+
+    /// Runtime model descriptors currently served by this provider snapshot.
+    fn model_descriptors(&self) -> Option<&[ModelDescriptor]> {
+        None
     }
 
     /// Send a chat request and return the LLM response.

@@ -91,11 +91,10 @@ pub struct AgentLoopConfig {
     pub tool_profile_context: ToolProfileContext,
 }
 pub struct AgentLoopImpl {
-    provider: Arc<dyn LlmProvider>,
+    pub provider: Arc<dyn LlmProvider>,
     pub(super) tool_registry: Box<dyn ToolRegistry>,
     model: String,
     max_tokens: u32,
-    /// Per-model registry output cap, if known; see `agent_loop_clamp` (#935).
     model_max_tokens: Option<u32>,
     temperature: f32,
     max_tool_iterations: u32,
@@ -194,6 +193,7 @@ impl AgentLoopImpl {
     pub fn swap_provider(&mut self, provider: Arc<dyn LlmProvider>) {
         self.provider = provider;
     }
+
     /// Return the currently configured model name.
     pub fn model(&self) -> &str {
         &self.model

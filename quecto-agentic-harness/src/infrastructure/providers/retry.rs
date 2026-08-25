@@ -22,6 +22,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::domain::catalogue::ModelDescriptor;
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
 use crate::domain::provider::{ChatRequest, LlmProvider};
@@ -202,6 +203,10 @@ impl LlmProvider for RetryingProvider {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    fn model_descriptors(&self) -> Option<&[ModelDescriptor]> {
+        self.inner.model_descriptors()
     }
 
     fn chat<'a>(
