@@ -4,13 +4,17 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::application::catalogue_runtime::CatalogueRuntimeSnapshot;
+use crate::catalogue_app::CatalogueSource;
+use crate::domain::catalogue::CatalogueSnapshot;
 use crate::domain::provider::LlmProvider;
+use crate::infrastructure::catalogue_registry::ModelRegistryCatalogueSource;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::reload::{ReloadResult, ReloadSource, RuntimeReload};
 
 use super::build_agent_provider;
 
-pub type ProviderReload = RuntimeReload<Arc<dyn LlmProvider>>;
+pub type ProviderReload = RuntimeReload<CatalogueRuntimeSnapshot>;
 
 /// Owned inputs used to rebuild the provider set after a config reload.
 ///
@@ -40,7 +44,7 @@ impl ProviderReloadInputs {
         }
     }
 
-    pub async fn rebuild_blocking(&self) -> Result<Arc<dyn LlmProvider>, String> {
+    pub async fn rebuild_blocking(&self) -> Result<CatalogueRuntimeSnapshot, String> {
         let inputs = self.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         std::thread::spawn(move || {
@@ -50,11 +54,18 @@ impl ProviderReloadInputs {
             .map_err(|_| "provider reload worker panicked".to_string())?
     }
 
-    fn rebuild_on_current_thread(&self) -> Result<Arc<dyn LlmProvider>, String> {
+    fn rebuild_on_current_thread(&self) -> Result<CatalogueRuntimeSnapshot, String> {
         let config =
             Config::load_with_env(self.config_path.to_str().unwrap_or(""), &self.env_overrides)
                 .map_err(|e| e.to_string())?;
-        build_agent_provider(&config, &self.base_dir, &self.http_client)
+        let provider = build_agent_provider(&config, &self.base_dir, &self.http_client)?;
+        let models =
+            ModelRegistryCatalogueSource::load_from_path(&self.base_dir.join("models.json"))?
+                .load()?;
+        Ok(CatalogueRuntimeSnapshot {
+            catalogue: CatalogueSnapshot::new(0, models),
+            provider,
+        })
     }
 }
 
@@ -76,14 +87,21 @@ pub fn seeded_provider_reload_with_base(
         sources.push(ReloadSource::new(base_dir.join("models.json")));
     }
     let mut reload = RuntimeReload::new(sources);
-    reload.seed(initial_provider);
+    let catalogue = CatalogueSnapshot::new(
+        0,
+        initial_provider.model_descriptors().unwrap_or(&[]).to_vec(),
+    );
+    reload.seed(CatalogueRuntimeSnapshot {
+        catalogue,
+        provider: initial_provider,
+    });
     reload
 }
 
 pub async fn poll_provider_reload(
     reload: Option<&mut ProviderReload>,
     inputs: Option<&ProviderReloadInputs>,
-) -> Option<ReloadResult<Arc<dyn LlmProvider>>> {
+) -> Option<ReloadResult<CatalogueRuntimeSnapshot>> {
     let (Some(reload), Some(inputs)) = (reload, inputs) else {
         return None;
     };
@@ -102,7 +120,7 @@ pub async fn poll_provider_reload(
 pub async fn force_provider_reload(
     reload: Option<&mut ProviderReload>,
     inputs: Option<&ProviderReloadInputs>,
-) -> Option<Result<ReloadResult<Arc<dyn LlmProvider>>, String>> {
+) -> Option<Result<ReloadResult<CatalogueRuntimeSnapshot>, String>> {
     let (Some(reload), Some(inputs)) = (reload, inputs) else {
         return None;
     };

@@ -1,7 +1,6 @@
 use crate::application::catalogue_refresh::{
     CatalogueRefreshStatus, RefreshCatalogueSourceUseCase,
 };
-use crate::domain::provider::LlmProvider;
 use crate::infrastructure::catalogue_discovery::ModelsJsonCatalogueRefreshAdapter;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::reload::ReloadResult;
@@ -12,10 +11,10 @@ use super::uds::{DispatchCtx, emit_event_to_broadcast_or_writer};
 
 pub(super) fn apply_provider_reload_result(
     ctx: &mut DispatchCtx<'_>,
-    result: Option<ReloadResult<std::sync::Arc<dyn LlmProvider>>>,
+    result: Option<ReloadResult<crate::application::catalogue_runtime::CatalogueRuntimeSnapshot>>,
 ) {
-    if let Some(ReloadResult::Reloaded(provider)) = result {
-        ctx.agent.swap_provider(provider);
+    if let Some(ReloadResult::Reloaded(runtime)) = result {
+        ctx.agent.swap_runtime(runtime);
         if let Some(inputs) = ctx.provider_reload_inputs {
             match Config::load_with_env(
                 inputs.config_path.to_str().unwrap_or(""),

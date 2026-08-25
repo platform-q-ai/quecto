@@ -117,3 +117,41 @@ async fn unchanged_poll_does_not_rebuild() {
         crate::infrastructure::reload::ReloadResult::Unchanged
     ));
 }
+
+#[tokio::test]
+async fn forced_reload_publishes_owned_catalogue_snapshot_from_models_json() {
+    let dir = TempDir::new().unwrap();
+    let path = write_config(&dir, r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
+    std::fs::write(
+        dir.path().join("models.json"),
+        serde_json::json!({"providers": {
+            "custom": {
+                "api": "openai-completions",
+                "baseUrl": "https://example.test/v1",
+                "apiKey": "sk-custom",
+                "models": [{"id": "custom-model", "displayName": "Custom Model"}]
+            }
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let mut reload =
+        seeded_provider_reload_with_base(&path, Some(dir.path().to_path_buf()), provider());
+    let inputs = inputs(path, &dir);
+
+    let result = force_provider_reload(Some(&mut reload), Some(&inputs))
+        .await
+        .unwrap()
+        .unwrap();
+
+    let crate::infrastructure::reload::ReloadResult::Reloaded(runtime) = result else {
+        panic!("expected reloaded runtime");
+    };
+    assert!(
+        runtime
+            .catalogue
+            .models()
+            .iter()
+            .any(|model| model.qualified_id() == "custom/custom-model")
+    );
+}

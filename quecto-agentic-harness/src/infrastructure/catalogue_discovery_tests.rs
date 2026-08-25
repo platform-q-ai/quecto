@@ -286,3 +286,56 @@ fn provider_keys_are_sorted_for_deterministic_refresh_publication() {
 
     assert_eq!(provider_keys(&path).unwrap(), ["alpha", "middle", "zeta"]);
 }
+
+#[test]
+fn publication_lock_preserves_different_provider_updates_across_processes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("models.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({"providers": {
+            "alpha": {"baseUrl": "https://example.test/v1", "models": []},
+            "beta": {"baseUrl": "https://example.test/v1", "models": []}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+
+    let lock = ModelsJsonPublishLock::acquire(tmp.path()).unwrap();
+    let alpha_dir = tmp.path().to_path_buf();
+    let alpha = std::thread::spawn(move || {
+        discover_once_with(
+            &alpha_dir,
+            "alpha",
+            |_url, _auth| Ok(vec![serde_json::json!({"id": "alpha-model"})]),
+            |path, bytes| atomic_write(path, bytes, Some(0o600)).map_err(|e| e.to_string()),
+        )
+        .unwrap();
+    });
+    let beta_dir = tmp.path().to_path_buf();
+    let beta = std::thread::spawn(move || {
+        discover_once_with(
+            &beta_dir,
+            "beta",
+            |_url, _auth| Ok(vec![serde_json::json!({"id": "beta-model"})]),
+            |path, bytes| atomic_write(path, bytes, Some(0o600)).map_err(|e| e.to_string()),
+        )
+        .unwrap();
+    });
+
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    drop(lock);
+    alpha.join().unwrap();
+    beta.join().unwrap();
+
+    let published: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(
+        published["providers"]["alpha"]["models"][0]["id"],
+        "alpha-model"
+    );
+    assert_eq!(
+        published["providers"]["beta"]["models"][0]["id"],
+        "beta-model"
+    );
+}

@@ -6,11 +6,12 @@
 //! behaviour themselves.
 
 use std::collections::HashMap;
+use std::fs::OpenOptions;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
+use fs2::FileExt;
 use serde_json::{Value, json};
 
 use crate::catalogue_refresh_app::{
@@ -27,9 +28,30 @@ use crate::infrastructure::providers::{
 pub(crate) const MAX_MODEL_DISCOVERY_RESPONSE_BYTES: usize = 5 * 1024 * 1024;
 pub(crate) const MAX_MODEL_DISCOVERY_MODELS: usize = 10_000;
 
-fn models_json_refresh_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
+struct ModelsJsonPublishLock {
+    file: std::fs::File,
+}
+
+impl ModelsJsonPublishLock {
+    fn acquire(base_dir: &Path) -> Result<Self, String> {
+        let lock_path = base_dir.join("models.json.lock");
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .map_err(|e| format!("failed to open {}: {e}", lock_path.display()))?;
+        file.lock_exclusive()
+            .map_err(|e| format!("failed to lock {}: {e}", lock_path.display()))?;
+        Ok(Self { file })
+    }
+}
+
+impl Drop for ModelsJsonPublishLock {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.file);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -153,9 +175,7 @@ where
     // Fetching may take seconds. Serialize the read-modify-write publication so
     // concurrent refreshes of different providers cannot both re-read the same
     // pre-publication file and lose whichever update writes first.
-    let _publish_guard = models_json_refresh_lock()
-        .lock()
-        .map_err(|_| "models.json refresh lock poisoned".to_string())?;
+    let _publish_guard = ModelsJsonPublishLock::acquire(base_dir)?;
     let mut latest = read_registry(&path)?;
     let latest_provider = provider_object(&latest, provider_key, &path)?;
     let latest_provider_without_models = provider_without_models(latest_provider);
