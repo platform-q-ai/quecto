@@ -64,7 +64,16 @@ async fn terminate_after_reap_with_empty_group_signals_nothing() {
 #[tokio::test]
 async fn terminate_after_reap_kills_surviving_group_members() {
     // The leader backgrounds a long sleep into its group and exits.
-    let child = spawn("sleep 30 & exit 0");
+    let pid_file = std::env::temp_dir().join(format!(
+        "quecto-tui-child-watch-survivor-{}-{}.pid",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("unnamed")
+    ));
+    let _ = std::fs::remove_file(&pid_file);
+    let child = spawn(&format!(
+        "sleep 30 & echo $! > '{}' ; exit 0",
+        pid_file.display()
+    ));
     let pgid = child.id().expect("child pid") as i32;
     let watch = watch_child(child, StderrTail::default());
     assert!(
@@ -74,17 +83,21 @@ async fn terminate_after_reap_kills_surviving_group_members() {
             .is_some(),
         "leader must be reaped first"
     );
+    let survivor_pid: i32 = std::fs::read_to_string(&pid_file)
+        .expect("survivor pid recorded")
+        .trim()
+        .parse()
+        .expect("survivor pid is numeric");
     tokio::time::timeout(Duration::from_secs(5), watch.terminate())
         .await
         .expect("terminate must complete within the grace window");
-    // A SIGKILLed member can linger a beat before the kernel removes it
-    // from the group, so poll the probe briefly.
+    // A SIGKILLed orphan can linger briefly as an init-owned zombie before
+    // it is reaped. That is no longer an executing survivor, so treat a
+    // zombie state as terminated instead of waiting for unrelated init timing.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     loop {
-        // SAFETY: pgid > 0 (from child.id()), so -pgid targets that group; signal 0 only probes for members without delivering a signal.
-        let probe = unsafe { libc::kill(-pgid, 0) };
-        if probe == -1 {
-            break; // Group empty — the survivor was terminated.
+        if !process_is_running_non_zombie(survivor_pid) {
+            break;
         }
         assert!(
             tokio::time::Instant::now() < deadline,
@@ -92,6 +105,36 @@ async fn terminate_after_reap_kills_surviving_group_members() {
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+    // SAFETY: pgid > 0 (from child.id()), so -pgid targets that group; signal 0 only probes for members without delivering a signal.
+    let group_probe = unsafe { libc::kill(-pgid, 0) };
+    assert!(
+        group_probe == -1 || process_is_zombie(survivor_pid),
+        "the group may remain probeable only while init still owns a zombie survivor"
+    );
+    let _ = std::fs::remove_file(pid_file);
+}
+
+fn process_is_running_non_zombie(pid: i32) -> bool {
+    // SAFETY: pid > 0 from the child-reported `$!`; signal 0 only probes for liveness.
+    if unsafe { libc::kill(pid, 0) } == -1 {
+        return false;
+    }
+    !process_is_zombie(pid)
+}
+
+#[cfg(target_os = "linux")]
+fn process_is_zombie(pid: i32) -> bool {
+    let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+        return false;
+    };
+    stat.rsplit_once(") ")
+        .and_then(|(_, rest)| rest.chars().next())
+        == Some('Z')
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_is_zombie(_pid: i32) -> bool {
+    false
 }
 
 /// The wait is event-driven: an exit already recorded resolves without

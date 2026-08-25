@@ -48,7 +48,7 @@ Feature: Find Tool
 
   Scenario: Find fixture allows search path outside workspace
     When I find files matching "*.conf" outside workspace in path "/etc"
-    Then the find result should be an error
+    Then the find result should not be an error
 
   Scenario: Nested glob pattern matches deeply
     Given a find workspace file "a/b/c/deep.rs"

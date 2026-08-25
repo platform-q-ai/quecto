@@ -414,11 +414,9 @@ async fn handle_submit_new_preserves_departing_workspace_manifest() {
     let a = h.app_mut();
     let old_workspace_id = a.workspace_id.clone();
     let old_workspace_label = a.workspace_label.clone();
-    let data_home = tempfile::tempdir().expect("isolated tui data");
-    // SAFETY: this test runs before invoking `/new`; the isolated path prevents touching user state.
-    unsafe {
-        std::env::set_var("XDG_DATA_HOME", data_home.path());
-    }
+    let manifest_dir = tempfile::tempdir().expect("isolated manifest dir");
+    let manifest_path = manifest_dir.path().join("workspace-manifests.json");
+    let registry_path = manifest_dir.path().join("tab-agent-registry.json");
     a.ac_mut().session_key = Some("cli:old-master".into());
     a.ac_mut().master_session.chat.add_entry(ChatEntry::User {
         text: "keep master".into(),
@@ -429,7 +427,11 @@ async fn handle_submit_new_preserves_departing_workspace_manifest() {
     a.conn_mut(tab1).unwrap().name = Some("worker".into());
     a.switch_tab(tab1);
 
-    a.handle_submit("/new");
+    let watches = a.reset_workspace_with_durability_paths(&registry_path, &manifest_path);
+    assert!(
+        watches.is_empty(),
+        "fixture uses disconnected tabs with no child processes"
+    );
 
     assert_ne!(
         a.workspace_id, old_workspace_id,
@@ -443,9 +445,7 @@ async fn handle_submit_new_preserves_departing_workspace_manifest() {
         "new blank master must not reuse old session"
     );
 
-    let store = crate::shell::workspace_manifest::WorkspaceManifestStore::load(
-        &crate::shell::workspace_manifest::default_manifest_path(),
-    );
+    let store = crate::shell::workspace_manifest::WorkspaceManifestStore::load(&manifest_path);
     let preserved = store
         .get(&old_workspace_id)
         .expect("/new must leave the old workspace in the resume manifest");

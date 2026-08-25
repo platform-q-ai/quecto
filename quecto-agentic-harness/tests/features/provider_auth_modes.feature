@@ -41,3 +41,12 @@ Feature: Explicit auth modes for models.json providers
     And I close the UDS connection
     Then the list_models response should mark "anthropic-oauth" models as auth "oauth"
     And the list_models response should mark "anthropic-api" models as auth "apiKey"
+
+  Scenario: OAuth runtime helper validates refresh prerequisites before network use
+    Given a temp base directory
+    When the OAuth runtime refresh helper validates missing and incomplete credentials
+    Then the OAuth runtime refresh helper should report missing credential states
+
+  Scenario: OAuth runtime provider factory rebuilds refreshed providers
+    When the OAuth runtime provider factory rebuilds OpenAI and Anthropic providers after refresh
+    Then the OAuth runtime rebuilt provider names should be "openai" and "anthropic"

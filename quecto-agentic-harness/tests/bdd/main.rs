@@ -739,6 +739,10 @@ pub struct QuectoWorld {
     pub _gateway_oauth_mock_server: Option<&'static wiremock::MockServer>,
     /// Mock OpenAI-compatible model catalog server for discovery scenarios.
     pub _model_discovery_mock_server: Option<&'static wiremock::MockServer>,
+    /// OAuth runtime helper errors captured by provider-auth-mode scenarios.
+    pub oauth_runtime_refresh_errors: Vec<String>,
+    /// Provider names rebuilt by the OAuth runtime factory helper.
+    pub oauth_runtime_rebuilt_provider_names: Vec<String>,
     /// Token exchange result (for issue #257 scenarios)
     pub gateway_token_exchange_result: Option<
         Result<

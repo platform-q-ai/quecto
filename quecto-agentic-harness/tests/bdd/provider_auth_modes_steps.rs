@@ -118,8 +118,8 @@ fn given_registry_anthropic_api(world: &mut QuectoWorld, api_key: String) {
     // Only seed a placeholder when the var is unset — never clobber a real key.
     if let Some(name) = api_key.strip_prefix('$') {
         if !name.is_empty() && std::env::var(name).is_err() {
-            // SAFETY: BDD scenarios seed a deterministic placeholder for an
-            // otherwise-unset env var; the value is idempotent across scenarios.
+            // BDD scenarios seed a deterministic placeholder for an otherwise-unset env var.
+            // SAFETY: the value is idempotent across scenarios and never clobbers a real key.
             unsafe { std::env::set_var(name, "sk-ant-env-placeholder") };
         }
     }
@@ -192,7 +192,104 @@ fn when_build_agent_provider(world: &mut QuectoWorld) {
     build_provider(world);
 }
 
+#[when("the OAuth runtime refresh helper validates missing and incomplete credentials")]
+fn when_oauth_runtime_refresh_helper_validates_prerequisites(world: &mut QuectoWorld) {
+    use quecto::infrastructure::oauth_runtime::make_oauth_refresh_fn;
+
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let store = std::sync::Arc::new(CredentialStore::new(&base));
+    let refresh = make_oauth_refresh_fn();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    let missing = rt
+        .block_on(refresh(store.clone(), "openai"))
+        .unwrap_err()
+        .to_string();
+    world.oauth_runtime_refresh_errors.push(missing);
+
+    store
+        .store(Credential {
+            provider: "openai".to_string(),
+            token: "sk-old".to_string(),
+            method: AuthMethod::Token,
+            expires_at: None,
+            refresh_token: None,
+            account_id: None,
+        })
+        .unwrap();
+    let missing_refresh_token = rt
+        .block_on(refresh(store.clone(), "openai"))
+        .unwrap_err()
+        .to_string();
+    world
+        .oauth_runtime_refresh_errors
+        .push(missing_refresh_token);
+
+    store
+        .store(Credential {
+            provider: "unknown-oauth".to_string(),
+            token: "access".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(1),
+            refresh_token: Some("refresh".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+    let missing_oauth_config = rt
+        .block_on(refresh(store, "unknown-oauth"))
+        .unwrap_err()
+        .to_string();
+    world
+        .oauth_runtime_refresh_errors
+        .push(missing_oauth_config);
+}
+
+#[when("the OAuth runtime provider factory rebuilds OpenAI and Anthropic providers after refresh")]
+fn when_oauth_runtime_provider_factory_rebuilds_providers(world: &mut QuectoWorld) {
+    use quecto::infrastructure::oauth_runtime::make_provider_factory;
+
+    let client = reqwest::Client::new();
+    let openai = make_provider_factory(
+        "openai",
+        Some("http://example.invalid/v1".to_string()),
+        client.clone(),
+    );
+    let anthropic = make_provider_factory(
+        "anthropic",
+        Some("http://example.invalid".to_string()),
+        client,
+    );
+
+    world
+        .oauth_runtime_rebuilt_provider_names
+        .push(openai("not-a-jwt-token").name().to_string());
+    world
+        .oauth_runtime_rebuilt_provider_names
+        .push(anthropic("fresh-token").name().to_string());
+}
+
 // ─── Then steps ──────────────────────────────────────────────────────────────
+
+#[then("the OAuth runtime refresh helper should report missing credential states")]
+fn then_oauth_runtime_refresh_helper_reports_missing_credential_states(world: &mut QuectoWorld) {
+    assert_eq!(world.oauth_runtime_refresh_errors.len(), 3);
+    assert!(world.oauth_runtime_refresh_errors[0].contains("no credential found for openai"));
+    assert!(world.oauth_runtime_refresh_errors[1].contains("no refresh token for openai"));
+    assert!(world.oauth_runtime_refresh_errors[2].contains("no OAuth config for unknown-oauth"));
+}
+
+#[then(expr = "the OAuth runtime rebuilt provider names should be {string} and {string}")]
+fn then_oauth_runtime_rebuilt_provider_names_are(
+    world: &mut QuectoWorld,
+    first: String,
+    second: String,
+) {
+    assert_eq!(
+        world.oauth_runtime_rebuilt_provider_names,
+        vec![first, second]
+    );
+}
 
 #[then(expr = "the router should expose a provider named {string}")]
 fn then_router_exposes_provider(world: &mut QuectoWorld, name: String) {

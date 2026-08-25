@@ -37,7 +37,55 @@ fn typed_ids_reject_blank_values_and_preserve_stable_serialization() {
         ModelRef::parse_qualified("openai-api/gpt-5").unwrap(),
         reference
     );
-    assert!(ModelRef::parse_qualified("bare-model").is_err());
+    let unqualified = ModelRef::parse_qualified("bare-model").unwrap_err();
+    assert_eq!(
+        unqualified.to_string(),
+        "model reference 'bare-model' is missing provider/model syntax"
+    );
+}
+
+#[test]
+fn stable_ids_empty_snapshots_and_lookup_ports_are_explicit() {
+    assert_eq!(
+        TransportKind::OpenAiCompletions.stable_id(),
+        "openai-completions"
+    );
+    assert_eq!(
+        TransportKind::AnthropicMessages.stable_id(),
+        "anthropic-messages"
+    );
+    assert_eq!(
+        TransportKind::GoogleGenerativeAi.stable_id(),
+        "google-generative-ai"
+    );
+
+    assert_eq!(AuthIdentity::ApiKey.stable_id(), "apiKey");
+    let oauth = AuthIdentity::OAuth {
+        provider: ProviderId::new("anthropic-oauth").unwrap(),
+    };
+    assert_eq!(oauth.stable_id(), "oauth");
+    assert_eq!(
+        oauth.oauth_provider().map(ProviderId::as_str),
+        Some("anthropic-oauth")
+    );
+    assert!(AuthIdentity::ApiKey.oauth_provider().is_none());
+
+    let empty = CatalogueSnapshot::empty(11);
+    assert_eq!(empty.generation, 11);
+    assert!(empty.models().is_empty());
+
+    let first = descriptor("provider", "first", "First");
+    let second = descriptor("provider", "second", "Second");
+    let snapshot = CatalogueSnapshot::new(12, vec![first.clone(), second.clone()]);
+    assert_eq!(
+        snapshot.find(&first.reference).unwrap().display_name,
+        first.display_name
+    );
+    assert!(
+        snapshot
+            .find(&ModelRef::parse("provider", "missing").unwrap())
+            .is_none()
+    );
 }
 
 #[test]

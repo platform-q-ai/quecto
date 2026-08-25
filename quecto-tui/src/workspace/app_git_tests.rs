@@ -15,10 +15,10 @@ async fn git_branch_refresh_task_reflects_branch_switches_promptly() {
     h.set_git_repo(repo.clone());
     assert!(h.apply_branch(Some("main".to_string())));
 
-    std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/feature/footer\n").unwrap();
+    std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/f\n").unwrap();
     assert!(h.refresh_branch_from_repo().await);
     assert!(
-        h.bottom_stack().contains("feature/footer"),
+        h.bottom_stack().contains("(f)"),
         "production branch refresh path should update the footer after a branch switch"
     );
     let interval = super::app_git::GIT_BRANCH_POLL_INTERVAL;

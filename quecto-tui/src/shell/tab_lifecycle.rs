@@ -10,6 +10,56 @@ use crate::shell::workspace_manifest::{
 };
 
 impl super::App {
+    /// Start a fresh `/new` workspace, preserving the old one for `/resume`.
+    pub(super) fn reset_workspace(&mut self) -> Vec<crate::shell::child_watch::ChildWatch> {
+        let registry_path = crate::shell::tab_registry::default_registry_path();
+        let manifest_path = crate::shell::workspace_manifest::default_manifest_path();
+        self.reset_workspace_with_durability_paths(&registry_path, &manifest_path)
+    }
+
+    /// Core `/new` reset implementation with injectable durability paths so
+    /// tests can exercise the persistence contract without mutating global env.
+    pub(super) fn reset_workspace_with_durability_paths(
+        &mut self,
+        registry_path: &std::path::Path,
+        manifest_path: &std::path::Path,
+    ) -> Vec<crate::shell::child_watch::ChildWatch> {
+        if let Some(parent) = registry_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Some(parent) = manifest_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let old_workspace_id = self.workspace_id.clone();
+        self.persist_durability_snapshot(&old_workspace_id, registry_path, manifest_path);
+
+        let mut master = self
+            .tabs
+            .remove(&crate::shell::connection::TabId::MASTER)
+            .expect("workspace reset requires a master tab");
+        let mut watches = Vec::new();
+        for (_, mut state) in self.tabs.drain() {
+            state.transport.abort_feed();
+            watches.extend(state.child_exit_watch.take());
+        }
+        master.name = None;
+        master.session_key = None;
+        master.pending_session_resume = None;
+        master.roster = crate::agents::view::ConnectionRoster::new();
+        self.tabs
+            .insert(crate::shell::connection::TabId::MASTER, master);
+        self.active_tab = crate::shell::connection::TabId::MASTER;
+        self.routing_tab_override = None;
+        self.editor.set_text("");
+        self.subagents = crate::agents::view::SubagentUi::new();
+        self.workspace_id = crate::shell::workspace_manifest::generate_workspace_id();
+        self.workspace_label = crate::shell::workspace_manifest::generate_workspace_label();
+        self.reset_session("New session started");
+        let new_workspace_id = self.workspace_id.clone();
+        self.persist_durability_snapshot(&new_workspace_id, registry_path, manifest_path);
+        watches
+    }
+
     /// Allocate the next free numeric tab id (monotonic, skips occupied).
     ///
     /// Ids with an in-flight attach are treated as occupied even after the
