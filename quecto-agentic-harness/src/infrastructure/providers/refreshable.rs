@@ -20,7 +20,7 @@ use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
 use crate::domain::provider::{ChatRequest, LlmProvider};
 use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
-use crate::infrastructure::auth::credential_store::{AuthMethod, CredentialStore};
+use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 
 /// Async function that refreshes an OAuth token.
 ///
@@ -119,11 +119,12 @@ impl RefreshableProvider {
         }
     }
 
-    fn current_access_token(&self) -> Option<String> {
+    fn current_credential(&self) -> Option<Credential> {
         self.store.load_snapshot().ok().and_then(|creds| {
             creds
                 .get(&self.credential_provider)
-                .map(|c| c.token.clone())
+                .filter(|cred| cred.method == AuthMethod::OAuth)
+                .cloned()
         })
     }
 
@@ -299,7 +300,7 @@ impl RefreshableProvider {
         >,
     {
         let inner = self.inner.read().await.clone();
-        let token_before_call = self.current_access_token();
+        let credential_before_call = self.current_credential();
         // Happy path: shallow clone (copies slice pointers + small Option fields,
         // not the underlying message/tool vecs).
         let result = call(&inner, request.clone()).await;
@@ -319,13 +320,16 @@ impl RefreshableProvider {
                 let owned = OwnedRequest::from(&request);
 
                 let _guard = self.refresh_lock.lock().await;
-                if let Some(current_token) = self.current_access_token() {
-                    if token_before_call.as_deref() != Some(current_token.as_str()) {
-                        let new_inner = (self.factory)(&current_token);
-                        let result = call(&new_inner, owned.as_request()).await;
-                        *self.inner.write().await = new_inner;
-                        return result;
-                    }
+                if let (Some(before), Some(current)) =
+                    (credential_before_call.as_ref(), self.current_credential())
+                    && (current.token != before.token
+                        || current.refresh_token != before.refresh_token
+                        || current.provider != before.provider)
+                {
+                    let new_inner = (self.factory)(&current.token);
+                    let result = call(&new_inner, owned.as_request()).await;
+                    *self.inner.write().await = new_inner;
+                    return result;
                 }
 
                 match (self.refresh_fn)(self.store.clone(), &self.credential_provider).await {

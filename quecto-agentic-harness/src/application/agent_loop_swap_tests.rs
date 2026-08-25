@@ -359,3 +359,40 @@ fn swap_provider_rederives_active_model_limits_from_reloaded_generation() {
     assert_eq!(agent.model_max_tokens, Some(250));
     assert_eq!(agent.model_context_window, Some(4000));
 }
+
+#[test]
+fn swap_provider_clears_stale_limits_when_descriptors_are_absent() {
+    let provider = Arc::new(DescriptorProvider {
+        descriptors: vec![descriptor_model(100, 1_000)],
+    });
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider,
+        tool_registry: Box::new(MockRegistry::new()),
+        model: "mock/model".into(),
+        max_tokens: 500,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: String::new(),
+        context_collapse_after_tool_calls: u32::MAX,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: Some(1_000),
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+    });
+
+    agent.swap_provider(Arc::new(DescriptorProvider {
+        descriptors: vec![descriptor_model(100, 1_000)],
+    }));
+    assert_eq!(agent.effective_max_context_tokens(), 1_000);
+
+    agent.swap_provider(Arc::new(MockProvider::new(vec![])));
+
+    assert_eq!(agent.model_max_tokens, None);
+    assert_eq!(agent.model_context_window, None);
+    assert_eq!(agent.effective_max_context_tokens(), 100_000);
+}

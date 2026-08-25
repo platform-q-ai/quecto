@@ -544,10 +544,7 @@ fn registry_provider_can_construct(
 ) -> Result<bool, String> {
     use crate::infrastructure::model_registry::{AuthMode, ProviderApi};
     if matches!(model.api, ProviderApi::GoogleGenerativeAi) {
-        return Err(format!(
-            "models.json provider '{}' uses google-generative-ai, but that wire protocol is not implemented yet",
-            model.provider
-        ));
+        return Ok(false);
     }
     match model.auth {
         AuthMode::ApiKey => registry_model_credential_available(model, store, config),
@@ -624,12 +621,7 @@ fn build_registry_provider(
             http_client.clone(),
         )
         .map_err(|e| format!("models.json provider configuration error: {}", e))?,
-        ProviderApi::GoogleGenerativeAi => {
-            return Err(format!(
-                "models.json provider '{}' uses google-generative-ai, but that wire protocol is not implemented yet",
-                model.provider
-            ));
-        }
+        ProviderApi::GoogleGenerativeAi => return Ok(None),
     };
 
     if model.auth == AuthMode::OAuth {

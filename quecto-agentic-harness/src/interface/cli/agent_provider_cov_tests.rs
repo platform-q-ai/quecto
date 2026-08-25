@@ -130,7 +130,7 @@ fn build_registry_provider_skips_api_key_models_without_key() {
 }
 
 #[test]
-fn build_registry_provider_reports_unimplemented_google_protocol() {
+fn build_registry_provider_skips_unimplemented_google_protocol() {
     let tmp = tempfile::TempDir::new().unwrap();
     let store = Arc::new(CredentialStore::new(tmp.path()));
     let refresh = crate::interface::shared::make_oauth_refresh_fn();
@@ -141,7 +141,7 @@ fn build_registry_provider_reports_unimplemented_google_protocol() {
     );
     m.api_key = Some("test-key".to_string());
 
-    let err = build_registry_provider(
+    let built = build_registry_provider(
         &m,
         tmp.path(),
         &store,
@@ -149,10 +149,9 @@ fn build_registry_provider_reports_unimplemented_google_protocol() {
         &reqwest::Client::new(),
         &Config::default(),
     )
-    .unwrap_err();
+    .unwrap();
 
-    assert!(err.contains("google-generative-ai"), "got: {err}");
-    assert!(err.contains("not implemented"), "got: {err}");
+    assert!(built.is_none());
 }
 
 #[test]
