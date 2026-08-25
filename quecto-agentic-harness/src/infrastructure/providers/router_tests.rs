@@ -539,3 +539,11 @@ async fn slice_ptr_provider_trait_surface_defaults_are_exercised() {
     }
     assert!(rx.recv().await.is_none());
 }
+
+#[test]
+#[should_panic(expected = "provider names must be unique case-insensitively")]
+fn router_rejects_case_insensitive_duplicate_provider_names() {
+    let first = TestProvider::succeeding("Foo", "first");
+    let second = TestProvider::succeeding("foo", "second");
+    let _ = ProviderRouter::new(vec![first as Arc<dyn LlmProvider>, second]);
+}

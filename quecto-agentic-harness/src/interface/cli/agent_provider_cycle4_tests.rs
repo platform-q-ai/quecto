@@ -113,3 +113,59 @@ fn runtime_catalogue_marks_skipped_registry_models_structurally_unavailable() {
         Availability::KnownButUnavailable { .. }
     ));
 }
+
+#[test]
+fn case_insensitive_duplicate_registry_provider_loser_is_unavailable_and_not_routed() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{
+            "providers": {
+                "Foo": {
+                    "api": "openai-completions",
+                    "baseUrl": "http://127.0.0.1:9/v1",
+                    "auth": { "mode": "apiKey", "apiKey": "sk-upper" },
+                    "models": [{ "id": "upper-model" }]
+                },
+                "foo": {
+                    "api": "openai-completions",
+                    "baseUrl": "http://127.0.0.1:10/v1",
+                    "auth": { "mode": "apiKey", "apiKey": "sk-lower" },
+                    "models": [{ "id": "lower-model" }]
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let runtime = build_agent_provider(&Config::default(), tmp.path(), &reqwest::Client::new())
+        .expect("canonical duplicate winner should still construct");
+    let descriptors = runtime.model_descriptors().unwrap();
+    let upper = descriptors
+        .iter()
+        .find(|model| model.qualified_id() == "Foo/upper-model")
+        .expect("canonical owner descriptor should be advertised");
+    let lower = descriptors
+        .iter()
+        .find(|model| model.qualified_id() == "foo/lower-model")
+        .expect("duplicate loser descriptor should be advertised structurally");
+
+    assert_eq!(upper.availability, Availability::Runnable);
+    assert!(matches!(
+        lower.availability,
+        Availability::KnownButUnavailable { .. }
+    ));
+}
+
+#[test]
+fn case_insensitive_duplicate_registry_provider_deterministically_selects_canonical_owner() {
+    let upper_first = vec![record("Zoo"), record("zoo"), record("Alpha")];
+    let lower_first = vec![record("zoo"), record("Zoo"), record("Alpha")];
+
+    let upper_first_owners = super::canonical_registry_prefix_owners(&upper_first);
+    let lower_first_owners = super::canonical_registry_prefix_owners(&lower_first);
+
+    assert_eq!(upper_first_owners, lower_first_owners);
+    assert!(upper_first_owners.contains("Zoo"));
+    assert!(!upper_first_owners.contains("zoo"));
+}

@@ -238,11 +238,14 @@ fn compose_agent_provider(
             .iter()
             .map(|model| model.provider.to_ascii_lowercase())
             .collect();
+    let canonical_registry_prefixes = canonical_registry_prefix_owners(model_registry.models());
     let mut runtime_model_descriptors = Vec::new();
     let mut constructible_registry_prefixes = HashSet::new();
     for model in model_registry.models() {
-        if registry_provider_can_construct(model, &store, config)? {
-            constructible_registry_prefixes.insert(model.provider.to_ascii_lowercase());
+        if canonical_registry_prefixes.contains(&model.provider)
+            && registry_provider_can_construct(model, &store, config)?
+        {
+            constructible_registry_prefixes.insert(model.provider.clone());
         }
     }
     for model in model_registry.models() {
@@ -250,7 +253,7 @@ fn compose_agent_provider(
         if let Some(mut descriptor) =
             record_to_descriptor_with_credential(model, Some(credential_available))?
         {
-            if !constructible_registry_prefixes.contains(&model.provider.to_ascii_lowercase()) {
+            if !constructible_registry_prefixes.contains(&model.provider) {
                 descriptor.availability =
                     crate::domain::catalogue::Availability::KnownButUnavailable {
                         reasons: vec![
@@ -265,11 +268,11 @@ fn compose_agent_provider(
     }
     for model in model_registry.models() {
         let canonical_prefix = model.provider.to_ascii_lowercase();
-        if provider_list
-            .iter()
-            .any(|p| p.name().eq_ignore_ascii_case(&model.provider))
-            || (seen_registry_prefixes.contains(&canonical_prefix)
-                && !registry_provider_can_construct(model, &store, config)?)
+        if !canonical_registry_prefixes.contains(&model.provider)
+            || provider_list
+                .iter()
+                .any(|p| p.name().eq_ignore_ascii_case(&model.provider))
+            || seen_registry_prefixes.contains(&canonical_prefix)
         {
             continue;
         }
@@ -345,6 +348,23 @@ fn compose_agent_provider(
         router,
         RetryConfig::default(),
     )))
+}
+
+fn canonical_registry_prefix_owners<'a>(
+    models: impl IntoIterator<Item = &'a crate::infrastructure::model_registry::ModelRecord>,
+) -> HashSet<String> {
+    let mut owners_by_canonical = std::collections::BTreeMap::new();
+    for model in models {
+        owners_by_canonical
+            .entry(model.provider.to_ascii_lowercase())
+            .and_modify(|owner: &mut String| {
+                if model.provider < *owner {
+                    *owner = model.provider.clone();
+                }
+            })
+            .or_insert_with(|| model.provider.clone());
+    }
+    owners_by_canonical.into_values().collect()
 }
 
 #[cfg(feature = "test-support")]

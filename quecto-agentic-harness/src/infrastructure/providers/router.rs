@@ -4,6 +4,7 @@
 //
 // Replaces FallbackProvider (#370).
 
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -36,6 +37,15 @@ impl ProviderRouter {
         providers: Vec<Arc<dyn LlmProvider>>,
         model_descriptors: Vec<ModelDescriptor>,
     ) -> Self {
+        let mut seen = HashSet::new();
+        for provider in &providers {
+            let canonical = provider.name().to_ascii_lowercase();
+            assert!(
+                seen.insert(canonical),
+                "provider names must be unique case-insensitively: {}",
+                provider.name()
+            );
+        }
         Self {
             providers,
             model_descriptors,
