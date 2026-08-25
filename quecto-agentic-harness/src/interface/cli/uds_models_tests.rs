@@ -1,109 +1,67 @@
+use std::sync::Arc;
+
+use crate::domain::message::LlmResponse;
+use crate::domain::provider::{ChatRequest, LlmProvider};
+use crate::infrastructure::providers::router::ProviderRouter;
+
 use super::list_models_data;
 
-#[test]
-fn list_models_data_serializes_registry_models() {
-    let tmp = tempfile::tempdir().unwrap();
-    std::fs::write(
-            tmp.path().join("models.json"),
-            r#"{
-              "providers": {
-                "anthropicish": {
-                  "api": "anthropic-messages",
-                  "apiKey": "sk-a",
-                  "models": [{"id":"claude-custom", "reasoning": true}]
-                },
-                "googleish": {
-                  "api": "google-generative-ai",
-                  "baseUrl": "https://google.example/v1",
-                  "models": [{"id":"gemini-custom"}]
-                },
-                "openish": {
-                  "api": "openai-completions",
-                  "models": [{"id":"open-custom", "cost":{"input":1.0,"output":2.0,"cacheRead":3.0,"cacheWrite":4.0}}]
-                }
-              }
-            }"#,
-        )
-        .unwrap();
+#[derive(Debug)]
+struct NamedProvider(String);
 
-    let data = list_models_data(tmp.path());
-    let models = data["models"].as_array().unwrap();
-    let find = |id: &str| {
-        models
-            .iter()
-            .find(|m| m["model"].as_str().unwrap().ends_with(id))
-            .unwrap()
-    };
+impl LlmProvider for NamedProvider {
+    fn name(&self) -> &str {
+        &self.0
+    }
 
-    let anthropic = find("claude-custom");
-    assert_eq!(anthropic["api"], "anthropic-messages");
-    assert_eq!(anthropic["auth"], "apiKey");
-    assert_eq!(anthropic["configured"], true);
-    assert_eq!(anthropic["reasoning"], true);
+    fn chat<'a>(
+        &'a self,
+        _request: ChatRequest<'a>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<LlmResponse, crate::domain::error::DomainError>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async { unreachable!("list_models must only inspect runtime provider names") })
+    }
+}
 
-    let google = find("gemini-custom");
-    assert_eq!(google["api"], "google-generative-ai");
-    assert_eq!(google["configured"], true);
-
-    let open = find("open-custom");
-    assert_eq!(open["api"], "openai-completions");
-    assert_eq!(open["configured"], false);
-    assert_eq!(open["cost"]["cacheRead"], 3.0);
-    assert_eq!(open["cost"]["cacheWrite"], 4.0);
+fn provider(name: &str) -> Arc<dyn LlmProvider> {
+    Arc::new(NamedProvider(name.to_string()))
 }
 
 #[test]
-fn list_models_data_skips_blank_identifier_records_without_hiding_valid_models() {
-    let tmp = tempfile::tempdir().unwrap();
-    std::fs::write(
-        tmp.path().join("models.json"),
-        r#"{
-          "providers": {
-            "openish": {
-              "api": "openai-completions",
-              "models": [{"id":"valid-model"}]
-            },
-            "   ": {
-              "api": "openai-completions",
-              "models": [{"id":"blank-provider-model"}]
-            },
-            "anthropicish": {
-              "api": "anthropic-messages",
-              "models": [{"id":"   "}]
-            }
-          }
-        }"#,
-    )
-    .unwrap();
+fn list_models_data_serializes_current_router_snapshot_not_models_json() {
+    let runtime: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::new(vec![
+        provider("current"),
+        provider("other"),
+    ]));
 
-    let data = list_models_data(tmp.path());
+    let data = list_models_data(&runtime);
 
     assert!(data.get("error").is_none(), "unexpected error: {data}");
     let models = data["models"].as_array().unwrap();
+    assert_eq!(models.len(), 2);
     assert!(
         models
             .iter()
-            .any(|model| model["model"] == "openish/valid-model")
+            .any(|model| model["model"] == "current/current")
     );
-    assert!(
-        !models
-            .iter()
-            .any(|model| model["model"] == "   /blank-provider-model")
-    );
-    assert!(
-        !models
-            .iter()
-            .any(|model| model["model"] == "anthropicish/   ")
-    );
+    assert!(models.iter().any(|model| model["model"] == "other/other"));
 }
 
 #[test]
-fn list_models_data_reports_registry_errors() {
-    let tmp = tempfile::tempdir().unwrap();
-    std::fs::write(tmp.path().join("models.json"), "not json").unwrap();
+fn list_models_data_reports_current_single_provider_snapshot() {
+    let runtime = provider("solo");
 
-    let data = list_models_data(tmp.path());
+    let data = list_models_data(&runtime);
 
-    assert_eq!(data["models"].as_array().unwrap().len(), 0);
-    assert!(data["error"].as_str().unwrap().contains("failed to parse"));
+    assert!(data.get("error").is_none(), "unexpected error: {data}");
+    let models = data["models"].as_array().unwrap();
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0]["provider"], "solo");
+    assert_eq!(models[0]["model"], "solo/solo");
+    assert_eq!(models[0]["configured"], true);
 }

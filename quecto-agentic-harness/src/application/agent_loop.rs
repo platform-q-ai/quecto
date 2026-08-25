@@ -91,7 +91,7 @@ pub struct AgentLoopConfig {
     pub tool_profile_context: ToolProfileContext,
 }
 pub struct AgentLoopImpl {
-    provider: Arc<dyn LlmProvider>,
+    pub(crate) provider: Arc<dyn LlmProvider>,
     pub(super) tool_registry: Box<dyn ToolRegistry>,
     model: String,
     max_tokens: u32,
@@ -190,10 +190,10 @@ impl AgentLoopImpl {
         self.durable_prefix_dirty
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    /// Replace the LLM provider after config reload.
     pub fn swap_provider(&mut self, provider: Arc<dyn LlmProvider>) {
         self.provider = provider;
     }
+
     /// Return the currently configured model name.
     pub fn model(&self) -> &str {
         &self.model

@@ -385,7 +385,9 @@ fn validate_oauth_base_url(
     let configured_url = reqwest::Url::parse(configured).map_err(|e| {
         format!(
             "models.json provider '{}' has invalid OAuth baseUrl '{}': {}",
-            provider_key, configured, e
+            provider_key,
+            sanitize_url_for_error(configured),
+            e
         )
     })?;
     let canonical_url = reqwest::Url::parse(canonical).expect("canonical OAuth base URL is valid");
@@ -397,8 +399,24 @@ fn validate_oauth_base_url(
     }
     Err(format!(
         "models.json provider '{}' uses oauth auth for '{}' but baseUrl '{}' is not the canonical OAuth host '{}'",
-        provider_key, oauth_provider, configured, canonical
+        provider_key,
+        oauth_provider,
+        sanitize_url_for_error(configured),
+        canonical
     ))
+}
+
+fn sanitize_url_for_error(raw: &str) -> String {
+    match reqwest::Url::parse(raw) {
+        Ok(mut url) => {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            url.set_query(None);
+            url.set_fragment(None);
+            url.to_string()
+        }
+        Err(_) => "<invalid url>".to_string(),
+    }
 }
 
 fn build_registry_provider(
