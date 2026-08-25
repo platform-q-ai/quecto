@@ -1,7 +1,11 @@
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::catalogue_runtime::CatalogueRuntimeSnapshot;
-use crate::domain::catalogue::{Availability, CatalogueSnapshot, ModelRef};
+#[cfg(any(test, feature = "test-support"))]
+use crate::domain::catalogue::CatalogueSnapshot;
+use crate::domain::catalogue::{Availability, ModelRef};
+#[cfg(any(test, feature = "test-support"))]
 use crate::domain::provider::LlmProvider;
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::Arc;
 
 impl AgentLoopImpl {
@@ -32,9 +36,8 @@ impl AgentLoopImpl {
         self.catalogue = runtime.catalogue;
     }
 
-    /// Compatibility entry point for callers that still rebuild only a provider.
-    /// Descriptor extraction happens at this boundary; all consumers use the
-    /// application-owned snapshot afterwards.
+    /// Test compatibility entry point for provider-only swaps.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn swap_provider(&mut self, provider: Arc<dyn LlmProvider>) {
         let generation = self.catalogue.generation.saturating_add(1);
         let catalogue = CatalogueSnapshot::new(

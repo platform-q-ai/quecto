@@ -352,10 +352,25 @@ fn swap_provider_rederives_active_model_limits_from_reloaded_generation() {
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     });
 
-    agent.swap_provider(Arc::new(DescriptorProvider {
-        descriptors: vec![descriptor_model(250, 4000)],
-    }));
+    // The provider deliberately advertises different descriptors: publication
+    // must use the catalogue carried by the application-owned runtime snapshot.
+    let reloaded_provider: Arc<dyn crate::domain::provider::LlmProvider> =
+        Arc::new(DescriptorProvider {
+            descriptors: vec![descriptor_model(999, 9999)],
+        });
+    agent.swap_runtime(
+        crate::application::catalogue_runtime::CatalogueRuntimeSnapshot {
+            catalogue: crate::domain::catalogue::CatalogueSnapshot::new(
+                42,
+                vec![descriptor_model(250, 4000)],
+            ),
+            provider: reloaded_provider.clone(),
+        },
+    );
 
+    assert!(Arc::ptr_eq(&agent.provider, &reloaded_provider));
+    assert_eq!(agent.catalogue.generation, 42);
+    assert_eq!(agent.catalogue.models()[0].capabilities.max_tokens, 250);
     assert_eq!(agent.model_max_tokens, Some(250));
     assert_eq!(agent.model_context_window, Some(4000));
 }

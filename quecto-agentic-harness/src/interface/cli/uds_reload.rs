@@ -14,7 +14,7 @@ pub(super) fn apply_provider_reload_result(
     result: Option<ReloadResult<provider_reload::ReloadedProviderRuntime>>,
 ) {
     if let Some(ReloadResult::Reloaded(runtime)) = result {
-        ctx.agent.swap_provider(runtime.provider);
+        ctx.agent.swap_runtime(runtime);
         if let Some(inputs) = ctx.provider_reload_inputs {
             match Config::load_with_env(
                 inputs.config_path.to_str().unwrap_or(""),
