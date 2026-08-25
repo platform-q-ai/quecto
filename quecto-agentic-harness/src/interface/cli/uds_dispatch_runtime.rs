@@ -109,8 +109,9 @@ fn runtime_model_limits(
     agent: &AgentLoopImpl,
     qualified_model: &str,
 ) -> Option<(Option<u32>, Option<usize>)> {
-    let descriptors = agent.provider.model_descriptors()?;
-    let descriptor = descriptors
+    let descriptor = agent
+        .catalogue
+        .models()
         .iter()
         .find(|d| d.qualified_id() == qualified_model)?;
     descriptor

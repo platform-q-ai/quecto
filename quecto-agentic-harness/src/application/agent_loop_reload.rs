@@ -1,18 +1,17 @@
 use crate::application::agent_loop::AgentLoopImpl;
-use crate::domain::catalogue::{Availability, ModelRef};
+use crate::application::catalogue_runtime::CatalogueRuntimeSnapshot;
+use crate::domain::catalogue::{Availability, CatalogueSnapshot, ModelRef};
 use crate::domain::provider::LlmProvider;
 use std::sync::Arc;
 
 impl AgentLoopImpl {
-    /// Replace the LLM provider after config reload and re-derive limits for the active model.
-    pub fn swap_provider(&mut self, provider: Arc<dyn LlmProvider>) {
+    /// Replace provider and catalogue as one application-owned runtime generation.
+    pub fn swap_runtime(&mut self, runtime: CatalogueRuntimeSnapshot) {
         let mut model_max_tokens = None;
         let mut model_context_window = None;
 
         if let Ok(reference) = ModelRef::parse_qualified(&self.model)
-            && let Some(descriptor) = provider
-                .model_descriptors()
-                .and_then(|models| models.iter().find(|m| m.reference == reference))
+            && let Some(descriptor) = runtime.catalogue.find(&reference)
             && descriptor.availability == Availability::Runnable
         {
             model_max_tokens = descriptor
@@ -29,6 +28,22 @@ impl AgentLoopImpl {
         self.model_context_window = model_context_window;
         self.context_manager
             .set_model_context_window(model_context_window);
-        self.provider = provider;
+        self.provider = runtime.provider;
+        self.catalogue = runtime.catalogue;
+    }
+
+    /// Compatibility entry point for callers that still rebuild only a provider.
+    /// Descriptor extraction happens at this boundary; all consumers use the
+    /// application-owned snapshot afterwards.
+    pub fn swap_provider(&mut self, provider: Arc<dyn LlmProvider>) {
+        let generation = self.catalogue.generation.saturating_add(1);
+        let catalogue = CatalogueSnapshot::new(
+            generation,
+            provider.model_descriptors().unwrap_or(&[]).to_vec(),
+        );
+        self.swap_runtime(CatalogueRuntimeSnapshot {
+            catalogue,
+            provider,
+        });
     }
 }

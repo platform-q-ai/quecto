@@ -9,6 +9,7 @@ use crate::domain::agent::{
     AgentInfo, AgentLoop, AgentProgressEvent, AgentResult, ProgressCallback,
 };
 use crate::domain::audit::{AuditEvent, AuditSink};
+use crate::domain::catalogue::CatalogueSnapshot;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent};
@@ -20,7 +21,6 @@ use crate::domain::tool::{
 };
 use std::pin::Pin;
 use std::sync::Arc;
-
 pub type ToolPolicyPersistence =
     Arc<dyn Fn(&crate::domain::tool::ToolPolicyReconciliation) -> Result<(), String> + Send + Sync>;
 #[path = "agent_loop_clamp.rs"]
@@ -92,6 +92,7 @@ pub struct AgentLoopConfig {
 }
 pub struct AgentLoopImpl {
     pub provider: Arc<dyn LlmProvider>,
+    pub catalogue: CatalogueSnapshot,
     pub(super) tool_registry: Box<dyn ToolRegistry>,
     pub(super) model: String,
     max_tokens: u32,
@@ -149,6 +150,10 @@ impl AgentLoopImpl {
             model_context_window: config.model_context_window,
         });
         Self {
+            catalogue: CatalogueSnapshot::new(
+                0,
+                config.provider.model_descriptors().unwrap_or(&[]).to_vec(),
+            ),
             provider: config.provider,
             tool_registry: config.tool_registry,
             model: config.model.clone(),
