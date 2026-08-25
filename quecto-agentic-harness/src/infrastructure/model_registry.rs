@@ -297,8 +297,23 @@ impl ModelRegistry {
 
     pub fn load_from_path(path: &Path) -> Result<Self, ModelRegistryError> {
         let mut registry = Self::builtin();
+        registry.apply_file(path)?;
+        Ok(registry)
+    }
+
+    /// Parse only the user-owned entries of `models.json`, without the built-in
+    /// layer underneath. Layer precedence belongs to the application catalogue
+    /// resolution; this parser is one source of it.
+    pub fn load_user_layer_from_path(path: &Path) -> Result<Self, ModelRegistryError> {
+        let mut registry = Self { models: Vec::new() };
+        registry.apply_file(path)?;
+        Ok(registry)
+    }
+
+    fn apply_file(&mut self, path: &Path) -> Result<(), ModelRegistryError> {
+        let registry = self;
         if !path.exists() {
-            return Ok(registry);
+            return Ok(());
         }
         let content = std::fs::read_to_string(path).map_err(ModelRegistryError::Io)?;
         let file: RegistryFile =
@@ -371,7 +386,7 @@ impl ModelRegistry {
                 registry.upsert(record);
             }
         }
-        Ok(registry)
+        Ok(())
     }
 
     pub fn find(&self, provider: &str, id: &str) -> Option<&ModelRecord> {
@@ -396,23 +411,6 @@ impl ModelRegistry {
         self.find(provider, id)
             .filter(|m| m.max_tokens_explicit)
             .map(|m| m.max_tokens)
-    }
-
-    /// Load the registry from `<base_dir>/models.json` **once** (falling back
-    /// to the built-in registry on any error) and return both per-model
-    /// limits: `(output cap, context window)` (#935/#1044). This is the single
-    /// per-model-limits accessor — the former single-value wrappers were
-    /// folded away (PR #1048) once they had no production consumers.
-    pub fn model_limits_from_base_dir(
-        base_dir: &Path,
-        qualified: &str,
-    ) -> (Option<u32>, Option<usize>) {
-        let registry =
-            Self::load_from_path(&base_dir.join("models.json")).unwrap_or_else(|_| Self::builtin());
-        (
-            registry.max_tokens_for(qualified),
-            registry.context_window_for(qualified),
-        )
     }
 
     /// The known context window for a `provider/id` qualified model string

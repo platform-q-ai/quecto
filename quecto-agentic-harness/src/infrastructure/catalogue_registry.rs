@@ -36,6 +36,46 @@ impl ModelRegistryCatalogueSource {
     }
 }
 
+/// The built-in catalogue layer: the descriptors Quecto ships with.
+pub struct BuiltinCatalogueSource;
+
+impl crate::catalogue_app::CatalogueSource for BuiltinCatalogueSource {
+    fn id(&self) -> &str {
+        "builtin"
+    }
+
+    fn load(&self) -> Result<Vec<ModelDescriptor>, String> {
+        ModelRegistryCatalogueSource::new(ModelRegistry::builtin()).load_valid_descriptors()
+    }
+}
+
+/// The user-owned catalogue layer: `models.json` entries only, without the
+/// built-in layer merged underneath. Precedence between the two is resolved by
+/// the application, not by this parser.
+pub struct UserModelsJsonCatalogueSource {
+    path: std::path::PathBuf,
+}
+
+impl UserModelsJsonCatalogueSource {
+    pub fn from_base_dir(base_dir: &std::path::Path) -> Self {
+        Self {
+            path: base_dir.join("models.json"),
+        }
+    }
+}
+
+impl crate::catalogue_app::CatalogueSource for UserModelsJsonCatalogueSource {
+    fn id(&self) -> &str {
+        "models.json"
+    }
+
+    fn load(&self) -> Result<Vec<ModelDescriptor>, String> {
+        let registry =
+            ModelRegistry::load_user_layer_from_path(&self.path).map_err(|e| e.to_string())?;
+        ModelRegistryCatalogueSource::new(registry).load_valid_descriptors()
+    }
+}
+
 pub fn record_to_descriptor(record: &ModelRecord) -> Result<Option<ModelDescriptor>, String> {
     record_to_descriptor_with_credential(record, None)
 }

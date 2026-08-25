@@ -105,3 +105,93 @@ fn oauth_auth_identity_preserves_auth_billing_provider_identity() {
     assert_eq!(id.oauth_provider().unwrap().as_str(), "openai");
     assert_ne!(ModelId::new("gpt-5").unwrap().as_str(), id.stable_id());
 }
+
+#[test]
+fn known_configured_available_and_runnable_are_distinct_derived_views() {
+    let mut unsupported_transport = descriptor("google", "gemini", false);
+    unsupported_transport.configured = true;
+    unsupported_transport.transport = TransportKind::GoogleGenerativeAi;
+    unsupported_transport.availability = Availability::KnownButUnavailable {
+        reasons: vec![UnavailableReason::UnsupportedTransport {
+            transport: TransportKind::GoogleGenerativeAi,
+        }],
+    };
+    let mut missing_credential = descriptor("fireworks", "glm", false);
+    missing_credential.configured = true;
+    let unconfigured = descriptor("anthropic-api", "claude", false);
+
+    let store = CatalogueSnapshotStore::new(CatalogueSnapshot::new(
+        4,
+        vec![
+            descriptor("openai-api", "gpt-5", true),
+            missing_credential,
+            unsupported_transport,
+            unconfigured,
+        ],
+    ));
+    let query = QueryCatalogueUseCase::new(store);
+
+    let ids = |filter| {
+        query
+            .query(filter)
+            .models()
+            .iter()
+            .map(|model| model.qualified_id())
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(ids(CatalogueQuery::Known).len(), 4);
+    assert_eq!(
+        ids(CatalogueQuery::Configured),
+        ["openai-api/gpt-5", "fireworks/glm", "google/gemini"]
+    );
+    assert_eq!(
+        ids(CatalogueQuery::Available),
+        ["openai-api/gpt-5", "fireworks/glm"],
+        "an entry with no transport adapter is configured but never available"
+    );
+    assert_eq!(ids(CatalogueQuery::Runnable), ["openai-api/gpt-5"]);
+}
+
+#[test]
+fn resolve_sources_applies_layer_precedence_and_reports_skipped_layers() {
+    struct Layer(&'static str, Vec<ModelDescriptor>);
+    struct Broken;
+
+    impl CatalogueSource for Layer {
+        fn id(&self) -> &str {
+            self.0
+        }
+        fn load(&self) -> Result<Vec<ModelDescriptor>, String> {
+            Ok(self.1.clone())
+        }
+    }
+
+    impl CatalogueSource for Broken {
+        fn id(&self) -> &str {
+            "models.json"
+        }
+        fn load(&self) -> Result<Vec<ModelDescriptor>, String> {
+            Err("failed to parse".to_string())
+        }
+    }
+
+    let builtin = Layer("builtin", vec![descriptor("openai-api", "gpt-5", false)]);
+    let runtime = Layer("runtime", vec![descriptor("openai-api", "gpt-5", true)]);
+
+    let resolved = ResolveCatalogueUseCase.resolve_sources(9, &[&builtin, &Broken, &runtime]);
+
+    assert_eq!(resolved.snapshot.generation, 9);
+    assert_eq!(resolved.snapshot.models().len(), 1);
+    assert!(
+        resolved.snapshot.models()[0].availability.runnable(),
+        "the runtime layer must win over built-in metadata for the same identity"
+    );
+    assert_eq!(
+        resolved.skipped,
+        vec![CatalogueSourceError {
+            source: "models.json".to_string(),
+            error: "failed to parse".to_string(),
+        }]
+    );
+}

@@ -543,13 +543,13 @@ fn model_record_qualified_id_and_registry_fallback_limits_are_covered() {
     assert_eq!(model.qualified_id(), "anthropic-api/claude-sonnet-5");
 
     let tmp = tempfile::tempdir().unwrap();
-    let (cap, window) = ModelRegistry::model_limits_from_base_dir(tmp.path(), "not-qualified");
-    assert_eq!(cap, None);
-    assert_eq!(window, None);
+    let registry = ModelRegistry::load_from_path(&tmp.path().join("models.json")).unwrap();
+    assert_eq!(registry.max_tokens_for("not-qualified"), None);
+    assert_eq!(registry.context_window_for("not-qualified"), None);
 }
 
 #[test]
-fn model_limits_from_base_dir_reads_output_cap_from_models_json() {
+fn registry_reads_output_cap_from_models_json() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(
         tmp.path().join("models.json"),
@@ -557,10 +557,16 @@ fn model_limits_from_base_dir_reads_output_cap_from_models_json() {
     )
     .unwrap();
 
-    let (cap, window) =
-        ModelRegistry::model_limits_from_base_dir(tmp.path(), "fireworks/qwen3p7-plus");
-    assert_eq!(cap, Some(65_536));
-    assert_eq!(window, None, "no declared window must not clamp");
+    let registry = ModelRegistry::load_from_path(&tmp.path().join("models.json")).unwrap();
+    assert_eq!(
+        registry.max_tokens_for("fireworks/qwen3p7-plus"),
+        Some(65_536)
+    );
+    assert_eq!(
+        registry.context_window_for("fireworks/qwen3p7-plus"),
+        None,
+        "no declared window must not clamp"
+    );
 }
 
 // --- #1044: known context windows for the window-aware budget ---
@@ -586,7 +592,7 @@ fn context_window_for_returns_declared_windows_only() {
 }
 
 #[test]
-fn model_limits_from_base_dir_reads_context_window_from_models_json() {
+fn registry_reads_context_window_from_models_json() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(
         tmp.path().join("models.json"),
@@ -594,12 +600,13 @@ fn model_limits_from_base_dir_reads_context_window_from_models_json() {
     )
     .unwrap();
 
+    let registry = ModelRegistry::load_from_path(&tmp.path().join("models.json")).unwrap();
     assert_eq!(
-        ModelRegistry::model_limits_from_base_dir(tmp.path(), "fireworks/small-window").1,
+        registry.context_window_for("fireworks/small-window"),
         Some(32_768)
     );
     assert_eq!(
-        ModelRegistry::model_limits_from_base_dir(tmp.path(), "fireworks/no-window").1,
+        registry.context_window_for("fireworks/no-window"),
         None,
         "a listed model without a declared window must not clamp"
     );

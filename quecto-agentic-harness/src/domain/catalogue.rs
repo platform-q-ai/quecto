@@ -196,6 +196,17 @@ pub struct ModelDescriptor {
 }
 
 impl ModelDescriptor {
+    /// Whether a transport adapter exists for this entry. Catalogue data alone
+    /// never makes an unimplemented protocol runnable, so this stays a derived
+    /// view over the recorded unavailability reasons.
+    pub fn adapter_supported(&self) -> bool {
+        !self
+            .availability
+            .reasons()
+            .iter()
+            .any(|reason| matches!(reason, UnavailableReason::UnsupportedTransport { .. }))
+    }
+
     pub fn qualified_id(&self) -> String {
         self.reference.qualified_id()
     }

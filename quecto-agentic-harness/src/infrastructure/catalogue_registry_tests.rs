@@ -152,3 +152,53 @@ fn registry_source_reports_malformed_models_json_instead_of_publishing_partial_c
 
     assert!(!error.is_empty());
 }
+
+#[test]
+fn builtin_and_user_layers_load_independently_for_application_precedence() {
+    use crate::catalogue_app::CatalogueSource;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","auth":{"mode":"apiKey","apiKey":"k"},"models":[{"id":"only-user"}]}}}"#,
+    )
+    .unwrap();
+
+    let builtin = BuiltinCatalogueSource;
+    let user = UserModelsJsonCatalogueSource::from_base_dir(tmp.path());
+    assert_eq!(builtin.id(), "builtin");
+    assert_eq!(user.id(), "models.json");
+
+    let builtin_models = builtin.load().unwrap();
+    let user_models = user.load().unwrap();
+
+    assert!(
+        !builtin_models.is_empty(),
+        "the built-in layer must carry shipped metadata"
+    );
+    // The user layer is parsed on its own: it must not carry the built-in
+    // entries, because precedence between the layers is the application's.
+    assert_eq!(
+        user_models
+            .iter()
+            .map(|model| model.qualified_id())
+            .collect::<Vec<_>>(),
+        ["fireworks/only-user"]
+    );
+}
+
+#[test]
+fn user_layer_reports_malformed_models_json_and_is_empty_without_the_file() {
+    use crate::catalogue_app::CatalogueSource;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let source = UserModelsJsonCatalogueSource::from_base_dir(tmp.path());
+    assert!(source.load().unwrap().is_empty());
+
+    std::fs::write(tmp.path().join("models.json"), "{ not json").unwrap();
+    let error = match source.load() {
+        Ok(_) => panic!("a malformed user layer must not resolve"),
+        Err(error) => error,
+    };
+    assert!(!error.is_empty());
+}

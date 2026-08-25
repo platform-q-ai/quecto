@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use crate::application::catalogue::{CatalogueSource, ResolveCatalogueUseCase};
 use crate::domain::catalogue::CatalogueSnapshot;
 use crate::domain::provider::LlmProvider;
 
@@ -31,21 +32,48 @@ pub trait ProviderRuntimeFactory<C, R> {
     ) -> Result<Arc<dyn LlmProvider>, String>;
 }
 
-/// Compose provider routing and its catalogue from exactly the same adapter result.
+/// Compose provider routing and its catalogue from exactly the same adapter
+/// result. `base_layers` are the lower-precedence catalogue sources (built-in
+/// metadata, then user-owned configuration); the runtime layer composed here
+/// always has the highest precedence because it alone carries credential- and
+/// adapter-derived availability. Both halves of the returned snapshot describe
+/// the same generation.
 pub fn compose_catalogue_runtime<C, R, F: ProviderRuntimeFactory<C, R>>(
     factory: &F,
     config: &C,
     runtime_inputs: &R,
     generation: u64,
+    base_layers: &[&dyn CatalogueSource],
 ) -> Result<CatalogueRuntimeSnapshot, String> {
     let provider = ComposeProviderRuntimeUseCase::new().compose(factory, config, runtime_inputs)?;
-    let descriptors = provider.model_descriptors().unwrap_or(&[]).to_vec();
-    let catalogue =
-        crate::application::catalogue::ResolveCatalogueUseCase.resolve(generation, [descriptors]);
+    let runtime_layer = RuntimeDescriptorSource(provider.model_descriptors().unwrap_or(&[]));
+    let mut sources: Vec<&dyn CatalogueSource> = base_layers.to_vec();
+    sources.push(&runtime_layer);
+    let resolved = ResolveCatalogueUseCase.resolve_sources(generation, &sources);
+    for skipped in &resolved.skipped {
+        tracing::warn!(
+            source = %skipped.source,
+            error = %skipped.error,
+            "catalogue source skipped; resolving remaining layers"
+        );
+    }
     Ok(CatalogueRuntimeSnapshot {
         provider,
-        catalogue,
+        catalogue: resolved.snapshot,
     })
+}
+
+/// The composed provider runtime as the highest-precedence catalogue layer.
+struct RuntimeDescriptorSource<'a>(&'a [crate::domain::catalogue::ModelDescriptor]);
+
+impl CatalogueSource for RuntimeDescriptorSource<'_> {
+    fn id(&self) -> &str {
+        "runtime"
+    }
+
+    fn load(&self) -> Result<Vec<crate::domain::catalogue::ModelDescriptor>, String> {
+        Ok(self.0.to_vec())
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy)]

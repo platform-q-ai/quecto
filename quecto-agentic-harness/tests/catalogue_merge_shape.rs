@@ -22,12 +22,26 @@ fn compact_rust(source: &str) -> String {
 }
 
 #[test]
-fn catalogue_module_has_no_unused_source_port_and_resolution_is_production_wired() {
+fn catalogue_source_port_is_declared_and_layered_resolution_is_production_wired() {
     let source = compact_rust(&read("src/application/catalogue.rs"));
     let runtime = compact_rust(&read("src/application/provider_runtime.rs"));
-    assert!(!source.contains("pub trait CatalogueSource"));
+    let composer = compact_rust(&read("src/interface/catalogue_runtime.rs"));
+    let adapters = compact_rust(&read("src/infrastructure/catalogue_registry.rs"));
+
+    assert!(source.contains("pub trait CatalogueSource"));
     assert!(source.contains("pub struct ResolveCatalogueUseCase"));
-    assert!(runtime.contains("ResolveCatalogueUseCase"));
+    // The port must not be an unused seam: production composition resolves
+    // ordered layers through it, and infrastructure supplies those layers.
+    assert!(runtime.contains("resolve_sources"));
+    assert!(composer.contains("BuiltinCatalogueSource") && composer.contains("UserModelsJson"));
+    assert!(
+        adapters.contains("impl crate::catalogue_app::CatalogueSource for BuiltinCatalogueSource")
+    );
+    assert!(
+        adapters.contains(
+            "impl crate::catalogue_app::CatalogueSource for UserModelsJsonCatalogueSource"
+        )
+    );
 }
 
 #[test]
@@ -53,18 +67,20 @@ fn catalogue_runtime_module_is_removed_after_atomic_snapshot_moved_to_retained_o
 #[test]
 fn obsolete_catalogue_contract_modules_and_files_are_removed() {
     let contracts = compact_rust(&read("tests/contracts.rs"));
-    for obsolete in ["catalogue_source", "catalogue_runtime_composer"] {
-        assert!(
-            !contracts.contains(&format!("mod {obsolete};")),
-            "obsolete contract remains registered: {obsolete}"
-        );
-        assert!(
-            !root()
-                .join(format!("tests/contracts/{obsolete}.rs"))
-                .exists(),
-            "obsolete contract implementation remains: {obsolete}.rs"
-        );
-    }
+    // The catalogue source port is production-wired, so its contract module is
+    // retained; only the abandoned composer contract must stay deleted.
+    assert!(contracts.contains("mod catalogue_source;"));
+    let obsolete = "catalogue_runtime_composer";
+    assert!(
+        !contracts.contains(&format!("mod {obsolete};")),
+        "obsolete contract remains registered: {obsolete}"
+    );
+    assert!(
+        !root()
+            .join(format!("tests/contracts/{obsolete}.rs"))
+            .exists(),
+        "obsolete contract implementation remains: {obsolete}.rs"
+    );
 }
 
 #[test]

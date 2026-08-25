@@ -108,6 +108,39 @@ fn composition_root_repl_and_uds_share_the_published_snapshot() {
 }
 
 #[test]
+fn effective_catalogue_is_resolved_from_ordered_application_owned_layers() {
+    let app = flat("src/application/catalogue.rs");
+    let runtime = flat("src/application/provider_runtime.rs");
+    let composer = flat("src/interface/catalogue_runtime.rs");
+
+    assert!(app.contains("pub trait CatalogueSource"));
+    assert!(app.contains("pub fn resolve_sources"));
+    assert!(runtime.contains("resolve_sources"));
+    assert!(composer.contains("BuiltinCatalogueSource"));
+    assert!(composer.contains("UserModelsJsonCatalogueSource"));
+    // Precedence belongs to the application: the legacy registry parser must
+    // expose the user layer on its own rather than deciding the merge itself.
+    let registry = flat("src/infrastructure/model_registry.rs");
+    assert!(registry.contains("pub fn load_user_layer_from_path"));
+    assert!(!registry.contains("pub fn model_limits_from_base_dir"));
+}
+
+#[test]
+fn availability_is_exposed_as_distinct_derived_views() {
+    let app = flat("src/application/catalogue.rs");
+    for view in [
+        "CatalogueQuery::Known",
+        "CatalogueQuery::Configured",
+        "CatalogueQuery::Available",
+        "CatalogueQuery::Runnable",
+    ] {
+        assert!(app.contains(view), "missing derived view: {view}");
+    }
+    let domain = flat("src/domain/catalogue.rs");
+    assert!(domain.contains("pub fn adapter_supported"));
+}
+
+#[test]
 fn consumer_contract_and_docs_cover_single_authority() {
     assert!(
         root()
@@ -117,6 +150,8 @@ fn consumer_contract_and_docs_cover_single_authority() {
     let docs = read("../docs/runtime-models-providers.md").to_ascii_lowercase();
     for phrase in [
         "effective catalogue",
+        "source precedence",
+        "lowest precedence first",
         "application",
         "existing transport",
         "new transport",

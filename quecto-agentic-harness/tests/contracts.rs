@@ -9,6 +9,8 @@ mod audit_sink;
 mod catalogue_refresh_all_port;
 #[path = "contracts/catalogue_refresh_port.rs"]
 mod catalogue_refresh_port;
+#[path = "contracts/catalogue_source.rs"]
+mod catalogue_source;
 #[path = "contracts/context_spill_store.rs"]
 mod context_spill_store;
 #[path = "contracts/environment_finalization_port.rs"]

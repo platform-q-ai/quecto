@@ -11,6 +11,30 @@ use crate::domain::catalogue::{
     Availability, CatalogueSnapshot, ModelDescriptor, ModelRef, TransportKind, UnavailableReason,
 };
 
+/// One ordered catalogue input. Infrastructure implements this port for the
+/// built-in layer, user-owned configuration, discovered metadata, and runtime
+/// composition; the application owns the precedence between them.
+pub trait CatalogueSource {
+    /// Stable identifier used to report which layer failed to load.
+    fn id(&self) -> &str;
+    fn load(&self) -> Result<Vec<ModelDescriptor>, String>;
+}
+
+/// A source layer that could not be loaded. The layer is skipped rather than
+/// failing resolution so one malformed input cannot erase the other layers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogueSourceError {
+    pub source: String,
+    pub error: String,
+}
+
+/// The effective catalogue plus the layers that were skipped while resolving it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedCatalogue {
+    pub snapshot: CatalogueSnapshot,
+    pub skipped: Vec<CatalogueSourceError>,
+}
+
 /// Resolve ordered source layers into one immutable effective catalogue.
 /// Later layers override earlier layers by stable provider/model identity.
 #[derive(Debug, Default, Clone, Copy)]
@@ -24,6 +48,32 @@ impl ResolveCatalogueUseCase {
     ) -> CatalogueSnapshot {
         CatalogueSnapshot::merge_layers(generation, layers)
     }
+
+    /// Resolve source layers in precedence order: earlier sources are the base,
+    /// later sources upsert by stable provider/model identity. A source that
+    /// fails to load is reported and skipped, so the remaining layers still
+    /// publish a coherent catalogue.
+    pub fn resolve_sources(
+        &self,
+        generation: u64,
+        sources: &[&dyn CatalogueSource],
+    ) -> ResolvedCatalogue {
+        let mut layers = Vec::with_capacity(sources.len());
+        let mut skipped = Vec::new();
+        for source in sources {
+            match source.load() {
+                Ok(models) => layers.push(models),
+                Err(error) => skipped.push(CatalogueSourceError {
+                    source: source.id().to_string(),
+                    error,
+                }),
+            }
+        }
+        ResolvedCatalogue {
+            snapshot: self.resolve(generation, layers),
+            skipped,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +81,7 @@ pub enum CatalogueQuery {
     All,
     Runnable,
     Available,
+    Configured,
     Known,
 }
 
@@ -82,10 +133,14 @@ impl QueryCatalogueUseCase {
             .models()
             .iter()
             .filter(|model| match filter {
+                // Derived views over one snapshot, narrowing in order: every
+                // known entry, those with a usable configuration, those whose
+                // transport also has an adapter, and finally those that can run
+                // right now.
                 CatalogueQuery::All | CatalogueQuery::Known => true,
-                CatalogueQuery::Available | CatalogueQuery::Runnable => {
-                    model.availability.runnable()
-                }
+                CatalogueQuery::Configured => model.configured,
+                CatalogueQuery::Available => model.configured && model.adapter_supported(),
+                CatalogueQuery::Runnable => model.availability.runnable(),
             })
             .cloned()
             .collect();

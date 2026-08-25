@@ -2,6 +2,12 @@
 
 Quecto has one **effective catalogue** of provider/model descriptors. The domain owns stable identities, capabilities, availability, and immutable generation snapshots. The application resolves source layers, answers queries and selections, refreshes sources, and publishes provider routing with the catalogue as one runtime generation. Infrastructure parses and persists external formats, discovers remote metadata, resolves credentials, and constructs concrete transports. CLI, UDS, and TUI consume projections of the application snapshot.
 
+## Source precedence
+
+Catalogue sources are resolved as ordered layers, lowest precedence first: built-in metadata, then user-owned `models.json`, then the composed runtime layer that carries credential- and adapter-derived availability. Later layers upsert earlier ones by stable `provider/model` identity and keep the earlier entry's position, so listing order is stable when a user overrides shipped metadata. A source that fails to load is reported and skipped; the remaining layers still publish a coherent generation.
+
+Queries are derived views over that one snapshot, narrowing in order: `Known` (every entry), `Configured` (usable local configuration), `Available` (configured and backed by a transport adapter), `Runnable` (can run right now).
+
 ## Add or correct model metadata
 
 For an existing provider, add the model to `models.json` or use explicit catalogue refresh. A user override with the same stable `provider/model` identity wins over older metadata without recompiling Quecto. Do not add model tables to CLI or TUI code.
