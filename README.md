@@ -1,42 +1,34 @@
 # Quecto
 
-Quecto is a Rust workspace for running AI coding agents locally, connecting them to terminal, HTTP/WebSocket, MCP, and managed-runtime surfaces. The core `quecto` binary owns model sessions, credentials, tools, workflows, subagents, and the Unix-domain-socket (UDS) protocol; the companion crates are clients, bridges, and infrastructure around that kernel.
+Quecto aims to be the smallest, most efficient agentic harness; designed to run anywhere on any device for any length of time.
 
-Companion crate versions are declared in each package `Cargo.toml`.
+## Features at a glance
+- **Agentic kernel:** run `quecto` directly or as a persistent UDSSession and message recovery server.
+- **Master Agents:** (do we want to keep this terminology?)
+- **Subagents:** spawn background agent sessions for independent investigation or review work.
+- **Providers:**
+- **Workspaces:**
+- **Containers:** run within containers
+- **Workflows:**
+- **Token-saving conversation management:** (talk about how conversation management works)
+- **Keyboard shortcuts (planned):** config driven shortcut customisation, profile driven (default, vim, browser)
+
+## Principles
+- **Modular:** Quecto is extendable via .... 
+- **Micro-Service driven:** Terminal UI, MCP bridge, Runtime manager and the Agentic harness all speak via UDS.
 
 ## Workspace projects
 
-| Project | Package / binary | What it is | Main features |
-|---|---|---|---|
-| [Agentic harness](quecto-agentic-harness/) | `quecto-agentic-harness` / `quecto` | The core CLI and UDS agent kernel. | Model/provider configuration, credential management, tool execution, workflows, subagents, session history, audit logs, UDS protocol, context management, and local/container execution hooks. |
-| [Terminal UI](quecto-tui/) | `quecto-tui` | A lightweight terminal client for the `quecto` UDS agent. | Spawn-or-attach agent startup, streaming chat, slash commands, model switching, workflow controls, markdown/link rendering, input history, and tool-output expansion. |
-| [HTTP/WebSocket API](quecto-api/) | `quecto-api` | A REST and WebSocket gateway to a running UDS agent. | `/prompt`, `/steer`, `/follow_up`, `/abort`, `/model`, `/state`, `/messages`, `/stats`, `/tools`, `/audit/events`, and `/ws` for browser/server clients. |
-| [MCP bridge](quecto-mcp/) | `quecto-mcp` | A standalone UDS extension that exposes remote MCP server tools as Quecto tools. | MCP tool discovery, allow/deny filtering, Quecto-safe tool-name mapping, `register_tools`, and proxying Quecto `execute_tool` events to MCP `tools/call`. |
-| [Runtime manager](quecto-runtime-manager/) | `quecto-runtime-manager` | A small HTTP manager for per-session Quecto runtimes. | Ensure/stop/status runtime APIs, process and Kubernetes pod execution models, API proxying, credential secret patching, and runtime capacity limits. |
-| [Line/framing I/O](quecto-line-io/) | `quecto-line-io` | Shared bounded JSON/UDS reader and writer library. | ADR-0008 length-prefixed frames, legacy NDJSON compatibility, 8 MiB payload cap, oversized-input handling, and shared wire helpers used by the harness, TUI, and API. |
+| Project | Package / binary | What it is |
+|---|---|---|
+| [Agentic harness](quecto-agentic-harness/) | `quecto-agentic-harness` / `quecto` | The core CLI and UDS agent kernel. |
+| [Terminal UI](quecto-tui/) | `quecto-tui` | A lightweight terminal client for the `quecto` UDS agent. |
+| [HTTP/WebSocket API](quecto-api/) | `quecto-api` | A REST and WebSocket gateway to a running UDS agent. |
+| [MCP bridge](quecto-mcp/) | `quecto-mcp` | A standalone UDS-driven extension that exposes remote MCP server tools as Quecto tools. |
+| [Runtime manager](quecto-runtime-manager/) | `quecto-runtime-manager` | A small HTTP manager for per-session Quecto runtimes. |
+| [Line/framing I/O](quecto-line-io/) | `quecto-line-io` | Shared bounded JSON/UDS reader and writer library. |
 
 Package-specific source, tests, docs, and fixtures are colocated under each package root.
-
-## Values
-
-Quecto is built around a few practical engineering values:
-
-- **Local-first control:** developers should be able to run, inspect, and supervise agent sessions from their own machine and infrastructure.
-- **One kernel, many surfaces:** the CLI/UDS harness is the source of truth; the TUI, API, MCP bridge, and runtime manager are focused adapters around it.
-- **Explicit, recoverable protocols:** commands, events, history, and tool results should be observable, bounded, and recoverable rather than hidden in client state.
-- **Security before convenience:** credentials stay out of the repo, secrets are redacted, local env files are ignored, and sandbox limits are documented instead of implied.
-- **Small, verified changes:** contributors should prefer minimal changes, repository conventions, BDD/TDD where practical, and checks that prove the touched behavior.
-- **Composable automation:** workflows, tools, subagents, and runtimes should be independently understandable pieces that compose without surprising authority or identity boundaries.
-
-## Features at a glance
-
-- **Local-first agent kernel:** run `quecto` directly or as a persistent UDS server.
-- **Multiple user surfaces:** terminal UI, REST, WebSocket, and MCP-extension workflows all speak to the same agent kernel.
-- **Provider-aware configuration:** configure built-in and OpenAI-compatible providers via config files, environment variables, or the credential store.
-- **Workflow support:** opt into guided development workflows with optional guard checks.
-- **Subagents:** spawn background agent sessions for independent investigation or review work.
-- **Session and message recovery:** stable message IDs, paged history, bounded content recovery, and audit-event access.
-- **Security-conscious defaults:** secret redaction in logs/status surfaces, explicit credential handling, ignored local env files, and documented sandbox limitations.
 
 ## Quick start
 
