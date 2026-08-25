@@ -23,7 +23,6 @@ The core `quecto` process can run as a one-shot CLI, an interactive REPL, or a p
 - **Inspectable agent work:** workflows, subagent lifecycle events, paged history, and recoverable context stubs make it possible to supervise and audit long agent runs.
 - **Review before trust:** the built-in development workflow expects tests, local review, PR review, and conformance checks rather than treating a single agent pass as sufficient.
 - **Protocol over embedding:** Terminal UI, MCP bridge, runtime manager, API gateway, and the agentic harness communicate over UDS/HTTP boundaries instead of sharing UI-specific internals.
-- **Secrets stay local:** credentials belong in the auth store, environment, or deployment secret manager — never in repository files, examples, logs, or screenshots.
 
 Companion crate versions are declared in each package `Cargo.toml`.
 
