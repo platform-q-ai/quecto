@@ -172,7 +172,7 @@ fn discover_once_with_reports_registry_validation_and_publish_failures() {
             std::fs::write(
                 &path,
                 serde_json::json!({"providers": {
-                    "open": {"api": "openai-completions", "baseUrl": "https://example.test/v1", "models": []},
+                    "open": {"api": "openai-completions", "baseUrl": "https://example.test/v1", "apiKey": "direct-token", "models": [{"id":"previous"}]},
                     "other": {"api": "openai-completions", "baseUrl": "https://example.test/v1", "models": [{"id":"keep"}]}
                 }})
                 .to_string(),
@@ -184,6 +184,54 @@ fn discover_once_with_reports_registry_validation_and_publish_failures() {
     )
     .unwrap_err();
     assert!(published.contains("failed to write"));
+}
+
+#[test]
+fn stale_discovery_is_discarded_when_provider_configuration_changes_before_publish() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("models.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({"providers": {"open": {
+            "api": "openai-completions",
+            "baseUrl": "https://old.example.test/v1",
+            "models": [{"id":"old-runtime"}]
+        }}})
+        .to_string(),
+    )
+    .unwrap();
+
+    let error = discover_once_with(
+        tmp.path(),
+        "open",
+        |_url, _auth| {
+            std::fs::write(
+                &path,
+                serde_json::json!({"providers": {"open": {
+                    "api": "openai-completions",
+                    "baseUrl": "https://new.example.test/v1",
+                    "models": [{"id":"new-runtime"}]
+                }}})
+                .to_string(),
+            )
+            .unwrap();
+            Ok(vec![json!({"id":"stale-old-backend"})])
+        },
+        |_path, _bytes| Ok(()),
+    )
+    .unwrap_err();
+
+    assert!(error.contains("changed during discovery"));
+    let registry: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(
+        registry["providers"]["open"]["baseUrl"],
+        "https://new.example.test/v1"
+    );
+    assert_eq!(
+        registry["providers"]["open"]["models"][0]["id"],
+        "new-runtime"
+    );
 }
 
 #[test]
