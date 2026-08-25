@@ -4,13 +4,26 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::domain::catalogue::{CatalogueSnapshot, ModelDescriptor};
 use crate::domain::provider::LlmProvider;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::reload::{ReloadResult, ReloadSource, RuntimeReload};
 
-use super::build_agent_provider;
+use crate::infrastructure::provider_runtime::build_agent_provider_with_descriptors;
 
-pub type ProviderReload = RuntimeReload<Arc<dyn LlmProvider>>;
+pub type ProviderReload = RuntimeReload<ReloadedProviderRuntime>;
+
+#[derive(Debug, Clone)]
+pub struct ReloadedProviderRuntime {
+    pub provider: Arc<dyn LlmProvider>,
+    pub catalogue: CatalogueSnapshot,
+}
+
+impl ReloadedProviderRuntime {
+    pub fn generation(&self) -> u64 {
+        self.catalogue.generation
+    }
+}
 
 /// Owned inputs used to rebuild the provider set after a config reload.
 ///
@@ -40,7 +53,7 @@ impl ProviderReloadInputs {
         }
     }
 
-    pub async fn rebuild_blocking(&self) -> Result<Arc<dyn LlmProvider>, String> {
+    pub async fn rebuild_blocking(&self) -> Result<ReloadedProviderRuntime, String> {
         let inputs = self.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         std::thread::spawn(move || {
@@ -50,11 +63,16 @@ impl ProviderReloadInputs {
             .map_err(|_| "provider reload worker panicked".to_string())?
     }
 
-    fn rebuild_on_current_thread(&self) -> Result<Arc<dyn LlmProvider>, String> {
+    fn rebuild_on_current_thread(&self) -> Result<ReloadedProviderRuntime, String> {
         let config =
             Config::load_with_env(self.config_path.to_str().unwrap_or(""), &self.env_overrides)
                 .map_err(|e| e.to_string())?;
-        build_agent_provider(&config, &self.base_dir, &self.http_client)
+        let (provider, descriptors) =
+            build_agent_provider_with_descriptors(&config, &self.base_dir, &self.http_client)?;
+        Ok(ReloadedProviderRuntime {
+            provider,
+            catalogue: CatalogueSnapshot::new(0, descriptors),
+        })
     }
 }
 
@@ -76,14 +94,17 @@ pub fn seeded_provider_reload_with_base(
         sources.push(ReloadSource::new(base_dir.join("models.json")));
     }
     let mut reload = RuntimeReload::new(sources);
-    reload.seed(initial_provider);
+    reload.seed(ReloadedProviderRuntime {
+        provider: initial_provider,
+        catalogue: CatalogueSnapshot::new(0, Vec::<ModelDescriptor>::new()),
+    });
     reload
 }
 
 pub async fn poll_provider_reload(
     reload: Option<&mut ProviderReload>,
     inputs: Option<&ProviderReloadInputs>,
-) -> Option<ReloadResult<Arc<dyn LlmProvider>>> {
+) -> Option<ReloadResult<ReloadedProviderRuntime>> {
     let (Some(reload), Some(inputs)) = (reload, inputs) else {
         return None;
     };
@@ -91,7 +112,10 @@ pub async fn poll_provider_reload(
         return Some(ReloadResult::Unchanged);
     }
     match inputs.rebuild_blocking().await {
-        Ok(provider) => Some(reload.record_reloaded(provider)),
+        Ok(mut runtime) => {
+            runtime.catalogue.generation = next_generation(reload);
+            Some(reload.record_reloaded(runtime))
+        }
         Err(err) => {
             tracing::warn!(target: "reload", error = %err, "reload rebuild failed; keeping last-good");
             Some(ReloadResult::Unchanged)
@@ -99,15 +123,26 @@ pub async fn poll_provider_reload(
     }
 }
 
+fn next_generation(reload: &ProviderReload) -> u64 {
+    reload
+        .last_good()
+        .map(ReloadedProviderRuntime::generation)
+        .unwrap_or(0)
+        .saturating_add(1)
+}
+
 pub async fn force_provider_reload(
     reload: Option<&mut ProviderReload>,
     inputs: Option<&ProviderReloadInputs>,
-) -> Option<Result<ReloadResult<Arc<dyn LlmProvider>>, String>> {
+) -> Option<Result<ReloadResult<ReloadedProviderRuntime>, String>> {
     let (Some(reload), Some(inputs)) = (reload, inputs) else {
         return None;
     };
     match inputs.rebuild_blocking().await {
-        Ok(provider) => Some(Ok(reload.record_reloaded(provider))),
+        Ok(mut runtime) => {
+            runtime.catalogue.generation = next_generation(reload);
+            Some(Ok(reload.record_reloaded(runtime)))
+        }
         Err(err) => {
             tracing::warn!(target: "reload", error = %err, "forced reload failed; keeping last-good");
             Some(Err(err))

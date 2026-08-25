@@ -5,6 +5,7 @@ use tempfile::TempDir;
 use crate::domain::provider::LlmProvider;
 use crate::interface::cli::provider_reload::{
     ProviderReloadInputs, force_provider_reload, poll_provider_reload, seeded_provider_reload,
+    seeded_provider_reload_with_base,
 };
 
 fn provider() -> Arc<dyn LlmProvider> {
@@ -111,4 +112,147 @@ async fn unchanged_poll_does_not_rebuild() {
         result,
         crate::infrastructure::reload::ReloadResult::Unchanged
     ));
+}
+
+#[tokio::test]
+async fn forced_reload_publishes_owned_catalogue_snapshot_from_models_json() {
+    let dir = TempDir::new().unwrap();
+    let path = write_config(&dir, r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
+    std::fs::write(
+        dir.path().join("models.json"),
+        serde_json::json!({"providers": {
+            "custom": {
+                "api": "openai-completions",
+                "baseUrl": "https://example.test/v1",
+                "apiKey": "sk-custom",
+                "models": [{"id": "custom-model", "displayName": "Custom Model"}]
+            }
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let mut reload =
+        seeded_provider_reload_with_base(&path, Some(dir.path().to_path_buf()), provider());
+    let inputs = inputs(path, &dir);
+
+    let result = force_provider_reload(Some(&mut reload), Some(&inputs))
+        .await
+        .unwrap()
+        .unwrap();
+
+    let crate::infrastructure::reload::ReloadResult::Reloaded(runtime) = result else {
+        panic!("expected reloaded runtime");
+    };
+    assert!(
+        runtime
+            .catalogue
+            .models()
+            .iter()
+            .any(|model| model.qualified_id() == "custom/custom-model")
+    );
+}
+
+#[tokio::test]
+async fn models_json_only_change_reloads_catalogue_and_runtime_together() {
+    let dir = TempDir::new().unwrap();
+    let path = write_config(&dir, r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
+    let models_path = dir.path().join("models.json");
+    std::fs::write(&models_path, r#"{"providers":{}}"#).unwrap();
+    let mut reload =
+        seeded_provider_reload_with_base(&path, Some(dir.path().to_path_buf()), provider());
+    std::fs::write(
+        &models_path,
+        r#"{"providers":{"custom":{"api":"openai-completions","baseUrl":"https://example.test/v1","auth":{"mode":"apiKey","apiKey":"sk-custom"},"models":[{"id":"after-race"}]}}}"#,
+    )
+    .unwrap();
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(10);
+    filetime::set_file_mtime(&models_path, filetime::FileTime::from_system_time(later)).unwrap();
+    let inputs = inputs(path, &dir);
+
+    let crate::infrastructure::reload::ReloadResult::Reloaded(runtime) =
+        poll_provider_reload(Some(&mut reload), Some(&inputs))
+            .await
+            .unwrap()
+    else {
+        panic!("models.json-only edit should reload");
+    };
+
+    assert!(runtime.catalogue.models().iter().any(|model| {
+        model.qualified_id() == "custom/after-race"
+            && runtime
+                .catalogue
+                .models()
+                .iter()
+                .any(|runtime_model| runtime_model == model)
+    }));
+}
+
+#[tokio::test]
+async fn forced_reload_catalogue_matches_runtime_descriptors_with_oauth_credentials() {
+    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
+
+    let dir = TempDir::new().unwrap();
+    let path = write_config(&dir, r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
+    std::fs::write(
+        dir.path().join("models.json"),
+        r#"{"providers":{"custom-oauth":{"api":"openai-completions","baseUrl":"https://api.openai.com/v1","auth":{"mode":"oauth","oauthProvider":"openai"},"models":[{"id":"gpt-oauth"}]}}}"#,
+    )
+    .unwrap();
+    CredentialStore::new(dir.path())
+        .store(Credential {
+            provider: "openai".to_string(),
+            token: "oauth-token".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: None,
+            refresh_token: None,
+            account_id: None,
+        })
+        .unwrap();
+    let mut reload =
+        seeded_provider_reload_with_base(&path, Some(dir.path().to_path_buf()), provider());
+    let inputs = inputs(path, &dir);
+
+    let crate::infrastructure::reload::ReloadResult::Reloaded(runtime) =
+        force_provider_reload(Some(&mut reload), Some(&inputs))
+            .await
+            .unwrap()
+            .unwrap()
+    else {
+        panic!("expected reloaded runtime");
+    };
+    assert!(
+        runtime.catalogue.models().iter().any(|model| {
+            model.qualified_id() == "custom-oauth/gpt-oauth"
+                && model.configured
+                && model.availability.runnable()
+        }),
+        "{:?}",
+        runtime.catalogue.models()
+    );
+}
+
+#[tokio::test]
+async fn reload_generations_are_monotonic() {
+    let dir = TempDir::new().unwrap();
+    let path = write_config(&dir, r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
+    let mut reload =
+        seeded_provider_reload_with_base(&path, Some(dir.path().to_path_buf()), provider());
+    let inputs = inputs(path.clone(), &dir);
+
+    let first = force_provider_reload(Some(&mut reload), Some(&inputs))
+        .await
+        .unwrap()
+        .unwrap();
+    let crate::infrastructure::reload::ReloadResult::Reloaded(first) = first else {
+        panic!("expected reload")
+    };
+    let second = force_provider_reload(Some(&mut reload), Some(&inputs))
+        .await
+        .unwrap()
+        .unwrap();
+    let crate::infrastructure::reload::ReloadResult::Reloaded(second) = second else {
+        panic!("expected reload")
+    };
+
+    assert!(second.generation() > first.generation());
 }

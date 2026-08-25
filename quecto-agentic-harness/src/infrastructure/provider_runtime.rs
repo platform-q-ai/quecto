@@ -7,6 +7,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use crate::domain::catalogue::ModelDescriptor;
 use crate::domain::provider::LlmProvider;
 use crate::infrastructure::auth::credential_store::CredentialStore;
 use crate::infrastructure::config::Config;
@@ -37,15 +38,22 @@ impl<'a> crate::provider_runtime_app::ProviderRuntimeFactory<Config, ProviderRun
     }
 }
 
-/// Concrete infrastructure implementation behind the application runtime-composition port.
-/// Kept `pub(crate)` so legacy tests and temporary compatibility adapters can
-/// exercise the exact same path without reintroducing CLI ownership.
 pub(crate) fn build_agent_provider(
     config: &Config,
     base_dir: &std::path::Path,
     http_client: &reqwest::Client,
 ) -> Result<Arc<dyn LlmProvider>, String> {
     compose_agent_provider(config, base_dir, http_client)
+}
+
+pub(crate) fn build_agent_provider_with_descriptors(
+    config: &Config,
+    base_dir: &std::path::Path,
+    http_client: &reqwest::Client,
+) -> Result<(Arc<dyn LlmProvider>, Vec<ModelDescriptor>), String> {
+    let provider = compose_agent_provider(config, base_dir, http_client)?;
+    let descriptors = compose_agent_descriptors(config, base_dir)?;
+    Ok((provider, descriptors))
 }
 
 /// Build a ProviderRouter from config + credential store.
@@ -63,19 +71,11 @@ fn compose_agent_provider(
     let store_arc = Arc::new(CredentialStore::new(base_dir));
     let refresh_fn = crate::infrastructure::oauth_runtime::make_oauth_refresh_fn();
 
-    // #1066: the endpoint router needs the *effective* registry (builtin +
-    // ~/.quecto/models.json overrides) so user `reasoning` overrides steer
-    // Responses-vs-Chat-Completions routing. Loaded once, reused below.
     let model_registry = crate::infrastructure::model_registry::ModelRegistry::load_from_path(
         &base_dir.join("models.json"),
     )
     .map_err(|e| e.to_string())?;
 
-    // Built-in providers are explicit by billing/auth mode. We deliberately do
-    // not resolve a single `openai`/`anthropic` slot by precedence because that
-    // can silently switch a request between monthly-plan OAuth and token-billed
-    // API-key auth. Users select `openai-api`, `openai-oauth`, `anthropic-api`,
-    // or `anthropic-oauth` explicitly (or define their own keys in models.json).
     let openai_base = non_empty(config.providers.openai.api_base.clone());
     let openai_api_key = if !config.providers.openai.api_key.is_empty() {
         config.providers.openai.api_key.clone()
@@ -310,6 +310,36 @@ fn mock_llm_bare_anthropic_alias_enabled(api_base: &Option<String>) -> bool {
         && api_base.as_deref().is_some_and(|base| {
             base.starts_with("http://127.0.0.1:") || base.starts_with("http://localhost:")
         })
+}
+
+fn compose_agent_descriptors(
+    config: &Config,
+    base_dir: &std::path::Path,
+) -> Result<Vec<ModelDescriptor>, String> {
+    let store = CredentialStore::new(base_dir);
+    crate::infrastructure::model_registry::ModelRegistry::load_from_path(
+        &base_dir.join("models.json"),
+    )
+    .map_err(|e| e.to_string())?
+    .models()
+    .iter()
+    .filter_map(
+        |model| match registry_provider_can_construct(model, &store, config) {
+            Ok(false) => None,
+            Ok(true) => match registry_model_credential_available(model, &store, config) {
+                Ok(credential_available) => {
+                    crate::infrastructure::catalogue_registry::record_to_descriptor_with_credential(
+                        model,
+                        credential_available,
+                    )
+                    .transpose()
+                }
+                Err(err) => Some(Err(err)),
+            },
+            Err(err) => Some(Err(err)),
+        },
+    )
+    .collect()
 }
 
 fn registry_provider_factory(
