@@ -15,8 +15,7 @@ use fs2::FileExt;
 use serde_json::{Value, json};
 
 use crate::catalogue_refresh_app::{
-    CatalogueRefreshApplication, CatalogueRefreshOutcome, CatalogueRefreshPort,
-    CatalogueRefreshStatus,
+    CatalogueRefreshAllPort, CatalogueRefreshOutcome, CatalogueRefreshPort, CatalogueRefreshStatus,
 };
 use crate::infrastructure::atomic_write::atomic_write;
 use crate::infrastructure::model_registry::resolve_registry_value;
@@ -72,17 +71,13 @@ impl ModelsJsonCatalogueRefreshAdapter {
     }
 }
 
-pub fn catalogue_refresh_application(
-    base_dir: impl Into<PathBuf>,
-) -> CatalogueRefreshApplication<impl CatalogueRefreshPort> {
-    CatalogueRefreshApplication::new(ModelsJsonCatalogueRefreshAdapter::new(base_dir))
-}
-
-impl CatalogueRefreshPort for ModelsJsonCatalogueRefreshAdapter {
+impl CatalogueRefreshAllPort for ModelsJsonCatalogueRefreshAdapter {
     fn refresh_all_sources(&self) -> Vec<CatalogueRefreshOutcome> {
         self.refresh_all()
     }
+}
 
+impl CatalogueRefreshPort for ModelsJsonCatalogueRefreshAdapter {
     fn refresh_source(&self, source: &str) -> CatalogueRefreshOutcome {
         match discover_once(&self.base_dir, source) {
             Ok(models) => CatalogueRefreshOutcome {

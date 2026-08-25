@@ -1,61 +1,57 @@
-//! Contract coverage for the application-owned catalogue refresh port.
+//! Contract coverage for catalogue refresh ports.
 
 use quecto::catalogue_refresh_app::{
-    CatalogueRefreshApplication, CatalogueRefreshOutcome, CatalogueRefreshPort,
-    CatalogueRefreshStatus,
+    CatalogueRefreshAllPort, CatalogueRefreshOutcome, CatalogueRefreshPort, CatalogueRefreshStatus,
+    RefreshCatalogueSourceUseCase,
 };
 
-struct FakeRefreshPort;
+struct RefreshPort;
 
-impl CatalogueRefreshPort for FakeRefreshPort {
+impl CatalogueRefreshPort for RefreshPort {
     fn refresh_source(&self, source: &str) -> CatalogueRefreshOutcome {
         CatalogueRefreshOutcome {
             source: source.to_string(),
-            status: CatalogueRefreshStatus::Refreshed { models: 3 },
+            status: if source == "ok" {
+                CatalogueRefreshStatus::Refreshed { models: 2 }
+            } else {
+                CatalogueRefreshStatus::Failed {
+                    error: "failed".to_string(),
+                }
+            },
         }
     }
+}
 
+impl CatalogueRefreshAllPort for RefreshPort {
     fn refresh_all_sources(&self) -> Vec<CatalogueRefreshOutcome> {
-        vec![
-            CatalogueRefreshOutcome {
-                source: "anthropic".to_string(),
-                status: CatalogueRefreshStatus::Skipped {
-                    reason: "unsupported".to_string(),
-                },
-            },
-            self.refresh_source("open"),
-        ]
+        vec![self.refresh_source("ok"), self.refresh_source("bad")]
     }
 }
 
 #[test]
-fn catalogue_refresh_port_reports_one_source_through_the_application() {
-    let outcome = CatalogueRefreshApplication::new(FakeRefreshPort).refresh("open");
+fn refresh_source_returns_structured_per_source_status() {
+    let outcome = RefreshCatalogueSourceUseCase::new().refresh(&RefreshPort, "ok");
 
-    assert_eq!(outcome.source, "open");
+    assert_eq!(outcome.source, "ok");
     assert_eq!(
         outcome.status,
-        CatalogueRefreshStatus::Refreshed { models: 3 }
+        CatalogueRefreshStatus::Refreshed { models: 2 }
     );
 }
 
 #[test]
-fn catalogue_refresh_port_preserves_per_source_refresh_all_outcomes() {
-    let outcomes = CatalogueRefreshApplication::new(FakeRefreshPort).refresh_all();
+fn refresh_all_does_not_short_circuit_failed_sources() {
+    let outcomes = RefreshCatalogueSourceUseCase::new().refresh_all(&RefreshPort);
 
+    assert_eq!(outcomes.len(), 2);
     assert_eq!(
-        outcomes
-            .iter()
-            .map(|outcome| outcome.source.as_str())
-            .collect::<Vec<_>>(),
-        ["anthropic", "open"]
-    );
-    assert!(matches!(
         outcomes[0].status,
-        CatalogueRefreshStatus::Skipped { .. }
-    ));
-    assert!(matches!(
+        CatalogueRefreshStatus::Refreshed { models: 2 }
+    );
+    assert_eq!(
         outcomes[1].status,
-        CatalogueRefreshStatus::Refreshed { models: 3 }
-    ));
+        CatalogueRefreshStatus::Failed {
+            error: "failed".to_string()
+        }
+    );
 }

@@ -11,6 +11,7 @@ pub mod model_registry;
 pub mod oauth_runtime;
 pub mod persistence;
 pub mod provider_runtime;
+pub(crate) mod provider_runtime_catalogue;
 pub mod providers;
 pub mod reload;
 pub mod repo_local_container_config;

@@ -1,7 +1,8 @@
 //! Infrastructure provider-runtime factory for agent execution.
 //!
-//! Owns credential lookup, adapter construction, OAuth refresh wrapping, retry
-//! decoration, and router composition behind `ProviderRuntimePort`.
+//! This module owns concrete credential lookup, provider adapter construction,
+//! OAuth refresh wrapping, retry decoration, and router composition behind the
+//! application `ProviderRuntimeFactory` port.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -17,32 +18,29 @@ use crate::infrastructure::providers::router::ProviderRouter;
 
 const MAX_OPENAI_COMPATIBLE_ENDPOINTS: usize = 32;
 
-type RuntimeInputs<'a> = (&'a std::path::Path, &'a reqwest::Client);
-
 #[derive(Debug, Default, Clone, Copy)]
 pub struct InfrastructureProviderRuntimeFactory;
 
-impl<'a> crate::provider_runtime_app::ProviderRuntimePort<Config, RuntimeInputs<'a>>
+pub struct ProviderRuntimeInputs<'a> {
+    pub base_dir: &'a std::path::Path,
+    pub http_client: &'a reqwest::Client,
+}
+
+impl<'a> crate::provider_runtime_app::ProviderRuntimeFactory<Config, ProviderRuntimeInputs<'a>>
     for InfrastructureProviderRuntimeFactory
 {
-    fn compose(
+    fn compose_runtime(
         &self,
         config: &Config,
-        runtime_inputs: &RuntimeInputs<'a>,
+        runtime_inputs: &ProviderRuntimeInputs<'a>,
     ) -> Result<Arc<dyn LlmProvider>, String> {
-        build_agent_provider(config, runtime_inputs.0, runtime_inputs.1)
+        build_agent_provider(config, runtime_inputs.base_dir, runtime_inputs.http_client)
     }
 }
 
-pub fn provider_runtime_application() -> crate::provider_runtime_app::ProviderRuntimeApplication<
-    impl for<'a> crate::provider_runtime_app::ProviderRuntimePort<Config, RuntimeInputs<'a>>,
-> {
-    crate::provider_runtime_app::ProviderRuntimeApplication::new(
-        InfrastructureProviderRuntimeFactory,
-    )
-}
-
-/// Concrete infrastructure implementation behind the application runtime port.
+/// Concrete infrastructure implementation behind the application runtime-composition port.
+/// Kept `pub(crate)` so legacy tests and temporary compatibility adapters can
+/// exercise the exact same path without reintroducing CLI ownership.
 pub(crate) fn build_agent_provider(
     config: &Config,
     base_dir: &std::path::Path,
@@ -52,7 +50,9 @@ pub(crate) fn build_agent_provider(
 }
 
 /// Build a ProviderRouter from config + credential store.
-/// OAuth providers wrap in [`RefreshableProvider`] so 401s refresh mid-session.
+///
+/// OAuth-backed providers are wrapped in [`RefreshableProvider`] so that
+/// expired tokens are automatically refreshed mid-session on 401 (issue #255).
 fn compose_agent_provider(
     config: &Config,
     base_dir: &std::path::Path,

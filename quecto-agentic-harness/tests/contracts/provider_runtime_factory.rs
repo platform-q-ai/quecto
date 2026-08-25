@@ -1,16 +1,17 @@
+//! Contract coverage for provider runtime factory ports.
+
 use std::sync::Arc;
 
-use super::*;
-use crate::domain::message::LlmResponse;
-use crate::domain::provider::{ChatRequest, StreamEvent};
-use crate::infrastructure::config::Config;
+use quecto::domain::message::LlmResponse;
+use quecto::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+use quecto::provider_runtime_app::{ComposeProviderRuntimeUseCase, ProviderRuntimeFactory};
 
 #[derive(Debug)]
-struct StubProvider;
+struct Provider;
 
-impl LlmProvider for StubProvider {
+impl LlmProvider for Provider {
     fn name(&self) -> &str {
-        "stub-runtime"
+        "runtime-factory-provider"
     }
 
     fn chat<'a>(
@@ -18,8 +19,9 @@ impl LlmProvider for StubProvider {
         _request: ChatRequest<'a>,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<LlmResponse, crate::domain::error::DomainError>>
-                + Send
+            dyn std::future::Future<
+                    Output = Result<LlmResponse, quecto::domain::error::DomainError>,
+                > + Send
                 + 'a,
         >,
     > {
@@ -39,8 +41,9 @@ impl LlmProvider for StubProvider {
         request: ChatRequest<'a>,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<LlmResponse, crate::domain::error::DomainError>>
-                + Send
+            dyn std::future::Future<
+                    Output = Result<LlmResponse, quecto::domain::error::DomainError>,
+                > + Send
                 + 'a,
         >,
     > {
@@ -60,38 +63,40 @@ impl LlmProvider for StubProvider {
     }
 }
 
+struct Config {
+    marker: &'static str,
+}
+
 struct RuntimeInputs {
-    root_name: &'static str,
+    workspace_name: &'static str,
     client_marker: &'static str,
 }
 
-struct CapturingFactory;
+struct Factory;
 
-impl ProviderRuntimeFactory<Config, RuntimeInputs> for CapturingFactory {
+impl ProviderRuntimeFactory<Config, RuntimeInputs> for Factory {
     fn compose_runtime(
         &self,
         config: &Config,
         runtime_inputs: &RuntimeInputs,
     ) -> Result<Arc<dyn LlmProvider>, String> {
-        assert_eq!(config.providers.openai.api_key, "sk-test");
-        assert_eq!(runtime_inputs.root_name, "runtime-root");
+        assert_eq!(config.marker, "contract");
+        assert_eq!(runtime_inputs.workspace_name, "workspace");
         assert_eq!(runtime_inputs.client_marker, "test-client");
-        Ok(Arc::new(StubProvider))
+        Ok(Arc::new(Provider))
     }
 }
 
 #[test]
-fn compose_provider_runtime_use_case_delegates_through_application_owned_port() {
-    let mut config = Config::default();
-    config.providers.openai.api_key = "sk-test".to_string();
+fn provider_runtime_factory_composes_through_application_use_case() {
     let runtime_inputs = RuntimeInputs {
-        root_name: "runtime-root",
+        workspace_name: "workspace",
         client_marker: "test-client",
     };
 
     let provider = ComposeProviderRuntimeUseCase::new()
-        .compose(&CapturingFactory, &config, &runtime_inputs)
+        .compose(&Factory, &Config { marker: "contract" }, &runtime_inputs)
         .unwrap();
 
-    assert_eq!(provider.name(), "stub-runtime");
+    assert_eq!(provider.name(), "runtime-factory-provider");
 }

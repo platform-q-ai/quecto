@@ -5,6 +5,8 @@
 mod agent_loop;
 #[path = "contracts/audit_sink.rs"]
 mod audit_sink;
+#[path = "contracts/catalogue_refresh_all_port.rs"]
+mod catalogue_refresh_all_port;
 #[path = "contracts/catalogue_refresh_port.rs"]
 mod catalogue_refresh_port;
 #[path = "contracts/catalogue_runtime_composer.rs"]
@@ -23,8 +25,8 @@ mod extension;
 mod llm_provider;
 #[path = "contracts/model_limit_source.rs"]
 mod model_limit_source;
-#[path = "contracts/provider_runtime_port.rs"]
-mod provider_runtime_port;
+#[path = "contracts/provider_runtime_factory.rs"]
+mod provider_runtime_factory;
 #[path = "contracts/runtime_tool_lifecycle_registry.rs"]
 mod runtime_tool_lifecycle_registry;
 #[path = "contracts/session_aware_tools.rs"]

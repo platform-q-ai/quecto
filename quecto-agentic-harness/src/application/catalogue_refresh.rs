@@ -1,4 +1,7 @@
-//! Application-owned catalogue refresh boundary.
+//! Application-level catalogue refresh use case and result types.
+//!
+//! Infrastructure performs provider-specific HTTP and persistence; interfaces
+//! call this use case instead of owning discovery/refresh semantics.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CatalogueRefreshStatus {
@@ -15,25 +18,33 @@ pub struct CatalogueRefreshOutcome {
 
 pub trait CatalogueRefreshPort {
     fn refresh_source(&self, source: &str) -> CatalogueRefreshOutcome;
+}
+
+pub trait CatalogueRefreshAllPort: CatalogueRefreshPort {
     fn refresh_all_sources(&self) -> Vec<CatalogueRefreshOutcome>;
 }
 
-/// Production orchestration boundary shared by CLI and UDS interfaces.
-pub struct CatalogueRefreshApplication<P> {
-    port: P,
-}
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RefreshCatalogueSourceUseCase;
 
-impl<P: CatalogueRefreshPort> CatalogueRefreshApplication<P> {
-    pub fn new(port: P) -> Self {
-        Self { port }
+impl RefreshCatalogueSourceUseCase {
+    pub fn new() -> Self {
+        Self
     }
 
-    pub fn refresh(&self, source: &str) -> CatalogueRefreshOutcome {
-        self.port.refresh_source(source)
+    pub fn refresh<P: CatalogueRefreshPort>(
+        &self,
+        port: &P,
+        source: &str,
+    ) -> CatalogueRefreshOutcome {
+        port.refresh_source(source)
     }
 
-    pub fn refresh_all(&self) -> Vec<CatalogueRefreshOutcome> {
-        self.port.refresh_all_sources()
+    pub fn refresh_all<P: CatalogueRefreshAllPort>(
+        &self,
+        port: &P,
+    ) -> Vec<CatalogueRefreshOutcome> {
+        port.refresh_all_sources()
     }
 }
 
