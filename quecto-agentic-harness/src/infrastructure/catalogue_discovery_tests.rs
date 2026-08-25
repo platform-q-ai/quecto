@@ -95,6 +95,133 @@ fn openai_discovery_fetches_publishes_and_trait_refresh_reports_missing_registry
 }
 
 #[test]
+fn discover_once_with_reports_registry_validation_and_publish_failures() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("models.json");
+
+    std::fs::write(&path, "{}").unwrap();
+    assert!(
+        provider_keys(&path)
+            .unwrap_err()
+            .contains("missing providers object")
+    );
+    assert!(
+        discover_once_with(
+            tmp.path(),
+            "open",
+            |_url, _auth| Ok(vec![]),
+            |_path, _bytes| Ok(())
+        )
+        .unwrap_err()
+        .contains("provider 'open' not found")
+    );
+
+    std::fs::write(
+        &path,
+        serde_json::json!({"providers": {"open": {"api": 7, "models": []}}}).to_string(),
+    )
+    .unwrap();
+    assert!(
+        discover_once_with(
+            tmp.path(),
+            "open",
+            |_url, _auth| Ok(vec![]),
+            |_path, _bytes| Ok(())
+        )
+        .unwrap_err()
+        .contains("api must be a string")
+    );
+
+    std::fs::write(
+        &path,
+        serde_json::json!({"providers": {
+            "anthropic": {"api": "anthropic-messages", "baseUrl": "https://example.test/v1", "models": []},
+            "oauth": {"api": "openai-completions", "baseUrl": "https://example.test/v1", "auth": {"mode": "oauth"}, "models": []},
+            "open": {"api": "openai-completions", "baseUrl": "https://example.test/v1", "apiKey": "direct-token", "models": []}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    assert!(
+        discover_once_with(
+            tmp.path(),
+            "anthropic",
+            |_url, _auth| Ok(vec![]),
+            |_path, _bytes| Ok(())
+        )
+        .unwrap_err()
+        .contains("is not an openai-completions provider")
+    );
+    assert!(
+        discover_once_with(
+            tmp.path(),
+            "oauth",
+            |_url, _auth| Ok(vec![]),
+            |_path, _bytes| Ok(())
+        )
+        .unwrap_err()
+        .contains("uses oauth auth")
+    );
+
+    let published = discover_once_with(
+        tmp.path(),
+        "open",
+        |url, auth| {
+            assert_eq!(url, "https://example.test/v1/models");
+            assert_eq!(auth, Some("direct-token"));
+            std::fs::write(
+                &path,
+                serde_json::json!({"providers": {
+                    "open": {"api": "openai-completions", "baseUrl": "https://example.test/v1", "models": []},
+                    "other": {"api": "openai-completions", "baseUrl": "https://example.test/v1", "models": [{"id":"keep"}]}
+                }})
+                .to_string(),
+            )
+            .unwrap();
+            Ok(vec![json!({"id":"fresh"})])
+        },
+        |_path, _bytes| Err("disk full".to_string()),
+    )
+    .unwrap_err();
+    assert!(published.contains("failed to write"));
+}
+
+#[test]
+fn fetch_openai_models_reports_http_and_payload_errors() {
+    let status_error =
+        fetch_openai_models(&serve_models_response(503, r#"{"error":"down"}"#), None).unwrap_err();
+    assert!(status_error.contains("503"));
+
+    let missing_data =
+        fetch_openai_models(&serve_models_response(200, "{}"), Some("token")).unwrap_err();
+    assert!(missing_data.contains("missing data array"));
+
+    let missing_id = fetch_openai_models(
+        &serve_models_response(200, r#"{"data":[{"name":"missing id"}]}"#),
+        None,
+    )
+    .unwrap_err();
+    assert!(missing_id.contains("model entry missing string id"));
+}
+
+fn serve_models_response(status: u16, body: &'static str) -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = [0; 1024];
+        let _ = stream.read(&mut buf).unwrap();
+        let response = format!(
+            "HTTP/1.1 {status} Test\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        std::io::Write::write_all(&mut stream, response.as_bytes()).unwrap();
+    });
+    format!("http://{addr}/v1/models")
+}
+
+#[test]
 fn provider_keys_are_sorted_for_deterministic_refresh_publication() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("models.json");
