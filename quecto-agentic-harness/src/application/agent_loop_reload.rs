@@ -33,6 +33,7 @@ impl AgentLoopImpl {
         self.context_manager
             .set_model_context_window(model_context_window);
         self.provider = runtime.provider;
+        self.catalogue_store.publish(runtime.catalogue.clone());
         self.catalogue = runtime.catalogue;
     }
 

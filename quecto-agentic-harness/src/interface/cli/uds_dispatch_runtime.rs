@@ -1,8 +1,6 @@
 use super::AgentEvent;
 use super::{DispatchCtx, emit_event_to_broadcast_or_writer};
-use crate::application::catalogue::{
-    CatalogueSnapshotStore, ResolveModelSelectionUseCase, SelectionFailure,
-};
+use crate::application::catalogue::{ResolveModelSelectionUseCase, SelectionFailure};
 use crate::domain::catalogue::ModelRef;
 
 pub(super) struct SetModelArgs {
@@ -66,8 +64,7 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     };
-    let selection =
-        ResolveModelSelectionUseCase::new(CatalogueSnapshotStore::new(ctx.agent.catalogue.clone()));
+    let selection = ResolveModelSelectionUseCase::new(ctx.agent.catalogue_store.clone());
     let descriptor = match selection.resolve(&reference) {
         Ok(descriptor) => descriptor,
         Err(SelectionFailure::UnknownModel) => {

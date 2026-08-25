@@ -368,7 +368,16 @@ fn repl_open_refuses_live_foreign_owner_but_ephemeral_skips_claim() {
     let ctx = ReplContext {
         base_dir: tmp.path(),
         config_path: tmp.path(),
-        provider: make_stub_provider(),
+        runtime: {
+            let provider = make_stub_provider();
+            crate::application::provider_runtime::CatalogueRuntimeSnapshot {
+                catalogue: crate::domain::catalogue::CatalogueSnapshot::new(
+                    0,
+                    provider.model_descriptors().unwrap_or(&[]).to_vec(),
+                ),
+                provider,
+            }
+        },
         config: &config,
         flags: &flags,
         cwd_override: None,

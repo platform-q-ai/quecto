@@ -95,7 +95,13 @@ fn test_build_system_prompt_no_user_prompt() {
     let ctx = ReplContext {
         base_dir: tmp.path(),
         config_path: tmp.path(),
-        provider,
+        runtime: crate::application::provider_runtime::CatalogueRuntimeSnapshot {
+            catalogue: crate::domain::catalogue::CatalogueSnapshot::new(
+                0,
+                provider.model_descriptors().unwrap_or(&[]).to_vec(),
+            ),
+            provider,
+        },
         config: &config,
         flags: &flags,
         cwd_override: None,
@@ -124,7 +130,13 @@ fn test_build_system_prompt_with_user_prompt() {
     let ctx = ReplContext {
         base_dir: tmp.path(),
         config_path: tmp.path(),
-        provider,
+        runtime: crate::application::provider_runtime::CatalogueRuntimeSnapshot {
+            catalogue: crate::domain::catalogue::CatalogueSnapshot::new(
+                0,
+                provider.model_descriptors().unwrap_or(&[]).to_vec(),
+            ),
+            provider,
+        },
         config: &config,
         flags: &flags,
         cwd_override: None,

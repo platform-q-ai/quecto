@@ -563,8 +563,13 @@ fn cmd_repl_with_progress<R: std::io::BufRead, W: std::io::Write>(
 
     let http_client = crate::interface::shared::build_http_client();
 
-    let provider = match build_agent_provider(&config, &base_dir, &http_client) {
-        Ok(p) => p,
+    let runtime = match crate::interface::catalogue_runtime::build_runtime_snapshot(
+        &config,
+        &base_dir,
+        &http_client,
+        0,
+    ) {
+        Ok(runtime) => runtime,
         Err(msg) => {
             let _ = writeln!(io.writer, "Error: {msg}");
             return 1;
@@ -574,7 +579,7 @@ fn cmd_repl_with_progress<R: std::io::BufRead, W: std::io::Write>(
     let repl_ctx = ReplContext {
         base_dir: &base_dir,
         config_path: &config_path,
-        provider,
+        runtime,
         config: &config,
         flags: &flags,
         cwd_override: ctx.cwd.as_deref(),

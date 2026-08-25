@@ -39,8 +39,8 @@ fn selection_rejects_unknown_and_unavailable_before_mutation() {
 fn startup_and_reload_both_use_the_shared_snapshot_composer() {
     let startup = flat("src/interface/cli/agent.rs");
     let reload = flat("src/interface/cli/provider_reload.rs");
-    assert!(startup.contains("build_agent_runtime"));
-    assert!(reload.contains("build_agent_runtime"));
+    assert!(startup.contains("build_runtime_snapshot"));
+    assert!(reload.contains("build_runtime_snapshot"));
     assert!(!reload.contains("build_agent_provider_with_descriptors"));
 }
 
@@ -88,6 +88,23 @@ fn tui_has_no_hardcoded_model_catalogue() {
     assert!(!selector.contains("fn known_models"));
     assert!(!selector.contains("claude-opus"));
     assert!(!selector.contains("gpt-5."));
+}
+
+#[test]
+fn composition_root_repl_and_uds_share_the_published_snapshot() {
+    let composer = flat("src/interface/catalogue_runtime.rs");
+    let cli = flat("src/interface/cli/mod.rs");
+    let repl = flat("src/interface/repl/mod.rs");
+    let agent = flat("src/application/agent_loop.rs");
+    let list = flat("src/interface/cli/uds_models.rs");
+    let select = flat("src/interface/cli/uds_dispatch_runtime.rs");
+
+    assert!(composer.contains("compose_catalogue_runtime"));
+    assert!(cli.contains("build_runtime_snapshot") && cli.contains("runtime,"));
+    assert!(repl.contains("ctx.runtime.catalogue") && !repl.contains("model_limits_from_base_dir"));
+    assert!(agent.contains("catalogue_store: CatalogueSnapshotStore"));
+    assert!(list.contains("agent.catalogue_store.clone()"));
+    assert!(select.contains("agent.catalogue_store.clone()"));
 }
 
 #[test]

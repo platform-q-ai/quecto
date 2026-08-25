@@ -3,6 +3,7 @@ use crate::application::agent_loop_stream::{
     StreamProviderError, TurnEnd, empty_stream_error_message, is_empty_streamed_response,
 };
 use crate::application::agent_usage::UsageTotals;
+use crate::application::catalogue::CatalogueSnapshotStore;
 use crate::application::context::{ContextManager, ContextManagerConfig};
 use crate::application::context_pruning;
 use crate::domain::agent::{
@@ -93,6 +94,7 @@ pub struct AgentLoopConfig {
 pub struct AgentLoopImpl {
     pub provider: Arc<dyn LlmProvider>,
     pub catalogue: CatalogueSnapshot,
+    pub catalogue_store: CatalogueSnapshotStore,
     pub(super) tool_registry: Box<dyn ToolRegistry>,
     pub(super) model: String,
     max_tokens: u32,
@@ -139,6 +141,11 @@ impl std::fmt::Debug for AgentLoopImpl {
     }
 }
 impl AgentLoopImpl {
+    pub fn with_catalogue(mut self, catalogue: CatalogueSnapshot) -> Self {
+        self.catalogue_store.publish(catalogue.clone());
+        self.catalogue = catalogue;
+        self
+    }
     pub fn new(config: AgentLoopConfig) -> Self {
         let context_manager = ContextManager::new(ContextManagerConfig {
             spill_store: config.spill_store.clone(),
@@ -149,11 +156,13 @@ impl AgentLoopImpl {
             context_collapse_after_messages: config.context_collapse_after_messages,
             model_context_window: config.model_context_window,
         });
+        let catalogue = CatalogueSnapshot::new(
+            0,
+            config.provider.model_descriptors().unwrap_or(&[]).to_vec(),
+        );
         Self {
-            catalogue: CatalogueSnapshot::new(
-                0,
-                config.provider.model_descriptors().unwrap_or(&[]).to_vec(),
-            ),
+            catalogue_store: CatalogueSnapshotStore::new(catalogue.clone()),
+            catalogue,
             provider: config.provider,
             tool_registry: config.tool_registry,
             model: config.model.clone(),
@@ -216,22 +225,18 @@ impl AgentLoopImpl {
     fn reconcile_context_gauge(&self, estimate: usize) -> usize {
         self.context_manager.reconcile_context_gauge(estimate)
     }
-
     fn observe_provider_context_gauge(&self, reported_tokens: usize, estimate_at_call: usize) {
         self.context_manager
             .observe_provider_context_gauge(reported_tokens, estimate_at_call);
     }
-
     fn observe_estimated_context_gauge(&self, estimate: usize) {
         self.context_manager
             .observe_estimated_context_gauge(estimate);
     }
-
     #[doc(hidden)]
     pub fn reconcile_context_gauge_for_test(&self, estimate: usize) -> usize {
         self.reconcile_context_gauge(estimate)
     }
-
     #[doc(hidden)]
     pub fn observe_provider_context_gauge_for_test(
         &self,
@@ -240,14 +245,12 @@ impl AgentLoopImpl {
     ) {
         self.observe_provider_context_gauge(reported_tokens, estimate_at_call);
     }
-
     /// Poison the context-gauge mutex so coverage exercises the
     /// `unwrap_or_else(|e| e.into_inner())` recovery paths (#1128).
     #[cfg(test)]
     pub(super) fn poison_context_gauge_lock_for_test(&self) {
         self.context_manager.poison_context_gauge_lock_for_test();
     }
-
     /// Drive all three gauge entry points against a poisoned mutex.
     #[cfg(test)]
     pub(super) fn exercise_poisoned_context_gauge_for_test(&self) {
@@ -262,7 +265,6 @@ impl AgentLoopImpl {
             "estimate-only must not clobber provider truth after poison recovery"
         );
     }
-
     /// Fire a progress event to the registered callback, if any. Takes a closure
     /// so the event is only constructed when a callback is registered; on the
     /// headless path (`progress_callback = None`) it's never called.
@@ -272,12 +274,10 @@ impl AgentLoopImpl {
             cb(make_event());
         }
     }
-
     pub fn with_max_tool_iterations(mut self, max: u32) -> Self {
         self.max_tool_iterations = max;
         self
     }
-
     #[cfg(test)]
     pub fn with_progress_callback(mut self, callback: Option<ProgressCallback>) -> Self {
         self.progress_callback = callback;

@@ -123,14 +123,14 @@ fn production_used_application_seams_remain_declared_and_wired() {
     let provider_app = compact_rust(&read("src/application/provider_runtime.rs"));
     let refresh_app = compact_rust(&read("src/application/catalogue_refresh.rs"));
     let limits_app = compact_rust(&read("src/application/catalogue_limits.rs"));
-    let agent_provider = compact_rust(&read("src/interface/cli/agent_provider.rs"));
+    let runtime_composer = compact_rust(&read("src/interface/catalogue_runtime.rs"));
     let models = compact_rust(&read("src/interface/cli/models.rs"));
     let uds_reload = compact_rust(&read("src/interface/cli/uds_reload.rs"));
     let dispatch = compact_rust(&read("src/interface/cli/uds_dispatch_runtime.rs"));
 
     assert!(provider_app.contains("pub struct ComposeProviderRuntimeUseCase"));
     assert!(
-        agent_provider.contains("compose_catalogue_runtime")
+        runtime_composer.contains("compose_catalogue_runtime")
             && provider_app.contains("ComposeProviderRuntimeUseCase")
     );
     assert!(refresh_app.contains("pub struct RefreshCatalogueSourceUseCase"));

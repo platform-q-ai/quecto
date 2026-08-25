@@ -150,7 +150,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
             }
         }
     }
-
     if (workflow || no_workflow_requested || workflow_guards || workflow_spec_path.is_some())
         && !uds_mode
     {
@@ -159,12 +158,10 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         );
         return None;
     }
-
     if workflow_spec_path.is_some() && no_workflow_requested {
         stderr.push_str("agent: --workflow-spec cannot be combined with --no-workflow\n");
         return None;
     }
-
     let mut flags = AgentFlags {
         session_name,
         no_session,
@@ -309,7 +306,7 @@ pub(crate) fn build_agent_from_config(
     };
 
     let http_client = crate::interface::shared::build_http_client();
-    let initial_runtime = match build_agent_runtime(&config, base_dir, &http_client, 0) {
+    let initial_runtime = match build_runtime_snapshot(&config, base_dir, &http_client, 0) {
         Ok(runtime) => runtime,
         Err(msg) => {
             stderr.push_str(&format!("{}\n", msg));
@@ -431,6 +428,7 @@ pub(crate) fn build_agent_from_config(
             crate::domain::tool::ToolProfileContext::Parent
         },
     })
+    .with_catalogue(initial_runtime.catalogue)
     .with_max_tool_iterations(
         flags
             .max_iterations
@@ -714,7 +712,8 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
 
 #[path = "agent_provider.rs"]
 mod agent_provider;
-pub use agent_provider::{build_agent_provider, build_agent_runtime};
+use crate::interface::catalogue_runtime::build_runtime_snapshot;
+pub use agent_provider::build_agent_provider;
 #[cfg(test)]
 #[path = "agent_935_clamp_tests.rs"]
 mod clamp_935_tests;

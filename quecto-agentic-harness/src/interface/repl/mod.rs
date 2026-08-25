@@ -5,13 +5,12 @@ pub(crate) mod progress;
 
 use std::io::{BufRead, Write};
 use std::path::Path;
-use std::sync::Arc;
 
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::provider_runtime::CatalogueRuntimeSnapshot;
 use crate::domain::agent::AgentLoop;
 use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role};
-use crate::domain::provider::LlmProvider;
 use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
@@ -330,17 +329,27 @@ pub fn run_repl<R: BufRead, W: Write>(
     // 3. Otherwise (non-TTY pipe/redirect), use None (silent).
     let (progress_callback, spinner_handle) = resolve_progress_callback(ctx, is_tty);
 
-    // #935: clamp the effective output cap to the model's registry max_tokens so
-    // a model whose real output limit is lower than the configured global
-    // default (e.g. Fireworks qwen3p7-plus = 65536) never receives a larger
-    // value. Mirror the CLI build path (interface/cli/agent.rs) so the REPL does
-    // not silently bypass the clamp.
-    // #1044: the model's known window bounds the pruning budget; one registry
-    // load supplies both per-model limits.
-    let (model_max_tokens, model_context_window) =
-        crate::infrastructure::catalogue_limits::model_limits_from_base_dir(ctx.base_dir, &model);
+    let (model_max_tokens, model_context_window) = ctx
+        .runtime
+        .catalogue
+        .models()
+        .iter()
+        .find(|descriptor| descriptor.qualified_id() == model && descriptor.availability.runnable())
+        .map(|descriptor| {
+            (
+                descriptor
+                    .capabilities
+                    .max_tokens_explicit
+                    .then_some(descriptor.capabilities.max_tokens),
+                descriptor
+                    .capabilities
+                    .context_window_explicit
+                    .then_some(descriptor.capabilities.context_window as usize),
+            )
+        })
+        .unwrap_or((None, None));
     let agent = AgentLoopImpl::new(AgentLoopConfig {
-        provider: ctx.provider.clone(),
+        provider: ctx.runtime.provider.clone(),
         tool_registry: Box::new(registry),
         model,
         max_tokens: ctx.config.agents.defaults.max_tokens,
@@ -364,6 +373,7 @@ pub fn run_repl<R: BufRead, W: Write>(
         model_context_window,
         tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
     })
+    .with_catalogue(ctx.runtime.catalogue.clone())
     .with_model_max_tokens(model_max_tokens);
 
     let session_store = FileSessionStore::new(ctx.base_dir);
@@ -506,7 +516,7 @@ pub struct ReplContext<'a> {
     /// The path the session's config was loaded from — plumbed into SpawnTool
     /// as the container-config fallback (#1369 follow-up).
     pub config_path: &'a Path,
-    pub provider: Arc<dyn LlmProvider>,
+    pub runtime: CatalogueRuntimeSnapshot,
     pub config: &'a Config,
     pub flags: &'a ReplFlags,
     /// Test/support override for the effective process cwd.
