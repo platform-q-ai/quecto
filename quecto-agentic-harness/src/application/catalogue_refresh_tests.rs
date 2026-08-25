@@ -1,69 +1,80 @@
 use super::*;
 
-struct FakeRefreshPort;
-
-impl CatalogueRefreshAllPort for FakeRefreshPort {
-    fn refresh_all_sources(&self) -> Vec<CatalogueRefreshOutcome> {
-        vec![
-            self.refresh_source("supported"),
-            CatalogueRefreshOutcome {
-                source: "broken".to_string(),
-                status: CatalogueRefreshStatus::Failed {
-                    error: "network".to_string(),
-                },
-            },
-        ]
-    }
+struct FakeRefreshPort {
+    single: CatalogueRefreshOutcome,
+    all: Vec<CatalogueRefreshOutcome>,
 }
 
 impl CatalogueRefreshPort for FakeRefreshPort {
     fn refresh_source(&self, source: &str) -> CatalogueRefreshOutcome {
-        CatalogueRefreshOutcome {
-            source: source.to_string(),
-            status: if source == "supported" {
-                CatalogueRefreshStatus::Refreshed { models: 3 }
-            } else {
-                CatalogueRefreshStatus::Skipped {
-                    reason: "unsupported".to_string(),
-                }
-            },
-        }
+        assert_eq!(source, self.single.source);
+        self.single.clone()
+    }
+
+    fn refresh_all_sources(&self) -> Vec<CatalogueRefreshOutcome> {
+        self.all.clone()
     }
 }
 
 #[test]
-fn refresh_use_case_delegates_to_refresh_port_and_returns_structured_outcome() {
-    let use_case = RefreshCatalogueSourceUseCase::new();
+fn application_refresh_delegates_to_the_port() {
+    let application = CatalogueRefreshApplication::new(FakeRefreshPort {
+        single: CatalogueRefreshOutcome {
+            source: "open".to_string(),
+            status: CatalogueRefreshStatus::Refreshed { models: 2 },
+        },
+        all: vec![],
+    });
 
+    let outcome = application.refresh("open");
+
+    assert_eq!(outcome.source, "open");
     assert_eq!(
-        use_case.refresh(&FakeRefreshPort, "supported"),
-        CatalogueRefreshOutcome {
-            source: "supported".to_string(),
-            status: CatalogueRefreshStatus::Refreshed { models: 3 }
-        }
+        outcome.status,
+        CatalogueRefreshStatus::Refreshed { models: 2 }
     );
-    assert_eq!(
-        use_case.refresh(&FakeRefreshPort, "google"),
-        CatalogueRefreshOutcome {
-            source: "google".to_string(),
-            status: CatalogueRefreshStatus::Skipped {
-                reason: "unsupported".to_string()
-            }
-        }
-    );
-    assert_eq!(
-        use_case.refresh_all(&FakeRefreshPort),
-        vec![
+}
+
+#[test]
+fn application_refresh_all_preserves_per_source_outcomes() {
+    let application = CatalogueRefreshApplication::new(FakeRefreshPort {
+        single: CatalogueRefreshOutcome {
+            source: "unused".to_string(),
+            status: CatalogueRefreshStatus::Failed {
+                error: "unused".to_string(),
+            },
+        },
+        all: vec![
             CatalogueRefreshOutcome {
-                source: "supported".to_string(),
-                status: CatalogueRefreshStatus::Refreshed { models: 3 }
+                source: "anthropic".to_string(),
+                status: CatalogueRefreshStatus::Skipped {
+                    reason: "unsupported".to_string(),
+                },
             },
             CatalogueRefreshOutcome {
-                source: "broken".to_string(),
+                source: "open".to_string(),
                 status: CatalogueRefreshStatus::Failed {
-                    error: "network".to_string()
-                }
-            }
-        ]
+                    error: "down".to_string(),
+                },
+            },
+        ],
+    });
+
+    let outcomes = application.refresh_all();
+
+    assert_eq!(
+        outcomes
+            .iter()
+            .map(|outcome| outcome.source.as_str())
+            .collect::<Vec<_>>(),
+        ["anthropic", "open"]
     );
+    assert!(matches!(
+        outcomes[0].status,
+        CatalogueRefreshStatus::Skipped { .. }
+    ));
+    assert!(matches!(
+        outcomes[1].status,
+        CatalogueRefreshStatus::Failed { .. }
+    ));
 }

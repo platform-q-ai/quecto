@@ -10,8 +10,6 @@ use crate::domain::provider::LlmProvider;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::reload::{ReloadResult, ReloadSource, RuntimeReload};
 
-use crate::infrastructure::provider_runtime_catalogue::build_agent_provider_with_descriptors;
-
 pub type ReloadedProviderRuntime = CatalogueRuntimeSnapshot;
 pub type ProviderReload = RuntimeReload<ReloadedProviderRuntime>;
 
@@ -57,12 +55,9 @@ impl ProviderReloadInputs {
         let config =
             Config::load_with_env(self.config_path.to_str().unwrap_or(""), &self.env_overrides)
                 .map_err(|e| e.to_string())?;
-        let (provider, descriptors) =
-            build_agent_provider_with_descriptors(&config, &self.base_dir, &self.http_client)?;
-        Ok(CatalogueRuntimeSnapshot {
-            provider,
-            catalogue: CatalogueSnapshot::new(0, descriptors),
-        })
+        use crate::infrastructure::provider_runtime::provider_runtime_application as ProviderRuntimeApplication;
+        let application = ProviderRuntimeApplication();
+        application.compose_reload(&config, &(&self.base_dir, &self.http_client))
     }
 }
 

@@ -42,7 +42,7 @@ fn refresh_all_returns_per_provider_outcomes_and_does_not_short_circuit_unsuppor
 #[test]
 fn openai_discovery_fetches_publishes_and_trait_refresh_reports_missing_registry() {
     let missing = tempfile::tempdir().unwrap();
-    let refresh_port: &dyn CatalogueRefreshAllPort =
+    let refresh_port: &dyn CatalogueRefreshPort =
         &ModelsJsonCatalogueRefreshAdapter::new(missing.path());
     let missing_outcomes = refresh_port.refresh_all_sources();
     assert_eq!(missing_outcomes.len(), 1);

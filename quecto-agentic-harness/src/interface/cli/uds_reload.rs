@@ -1,7 +1,5 @@
-use crate::application::catalogue_refresh::{
-    CatalogueRefreshStatus, RefreshCatalogueSourceUseCase,
-};
-use crate::infrastructure::catalogue_discovery::ModelsJsonCatalogueRefreshAdapter;
+use crate::application::catalogue_refresh::CatalogueRefreshStatus;
+use crate::infrastructure::catalogue_discovery::catalogue_refresh_application as CatalogueRefreshApplication;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::reload::ReloadResult;
 
@@ -98,12 +96,11 @@ pub(super) async fn handle_refresh_models(
         .filter(|p| !p.trim().is_empty())
         .map(str::to_string);
     let outcomes = match tokio::task::spawn_blocking(move || {
-        let refresh_port = ModelsJsonCatalogueRefreshAdapter::new(base_dir);
-        let use_case = RefreshCatalogueSourceUseCase::new();
+        let use_case = CatalogueRefreshApplication(base_dir);
         if let Some(provider) = provider {
-            vec![use_case.refresh(&refresh_port, &provider)]
+            vec![use_case.refresh(&provider)]
         } else {
-            use_case.refresh_all(&refresh_port)
+            use_case.refresh_all()
         }
     })
     .await

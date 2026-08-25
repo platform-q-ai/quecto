@@ -1,12 +1,15 @@
+//! Contract coverage for the application-owned provider runtime port.
+
 use std::sync::Arc;
 
-use super::*;
-use crate::domain::catalogue::{
+use quecto::catalogue_runtime_app::CatalogueRuntimeSnapshot;
+use quecto::domain::catalogue::{
     AuthIdentity, Availability, ModelCapabilities, ModelCost, ModelDescriptor, ModelRef,
     TransportKind,
 };
-use crate::domain::message::LlmResponse;
-use crate::domain::provider::{ChatRequest, StreamEvent};
+use quecto::domain::message::LlmResponse;
+use quecto::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+use quecto::provider_runtime_app::{ProviderRuntimeApplication, ProviderRuntimePort};
 
 #[derive(Debug)]
 struct NamedProvider {
@@ -15,7 +18,7 @@ struct NamedProvider {
 
 impl LlmProvider for NamedProvider {
     fn name(&self) -> &str {
-        "composed"
+        "contract-provider"
     }
 
     fn chat<'a>(
@@ -23,8 +26,9 @@ impl LlmProvider for NamedProvider {
         _request: ChatRequest<'a>,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<LlmResponse, crate::domain::error::DomainError>>
-                + Send
+            dyn std::future::Future<
+                    Output = Result<LlmResponse, quecto::domain::error::DomainError>,
+                > + Send
                 + 'a,
         >,
     > {
@@ -44,8 +48,9 @@ impl LlmProvider for NamedProvider {
         request: ChatRequest<'a>,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<LlmResponse, crate::domain::error::DomainError>>
-                + Send
+            dyn std::future::Future<
+                    Output = Result<LlmResponse, quecto::domain::error::DomainError>,
+                > + Send
                 + 'a,
         >,
     > {
@@ -108,22 +113,21 @@ impl ProviderRuntimePort<(), ()> for FakePort {
 }
 
 #[test]
-fn application_compose_delegates_to_the_port() {
+fn provider_runtime_port_composes_through_the_application() {
     let provider = ProviderRuntimeApplication::new(FakePort)
         .compose(&(), &())
         .unwrap();
 
-    assert_eq!(provider.name(), "composed");
+    assert_eq!(provider.name(), "contract-provider");
 }
 
 #[test]
-fn application_compose_reload_publishes_catalogue_runtime_snapshot() {
-    let runtime = ProviderRuntimeApplication::new(FakePort)
+fn provider_runtime_port_reload_publishes_catalogue_runtime_snapshot() {
+    let runtime: CatalogueRuntimeSnapshot = ProviderRuntimeApplication::new(FakePort)
         .compose_reload(&(), &())
         .unwrap();
 
     assert_eq!(runtime.generation(), 0);
-    assert_eq!(runtime.provider.name(), "composed");
-    assert_eq!(runtime.catalogue.models().len(), 1);
+    assert_eq!(runtime.provider.name(), "contract-provider");
     assert_eq!(runtime.catalogue.models()[0].qualified_id(), "open/alpha");
 }

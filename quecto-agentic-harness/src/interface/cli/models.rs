@@ -1,9 +1,7 @@
 use std::time::Duration;
 
-use crate::application::catalogue_refresh::{
-    CatalogueRefreshStatus, RefreshCatalogueSourceUseCase,
-};
-use crate::infrastructure::catalogue_discovery::ModelsJsonCatalogueRefreshAdapter;
+use crate::application::catalogue_refresh::CatalogueRefreshStatus;
+use crate::infrastructure::catalogue_discovery::catalogue_refresh_application as CatalogueRefreshApplication;
 
 use super::CliContext;
 
@@ -67,10 +65,9 @@ fn cmd_discover(
         }
     }
 
-    let refresh_port = ModelsJsonCatalogueRefreshAdapter::new(ctx.base_dir());
-    let refresh_use_case = RefreshCatalogueSourceUseCase::new();
+    let refresh_use_case = CatalogueRefreshApplication(ctx.base_dir());
     loop {
-        match refresh_use_case.refresh(&refresh_port, &provider).status {
+        match refresh_use_case.refresh(&provider).status {
             CatalogueRefreshStatus::Refreshed { models } => stdout.push_str(&format!(
                 "Discovered {models} model(s) for provider {provider}\n"
             )),
