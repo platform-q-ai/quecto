@@ -547,3 +547,49 @@ fn router_rejects_case_insensitive_duplicate_provider_names() {
     let second = TestProvider::succeeding("foo", "second");
     let _ = ProviderRouter::new(vec![first as Arc<dyn LlmProvider>, second]);
 }
+
+#[tokio::test]
+async fn differently_cased_unavailable_catalogue_prefix_does_not_route_to_winner() {
+    use crate::domain::catalogue::{
+        AuthIdentity, Availability, ModelCapabilities, ModelCost, ModelRef, TransportKind,
+        UnavailableReason,
+    };
+
+    let winner = TestProvider::succeeding("acme", "wrong provider");
+    let unavailable = ModelDescriptor {
+        reference: ModelRef::parse("Acme", "model").unwrap(),
+        display_name: None,
+        transport: TransportKind::OpenAiCompletions,
+        auth: AuthIdentity::ApiKey,
+        base_url: Some("http://127.0.0.1:9/v1".to_string()),
+        auth_header: true,
+        allow_remote_http: true,
+        configured: false,
+        capabilities: ModelCapabilities {
+            input: vec![],
+            context_window: 0,
+            max_tokens: 0,
+            context_window_explicit: false,
+            max_tokens_explicit: false,
+            reasoning: false,
+            cost: ModelCost::default(),
+        },
+        availability: Availability::KnownButUnavailable {
+            reasons: vec![UnavailableReason::MissingCredential],
+        },
+    };
+    let router = ProviderRouter::with_model_descriptors(
+        vec![winner as Arc<dyn LlmProvider>],
+        vec![unavailable],
+    );
+
+    let err = router
+        .chat(make_request(&test_messages(), "ACME/model"))
+        .await
+        .expect_err("losing case variant must remain unavailable, not route to acme");
+    assert!(
+        err.to_string()
+            .contains("provider 'ACME' is known but unavailable"),
+        "{err}"
+    );
+}

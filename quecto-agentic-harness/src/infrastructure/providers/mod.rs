@@ -22,7 +22,7 @@ use std::sync::Arc;
 use crate::domain::provider::LlmProvider;
 
 const ALLOW_CUSTOM_HOSTS_ENV: &str = "QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS";
-const RESERVED_PROVIDER_PREFIXES: &[&str] =
+pub(crate) const RESERVED_PROVIDER_PREFIXES: &[&str] =
     &["openai", "openai-codex", "codex", "anthropic", "router"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]

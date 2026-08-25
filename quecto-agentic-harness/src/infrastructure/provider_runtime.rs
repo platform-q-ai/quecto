@@ -238,6 +238,11 @@ fn compose_agent_provider(
             .iter()
             .map(|model| model.provider.to_ascii_lowercase())
             .collect();
+    custom_prefixes.extend(
+        providers::RESERVED_PROVIDER_PREFIXES
+            .iter()
+            .map(|p| p.to_ascii_lowercase()),
+    );
     let canonical_registry_prefixes = canonical_registry_prefix_owners(model_registry.models());
     let mut runtime_model_descriptors = Vec::new();
     let mut constructible_registry_prefixes = HashSet::new();
@@ -277,10 +282,8 @@ fn compose_agent_provider(
             continue;
         }
         seen_registry_prefixes.insert(canonical_prefix.clone());
-        // Reserve every user catalogue provider prefix before construction or
-        // credential checks so unavailable/unsupported registry rows cannot
-        // later be claimed by openai_compatible routes. Builtin prefixes stay
-        // intentionally claimable by explicit legacy openai_compatible config.
+        // Reserve user catalogue prefixes before construction/credential checks so
+        // unavailable/unsupported rows cannot be claimed by openai_compatible routes.
         if !builtin_registry_prefixes.contains(&canonical_prefix) {
             custom_prefixes.insert(canonical_prefix);
         }

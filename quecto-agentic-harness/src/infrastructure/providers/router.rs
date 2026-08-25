@@ -64,6 +64,19 @@ impl ProviderRouter {
         &self.providers
     }
 
+    fn canonical_catalogue_owner(&self, prefix: &str) -> Option<&str> {
+        self.model_descriptors
+            .iter()
+            .find(|descriptor| {
+                descriptor
+                    .reference
+                    .provider()
+                    .as_str()
+                    .eq_ignore_ascii_case(prefix)
+            })
+            .map(|descriptor| descriptor.reference.provider().as_str())
+    }
+
     /// Resolve which provider and effective model to use for a request.
     ///
     /// - `provider/model` syntax → match by provider name, strip prefix
@@ -76,6 +89,16 @@ impl ProviderRouter {
         model: &'b str,
     ) -> Result<(&'a Arc<dyn LlmProvider>, &'b str), DomainError> {
         if let Some((prefix, bare_model)) = parse_qualified_model(model) {
+            if let Some(owner) = self.canonical_catalogue_owner(prefix) {
+                if let Some(provider) = self.providers.iter().find(|p| p.name() == owner) {
+                    return Ok((provider, bare_model));
+                }
+                let truncated = truncate_prefix(prefix, MAX_PREFIX_IN_ERROR);
+                return Err(DomainError::Provider(format!(
+                    "provider '{}' is known but unavailable",
+                    truncated
+                )));
+            }
             for p in &self.providers {
                 if provider_prefix_matches(prefix, p.name()) {
                     return Ok((p, bare_model));

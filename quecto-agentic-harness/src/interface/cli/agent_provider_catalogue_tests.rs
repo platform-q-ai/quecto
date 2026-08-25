@@ -178,3 +178,30 @@ fn runtime_rejects_openai_compatible_collision_with_unavailable_google_oauth_pre
         "{err}"
     );
 }
+
+#[test]
+fn runtime_rejects_openai_compatible_collision_with_every_builtin_prefix() {
+    use crate::infrastructure::config::{Config, OpenAiCompatibleEndpoint};
+    use crate::infrastructure::provider_runtime::build_agent_provider;
+    use crate::infrastructure::providers::RESERVED_PROVIDER_PREFIXES;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+
+    for prefix in RESERVED_PROVIDER_PREFIXES {
+        let mut config = Config::default();
+        config.providers.openai_compatible.endpoints = vec![OpenAiCompatibleEndpoint {
+            prefix: prefix.to_ascii_uppercase(),
+            api_key: "sk-colliding".to_string(),
+            api_base: "http://127.0.0.1:10/v1".to_string(),
+            allow_remote_http: true,
+        }];
+
+        let err = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).expect_err(
+            &format!("{prefix} must be reserved before router construction"),
+        );
+        assert!(
+            err.contains("duplicate openai_compatible/provider prefix"),
+            "{prefix}: {err}"
+        );
+    }
+}
