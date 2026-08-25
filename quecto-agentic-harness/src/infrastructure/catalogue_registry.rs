@@ -47,6 +47,13 @@ impl ModelRegistryCatalogueSource {
 }
 
 pub fn record_to_descriptor(record: &ModelRecord) -> Result<Option<ModelDescriptor>, String> {
+    record_to_descriptor_with_credential(record, None)
+}
+
+pub fn record_to_descriptor_with_credential(
+    record: &ModelRecord,
+    credential_available_override: Option<bool>,
+) -> Result<Option<ModelDescriptor>, String> {
     if record.provider.trim().is_empty() || record.id.trim().is_empty() {
         return Ok(None);
     }
@@ -68,13 +75,13 @@ pub fn record_to_descriptor(record: &ModelRecord) -> Result<Option<ModelDescript
             .map_err(|e| e.to_string())?,
         },
     };
-    let credential_available = match record.auth {
+    let credential_available = credential_available_override.unwrap_or_else(|| match record.auth {
         AuthMode::ApiKey => record.api_key.as_deref().is_some_and(|k| !k.is_empty()),
         // The registry adapter must not read secrets. OAuth availability is
         // determined by credential-status application ports in the runtime path;
         // the descriptor records the auth identity and remains secret-free.
         AuthMode::OAuth => false,
-    };
+    });
     let adapter_supported = !matches!(record.api, ProviderApi::GoogleGenerativeAi);
     let configured = credential_available || record.base_url.is_some();
 

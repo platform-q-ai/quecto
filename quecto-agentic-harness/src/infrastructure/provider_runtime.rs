@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::domain::provider::LlmProvider;
 use crate::infrastructure::auth::credential_store::CredentialStore;
-use crate::infrastructure::catalogue_registry::record_to_descriptor;
+use crate::infrastructure::catalogue_registry::record_to_descriptor_with_credential;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::providers;
 use crate::infrastructure::providers::refreshable::{RefreshableConfig, RefreshableProvider};
@@ -232,7 +232,10 @@ fn compose_agent_provider(
     let mut seen_registry_prefixes = HashSet::new();
     let mut runtime_model_descriptors = Vec::new();
     for model in model_registry.models() {
-        if let Some(descriptor) = record_to_descriptor(model)? {
+        let credential_available = registry_model_credential_available(model, &store)?;
+        if let Some(descriptor) =
+            record_to_descriptor_with_credential(model, Some(credential_available))?
+        {
             runtime_model_descriptors.push(descriptor);
         }
     }
@@ -426,6 +429,30 @@ fn sanitize_url_for_error(raw: &str) -> String {
             url.to_string()
         }
         Err(_) => "<invalid url>".to_string(),
+    }
+}
+
+fn registry_model_credential_available(
+    model: &crate::infrastructure::model_registry::ModelRecord,
+    store: &CredentialStore,
+) -> Result<bool, String> {
+    use crate::infrastructure::auth::credential_store::AuthMethod;
+    use crate::infrastructure::model_registry::AuthMode;
+
+    match model.auth {
+        AuthMode::ApiKey => Ok(model.api_key.as_deref().is_some_and(|key| !key.is_empty())),
+        AuthMode::OAuth => {
+            let oauth_provider = model.oauth_provider.as_deref().ok_or_else(|| {
+                format!(
+                    "models.json provider '{}' uses oauth auth but is missing oauthProvider",
+                    model.provider
+                )
+            })?;
+            Ok(store
+                .get(oauth_provider)
+                .map_err(|e| e.to_string())?
+                .is_some_and(|cred| cred.method == AuthMethod::OAuth && !cred.token.is_empty()))
+        }
     }
 }
 
