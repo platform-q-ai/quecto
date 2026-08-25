@@ -109,36 +109,36 @@ fn compose_agent_provider(
             .map_err(|e| format!("openai-api provider configuration error: {}", e))?,
         );
     }
-    if let Some(openai_oauth_cred) =
-        store.get("openai").ok().flatten().filter(|c| {
+    if !config.providers.openai.disable_codex_routing {
+        if let Some(openai_oauth_cred) = store.get("openai").ok().flatten().filter(|c| {
             c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
-        })
-    {
-        // #811: construct from the stored (possibly stale) token — no eager
-        // network refresh on the pre-announce startup path. RefreshableProvider
-        // refreshes lazily on a 401 at first real request, after socket announce.
-        let openai_oauth_key = openai_oauth_cred.token;
-        if !openai_oauth_key.is_empty() {
-            let inner = build_single_provider(
-                "openai",
-                &openai_oauth_key,
-                &openai_base,
-                http_client,
-                false,
-            )?;
-            let factory = crate::infrastructure::oauth_runtime::make_provider_factory(
-                "openai",
-                openai_base.clone(),
-                http_client.clone(),
-            );
-            provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
-                inner,
-                store: store_arc.clone(),
-                provider_name: "openai-oauth".to_string(),
-                credential_provider: "openai".to_string(),
-                refresh_fn: refresh_fn.clone(),
-                factory,
-            })));
+        }) {
+            // #811: construct from the stored (possibly stale) token — no eager
+            // network refresh on the pre-announce startup path. RefreshableProvider
+            // refreshes lazily on a 401 at first real request, after socket announce.
+            let openai_oauth_key = openai_oauth_cred.token;
+            if !openai_oauth_key.is_empty() {
+                let inner = build_single_provider(
+                    "openai",
+                    &openai_oauth_key,
+                    &canonical_oauth_api_base("openai", &openai_base)?,
+                    http_client,
+                    false,
+                )?;
+                let factory = crate::infrastructure::oauth_runtime::make_provider_factory(
+                    "openai",
+                    canonical_oauth_api_base("openai", &openai_base)?,
+                    http_client.clone(),
+                );
+                provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
+                    inner,
+                    store: store_arc.clone(),
+                    provider_name: "openai-oauth".to_string(),
+                    credential_provider: "openai".to_string(),
+                    refresh_fn: refresh_fn.clone(),
+                    factory,
+                })));
+            }
         }
     }
 
@@ -194,7 +194,7 @@ fn compose_agent_provider(
             let inner = providers::create_anthropic_compatible_provider(
                 "anthropic-oauth",
                 anthropic_oauth_key,
-                anthropic_base.clone(),
+                canonical_oauth_api_base("anthropic", &anthropic_base)?,
                 false,
                 http_client.clone(),
             )
@@ -202,7 +202,7 @@ fn compose_agent_provider(
             let factory = registry_provider_factory(
                 crate::infrastructure::model_registry::ProviderApi::AnthropicMessages,
                 "anthropic-oauth".to_string(),
-                anthropic_base.clone(),
+                canonical_oauth_api_base("anthropic", &anthropic_base)?,
                 false,
                 http_client.clone(),
             );
@@ -237,6 +237,18 @@ fn compose_agent_provider(
                 .any(|p| p.name().eq_ignore_ascii_case(&model.provider))
         {
             continue;
+        }
+        seen_registry_prefixes.insert(canonical_prefix.clone());
+        // Reserve configured registry prefixes before construction so skipped
+        // user metadata cannot later collide with openai_compatible routes.
+        if model.api_key.is_some()
+            || model.base_url.is_some()
+            || matches!(
+                model.auth,
+                crate::infrastructure::model_registry::AuthMode::OAuth
+            )
+        {
+            custom_prefixes.insert(canonical_prefix.clone());
         }
         let Some(provider) =
             build_registry_provider(model, base_dir, &store_arc, &refresh_fn, http_client)?
@@ -373,6 +385,30 @@ fn oauth_registry_base_url(
     }
 }
 
+fn canonical_oauth_api_base(
+    provider: &str,
+    configured: &Option<String>,
+) -> Result<Option<String>, String> {
+    let configured = configured.as_ref().filter(|b| !b.trim().is_empty());
+    match provider {
+        "openai" => validate_oauth_base_url(
+            "openai-oauth",
+            provider,
+            configured,
+            "https://api.openai.com/v1",
+        )
+        .map(Some),
+        "anthropic" => validate_oauth_base_url(
+            "anthropic-oauth",
+            provider,
+            configured,
+            "https://api.anthropic.com",
+        )
+        .map(Some),
+        _ => Ok(configured.cloned()),
+    }
+}
+
 fn validate_oauth_base_url(
     provider_key: &str,
     oauth_provider: &str,
@@ -419,6 +455,114 @@ fn sanitize_url_for_error(raw: &str) -> String {
     }
 }
 
+pub(crate) fn registry_model_credential_available(
+    model: &crate::infrastructure::model_registry::ModelRecord,
+    store: &CredentialStore,
+    config: &Config,
+) -> Result<bool, String> {
+    use crate::infrastructure::auth::credential_store::AuthMethod;
+    use crate::infrastructure::model_registry::AuthMode;
+
+    match model.auth {
+        AuthMode::ApiKey => Ok(model.api_key.as_deref().is_some_and(|key| !key.is_empty())
+            || builtin_api_key_available(model, store, config)?),
+        AuthMode::OAuth => {
+            let oauth_provider = model.oauth_provider.as_deref().ok_or_else(|| {
+                format!(
+                    "models.json provider '{}' uses oauth auth but is missing oauthProvider",
+                    model.provider
+                )
+            })?;
+            Ok(store
+                .get(oauth_provider)
+                .map_err(|e| e.to_string())?
+                .is_some_and(|cred| cred.method == AuthMethod::OAuth && !cred.token.is_empty()))
+        }
+    }
+}
+
+pub(crate) fn builtin_api_key_available(
+    model: &crate::infrastructure::model_registry::ModelRecord,
+    store: &CredentialStore,
+    config: &Config,
+) -> Result<bool, String> {
+    use crate::infrastructure::auth::credential_store::AuthMethod;
+
+    let (config_key, credential_provider) = match model.provider.as_str() {
+        "openai-api" => (&config.providers.openai.api_key, "openai"),
+        "anthropic-api" => (&config.providers.anthropic.api_key, "anthropic"),
+        _ => return Ok(false),
+    };
+    if !config_key.is_empty() {
+        return Ok(true);
+    }
+    Ok(store
+        .get(credential_provider)
+        .map_err(|e| e.to_string())?
+        .is_some_and(|cred| {
+            cred.method == AuthMethod::Token && !cred.token.is_empty() && !cred.is_expired()
+        }))
+}
+
+pub(crate) fn registry_api_key(
+    model: &crate::infrastructure::model_registry::ModelRecord,
+    store: &CredentialStore,
+    config: &Config,
+) -> Result<Option<String>, String> {
+    if let Some(key) = model.api_key.as_ref().filter(|key| !key.is_empty()) {
+        return Ok(Some(key.clone()));
+    }
+    let (config_key, store_name) = match model.provider.as_str() {
+        "openai-api" => (config.providers.openai.api_key.as_str(), "openai"),
+        "anthropic-api" => (config.providers.anthropic.api_key.as_str(), "anthropic"),
+        _ => return Ok(None),
+    };
+    if !config_key.is_empty() {
+        return Ok(Some(config_key.to_string()));
+    }
+    let Some(cred) = store.get(store_name).map_err(|e| e.to_string())? else {
+        return Ok(None);
+    };
+    Ok((matches!(
+        cred.method,
+        crate::infrastructure::auth::credential_store::AuthMethod::Token
+    ) && !cred.token.is_empty()
+        && !cred.is_expired())
+    .then_some(cred.token))
+}
+
+pub(crate) fn oauth_registry_credential_available(
+    model: &crate::infrastructure::model_registry::ModelRecord,
+    store: &CredentialStore,
+) -> Result<bool, String> {
+    let Some(oauth_provider) = model.oauth_provider.as_deref() else {
+        return Ok(false);
+    };
+    Ok(store
+        .get(oauth_provider)
+        .map_err(|e| e.to_string())?
+        .is_some_and(|cred| {
+            cred.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
+                && !cred.token.is_empty()
+                && !cred.is_expired()
+        }))
+}
+
+pub(crate) fn registry_provider_can_construct(
+    model: &crate::infrastructure::model_registry::ModelRecord,
+    store: &CredentialStore,
+    config: &Config,
+) -> Result<bool, String> {
+    use crate::infrastructure::model_registry::{AuthMode, ProviderApi};
+    if matches!(model.api, ProviderApi::GoogleGenerativeAi) {
+        return Ok(false);
+    }
+    match model.auth {
+        AuthMode::ApiKey => registry_model_credential_available(model, store, config),
+        AuthMode::OAuth => oauth_registry_credential_available(model, store),
+    }
+}
+
 fn build_registry_provider(
     model: &crate::infrastructure::model_registry::ModelRecord,
     _base_dir: &std::path::Path,
@@ -429,12 +573,13 @@ fn build_registry_provider(
     use crate::infrastructure::model_registry::{AuthMode, ProviderApi};
 
     let mut api_base = model.base_url.clone();
+    let _ = registry_provider_can_construct(model, store, &Config::default())?;
     let auth_key = match model.auth {
         AuthMode::ApiKey => {
-            let Some(key) = model.api_key.as_ref().filter(|k| !k.is_empty()) else {
+            let Some(key) = registry_api_key(model, store, &Config::default())? else {
                 return Ok(None);
             };
-            key.clone()
+            key
         }
         AuthMode::OAuth => {
             let oauth_provider = model.oauth_provider.as_deref().ok_or_else(|| {
@@ -570,3 +715,6 @@ mod agent_provider_cov_tests;
 #[cfg(test)]
 #[path = "../interface/cli/agent_provider_xai_tests.rs"]
 mod agent_provider_xai_tests;
+#[cfg(test)]
+#[path = "../interface/cli/provider_runtime_review_tests.rs"]
+mod provider_runtime_review_tests;
