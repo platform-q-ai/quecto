@@ -105,7 +105,7 @@ impl App {
     pub(super) fn show_workflow_status(&mut self) {
         let wf = &self.ac().master_session.workflow_bar;
         let text = if workflow_bar::render_widget(wf, self.terminal.width).is_empty() {
-            "Workflow is not active. Start quecto-tui with --workflow to enable it.".to_string()
+            "Workflow is not active. Ask the agent to select/start a workflow, or launch with `--workflow` to prompt workflow mode immediately.".to_string()
         } else {
             let current = wf
                 .current_step_id()
