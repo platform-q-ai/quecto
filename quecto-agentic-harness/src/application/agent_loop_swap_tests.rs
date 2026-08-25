@@ -269,3 +269,93 @@ fn model_getter_and_setter_roundtrip() {
     assert_eq!(agent.model(), "claude-haiku-4-5");
     assert_eq!(agent.max_context_tokens(), 190_000);
 }
+
+#[derive(Debug)]
+struct DescriptorProvider {
+    descriptors: Vec<crate::domain::catalogue::ModelDescriptor>,
+}
+
+impl crate::domain::provider::LlmProvider for DescriptorProvider {
+    fn name(&self) -> &str {
+        "descriptor"
+    }
+    fn model_descriptors(&self) -> Option<&[crate::domain::catalogue::ModelDescriptor]> {
+        Some(&self.descriptors)
+    }
+    fn chat<'a>(
+        &'a self,
+        _request: crate::domain::provider::ChatRequest<'a>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        crate::domain::message::LlmResponse,
+                        crate::domain::error::DomainError,
+                    >,
+                > + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async { Err(crate::domain::error::DomainError::Provider("unused".into())) })
+    }
+}
+
+fn descriptor_model(
+    max_tokens: u32,
+    context_window: u32,
+) -> crate::domain::catalogue::ModelDescriptor {
+    use crate::domain::catalogue::*;
+    ModelDescriptor {
+        reference: ModelRef::parse("mock", "model").unwrap(),
+        display_name: None,
+        transport: TransportKind::OpenAiCompletions,
+        auth: AuthIdentity::ApiKey,
+        base_url: None,
+        auth_header: true,
+        allow_remote_http: true,
+        configured: true,
+        capabilities: ModelCapabilities {
+            input: vec!["text".into()],
+            context_window,
+            max_tokens,
+            context_window_explicit: true,
+            max_tokens_explicit: true,
+            reasoning: false,
+            cost: ModelCost::default(),
+        },
+        availability: Availability::Runnable,
+    }
+}
+
+#[test]
+fn swap_provider_rederives_active_model_limits_from_reloaded_generation() {
+    let provider = Arc::new(DescriptorProvider {
+        descriptors: vec![descriptor_model(100, 1000)],
+    });
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider,
+        tool_registry: Box::new(MockRegistry::new()),
+        model: "mock/model".into(),
+        max_tokens: 500,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: String::new(),
+        context_collapse_after_tool_calls: u32::MAX,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: Some(1000),
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+    });
+
+    agent.swap_provider(Arc::new(DescriptorProvider {
+        descriptors: vec![descriptor_model(250, 4000)],
+    }));
+
+    assert_eq!(agent.model_max_tokens, Some(250));
+    assert_eq!(agent.model_context_window, Some(4000));
+}

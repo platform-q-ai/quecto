@@ -14,7 +14,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
@@ -67,6 +67,7 @@ pub struct RefreshableProvider {
     credential_provider: String,
     refresh_fn: RefreshFn,
     factory: ProviderFactory,
+    refresh_lock: Mutex<()>,
 }
 
 impl std::fmt::Debug for RefreshableProvider {
@@ -88,6 +89,7 @@ impl RefreshableProvider {
             credential_provider: config.credential_provider,
             refresh_fn: config.refresh_fn,
             factory: config.factory,
+            refresh_lock: Mutex::new(()),
         }
     }
 
@@ -117,6 +119,14 @@ impl RefreshableProvider {
         }
     }
 
+    fn current_access_token(&self) -> Option<String> {
+        self.store.load_snapshot().ok().and_then(|creds| {
+            creds
+                .get(&self.credential_provider)
+                .map(|c| c.token.clone())
+        })
+    }
+
     /// Pre-emptively refresh the token and rebuild the inner provider when the
     /// stored credential is expired.
     ///
@@ -137,6 +147,11 @@ impl RefreshableProvider {
             provider = self.provider_name.as_str(),
             "stored OAuth token expired before stream — attempting pre-emptive refresh"
         );
+
+        let _guard = self.refresh_lock.lock().await;
+        if !self.credential_needs_refresh() {
+            return;
+        }
 
         match (self.refresh_fn)(self.store.clone(), &self.credential_provider).await {
             Ok(new_token) => {
@@ -284,6 +299,7 @@ impl RefreshableProvider {
         >,
     {
         let inner = self.inner.read().await.clone();
+        let token_before_call = self.current_access_token();
         // Happy path: shallow clone (copies slice pointers + small Option fields,
         // not the underlying message/tool vecs).
         let result = call(&inner, request.clone()).await;
@@ -301,6 +317,16 @@ impl RefreshableProvider {
                 // Retry path: clone request data so the rebuilt provider
                 // can use it independently of the original borrow.
                 let owned = OwnedRequest::from(&request);
+
+                let _guard = self.refresh_lock.lock().await;
+                if let Some(current_token) = self.current_access_token() {
+                    if token_before_call.as_deref() != Some(current_token.as_str()) {
+                        let new_inner = (self.factory)(&current_token);
+                        let result = call(&new_inner, owned.as_request()).await;
+                        *self.inner.write().await = new_inner;
+                        return result;
+                    }
+                }
 
                 match (self.refresh_fn)(self.store.clone(), &self.credential_provider).await {
                     Ok(new_token) => {
@@ -331,3 +357,7 @@ impl RefreshableProvider {
 #[cfg(test)]
 #[path = "refreshable_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "refreshable_concurrency_tests.rs"]
+mod concurrency_tests;

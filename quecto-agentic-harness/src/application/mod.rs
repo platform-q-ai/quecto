@@ -1,6 +1,7 @@
 pub mod agent_loop;
 mod agent_loop_lifecycle_compat;
 mod agent_loop_policy;
+mod agent_loop_reload;
 mod agent_loop_stream;
 #[cfg(any(test, feature = "test-support"))]
 pub mod agent_loop_test_support;

@@ -93,9 +93,9 @@ pub struct AgentLoopConfig {
 pub struct AgentLoopImpl {
     pub provider: Arc<dyn LlmProvider>,
     pub(super) tool_registry: Box<dyn ToolRegistry>,
-    model: String,
+    pub(super) model: String,
     max_tokens: u32,
-    model_max_tokens: Option<u32>,
+    pub(super) model_max_tokens: Option<u32>,
     temperature: f32,
     max_tool_iterations: u32,
     spill_store: Option<Arc<dyn ContextSpillStore>>,
@@ -120,7 +120,7 @@ pub struct AgentLoopImpl {
     durable_prefix_dirty: std::sync::atomic::AtomicBool,
     /// Context-management boundary for pruning, spilling, dirty-prefix, and
     /// user-facing context gauge decisions.
-    context_manager: ContextManager,
+    pub(super) context_manager: ContextManager,
     pub(super) pending_tool_policy_requests:
         std::sync::Mutex<Vec<crate::domain::tool::ToolPolicyRequest>>,
     pub(super) tool_policy_state: std::sync::Mutex<ToolPolicyState>,
@@ -189,11 +189,6 @@ impl AgentLoopImpl {
         self.durable_prefix_dirty
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    /// Replace the LLM provider after config reload.
-    pub fn swap_provider(&mut self, provider: Arc<dyn LlmProvider>) {
-        self.provider = provider;
-    }
-
     /// Return the currently configured model name.
     pub fn model(&self) -> &str {
         &self.model
