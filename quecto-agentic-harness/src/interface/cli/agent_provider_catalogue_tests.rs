@@ -137,3 +137,44 @@ fn runtime_catalogue_skips_unsupported_google_oauth_without_rejecting_valid_prov
             ))
     ));
 }
+
+#[test]
+fn runtime_rejects_openai_compatible_collision_with_unavailable_google_oauth_prefix() {
+    use crate::infrastructure::config::{Config, OpenAiCompatibleEndpoint};
+    use crate::infrastructure::provider_runtime::build_agent_provider;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{
+            "providers": {
+                "google-oauth": {
+                    "api": "google-generative-ai",
+                    "auth": { "mode": "oauth" },
+                    "models": [{ "id": "gemini-pro" }]
+                },
+                "valid-openai": {
+                    "api": "openai-completions",
+                    "baseUrl": "http://127.0.0.1:9/v1",
+                    "auth": { "mode": "apiKey", "apiKey": "sk-valid" },
+                    "models": [{ "id": "valid-model" }]
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let mut config = Config::default();
+    config.providers.openai_compatible.endpoints = vec![OpenAiCompatibleEndpoint {
+        prefix: "google-oauth".to_string(),
+        api_key: "sk-colliding".to_string(),
+        api_base: "http://127.0.0.1:10/v1".to_string(),
+        allow_remote_http: true,
+    }];
+
+    let err = build_agent_provider(&config, tmp.path(), &reqwest::Client::new())
+        .expect_err("unavailable catalogue prefixes must not become openai_compatible routes");
+    assert!(
+        err.contains("duplicate openai_compatible/provider prefix 'google-oauth'"),
+        "{err}"
+    );
+}
