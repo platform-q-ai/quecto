@@ -339,3 +339,42 @@ fn publication_lock_preserves_different_provider_updates_across_processes() {
         "beta-model"
     );
 }
+
+#[test]
+fn discover_models_url_rejects_unsafe_and_non_v1_bases_without_leaking_credentials() {
+    let insecure =
+        discover_models_url("open", "http://insecure.example/v1?token=secret", false).unwrap_err();
+    assert!(insecure.contains("invalid baseUrl"));
+    assert!(!insecure.contains("token=secret"));
+
+    let non_v1 = discover_models_url("open", "https://example.test/api", true).unwrap_err();
+    assert!(non_v1.contains("must end at an OpenAI-compatible /v1 endpoint"));
+}
+
+#[test]
+fn fetch_openai_models_reports_transport_and_body_failures() {
+    // Bind then drop so the port is closed: the request must fail in transport
+    // rather than hang, and the error must not embed the request URL twice.
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = closed.local_addr().unwrap();
+    drop(closed);
+    let transport = fetch_openai_models(&format!("http://{addr}/v1/models"), None).unwrap_err();
+    assert!(transport.starts_with("GET http://"));
+    assert!(transport.contains("failed"));
+
+    let invalid_json =
+        fetch_openai_models(&serve_models_response(200, "not json"), None).unwrap_err();
+    assert!(invalid_json.contains("returned invalid JSON"));
+}
+
+#[test]
+fn publish_lock_reports_unopenable_lock_paths() {
+    let tmp = tempfile::tempdir().unwrap();
+    let missing = tmp.path().join("missing-dir");
+    let error = match ModelsJsonPublishLock::acquire(&missing) {
+        Ok(_) => panic!("publication lock must not be acquired in a missing directory"),
+        Err(error) => error,
+    };
+    assert!(error.contains("failed to open"));
+    assert!(error.contains("models.json.lock"));
+}

@@ -917,11 +917,15 @@ pub(crate) fn rewrite_config_to_provider_uri(
             "openai-api": {
                 "api": "openai-completions",
                 "baseUrl": new_uri,
+                "apiKey": "sk-test-key",
+                "allowRemoteHttp": true,
                 "models": [{ "id": "gpt-5.5", "name": "Mock OpenAI" }]
             },
             "anthropic-api": {
                 "api": "anthropic-messages",
                 "baseUrl": new_uri,
+                "apiKey": "sk-ant-test-key",
+                "allowRemoteHttp": true,
                 "models": [{ "id": "claude-haiku-4-5", "name": "Mock Anthropic" }]
             }
         }

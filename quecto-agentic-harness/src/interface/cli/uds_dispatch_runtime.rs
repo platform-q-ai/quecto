@@ -70,8 +70,25 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
     let descriptor = match selection.resolve(&reference) {
         Ok(descriptor) => descriptor,
         Err(SelectionFailure::UnknownModel) => {
-            let ev = AgentEvent::err(args.id.as_deref(), &args.type_name, "unknown model");
+            // Distinguish an unknown provider prefix from an unknown model id
+            // within a configured provider: the former is a configuration
+            // problem the user must fix, the latter a typo in the model name.
+            let provider = reference.provider().as_str();
+            let provider_configured = ctx
+                .agent
+                .catalogue
+                .models()
+                .iter()
+                .any(|descriptor| descriptor.reference.provider().as_str() == provider);
+            let message = if provider_configured {
+                "unknown model".to_string()
+            } else {
+                format!("no configured provider '{provider}'")
+            };
+            let ev = AgentEvent::err(args.id.as_deref(), &args.type_name, message.clone());
             emit_event_to_broadcast_or_writer(ctx, &ev).await;
+            emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(None, "agent_error", message))
+                .await;
             return false;
         }
         Err(SelectionFailure::Unavailable { reasons }) => {

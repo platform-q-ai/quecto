@@ -138,3 +138,17 @@ fn registry_source_keeps_auth_identity_separate_and_marks_missing_runtime_capabi
     let error = record_to_descriptor(&custom_oauth_record).unwrap_err();
     assert!(error.contains("provider id must not be empty"));
 }
+
+#[test]
+fn registry_source_reports_malformed_models_json_instead_of_publishing_partial_catalogue() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let path = tmp.path().join("models.json");
+    std::fs::write(&path, "{ not json").unwrap();
+
+    let error = match ModelRegistryCatalogueSource::load_from_path(&path) {
+        Ok(_) => panic!("malformed models.json must not load as a catalogue source"),
+        Err(error) => error,
+    };
+
+    assert!(!error.is_empty());
+}

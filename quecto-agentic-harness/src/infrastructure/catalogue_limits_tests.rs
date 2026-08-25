@@ -16,3 +16,26 @@ fn catalogue_limit_source_preserves_legacy_base_dir_limit_lookup() {
         (None, None)
     );
 }
+
+#[test]
+fn catalogue_limit_source_falls_back_to_builtin_limits_when_models_json_is_malformed() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("models.json"), "{ not json").unwrap();
+
+    let builtin = crate::infrastructure::model_registry::ModelRegistry::builtin();
+    let sample = builtin
+        .models()
+        .iter()
+        .find(|model| model.context_window_explicit)
+        .expect("builtin registry should pin at least one explicit context window");
+    let qualified = format!("{}/{}", sample.provider, sample.id);
+
+    assert_eq!(
+        super::model_limits_from_base_dir(tmp.path(), &qualified),
+        (
+            builtin.max_tokens_for(&qualified),
+            builtin.context_window_for(&qualified)
+        )
+    );
+    assert!(builtin.context_window_for(&qualified).is_some());
+}
