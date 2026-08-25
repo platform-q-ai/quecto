@@ -182,12 +182,10 @@ fn list_models_data_uses_direct_provider_descriptors_before_router_introspection
 }
 
 #[test]
-fn list_models_data_unwraps_retrying_provider_to_router_children_when_router_snapshot_empty() {
+fn list_models_data_uses_retrying_provider_descriptor_surface_without_downcasts() {
     let child_descriptor = descriptor("child", "m", AuthIdentity::ApiKey);
-    let router: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::with_model_descriptors(
-        vec![provider_with_descriptors("child", vec![child_descriptor])],
-        Vec::new(),
-    ));
+    let child = provider_with_descriptors("child", vec![child_descriptor]);
+    let router: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::new(vec![child]));
     let runtime: Arc<dyn LlmProvider> =
         Arc::new(RetryingProvider::new(router, RetryConfig::no_delay(1)));
 

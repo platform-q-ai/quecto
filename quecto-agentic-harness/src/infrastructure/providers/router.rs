@@ -30,7 +30,8 @@ impl ProviderRouter {
     /// Create a new router from an ordered list of providers.
     /// The first provider is the default for bare model names.
     pub fn new(providers: Vec<Arc<dyn LlmProvider>>) -> Self {
-        Self::with_model_descriptors(providers, Vec::new())
+        let model_descriptors = aggregate_provider_model_descriptors(&providers);
+        Self::with_model_descriptors(providers, model_descriptors)
     }
 
     pub fn with_model_descriptors(
@@ -117,6 +118,16 @@ impl ProviderRouter {
             .map(|p| (p, model))
             .ok_or_else(|| DomainError::Provider(ERR_NO_PROVIDERS.to_string()))
     }
+}
+
+fn aggregate_provider_model_descriptors(
+    providers: &[Arc<dyn LlmProvider>],
+) -> Vec<ModelDescriptor> {
+    providers
+        .iter()
+        .filter_map(|provider| provider.model_descriptors())
+        .flat_map(|descriptors| descriptors.iter().cloned())
+        .collect()
 }
 
 impl ProviderRouter {

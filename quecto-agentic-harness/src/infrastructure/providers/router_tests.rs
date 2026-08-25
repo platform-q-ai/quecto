@@ -593,3 +593,74 @@ async fn differently_cased_unavailable_catalogue_prefix_does_not_route_to_winner
         "{err}"
     );
 }
+
+#[test]
+fn new_router_aggregates_descriptors_from_wrapped_custom_providers() {
+    use crate::domain::catalogue::{
+        AuthIdentity, Availability, ModelCapabilities, ModelCost, ModelRef, TransportKind,
+    };
+
+    #[derive(Debug)]
+    struct DescribedProvider {
+        name: String,
+        descriptors: Vec<ModelDescriptor>,
+    }
+
+    impl LlmProvider for DescribedProvider {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn model_descriptors(&self) -> Option<&[ModelDescriptor]> {
+            Some(&self.descriptors)
+        }
+
+        fn chat(
+            &self,
+            _request: ChatRequest<'_>,
+        ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+            Box::pin(async { unreachable!("descriptor aggregation must not chat") })
+        }
+    }
+
+    fn descriptor(provider: &str, model: &str) -> ModelDescriptor {
+        ModelDescriptor {
+            reference: ModelRef::parse(provider, model).unwrap(),
+            display_name: Some(model.to_string()),
+            transport: TransportKind::OpenAiCompletions,
+            auth: AuthIdentity::ApiKey,
+            base_url: None,
+            auth_header: true,
+            allow_remote_http: false,
+            configured: true,
+            capabilities: ModelCapabilities {
+                input: vec![],
+                context_window: 1234,
+                max_tokens: 99,
+                context_window_explicit: true,
+                max_tokens_explicit: true,
+                reasoning: false,
+                cost: ModelCost::default(),
+            },
+            availability: Availability::Runnable,
+        }
+    }
+
+    let inner = Arc::new(DescribedProvider {
+        name: "custom".to_string(),
+        descriptors: vec![descriptor("custom", "model-a")],
+    }) as Arc<dyn LlmProvider>;
+    let retrying = Arc::new(
+        crate::infrastructure::providers::retry::RetryingProvider::new(
+            inner,
+            crate::infrastructure::providers::retry::RetryConfig::default(),
+        ),
+    ) as Arc<dyn LlmProvider>;
+
+    let router = ProviderRouter::new(vec![retrying]);
+
+    let descriptors = router.model_descriptors().unwrap();
+    assert_eq!(descriptors.len(), 1);
+    assert_eq!(descriptors[0].qualified_id(), "custom/model-a");
+    assert_eq!(descriptors[0].capabilities.context_window, 1234);
+}

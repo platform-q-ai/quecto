@@ -14,31 +14,7 @@ fn list_catalogue_data(catalogue: &CatalogueSnapshot) -> serde_json::Value {
 fn list_models_data(
     provider: &std::sync::Arc<dyn crate::domain::provider::LlmProvider>,
 ) -> serde_json::Value {
-    use crate::infrastructure::providers::retry::RetryingProvider;
-    use crate::infrastructure::providers::router::ProviderRouter;
-
-    let provider = provider
-        .as_any()
-        .downcast_ref::<RetryingProvider>()
-        .map_or(provider, RetryingProvider::inner);
-    if let Some(models) = provider.model_descriptors()
-        && !models.is_empty()
-    {
-        return list_models_slice(models);
-    }
-    let models = provider
-        .as_any()
-        .downcast_ref::<ProviderRouter>()
-        .map(|router| {
-            router
-                .providers()
-                .iter()
-                .flat_map(|provider| provider.model_descriptors().unwrap_or(&[]))
-                .cloned()
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    list_models_slice(&models)
+    list_models_slice(provider.model_descriptors().unwrap_or(&[]))
 }
 
 fn list_models_slice(models: &[crate::domain::catalogue::ModelDescriptor]) -> serde_json::Value {

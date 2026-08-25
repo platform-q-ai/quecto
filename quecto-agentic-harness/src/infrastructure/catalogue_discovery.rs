@@ -114,6 +114,7 @@ where
     let path = base_dir.join("models.json");
     let registry = read_registry(&path)?;
     let provider = provider_object(&registry, provider_key, &path)?;
+    let initial_provider = Value::Object(provider.clone());
     let api = provider_api(provider, provider_key)?;
     if api != "openai-completions" {
         return Err(format!(
@@ -156,6 +157,13 @@ where
         .lock()
         .map_err(|_| "models.json refresh lock poisoned".to_string())?;
     let mut latest = read_registry(&path)?;
+    let latest_provider = provider_object(&latest, provider_key, &path)?;
+    let latest_provider_without_models = provider_without_models(latest_provider);
+    if latest_provider_without_models != initial_provider_without_models(&initial_provider) {
+        return Err(format!(
+            "provider '{provider_key}' changed during discovery; discarding stale catalogue refresh"
+        ));
+    }
     provider_object_mut(&mut latest, provider_key, &path)?
         .insert("models".to_string(), Value::Array(discovered));
     let bytes = serde_json::to_vec_pretty(&latest)
@@ -181,6 +189,19 @@ pub(crate) fn provider_keys(path: &Path) -> Result<Vec<String>, String> {
     let mut keys: Vec<_> = providers.keys().cloned().collect();
     keys.sort();
     Ok(keys)
+}
+
+fn initial_provider_without_models(provider: &Value) -> Value {
+    provider
+        .as_object()
+        .map(provider_without_models)
+        .unwrap_or_else(|| provider.clone())
+}
+
+fn provider_without_models(provider: &serde_json::Map<String, Value>) -> Value {
+    let mut comparable = provider.clone();
+    comparable.remove("models");
+    Value::Object(comparable)
 }
 
 fn read_registry(path: &Path) -> Result<Value, String> {
