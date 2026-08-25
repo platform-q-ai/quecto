@@ -464,7 +464,7 @@ fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hoo
     );
     assert_eq!(
         all_steps[10].label,
-        "Bump changed crate versions and sync docs"
+        "Bump changed crate versions and sync crate-specific docs"
     );
     assert_eq!(all_steps[12].label, "Push through the fast pre-push gate");
     assert_eq!(

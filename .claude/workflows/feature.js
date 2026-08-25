@@ -7,7 +7,7 @@ export const meta = {
     { title: 'RED', detail: 'Update scenarios, write tests, confirm they fail' },
     { title: 'BDD Review', detail: 'Sub-agent reviews BDD feature/step/unit tests' },
     { title: 'GREEN', detail: 'Implement, refactor, verify tests pass' },
-    { title: 'Version', detail: 'Bump semver for every changed crate + sync version docs' },
+    { title: 'Version', detail: 'Bump semver for every changed crate + sync crate-specific version assertions' },
     { title: 'Ship', detail: 'Commit, push (full gate), open PR' },
     { title: 'PR Review', detail: 'Narrow parallel finders → adversarial verification → one posted review' },
     { title: 'Fix Reviews', detail: 'Triage findings, fix, push, resolve threads' },
@@ -93,15 +93,15 @@ await agent(
   { label: 'green', phase: 'GREEN' }
 )
 
-// ── Version bump: semver for every changed crate + version docs ────────────
+// ── Version bump: semver for every changed crate + crate-specific assertions ──
 phase('Version')
 await agent(
   `Task: ${TASK}\n\n` +
   `STEP — Bump semver for every crate this change touches. Determine which crates have modified source ` +
   `(e.g. 'git diff --name-only master...HEAD' plus unstaged changes) and, for EACH changed crate, bump ` +
   `its version in that crate's Cargo.toml — patch by default, minor for a notable feature. Do NOT bump ` +
-  `crates you did not change. Keep version docs in lockstep: for changed crates, update whatever doc/test asserts ` +
-  `that crate's version; do not add or update a workspace README version line. Report the old→new ` +
+  `crates you did not change. Keep crate-specific version assertions in lockstep: for changed crates, update any non-README test or package-specific doc that pins ` +
+  `that crate's version; do not add or update README version lines. Report the old→new ` +
   `version for each bumped crate.`,
   { label: 'version-bump', phase: 'Version' }
 )

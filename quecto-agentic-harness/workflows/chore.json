@@ -32,7 +32,7 @@
       "key": "implement",
       "label": "Make the minimal change",
       "phase": "green",
-      "guidance": "Create a branch if on master. Make the smallest change that satisfies the definition of done \u2014 no drive-by refactors, no speculative cleanup. Keep repo conventions: if you bump a crate version or touch docs, keep Cargo.toml and any crate-specific version docs/tests in lockstep; do not add or update a workspace README version line. Done when the change matches the definition of done and nothing else changed."
+      "guidance": "Create a branch if on master. Make the smallest change that satisfies the definition of done \u2014 no drive-by refactors, no speculative cleanup. Keep repo conventions: if you bump a crate version, keep Cargo.toml and crate-specific version assertions in lockstep; do not add or update README version lines. Done when the change matches the definition of done and nothing else changed."
     },
     {
       "key": "verify",
