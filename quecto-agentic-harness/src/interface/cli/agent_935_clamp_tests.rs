@@ -14,12 +14,12 @@ fn test_build_agent_from_config_clamps_effective_max_tokens_to_registry_cap() {
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(
         tmp.path().join("config.json"),
-        r#"{"providers":{"fireworks":{"api_key":"k"}},"agents":{"defaults":{"max_tokens":200000}}}"#,
+        r#"{"providers":{"openai":{"api_key":"sk-openai"}},"agents":{"defaults":{"max_tokens":200000}}}"#,
     )
     .unwrap();
     std::fs::write(
         tmp.path().join("models.json"),
-        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","apiKey":"k","models":[{"id":"qwen3p7-plus","maxTokens":65536}]}}}"#,
+        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","allowRemoteHttp":true,"auth":{"apiKey":"k"},"models":[{"id":"qwen3p7-plus","maxTokens":65536}]}}}"#,
     )
     .unwrap();
     let flags = AgentFlags {
@@ -49,7 +49,7 @@ fn test_build_agent_from_config_clamps_effective_max_tokens_to_registry_cap() {
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
     let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None)
-        .expect("agent build should succeed");
+        .unwrap_or_else(|| panic!("agent build should succeed; stderr={stderr}"));
     assert_eq!(
         result.agent.effective_max_tokens(),
         65_536,

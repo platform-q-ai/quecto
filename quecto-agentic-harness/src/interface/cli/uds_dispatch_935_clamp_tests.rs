@@ -13,11 +13,10 @@ use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::AgentSession;
 
 #[tokio::test]
-async fn dispatch_set_model_re_clamps_effective_max_tokens() {
-    // The agent is configured with max_tokens=100; after switching to a model
-    // whose registry maxTokens is 50, the effective cap must clamp to 50.
-    // Deleting the registry-lookup + set_model cap wiring in handle_set_model
-    // makes this FAIL (the effective cap stays 100).
+async fn dispatch_set_model_ignores_filesystem_registry_not_in_active_runtime() {
+    // The agent is configured with max_tokens=100. A stale filesystem registry
+    // advertises maxTokens=50, but the active last-good runtime provider has no
+    // matching descriptor, so set_model must not independently reread/apply it.
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(
         tmp.path().join("models.json"),
@@ -102,7 +101,7 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
     }
     assert_eq!(
         agent.effective_max_tokens(),
-        50,
-        "a UDS model switch must re-clamp the effective cap to the new model's registry maxTokens"
+        100,
+        "set_model limits must come from the active runtime, not a fresh registry reread"
     );
 }

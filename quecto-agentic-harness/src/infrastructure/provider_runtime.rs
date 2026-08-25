@@ -231,31 +231,57 @@ fn compose_agent_provider(
     // silently switch a vendor between OAuth and API-key billing.
     let mut seen_registry_prefixes = HashSet::new();
     let mut runtime_model_descriptors = Vec::new();
+    let mut constructible_registry_prefixes = HashSet::new();
+    for model in model_registry.models() {
+        if registry_provider_can_construct(model, &store, config)? {
+            constructible_registry_prefixes.insert(model.provider.to_ascii_lowercase());
+        }
+    }
     for model in model_registry.models() {
         let credential_available = registry_model_credential_available(model, &store, config)?;
-        if let Some(descriptor) =
+        if let Some(mut descriptor) =
             record_to_descriptor_with_credential(model, Some(credential_available))?
         {
+            if !constructible_registry_prefixes.contains(&model.provider.to_ascii_lowercase()) {
+                descriptor.availability =
+                    crate::domain::catalogue::Availability::KnownButUnavailable {
+                        reasons: vec![
+                            crate::domain::catalogue::UnavailableReason::InvalidConfiguration(
+                                "provider skipped during runtime construction".to_string(),
+                            ),
+                        ],
+                    };
+            }
             runtime_model_descriptors.push(descriptor);
         }
     }
     for model in model_registry.models() {
         let canonical_prefix = model.provider.to_ascii_lowercase();
-        if seen_registry_prefixes.contains(&canonical_prefix)
-            || provider_list
-                .iter()
-                .any(|p| p.name().eq_ignore_ascii_case(&model.provider))
+        if provider_list
+            .iter()
+            .any(|p| p.name().eq_ignore_ascii_case(&model.provider))
+            || (seen_registry_prefixes.contains(&canonical_prefix)
+                && !registry_provider_can_construct(model, &store, config)?)
         {
             continue;
         }
-        let Some(provider) =
-            build_registry_provider(model, base_dir, &store_arc, &refresh_fn, http_client)?
+        seen_registry_prefixes.insert(canonical_prefix.clone());
+        // Reserve configured registry prefixes before construction so skipped
+        // user metadata cannot later collide with openai_compatible routes.
+        if model.api_key.is_some() || model.base_url.is_some() {
+            custom_prefixes.insert(canonical_prefix);
+        }
+        let Some(provider) = build_registry_provider(
+            model,
+            base_dir,
+            &store_arc,
+            &refresh_fn,
+            http_client,
+            config,
+        )?
         else {
             continue;
         };
-        seen_registry_prefixes.insert(canonical_prefix.clone());
-        // Reserve the prefix so an openai_compatible endpoint cannot collide.
-        custom_prefixes.insert(canonical_prefix);
         provider_list.push(provider);
     }
     for endpoint in &config.providers.openai_compatible.endpoints {
@@ -481,23 +507,68 @@ fn builtin_api_key_available(
         }))
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+fn registry_api_key(
+    model: &crate::infrastructure::model_registry::ModelRecord,
+    store: &CredentialStore,
+    config: &Config,
+) -> Result<Option<String>, String> {
+    if let Some(key) = model.api_key.as_ref().filter(|key| !key.is_empty()) {
+        return Ok(Some(key.clone()));
+    }
+    let (config_key, store_name) = match model.provider.as_str() {
+        "openai-api" => (config.providers.openai.api_key.as_str(), "openai"),
+        "anthropic-api" => (config.providers.anthropic.api_key.as_str(), "anthropic"),
+        _ => return Ok(None),
+    };
+    if !config_key.is_empty() {
+        return Ok(Some(config_key.to_string()));
+    }
+    let Some(cred) = store.get(store_name).map_err(|e| e.to_string())? else {
+        return Ok(None);
+    };
+    Ok((matches!(
+        cred.method,
+        crate::infrastructure::auth::credential_store::AuthMethod::Token
+    ) && !cred.token.is_empty()
+        && !cred.is_expired())
+    .then_some(cred.token))
+}
+
+fn registry_provider_can_construct(
+    model: &crate::infrastructure::model_registry::ModelRecord,
+    store: &CredentialStore,
+    config: &Config,
+) -> Result<bool, String> {
+    use crate::infrastructure::model_registry::{AuthMode, ProviderApi};
+    if matches!(model.api, ProviderApi::GoogleGenerativeAi) {
+        return Err(format!(
+            "models.json provider '{}' uses google-generative-ai, but that wire protocol is not implemented yet",
+            model.provider
+        ));
+    }
+    match model.auth {
+        AuthMode::ApiKey => registry_model_credential_available(model, store, config),
+        AuthMode::OAuth => registry_model_credential_available(model, store, config),
+    }
+}
+
 fn build_registry_provider(
     model: &crate::infrastructure::model_registry::ModelRecord,
     _base_dir: &std::path::Path,
     store: &Arc<CredentialStore>,
     refresh_fn: &crate::infrastructure::providers::refreshable::RefreshFn,
     http_client: &reqwest::Client,
+    config: &Config,
 ) -> Result<Option<Arc<dyn LlmProvider>>, String> {
     use crate::infrastructure::model_registry::{AuthMode, ProviderApi};
 
     let mut api_base = model.base_url.clone();
     let auth_key = match model.auth {
-        AuthMode::ApiKey => {
-            let Some(key) = model.api_key.as_ref().filter(|k| !k.is_empty()) else {
-                return Ok(None);
-            };
-            key.clone()
-        }
+        AuthMode::ApiKey => match registry_api_key(model, store, config)? {
+            Some(key) => key,
+            None => return Ok(None),
+        },
         AuthMode::OAuth => {
             let oauth_provider = model.oauth_provider.as_deref().ok_or_else(|| {
                 format!(
@@ -629,6 +700,12 @@ fn build_single_provider(
 #[path = "../interface/cli/agent_provider_cov_tests.rs"]
 mod agent_provider_cov_tests;
 
+#[cfg(test)]
+#[path = "../interface/cli/agent_provider_catalogue_tests.rs"]
+mod agent_provider_catalogue_tests;
+#[cfg(test)]
+#[path = "../interface/cli/agent_provider_cycle4_tests.rs"]
+mod agent_provider_cycle4_tests;
 #[cfg(test)]
 #[path = "../interface/cli/agent_provider_xai_tests.rs"]
 mod agent_provider_xai_tests;

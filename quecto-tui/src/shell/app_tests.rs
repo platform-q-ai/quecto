@@ -302,6 +302,7 @@ fn builtin_commands_have_stable_order_and_names() {
             "delete-all-subagents",
             "resume",
             "model",
+            "models-refresh",
             "effort",
             "thinking",
             "workflow",

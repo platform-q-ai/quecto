@@ -42,19 +42,19 @@ fn build_agent_from_config_threads_context_knobs_into_the_loop() {
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(
         tmp.path().join("config.json"),
-        r#"{"providers":{"fireworks":{"api_key":"k"}},"agents":{"defaults":{"max_context_tokens":200000,"pin_recent_turns":5,"context_collapse_after_messages":7}}}"#,
+        r#"{"providers":{"fireworks":{"api_key":"k"},"openai":{"api_key":"sk-test"}},"agents":{"defaults":{"max_context_tokens":200000,"pin_recent_turns":5,"context_collapse_after_messages":7}}}"#,
     )
     .unwrap();
     std::fs::write(
         tmp.path().join("models.json"),
-        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","apiKey":"k","models":[{"id":"small-window","contextWindow":100000}]}}}"#,
+        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","allowRemoteHttp":true,"auth":{"mode":"apiKey","apiKey":"k"},"models":[{"id":"small-window","contextWindow":100000}]}}}"#,
     )
     .unwrap();
     let flags = flags_for_wiring_test();
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
     let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None)
-        .expect("agent build should succeed");
+        .unwrap_or_else(|| panic!("agent build should succeed; stderr={stderr}"));
     assert_eq!(
         result.agent.effective_max_context_tokens(),
         100_000,

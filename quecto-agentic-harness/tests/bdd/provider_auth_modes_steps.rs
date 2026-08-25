@@ -21,7 +21,11 @@ fn write_registry(world: &QuectoWorld, registry: serde_json::Value) {
     .expect("write models.json");
     let config_path = base.join("config.json");
     if !config_path.exists() {
-        std::fs::write(&config_path, r#"{"providers":{}}"#).expect("write config.json");
+        std::fs::write(
+            &config_path,
+            r#"{"providers":{"anthropic":{"api_key":"sk-ant-config"}}}"#,
+        )
+        .expect("write config.json");
     }
 }
 
@@ -84,6 +88,7 @@ fn anthropic_api_provider() -> serde_json::Value {
     serde_json::json!({
         "api": "anthropic-messages",
         "baseUrl": "https://api.anthropic.com",
+        "allowRemoteHttp": true,
         "auth": { "mode": "apiKey", "apiKey": "sk-ant-direct" },
         "models": [{ "id": "claude-opus-4-8" }]
     })
@@ -131,6 +136,7 @@ fn given_registry_anthropic_api(world: &mut QuectoWorld, api_key: String) {
                 "anthropic-api": {
                     "api": "anthropic-messages",
                     "baseUrl": "https://api.anthropic.com",
+                    "allowRemoteHttp": true,
                     "auth": { "mode": "apiKey", "apiKey": api_key },
                     "models": [{ "id": "claude-opus-4-8" }]
                 }

@@ -86,9 +86,6 @@ fn refresh_outcomes_should_reload_runtime(
     outcomes
         .iter()
         .any(|outcome| matches!(outcome.status, CatalogueRefreshStatus::Refreshed { .. }))
-        || !outcomes
-            .iter()
-            .any(|outcome| matches!(outcome.status, CatalogueRefreshStatus::Failed { .. }))
 }
 
 pub(super) async fn handle_refresh_models(
@@ -220,6 +217,18 @@ mod refresh_tests {
             source: "provider-b".to_string(),
             status: CatalogueRefreshStatus::Failed {
                 error: "network failed".to_string(),
+            },
+        }];
+
+        assert!(!refresh_outcomes_should_reload_runtime(&outcomes));
+    }
+
+    #[test]
+    fn refresh_all_all_skipped_does_not_reload_runtime() {
+        let outcomes = vec![CatalogueRefreshOutcome {
+            source: "provider-b".to_string(),
+            status: CatalogueRefreshStatus::Skipped {
+                reason: "not configured".to_string(),
             },
         }];
 

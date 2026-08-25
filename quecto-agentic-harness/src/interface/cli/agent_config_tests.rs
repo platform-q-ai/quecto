@@ -308,7 +308,7 @@ fn test_build_agent_provider_rejects_models_json_remote_http_by_default() {
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(
         tmp.path().join("models.json"),
-        r#"{"providers":{"fireworks":{"baseUrl":"http://example.com/v1","apiKey":"sk-fw","api":"openai-completions","models":[{"id":"m"}]}}}"#,
+        r#"{"providers":{"remote-fw":{"apiBase":"http://example.com/v1","auth":{"mode":"apiKey","apiKey":"sk-fw"},"api":"openai-completions","models":[{"id":"m"}]}}}"#,
     )
     .unwrap();
     let config = config_from_str(r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
@@ -368,10 +368,12 @@ fn test_build_agent_provider_registry_anthropic_api_key_provider() {
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(
         tmp.path().join("models.json"),
-        r#"{"providers":{"anthropic-api":{"api":"anthropic-messages","baseUrl":"https://api.anthropic.com","auth":{"mode":"apiKey","apiKey":"sk-ant-direct"},"models":[{"id":"claude-opus-4-8"}]}}}"#,
+        r#"{"providers":{"anthropic-api":{"api":"anthropic-messages","baseUrl":"https://api.anthropic.com","apiKey":"sk-ant-direct","auth":{"mode":"apiKey"},"models":[{"id":"claude-opus-4-8"}]}}}"#,
     )
     .unwrap();
-    let config = config_from_str(r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
+    let config = config_from_str(
+        r#"{"providers":{"openai":{"api_key":"sk-test"},"anthropic":{"api_key":"sk-ant-config"}}}"#,
+    );
 
     let provider = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
     let names = router_provider_names(&provider);
@@ -612,11 +614,13 @@ fn test_build_agent_provider_oauth_and_api_key_coexist_for_same_vendor() {
         tmp.path().join("models.json"),
         r#"{"providers":{
             "anthropic-oauth":{"api":"anthropic-messages","auth":{"mode":"oauth","oauthProvider":"anthropic"},"models":[{"id":"claude-opus-4-8"}]},
-            "anthropic-api":{"api":"anthropic-messages","baseUrl":"https://api.anthropic.com","auth":{"mode":"apiKey","apiKey":"sk-ant-direct"},"models":[{"id":"claude-opus-4-8"}]}
+            "anthropic-api":{"api":"anthropic-messages","base_url":"https://api.anthropic.com","allow_remote_http":true,"auth":{"mode":"apiKey","apiKey":"sk-ant-direct"},"models":[{"id":"claude-opus-4-8"}]}
         }}"#,
     )
     .unwrap();
-    let config = config_from_str(r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
+    let config = config_from_str(
+        r#"{"providers":{"openai":{"api_key":"sk-test"},"anthropic":{"api_key":"sk-ant-config"}}}"#,
+    );
 
     let provider = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
     let names = router_provider_names(&provider);

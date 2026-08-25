@@ -5,6 +5,7 @@ use tempfile::TempDir;
 use crate::domain::provider::LlmProvider;
 use crate::interface::cli::provider_reload::{
     ProviderReloadInputs, force_provider_reload, poll_provider_reload, seeded_provider_reload,
+    seeded_provider_reload_with_base,
 };
 
 fn provider() -> Arc<dyn LlmProvider> {
@@ -26,15 +27,15 @@ fn inputs(path: std::path::PathBuf, dir: &TempDir) -> ProviderReloadInputs {
     )
 }
 
-fn config_with_fireworks(api_base: &str) -> String {
+fn config_with_custom_provider(api_base: &str) -> String {
     format!(
         r#"{{
   "providers": {{
-    "openai": {{ "api_key": "sk-test", "api_base": "http://127.0.0.1:9" }},
+    "openai": {{ "api_key": "sk-test" }},
     "openai_compatible": {{
       "endpoints": [{{
-        "prefix": "fireworks",
-        "api_key": "sk-fireworks",
+        "prefix": "custom",
+        "api_key": "sk-custom",
         "api_base": "{api_base}",
         "allow_remote_http": true
       }}]
@@ -57,18 +58,22 @@ async fn force_provider_reload_returns_none_when_not_configured() {
 #[tokio::test]
 async fn changed_poll_reloads_new_provider() {
     let dir = TempDir::new().unwrap();
-    let path = write_config(
-        &dir,
-        r#"{"providers":{"openai":{"api_key":"sk-test","api_base":"http://127.0.0.1:9"}}}"#,
-    );
-    let mut reload = seeded_provider_reload(&path, provider());
+    let path = write_config(&dir, r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
+    let mut reload =
+        seeded_provider_reload_with_base(&path, Some(dir.path().to_path_buf()), provider());
 
+    std::fs::write(
+        &path,
+        format!(
+            "{}\n",
+            config_with_custom_provider("https://example.test/v1")
+        ),
+    )
+    .unwrap();
     // Move the file mtime forward deterministically so the reload sees a
     // changed file without depending on wall-clock timing.
     let later = std::time::SystemTime::now() + std::time::Duration::from_secs(10);
     filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(later)).unwrap();
-
-    std::fs::write(&path, config_with_fireworks("http://127.0.0.1:9")).unwrap();
     let inputs = inputs(path, &dir);
 
     let result = poll_provider_reload(Some(&mut reload), Some(&inputs))

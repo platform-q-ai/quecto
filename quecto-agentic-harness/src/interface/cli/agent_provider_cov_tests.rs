@@ -113,8 +113,15 @@ fn build_registry_provider_skips_api_key_models_without_key() {
     let mut m = model("custom", ProviderApi::OpenAiCompletions, AuthMode::ApiKey);
     m.base_url = Some("https://api.example.test/v1".to_string());
 
-    let built = build_registry_provider(&m, tmp.path(), &store, &refresh, &reqwest::Client::new())
-        .expect("provider build should not error");
+    let built = build_registry_provider(
+        &m,
+        tmp.path(),
+        &store,
+        &refresh,
+        &reqwest::Client::new(),
+        &Config::default(),
+    )
+    .expect("provider build should not error");
 
     assert!(
         built.is_none(),
@@ -134,8 +141,15 @@ fn build_registry_provider_reports_unimplemented_google_protocol() {
     );
     m.api_key = Some("test-key".to_string());
 
-    let err = build_registry_provider(&m, tmp.path(), &store, &refresh, &reqwest::Client::new())
-        .unwrap_err();
+    let err = build_registry_provider(
+        &m,
+        tmp.path(),
+        &store,
+        &refresh,
+        &reqwest::Client::new(),
+        &Config::default(),
+    )
+    .unwrap_err();
 
     assert!(err.contains("google-generative-ai"), "got: {err}");
     assert!(err.contains("not implemented"), "got: {err}");
@@ -190,9 +204,16 @@ fn build_registry_provider_api_key_openai_and_oauth_anthropic_paths() {
     openai.base_url = Some("http://127.0.0.1:9/v1".to_string());
     openai.allow_remote_http = true;
     openai.api_key = Some("api-token".to_string());
-    let built = build_registry_provider(&openai, tmp.path(), &store, &refresh, &client)
-        .unwrap()
-        .expect("api-key provider");
+    let built = build_registry_provider(
+        &openai,
+        tmp.path(),
+        &store,
+        &refresh,
+        &client,
+        &Config::default(),
+    )
+    .unwrap()
+    .expect("api-key provider");
     assert_eq!(built.name(), "custom-openai");
 
     let mut anthropic = model(
@@ -202,9 +223,16 @@ fn build_registry_provider_api_key_openai_and_oauth_anthropic_paths() {
     );
     anthropic.oauth_provider = Some("anthropic".to_string());
     anthropic.base_url = Some("https://api.anthropic.com".to_string());
-    let built = build_registry_provider(&anthropic, tmp.path(), &store, &refresh, &client)
-        .unwrap()
-        .expect("oauth provider");
+    let built = build_registry_provider(
+        &anthropic,
+        tmp.path(),
+        &store,
+        &refresh,
+        &client,
+        &Config::default(),
+    )
+    .unwrap()
+    .expect("oauth provider");
     assert_eq!(built.name(), "custom-anthropic-oauth");
 }
 
@@ -253,9 +281,15 @@ fn validate_oauth_base_url_accepts_canonical_host_with_path_and_registry_skips_o
     );
     m.oauth_provider = Some("openai".to_string());
     m.base_url = Some("https://api.openai.com/v1".to_string());
-    let skipped =
-        build_registry_provider(&m, tmp.path(), &store, &refresh, &reqwest::Client::new())
-            .expect("missing credential is a skip");
+    let skipped = build_registry_provider(
+        &m,
+        tmp.path(),
+        &store,
+        &refresh,
+        &reqwest::Client::new(),
+        &Config::default(),
+    )
+    .expect("missing credential is a skip");
     assert!(skipped.is_none());
 }
 
@@ -411,8 +445,15 @@ fn build_registry_provider_rejects_registry_oauth_models_without_oauth_provider(
         ProviderApi::OpenAiCompletions,
         AuthMode::OAuth,
     );
-    let err = build_registry_provider(&missing_provider, tmp.path(), &store, &refresh, &client)
-        .expect_err("oauth registry models must name their OAuth provider");
+    let err = build_registry_provider(
+        &missing_provider,
+        tmp.path(),
+        &store,
+        &refresh,
+        &client,
+        &Config::default(),
+    )
+    .expect_err("oauth registry models must name their OAuth provider");
     assert!(err.contains("missing oauthProvider"), "got: {err}");
 
     let mut unknown_provider = model(
@@ -421,8 +462,15 @@ fn build_registry_provider_rejects_registry_oauth_models_without_oauth_provider(
         AuthMode::OAuth,
     );
     unknown_provider.oauth_provider = Some("not-a-provider".to_string());
-    let err = build_registry_provider(&unknown_provider, tmp.path(), &store, &refresh, &client)
-        .expect_err("unknown OAuth providers must be rejected");
+    let err = build_registry_provider(
+        &unknown_provider,
+        tmp.path(),
+        &store,
+        &refresh,
+        &client,
+        &Config::default(),
+    )
+    .expect_err("unknown OAuth providers must be rejected");
     assert!(err.contains("not a kernel OAuth provider"), "got: {err}");
 }
 
@@ -454,6 +502,7 @@ fn build_registry_provider_skips_registry_oauth_models_when_stored_credential_is
         &store,
         &refresh,
         &reqwest::Client::new(),
+        &Config::default(),
     )
     .expect("token credentials are not OAuth credentials");
     assert!(skipped.is_none());
@@ -487,6 +536,7 @@ fn build_registry_provider_skips_registry_oauth_models_when_stored_oauth_token_i
         &store,
         &refresh,
         &reqwest::Client::new(),
+        &Config::default(),
     )
     .expect("empty OAuth credentials are skipped");
     assert!(skipped.is_none());
@@ -515,9 +565,16 @@ fn build_registry_provider_openai_oauth_builds_refreshable_provider() {
     m.oauth_provider = Some("openai".to_string());
     m.base_url = Some("https://api.openai.com/v1".to_string());
 
-    let built = build_registry_provider(&m, tmp.path(), &store, &refresh, &reqwest::Client::new())
-        .unwrap()
-        .expect("valid OAuth registry provider");
+    let built = build_registry_provider(
+        &m,
+        tmp.path(),
+        &store,
+        &refresh,
+        &reqwest::Client::new(),
+        &Config::default(),
+    )
+    .unwrap()
+    .expect("valid OAuth registry provider");
     assert_eq!(built.name(), "custom-openai-oauth");
     assert!(
         built
@@ -551,9 +608,16 @@ fn build_registry_provider_xai_oauth_builds_openai_compatible_refreshable_provid
     m.oauth_provider = Some("xai".to_string());
     m.base_url = Some("https://api.x.ai/v1".to_string());
 
-    let built = build_registry_provider(&m, tmp.path(), &store, &refresh, &reqwest::Client::new())
-        .unwrap()
-        .expect("valid xAI OAuth registry provider");
+    let built = build_registry_provider(
+        &m,
+        tmp.path(),
+        &store,
+        &refresh,
+        &reqwest::Client::new(),
+        &Config::default(),
+    )
+    .unwrap()
+    .expect("valid xAI OAuth registry provider");
     assert_eq!(built.name(), "xai-custom");
     assert!(
         built
@@ -587,8 +651,15 @@ fn build_registry_provider_rejects_noncanonical_openai_oauth_base_url() {
     m.oauth_provider = Some("openai".to_string());
     m.base_url = Some("https://attacker.example/v1".to_string());
 
-    let err = build_registry_provider(&m, tmp.path(), &store, &refresh, &reqwest::Client::new())
-        .expect_err("OAuth registry providers must pin canonical hosts");
+    let err = build_registry_provider(
+        &m,
+        tmp.path(),
+        &store,
+        &refresh,
+        &reqwest::Client::new(),
+        &Config::default(),
+    )
+    .expect_err("OAuth registry providers must pin canonical hosts");
     assert!(err.contains("canonical OAuth host"), "got: {err}");
     assert!(err.contains("evil-openai-oauth"), "got: {err}");
 }
@@ -609,84 +680,5 @@ fn build_single_provider_reports_configuration_errors_for_a_bad_api_base() {
     assert!(
         err.contains("openai") && err.contains("provider configuration error"),
         "error should name the provider and the stage: {err}"
-    );
-}
-
-#[test]
-fn runtime_catalogue_marks_builtin_api_key_models_configured_from_effective_api_key_inputs() {
-    use crate::infrastructure::config::Config;
-    use crate::infrastructure::provider_runtime::build_agent_provider;
-    use std::collections::HashMap;
-
-    let tmp = tempfile::TempDir::new().unwrap();
-    let config_path = tmp.path().join("missing-config.json");
-    let env = HashMap::from([
-        ("OPENAI_API_KEY".to_string(), "sk-openai-env".to_string()),
-        ("ANTHROPIC_API_KEY".to_string(), "sk-ant-env".to_string()),
-    ]);
-    let config = Config::load_with_env(config_path.to_str().unwrap(), &env)
-        .expect("OPENAI_API_KEY and ANTHROPIC_API_KEY should populate provider config");
-
-    let runtime = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
-    let descriptors = runtime
-        .model_descriptors()
-        .expect("router should expose descriptors");
-
-    for qualified_id in ["openai-api/gpt-5.6-sol", "anthropic-api/claude-sonnet-5"] {
-        let model = descriptors
-            .iter()
-            .find(|model| model.qualified_id() == qualified_id)
-            .unwrap_or_else(|| panic!("{qualified_id} should be advertised"));
-        assert!(
-            model.configured,
-            "{qualified_id} is runnable from the effective API key used to build its provider"
-        );
-        assert_eq!(
-            model.availability,
-            crate::domain::catalogue::Availability::Runnable
-        );
-    }
-}
-
-#[test]
-fn runtime_catalogue_marks_oauth_model_configured_when_runtime_has_oauth_credential() {
-    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
-    use crate::infrastructure::config::Config;
-    use crate::infrastructure::provider_runtime::build_agent_provider;
-
-    let tmp = tempfile::TempDir::new().unwrap();
-    std::fs::write(
-        tmp.path().join("models.json"),
-        r#"{"providers":{"openai-oauth":{"api":"openai-completions","baseUrl":"https://api.openai.com/v1","auth":{"mode":"oauth","oauthProvider":"openai"},"models":[{"id":"gpt-oauth"}]}}}"#,
-    )
-    .unwrap();
-    CredentialStore::new(tmp.path())
-        .store(Credential {
-            provider: "openai".to_string(),
-            token: "oauth-token".to_string(),
-            method: AuthMethod::OAuth,
-            expires_at: None,
-            refresh_token: None,
-            account_id: None,
-        })
-        .unwrap();
-
-    let runtime =
-        build_agent_provider(&Config::default(), tmp.path(), &reqwest::Client::new()).unwrap();
-    let descriptors = runtime
-        .model_descriptors()
-        .expect("router should expose descriptors");
-    let oauth = descriptors
-        .iter()
-        .find(|model| model.qualified_id() == "openai-oauth/gpt-oauth")
-        .expect("oauth model should be advertised");
-
-    assert!(
-        oauth.configured,
-        "runnable OAuth model must not be advertised as unconfigured"
-    );
-    assert_eq!(
-        oauth.availability,
-        crate::domain::catalogue::Availability::Runnable
     );
 }

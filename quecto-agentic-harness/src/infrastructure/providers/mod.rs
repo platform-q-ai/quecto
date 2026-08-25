@@ -46,9 +46,24 @@ impl std::fmt::Display for ProviderFactoryError {
             } => write!(
                 f,
                 "invalid api_base for {}: '{}' ({})",
-                provider, api_base, reason
+                provider,
+                sanitize_url_for_error(api_base),
+                reason
             ),
         }
+    }
+}
+
+fn sanitize_url_for_error(raw: &str) -> String {
+    match reqwest::Url::parse(raw) {
+        Ok(mut url) => {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            url.set_query(None);
+            url.set_fragment(None);
+            url.to_string()
+        }
+        Err(_) => "<invalid url>".to_string(),
     }
 }
 

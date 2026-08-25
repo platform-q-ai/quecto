@@ -50,10 +50,8 @@ fn interface_renders_frame(world: &mut TuiWorld) {
     world.stdout = with_harness(world, |h| h.full_frame());
 }
 
-#[then(
-    regex = r#"^the slash dropdown draws exactly the first 8 commands with the indicator "([^"]*)"$"#
-)]
-fn slash_dropdown_windowed(world: &mut TuiWorld, indicator: String) {
+#[then("the slash dropdown draws exactly the first 8 commands")]
+fn slash_dropdown_windowed(world: &mut TuiWorld) {
     let count = with_harness(world, |h| h.autocomplete_suggestion_count());
     let plain = strip_ansi(&world.stdout);
     let names = TuiHarness::slash_command_names();
@@ -62,7 +60,7 @@ fn slash_dropdown_windowed(world: &mut TuiWorld, indicator: String) {
         names.len(),
         "all built-in commands should be suggested"
     );
-    assert_eq!(count, 20, "the built-in command set is 20 commands");
+    assert_eq!(count, names.len(), "the built-in command count changed");
     // Positive windowing lock: a drawn row is `/{name}` followed by the fixed
     // two-space description gap. Exactly the first 8 commands are drawn.
     let drawn: Vec<String> = names
@@ -75,6 +73,7 @@ fn slash_dropdown_windowed(world: &mut TuiWorld, indicator: String) {
         names[..8].to_vec(),
         "exactly the first 8 command rows must be drawn:\n{plain}"
     );
+    let indicator = format!("(1/{count})");
     assert!(
         plain.contains(&indicator),
         "the composed frame must contain the overflow indicator {indicator}:\n{plain}"

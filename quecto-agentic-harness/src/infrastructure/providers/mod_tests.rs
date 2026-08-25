@@ -25,6 +25,21 @@ fn test_create_anthropic_provider() {
 }
 
 #[test]
+fn invalid_api_base_display_redacts_url_credentials_query_and_fragment() {
+    let err = ProviderFactoryError::InvalidApiBase {
+        provider: "openai".to_string(),
+        api_base: "https://user:secret@example.test/v1?api_key=top#frag".to_string(),
+        reason: "boom".to_string(),
+    }
+    .to_string();
+    assert!(err.contains("https://example.test/v1"), "{err}");
+    assert!(!err.contains("user"), "{err}");
+    assert!(!err.contains("secret"), "{err}");
+    assert!(!err.contains("api_key"), "{err}");
+    assert!(!err.contains("frag"), "{err}");
+}
+
+#[test]
 fn test_create_unknown_provider() {
     let provider =
         create_provider_with_client("gemini", "key".to_string(), None, reqwest::Client::new());
