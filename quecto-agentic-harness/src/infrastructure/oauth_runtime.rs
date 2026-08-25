@@ -75,7 +75,8 @@ fn expires_at_with_margin(expires_in: u64) -> i64 {
     crate::infrastructure::time::unix_timestamp_secs() + expires_in as i64 - 300
 }
 
-fn persist_refreshed_token(
+/// Persist a refreshed OAuth token response into the credential store.
+pub fn persist_refreshed_token(
     store: &crate::infrastructure::auth::credential_store::CredentialStore,
     provider: &str,
     previous_refresh_token: &str,

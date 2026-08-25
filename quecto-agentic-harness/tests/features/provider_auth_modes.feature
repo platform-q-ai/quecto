@@ -49,4 +49,4 @@ Feature: Explicit auth modes for models.json providers
 
   Scenario: OAuth runtime provider factory rebuilds refreshed providers
     When the OAuth runtime provider factory rebuilds OpenAI and Anthropic providers after refresh
-    Then the OAuth runtime rebuilt provider names should be "openai" and "anthropic"
+    Then the OAuth runtime rebuilt provider names should be "codex" and "anthropic"

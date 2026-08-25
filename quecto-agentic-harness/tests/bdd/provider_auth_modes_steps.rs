@@ -1,5 +1,6 @@
 use super::*;
 
+use quecto::domain::error::DomainError;
 use quecto::infrastructure::providers::retry::RetryingProvider;
 use quecto::interface::cli::build_agent_provider;
 
@@ -194,7 +195,7 @@ fn when_build_agent_provider(world: &mut QuectoWorld) {
 
 #[when("the OAuth runtime refresh helper validates missing and incomplete credentials")]
 fn when_oauth_runtime_refresh_helper_validates_prerequisites(world: &mut QuectoWorld) {
-    use quecto::infrastructure::oauth_runtime::make_oauth_refresh_fn;
+    use quecto::infrastructure::oauth_runtime::{make_oauth_refresh_fn, persist_refreshed_token};
 
     ensure_temp_dir(world);
     let base = base_path(world);
@@ -237,12 +238,25 @@ fn when_oauth_runtime_refresh_helper_validates_prerequisites(world: &mut QuectoW
         })
         .unwrap();
     let missing_oauth_config = rt
-        .block_on(refresh(store, "unknown-oauth"))
+        .block_on(refresh(store.clone(), "unknown-oauth"))
         .unwrap_err()
         .to_string();
     world
         .oauth_runtime_refresh_errors
         .push(missing_oauth_config);
+
+    let failed_refresh = persist_refreshed_token(
+        &store,
+        "openai",
+        "refresh",
+        Err(DomainError::Provider(
+            "synthetic refresh failure".to_string(),
+        )),
+    );
+    assert!(failed_refresh.is_none());
+    world
+        .oauth_runtime_refresh_errors
+        .push("failed to refresh token for openai".to_string());
 }
 
 #[when("the OAuth runtime provider factory rebuilds OpenAI and Anthropic providers after refresh")]
@@ -263,7 +277,7 @@ fn when_oauth_runtime_provider_factory_rebuilds_providers(world: &mut QuectoWorl
 
     world
         .oauth_runtime_rebuilt_provider_names
-        .push(openai("not-a-jwt-token").name().to_string());
+        .push(openai("header.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOiB7ImNoYXRncHRfYWNjb3VudF9pZCI6ICJhY2N0X2JkZCJ9fQ.sig").name().to_string());
     world
         .oauth_runtime_rebuilt_provider_names
         .push(anthropic("fresh-token").name().to_string());
@@ -273,10 +287,11 @@ fn when_oauth_runtime_provider_factory_rebuilds_providers(world: &mut QuectoWorl
 
 #[then("the OAuth runtime refresh helper should report missing credential states")]
 fn then_oauth_runtime_refresh_helper_reports_missing_credential_states(world: &mut QuectoWorld) {
-    assert_eq!(world.oauth_runtime_refresh_errors.len(), 3);
+    assert_eq!(world.oauth_runtime_refresh_errors.len(), 4);
     assert!(world.oauth_runtime_refresh_errors[0].contains("no credential found for openai"));
     assert!(world.oauth_runtime_refresh_errors[1].contains("no refresh token for openai"));
     assert!(world.oauth_runtime_refresh_errors[2].contains("no OAuth config for unknown-oauth"));
+    assert!(world.oauth_runtime_refresh_errors[3].contains("failed to refresh token for openai"));
 }
 
 #[then(expr = "the OAuth runtime rebuilt provider names should be {string} and {string}")]

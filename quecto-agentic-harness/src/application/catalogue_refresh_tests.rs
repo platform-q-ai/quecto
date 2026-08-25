@@ -2,6 +2,20 @@ use super::*;
 
 struct FakeRefreshPort;
 
+impl CatalogueRefreshAllPort for FakeRefreshPort {
+    fn refresh_all_sources(&self) -> Vec<CatalogueRefreshOutcome> {
+        vec![
+            self.refresh_source("supported"),
+            CatalogueRefreshOutcome {
+                source: "broken".to_string(),
+                status: CatalogueRefreshStatus::Failed {
+                    error: "network".to_string(),
+                },
+            },
+        ]
+    }
+}
+
 impl CatalogueRefreshPort for FakeRefreshPort {
     fn refresh_source(&self, source: &str) -> CatalogueRefreshOutcome {
         CatalogueRefreshOutcome {
@@ -36,5 +50,20 @@ fn refresh_use_case_delegates_to_refresh_port_and_returns_structured_outcome() {
                 reason: "unsupported".to_string()
             }
         }
+    );
+    assert_eq!(
+        use_case.refresh_all(&FakeRefreshPort),
+        vec![
+            CatalogueRefreshOutcome {
+                source: "supported".to_string(),
+                status: CatalogueRefreshStatus::Refreshed { models: 3 }
+            },
+            CatalogueRefreshOutcome {
+                source: "broken".to_string(),
+                status: CatalogueRefreshStatus::Failed {
+                    error: "network".to_string()
+                }
+            }
+        ]
     );
 }
