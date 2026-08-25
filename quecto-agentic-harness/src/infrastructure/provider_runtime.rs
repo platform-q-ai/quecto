@@ -125,13 +125,15 @@ fn compose_agent_provider(
                 &openai_oauth_key,
                 &openai_base,
                 http_client,
-                false,
+                config.providers.openai.disable_codex_routing,
             )?;
-            let factory = crate::infrastructure::oauth_runtime::make_provider_factory(
-                "openai",
-                openai_base.clone(),
-                http_client.clone(),
-            );
+            let factory =
+                crate::infrastructure::oauth_runtime::make_provider_factory_with_codex_routing(
+                    "openai",
+                    openai_base.clone(),
+                    http_client.clone(),
+                    config.providers.openai.disable_codex_routing,
+                );
             provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
                 inner,
                 store: store_arc.clone(),

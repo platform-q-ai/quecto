@@ -119,6 +119,8 @@ pub enum Command {
     RefreshModels {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider: Option<String>,
     },
     ListSessions {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -745,5 +747,4 @@ mod client_sync_tests;
 #[path = "client_workspace_tests.rs"]
 mod client_workspace_tests;
 #[cfg(test)]
-#[path = "client_tests.rs"]
 mod tests;

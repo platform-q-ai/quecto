@@ -171,13 +171,22 @@ pub fn make_provider_factory(
     api_base: Option<String>,
     http_client: reqwest::Client,
 ) -> ProviderFactory {
+    make_provider_factory_with_codex_routing(provider_name, api_base, http_client, false)
+}
+
+pub fn make_provider_factory_with_codex_routing(
+    provider_name: &str,
+    api_base: Option<String>,
+    http_client: reqwest::Client,
+    disable_codex_routing: bool,
+) -> ProviderFactory {
     use crate::infrastructure::providers;
 
     let name = provider_name.to_string();
     let base = api_base;
     Arc::new(
         move |new_token: &str| -> Arc<dyn crate::domain::provider::LlmProvider> {
-            if name == "openai" {
+            if name == "openai" && !disable_codex_routing {
                 let account_id =
                     crate::infrastructure::auth::oauth::extract_openai_account_id(new_token);
                 if let Some(acct) = account_id {

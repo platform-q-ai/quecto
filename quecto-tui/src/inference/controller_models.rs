@@ -55,6 +55,7 @@ impl App {
     pub(super) fn send_models_refresh(&mut self) {
         self.send_command(Command::RefreshModels {
             id: Some(self.ac().namespaced_id("models-refresh")),
+            provider: None,
         });
     }
 

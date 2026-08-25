@@ -117,8 +117,14 @@ fn runtime_model_limits(
         .availability
         .runnable()
         .then_some((
-            Some(descriptor.capabilities.max_tokens),
-            Some(descriptor.capabilities.context_window as usize),
+            descriptor
+                .capabilities
+                .max_tokens_explicit
+                .then_some(descriptor.capabilities.max_tokens),
+            descriptor
+                .capabilities
+                .context_window_explicit
+                .then_some(descriptor.capabilities.context_window as usize),
         ))
         .or(Some((None, None)))
 }

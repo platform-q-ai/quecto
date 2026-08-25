@@ -745,3 +745,6 @@ async fn command_sender_and_client_send_emit_identical_bytes() {
     let expected = serialize_command(&cmd).expect("serialize");
     assert_eq!(from_sender, expected);
 }
+
+#[path = "client_refresh_models_tests.rs"]
+mod client_refresh_models_tests;
