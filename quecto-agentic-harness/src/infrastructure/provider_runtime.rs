@@ -232,7 +232,7 @@ fn compose_agent_provider(
     let mut seen_registry_prefixes = HashSet::new();
     let mut runtime_model_descriptors = Vec::new();
     for model in model_registry.models() {
-        let credential_available = registry_model_credential_available(model, &store)?;
+        let credential_available = registry_model_credential_available(model, &store, config)?;
         if let Some(descriptor) =
             record_to_descriptor_with_credential(model, Some(credential_available))?
         {
@@ -435,12 +435,14 @@ fn sanitize_url_for_error(raw: &str) -> String {
 fn registry_model_credential_available(
     model: &crate::infrastructure::model_registry::ModelRecord,
     store: &CredentialStore,
+    config: &Config,
 ) -> Result<bool, String> {
     use crate::infrastructure::auth::credential_store::AuthMethod;
     use crate::infrastructure::model_registry::AuthMode;
 
     match model.auth {
-        AuthMode::ApiKey => Ok(model.api_key.as_deref().is_some_and(|key| !key.is_empty())),
+        AuthMode::ApiKey => Ok(model.api_key.as_deref().is_some_and(|key| !key.is_empty())
+            || builtin_api_key_available(model, store, config)?),
         AuthMode::OAuth => {
             let oauth_provider = model.oauth_provider.as_deref().ok_or_else(|| {
                 format!(
@@ -454,6 +456,29 @@ fn registry_model_credential_available(
                 .is_some_and(|cred| cred.method == AuthMethod::OAuth && !cred.token.is_empty()))
         }
     }
+}
+
+fn builtin_api_key_available(
+    model: &crate::infrastructure::model_registry::ModelRecord,
+    store: &CredentialStore,
+    config: &Config,
+) -> Result<bool, String> {
+    use crate::infrastructure::auth::credential_store::AuthMethod;
+
+    let (config_key, credential_provider) = match model.provider.as_str() {
+        "openai-api" => (&config.providers.openai.api_key, "openai"),
+        "anthropic-api" => (&config.providers.anthropic.api_key, "anthropic"),
+        _ => return Ok(false),
+    };
+    if !config_key.is_empty() {
+        return Ok(true);
+    }
+    Ok(store
+        .get(credential_provider)
+        .map_err(|e| e.to_string())?
+        .is_some_and(|cred| {
+            cred.method == AuthMethod::Token && !cred.token.is_empty() && !cred.is_expired()
+        }))
 }
 
 fn build_registry_provider(
