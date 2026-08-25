@@ -30,6 +30,11 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
     if let Some(result) = try_forward_subagent_targeted_command(&cmd, ctx).await {
         return result;
     }
+    // Catalogue reads are on-consume: poll the local reload gate before the
+    // fieldless-query fast path. This performs no network discovery.
+    if matches!(&cmd, AgentCommand::ListModels { .. }) {
+        super::super::uds_reload::poll_provider_reload_for_ctx(ctx).await;
+    }
     // Fast path: queries + clear_history (defers id/type_name clones).
     if let Some(result) = super::uds_dispatch_query::dispatch_fieldless_command(&cmd, ctx).await {
         return result;

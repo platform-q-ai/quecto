@@ -1,9 +1,14 @@
+use crate::application::catalogue::{
+    CatalogueQuery, CatalogueSnapshotStore, QueryCatalogueUseCase,
+};
 use crate::domain::catalogue::{AuthIdentity, CatalogueSnapshot, TransportKind};
 
 use super::uds::DispatchCtx;
 
 pub(super) fn list_models_response(ctx: &DispatchCtx<'_>) -> serde_json::Value {
-    list_catalogue_data(&ctx.agent.catalogue)
+    let query =
+        QueryCatalogueUseCase::new(CatalogueSnapshotStore::new(ctx.agent.catalogue.clone()));
+    list_catalogue_data(&query.query(CatalogueQuery::All))
 }
 
 fn list_catalogue_data(catalogue: &CatalogueSnapshot) -> serde_json::Value {

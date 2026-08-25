@@ -142,13 +142,13 @@ pub(super) async fn handle_refresh_models(
             },
         })).collect::<Vec<_>>()
     });
+    let any_refreshed = outcomes
+        .iter()
+        .any(|outcome| matches!(outcome.status, CatalogueRefreshStatus::Refreshed { .. }));
     let any_failed = outcomes
         .iter()
         .any(|outcome| matches!(outcome.status, CatalogueRefreshStatus::Failed { .. }));
-    if any_failed {
-        emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(id, type_name, data.to_string()))
-            .await;
-    } else {
+    if any_refreshed {
         match provider_reload::force_provider_reload(
             ctx.provider_reload.as_deref_mut(),
             ctx.provider_reload_inputs,
@@ -157,8 +157,12 @@ pub(super) async fn handle_refresh_models(
         {
             Some(Ok(result)) => {
                 apply_provider_reload_result(ctx, Some(result));
-                emit_event_to_broadcast_or_writer(ctx, &AgentEvent::ok(id, type_name, Some(data)))
-                    .await;
+                let event = if any_failed {
+                    AgentEvent::err(id, type_name, data.to_string())
+                } else {
+                    AgentEvent::ok(id, type_name, Some(data))
+                };
+                emit_event_to_broadcast_or_writer(ctx, &event).await;
             }
             Some(Err(err)) => {
                 emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(id, type_name, err)).await;
@@ -171,6 +175,11 @@ pub(super) async fn handle_refresh_models(
                 .await;
             }
         }
+    } else if any_failed {
+        emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(id, type_name, data.to_string()))
+            .await;
+    } else {
+        emit_event_to_broadcast_or_writer(ctx, &AgentEvent::ok(id, type_name, Some(data))).await;
     }
     false
 }

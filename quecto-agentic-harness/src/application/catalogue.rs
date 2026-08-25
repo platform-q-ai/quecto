@@ -11,6 +11,21 @@ use crate::domain::catalogue::{
     Availability, CatalogueSnapshot, ModelDescriptor, ModelRef, TransportKind, UnavailableReason,
 };
 
+/// Resolve ordered source layers into one immutable effective catalogue.
+/// Later layers override earlier layers by stable provider/model identity.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ResolveCatalogueUseCase;
+
+impl ResolveCatalogueUseCase {
+    pub fn resolve(
+        &self,
+        generation: u64,
+        layers: impl IntoIterator<Item = Vec<ModelDescriptor>>,
+    ) -> CatalogueSnapshot {
+        CatalogueSnapshot::merge_layers(generation, layers)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CatalogueQuery {
     All,

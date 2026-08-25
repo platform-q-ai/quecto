@@ -4,6 +4,10 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use crate::domain::catalogue::{
+    AuthIdentity, Availability, ModelCapabilities, ModelDescriptor, ModelId, ModelRef, ProviderId,
+    TransportKind,
+};
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
 use crate::domain::provider::{ChatRequest, LlmProvider};
@@ -20,6 +24,42 @@ impl LlmProvider for StubProvider {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    fn model_descriptors(&self) -> Option<&[ModelDescriptor]> {
+        static MODELS: std::sync::OnceLock<Vec<ModelDescriptor>> = std::sync::OnceLock::new();
+        Some(MODELS.get_or_init(|| {
+            [
+                ("stub", "stub"),
+                ("openai", "gpt-5.2"),
+                ("anthropic-api", "claude-sonnet-4-6"),
+            ]
+            .into_iter()
+            .map(|(provider, model)| ModelDescriptor {
+                reference: ModelRef::new(
+                    ProviderId::new(provider).unwrap(),
+                    ModelId::new(model).unwrap(),
+                ),
+                display_name: Some(model.into()),
+                transport: TransportKind::OpenAiCompletions,
+                auth: AuthIdentity::ApiKey,
+                capabilities: ModelCapabilities {
+                    input: vec!["text".into()],
+                    context_window: 0,
+                    max_tokens: 0,
+                    context_window_explicit: false,
+                    max_tokens_explicit: false,
+                    reasoning: false,
+                    cost: Default::default(),
+                },
+                availability: Availability::Runnable,
+                base_url: None,
+                auth_header: false,
+                allow_remote_http: false,
+                configured: true,
+            })
+            .collect()
+        }))
     }
 
     fn chat(

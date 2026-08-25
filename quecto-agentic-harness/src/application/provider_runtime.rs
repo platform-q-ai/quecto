@@ -31,6 +31,23 @@ pub trait ProviderRuntimeFactory<C, R> {
     ) -> Result<Arc<dyn LlmProvider>, String>;
 }
 
+/// Compose provider routing and its catalogue from exactly the same adapter result.
+pub fn compose_catalogue_runtime<C, R, F: ProviderRuntimeFactory<C, R>>(
+    factory: &F,
+    config: &C,
+    runtime_inputs: &R,
+    generation: u64,
+) -> Result<CatalogueRuntimeSnapshot, String> {
+    let provider = ComposeProviderRuntimeUseCase::new().compose(factory, config, runtime_inputs)?;
+    let descriptors = provider.model_descriptors().unwrap_or(&[]).to_vec();
+    let catalogue =
+        crate::application::catalogue::ResolveCatalogueUseCase.resolve(generation, [descriptors]);
+    Ok(CatalogueRuntimeSnapshot {
+        provider,
+        catalogue,
+    })
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ComposeProviderRuntimeUseCase;
 

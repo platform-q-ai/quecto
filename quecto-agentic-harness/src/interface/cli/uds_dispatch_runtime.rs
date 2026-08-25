@@ -1,6 +1,9 @@
 use super::AgentEvent;
 use super::{DispatchCtx, emit_event_to_broadcast_or_writer};
-use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::catalogue::{
+    CatalogueSnapshotStore, ResolveModelSelectionUseCase, SelectionFailure,
+};
+use crate::domain::catalogue::ModelRef;
 
 pub(super) struct SetModelArgs {
     pub(super) id: Option<String>,
@@ -40,12 +43,49 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
             return false;
         }
     };
-    // #935/#1044: re-derive the per-model output cap AND context window so a
-    // model switch re-clamps subsequent turns and the pruning budget; one
-    // registry load feeds both, and set_model takes them atomically so model,
-    // cap, and window can never diverge.
-    let _ = ctx.base_dir;
-    let (cap, window) = runtime_model_limits(ctx.agent, &resolved_model).unwrap_or((None, None));
+    let reference = ModelRef::parse_qualified(&resolved_model).ok().or_else(|| {
+        let mut matches = ctx
+            .agent
+            .catalogue
+            .models()
+            .iter()
+            .filter(|descriptor| descriptor.reference.model().as_str() == resolved_model)
+            .map(|descriptor| descriptor.reference.clone());
+        let unique = matches.next()?;
+        matches.next().is_none().then_some(unique)
+    });
+    let Some(reference) = reference else {
+        let ev = AgentEvent::err(args.id.as_deref(), &args.type_name, "unknown model");
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    };
+    let selection =
+        ResolveModelSelectionUseCase::new(CatalogueSnapshotStore::new(ctx.agent.catalogue.clone()));
+    let descriptor = match selection.resolve(&reference) {
+        Ok(descriptor) => descriptor,
+        Err(SelectionFailure::UnknownModel) => {
+            let ev = AgentEvent::err(args.id.as_deref(), &args.type_name, "unknown model");
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
+            return false;
+        }
+        Err(SelectionFailure::Unavailable { reasons }) => {
+            let ev = AgentEvent::err(
+                args.id.as_deref(),
+                &args.type_name,
+                format!("model is unavailable: {reasons:?}"),
+            );
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
+            return false;
+        }
+    };
+    let cap = descriptor
+        .capabilities
+        .max_tokens_explicit
+        .then_some(descriptor.capabilities.max_tokens);
+    let window = descriptor
+        .capabilities
+        .context_window_explicit
+        .then_some(descriptor.capabilities.context_window as usize);
     ctx.agent.set_model(resolved_model.clone(), cap, window);
     ctx.session.set_model(resolved_model);
     // Every model switch resets the session effort to `low` (#1067): a level
@@ -103,29 +143,4 @@ pub(super) async fn handle_set_effort(
     };
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
-}
-
-fn runtime_model_limits(
-    agent: &AgentLoopImpl,
-    qualified_model: &str,
-) -> Option<(Option<u32>, Option<usize>)> {
-    let descriptor = agent
-        .catalogue
-        .models()
-        .iter()
-        .find(|d| d.qualified_id() == qualified_model)?;
-    descriptor
-        .availability
-        .runnable()
-        .then_some((
-            descriptor
-                .capabilities
-                .max_tokens_explicit
-                .then_some(descriptor.capabilities.max_tokens),
-            descriptor
-                .capabilities
-                .context_window_explicit
-                .then_some(descriptor.capabilities.context_window as usize),
-        ))
-        .or(Some((None, None)))
 }

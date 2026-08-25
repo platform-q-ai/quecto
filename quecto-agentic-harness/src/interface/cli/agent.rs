@@ -1,5 +1,3 @@
-use std::{collections::HashMap, sync::Arc};
-
 use super::CliContext;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::agent::AgentLoop;
@@ -8,7 +6,7 @@ use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
-
+use std::{collections::HashMap, sync::Arc};
 /// Max byte length for `--socket` paths.  Linux allows 108, macOS 104;
 /// we use the stricter limit for portability.
 const MAX_SOCKET_PATH_BYTES: usize = 104;
@@ -17,7 +15,6 @@ pub(crate) struct AgentOutput<'a> {
     pub(crate) stdout: &'a mut String,
     pub(crate) stderr: &'a mut String,
 }
-
 mod agent_deadline;
 mod flag_parse;
 pub(crate) use agent_deadline::{DeadlineResult, run_with_deadline};
@@ -27,7 +24,6 @@ use flag_parse::{
     next_arg, parse_agent_mode, parse_effort_level, parse_pos_u32, parse_pos_u64,
     parse_session_name,
 };
-
 pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<AgentFlags> {
     let mut session_name: Option<String> = None;
     let mut no_session = false;
@@ -49,7 +45,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut inherited_tool_policy_path: Option<std::path::PathBuf> = None;
     let mut spawned = false;
     let mut i = 0;
-
     while i < args.len() {
         match args[i].as_str() {
             f @ ("--no-session" | "--persist" | "--workflow" | "--workflow-guards"
@@ -296,14 +291,11 @@ pub(crate) fn build_agent_from_config(
     stderr: &mut String,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 ) -> Option<AgentBuildResult> {
-    // An explicitly-provided --config path must exist; only a missing DEFAULT
-    // config falls back to zero-config defaults.
     if let Some(msg) = super::explicit_config_missing(config_path, config_explicit) {
         stderr.push_str(&msg);
         stderr.push('\n');
         return None;
     }
-    // Zero-config: a missing default config file loads defaults (no onboarding step).
     let env_overrides: HashMap<String, String> = std::env::vars()
         .filter(|(k, _)| k.starts_with("QUECTO_"))
         .collect();
@@ -317,9 +309,8 @@ pub(crate) fn build_agent_from_config(
     };
 
     let http_client = crate::interface::shared::build_http_client();
-
-    let provider = match build_agent_provider(&config, base_dir, &http_client) {
-        Ok(p) => p,
+    let initial_runtime = match build_agent_runtime(&config, base_dir, &http_client, 0) {
+        Ok(runtime) => runtime,
         Err(msg) => {
             stderr.push_str(&format!("{}\n", msg));
             return None;
@@ -328,7 +319,7 @@ pub(crate) fn build_agent_from_config(
     let provider_reload = crate::interface::cli::provider_reload::seeded_provider_reload_with_base(
         config_path,
         Some(base_dir.to_path_buf()),
-        provider.clone(),
+        initial_runtime.provider.clone(),
     );
     let provider_reload_inputs = crate::interface::cli::provider_reload::ProviderReloadInputs::new(
         config_path.to_path_buf(),
@@ -337,7 +328,6 @@ pub(crate) fn build_agent_from_config(
         http_client.clone(),
     );
 
-    // Workflow templates resolve against CWD and home.
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let home_dir = crate::infrastructure::tools::path_utils::home_dir();
     let ToolRegistryBuild {
@@ -399,10 +389,26 @@ pub(crate) fn build_agent_from_config(
     // #935/#1044: one registry load supplies the per-model output cap (clamps
     // max_tokens so low-limit models never get a larger value; set_model
     // re-derives on switch) and the known context window (bounds the budget).
-    let (cap, window) =
-        crate::infrastructure::catalogue_limits::model_limits_from_base_dir(base_dir, &model);
+    let (cap, window) = initial_runtime
+        .catalogue
+        .models()
+        .iter()
+        .find(|descriptor| descriptor.qualified_id() == model && descriptor.availability.runnable())
+        .map(|descriptor| {
+            (
+                descriptor
+                    .capabilities
+                    .max_tokens_explicit
+                    .then_some(descriptor.capabilities.max_tokens),
+                descriptor
+                    .capabilities
+                    .context_window_explicit
+                    .then_some(descriptor.capabilities.context_window as usize),
+            )
+        })
+        .unwrap_or((None, None));
     let agent = AgentLoopImpl::new(AgentLoopConfig {
-        provider,
+        provider: initial_runtime.provider,
         tool_registry: Box::new(registry),
         model: model.clone(),
         max_tokens: config.agents.defaults.max_tokens,
@@ -708,7 +714,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
 
 #[path = "agent_provider.rs"]
 mod agent_provider;
-pub use agent_provider::build_agent_provider;
+pub use agent_provider::{build_agent_provider, build_agent_runtime};
 #[cfg(test)]
 #[path = "agent_935_clamp_tests.rs"]
 mod clamp_935_tests;

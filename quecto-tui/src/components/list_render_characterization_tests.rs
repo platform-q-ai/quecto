@@ -282,7 +282,15 @@ fn model_selector_narrow_truncates_provider_not_drops_it() {
 
 #[test]
 fn model_selector_overflow_indicator_pixels() {
-    let mut sel = ModelSelector::new(None);
+    let models = (0..34)
+        .map(|i| ModelEntry {
+            id: format!("provider/model-{i}"),
+            provider: "Provider".into(),
+            auth: None,
+            is_current: false,
+        })
+        .collect();
+    let mut sel = ModelSelector::with_models(models, None);
     let lines = sel.render(80);
     let plain = strip_ansi(lines.last().unwrap());
     assert_eq!(
@@ -316,18 +324,38 @@ fn model_selector_no_match_placeholder_pixels() {
 /// into the new range (old semantics) — it must not reset it to row 0.
 #[test]
 fn model_selector_filter_change_clamps_selection() {
-    let mut sel = ModelSelector::new(None);
+    let models = vec![
+        ModelEntry {
+            id: "fireworks/glm".into(),
+            provider: "Fireworks".into(),
+            auth: None,
+            is_current: false,
+        },
+        ModelEntry {
+            id: "fireworks/kimi".into(),
+            provider: "Fireworks".into(),
+            auth: None,
+            is_current: false,
+        },
+        ModelEntry {
+            id: "other/model".into(),
+            provider: "Other".into(),
+            auth: None,
+            is_current: false,
+        },
+    ];
+    let mut sel = ModelSelector::with_models(models, None);
     for _ in 0..5 {
         sel.handle_input(&Key::Down);
     }
     for c in "fireworks".chars() {
         sel.handle_input(&Key::Char(c));
     }
-    assert_eq!(sel.visible_count(), 2, "two fireworks models match");
-    let selected = sel.selected_model().expect("clamped selection").id.clone();
-    // Clamped to the LAST match (index 1, kimi), not reset to row 0 (glm).
+    assert_eq!(sel.visible_count(), 2);
     assert!(
-        selected.contains("kimi"),
-        "selection must clamp to the last match, not reset to the first: {selected}"
+        sel.selected_model()
+            .expect("clamped selection")
+            .id
+            .contains("kimi")
     );
 }

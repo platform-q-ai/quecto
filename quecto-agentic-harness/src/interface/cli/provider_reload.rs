@@ -5,12 +5,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::application::provider_runtime::CatalogueRuntimeSnapshot;
-use crate::domain::catalogue::{CatalogueSnapshot, ModelDescriptor};
 use crate::domain::provider::LlmProvider;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::reload::{ReloadResult, ReloadSource, RuntimeReload};
 
-use crate::infrastructure::provider_runtime_catalogue::build_agent_provider_with_descriptors;
+use crate::interface::cli::agent::build_agent_runtime;
 
 pub type ProviderReload = RuntimeReload<CatalogueRuntimeSnapshot>;
 
@@ -56,12 +55,7 @@ impl ProviderReloadInputs {
         let config =
             Config::load_with_env(self.config_path.to_str().unwrap_or(""), &self.env_overrides)
                 .map_err(|e| e.to_string())?;
-        let (provider, descriptors) =
-            build_agent_provider_with_descriptors(&config, &self.base_dir, &self.http_client)?;
-        Ok(CatalogueRuntimeSnapshot {
-            provider,
-            catalogue: CatalogueSnapshot::new(0, descriptors),
-        })
+        build_agent_runtime(&config, &self.base_dir, &self.http_client, 0)
     }
 }
 
@@ -83,9 +77,12 @@ pub fn seeded_provider_reload_with_base(
         sources.push(ReloadSource::new(base_dir.join("models.json")));
     }
     let mut reload = RuntimeReload::new(sources);
+    let descriptors = initial_provider.model_descriptors().unwrap_or(&[]).to_vec();
+    let catalogue =
+        crate::application::catalogue::ResolveCatalogueUseCase.resolve(0, [descriptors]);
     reload.seed(CatalogueRuntimeSnapshot {
         provider: initial_provider,
-        catalogue: CatalogueSnapshot::new(0, Vec::<ModelDescriptor>::new()),
+        catalogue,
     });
     reload
 }

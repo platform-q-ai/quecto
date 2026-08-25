@@ -22,18 +22,12 @@ fn compact_rust(source: &str) -> String {
 }
 
 #[test]
-fn catalogue_module_no_longer_declares_unused_resolution_port_or_use_case() {
+fn catalogue_module_has_no_unused_source_port_and_resolution_is_production_wired() {
     let source = compact_rust(&read("src/application/catalogue.rs"));
-    for declaration in [
-        "pub trait CatalogueSource",
-        "pub struct ResolveCatalogueUseCase",
-        "impl<'a> ResolveCatalogueUseCase",
-    ] {
-        assert!(
-            !source.contains(declaration),
-            "unused production declaration remains: {declaration}"
-        );
-    }
+    let runtime = compact_rust(&read("src/application/provider_runtime.rs"));
+    assert!(!source.contains("pub trait CatalogueSource"));
+    assert!(source.contains("pub struct ResolveCatalogueUseCase"));
+    assert!(runtime.contains("ResolveCatalogueUseCase"));
 }
 
 #[test]
@@ -135,7 +129,10 @@ fn production_used_application_seams_remain_declared_and_wired() {
     let dispatch = compact_rust(&read("src/interface/cli/uds_dispatch_runtime.rs"));
 
     assert!(provider_app.contains("pub struct ComposeProviderRuntimeUseCase"));
-    assert!(agent_provider.contains("ComposeProviderRuntimeUseCase"));
+    assert!(
+        agent_provider.contains("compose_catalogue_runtime")
+            && provider_app.contains("ComposeProviderRuntimeUseCase")
+    );
     assert!(refresh_app.contains("pub struct RefreshCatalogueSourceUseCase"));
     assert!(models.contains("RefreshCatalogueSourceUseCase"));
     assert!(uds_reload.contains("RefreshCatalogueSourceUseCase"));

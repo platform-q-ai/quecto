@@ -13,58 +13,6 @@ use crate::components::theme;
 use crate::components::utils::{truncate_to_width, visible_width};
 use crate::shell::keys::Key;
 
-/// Well-known fallback models, used when the caller doesn't supply a model
-/// list: every Anthropic/OpenAI model is offered through both its `api` and
-/// `oauth` provider; the Fireworks serverless ids are single-provider.
-fn known_models() -> Vec<ModelEntry> {
-    const ANTHROPIC: &[&str] = &[
-        "claude-fable-5",
-        "claude-opus-4-8",
-        "claude-opus-4-7",
-        "claude-opus-4-6",
-        "claude-opus-4-5",
-        "claude-sonnet-4-6",
-        "claude-sonnet-4-5",
-    ];
-    const OPENAI: &[&str] = &[
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
-        "gpt-5.6-luna",
-        "gpt-5.5",
-        "gpt-5.5-mini",
-        "gpt-5.5-nano",
-        "gpt-5.3-codex",
-        "gpt-5.3-codex-spark",
-        "gpt-5.2-codex",
-    ];
-    let mut pairs: Vec<(String, String)> = Vec::new();
-    for (vendor, brand, ids) in [
-        ("anthropic", "Anthropic", ANTHROPIC),
-        ("openai", "OpenAI", OPENAI),
-    ] {
-        for id in ids {
-            for (auth, label) in [("api", "API"), ("oauth", "OAuth")] {
-                pairs.push((format!("{vendor}-{auth}/{id}"), format!("{brand} {label}")));
-            }
-        }
-    }
-    for id in ["glm-5p2", "kimi-k2p7-code"] {
-        pairs.push((
-            format!("fireworks/accounts/fireworks/models/{id}"),
-            "Fireworks".into(),
-        ));
-    }
-    pairs
-        .into_iter()
-        .map(|(id, provider)| ModelEntry {
-            id,
-            provider,
-            auth: None,
-            is_current: false,
-        })
-        .collect()
-}
-
 /// Maximum query length to prevent unbounded growth.
 const MAX_QUERY_LEN: usize = 64;
 
@@ -100,12 +48,12 @@ pub struct ModelSelector {
 }
 
 impl ModelSelector {
-    /// Create a new model selector with default known models.
+    /// Create a new model selector with no independent catalogue.
     ///
     /// `current_model` is sanitized and marked with ● in the list.
-    /// If it's not in the known list, it's added at the top.
+    /// The current model is shown until the application catalogue projection arrives.
     pub fn new(current_model: Option<&str>) -> Self {
-        Self::with_models(known_models(), current_model)
+        Self::with_models(Vec::new(), current_model)
     }
 
     /// Create a model selector with a caller-supplied model list.

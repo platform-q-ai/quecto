@@ -10,10 +10,27 @@ impl ModelSelector {
     }
 }
 
-/// The default model ids, in selector order (test stand-in for the old
-/// hardcoded table).
 fn known_ids() -> Vec<String> {
-    known_models().into_iter().map(|m| m.id).collect()
+    vec![
+        "provider/alpha-sonnet".into(),
+        "fireworks/glm".into(),
+        "fireworks/kimi".into(),
+    ]
+}
+
+fn test_selector() -> ModelSelector {
+    ModelSelector::with_models(
+        known_ids()
+            .into_iter()
+            .map(|id| ModelEntry {
+                id,
+                provider: "Test".into(),
+                auth: None,
+                is_current: false,
+            })
+            .collect(),
+        None,
+    )
 }
 
 fn strip_ansi(s: &str) -> String {
@@ -35,7 +52,7 @@ fn strip_ansi(s: &str) -> String {
 
 #[test]
 fn renders_model_list() {
-    let mut sel = ModelSelector::new(None);
+    let mut sel = test_selector();
     let lines = sel.render(60);
     let plain: String = lines
         .iter()
@@ -43,75 +60,15 @@ fn renders_model_list() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        plain.contains("claude-sonnet-4"),
+        plain.contains("provider/alpha-sonnet"),
         "should contain a model: {}",
         plain
     );
 }
 
 #[test]
-fn known_models_include_latest_anthropic_models() {
-    let known_ids: Vec<String> = known_ids();
-    assert!(
-        known_ids
-            .iter()
-            .any(|id| id == "anthropic-api/claude-fable-5"),
-        "known models should include Claude Fable 5: {:?}",
-        known_ids
-    );
-    assert!(
-        known_ids
-            .iter()
-            .any(|id| id == "anthropic-api/claude-opus-4-8"),
-        "known models should include Opus 4.8: {:?}",
-        known_ids
-    );
-    assert!(
-        known_ids
-            .iter()
-            .any(|id| id == "anthropic-api/claude-opus-4-7"),
-        "known models should include Opus 4.7: {:?}",
-        known_ids
-    );
-}
-
-#[test]
-fn known_models_include_gpt_5_6_tiers_for_both_auth_modes() {
-    let known_ids: Vec<String> = known_ids();
-    for id in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
-        for auth in ["api", "oauth"] {
-            let full = format!("openai-{auth}/{id}");
-            assert!(
-                known_ids.iter().any(|k| k == &full),
-                "known models should include {full}: {:?}",
-                known_ids
-            );
-        }
-    }
-}
-
-#[test]
-fn known_models_include_fireworks_serverless_models() {
-    let known_ids: Vec<String> = known_ids();
-    assert!(
-        known_ids
-            .iter()
-            .any(|id| id == "fireworks/accounts/fireworks/models/glm-5p2"),
-        "known models should include Fireworks GLM 5.2: {:?}",
-        known_ids
-    );
-    assert!(
-        known_ids
-            .iter()
-            .any(|id| id == "fireworks/accounts/fireworks/models/kimi-k2p7-code"),
-        "known models should include Fireworks Kimi K2.7 Code: {:?}",
-        known_ids
-    );
-}
-
-#[test]
 fn shows_selection_indicator() {
-    let mut sel = ModelSelector::new(None);
+    let mut sel = test_selector();
     let lines = sel.render(60);
     let joined: String = lines
         .iter()
@@ -127,7 +84,7 @@ fn shows_selection_indicator() {
 
 #[test]
 fn navigate_down_selects_next() {
-    let mut sel = ModelSelector::new(None);
+    let mut sel = test_selector();
     sel.handle_input(&Key::Down);
     let selected = sel.selected_model().unwrap();
     assert_eq!(selected.id, known_ids()[1], "should select second model");
@@ -135,7 +92,7 @@ fn navigate_down_selects_next() {
 
 #[test]
 fn navigate_down_wraps() {
-    let mut sel = ModelSelector::new(None);
+    let mut sel = test_selector();
     let count = sel.visible_count();
     for _ in 0..count {
         sel.handle_input(&Key::Down);
@@ -146,7 +103,7 @@ fn navigate_down_wraps() {
 
 #[test]
 fn navigate_up_wraps() {
-    let mut sel = ModelSelector::new(None);
+    let mut sel = test_selector();
     sel.handle_input(&Key::Up);
     let selected = sel.selected_model().unwrap();
     let last_idx = known_ids().len() - 1;
@@ -159,7 +116,7 @@ fn navigate_up_wraps() {
 
 #[test]
 fn enter_selects_model() {
-    let mut sel = ModelSelector::new(None);
+    let mut sel = test_selector();
     sel.handle_input(&Key::Enter);
     let result = sel.take_result();
     assert_eq!(
@@ -170,14 +127,14 @@ fn enter_selects_model() {
 
 #[test]
 fn escape_cancels() {
-    let mut sel = ModelSelector::new(None);
+    let mut sel = test_selector();
     sel.handle_input(&Key::Escape);
     assert_eq!(sel.take_result(), ModelSelectorResult::Dismissed);
 }
 
 #[test]
 fn fuzzy_filter_narrows_list() {
-    let mut sel = ModelSelector::new(None);
+    let mut sel = test_selector();
     sel.handle_input(&Key::Char('s'));
     sel.handle_input(&Key::Char('o'));
     sel.handle_input(&Key::Char('n'));
@@ -202,7 +159,7 @@ fn fuzzy_filter_narrows_list() {
 
 #[test]
 fn empty_query_shows_all() {
-    let mut sel = ModelSelector::new(None);
+    let mut sel = test_selector();
     sel.handle_input(&Key::Char('x'));
     sel.handle_input(&Key::Backspace);
     assert_eq!(sel.visible_count(), known_ids().len());
@@ -210,7 +167,7 @@ fn empty_query_shows_all() {
 
 #[test]
 fn no_match_shows_empty_state() {
-    let mut sel = ModelSelector::new(None);
+    let mut sel = test_selector();
     for c in "zzzznonexistent".chars() {
         sel.handle_input(&Key::Char(c));
     }
@@ -283,7 +240,7 @@ fn respects_width() {
 
 #[test]
 fn shared_list_backs_rows_with_model_id_values() {
-    let sel = ModelSelector::new(None);
+    let sel = test_selector();
     let list = sel.shared_list();
     assert_eq!(list.len(), known_ids().len());
     assert_eq!(
@@ -295,7 +252,7 @@ fn shared_list_backs_rows_with_model_id_values() {
 
 #[test]
 fn shared_list_selection_clamps_when_filter_narrows() {
-    let mut sel = ModelSelector::new(None);
+    let mut sel = test_selector();
     for _ in 0..5 {
         sel.handle_input(&Key::Down);
     }
@@ -314,7 +271,7 @@ fn shared_list_suggestions_track_filter_changes() {
     // Guards the rejected-attempt bug: re-setting suggestions on a filter
     // change must actually replace the shared list's values (which only
     // works because `value` is the model id, not a hollow placeholder).
-    let mut sel = ModelSelector::new(None);
+    let mut sel = test_selector();
     for c in "fireworks".chars() {
         sel.handle_input(&Key::Char(c));
     }
@@ -354,7 +311,7 @@ fn sanitize_strips_control_chars() {
 
 #[test]
 fn query_capped_at_max_length() {
-    let mut sel = ModelSelector::new(None);
+    let mut sel = test_selector();
     for _ in 0..100 {
         sel.handle_input(&Key::Char('x'));
     }
@@ -363,7 +320,7 @@ fn query_capped_at_max_length() {
 
 #[test]
 fn enter_on_empty_filtered_cancels() {
-    let mut sel = ModelSelector::new(None);
+    let mut sel = test_selector();
     for c in "zzzznonexistent".chars() {
         sel.handle_input(&Key::Char(c));
     }

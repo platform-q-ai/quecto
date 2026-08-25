@@ -123,6 +123,7 @@ pub(super) async fn run_command_loop(
 
 pub(crate) struct DispatchCtx<'a> {
     pub wire_mode: super::uds_wire::ConnectionWireMode,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub base_dir: &'a std::path::Path,
     pub agent: &'a mut AgentLoopImpl,
     pub messages: &'a mut Vec<Message>,
