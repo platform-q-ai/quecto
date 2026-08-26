@@ -321,3 +321,73 @@ fn an_endpoint_owns_a_same_prefix_route_that_carries_its_own_credential() {
         "the endpoint owns the route: {error}"
     );
 }
+
+#[test]
+fn an_unsupported_transport_keeps_its_reason_when_the_runtime_skips_it() {
+    use crate::domain::catalogue::{Availability, TransportKind, UnavailableReason};
+    use crate::infrastructure::config::Config;
+    use crate::infrastructure::provider_runtime::build_agent_provider;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"google":{"api":"google-generative-ai","baseUrl":"https://generativelanguage.example/v1","auth":{"mode":"apiKey","apiKey":"k"},"models":[{"id":"gemini"}]},"open":{"api":"openai-completions","baseUrl":"https://example.test/v1","auth":{"mode":"apiKey","apiKey":"sk-open"},"models":[{"id":"m"}]}}}"#,
+    )
+    .unwrap();
+
+    let runtime = build_agent_provider(&Config::default(), tmp.path(), &reqwest::Client::new())
+        .expect("an unsupported transport must not fail composition");
+    let google = runtime
+        .model_descriptors()
+        .unwrap()
+        .iter()
+        .find(|model| model.qualified_id() == "google/gemini")
+        .expect("the entry stays listed");
+
+    let Availability::KnownButUnavailable { reasons } = &google.availability else {
+        panic!("a google entry can never be runnable");
+    };
+    assert!(
+        reasons.contains(&UnavailableReason::UnsupportedTransport {
+            transport: TransportKind::GoogleGenerativeAi
+        }),
+        "the skip must not erase why the transport is unusable: {reasons:?}"
+    );
+    assert!(
+        !google.adapter_supported(),
+        "adapter support is derived from that reason"
+    );
+}
+
+#[test]
+fn a_keyless_endpoint_does_not_advertise_its_prefix_as_runnable() {
+    use crate::infrastructure::config::{Config, OpenAiCompatibleEndpoint};
+    use crate::infrastructure::provider_runtime::build_agent_provider;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut config = Config::default();
+    config.providers.openai.api_key = "sk-openai".into();
+    config.providers.openai_compatible.endpoints = vec![OpenAiCompatibleEndpoint {
+        prefix: "fireworks".to_string(),
+        api_key: String::new(),
+        api_base: "http://127.0.0.1:9/v1".to_string(),
+        allow_remote_http: true,
+    }];
+
+    let runtime = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
+
+    // No provider is constructed for a keyless endpoint, so its prefix must not
+    // be advertised as runnable by the catalogue either.
+    for model in runtime
+        .model_descriptors()
+        .unwrap()
+        .iter()
+        .filter(|model| model.reference.provider().as_str() == "fireworks")
+    {
+        assert!(
+            !model.availability.runnable(),
+            "{} has no constructed provider",
+            model.qualified_id()
+        );
+    }
+}

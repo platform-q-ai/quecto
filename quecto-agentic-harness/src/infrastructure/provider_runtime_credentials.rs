@@ -4,15 +4,38 @@
 //! configured `openai_compatible` endpoint owns a prefix the catalogue also
 //! names, are policy questions separate from wiring the providers together.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::CredentialStore;
+use crate::infrastructure::auth::credential_store::Credential;
 use crate::infrastructure::config::Config;
+
+/// The credential store read once for a whole composition.
+///
+/// Every registry record used to re-read and re-parse `credentials.json`, which
+/// is both slow (once per model, on every startup and reload poll) and
+/// inconsistent: a rotation midway through composing would be observed by some
+/// records and not others.
+pub(crate) struct CredentialSnapshot {
+    credentials: HashMap<String, Credential>,
+}
+
+impl CredentialSnapshot {
+    pub(crate) fn load(store: &CredentialStore) -> Result<Self, String> {
+        Ok(Self {
+            credentials: store.load_snapshot().map_err(|e| e.to_string())?,
+        })
+    }
+
+    pub(crate) fn get(&self, provider: &str) -> Option<&Credential> {
+        self.credentials.get(provider)
+    }
+}
 
 pub(super) fn explicit_endpoint_owns_registry_route(
     model: &crate::infrastructure::model_registry::ModelRecord,
     endpoint_prefixes: &HashSet<String>,
-    store: &CredentialStore,
+    store: &CredentialSnapshot,
     config: &Config,
 ) -> Result<bool, String> {
     use crate::infrastructure::model_registry::AuthMode;
@@ -51,7 +74,7 @@ pub(super) fn explicit_endpoint_owns_registry_route(
 /// route ownership does not depend on the endpoint it is being compared with.
 fn registry_provider_can_construct_without_endpoint(
     model: &crate::infrastructure::model_registry::ModelRecord,
-    store: &CredentialStore,
+    store: &CredentialSnapshot,
     config: &Config,
 ) -> Result<bool, String> {
     let mut without_endpoints = config.clone();
@@ -91,7 +114,7 @@ fn same_api_base(left: &str, right: &str) -> bool {
 
 pub(super) fn registry_model_credential_available(
     model: &crate::infrastructure::model_registry::ModelRecord,
-    store: &CredentialStore,
+    store: &CredentialSnapshot,
     config: &Config,
 ) -> Result<bool, String> {
     use crate::infrastructure::auth::credential_store::AuthMethod;
@@ -115,14 +138,13 @@ pub(super) fn registry_model_credential_available(
             })?;
             Ok(store
                 .get(oauth_provider)
-                .map_err(|e| e.to_string())?
                 .is_some_and(|cred| cred.method == AuthMethod::OAuth && !cred.token.is_empty()))
         }
     }
 }
 fn builtin_api_key_available(
     model: &crate::infrastructure::model_registry::ModelRecord,
-    store: &CredentialStore,
+    store: &CredentialSnapshot,
     config: &Config,
 ) -> Result<bool, String> {
     use crate::infrastructure::auth::credential_store::AuthMethod;
@@ -134,17 +156,14 @@ fn builtin_api_key_available(
     if !config_key.is_empty() {
         return Ok(true);
     }
-    Ok(store
-        .get(credential_provider)
-        .map_err(|e| e.to_string())?
-        .is_some_and(|cred| {
-            cred.method == AuthMethod::Token && !cred.token.is_empty() && !cred.is_expired()
-        }))
+    Ok(store.get(credential_provider).is_some_and(|cred| {
+        cred.method == AuthMethod::Token && !cred.token.is_empty() && !cred.is_expired()
+    }))
 }
 #[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn registry_api_key(
     model: &crate::infrastructure::model_registry::ModelRecord,
-    store: &CredentialStore,
+    store: &CredentialSnapshot,
     config: &Config,
 ) -> Result<Option<String>, String> {
     if let Some(key) = model.api_key.as_ref().filter(|key| !key.is_empty()) {
@@ -158,7 +177,7 @@ pub(super) fn registry_api_key(
     if !config_key.is_empty() {
         return Ok(Some(config_key.to_string()));
     }
-    let Some(cred) = store.get(store_name).map_err(|e| e.to_string())? else {
+    let Some(cred) = store.get(store_name) else {
         return Ok(None);
     };
     Ok((matches!(
@@ -166,19 +185,17 @@ pub(super) fn registry_api_key(
         crate::infrastructure::auth::credential_store::AuthMethod::Token
     ) && !cred.token.is_empty()
         && !cred.is_expired())
-    .then_some(cred.token))
+    .then_some(cred.token.clone()))
 }
 pub(super) fn registry_provider_can_construct(
     model: &crate::infrastructure::model_registry::ModelRecord,
-    store: &CredentialStore,
+    store: &CredentialSnapshot,
     config: &Config,
 ) -> Result<bool, String> {
-    use crate::infrastructure::model_registry::{AuthMode, ProviderApi};
+    use crate::infrastructure::model_registry::ProviderApi;
     if matches!(model.api, ProviderApi::GoogleGenerativeAi) {
         return Ok(false);
     }
-    match model.auth {
-        AuthMode::ApiKey => registry_model_credential_available(model, store, config),
-        AuthMode::OAuth => registry_model_credential_available(model, store, config),
-    }
+    // Both auth modes reduce to "is a credential available for this record".
+    registry_model_credential_available(model, store, config)
 }

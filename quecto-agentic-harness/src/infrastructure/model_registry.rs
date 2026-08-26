@@ -544,7 +544,7 @@ struct RegistryAuth {
     #[serde(default)]
     mode: Option<String>,
     /// For `apiKey` mode: the key (supports `$ENV` interpolation).
-    #[serde(default, alias = "apiKey")]
+    #[serde(default, alias = "api_key")]
     api_key: Option<String>,
     /// For `oauth` mode: the kernel OAuth provider identity to resolve against.
     #[serde(default)]

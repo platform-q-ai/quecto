@@ -252,6 +252,13 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
         &()
     }
 
+    /// Provider prefixes this runtime can route, including providers whose model
+    /// ids the catalogue cannot enumerate. Selection accepts an unknown id under
+    /// a routable prefix instead of refusing a model the runtime would serve.
+    fn routable_provider_names(&self) -> Vec<String> {
+        vec![self.name().to_string()]
+    }
+
     /// Runtime model descriptors currently served by this provider snapshot.
     fn model_descriptors(&self) -> Option<&[ModelDescriptor]> {
         None

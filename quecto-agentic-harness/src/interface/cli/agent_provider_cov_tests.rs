@@ -116,10 +116,12 @@ fn build_registry_provider_skips_api_key_models_without_key() {
     let built = build_registry_provider(
         &m,
         tmp.path(),
-        &store,
-        &refresh,
-        &reqwest::Client::new(),
-        &Config::default(),
+        &registry_context(
+            &store,
+            &refresh,
+            &reqwest::Client::new(),
+            &Config::default(),
+        ),
     )
     .expect("provider build should not error");
 
@@ -144,10 +146,12 @@ fn build_registry_provider_skips_unimplemented_google_protocol() {
     let built = build_registry_provider(
         &m,
         tmp.path(),
-        &store,
-        &refresh,
-        &reqwest::Client::new(),
-        &Config::default(),
+        &registry_context(
+            &store,
+            &refresh,
+            &reqwest::Client::new(),
+            &Config::default(),
+        ),
     )
     .unwrap();
 
@@ -206,10 +210,7 @@ fn build_registry_provider_api_key_openai_and_oauth_anthropic_paths() {
     let built = build_registry_provider(
         &openai,
         tmp.path(),
-        &store,
-        &refresh,
-        &client,
-        &Config::default(),
+        &registry_context(&store, &refresh, &client, &Config::default()),
     )
     .unwrap()
     .expect("api-key provider");
@@ -225,10 +226,7 @@ fn build_registry_provider_api_key_openai_and_oauth_anthropic_paths() {
     let built = build_registry_provider(
         &anthropic,
         tmp.path(),
-        &store,
-        &refresh,
-        &client,
-        &Config::default(),
+        &registry_context(&store, &refresh, &client, &Config::default()),
     )
     .unwrap()
     .expect("oauth provider");
@@ -283,10 +281,12 @@ fn validate_oauth_base_url_accepts_canonical_host_with_path_and_registry_skips_o
     let skipped = build_registry_provider(
         &m,
         tmp.path(),
-        &store,
-        &refresh,
-        &reqwest::Client::new(),
-        &Config::default(),
+        &registry_context(
+            &store,
+            &refresh,
+            &reqwest::Client::new(),
+            &Config::default(),
+        ),
     )
     .expect("missing credential is a skip");
     assert!(skipped.is_none());
@@ -447,10 +447,7 @@ fn build_registry_provider_rejects_registry_oauth_models_without_oauth_provider(
     let err = build_registry_provider(
         &missing_provider,
         tmp.path(),
-        &store,
-        &refresh,
-        &client,
-        &Config::default(),
+        &registry_context(&store, &refresh, &client, &Config::default()),
     )
     .expect_err("oauth registry models must name their OAuth provider");
     assert!(err.contains("missing oauthProvider"), "got: {err}");
@@ -464,10 +461,7 @@ fn build_registry_provider_rejects_registry_oauth_models_without_oauth_provider(
     let err = build_registry_provider(
         &unknown_provider,
         tmp.path(),
-        &store,
-        &refresh,
-        &client,
-        &Config::default(),
+        &registry_context(&store, &refresh, &client, &Config::default()),
     )
     .expect_err("unknown OAuth providers must be rejected");
     assert!(err.contains("not a kernel OAuth provider"), "got: {err}");
@@ -498,10 +492,12 @@ fn build_registry_provider_skips_registry_oauth_models_when_stored_credential_is
     let skipped = build_registry_provider(
         &token_credential,
         tmp.path(),
-        &store,
-        &refresh,
-        &reqwest::Client::new(),
-        &Config::default(),
+        &registry_context(
+            &store,
+            &refresh,
+            &reqwest::Client::new(),
+            &Config::default(),
+        ),
     )
     .expect("token credentials are not OAuth credentials");
     assert!(skipped.is_none());
@@ -532,10 +528,12 @@ fn build_registry_provider_skips_registry_oauth_models_when_stored_oauth_token_i
     let skipped = build_registry_provider(
         &token_credential,
         tmp.path(),
-        &store,
-        &refresh,
-        &reqwest::Client::new(),
-        &Config::default(),
+        &registry_context(
+            &store,
+            &refresh,
+            &reqwest::Client::new(),
+            &Config::default(),
+        ),
     )
     .expect("empty OAuth credentials are skipped");
     assert!(skipped.is_none());
@@ -567,10 +565,12 @@ fn build_registry_provider_openai_oauth_builds_refreshable_provider() {
     let built = build_registry_provider(
         &m,
         tmp.path(),
-        &store,
-        &refresh,
-        &reqwest::Client::new(),
-        &Config::default(),
+        &registry_context(
+            &store,
+            &refresh,
+            &reqwest::Client::new(),
+            &Config::default(),
+        ),
     )
     .unwrap()
     .expect("valid OAuth registry provider");
@@ -610,10 +610,12 @@ fn build_registry_provider_xai_oauth_builds_openai_compatible_refreshable_provid
     let built = build_registry_provider(
         &m,
         tmp.path(),
-        &store,
-        &refresh,
-        &reqwest::Client::new(),
-        &Config::default(),
+        &registry_context(
+            &store,
+            &refresh,
+            &reqwest::Client::new(),
+            &Config::default(),
+        ),
     )
     .unwrap()
     .expect("valid xAI OAuth registry provider");
@@ -653,10 +655,12 @@ fn build_registry_provider_rejects_noncanonical_openai_oauth_base_url() {
     let err = build_registry_provider(
         &m,
         tmp.path(),
-        &store,
-        &refresh,
-        &reqwest::Client::new(),
-        &Config::default(),
+        &registry_context(
+            &store,
+            &refresh,
+            &reqwest::Client::new(),
+            &Config::default(),
+        ),
     )
     .expect_err("OAuth registry providers must pin canonical hosts");
     assert!(err.contains("canonical OAuth host"), "got: {err}");
@@ -680,4 +684,24 @@ fn build_single_provider_reports_configuration_errors_for_a_bad_api_base() {
         err.contains("openai") && err.contains("provider configuration error"),
         "error should name the provider and the stage: {err}"
     );
+}
+
+/// The per-composition context `build_registry_provider` takes, built for a
+/// single record under test.
+fn registry_context<'a>(
+    store: &'a std::sync::Arc<CredentialStore>,
+    refresh: &'a crate::infrastructure::providers::refreshable::RefreshFn,
+    http_client: &'a reqwest::Client,
+    config: &'a Config,
+) -> crate::infrastructure::provider_runtime::RegistryProviderContext<'a> {
+    crate::infrastructure::provider_runtime::RegistryProviderContext {
+        store,
+        credentials: Box::leak(Box::new(
+            crate::infrastructure::provider_runtime::credentials::CredentialSnapshot::load(store)
+                .unwrap(),
+        )),
+        refresh_fn: refresh,
+        http_client,
+        config,
+    }
 }

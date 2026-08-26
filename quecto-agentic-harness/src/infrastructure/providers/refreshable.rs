@@ -362,10 +362,13 @@ impl RefreshableProvider {
 
                 match refreshed {
                     Ok(new_token) => {
+                        // Install before retrying: a concurrent 401 must be able
+                        // to see the fresh token and adopt it instead of
+                        // refreshing again (which would rotate the refresh token
+                        // a second time).
                         let new_inner = (self.factory)(&new_token);
-                        let result = call(&new_inner, owned.as_request()).await;
-                        self.install_inner(new_inner, new_token).await;
-                        result
+                        self.install_inner(new_inner.clone(), new_token).await;
+                        call(&new_inner, owned.as_request()).await
                     }
                     Err(refresh_err) => {
                         tracing::warn!(

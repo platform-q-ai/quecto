@@ -30,7 +30,7 @@ fn runtime_snapshot_reports_missing_provider_configuration() {
 }
 
 #[test]
-fn configured_endpoints_are_published_as_open_providers() {
+fn every_constructed_provider_is_published_as_a_routable_prefix() {
     use crate::infrastructure::config::OpenAiCompatibleEndpoint;
 
     let temp = TempDir::new().unwrap();
@@ -58,9 +58,12 @@ fn configured_endpoints_are_published_as_open_providers() {
         .iter()
         .map(|provider| provider.as_str().to_string())
         .collect();
-    assert_eq!(
-        open,
-        ["spark"],
-        "only endpoints that actually construct a provider route open model ids"
+    // Every constructed provider routes ids the catalogue may not enumerate,
+    // and a keyless endpoint constructs nothing.
+    assert!(open.contains(&"spark".to_string()));
+    assert!(open.contains(&"openai-api".to_string()));
+    assert!(
+        !open.contains(&"keyless".to_string()),
+        "a keyless endpoint constructs no provider: {open:?}"
     );
 }

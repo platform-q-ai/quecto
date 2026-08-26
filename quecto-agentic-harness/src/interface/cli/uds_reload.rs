@@ -168,13 +168,24 @@ pub(super) async fn handle_refresh_models(
                 };
                 emit_event_to_broadcast_or_writer(ctx, &event).await;
             }
+            // Discovery already persisted what it refreshed, so the per-source
+            // outcomes are reported either way; only the follow-up reload failed.
             Some(Err(err)) => {
-                emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(id, type_name, err)).await;
-            }
-            None => {
+                let mut data = data.clone();
+                data["reloadError"] = serde_json::Value::String(err);
                 emit_event_to_broadcast_or_writer(
                     ctx,
-                    &AgentEvent::err(id, type_name, "provider reload is not configured"),
+                    &AgentEvent::err(id, type_name, data.to_string()),
+                )
+                .await;
+            }
+            None => {
+                let mut data = data.clone();
+                data["reloadError"] =
+                    serde_json::Value::String("provider reload is not configured".to_string());
+                emit_event_to_broadcast_or_writer(
+                    ctx,
+                    &AgentEvent::err(id, type_name, data.to_string()),
                 )
                 .await;
             }

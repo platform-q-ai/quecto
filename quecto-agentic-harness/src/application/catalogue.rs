@@ -161,7 +161,10 @@ impl QueryCatalogueUseCase {
             })
             .cloned()
             .collect();
+        // A projection narrows the model list, not the runtime's routing: the
+        // open providers stay attached so consumers can still ask about them.
         CatalogueSnapshot::new(snapshot.generation, models)
+            .with_open_providers(snapshot.open_providers().to_vec())
     }
 }
 

@@ -44,7 +44,6 @@ pub fn compose_catalogue_runtime<C, R, F: ProviderRuntimeFactory<C, R>>(
     runtime_inputs: &R,
     generation: u64,
     base_layers: &[&dyn CatalogueSource],
-    open_providers: Vec<crate::domain::catalogue::ProviderId>,
 ) -> Result<CatalogueRuntimeSnapshot, String> {
     let provider = ComposeProviderRuntimeUseCase::new().compose(factory, config, runtime_inputs)?;
     let runtime_layer = RuntimeDescriptorSource(provider.model_descriptors().unwrap_or(&[]));
@@ -58,9 +57,16 @@ pub fn compose_catalogue_runtime<C, R, F: ProviderRuntimeFactory<C, R>>(
             "catalogue source skipped; resolving remaining layers"
         );
     }
+    // The runtime is the authority on which prefixes it can route, including
+    // providers whose model ids the catalogue cannot enumerate.
+    let routable = provider
+        .routable_provider_names()
+        .into_iter()
+        .filter_map(|name| crate::domain::catalogue::ProviderId::new(name).ok())
+        .collect();
     Ok(CatalogueRuntimeSnapshot {
+        catalogue: resolved.snapshot.with_open_providers(routable),
         provider,
-        catalogue: resolved.snapshot.with_open_providers(open_providers),
     })
 }
 

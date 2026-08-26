@@ -205,6 +205,10 @@ impl LlmProvider for RetryingProvider {
         self
     }
 
+    fn routable_provider_names(&self) -> Vec<String> {
+        self.inner.routable_provider_names()
+    }
+
     fn model_descriptors(&self) -> Option<&[ModelDescriptor]> {
         self.inner.model_descriptors()
     }

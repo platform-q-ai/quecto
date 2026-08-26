@@ -61,15 +61,18 @@ fn skipped_registry_prefix_collides_with_openai_compatible_endpoint() {
 fn registry_api_key_falls_back_to_builtin_config_and_skips_unknowns() {
     let tmp = tempfile::TempDir::new().unwrap();
     let store = crate::infrastructure::auth::credential_store::CredentialStore::new(tmp.path());
+    let credentials =
+        crate::infrastructure::provider_runtime::credentials::CredentialSnapshot::load(&store)
+            .unwrap();
     let mut config = Config::default();
     config.providers.anthropic.api_key = "sk-ant-config".to_string();
 
     assert_eq!(
-        super::registry_api_key(&record("anthropic-api"), &store, &config).unwrap(),
+        super::registry_api_key(&record("anthropic-api"), &credentials, &config).unwrap(),
         Some("sk-ant-config".to_string())
     );
     assert_eq!(
-        super::registry_api_key(&record("custom"), &store, &config).unwrap(),
+        super::registry_api_key(&record("custom"), &credentials, &config).unwrap(),
         None
     );
 }

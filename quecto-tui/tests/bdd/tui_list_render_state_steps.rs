@@ -50,8 +50,10 @@ fn interface_renders_frame(world: &mut TuiWorld) {
     world.stdout = with_harness(world, |h| h.full_frame());
 }
 
-#[then("the slash dropdown draws exactly the first 8 commands")]
-fn slash_dropdown_windowed(world: &mut TuiWorld) {
+#[then(
+    regex = r#"^the slash dropdown draws exactly the first 8 commands with the indicator "([^"]+)"$"#
+)]
+fn slash_dropdown_windowed(world: &mut TuiWorld, expected_indicator: String) {
     let count = with_harness(world, |h| h.autocomplete_suggestion_count());
     let plain = strip_ansi(&world.stdout);
     let names = TuiHarness::slash_command_names();
@@ -59,6 +61,12 @@ fn slash_dropdown_windowed(world: &mut TuiWorld) {
         count,
         names.len(),
         "all built-in commands should be suggested"
+    );
+    // Pinned explicitly: deriving the expected indicator from the rendered count
+    // alone would pass for any command-set size.
+    assert_eq!(
+        count, 21,
+        "the built-in command set is 21 commands; update this pin deliberately"
     );
     // Positive windowing lock: a drawn row is `/{name}` followed by the fixed
     // two-space description gap. Exactly the first 8 commands are drawn.
@@ -72,10 +80,14 @@ fn slash_dropdown_windowed(world: &mut TuiWorld) {
         names[..8].to_vec(),
         "exactly the first 8 command rows must be drawn:\n{plain}"
     );
-    let indicator = format!("(1/{count})");
+    assert_eq!(
+        expected_indicator,
+        format!("(1/{count})"),
+        "the scenario's indicator must match the rendered command count"
+    );
     assert!(
-        plain.contains(&indicator),
-        "the composed frame must contain the overflow indicator {indicator}:\n{plain}"
+        plain.contains(&expected_indicator),
+        "the composed frame must contain the overflow indicator {expected_indicator}:\n{plain}"
     );
     assert!(
         plain.contains("→ /clear"),

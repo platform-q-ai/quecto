@@ -258,3 +258,71 @@ fn bare_names_resolve_uniquely_and_report_ambiguity_with_candidates() {
         SelectionFailure::UnknownModel
     );
 }
+
+#[test]
+fn an_unknown_id_under_a_routable_provider_is_selectable_without_limits() {
+    use crate::domain::catalogue::ProviderId;
+
+    // The catalogue enumerates what it knows; the runtime decides what it can
+    // route. A model newer than the shipped registry must not be refused when
+    // its provider is configured and constructible.
+    let snapshot = CatalogueSnapshot::new(3, vec![descriptor("openai-api", "gpt-5", true)])
+        .with_open_providers(vec![ProviderId::new("openai-api").unwrap()]);
+    let selection = ResolveModelSelectionUseCase::new(CatalogueSnapshotStore::new(snapshot));
+
+    let newer = ModelRef::parse("openai-api", "gpt-5.7").unwrap();
+    assert_eq!(
+        selection.resolve(&newer).unwrap(),
+        ModelSelection::OpenRoute(newer)
+    );
+    assert_eq!(
+        selection
+            .resolve(&ModelRef::parse("gemini", "gemini-pro").unwrap())
+            .unwrap_err(),
+        SelectionFailure::UnknownModel,
+        "a prefix the runtime cannot route stays an error"
+    );
+}
+
+#[test]
+fn a_known_but_unavailable_model_is_still_rejected_under_a_routable_provider() {
+    use crate::domain::catalogue::ProviderId;
+
+    let snapshot = CatalogueSnapshot::new(3, vec![descriptor("openai-api", "gpt-5", false)])
+        .with_open_providers(vec![ProviderId::new("openai-api").unwrap()]);
+    let selection = ResolveModelSelectionUseCase::new(CatalogueSnapshotStore::new(snapshot));
+
+    assert_eq!(
+        selection
+            .resolve(&ModelRef::parse("openai-api", "gpt-5").unwrap())
+            .unwrap_err(),
+        SelectionFailure::Unavailable {
+            reasons: vec![UnavailableReason::MissingCredential]
+        },
+        "an enumerated model keeps its recorded unavailability"
+    );
+}
+
+#[test]
+fn a_query_projection_keeps_the_snapshot_open_providers() {
+    use crate::domain::catalogue::ProviderId;
+
+    let store = CatalogueSnapshotStore::new(
+        CatalogueSnapshot::new(
+            1,
+            vec![
+                descriptor("openai-api", "gpt-5", true),
+                descriptor("google", "gemini", false),
+            ],
+        )
+        .with_open_providers(vec![ProviderId::new("spark").unwrap()]),
+    );
+
+    let runnable = QueryCatalogueUseCase::new(store).query(CatalogueQuery::Runnable);
+
+    assert_eq!(runnable.models().len(), 1);
+    assert!(
+        runnable.accepts_any_model(&ProviderId::new("spark").unwrap()),
+        "narrowing the model list must not drop the runtime's routing"
+    );
+}

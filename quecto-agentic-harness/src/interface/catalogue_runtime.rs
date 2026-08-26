@@ -28,24 +28,7 @@ pub fn build_runtime_snapshot(
         },
         generation,
         &[&builtin, &user],
-        open_endpoint_providers(config),
     )
-}
-
-/// Explicitly configured OpenAI-compatible endpoints route any model id under
-/// their prefix, so the catalogue records the prefix rather than pretending to
-/// enumerate that provider's models.
-fn open_endpoint_providers(config: &Config) -> Vec<crate::domain::catalogue::ProviderId> {
-    config
-        .providers
-        .openai_compatible
-        .endpoints
-        .iter()
-        .filter(|endpoint| !endpoint.api_key.trim().is_empty())
-        .filter_map(|endpoint| {
-            crate::domain::catalogue::ProviderId::new(endpoint.prefix.trim().to_string()).ok()
-        })
-        .collect()
 }
 
 #[cfg(test)]

@@ -180,6 +180,13 @@ impl LlmProvider for ProviderRouter {
         self
     }
 
+    fn routable_provider_names(&self) -> Vec<String> {
+        self.providers
+            .iter()
+            .map(|provider| provider.name().to_string())
+            .collect()
+    }
+
     fn model_descriptors(&self) -> Option<&[ModelDescriptor]> {
         Some(&self.model_descriptors)
     }

@@ -27,7 +27,7 @@ impl<'a> crate::application::ports::ProviderRuntimeFactory<Config, ProviderRunti
     }
 }
 #[path = "provider_runtime_credentials.rs"]
-mod credentials;
+pub(crate) mod credentials;
 
 use credentials::{
     explicit_endpoint_owns_registry_route, registry_api_key, registry_model_credential_available,
@@ -47,6 +47,8 @@ fn compose_agent_provider(
     http_client: &reqwest::Client,
 ) -> Result<Arc<dyn LlmProvider>, String> {
     let store = CredentialStore::new(base_dir);
+    // One read of the credential store serves the whole composition.
+    let credentials = credentials::CredentialSnapshot::load(&store)?;
     let mut provider_list: Vec<Arc<dyn crate::domain::provider::LlmProvider>> = Vec::new();
     let store_arc = Arc::new(CredentialStore::new(base_dir));
     let refresh_fn = crate::infrastructure::oauth_runtime::make_oauth_refresh_fn();
@@ -206,13 +208,15 @@ fn compose_agent_provider(
             .map(|p| p.to_ascii_lowercase()),
     );
     let canonical_registry_prefixes = canonical_registry_prefix_owners(model_registry.models());
-    let mut runtime_model_descriptors = Vec::new();
+    // Endpoints without a key are skipped when providers are constructed, so
+    // they must not mark catalogue routes runnable either.
     let configured_endpoint_prefixes: HashSet<String> = config
         .providers
         .openai_compatible
         .endpoints
         .iter()
-        .map(|endpoint| endpoint.prefix.to_ascii_lowercase())
+        .filter(|endpoint| !endpoint.api_key.trim().is_empty())
+        .map(|endpoint| endpoint.prefix.trim().to_ascii_lowercase())
         .collect();
     let mut constructible_registry_prefixes = configured_endpoint_prefixes.clone();
     if has_openai_api_key {
@@ -227,39 +231,22 @@ fn compose_agent_provider(
             .any(|provider| provider.name().eq_ignore_ascii_case(&model.provider))
             || configured_endpoint_prefixes.contains(&model.provider.to_ascii_lowercase());
         if canonical_registry_prefixes.contains(&model.provider)
-            && (has_existing_provider || registry_provider_can_construct(model, &store, config)?)
+            && (has_existing_provider
+                || registry_provider_can_construct(model, &credentials, config)?)
         {
             constructible_registry_prefixes.insert(model.provider.to_ascii_lowercase());
         }
     }
-    for model in model_registry.models() {
-        let credential_available = registry_model_credential_available(model, &store, config)?;
-        if let Some(mut descriptor) =
-            record_to_descriptor_with_credential(model, Some(credential_available))?
-        {
-            let canonical_provider = model.provider.to_ascii_lowercase();
-            let is_canonical_owner = canonical_registry_prefixes.contains(&model.provider);
-            let has_direct_runtime = is_canonical_owner
-                && ((canonical_provider == "openai-api" && has_openai_api_key)
-                    || (canonical_provider == "anthropic-api" && has_anthropic_api_key)
-                    || configured_endpoint_prefixes.contains(&canonical_provider)
-                    || constructible_registry_prefixes.contains(&canonical_provider));
-            if !is_canonical_owner
-                || (!has_direct_runtime
-                    && !constructible_registry_prefixes.contains(&canonical_provider))
-            {
-                descriptor.availability =
-                    crate::domain::catalogue::Availability::KnownButUnavailable {
-                        reasons: vec![
-                            crate::domain::catalogue::UnavailableReason::InvalidConfiguration(
-                                "provider skipped during runtime construction".to_string(),
-                            ),
-                        ],
-                    };
-            }
-            runtime_model_descriptors.push(descriptor);
-        }
-    }
+    let runtime_model_descriptors = catalogue_descriptors(&DescriptorInputs {
+        model_registry: &model_registry,
+        credentials: &credentials,
+        config,
+        canonical_registry_prefixes: &canonical_registry_prefixes,
+        configured_endpoint_prefixes: &configured_endpoint_prefixes,
+        constructible_registry_prefixes: &constructible_registry_prefixes,
+        has_openai_api_key,
+        has_anthropic_api_key,
+    })?;
     for model in model_registry.models() {
         let canonical_prefix = model.provider.to_ascii_lowercase();
         if !canonical_registry_prefixes.contains(&model.provider)
@@ -274,7 +261,7 @@ fn compose_agent_provider(
         if explicit_endpoint_owns_registry_route(
             model,
             &configured_endpoint_prefixes,
-            &store,
+            &credentials,
             config,
         )? {
             continue;
@@ -291,10 +278,13 @@ fn compose_agent_provider(
         let Some(provider) = build_registry_provider(
             model,
             base_dir,
-            &store_arc,
-            &refresh_fn,
-            http_client,
-            config,
+            &RegistryProviderContext {
+                store: &store_arc,
+                credentials: &credentials,
+                refresh_fn: &refresh_fn,
+                http_client,
+                config,
+            },
         )?
         else {
             continue;
@@ -336,6 +326,62 @@ fn compose_agent_provider(
         RetryConfig::default(),
     )))
 }
+/// What the catalogue projection of one composition needs to derive each
+/// record's availability.
+struct DescriptorInputs<'a> {
+    model_registry: &'a crate::infrastructure::model_registry::ModelRegistry,
+    credentials: &'a credentials::CredentialSnapshot,
+    config: &'a Config,
+    canonical_registry_prefixes: &'a HashSet<String>,
+    configured_endpoint_prefixes: &'a HashSet<String>,
+    constructible_registry_prefixes: &'a HashSet<String>,
+    has_openai_api_key: bool,
+    has_anthropic_api_key: bool,
+}
+
+/// Project the registry into domain descriptors, recording for each entry why
+/// the runtime could not serve it.
+fn catalogue_descriptors(
+    inputs: &DescriptorInputs<'_>,
+) -> Result<Vec<crate::domain::catalogue::ModelDescriptor>, String> {
+    let mut runtime_model_descriptors = Vec::new();
+    for model in inputs.model_registry.models() {
+        let credential_available =
+            registry_model_credential_available(model, inputs.credentials, inputs.config)?;
+        if let Some(mut descriptor) =
+            record_to_descriptor_with_credential(model, Some(credential_available))?
+        {
+            let canonical_provider = model.provider.to_ascii_lowercase();
+            let is_canonical_owner = inputs.canonical_registry_prefixes.contains(&model.provider);
+            let has_direct_runtime = is_canonical_owner
+                && ((canonical_provider == "openai-api" && inputs.has_openai_api_key)
+                    || (canonical_provider == "anthropic-api" && inputs.has_anthropic_api_key)
+                    || inputs
+                        .configured_endpoint_prefixes
+                        .contains(&canonical_provider)
+                    || inputs
+                        .constructible_registry_prefixes
+                        .contains(&canonical_provider));
+            if !is_canonical_owner || !has_direct_runtime {
+                // Keep the reasons derived from the catalogue entry (an
+                // unimplemented transport, a missing credential) and add why the
+                // runtime skipped it, so availability stays a complete account.
+                let mut reasons = descriptor.availability.reasons().to_vec();
+                let skipped = crate::domain::catalogue::UnavailableReason::InvalidConfiguration(
+                    "provider skipped during runtime construction".to_string(),
+                );
+                if !reasons.contains(&skipped) {
+                    reasons.push(skipped);
+                }
+                descriptor.availability =
+                    crate::domain::catalogue::Availability::KnownButUnavailable { reasons };
+            }
+            runtime_model_descriptors.push(descriptor);
+        }
+    }
+    Ok(runtime_model_descriptors)
+}
+
 fn ensure_providers_configured(providers: &[Arc<dyn LlmProvider>]) -> Result<(), String> {
     if providers.is_empty() {
         return Err(
@@ -492,23 +538,31 @@ fn sanitize_url_for_error(raw: &str) -> String {
         Err(_) => "<invalid url>".to_string(),
     }
 }
-/// Whether a configured `openai_compatible` endpoint supplies the credential
-/// for this registry prefix. The endpoint carries both the base URL and the key,
-/// so a catalogue entry routed through it is credentialled even when the record
-/// itself declares no key (#1193).
+/// Everything a registry record needs to become a concrete provider, resolved
+/// once per composition rather than per record.
+pub(crate) struct RegistryProviderContext<'a> {
+    pub(crate) store: &'a Arc<CredentialStore>,
+    pub(crate) credentials: &'a credentials::CredentialSnapshot,
+    pub(crate) refresh_fn: &'a crate::infrastructure::providers::refreshable::RefreshFn,
+    pub(crate) http_client: &'a reqwest::Client,
+    pub(crate) config: &'a Config,
+}
+
 fn build_registry_provider(
     model: &crate::infrastructure::model_registry::ModelRecord,
     _base_dir: &std::path::Path,
-    store: &Arc<CredentialStore>,
-    refresh_fn: &crate::infrastructure::providers::refreshable::RefreshFn,
-    http_client: &reqwest::Client,
-    config: &Config,
+    ctx: &RegistryProviderContext<'_>,
 ) -> Result<Option<Arc<dyn LlmProvider>>, String> {
+    let store = ctx.store;
+    let credentials = ctx.credentials;
+    let refresh_fn = ctx.refresh_fn;
+    let http_client = ctx.http_client;
+    let config = ctx.config;
     use crate::infrastructure::model_registry::{AuthMode, ProviderApi};
 
     let mut api_base = model.base_url.clone();
     let auth_key = match model.auth {
-        AuthMode::ApiKey => match registry_api_key(model, store, config)? {
+        AuthMode::ApiKey => match registry_api_key(model, credentials, config)? {
             Some(key) => key,
             None => return Ok(None),
         },
@@ -578,10 +632,10 @@ fn build_registry_provider(
         return Ok(Some(Arc::new(RefreshableProvider::new(
             RefreshableConfig {
                 inner,
-                store: store.clone(),
+                store: (*store).clone(),
                 provider_name: model.provider.clone(),
                 credential_provider: oauth_provider,
-                refresh_fn: refresh_fn.clone(),
+                refresh_fn: (*refresh_fn).clone(),
                 factory,
             },
         ))));
