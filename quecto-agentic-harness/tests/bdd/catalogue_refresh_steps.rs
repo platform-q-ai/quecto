@@ -76,7 +76,9 @@ impl RefreshableCatalogueSource for RefFakeSource {
                 *self.cached.lock().unwrap() = entries.clone();
                 Ok(RefreshChange::Updated { models })
             }
-            RefBehaviour::Unchanged => Ok(RefreshChange::Unchanged),
+            RefBehaviour::Unchanged => Ok(RefreshChange::Unchanged {
+                models: self.cached.lock().unwrap().len(),
+            }),
             RefBehaviour::Unsupported(reason) => Err(RefreshError::Unsupported {
                 reason: reason.clone(),
             }),
@@ -89,7 +91,7 @@ impl RefreshableCatalogueSource for RefFakeSource {
             }
             RefBehaviour::OutliveTimeout => {
                 std::thread::sleep(ctx.bounds.timeout + Duration::from_millis(50));
-                Ok(RefreshChange::Unchanged)
+                Ok(RefreshChange::Unchanged { models: 0 })
             }
         }
     }
@@ -392,9 +394,12 @@ fn then_outcome_updated(world: &mut QuectoWorld, source: String, models: usize) 
 
 #[then(expr = "the refresh outcome for {string} is unchanged")]
 fn then_outcome_unchanged(world: &mut QuectoWorld, source: String) {
-    assert_eq!(
-        ref_outcome_status(world, &source),
-        SourceRefreshStatus::Unchanged
+    assert!(
+        matches!(
+            ref_outcome_status(world, &source),
+            SourceRefreshStatus::Unchanged { .. }
+        ),
+        "expected an unchanged outcome for {source}"
     );
 }
 
