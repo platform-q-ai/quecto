@@ -452,3 +452,63 @@ fn availability_of_an_oauth_record_without_an_oauth_provider_is_false_not_an_err
             .expect("an availability query must not error")
     );
 }
+
+#[test]
+fn an_entry_the_runtime_declines_to_build_is_not_published_as_runnable() {
+    use crate::infrastructure::config::Config;
+    use crate::infrastructure::provider_runtime::build_agent_provider;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    // A credential but no base URL: `build_registry_provider` skips it, so the
+    // catalogue must not advertise it as usable.
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"myllm":{"api":"openai-completions","auth":{"mode":"apiKey","apiKey":"sk-my"},"models":[{"id":"m"}]},"open":{"api":"openai-completions","baseUrl":"https://example.test/v1","auth":{"mode":"apiKey","apiKey":"sk-open"},"models":[{"id":"ok"}]}}}"#,
+    )
+    .unwrap();
+
+    let runtime = build_agent_provider(&Config::default(), tmp.path(), &reqwest::Client::new())
+        .expect("the other provider composes");
+    let descriptors = runtime.model_descriptors().unwrap();
+
+    let skipped = descriptors
+        .iter()
+        .find(|model| model.qualified_id() == "myllm/m")
+        .expect("the entry stays listed");
+    assert!(
+        !skipped.availability.runnable(),
+        "an entry with no constructed provider must not be runnable"
+    );
+    assert!(
+        descriptors
+            .iter()
+            .find(|model| model.qualified_id() == "open/ok")
+            .expect("the constructed provider's entry")
+            .availability
+            .runnable()
+    );
+}
+
+#[test]
+fn an_endpoint_repeating_a_builtin_provider_name_reports_a_duplicate_prefix() {
+    use crate::infrastructure::config::{Config, OpenAiCompatibleEndpoint};
+    use crate::infrastructure::provider_runtime::build_agent_provider;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut config = Config::default();
+    config.providers.openai.api_key = "sk-openai".into();
+    config.providers.openai_compatible.endpoints = vec![OpenAiCompatibleEndpoint {
+        prefix: "openai-api".to_string(),
+        api_key: "sk-endpoint".to_string(),
+        api_base: "http://127.0.0.1:9/v1".to_string(),
+        allow_remote_http: true,
+    }];
+
+    let error = build_agent_provider(&config, tmp.path(), &reqwest::Client::new())
+        .expect_err("two definitions of one provider name are ambiguous");
+
+    assert!(
+        error.contains("duplicate openai_compatible/provider prefix 'openai-api'"),
+        "the collision must be reported as configuration, not as a router invariant: {error}"
+    );
+}

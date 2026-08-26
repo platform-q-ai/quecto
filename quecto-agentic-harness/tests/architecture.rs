@@ -93,9 +93,17 @@ fn assert_application_imports_are_ports_only(dir: &Path) {
 
     for file_content in &files {
         let (file_path, _) = file_content.split_once(":\n").unwrap();
-        for line in file_content.lines().skip(1) {
+        let mut lines = file_content.lines().skip(1).peekable();
+        while let Some(line) = lines.next() {
             let trimmed = line.trim();
-            if trimmed == "#[cfg(test)]" {
+            // Stop only at a trailing test module; a `#[cfg(test)]` item in the
+            // middle of a file must not silently disable the rest of the scan.
+            if trimmed == "#[cfg(test)]"
+                && lines
+                    .peek()
+                    .map(|next| next.trim())
+                    .is_some_and(|next| next.starts_with("mod ") || next.starts_with("#[path"))
+            {
                 break;
             }
             if trimmed.starts_with("//") {

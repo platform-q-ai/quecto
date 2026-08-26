@@ -96,3 +96,21 @@ fn parse_resume_session_name_defaults_when_missing() {
     assert_eq!(parse_resume_session_name(&json!({"session": "abc"})), "abc");
     assert_eq!(parse_resume_session_name(&json!({})), "session");
 }
+
+#[test]
+fn parse_set_model_reads_the_reported_unavailability() {
+    assert_eq!(
+        parse_set_model(
+            &json!({"unavailable": "model is unavailable: no credential is configured"}),
+            &sanitize
+        )
+        .1
+        .as_deref(),
+        Some("model is unavailable: no credential is configured")
+    );
+    assert_eq!(
+        parse_set_model(&json!({"model": "x"}), &sanitize).1,
+        None,
+        "a model that can run reports no reason"
+    );
+}

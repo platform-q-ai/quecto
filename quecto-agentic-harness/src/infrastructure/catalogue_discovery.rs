@@ -100,6 +100,11 @@ fn refresh_all_from_models_json(
     port: &dyn CatalogueRefreshPort,
     path: &Path,
 ) -> Vec<CatalogueRefreshOutcome> {
+    // No user catalogue file means there is nothing to refresh, which is the
+    // ordinary state for a user on built-in models — not a failure.
+    if !path.exists() {
+        return Vec::new();
+    }
     match provider_keys(path) {
         Ok(keys) => keys.iter().map(|key| port.refresh_source(key)).collect(),
         Err(error) => vec![CatalogueRefreshOutcome {

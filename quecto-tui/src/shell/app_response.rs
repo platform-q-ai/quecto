@@ -453,29 +453,6 @@ impl App {
         self.replace_chat_with_messages(&data);
     }
 
-    /// Apply a successful master-stream `set_model` response. When a child is
-    /// focused, only the master's retained footer may update — never toast or
-    /// clobber the focused child's displayed model (#1085, mirrors effort).
-    fn handle_set_model_success(&mut self, data: Option<serde_json::Value>) {
-        if let Some(model) = data.as_ref().and_then(|d| {
-            crate::protocol::state_payloads::parse_set_model_id(
-                d,
-                &crate::components::ansi::sanitize_control,
-            )
-        }) {
-            self.ac_mut().master_session.footer.set_model(&model);
-            if self.ac().roster.active_agent_id.is_none() {
-                self.ac_mut().inference.current_model = Some(model);
-            }
-        }
-        if self.ac().roster.active_agent_id.is_none() {
-            self.notify("Model switched", NotifyLevel::Success);
-            // A model switch can change the provider's effort vocabulary
-            // and context window — re-sync from the agent (#1067).
-            self.send_state_resync();
-        }
-    }
-
     fn handle_get_state(&mut self, data: Option<serde_json::Value>) {
         let Some(data) = data else { return };
         let snap = crate::protocol::state_payloads::parse_get_state(

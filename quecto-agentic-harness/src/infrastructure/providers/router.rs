@@ -82,14 +82,19 @@ impl ProviderRouter {
     /// prefix matching, or a losing case variant would route to the winner's
     /// provider.
     fn canonical_catalogue_owner(&self, prefix: &str) -> Option<(&str, bool)> {
+        // Exact first: descriptor order follows the registry's map iteration, so
+        // two spellings differing only in case must not resolve at random.
         self.model_descriptors
             .iter()
-            .find(|descriptor| {
-                descriptor
-                    .reference
-                    .provider()
-                    .as_str()
-                    .eq_ignore_ascii_case(prefix)
+            .find(|descriptor| descriptor.reference.provider().as_str() == prefix)
+            .or_else(|| {
+                self.model_descriptors.iter().find(|descriptor| {
+                    descriptor
+                        .reference
+                        .provider()
+                        .as_str()
+                        .eq_ignore_ascii_case(prefix)
+                })
             })
             .map(|descriptor| {
                 (

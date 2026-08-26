@@ -1,5 +1,5 @@
 use crate::application::catalogue_refresh::{
-    CatalogueRefreshStatus, RefreshCatalogueSourceUseCase,
+    CatalogueRefreshOutcome, CatalogueRefreshStatus, RefreshCatalogueSourceUseCase,
 };
 use crate::application::provider_runtime::CatalogueRuntimeSnapshot;
 use crate::infrastructure::catalogue_discovery::ModelsJsonCatalogueRefreshAdapter;
@@ -88,6 +88,21 @@ pub(super) async fn handle_reload(
     false
 }
 
+/// One sentence naming the sources that failed, for a client that renders the
+/// error text directly.
+fn refresh_failure_message(outcomes: &[CatalogueRefreshOutcome]) -> String {
+    let failed: Vec<_> = outcomes
+        .iter()
+        .filter_map(|outcome| match &outcome.status {
+            CatalogueRefreshStatus::Failed { error } => {
+                Some(format!("{}: {error}", outcome.source))
+            }
+            _ => None,
+        })
+        .collect();
+    format!("catalogue refresh failed for {}", failed.join("; "))
+}
+
 pub(super) async fn handle_refresh_models(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
@@ -166,7 +181,9 @@ pub(super) async fn handle_refresh_models(
             Some(Ok(result)) => {
                 apply_provider_reload_result(ctx, Some(result));
                 let event = if any_failed {
-                    AgentEvent::err(id, type_name, data.to_string())
+                    // A short sentence for the user; the per-source detail stays
+                    // structured rather than being rendered as a JSON blob.
+                    AgentEvent::err(id, type_name, refresh_failure_message(&outcomes))
                 } else {
                     AgentEvent::ok(id, type_name, Some(data))
                 };
@@ -175,28 +192,34 @@ pub(super) async fn handle_refresh_models(
             // Discovery already persisted what it refreshed, so the per-source
             // outcomes are reported either way; only the follow-up reload failed.
             Some(Err(err)) => {
-                let mut data = data.clone();
-                data["reloadError"] = serde_json::Value::String(err);
                 emit_event_to_broadcast_or_writer(
                     ctx,
-                    &AgentEvent::err(id, type_name, data.to_string()),
+                    &AgentEvent::err(
+                        id,
+                        type_name,
+                        format!("refreshed the catalogue but could not reload it: {err}"),
+                    ),
                 )
                 .await;
             }
             None => {
-                let mut data = data.clone();
-                data["reloadError"] =
-                    serde_json::Value::String("provider reload is not configured".to_string());
                 emit_event_to_broadcast_or_writer(
                     ctx,
-                    &AgentEvent::err(id, type_name, data.to_string()),
+                    &AgentEvent::err(
+                        id,
+                        type_name,
+                        "refreshed the catalogue but provider reload is not configured",
+                    ),
                 )
                 .await;
             }
         }
     } else if any_failed {
-        emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(id, type_name, data.to_string()))
-            .await;
+        emit_event_to_broadcast_or_writer(
+            ctx,
+            &AgentEvent::err(id, type_name, refresh_failure_message(&outcomes)),
+        )
+        .await;
     } else {
         emit_event_to_broadcast_or_writer(ctx, &AgentEvent::ok(id, type_name, Some(data))).await;
     }

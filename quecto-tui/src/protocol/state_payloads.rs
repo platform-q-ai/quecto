@@ -86,11 +86,32 @@ pub fn parse_set_effort_level(
 }
 
 /// Extract the model id echoed on a successful `set_model` response.
+/// A successful `set_model` response: the echoed model, and why it cannot
+/// currently run when the agent recorded a switch it knows is unusable.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct SetModelResponse {
+    model: Option<String>,
+    unavailable: Option<String>,
+}
+
+/// Both fields of a `set_model` response, mapped once.
+pub fn parse_set_model(
+    data: &serde_json::Value,
+    sanitize: &dyn Fn(&str) -> String,
+) -> (Option<String>, Option<String>) {
+    let parsed: SetModelResponse = serde_json::from_value(data.clone()).unwrap_or_default();
+    (
+        parsed.model.as_deref().map(sanitize),
+        parsed.unavailable.as_deref().map(sanitize),
+    )
+}
+
 pub fn parse_set_model_id(
     data: &serde_json::Value,
     sanitize: &dyn Fn(&str) -> String,
 ) -> Option<String> {
-    data.get("model").and_then(|v| v.as_str()).map(sanitize)
+    parse_set_model(data, sanitize).0
 }
 
 /// Extract the session name from a successful `resume_session` response.

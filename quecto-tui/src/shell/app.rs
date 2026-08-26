@@ -334,6 +334,8 @@ mod app_paged_history;
 mod app_render_helpers;
 #[path = "app_response.rs"]
 mod app_response;
+#[path = "app_response_set_model.rs"]
+mod app_response_set_model;
 #[cfg(any(test, feature = "test-harness"))]
 #[path = "app_response_test_api.rs"]
 mod app_response_test_api;

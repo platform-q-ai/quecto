@@ -40,15 +40,18 @@ fn refresh_all_returns_per_provider_outcomes_and_does_not_short_circuit_unsuppor
 }
 
 #[test]
-fn openai_discovery_fetches_publishes_and_trait_refresh_reports_missing_registry() {
-    let missing = tempfile::tempdir().unwrap();
+fn openai_discovery_fetches_publishes_and_trait_refresh_reports_malformed_registry() {
+    // A malformed user catalogue is a failure worth reporting; a missing one is
+    // covered separately, because having no `models.json` is ordinary.
+    let malformed = tempfile::tempdir().unwrap();
+    std::fs::write(malformed.path().join("models.json"), "{ not json").unwrap();
     let refresh_port: &dyn CatalogueRefreshAllPort =
-        &ModelsJsonCatalogueRefreshAdapter::new(missing.path());
-    let missing_outcomes = refresh_port.refresh_all_sources();
-    assert_eq!(missing_outcomes.len(), 1);
-    assert_eq!(missing_outcomes[0].source, "models.json");
+        &ModelsJsonCatalogueRefreshAdapter::new(malformed.path());
+    let malformed_outcomes = refresh_port.refresh_all_sources();
+    assert_eq!(malformed_outcomes.len(), 1);
+    assert_eq!(malformed_outcomes[0].source, "models.json");
     assert!(matches!(
-        missing_outcomes[0].status,
+        malformed_outcomes[0].status,
         CatalogueRefreshStatus::Failed { .. }
     ));
 
@@ -377,4 +380,15 @@ fn publish_lock_reports_unopenable_lock_paths() {
     };
     assert!(error.contains("failed to open"));
     assert!(error.contains("models.json.lock"));
+}
+
+#[test]
+fn refresh_all_reports_nothing_to_do_when_no_user_catalogue_exists() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    // The ordinary state for a user on built-in models: `models.json` was never
+    // created, so a refresh has no sources — not a failure to report.
+    let outcomes = ModelsJsonCatalogueRefreshAdapter::new(tmp.path().to_path_buf()).refresh_all();
+
+    assert!(outcomes.is_empty(), "{outcomes:?}");
 }

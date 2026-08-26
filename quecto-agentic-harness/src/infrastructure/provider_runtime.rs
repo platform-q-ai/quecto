@@ -207,6 +207,14 @@ fn compose_agent_provider(
             .iter()
             .map(|p| p.to_ascii_lowercase()),
     );
+    // Providers already constructed (the built-in API-key and OAuth routes) own
+    // their names too: an endpoint repeating one is reported as the duplicate
+    // prefix it is, rather than reaching the router as two providers of one name.
+    custom_prefixes.extend(
+        provider_list
+            .iter()
+            .map(|provider| provider.name().to_ascii_lowercase()),
+    );
     let canonical_registry_prefixes = canonical_registry_prefix_owners(model_registry.models());
     // Endpoints without a key are skipped when providers are constructed, so
     // they must not mark catalogue routes runnable either.
@@ -237,16 +245,6 @@ fn compose_agent_provider(
             constructible_registry_prefixes.insert(model.provider.to_ascii_lowercase());
         }
     }
-    let runtime_model_descriptors = catalogue_descriptors(&DescriptorInputs {
-        model_registry: &model_registry,
-        credentials: &credentials,
-        config,
-        canonical_registry_prefixes: &canonical_registry_prefixes,
-        configured_endpoint_prefixes: &configured_endpoint_prefixes,
-        constructible_registry_prefixes: &constructible_registry_prefixes,
-        has_openai_api_key,
-        has_anthropic_api_key,
-    })?;
     for model in model_registry.models() {
         let canonical_prefix = model.provider.to_ascii_lowercase();
         if !canonical_registry_prefixes.contains(&model.provider)
@@ -320,6 +318,20 @@ fn compose_agent_provider(
         .map_err(|e| format!("openai_compatible provider configuration error: {}", e))?;
         provider_list.push(provider);
     }
+    let runtime_model_descriptors = catalogue_descriptors(&DescriptorInputs {
+        model_registry: &model_registry,
+        credentials: &credentials,
+        config,
+        canonical_registry_prefixes: &canonical_registry_prefixes,
+        configured_endpoint_prefixes: &configured_endpoint_prefixes,
+        constructible_registry_prefixes: &constructible_registry_prefixes,
+        constructed_provider_names: &provider_list
+            .iter()
+            .map(|provider| provider.name().to_ascii_lowercase())
+            .collect(),
+        has_openai_api_key,
+        has_anthropic_api_key,
+    })?;
     ensure_providers_configured(&provider_list, &model_registry)?;
     let router: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::try_with_model_descriptors(
         provider_list,
@@ -339,6 +351,10 @@ struct DescriptorInputs<'a> {
     canonical_registry_prefixes: &'a HashSet<String>,
     configured_endpoint_prefixes: &'a HashSet<String>,
     constructible_registry_prefixes: &'a HashSet<String>,
+    /// Names of the providers actually constructed, lowercased. Availability is
+    /// reconciled against this rather than predicted, so an entry the runtime
+    /// declined to build cannot be published as runnable.
+    constructed_provider_names: &'a HashSet<String>,
     has_openai_api_key: bool,
     has_anthropic_api_key: bool,
 }
@@ -358,6 +374,9 @@ fn catalogue_descriptors(
             let canonical_provider = model.provider.to_ascii_lowercase();
             let is_canonical_owner = inputs.canonical_registry_prefixes.contains(&model.provider);
             let has_direct_runtime = is_canonical_owner
+                && inputs
+                    .constructed_provider_names
+                    .contains(&canonical_provider)
                 && ((canonical_provider == "openai-api" && inputs.has_openai_api_key)
                     || (canonical_provider == "anthropic-api" && inputs.has_anthropic_api_key)
                     || inputs
