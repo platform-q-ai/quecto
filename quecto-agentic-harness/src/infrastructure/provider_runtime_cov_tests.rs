@@ -2,6 +2,29 @@ use super::*;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential};
 use crate::infrastructure::model_registry::{AuthMode, ModelCost, ModelRecord, ProviderApi};
 
+/// Test shim keeping the legacy call shape: composes via the real
+/// infrastructure factory with interface-wired inputs.
+fn build_agent_provider(
+    config: &Config,
+    base_dir: &std::path::Path,
+    http_client: &reqwest::Client,
+) -> Result<Arc<dyn LlmProvider>, String> {
+    compose_agent_provider(config, &test_inputs(base_dir, http_client))
+}
+
+fn test_inputs(base_dir: &std::path::Path, http_client: &reqwest::Client) -> AgentRuntimeInputs {
+    AgentRuntimeInputs {
+        base_dir: base_dir.to_path_buf(),
+        http_client: http_client.clone(),
+        refresh_fn: crate::interface::shared::make_oauth_refresh_fn(),
+        openai_oauth_factory: crate::interface::shared::make_provider_factory(
+            "openai",
+            None,
+            http_client.clone(),
+        ),
+    }
+}
+
 fn model(provider: &str, api: ProviderApi, auth: AuthMode) -> ModelRecord {
     ModelRecord {
         provider: provider.to_string(),

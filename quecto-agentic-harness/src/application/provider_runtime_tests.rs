@@ -1,6 +1,5 @@
 //! Unit tests for application-owned provider runtime composition and model
-//! selection (issue #1573, epic #1193 slice 3). RED phase: these compile
-//! against the skeleton and fail until the GREEN implementation lands.
+//! selection (issue #1573, epic #1193 slice 3).
 
 use super::*;
 use crate::application::catalogue::{CatalogueSnapshotStore, SourceEntries};
@@ -330,4 +329,54 @@ fn selection_never_swaps_api_key_and_oauth_identities() {
         AuthIdentity::ApiKey,
         "API-key model must keep its API-key identity"
     );
+}
+
+#[test]
+fn selection_generation_tracks_recomposition_past_the_first_generation() {
+    let fixture = Fixture::new(vec![gpt5()]);
+    fixture.compose().expect("first composition succeeds");
+    fixture.compose().expect("second composition succeeds");
+    let reference = ModelRef::parse_qualified("openai-api/gpt-5").unwrap();
+    let selection = ResolveModelSelectionUseCase::new()
+        .select(&fixture.runtime_store, &reference)
+        .expect("selection succeeds");
+    // The selection reads the published snapshot's generation — a hardcoded
+    // first generation must fail here.
+    assert_eq!(selection.generation, 2);
+    assert_eq!(
+        selection.generation,
+        fixture.catalogue_store.current().generation()
+    );
+}
+
+#[test]
+fn selection_of_unsupported_transport_returns_unsupported_transport_reason() {
+    use crate::domain::catalogue::{Availability, AvailabilityStatus};
+
+    // The resolve path cannot currently produce an unsupported transport
+    // (every enumerated transport has an adapter), so the selection rule is
+    // exercised directly on a snapshot carrying that derived availability.
+    let unsupported = UnavailableReason::UnsupportedTransport {
+        transport: TransportKind::OpenAiCompletions,
+    };
+    let mut unrunnable = gpt5();
+    unrunnable.model.availability =
+        Availability::unavailable(AvailabilityStatus::Configured, vec![unsupported.clone()])
+            .unwrap();
+    let resolution = crate::domain::catalogue::resolve_catalogue(
+        1,
+        vec![(SourceLayer::BuiltIn, vec![unrunnable])],
+    );
+    let snapshot = CatalogueRuntimeSnapshot {
+        catalogue: Arc::new(resolution.snapshot),
+        provider: Arc::new(FakeProvider {
+            name: "router".to_string(),
+        }),
+    };
+    let reference = ModelRef::parse_qualified("openai-api/gpt-5").unwrap();
+    let error = select_in_snapshot(&snapshot, &reference).expect_err("selection fails");
+    match error {
+        SelectionError::NotRunnable { reasons, .. } => assert_eq!(reasons, vec![unsupported]),
+        other => panic!("expected NotRunnable, got {other:?}"),
+    }
 }

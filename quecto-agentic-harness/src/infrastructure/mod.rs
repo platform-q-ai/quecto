@@ -7,6 +7,7 @@ pub mod line_cap;
 pub mod logging;
 pub mod model_registry;
 pub mod persistence;
+pub mod provider_runtime;
 pub mod providers;
 pub mod reload;
 pub mod repo_local_container_config;

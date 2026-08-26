@@ -1,10 +1,6 @@
 //! Application-owned provider runtime composition and model selection
 //! (epic #1193, slice 3).
 //!
-//! RED-phase skeleton: the API surface consumers and tests compile against.
-//! Behaviour is implemented in the GREEN phase; every use case currently
-//! signals `unimplemented`.
-//!
 //! The application owns the composition use-case seam: from the current
 //! resolved catalogue generation it constructs the concrete provider runtime
 //! (via a factory port implemented in infrastructure) and publishes runtime
@@ -16,7 +12,8 @@
 use std::sync::{Arc, RwLock};
 
 use crate::application::catalogue::{
-    CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, ResolvedCatalogue,
+    CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, ResolveCatalogueUseCase,
+    ResolvedCatalogue,
 };
 use crate::domain::catalogue::{CatalogueEntry, CatalogueSnapshot, ModelRef, UnavailableReason};
 use crate::domain::provider::LlmProvider;
@@ -61,8 +58,22 @@ impl RuntimeSnapshotStore {
     /// The current published runtime snapshot, or `None` before the first
     /// successful composition.
     pub fn current(&self) -> Option<Arc<CatalogueRuntimeSnapshot>> {
-        let _held = &self.current;
-        unimplemented!("issue #1573: runtime snapshot store read")
+        // A panic elsewhere must not poison every later runtime read: the
+        // snapshot behind a poisoned lock is still a fully published
+        // generation (`publish` replaces it wholesale).
+        self.current
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    /// Atomically replace the published runtime snapshot. Readers see either
+    /// the old or the new generation, never a partial state.
+    fn publish(&self, snapshot: Arc<CatalogueRuntimeSnapshot>) {
+        *self
+            .current
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(snapshot);
     }
 }
 
@@ -105,12 +116,41 @@ impl ComposeProviderRuntimeUseCase {
 
     pub fn compose_and_publish<C, R, F: ProviderRuntimeFactory<C, R>>(
         &self,
-        _factory: &F,
-        _config: &C,
-        _runtime_inputs: &R,
-        _ports: &CompositionPorts<'_>,
+        factory: &F,
+        config: &C,
+        runtime_inputs: &R,
+        ports: &CompositionPorts<'_>,
     ) -> Result<ComposedRuntime, RuntimeCompositionError> {
-        unimplemented!("issue #1573: compose provider runtime use case")
+        // The factory runs before anything is published: a failed composition
+        // must leave both stores exactly as they were (the previous valid
+        // runtime and catalogue generation stay current — or nothing, before
+        // the first success).
+        let provider = match factory.compose_runtime(config, runtime_inputs) {
+            Ok(provider) => provider,
+            Err(error) => {
+                return Err(RuntimeCompositionError {
+                    error,
+                    retained: ports.runtime_store.current(),
+                });
+            }
+        };
+        let resolution = ResolveCatalogueUseCase.resolve_and_publish(
+            ports.sources,
+            ports.credentials,
+            ports.catalogue_store,
+        );
+        let snapshot = Arc::new(CatalogueRuntimeSnapshot {
+            catalogue: resolution.snapshot.clone(),
+            provider,
+        });
+        // The runtime store is the coherent aggregate consumers read: its one
+        // atomic publish pairs the routing runtime with the exact catalogue
+        // generation it was composed from.
+        ports.runtime_store.publish(snapshot.clone());
+        Ok(ComposedRuntime {
+            snapshot,
+            resolution,
+        })
     }
 }
 
@@ -149,11 +189,41 @@ impl ResolveModelSelectionUseCase {
 
     pub fn select(
         &self,
-        _store: &RuntimeSnapshotStore,
-        _reference: &ModelRef,
+        store: &RuntimeSnapshotStore,
+        reference: &ModelRef,
     ) -> Result<ModelSelection, SelectionError> {
-        unimplemented!("issue #1573: resolve model selection use case")
+        let Some(snapshot) = store.current() else {
+            return Err(SelectionError::NoRuntime);
+        };
+        select_in_snapshot(&snapshot, reference)
     }
+}
+
+/// Resolve a model reference against one published runtime generation:
+/// descriptor plus runnable provider, or the structured reason the catalogue
+/// derived for it. The catalogue entry — identity, transport, auth path, and
+/// metadata — is returned exactly as the catalogue shows it; selection never
+/// substitutes a different auth identity.
+pub fn select_in_snapshot(
+    snapshot: &CatalogueRuntimeSnapshot,
+    reference: &ModelRef,
+) -> Result<ModelSelection, SelectionError> {
+    let Some(entry) = snapshot.catalogue.find(reference) else {
+        return Err(SelectionError::UnknownModel {
+            reference: reference.qualified_id(),
+        });
+    };
+    if !entry.model.availability.is_runnable() {
+        return Err(SelectionError::NotRunnable {
+            reference: reference.clone(),
+            reasons: entry.model.availability.reasons().to_vec(),
+        });
+    }
+    Ok(ModelSelection {
+        entry: entry.clone(),
+        provider: snapshot.provider.clone(),
+        generation: snapshot.generation(),
+    })
 }
 
 #[cfg(test)]

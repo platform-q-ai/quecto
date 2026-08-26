@@ -27,6 +27,13 @@ pub struct CatalogueRuntimeState {
     catalogue_store: Option<CatalogueSnapshotStore>,
     runtime_store: Option<RuntimeSnapshotStore>,
     composed: Option<Result<ComposedRuntime, RuntimeCompositionError>>,
+    /// The error string injected into the factory by "the provider factory
+    /// now fails", so the failure Then can assert the reported error carries
+    /// the factory's own cause without the feature encoding a message.
+    injected_factory_error: Option<String>,
+    /// The runtime snapshot published by the last successful composition —
+    /// the baseline the retention Then compares the stores against.
+    last_published: Option<Arc<quecto::application::provider_runtime::CatalogueRuntimeSnapshot>>,
     selection:
         Option<Result<quecto::application::provider_runtime::ModelSelection, SelectionError>>,
 }
@@ -90,18 +97,6 @@ impl ProviderRuntimeFactory<(), ()> for RtFakeFactory {
             .unwrap()
             .clone()
             .map(|name| Arc::new(RtNamedProvider { name }) as Arc<dyn LlmProvider>)
-    }
-}
-
-fn rt_layer(name: &str) -> SourceLayer {
-    match name {
-        "built-in" => SourceLayer::BuiltIn,
-        "generated" => SourceLayer::Generated,
-        "discovered" => SourceLayer::Discovered,
-        "extension" => SourceLayer::Extension,
-        "user-defined" => SourceLayer::UserDefined,
-        "user-override" => SourceLayer::UserOverride,
-        other => panic!("unknown source layer '{other}'"),
     }
 }
 
@@ -174,7 +169,7 @@ fn rt_compose(world: &mut QuectoWorld) {
         .iter()
         .map(|source| source.as_ref() as &dyn CatalogueSource)
         .collect();
-    state.composed = Some(ComposeProviderRuntimeUseCase::new().compose_and_publish(
+    let composed = ComposeProviderRuntimeUseCase::new().compose_and_publish(
         factory.as_ref(),
         &(),
         &(),
@@ -184,7 +179,11 @@ fn rt_compose(world: &mut QuectoWorld) {
             catalogue_store: &catalogue_store,
             runtime_store: &runtime_store,
         },
-    ));
+    );
+    if let Ok(composed) = &composed {
+        state.last_published = Some(composed.snapshot.clone());
+    }
+    state.composed = Some(composed);
 }
 
 fn rt_published(
@@ -199,39 +198,29 @@ fn rt_published(
         .expect("a runtime is published")
 }
 
-#[given(
-    expr = "a runtime catalogue source {string} at layer {string} defining model {string} named {string}"
-)]
-fn given_runtime_source(
-    world: &mut QuectoWorld,
-    id: String,
-    layer: String,
-    qualified: String,
-    display: String,
-) {
-    world.catalogue_runtime.sources.push(Arc::new(RtFakeSource {
-        id,
-        layer: rt_layer(&layer),
-        entries: Mutex::new(vec![rt_entry(&qualified, &display, "api-key")]),
+#[given(expr = "a catalogue source defining model {string}")]
+fn given_runtime_source(world: &mut QuectoWorld, qualified: String) {
+    given_runtime_source_with_auth(world, qualified, "api-key".to_string());
+}
+
+#[given(expr = "a catalogue source defining model {string} with auth {string}")]
+fn given_runtime_source_with_auth(world: &mut QuectoWorld, qualified: String, auth: String) {
+    // Source id, layer, and display name are incidental to this feature
+    // (layer precedence is slice 1/2 behaviour), so the step defaults them.
+    let sources = &mut world.catalogue_runtime.sources;
+    let display = format!("Model {qualified}");
+    sources.push(Arc::new(RtFakeSource {
+        id: format!("source-{}", sources.len() + 1),
+        layer: SourceLayer::BuiltIn,
+        entries: Mutex::new(vec![rt_entry(&qualified, &display, &auth)]),
     }));
 }
 
-#[given(
-    expr = "a runtime catalogue source {string} at layer {string} defining model {string} named {string} with auth {string}"
-)]
-fn given_runtime_source_with_auth(
-    world: &mut QuectoWorld,
-    id: String,
-    layer: String,
-    qualified: String,
-    display: String,
-    auth: String,
-) {
-    world.catalogue_runtime.sources.push(Arc::new(RtFakeSource {
-        id,
-        layer: rt_layer(&layer),
-        entries: Mutex::new(vec![rt_entry(&qualified, &display, &auth)]),
-    }));
+#[given(expr = "a published runtime for model {string}")]
+fn given_published_runtime(world: &mut QuectoWorld, qualified: String) {
+    given_runtime_source(world, qualified);
+    given_provider_factory(world, "router".to_string());
+    rt_compose(world);
 }
 
 #[given(expr = "a provider factory that composes a runtime named {string}")]
@@ -241,14 +230,16 @@ fn given_provider_factory(world: &mut QuectoWorld, name: String) {
     }));
 }
 
-#[given(expr = "the provider factory now fails with {string}")]
-fn given_factory_fails(world: &mut QuectoWorld, error: String) {
+#[given(expr = "the provider factory now fails")]
+fn given_factory_fails(world: &mut QuectoWorld) {
+    let error = "runtime factory failure (bdd)".to_string();
     let factory = world
         .catalogue_runtime
         .factory
         .as_ref()
         .expect("factory declared by a Given");
-    *factory.result.lock().unwrap() = Err(error);
+    *factory.result.lock().unwrap() = Err(error.clone());
+    world.catalogue_runtime.injected_factory_error = Some(error);
 }
 
 #[given(expr = "no runtime credential is available for provider {string}")]
@@ -296,23 +287,48 @@ fn then_runtime_provider_named(world: &mut QuectoWorld, name: String) {
     assert_eq!(rt_published(world).provider.name(), name);
 }
 
-#[then(expr = "the published runtime generation is {int}")]
-fn then_runtime_generation(world: &mut QuectoWorld, generation: u64) {
-    assert_eq!(rt_published(world).generation(), generation);
-}
-
-#[then(expr = "the composition reports a runtime error containing {string}")]
-fn then_composition_error(world: &mut QuectoWorld, fragment: String) {
+#[then(expr = "the composition fails carrying the factory's error")]
+fn then_composition_fails(world: &mut QuectoWorld) {
     let composed = world
         .catalogue_runtime
         .composed
         .as_ref()
         .expect("a composition ran");
-    let error = composed.as_ref().expect_err("composition failed");
+    let error: &RuntimeCompositionError = composed.as_ref().expect_err("composition failed");
+    let injected = world
+        .catalogue_runtime
+        .injected_factory_error
+        .as_ref()
+        .expect("a factory failure was injected");
     assert!(
-        error.error.contains(&fragment),
-        "expected error containing '{fragment}', got '{}'",
+        error.error.contains(injected),
+        "structured composition error must carry the factory's cause, got '{}'",
         error.error
+    );
+}
+
+#[then(expr = "the previously published runtime and catalogue are retained")]
+fn then_previous_retained(world: &mut QuectoWorld) {
+    let baseline = world
+        .catalogue_runtime
+        .last_published
+        .clone()
+        .expect("a runtime was published before the failure");
+    let current = rt_published(world);
+    assert!(
+        Arc::ptr_eq(&baseline, &current),
+        "the runtime snapshot published before the failure must stay current"
+    );
+    let catalogue = world
+        .catalogue_runtime
+        .catalogue_store
+        .as_ref()
+        .expect("catalogue store exists")
+        .current();
+    assert_eq!(
+        catalogue.generation(),
+        baseline.generation(),
+        "the catalogue store must stay on the last valid generation"
     );
 }
 
@@ -355,8 +371,8 @@ fn then_selection_generation_matches(world: &mut QuectoWorld) {
     assert_eq!(generation, catalogue.generation());
 }
 
-#[then(expr = "the selection fails because the model is unknown")]
-fn then_selection_unknown(world: &mut QuectoWorld) {
+#[then(expr = "the selection fails because model {string} is unknown")]
+fn then_selection_unknown(world: &mut QuectoWorld, qualified: String) {
     let error = world
         .catalogue_runtime
         .selection
@@ -365,8 +381,8 @@ fn then_selection_unknown(world: &mut QuectoWorld) {
         .as_ref()
         .expect_err("selection failed");
     assert!(
-        matches!(error, SelectionError::UnknownModel { .. }),
-        "expected UnknownModel, got {error:?}"
+        matches!(error, SelectionError::UnknownModel { reference } if *reference == qualified),
+        "expected UnknownModel for '{qualified}', got {error:?}"
     );
 }
 
