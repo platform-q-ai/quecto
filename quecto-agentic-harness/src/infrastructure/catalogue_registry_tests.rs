@@ -62,7 +62,7 @@ fn preloaded_models_file_source_uses_records_without_file_io() {
     let mut record = ModelRegistry::builtin().models()[0].clone();
     record.provider = "preloaded-provider".to_string();
     record.id = "preloaded-model".to_string();
-    let source = ModelsFileCatalogueSource::preloaded(Ok(vec![record]));
+    let source = ModelsFileCatalogueSource::preloaded(Ok(entries_from_records(&[record])));
 
     let loaded = source.load().unwrap();
 
