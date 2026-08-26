@@ -535,32 +535,12 @@ fn max_tokens_for_returns_none_when_model_omits_max_tokens() {
 }
 
 #[test]
-fn model_record_qualified_id_and_registry_fallback_limits_are_covered() {
+fn model_record_qualified_id_is_covered() {
     let registry = ModelRegistry::builtin();
     let model = registry
         .find("anthropic-api", "claude-sonnet-5")
         .expect("builtin model");
     assert_eq!(model.qualified_id(), "anthropic-api/claude-sonnet-5");
-
-    let tmp = tempfile::tempdir().unwrap();
-    let (cap, window) = ModelRegistry::model_limits_from_base_dir(tmp.path(), "not-qualified");
-    assert_eq!(cap, None);
-    assert_eq!(window, None);
-}
-
-#[test]
-fn model_limits_from_base_dir_reads_output_cap_from_models_json() {
-    let tmp = tempfile::tempdir().unwrap();
-    std::fs::write(
-        tmp.path().join("models.json"),
-        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","apiKey":"k","models":[{"id":"qwen3p7-plus","maxTokens":65536}]}}}"#,
-    )
-    .unwrap();
-
-    let (cap, window) =
-        ModelRegistry::model_limits_from_base_dir(tmp.path(), "fireworks/qwen3p7-plus");
-    assert_eq!(cap, Some(65_536));
-    assert_eq!(window, None, "no declared window must not clamp");
 }
 
 // --- #1044: known context windows for the window-aware budget ---
@@ -583,26 +563,6 @@ fn context_window_for_returns_declared_windows_only() {
     // Unknown models and non-qualified ids are unknown.
     assert_eq!(registry.context_window_for("nope/never-heard-of-it"), None);
     assert_eq!(registry.context_window_for("not-qualified"), None);
-}
-
-#[test]
-fn model_limits_from_base_dir_reads_context_window_from_models_json() {
-    let tmp = tempfile::tempdir().unwrap();
-    std::fs::write(
-        tmp.path().join("models.json"),
-        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","apiKey":"k","models":[{"id":"small-window","contextWindow":32768},{"id":"no-window"}]}}}"#,
-    )
-    .unwrap();
-
-    assert_eq!(
-        ModelRegistry::model_limits_from_base_dir(tmp.path(), "fireworks/small-window").1,
-        Some(32_768)
-    );
-    assert_eq!(
-        ModelRegistry::model_limits_from_base_dir(tmp.path(), "fireworks/no-window").1,
-        None,
-        "a listed model without a declared window must not clamp"
-    );
 }
 
 // --- xAI (Grok) builtin models (PR #1087) ---

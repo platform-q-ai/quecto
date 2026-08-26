@@ -295,8 +295,19 @@ impl ModelRegistry {
 
     pub fn load_from_path(path: &Path) -> Result<Self, ModelRegistryError> {
         let mut registry = Self::builtin();
+        for record in Self::load_file_records(path)? {
+            registry.upsert(record);
+        }
+        Ok(registry)
+    }
+
+    /// Parse only the records `path` itself defines (no built-in table), so
+    /// the catalogue source adapters can feed the user-defined layer
+    /// separately from the built-in layer. A missing file is an empty layer.
+    pub fn load_file_records(path: &Path) -> Result<Vec<ModelRecord>, ModelRegistryError> {
+        let mut records = Vec::new();
         if !path.exists() {
-            return Ok(registry);
+            return Ok(records);
         }
         let content = std::fs::read_to_string(path).map_err(ModelRegistryError::Io)?;
         let file: RegistryFile =
@@ -366,10 +377,10 @@ impl ModelRegistry {
                         cache_write: cost.cache_write.or(cost.cache_write_camel).unwrap_or(0.0),
                     };
                 }
-                registry.upsert(record);
+                records.push(record);
             }
         }
-        Ok(registry)
+        Ok(records)
     }
 
     pub fn find(&self, provider: &str, id: &str) -> Option<&ModelRecord> {
@@ -394,23 +405,6 @@ impl ModelRegistry {
         self.find(provider, id)
             .filter(|m| m.max_tokens_explicit)
             .map(|m| m.max_tokens)
-    }
-
-    /// Load the registry from `<base_dir>/models.json` **once** (falling back
-    /// to the built-in registry on any error) and return both per-model
-    /// limits: `(output cap, context window)` (#935/#1044). This is the single
-    /// per-model-limits accessor — the former single-value wrappers were
-    /// folded away (PR #1048) once they had no production consumers.
-    pub fn model_limits_from_base_dir(
-        base_dir: &Path,
-        qualified: &str,
-    ) -> (Option<u32>, Option<usize>) {
-        let registry =
-            Self::load_from_path(&base_dir.join("models.json")).unwrap_or_else(|_| Self::builtin());
-        (
-            registry.max_tokens_for(qualified),
-            registry.context_window_for(qualified),
-        )
     }
 
     /// The known context window for a `provider/id` qualified model string

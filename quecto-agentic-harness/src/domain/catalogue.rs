@@ -334,6 +334,21 @@ impl CatalogueSnapshot {
             .iter()
             .find(|entry| entry.reference() == reference)
     }
+
+    /// A narrowed view over this snapshot: same generation, only the entries
+    /// `keep` accepts. A projection narrows the entry list, never the
+    /// generation, so consumers can prove which publication they render.
+    pub fn filtered(&self, keep: impl Fn(&CatalogueEntry) -> bool) -> Self {
+        Self {
+            generation: self.generation,
+            entries: self
+                .entries
+                .iter()
+                .filter(|entry| keep(entry))
+                .cloned()
+                .collect(),
+        }
+    }
 }
 
 /// Outcome of resolving source layers: the snapshot plus every rejected entry.
