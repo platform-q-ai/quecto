@@ -102,3 +102,7 @@ pub(super) fn bind_secure_socket(
     }
     Ok(listener)
 }
+
+#[cfg(test)]
+#[path = "uds_socket_tests.rs"]
+mod tests;
