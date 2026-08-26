@@ -3,5 +3,6 @@
 *.swo
 .env
 
-# Local agent working state (python lab scratch, runtime artefacts)
-.quecto/
+# Python-lab scratch output. Narrow on purpose: `.quecto/config.json` and
+# `.quecto/container-config-trust.json` are supported repo-local config files.
+.quecto/python_lab/

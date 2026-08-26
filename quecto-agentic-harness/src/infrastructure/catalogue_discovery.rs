@@ -114,7 +114,7 @@ impl ModelsJsonCatalogueRefreshAdapter {
     /// Wall-clock budget for refreshing every source. Discovery runs on the
     /// command loop, so a catalogue full of unreachable endpoints must not stall
     /// every other UDS command for `sources × request timeout`.
-    pub(crate) const REFRESH_ALL_BUDGET: Duration = Duration::from_secs(20);
+    pub(crate) const REFRESH_ALL_BUDGET: Duration = Duration::from_secs(10);
 
     /// The worst case a caller must allow for: the budget may be checked just
     /// before a source starts, so one whole request and one lock wait can follow

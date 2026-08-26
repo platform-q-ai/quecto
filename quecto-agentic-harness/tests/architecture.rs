@@ -1248,14 +1248,14 @@ const TUI_FEATURE_VIEW_RATCHET_ROOTS: &[&str] = &[
 /// #1193 converted the `list_models` / `set_model` / catalogue-refresh mappers
 /// to typed deserialization while absorbing the new refresh-failure and
 /// catalogue-error reporting from the view, then mapped the list response in a
-/// single pass: 134 → 129.
-const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 129;
+/// single pass, then deserialized them from borrowed values: 134 → 126.
+const TUI_PROTOCOL_RAW_JSON_SITE_SEED: usize = 126;
 /// Measured with direct deserialization, key, indexed-value, and accessor-chain parsing all counted.
-const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 129;
+const TUI_PHASE_6_PROTOCOL_RAW_JSON_TOTAL: usize = 126;
 /// Current combined feature/view + protocol ceiling. This prevents moving
 /// sites between buckets (and adjusting their individual seeds) from hiding
 /// growth in the total raw-JSON inventory; keep it exact when re-baselining.
-const TUI_RAW_JSON_COMBINED_CEILING: usize = 134;
+const TUI_RAW_JSON_COMBINED_CEILING: usize = 131;
 
 /// Seed: production feature/view *usages* of `protocol::client` wire DTOs.
 /// Lower this as call sites migrate behind mappers. Never raise it.

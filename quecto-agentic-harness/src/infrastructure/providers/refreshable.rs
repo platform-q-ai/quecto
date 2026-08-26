@@ -355,7 +355,13 @@ impl RefreshableProvider {
                 // 401 for the length of a full generation.
                 let refreshed = {
                     let _guard = self.refresh_lock.lock().await;
-                    let stored = self.current_credential().map(|cred| cred.token);
+                    // An expired stored token is not an adoption candidate:
+                    // taking it would spend this turn on a second 401 before
+                    // refreshing anyway.
+                    let stored = self
+                        .current_credential()
+                        .filter(|cred| !cred.is_expired())
+                        .map(|cred| cred.token);
                     let token = match stored {
                         // Another task refreshed while this request was in
                         // flight: adopt its token instead of refreshing again.

@@ -41,11 +41,14 @@ pub(super) fn explicit_endpoint_owns_registry_route(
     use crate::infrastructure::model_registry::AuthMode;
     use crate::infrastructure::model_registry::ProviderApi;
     let prefix = model.provider.to_ascii_lowercase();
-    // A Google route has no adapter at all. An OAuth route keeps its auth and
-    // billing identity only while it can actually run: an api-key endpoint must
-    // not take over a working OAuth route, but a declared-and-uncredentialled
-    // one is not an identity to protect.
-    if !endpoint_prefixes.contains(&prefix) || matches!(model.api, ProviderApi::GoogleGenerativeAi)
+    // An `openai_compatible` endpoint speaks one wire protocol, so it may only
+    // serve a route declared with that protocol: adopting an anthropic-messages
+    // or google-generative-ai route would send requests over the wrong wire and
+    // fail at turn time. An OAuth route additionally keeps its auth and billing
+    // identity while it can actually run: an api-key endpoint must not take over
+    // a working OAuth route, though a declared-and-uncredentialled one is not an
+    // identity to protect.
+    if !endpoint_prefixes.contains(&prefix) || !matches!(model.api, ProviderApi::OpenAiCompletions)
     {
         return Ok(false);
     }

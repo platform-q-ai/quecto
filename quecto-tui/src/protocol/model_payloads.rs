@@ -22,6 +22,8 @@
 //!    inside the mapper next to the canonical rules, never re-implemented at a
 //!    consuming call site.
 
+use serde::Deserialize;
+
 /// A model advertised by the harness in a `list_models` response.
 ///
 /// Field derivation is the canonical, parity-preserving contract:
@@ -69,7 +71,7 @@ pub fn parse_refresh_failures(
     data: &serde_json::Value,
     sanitize: &dyn Fn(&str) -> String,
 ) -> Vec<String> {
-    let parsed: RefreshResponse = serde_json::from_value(data.clone()).unwrap_or_default();
+    let parsed = RefreshResponse::deserialize(data).unwrap_or_default();
     parsed
         .sources
         .into_iter()
@@ -116,7 +118,9 @@ pub fn parse_model_list_response(
     data: &serde_json::Value,
     sanitize: &dyn Fn(&str) -> String,
 ) -> (Vec<ModelListEntry>, Option<String>) {
-    let parsed: ModelListResponse = serde_json::from_value(data.clone()).unwrap_or_default();
+    // Borrowed, not cloned: a discovered catalogue can hold thousands of rows
+    // and the selector re-requests this list on every open.
+    let parsed = ModelListResponse::deserialize(data).unwrap_or_default();
     let entries = parsed
         .models
         .iter()
@@ -175,7 +179,7 @@ fn parse_model_list_entry(
     model: &serde_json::Value,
     sanitize: &dyn Fn(&str) -> String,
 ) -> Option<ModelListEntry> {
-    let row: ModelListRow = serde_json::from_value(model.clone()).unwrap_or_default();
+    let row = ModelListRow::deserialize(model).unwrap_or_default();
     let id = sanitize(row.model.as_deref().or(row.id.as_deref())?);
     if id.is_empty() {
         return None;

@@ -930,11 +930,17 @@ pub(crate) fn rewrite_config_to_provider_uri(
             }
         }
     });
-    std::fs::write(
-        base.join("models.json"),
-        serde_json::to_string_pretty(&registry).expect("serialize mock registry"),
-    )
-    .expect("write mock registry");
+    // Only when the scenario has not seeded its own registry: this helper runs
+    // from several `given` steps, and overwriting a scenario's models.json would
+    // surface as a puzzling catalogue failure rather than a step-ordering bug.
+    let registry_path = base.join("models.json");
+    if !registry_path.exists() {
+        std::fs::write(
+            &registry_path,
+            serde_json::to_string_pretty(&registry).expect("serialize mock registry"),
+        )
+        .expect("write mock registry");
+    }
 
     // Also update the custom config path if one was set (for --config flag scenarios).
     if let Some(ref custom_path) = world.custom_config_path {
