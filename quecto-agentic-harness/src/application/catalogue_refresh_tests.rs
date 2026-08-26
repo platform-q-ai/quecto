@@ -580,6 +580,56 @@ fn refresh_outliving_the_timeout_is_reported_failed() {
 }
 
 #[test]
+fn cancellation_observed_mid_refresh_is_not_reclassified_as_timeout() {
+    struct SlowCancelled {
+        sleep: Duration,
+    }
+    impl CatalogueSource for SlowCancelled {
+        fn id(&self) -> &str {
+            "slow-cancelled"
+        }
+        fn layer(&self) -> SourceLayer {
+            SourceLayer::Discovered
+        }
+        fn load(&self) -> Result<SourceEntries, String> {
+            Ok(SourceEntries::default())
+        }
+    }
+    impl RefreshableCatalogueSource for SlowCancelled {
+        fn refresh(&self, _ctx: &RefreshContext) -> Result<RefreshChange, RefreshError> {
+            std::thread::sleep(self.sleep);
+            Err(RefreshError::Cancelled)
+        }
+    }
+    let slow = SlowCancelled {
+        sleep: Duration::from_millis(50),
+    };
+    let store = CatalogueSnapshotStore::empty();
+    let refreshables: Vec<&dyn RefreshableCatalogueSource> = vec![&slow];
+    let sources: Vec<&dyn CatalogueSource> = vec![&slow];
+    let ports = RefreshPorts {
+        refreshables: &refreshables,
+        sources: &sources,
+        credentials: &AllowAllCredentials,
+        store: &store,
+        redaction: &NoopRedaction,
+    };
+    let report = RefreshCatalogueSourcesUseCase.refresh(
+        &ports,
+        &RefreshSelection::All,
+        &RefreshContext::new(RefreshBounds {
+            timeout: Duration::from_millis(10),
+            ..RefreshBounds::default()
+        }),
+    );
+    assert_eq!(
+        outcome(&report, "slow-cancelled").status,
+        SourceRefreshStatus::Cancelled,
+        "a cancellation the source observed must never surface as a timeout failure"
+    );
+}
+
+#[test]
 fn refresh_within_the_timeout_keeps_its_own_outcome() {
     let report = sleepy_report(Duration::from_millis(1), Duration::from_secs(5));
     assert_eq!(

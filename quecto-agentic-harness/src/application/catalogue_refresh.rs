@@ -227,6 +227,11 @@ fn refresh_one(
     }
     let started = std::time::Instant::now();
     let result = source.refresh(ctx);
+    // A cancellation the source observed mid-refresh is a cancellation, not a
+    // timeout failure, even when the aborted attempt outlived the budget.
+    if matches!(result, Err(RefreshError::Cancelled)) {
+        return SourceRefreshStatus::Cancelled;
+    }
     if started.elapsed() > ctx.bounds.timeout {
         return SourceRefreshStatus::Failed {
             reason: format!(

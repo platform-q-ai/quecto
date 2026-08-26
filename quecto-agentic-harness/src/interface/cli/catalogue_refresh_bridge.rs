@@ -39,15 +39,19 @@ pub fn refresh_catalogue(
     let inputs = CatalogueInputs::load(base_dir);
     let refreshables: Vec<&dyn crate::application::catalogue_refresh::RefreshableCatalogueSource> =
         discovery.sources.iter().map(AsRef::as_ref).collect();
-    // Precedence-ordered resolve inputs: built-in, then the live refreshable
-    // sources as the discovered layer (their caches were just rewritten, and
-    // `CatalogueInputs` would read the pre-refresh cache files), then the
-    // user layers, which still win in normal precedence.
+    // Resolve inputs: `inputs.sources()` already feeds the discovered layer
+    // from every persisted discovery cache (caches are read lazily, so they
+    // see this run's rewrites); append live sources only for providers whose
+    // cache did not exist when the inputs were enumerated (first refresh), so
+    // no provider's models are fed in twice. Precedence is layer-based, so
+    // the user layers win regardless of input order.
+    let cached_providers = inputs.discovered_providers();
     let mut sources = inputs.sources();
     sources.extend(
         discovery
             .sources
             .iter()
+            .filter(|s| !cached_providers.contains(&s.id()))
             .map(|s| s.as_ref() as &dyn crate::application::catalogue::CatalogueSource),
     );
     let store = snapshot_store_for(base_dir);

@@ -335,8 +335,13 @@ impl RefreshableCatalogueSource for HttpDiscoverySource {
             .cache
             .store_models_response(&body)
             .map_err(|reason| RefreshError::Failed { reason })?;
-        let current = std::fs::read_to_string(self.cache.cache_path()).ok();
-        if previous == current {
+        let current = match std::fs::read_to_string(self.cache.cache_path()) {
+            Ok(text) => text,
+            // The write itself succeeded; if the read-back fails, report
+            // Updated conservatively so the new cache is still republished.
+            Err(_) => return Ok(RefreshChange::Updated { models }),
+        };
+        if previous.as_deref() == Some(current.as_str()) {
             Ok(RefreshChange::Unchanged)
         } else {
             Ok(RefreshChange::Updated { models })
@@ -473,7 +478,7 @@ fn provider_discovery_source(
         return Box::new(UnsupportedRefreshSource::new(
             key,
             format!(
-                "provider api '{api}' does not expose an OpenAI-compatible model listing                  endpoint; maintain its models in models.json directly"
+                "provider api '{api}' does not expose an OpenAI-compatible model listing endpoint; maintain its models in models.json directly"
             ),
         ));
     }
@@ -485,7 +490,7 @@ fn provider_discovery_source(
     {
         return Box::new(UnsupportedRefreshSource::new(
             key,
-            "provider uses oauth auth, which catalogue refresh does not support;              maintain its models in models.json directly",
+            "provider uses oauth auth, which catalogue refresh does not support; maintain its models in models.json directly",
         ));
     }
     let Some(base_url) = provider
@@ -495,7 +500,7 @@ fn provider_discovery_source(
     else {
         return Box::new(UnsupportedRefreshSource::new(
             key,
-            "provider declares no baseUrl to discover models from;              add one or maintain its models in models.json directly",
+            "provider declares no baseUrl to discover models from; add one or maintain its models in models.json directly",
         ));
     };
     let allow_remote_http = provider

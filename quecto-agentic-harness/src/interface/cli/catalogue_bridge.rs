@@ -89,6 +89,12 @@ impl CatalogueInputs {
         sources.push(&self.user_file);
         sources
     }
+
+    /// Providers that already have a persisted discovery cache feeding the
+    /// discovered layer via [`CatalogueInputs::sources`].
+    pub(crate) fn discovered_providers(&self) -> Vec<&str> {
+        self.discovered.iter().map(|c| c.provider()).collect()
+    }
 }
 
 /// The per-model limits for a qualified `provider/model` string, read from the
