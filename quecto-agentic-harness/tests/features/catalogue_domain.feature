@@ -8,15 +8,20 @@ Feature: Canonical catalogue domain model (epic #1193, slice 1)
     Given the qualified model identifier "openai-api/gpt-5"
     When I parse it into a typed model reference
     Then the reference serializes back to exactly "openai-api/gpt-5"
-    And the reference names provider "openai-api" and model "gpt-5"
+
+  Scenario: A parsed model reference exposes its provider and model parts
+    Given the qualified model identifier "openai-api/gpt-5"
+    When I parse it into a typed model reference
+    Then the reference names provider "openai-api" and model "gpt-5"
 
   Scenario: Blank identifiers are rejected at construction
     When I try to construct a provider id from "   "
     Then the catalogue id construction is rejected
 
   Scenario: API-key and OAuth identities are distinct provider identities
-    Given a provider descriptor "anthropic-api" authenticating with an API key
-    And a provider descriptor "anthropic-oauth" authenticating with OAuth via "anthropic-oauth"
+    Given a provider descriptor "anthropic" authenticating with an API key
+    And a provider descriptor "anthropic" authenticating with OAuth via "anthropic-oauth"
+    When I compare the two provider identities
     Then the two provider identities are distinct
 
   Scenario: Later source layers override earlier ones by stable identity
@@ -43,3 +48,7 @@ Feature: Canonical catalogue domain model (epic #1193, slice 1)
     Given a catalogue entry for "custom/local" that is configured but missing a credential
     When I resolve the catalogue layers into a snapshot
     Then the resolved model "custom/local" is not runnable because a credential is missing
+
+  Scenario: Non-runnable availability without a reason is rejected
+    When I try to construct a non-runnable availability with no reason
+    Then the availability construction is rejected for lacking a reason

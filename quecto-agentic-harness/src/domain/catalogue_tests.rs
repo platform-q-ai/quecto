@@ -40,7 +40,15 @@ fn typed_ids_reject_blank_values() {
         CatalogueDomainError::EmptyProviderId
     );
     assert_eq!(
+        ProviderId::new("").unwrap_err(),
+        CatalogueDomainError::EmptyProviderId
+    );
+    assert_eq!(
         ModelId::new("").unwrap_err(),
+        CatalogueDomainError::EmptyModelId
+    );
+    assert_eq!(
+        ModelId::new("   ").unwrap_err(),
         CatalogueDomainError::EmptyModelId
     );
 }
@@ -64,6 +72,20 @@ fn model_ref_round_trips_existing_string_ids() {
     assert_eq!(
         ModelRef::parse_qualified("bare-model").unwrap_err(),
         CatalogueDomainError::UnqualifiedModelRef("bare-model".to_string())
+    );
+    // Slash-at-boundary inputs must reject the blank segment, never build a
+    // reference that would round-trip into a corrupt qualified string.
+    assert_eq!(
+        ModelRef::parse_qualified("/gpt-5").unwrap_err(),
+        CatalogueDomainError::EmptyProviderId
+    );
+    assert_eq!(
+        ModelRef::parse_qualified("openai-api/").unwrap_err(),
+        CatalogueDomainError::EmptyModelId
+    );
+    assert_eq!(
+        ModelRef::parse_qualified("/").unwrap_err(),
+        CatalogueDomainError::EmptyProviderId
     );
 }
 
@@ -91,6 +113,11 @@ fn transport_and_auth_expose_stable_ids() {
         Some("anthropic-oauth")
     );
     assert!(AuthIdentity::ApiKey.oauth_provider().is_none());
+    // OAuth without a named credential provider is a visible misconfiguration:
+    // still an OAuth identity, with no provider to report.
+    let anonymous = AuthIdentity::OAuth { provider: None };
+    assert_eq!(anonymous.stable_id(), "oauth");
+    assert!(anonymous.oauth_provider().is_none());
 }
 
 #[test]
@@ -129,6 +156,14 @@ fn availability_states_enforce_reason_invariants() {
         &[UnavailableReason::MissingCredential]
     );
 
+    assert_eq!(
+        Availability::unavailable(
+            AvailabilityStatus::Runnable,
+            vec![UnavailableReason::MissingCredential]
+        )
+        .unwrap_err(),
+        CatalogueDomainError::RunnableWithReasons
+    );
     assert_eq!(
         Availability::unavailable(AvailabilityStatus::Runnable, vec![]).unwrap_err(),
         CatalogueDomainError::RunnableWithReasons
@@ -169,6 +204,12 @@ fn validate_entry_rejects_provider_mismatch_and_zero_limits() {
         validate_entry(&zero_out).unwrap_err(),
         CatalogueDomainError::ZeroLimit("max_output_tokens".to_string())
     );
+
+    // The minimal non-zero limits are valid: only zero is rejected.
+    let mut minimal = entry("openai-api", "gpt-5", "GPT");
+    minimal.model.capabilities.context_window = 1;
+    minimal.model.capabilities.max_output_tokens = 1;
+    assert!(validate_entry(&minimal).is_ok());
 }
 
 #[test]

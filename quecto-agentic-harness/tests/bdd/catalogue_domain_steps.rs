@@ -19,6 +19,8 @@ pub struct CatalogueDomainState {
     pub descriptors: Vec<ProviderDescriptor>,
     pub layers: Vec<(SourceLayer, Vec<CatalogueEntry>)>,
     pub resolution: Option<CatalogueResolution>,
+    pub identities_same: Option<bool>,
+    pub availability_result: Option<Result<Availability, CatalogueDomainError>>,
 }
 
 fn capabilities() -> ModelCapabilities {
@@ -140,12 +142,21 @@ fn given_oauth_descriptor(world: &mut QuectoWorld, id: String, credential_provid
     ));
 }
 
-#[then(expr = "the two provider identities are distinct")]
-fn then_identities_distinct(world: &mut QuectoWorld) {
+#[when(expr = "I compare the two provider identities")]
+fn when_compare_identities(world: &mut QuectoWorld) {
     let [a, b] = &world.catalogue.descriptors[..] else {
         panic!("expected exactly two provider descriptors");
     };
-    assert!(!a.same_identity(b), "identities unexpectedly equal");
+    world.catalogue.identities_same = Some(a.same_identity(b));
+}
+
+#[then(expr = "the two provider identities are distinct")]
+fn then_identities_distinct(world: &mut QuectoWorld) {
+    let same = world
+        .catalogue
+        .identities_same
+        .expect("identities were not compared");
+    assert!(!same, "identities unexpectedly equal");
 }
 
 #[given(expr = "a {word} catalogue layer defining model {string} named {string}")]
@@ -233,9 +244,32 @@ fn then_model_missing_credential(world: &mut QuectoWorld, reference: String) {
         .snapshot
         .find(&reference)
         .expect("model not found in snapshot");
+    assert_eq!(
+        entry.model.availability.status(),
+        AvailabilityStatus::Configured
+    );
     assert!(!entry.model.availability.is_runnable());
     assert_eq!(
         entry.model.availability.reasons(),
         &[UnavailableReason::MissingCredential]
+    );
+}
+
+#[when(expr = "I try to construct a non-runnable availability with no reason")]
+fn when_construct_reasonless_availability(world: &mut QuectoWorld) {
+    world.catalogue.availability_result =
+        Some(Availability::unavailable(AvailabilityStatus::Known, vec![]));
+}
+
+#[then(expr = "the availability construction is rejected for lacking a reason")]
+fn then_availability_rejected(world: &mut QuectoWorld) {
+    let result = world
+        .catalogue
+        .availability_result
+        .as_ref()
+        .expect("no availability result");
+    assert_eq!(
+        result.as_ref().unwrap_err(),
+        &CatalogueDomainError::UnavailableWithoutReason
     );
 }
