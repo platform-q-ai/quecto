@@ -155,3 +155,124 @@ fn user_listed_models_win_over_synthesized_discovered_records() {
     assert_eq!(record.display_name.as_deref(), Some("Mine"));
     assert_eq!(record.max_tokens, 999);
 }
+
+// --- issue #1575 (epic #1193, slice 5): user-owned extension surface -------
+
+fn slice5_write(tmp: &tempfile::TempDir, json: &str) {
+    std::fs::write(tmp.path().join("models.json"), json).unwrap();
+}
+
+const SLICE5_MIXED_TRANSPORTS: &str = r#"{"providers":{
+    "custom":{"api":"openai-completions","baseUrl":"https://e.example/v1","apiKey":"$CUSTOM_KEY","models":[{"id":"m1"}]},
+    "wsprov":{"api":"websocket-frames","models":[{"id":"m2"}]}
+}}"#;
+
+/// AC3 (part): a valid provider must survive an unsupported-transport
+/// neighbour in the same user file instead of the whole layer erroring away.
+#[test]
+fn valid_provider_survives_an_unsupported_transport_neighbour() {
+    use crate::domain::catalogue::ModelRef;
+    let tmp = tempfile::tempdir().unwrap();
+    slice5_write(&tmp, SLICE5_MIXED_TRANSPORTS);
+    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let good = ModelRef::parse_qualified("custom/m1").unwrap();
+    assert!(
+        resolved.snapshot.find(&good).is_some(),
+        "a valid sibling provider must survive an unsupported-transport neighbour"
+    );
+}
+
+/// AC3 (part): the unsupported-transport entry itself is listed as known.
+#[test]
+fn unsupported_transport_entry_is_listed_as_known() {
+    use crate::domain::catalogue::ModelRef;
+    let tmp = tempfile::tempdir().unwrap();
+    slice5_write(&tmp, SLICE5_MIXED_TRANSPORTS);
+    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let unsupported = ModelRef::parse_qualified("wsprov/m2").unwrap();
+    assert!(
+        resolved.snapshot.find(&unsupported).is_some(),
+        "unsupported-transport entry must be listed as known"
+    );
+}
+
+/// AC3 (part): the listed entry is not runnable and carries a structured
+/// unsupported-transport reason.
+#[test]
+fn unsupported_transport_entry_is_not_runnable_with_structured_reason() {
+    use crate::domain::catalogue::{ModelRef, UnavailableReason};
+    let tmp = tempfile::tempdir().unwrap();
+    slice5_write(&tmp, SLICE5_MIXED_TRANSPORTS);
+    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let unsupported = ModelRef::parse_qualified("wsprov/m2").unwrap();
+    let entry = resolved
+        .snapshot
+        .find(&unsupported)
+        .expect("unsupported-transport entry must be listed as known");
+    assert!(!entry.model.availability.is_runnable());
+    assert!(
+        entry
+            .model
+            .availability
+            .reasons()
+            .iter()
+            .any(|r| matches!(r, UnavailableReason::UnsupportedTransport { .. })),
+        "expected a structured unsupported-transport reason, got: {:?}",
+        entry.model.availability.reasons()
+    );
+}
+
+const SLICE5_OVERRIDE: &str =
+    r#"{"overrides":{"openai-api/gpt-5.5":{"name":"My 5.5","contextWindow":999000}}}"#;
+
+/// AC1 (part): a stable-ID override replaces the built-in display name.
+#[test]
+fn stable_id_override_replaces_builtin_display_name() {
+    use crate::domain::catalogue::ModelRef;
+    let tmp = tempfile::tempdir().unwrap();
+    slice5_write(&tmp, SLICE5_OVERRIDE);
+    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let reference = ModelRef::parse_qualified("openai-api/gpt-5.5").unwrap();
+    let entry = resolved.snapshot.find(&reference).expect("builtin entry");
+    assert_eq!(
+        entry.model.display_name.as_deref(),
+        Some("My 5.5"),
+        "override by stable ID must replace the built-in display name"
+    );
+}
+
+/// AC1 (part): a stable-ID override replaces the built-in context window.
+#[test]
+fn stable_id_override_replaces_builtin_context_window() {
+    use crate::domain::catalogue::ModelRef;
+    let tmp = tempfile::tempdir().unwrap();
+    slice5_write(&tmp, SLICE5_OVERRIDE);
+    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let reference = ModelRef::parse_qualified("openai-api/gpt-5.5").unwrap();
+    let entry = resolved.snapshot.find(&reference).expect("builtin entry");
+    assert_eq!(
+        entry.model.capabilities.context_window, 999_000,
+        "override by stable ID must replace the built-in context window"
+    );
+}
+
+/// AC5: catalogue files carry credential *references*, never literal secrets.
+/// A literal-secret field in the override surface must be rejected with a
+/// clear, structured error rather than silently accepted or ignored.
+#[test]
+fn literal_secret_in_override_surface_is_rejected_with_structured_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    slice5_write(
+        &tmp,
+        r#"{"overrides":{"openai-api/gpt-5.5":{"apiKey":"sk-live-secret123"}}}"#,
+    );
+    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let mentions = |text: &str| text.contains("credential reference");
+    assert!(
+        resolved.source_errors.iter().any(|e| mentions(&e.error))
+            || resolved.skipped.iter().any(|(_, s)| mentions(&s.error)),
+        "a literal secret in an override must produce an error naming credential references; got source_errors={:?} skipped={:?}",
+        resolved.source_errors,
+        resolved.skipped
+    );
+}
