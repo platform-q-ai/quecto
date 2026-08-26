@@ -285,6 +285,8 @@ pub struct QuectoWorld {
     /// #1573 catalogue runtime slice state (factory, stores, composition, selection).
     pub catalogue_runtime: catalogue_runtime_steps::CatalogueRuntimeState,
     /// #1574 catalogue refresh slice state (refreshables, store, report).
+    /// #1576 convergence slice state (builtin-only base dir, UDS listing).
+    pub catalogue_convergence: catalogue_convergence_steps::CatalogueConvergenceState,
     pub catalogue_refresh: catalogue_refresh_steps::CatalogueRefreshState,
     /// #1575 user catalogue extension surface state (temp base dir, resolution).
     pub catalogue_user_config: catalogue_user_config_steps::CatalogueUserConfigState,
@@ -1367,6 +1369,7 @@ mod architecture_steps;
 mod audit_log_steps;
 mod auth_steps;
 mod catalogue_application_steps;
+mod catalogue_convergence_steps;
 mod catalogue_domain_steps;
 mod catalogue_refresh_steps;
 mod catalogue_runtime_steps;

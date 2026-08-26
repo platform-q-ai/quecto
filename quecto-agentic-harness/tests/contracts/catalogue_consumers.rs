@@ -195,3 +195,44 @@ fn refresh_surfaces_share_one_operation_and_one_published_generation() {
         );
     });
 }
+
+#[test]
+fn every_listing_surface_reports_the_snapshot_effort_vocabulary() {
+    // Slice 6 (#1576): capability metadata — including the reasoning-effort
+    // vocabulary formerly inferred per surface from provider/model names — is
+    // projected from the canonical snapshot, so every consumer renders the
+    // same vocabulary for the same generation.
+    let tmp = tempfile::tempdir().unwrap();
+    let response = list_models_data(tmp.path());
+    let models = response["models"].as_array().unwrap();
+    assert!(!models.is_empty(), "builtin listing is empty");
+    for model in models {
+        let levels = model["effort_levels"].as_array();
+        assert!(
+            levels.is_some_and(|l| !l.is_empty()),
+            "listed model lacks a snapshot effort vocabulary: {model}"
+        );
+    }
+    let vocab = |id: &str| -> String {
+        models
+            .iter()
+            .find(|m| m["model"].as_str() == Some(id))
+            .unwrap_or_else(|| panic!("model {id} not listed"))["effort_levels"]
+            .as_array()
+            .map(|l| {
+                l.iter()
+                    .map(|v| v.as_str().unwrap().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        vocab("anthropic-api/claude-opus-4-6"),
+        "low, medium, high, max"
+    );
+    assert_eq!(
+        vocab("openai-api/gpt-5.5"),
+        "none, low, medium, high, xhigh"
+    );
+}
