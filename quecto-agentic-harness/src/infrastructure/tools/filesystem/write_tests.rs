@@ -40,6 +40,24 @@ async fn test_write_empty_object_returns_actionable_error() {
     );
 }
 
+#[tokio::test]
+async fn write_rejects_malformed_json() {
+    let (ws, sb, _tmp) = test_tools();
+    let tool = WriteTool::new(ws, sb);
+    let result = tool.execute("{not json").await.unwrap();
+    assert!(result.is_error);
+    assert!(result.content.contains("invalid JSON arguments"));
+}
+
+#[tokio::test]
+async fn write_requires_string_content() {
+    let (ws, sb, _tmp) = test_tools();
+    let tool = WriteTool::new(ws, sb);
+    let result = tool.execute(r#"{"path":"out.txt"}"#).await.unwrap();
+    assert!(result.is_error);
+    assert!(result.content.contains("content"));
+}
+
 #[test]
 fn test_write_description_includes_example() {
     let (ws, sb, _tmp) = test_tools();
