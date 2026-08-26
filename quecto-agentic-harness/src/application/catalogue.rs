@@ -168,22 +168,30 @@ impl ResolveCatalogueUseCase {
                 }),
             }
         }
-        if layers.is_empty() && !source_errors.is_empty() {
-            // Every source failed: the last valid snapshot stays published so
-            // consumers keep a coherent catalogue instead of an empty one.
-            return ResolvedCatalogue {
-                snapshot: store.current(),
-                rejected: Vec::new(),
-                source_errors,
-                skipped,
-            };
+        if !source_errors.is_empty() {
+            let current = store.current();
+            // A failed source never partially replaces published state: once
+            // a valid generation exists, it is retained wholesale and the
+            // errors are surfaced (#1575, AC4b — a malformed user file keeps
+            // the last valid catalogue). Before any generation is published
+            // there is nothing valid to retain, so the surviving layers still
+            // publish (malformed-source isolation keeps built-ins resolving
+            // on a broken first read) — unless every source failed.
+            if current.generation() > 0 || layers.is_empty() {
+                return ResolvedCatalogue {
+                    snapshot: current,
+                    rejected: Vec::new(),
+                    source_errors,
+                    skipped,
+                };
+            }
         }
         for (_, entries) in &mut layers {
             for entry in entries {
                 let credential_available = credentials.credential_available(entry);
                 entry.model.availability = derive_availability(
-                    entry.provider.transport,
-                    transport_has_adapter(entry.provider.transport),
+                    entry.provider.transport.clone(),
+                    transport_has_adapter(&entry.provider.transport),
                     credential_available,
                 );
             }
@@ -244,11 +252,12 @@ impl QueryCatalogueUseCase {
     }
 }
 
-/// Whether a transport adapter exists for this transport kind. Every kind the
-/// domain enumerates has an adapter today; the parameter stays explicit on
-/// [`derive_availability`] so a future transport without one derives honestly.
-fn transport_has_adapter(_transport: TransportKind) -> bool {
-    true
+/// Whether a transport adapter exists for this transport kind. Every named
+/// kind the domain enumerates has an adapter today; a transport a catalogue
+/// file declared that no adapter implements does not (#1575, AC3), so its
+/// entries stay known-but-unrunnable by construction.
+fn transport_has_adapter(transport: &TransportKind) -> bool {
+    !matches!(transport, TransportKind::Unsupported { .. })
 }
 
 /// Translate adapter support and credential status into derived availability.

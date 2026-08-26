@@ -37,7 +37,10 @@ fn registry_loads_pi_shaped_models_json_with_defaults() {
 }
 
 #[test]
-fn registry_rejects_unknown_wire_protocols() {
+fn registry_keeps_unknown_wire_protocols_as_unsupported_blocks() {
+    // #1575 (AC3): a transport this build has no adapter for must not fail
+    // the whole file — the block is kept as known-but-unrunnable data and
+    // produces no runtime records.
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("models.json");
     std::fs::write(
@@ -46,10 +49,17 @@ fn registry_rejects_unknown_wire_protocols() {
     )
     .unwrap();
 
-    let err = ModelRegistry::load_from_path(&path)
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("unknown api 'cohere-chat'"), "{err}");
+    let config = ModelRegistry::load_registry_config(&path).unwrap();
+    assert!(
+        config.records.is_empty(),
+        "no runtime record for an unrunnable transport"
+    );
+    assert!(config.providers.is_empty());
+    assert_eq!(config.unsupported.len(), 1);
+    let block = &config.unsupported[0];
+    assert_eq!(block.provider, "x");
+    assert_eq!(block.declared_transport, "cohere-chat");
+    assert_eq!(block.models, vec![("m".to_string(), None)]);
 }
 
 #[test]

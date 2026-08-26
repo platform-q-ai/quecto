@@ -19,7 +19,9 @@ use crate::domain::catalogue::{
     AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost as DomainModelCost,
     ModelDescriptor, ModelRef, ProviderDescriptor, ProviderId, SourceLayer, TransportKind,
 };
-use crate::infrastructure::model_registry::{AuthMode, ModelRecord, ModelRegistry, ProviderApi};
+use crate::infrastructure::model_registry::{
+    AuthMode, ModelRecord, ModelRegistry, ProviderApi, UnsupportedProviderConfig,
+};
 
 /// Map one legacy registry record into a domain catalogue entry. Availability
 /// starts as runnable; the resolve use case derives the real status from the
@@ -76,7 +78,7 @@ fn entry_from_record(record: &ModelRecord) -> Result<CatalogueEntry, String> {
 /// Map records into entries, keeping the layer alive when individual records
 /// are unmappable: one invalid record must not erase its valid neighbours, so
 /// failures become per-record `skipped` diagnostics instead of a layer error.
-fn entries_from_records(records: &[ModelRecord]) -> SourceEntries {
+pub(crate) fn entries_from_records(records: &[ModelRecord]) -> SourceEntries {
     let mut loaded = SourceEntries::default();
     for record in records {
         match entry_from_record(record) {
@@ -88,6 +90,63 @@ fn entries_from_records(records: &[ModelRecord]) -> SourceEntries {
         }
     }
     loaded
+}
+
+/// Map an unsupported-transport provider block into catalogue entries: its
+/// models are known (listed) but can never become runnable, because the
+/// declared transport has no adapter in this build (#1575, AC3). The resolve
+/// use case derives the structured unsupported-transport reason from the
+/// transport kind.
+pub(crate) fn entries_for_unsupported_provider(
+    config: &UnsupportedProviderConfig,
+) -> SourceEntries {
+    let mut loaded = SourceEntries::default();
+    for (model_id, name) in &config.models {
+        let build = || -> Result<CatalogueEntry, String> {
+            let provider_id =
+                ProviderId::new(config.provider.clone()).map_err(|e| e.to_string())?;
+            let reference = ModelRef::parse(config.provider.clone(), model_id.clone())
+                .map_err(|e| e.to_string())?;
+            Ok(CatalogueEntry {
+                provider: ProviderDescriptor {
+                    id: provider_id,
+                    display_name: Some(config.provider.clone()),
+                    transport: TransportKind::Unsupported {
+                        declared: config.declared_transport.clone(),
+                    },
+                    auth: AuthIdentity::ApiKey,
+                },
+                model: ModelDescriptor {
+                    reference,
+                    display_name: name.clone(),
+                    capabilities: default_capabilities(),
+                    availability: Availability::runnable(),
+                },
+            })
+        };
+        match build() {
+            Ok(entry) => loaded.entries.push(entry),
+            Err(error) => loaded.skipped.push(SkippedRecord {
+                record: format!("{}/{}", config.provider, model_id),
+                error,
+            }),
+        }
+    }
+    loaded
+}
+
+/// The synthesized capability defaults matching a `models.json` entry that
+/// declares only an id (nothing explicit, so nothing clamps).
+fn default_capabilities() -> ModelCapabilities {
+    ModelCapabilities {
+        input_modalities: vec!["text".to_string()],
+        context_window: 128_000,
+        max_output_tokens: 16_384,
+        context_window_explicit: false,
+        max_output_tokens_explicit: false,
+        reasoning: false,
+        cost: DomainModelCost::default(),
+    }
 }
 
 /// The built-in registry table as the `BuiltIn` source layer.
@@ -114,10 +173,11 @@ pub struct ModelsFileCatalogueSource {
 enum ModelsFileInput {
     /// Read and parse the file at load time.
     Path(PathBuf),
-    /// Records already parsed by the caller; `load` re-parses nothing, so one
-    /// resolve reads `models.json` exactly once even when the caller also
-    /// derives credential status from the same parse.
-    Preloaded(Result<Vec<ModelRecord>, String>),
+    /// Entries already mapped by the caller from one `models.json` parse;
+    /// `load` re-parses nothing, so one resolve reads `models.json` exactly
+    /// once even when the caller also derives credential status from the same
+    /// parse.
+    Preloaded(Result<SourceEntries, String>),
 }
 
 impl ModelsFileCatalogueSource {
@@ -127,10 +187,11 @@ impl ModelsFileCatalogueSource {
         }
     }
 
-    /// Build the source over an already-parsed `models.json` read.
-    pub fn preloaded(records: Result<Vec<ModelRecord>, String>) -> Self {
+    /// Build the source over entries mapped from an already-parsed
+    /// `models.json` read (listed records plus unsupported-transport blocks).
+    pub fn preloaded(entries: Result<SourceEntries, String>) -> Self {
         Self {
-            input: ModelsFileInput::Preloaded(records),
+            input: ModelsFileInput::Preloaded(entries),
         }
     }
 }
@@ -143,13 +204,55 @@ impl CatalogueSource for ModelsFileCatalogueSource {
         SourceLayer::UserDefined
     }
     fn load(&self) -> Result<SourceEntries, String> {
-        let records = match &self.input {
+        match &self.input {
             ModelsFileInput::Path(path) => {
-                ModelRegistry::load_file_records(path).map_err(|error| error.to_string())?
+                let config =
+                    ModelRegistry::load_registry_config(path).map_err(|error| error.to_string())?;
+                Ok(user_file_entries(&config.records, &config.unsupported))
             }
-            ModelsFileInput::Preloaded(result) => result.clone()?,
-        };
-        Ok(entries_from_records(&records))
+            ModelsFileInput::Preloaded(result) => result.clone(),
+        }
+    }
+}
+
+/// Map one `models.json` parse into the `UserDefined` layer's entries: the
+/// listed records plus known-but-unrunnable entries for unsupported-transport
+/// provider blocks.
+pub(crate) fn user_file_entries(
+    records: &[ModelRecord],
+    unsupported: &[UnsupportedProviderConfig],
+) -> SourceEntries {
+    let mut loaded = entries_from_records(records);
+    for block in unsupported {
+        let mut mapped = entries_for_unsupported_provider(block);
+        loaded.entries.append(&mut mapped.entries);
+        loaded.skipped.append(&mut mapped.skipped);
+    }
+    loaded
+}
+
+/// The user's `overrides` section as the `UserOverride` source layer:
+/// patched full entries built by the interface bridge from the same
+/// `models.json` parse, plus per-override diagnostics (#1575, AC1/AC5).
+pub struct UserOverrideCatalogueSource {
+    entries: SourceEntries,
+}
+
+impl UserOverrideCatalogueSource {
+    pub fn preloaded(entries: SourceEntries) -> Self {
+        Self { entries }
+    }
+}
+
+impl CatalogueSource for UserOverrideCatalogueSource {
+    fn id(&self) -> &str {
+        "models.json overrides"
+    }
+    fn layer(&self) -> SourceLayer {
+        SourceLayer::UserOverride
+    }
+    fn load(&self) -> Result<SourceEntries, String> {
+        Ok(self.entries.clone())
     }
 }
 

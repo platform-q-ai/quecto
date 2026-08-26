@@ -276,3 +276,79 @@ fn literal_secret_in_override_surface_is_rejected_with_structured_error() {
         resolved.skipped
     );
 }
+
+/// AC1a: a data-only model add on an existing provider is published with its
+/// declared display name.
+#[test]
+fn user_file_model_add_on_existing_provider_is_published() {
+    use crate::domain::catalogue::ModelRef;
+    let tmp = tempfile::tempdir().unwrap();
+    slice5_write(
+        &tmp,
+        r#"{"providers":{"openai-api":{"api":"openai-completions","models":[{"id":"gpt-5.5-preview","name":"GPT 5.5 Preview"}]}}}"#,
+    );
+    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let added = ModelRef::parse_qualified("openai-api/gpt-5.5-preview").unwrap();
+    let entry = resolved.snapshot.find(&added).expect("added model listed");
+    assert_eq!(entry.model.display_name.as_deref(), Some("GPT 5.5 Preview"));
+}
+
+/// AC2: a data-only provider add on an existing transport reaches runnable
+/// with a base url and a credential reference resolved from the environment.
+#[test]
+fn user_file_provider_add_with_credential_reference_is_runnable() {
+    use crate::domain::catalogue::ModelRef;
+    // SAFETY: test-only env mutation with a name no other test reads.
+    unsafe { std::env::set_var("SLICE5_GATEWAY_KEY", "gw-secret") };
+    let tmp = tempfile::tempdir().unwrap();
+    slice5_write(
+        &tmp,
+        r#"{"providers":{"my-gateway":{"api":"openai-completions","baseUrl":"https://gw.example/v1","apiKey":"$SLICE5_GATEWAY_KEY","models":[{"id":"custom-model"}]}}}"#,
+    );
+    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let added = ModelRef::parse_qualified("my-gateway/custom-model").unwrap();
+    let entry = resolved.snapshot.find(&added).expect("added model listed");
+    assert!(
+        entry.model.availability.is_runnable(),
+        "a credentialed provider add on a supported transport must be runnable, got {:?}",
+        entry.model.availability
+    );
+}
+
+/// AC5/AC6 boundary: the legacy provider-level literal `apiKey` stays
+/// accepted for compatibility — only the new `overrides` surface is
+/// reference-only (documented in docs/runtime-models-providers.md).
+#[test]
+fn legacy_provider_level_literal_api_key_stays_accepted() {
+    use crate::domain::catalogue::ModelRef;
+    let tmp = tempfile::tempdir().unwrap();
+    slice5_write(
+        &tmp,
+        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","apiKey":"legacy-literal-key","models":[{"id":"qwen3p7-plus"}]}}}"#,
+    );
+    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    assert!(resolved.source_errors.is_empty() && resolved.skipped.is_empty());
+    let legacy = ModelRef::parse_qualified("fireworks/qwen3p7-plus").unwrap();
+    let entry = resolved
+        .snapshot
+        .find(&legacy)
+        .expect("legacy model listed");
+    assert!(entry.model.availability.is_runnable());
+}
+
+/// AC1b guard: an override targeting an unknown model is a per-record
+/// diagnostic, not silently dropped and not a layer failure.
+#[test]
+fn override_of_unknown_model_is_reported_not_dropped() {
+    let tmp = tempfile::tempdir().unwrap();
+    slice5_write(&tmp, r#"{"overrides":{"nope/missing":{"name":"X"}}}"#);
+    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    assert!(
+        resolved
+            .skipped
+            .iter()
+            .any(|(_, s)| s.record == "nope/missing" && s.error.contains("known model")),
+        "unknown override target must surface as a diagnostic, got {:?}",
+        resolved.skipped
+    );
+}

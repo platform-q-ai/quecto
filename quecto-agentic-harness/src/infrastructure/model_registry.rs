@@ -325,10 +325,7 @@ impl ModelRegistry {
         let mut records = Vec::new();
         let mut provider_defaults = Vec::new();
         if !path.exists() {
-            return Ok(RegistryConfig {
-                records,
-                providers: provider_defaults,
-            });
+            return Ok(RegistryConfig::default());
         }
         let content = std::fs::read_to_string(path).map_err(ModelRegistryError::Io)?;
         let file: RegistryFile =
@@ -336,8 +333,28 @@ impl ModelRegistry {
         // Deterministic provider order regardless of the map's iteration.
         let mut providers: Vec<_> = file.providers.into_iter().collect();
         providers.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut unsupported = Vec::new();
         for (provider_key, provider) in providers {
-            let api = ProviderApi::parse(provider.api.as_deref().unwrap_or("openai-completions"))?;
+            let declared_api = provider.api.as_deref().unwrap_or("openai-completions");
+            let api = match ProviderApi::parse(declared_api) {
+                Ok(api) => api,
+                // A transport this build has no adapter for must not fail the
+                // whole file: the provider's models stay known-but-unrunnable
+                // catalogue entries with a structured reason (#1575, AC3).
+                Err(ModelRegistryError::UnknownApi(declared)) => {
+                    unsupported.push(UnsupportedProviderConfig {
+                        provider: provider_key,
+                        declared_transport: declared,
+                        models: provider
+                            .models
+                            .into_iter()
+                            .map(|m| (m.id, m.name))
+                            .collect(),
+                    });
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
 
             // Resolve the auth mode. An explicit `auth` block wins; otherwise we
             // default to ApiKey (the historical behaviour). The block's apiKey
@@ -414,9 +431,27 @@ impl ModelRegistry {
             }
             provider_defaults.push((provider_key, defaults));
         }
+        let mut overrides: Vec<(String, ModelOverride)> = file
+            .overrides
+            .into_iter()
+            .map(|(qualified, patch)| {
+                (
+                    qualified,
+                    ModelOverride {
+                        name: patch.name,
+                        context_window: patch.context_window,
+                        max_tokens: patch.max_tokens,
+                        api_key: patch.api_key,
+                    },
+                )
+            })
+            .collect();
+        overrides.sort_by(|a, b| a.0.cmp(&b.0));
         Ok(RegistryConfig {
             records,
             providers: provider_defaults,
+            overrides,
+            unsupported,
         })
     }
 
@@ -538,6 +573,34 @@ impl ProviderDefaults {
 pub struct RegistryConfig {
     pub records: Vec<ModelRecord>,
     pub providers: Vec<(String, ProviderDefaults)>,
+    /// Stable-ID metadata overrides from the file's `overrides` section, in
+    /// deterministic (sorted) qualified-id order (#1575, AC1).
+    pub overrides: Vec<(String, ModelOverride)>,
+    /// Providers whose declared transport has no adapter in this build: their
+    /// models become known-but-unrunnable catalogue entries instead of
+    /// erasing the file (#1575, AC3).
+    pub unsupported: Vec<UnsupportedProviderConfig>,
+}
+
+/// One stable-ID metadata override (`overrides` section of `models.json`):
+/// only the declared fields replace the base entry's metadata. `api_key` is a
+/// credential *reference* (`$ENV`); the catalogue layer rejects literals.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ModelOverride {
+    pub name: Option<String>,
+    pub context_window: Option<u32>,
+    pub max_tokens: Option<u32>,
+    pub api_key: Option<String>,
+}
+
+/// A provider block whose declared transport this build cannot run, kept so
+/// the catalogue can list its models as known with a structured reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsupportedProviderConfig {
+    pub provider: String,
+    pub declared_transport: String,
+    /// `(model id, display name)` pairs the block listed.
+    pub models: Vec<(String, Option<String>)>,
 }
 
 pub fn resolve_registry_value<F>(value: &str, env: F) -> String
@@ -587,6 +650,23 @@ where
 struct RegistryFile {
     #[serde(default)]
     providers: HashMap<String, RegistryProvider>,
+    /// Stable-ID metadata overrides keyed by qualified `provider/model` id.
+    #[serde(default)]
+    overrides: HashMap<String, RegistryOverride>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RegistryOverride {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    context_window: Option<u32>,
+    #[serde(default)]
+    max_tokens: Option<u32>,
+    /// Credential reference (`$ENV`); literals are rejected downstream.
+    #[serde(default)]
+    api_key: Option<String>,
 }
 
 #[derive(Deserialize)]
