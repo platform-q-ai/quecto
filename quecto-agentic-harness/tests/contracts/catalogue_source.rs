@@ -12,8 +12,8 @@ fn assert_source_contract(source: &dyn CatalogueSource, expected_layer: SourceLa
     assert!(!source.id().is_empty(), "sources must be identifiable");
     assert_eq!(source.layer(), expected_layer);
     match source.load() {
-        Ok(entries) => {
-            for entry in entries {
+        Ok(loaded) => {
+            for entry in loaded.entries {
                 // Every loaded entry names its own provider — the domain
                 // validation invariant sources are expected to satisfy.
                 assert_eq!(entry.reference().provider(), &entry.provider.id);
@@ -27,7 +27,7 @@ fn assert_source_contract(source: &dyn CatalogueSource, expected_layer: SourceLa
 fn builtin_source_satisfies_the_contract() {
     let source = BuiltinCatalogueSource;
     assert_source_contract(&source, SourceLayer::BuiltIn);
-    assert!(!source.load().unwrap().is_empty());
+    assert!(!source.load().unwrap().entries.is_empty());
 }
 
 #[test]
@@ -40,7 +40,9 @@ fn models_file_source_satisfies_the_contract_when_loadable() {
     .unwrap();
     let source = ModelsFileCatalogueSource::new(tmp.path());
     assert_source_contract(&source, SourceLayer::UserDefined);
-    assert_eq!(source.load().unwrap().len(), 1);
+    let loaded = source.load().unwrap();
+    assert_eq!(loaded.entries.len(), 1);
+    assert!(loaded.skipped.is_empty());
 }
 
 #[test]
@@ -50,4 +52,19 @@ fn models_file_source_satisfies_the_contract_when_malformed() {
     let source = ModelsFileCatalogueSource::new(tmp.path());
     assert_source_contract(&source, SourceLayer::UserDefined);
     assert!(source.load().unwrap_err().contains("failed to parse"));
+}
+
+#[test]
+fn one_invalid_record_is_skipped_without_erasing_valid_neighbours() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"custom":{"api":"openai-completions","models":[{"id":"m1"},{"id":""}]}}}"#,
+    )
+    .unwrap();
+    let source = ModelsFileCatalogueSource::new(tmp.path());
+    let loaded = source.load().unwrap();
+    assert_eq!(loaded.entries.len(), 1, "valid records must survive");
+    assert_eq!(loaded.skipped.len(), 1);
+    assert!(!loaded.skipped[0].error.is_empty());
 }

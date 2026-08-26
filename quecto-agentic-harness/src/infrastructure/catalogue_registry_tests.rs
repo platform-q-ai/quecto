@@ -5,7 +5,7 @@ use super::*;
 
 #[test]
 fn builtin_source_maps_the_builtin_table_into_domain_entries() {
-    let entries = BuiltinCatalogueSource.load().unwrap();
+    let entries = BuiltinCatalogueSource.load().unwrap().entries;
     let builtin = ModelRegistry::builtin();
     assert_eq!(entries.len(), builtin.models().len());
     let first = &builtin.models()[0];
@@ -26,7 +26,7 @@ fn models_file_source_loads_only_the_file_records() {
     )
     .unwrap();
     let source = ModelsFileCatalogueSource::new(tmp.path());
-    let entries = source.load().unwrap();
+    let entries = source.load().unwrap().entries;
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].reference().qualified_id(), "custom/m1");
     assert_eq!(source.layer(), SourceLayer::UserDefined);
@@ -52,6 +52,7 @@ fn missing_models_file_is_an_empty_layer() {
         ModelsFileCatalogueSource::new(tmp.path())
             .load()
             .unwrap()
+            .entries
             .is_empty()
     );
 }

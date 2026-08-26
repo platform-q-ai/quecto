@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use super::*;
 use crate::domain::catalogue::{
     AuthIdentity, AvailabilityStatus, ModelCapabilities, ModelCost, ModelDescriptor, ModelId,
-    ModelRef, ProviderId, UnavailableReason,
+    ModelRef, ProviderDescriptor, ProviderId, UnavailableReason,
 };
 
 const FAKE_SECRET: &str = "sk-secret-123";
@@ -52,7 +52,7 @@ fn entry(provider_id: &str, model: &str, display: &str) -> CatalogueEntry {
 struct FakeSource {
     id: String,
     layer: SourceLayer,
-    result: Mutex<Result<Vec<CatalogueEntry>, String>>,
+    result: Mutex<Result<SourceEntries, String>>,
 }
 
 impl FakeSource {
@@ -60,7 +60,7 @@ impl FakeSource {
         Self {
             id: id.to_string(),
             layer,
-            result: Mutex::new(Ok(entries)),
+            result: Mutex::new(Ok(entries.into())),
         }
     }
 
@@ -73,7 +73,7 @@ impl FakeSource {
     }
 
     fn set_result(&self, result: Result<Vec<CatalogueEntry>, String>) {
-        *self.result.lock().unwrap() = result;
+        *self.result.lock().unwrap() = result.map(SourceEntries::from);
     }
 }
 
@@ -84,7 +84,7 @@ impl CatalogueSource for FakeSource {
     fn layer(&self) -> SourceLayer {
         self.layer
     }
-    fn load(&self) -> Result<Vec<CatalogueEntry>, String> {
+    fn load(&self) -> Result<SourceEntries, String> {
         self.result.lock().unwrap().clone()
     }
 }
@@ -106,10 +106,12 @@ impl FakeCredentials {
 }
 
 impl CredentialStatusPort for FakeCredentials {
-    fn credential_available(&self, provider: &ProviderDescriptor) -> bool {
+    fn credential_available(&self, entry: &CatalogueEntry) -> bool {
         // The secret stays inside the port: only a boolean ever leaves.
         debug_assert!(!self.secret.is_empty());
-        self.available_for.iter().any(|p| p == provider.id.as_str())
+        self.available_for
+            .iter()
+            .any(|p| p == entry.provider.id.as_str())
     }
 }
 
@@ -333,7 +335,6 @@ fn query_filters_narrow_by_availability() {
     );
     let query = QueryCatalogueUseCase::new(store.clone());
     assert_eq!(query.query(CatalogueQuery::All).entries().len(), 2);
-    assert_eq!(query.query(CatalogueQuery::Known).entries().len(), 2);
     // openai-api is Available-but-not-Runnable (credential missing): it must
     // appear under `Available` and be excluded from `Runnable`.
     let available = query.query(CatalogueQuery::Available);
@@ -429,4 +430,41 @@ fn resolve_rejects_domain_invalid_entries_but_publishes_valid_siblings() {
         resolved.snapshot,
         "publication still happens"
     );
+}
+
+/// Concurrent resolves against one store must never tag two different
+/// publications with the same generation: the increment and publish happen
+/// under one lock.
+#[test]
+fn concurrent_resolves_publish_distinct_generations() {
+    let store = CatalogueSnapshotStore::empty();
+    let generations: Vec<u64> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let store = store.clone();
+                scope.spawn(move || {
+                    let builtin = FakeSource::ok(
+                        "builtin",
+                        SourceLayer::BuiltIn,
+                        vec![entry("openai-api", "gpt-5", "Builtin GPT")],
+                    );
+                    let credentials = FakeCredentials::granting(&["openai-api"]);
+                    ResolveCatalogueUseCase
+                        .resolve_and_publish(&[&builtin], &credentials, &store)
+                        .snapshot
+                        .generation()
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    let mut sorted = generations.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(
+        sorted.len(),
+        8,
+        "duplicate generation published: {generations:?}"
+    );
+    assert_eq!(store.current().generation(), 8);
 }

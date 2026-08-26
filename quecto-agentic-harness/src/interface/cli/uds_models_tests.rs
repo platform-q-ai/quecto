@@ -62,3 +62,44 @@ fn list_models_data_reports_registry_errors() {
     assert_eq!(data["models"].as_array().unwrap().len(), 0);
     assert!(data["error"].as_str().unwrap().contains("failed to parse"));
 }
+
+/// A record the catalogue drops (domain-rejected or unmappable) must surface
+/// as a wire diagnostic instead of silently vanishing from the listing.
+#[test]
+fn list_models_data_surfaces_rejected_and_skipped_records() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"custom":{"api":"openai-completions",
+            "models":[{"id":"good"},{"id":"bad","maxTokens":0},{"id":""}]}}}"#,
+    )
+    .unwrap();
+
+    let data = list_models_data(tmp.path());
+    let models = data["models"].as_array().unwrap();
+    assert!(
+        models
+            .iter()
+            .any(|m| m["model"].as_str() == Some("custom/good")),
+        "valid sibling records must survive"
+    );
+    assert!(
+        !models
+            .iter()
+            .any(|m| m["model"].as_str() == Some("custom/bad"))
+    );
+    let rejected = data["rejected"].as_array().unwrap();
+    assert!(
+        rejected
+            .iter()
+            .any(|r| r["model"].as_str() == Some("custom/bad")
+                && !r["reason"].as_str().unwrap().is_empty()),
+        "domain-rejected entries must carry a diagnostic: {rejected:?}"
+    );
+    assert!(
+        rejected
+            .iter()
+            .any(|r| r["model"].as_str() == Some("custom/")),
+        "unmappable records must carry a diagnostic: {rejected:?}"
+    );
+}

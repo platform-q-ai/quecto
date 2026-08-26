@@ -22,15 +22,20 @@ use crate::infrastructure::model_registry::ModelRegistry;
 pub fn resolve_and_publish_for(base_dir: &Path) -> (CatalogueSnapshotStore, ResolvedCatalogue) {
     let store = snapshot_store_for(base_dir);
     let builtin = BuiltinCatalogueSource;
-    let user_file = ModelsFileCatalogueSource::new(base_dir);
-    // Credential status comes from the same parsed configuration the sources
-    // feed from; a broken file simply configures nothing extra.
-    let file_records =
-        ModelRegistry::load_file_records(&base_dir.join("models.json")).unwrap_or_default();
+    // models.json is read and parsed exactly once per resolve: the same parse
+    // feeds both the user-defined source layer and credential status, so the
+    // published entries and their availability always describe one on-disk
+    // state (and a resolve costs one file read, not two).
+    let file_load = ModelRegistry::load_file_records(&base_dir.join("models.json"))
+        .map_err(|error| error.to_string());
     let builtin_registry = ModelRegistry::builtin();
     let credentials = RegistryCredentialStatus::from_records(
-        builtin_registry.models().iter().chain(&file_records),
+        builtin_registry
+            .models()
+            .iter()
+            .chain(file_load.as_deref().unwrap_or_default()),
     );
+    let user_file = ModelsFileCatalogueSource::preloaded(file_load);
     let resolved =
         ResolveCatalogueUseCase.resolve_and_publish(&[&builtin, &user_file], &credentials, &store);
     (store, resolved)

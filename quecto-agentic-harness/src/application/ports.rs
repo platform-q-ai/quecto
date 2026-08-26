@@ -8,5 +8,5 @@
 
 pub use super::catalogue::{
     CatalogueSnapshotStore, CatalogueSource, CatalogueSourceError, CredentialStatusPort,
-    ResolvedCatalogue, derive_availability,
+    ResolvedCatalogue, SkippedRecord, SourceEntries,
 };

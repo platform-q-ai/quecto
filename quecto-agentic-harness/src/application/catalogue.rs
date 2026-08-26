@@ -9,8 +9,8 @@
 use std::sync::{Arc, RwLock};
 
 use crate::domain::catalogue::{
-    Availability, AvailabilityStatus, CatalogueEntry, CatalogueSnapshot, ProviderDescriptor,
-    RejectedEntry, SourceLayer, TransportKind, UnavailableReason, resolve_catalogue,
+    Availability, AvailabilityStatus, CatalogueEntry, CatalogueSnapshot, RejectedEntry,
+    SourceLayer, TransportKind, UnavailableReason, resolve_catalogue,
 };
 
 /// One named, ordered catalogue input. Infrastructure implements this port;
@@ -20,13 +20,42 @@ pub trait CatalogueSource: Send + Sync {
     fn id(&self) -> &str;
     /// The domain precedence layer this source feeds.
     fn layer(&self) -> SourceLayer;
-    /// Load this source's entries. Parsing stays in infrastructure.
-    fn load(&self) -> Result<Vec<CatalogueEntry>, String>;
+    /// Load this source's entries. Parsing stays in infrastructure. A record
+    /// the source cannot map into a domain entry is reported in
+    /// [`SourceEntries::skipped`] instead of failing the whole layer, so one
+    /// bad record cannot erase its valid neighbours.
+    fn load(&self) -> Result<SourceEntries, String>;
 }
 
-/// Auth availability without exposing secret values.
+/// What one source load yields: the entries that mapped cleanly plus the
+/// records that did not (kept as diagnostics, never silently dropped).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SourceEntries {
+    pub entries: Vec<CatalogueEntry>,
+    pub skipped: Vec<SkippedRecord>,
+}
+
+impl From<Vec<CatalogueEntry>> for SourceEntries {
+    fn from(entries: Vec<CatalogueEntry>) -> Self {
+        Self {
+            entries,
+            skipped: Vec::new(),
+        }
+    }
+}
+
+/// One record a source could not map into a domain entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedRecord {
+    pub record: String,
+    pub error: String,
+}
+
+/// Auth availability without exposing secret values. Judged per entry, not
+/// per provider, matching the legacy per-record `configured` predicate: a key
+/// declared for one model must not mark its siblings configured.
 pub trait CredentialStatusPort: Send + Sync {
-    fn credential_available(&self, provider: &ProviderDescriptor) -> bool;
+    fn credential_available(&self, entry: &CatalogueEntry) -> bool;
 }
 
 /// A source layer that could not be loaded; the layer is skipped so one
@@ -41,21 +70,24 @@ pub struct CatalogueSourceError {
 /// domain rejected, and sources that failed to load.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedCatalogue {
-    pub snapshot: CatalogueSnapshot,
+    pub snapshot: Arc<CatalogueSnapshot>,
     pub rejected: Vec<RejectedEntry>,
     pub source_errors: Vec<CatalogueSourceError>,
+    /// Per-record diagnostics from sources whose other records loaded fine:
+    /// `(source id, skipped record)` pairs surfaced to consumers.
+    pub skipped: Vec<(String, SkippedRecord)>,
 }
 
 /// Atomic holder of the current published snapshot generation.
 #[derive(Debug, Clone)]
 pub struct CatalogueSnapshotStore {
-    current: Arc<RwLock<CatalogueSnapshot>>,
+    current: Arc<RwLock<Arc<CatalogueSnapshot>>>,
 }
 
 impl CatalogueSnapshotStore {
     pub fn new(initial: CatalogueSnapshot) -> Self {
         Self {
-            current: Arc::new(RwLock::new(initial)),
+            current: Arc::new(RwLock::new(Arc::new(initial))),
         }
     }
 
@@ -63,7 +95,9 @@ impl CatalogueSnapshotStore {
         Self::new(CatalogueSnapshot::empty(0))
     }
 
-    pub fn current(&self) -> CatalogueSnapshot {
+    /// The current published generation, shared by reference: a read is a
+    /// refcount bump, never a deep copy of the catalogue.
+    pub fn current(&self) -> Arc<CatalogueSnapshot> {
         // A panic elsewhere must not turn every later catalogue read into a
         // process-killing panic: the snapshot behind a poisoned lock is still
         // a fully published generation (`publish` replaces it wholesale).
@@ -79,7 +113,25 @@ impl CatalogueSnapshotStore {
         *self
             .current
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = snapshot;
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Arc::new(snapshot);
+    }
+
+    /// Resolve and publish the next generation atomically: the write lock is
+    /// held across reading the current generation, building its successor,
+    /// and publishing it, so two concurrent resolves can never publish two
+    /// different snapshots tagged with the same generation.
+    pub fn publish_next<T>(
+        &self,
+        resolve: impl FnOnce(u64) -> (CatalogueSnapshot, T),
+    ) -> (Arc<CatalogueSnapshot>, T) {
+        let mut guard = self
+            .current
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (snapshot, extra) = resolve(guard.generation() + 1);
+        let snapshot = Arc::new(snapshot);
+        *guard = snapshot.clone();
+        (snapshot, extra)
     }
 }
 
@@ -98,9 +150,18 @@ impl ResolveCatalogueUseCase {
     ) -> ResolvedCatalogue {
         let mut layers = Vec::with_capacity(sources.len());
         let mut source_errors = Vec::new();
+        let mut skipped = Vec::new();
         for source in sources {
             match source.load() {
-                Ok(entries) => layers.push((source.layer(), entries)),
+                Ok(loaded) => {
+                    skipped.extend(
+                        loaded
+                            .skipped
+                            .into_iter()
+                            .map(|record| (source.id().to_string(), record)),
+                    );
+                    layers.push((source.layer(), loaded.entries));
+                }
                 Err(error) => source_errors.push(CatalogueSourceError {
                     source: source.id().to_string(),
                     error,
@@ -114,24 +175,31 @@ impl ResolveCatalogueUseCase {
                 snapshot: store.current(),
                 rejected: Vec::new(),
                 source_errors,
+                skipped,
             };
         }
         for (_, entries) in &mut layers {
             for entry in entries {
+                let credential_available = credentials.credential_available(entry);
                 entry.model.availability = derive_availability(
                     entry.provider.transport,
                     transport_has_adapter(entry.provider.transport),
-                    credentials.credential_available(&entry.provider),
+                    credential_available,
                 );
             }
         }
-        let generation = store.current().generation() + 1;
-        let resolution = resolve_catalogue(generation, layers);
-        store.publish(resolution.snapshot.clone());
+        // Read-increment-resolve-publish happens under one write lock so a
+        // concurrent resolve on the same store can never tag a different
+        // snapshot with the same generation.
+        let (snapshot, rejected) = store.publish_next(|generation| {
+            let resolution = resolve_catalogue(generation, layers);
+            (resolution.snapshot, resolution.rejected)
+        });
         ResolvedCatalogue {
-            snapshot: resolution.snapshot,
-            rejected: resolution.rejected,
+            snapshot,
+            rejected,
             source_errors,
+            skipped,
         }
     }
 }
@@ -139,8 +207,10 @@ impl ResolveCatalogueUseCase {
 /// Derived views over one snapshot, narrowing in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CatalogueQuery {
+    /// Everything the catalogue knows — the bottom rung of the availability
+    /// ladder. (A separate `Known` synonym was removed: two names for one
+    /// behaviour can only drift apart.)
     All,
-    Known,
     Available,
     Runnable,
 }
@@ -165,7 +235,7 @@ impl QueryCatalogueUseCase {
             // knows, entries whose status reached at least Available (adapter
             // present, only a credential possibly missing), and entries that
             // can run right now.
-            CatalogueQuery::All | CatalogueQuery::Known => true,
+            CatalogueQuery::All => true,
             CatalogueQuery::Available => {
                 entry.model.availability.status() >= AvailabilityStatus::Available
             }

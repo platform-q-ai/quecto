@@ -6,6 +6,7 @@
 //! list is a projection of this same response, so CLI, UDS, and TUI all render
 //! one snapshot generation.
 
+use crate::application::catalogue::ResolvedCatalogue;
 use crate::application::catalogue::{
     CatalogueQuery, ModelListing, QueryCatalogueUseCase, project_model_listing,
 };
@@ -31,17 +32,54 @@ pub fn list_models_data(base_dir: &std::path::Path) -> serde_json::Value {
     }
     let snapshot = QueryCatalogueUseCase::new(store).query(CatalogueQuery::All);
     let listing = project_model_listing(&snapshot);
-    render_listing(&listing, &snapshot)
+    render_listing(&listing, &snapshot, &resolved)
+}
+
+/// Diagnostics for records the catalogue dropped: entries the domain rejected
+/// after validation plus records a source could not map at all. Rendered on
+/// the wire so a model that vanishes from the listing is never silent.
+fn rejected_diagnostics(resolved: &ResolvedCatalogue) -> Vec<serde_json::Value> {
+    resolved
+        .rejected
+        .iter()
+        .map(|rejection| {
+            serde_json::json!({
+                "model": rejection.entry.reference().qualified_id(),
+                "reason": rejection.error.to_string(),
+            })
+        })
+        .chain(resolved.skipped.iter().map(|(source, record)| {
+            serde_json::json!({
+                "model": record.record,
+                "reason": format!("{source}: {}", record.error),
+            })
+        }))
+        .collect()
 }
 
 /// Render the legacy `list_models` wire shape. Identity, display name, and
 /// configured status come from the shared projection rows; transport, auth,
 /// and capability metadata come from the matching snapshot entries.
-fn render_listing(listing: &ModelListing, snapshot: &CatalogueSnapshot) -> serde_json::Value {
+fn render_listing(
+    listing: &ModelListing,
+    snapshot: &CatalogueSnapshot,
+    resolved: &ResolvedCatalogue,
+) -> serde_json::Value {
+    // Rows are joined to snapshot entries by qualified id, not by position,
+    // so a projection that ever filters or reorders cannot silently pair one
+    // model's identity with another model's metadata.
+    let rows: std::collections::HashMap<&str, &crate::application::catalogue::ModelListingRow> =
+        listing
+            .rows
+            .iter()
+            .map(|row| (row.qualified_id.as_str(), row))
+            .collect();
     serde_json::json!({
         "generation": listing.generation,
-        "models": listing.rows.iter().zip(snapshot.entries()).map(|(row, entry)| {
-            serde_json::json!({
+        "rejected": rejected_diagnostics(resolved),
+        "models": snapshot.entries().iter().filter_map(|entry| {
+            let row = rows.get(entry.reference().qualified_id().as_str())?;
+            Some(serde_json::json!({
                 "provider": entry.reference().provider().as_str(),
                 "id": entry.reference().model().as_str(),
                 "model": row.qualified_id,
@@ -67,7 +105,7 @@ fn render_listing(listing: &ModelListing, snapshot: &CatalogueSnapshot) -> serde
                 },
                 "reasoning": entry.model.capabilities.reasoning,
                 "configured": row.runnable,
-            })
+            }))
         }).collect::<Vec<_>>()
     })
 }

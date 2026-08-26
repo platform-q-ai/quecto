@@ -9,7 +9,8 @@ use std::sync::{Arc, Mutex};
 use super::*;
 use quecto::application::catalogue::{
     CatalogueQuery, CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, ModelListing,
-    QueryCatalogueUseCase, ResolveCatalogueUseCase, ResolvedCatalogue, project_model_listing,
+    QueryCatalogueUseCase, ResolveCatalogueUseCase, ResolvedCatalogue, SourceEntries,
+    project_model_listing,
 };
 use quecto::domain::catalogue::{
     AuthIdentity, Availability, CatalogueEntry, CatalogueSnapshot, ModelCapabilities, ModelCost,
@@ -43,8 +44,8 @@ impl CatalogueSource for AppFakeSource {
     fn layer(&self) -> SourceLayer {
         self.layer
     }
-    fn load(&self) -> Result<Vec<CatalogueEntry>, String> {
-        self.result.lock().unwrap().clone()
+    fn load(&self) -> Result<SourceEntries, String> {
+        self.result.lock().unwrap().clone().map(SourceEntries::from)
     }
 }
 
@@ -54,10 +55,10 @@ struct AppFakeCredentials {
 }
 
 impl CredentialStatusPort for AppFakeCredentials {
-    fn credential_available(&self, provider: &ProviderDescriptor) -> bool {
+    fn credential_available(&self, entry: &CatalogueEntry) -> bool {
         // The secret stays inside the port: only a boolean ever leaves.
         let _secret_never_leaves = &self.secret;
-        !self.denied.iter().any(|p| p == provider.id.as_str())
+        !self.denied.iter().any(|p| p == entry.provider.id.as_str())
     }
 }
 
@@ -106,7 +107,6 @@ fn app_layer(name: &str) -> SourceLayer {
 fn app_filter(name: &str) -> CatalogueQuery {
     match name {
         "all" => CatalogueQuery::All,
-        "known" => CatalogueQuery::Known,
         "available" => CatalogueQuery::Available,
         "runnable" => CatalogueQuery::Runnable,
         other => panic!("unknown filter '{other}'"),
