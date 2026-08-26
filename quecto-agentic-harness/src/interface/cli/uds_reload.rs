@@ -180,13 +180,10 @@ pub(super) async fn handle_refresh_models(
         {
             Some(Ok(result)) => {
                 apply_provider_reload_result(ctx, Some(result));
-                let event = if any_failed {
-                    // A short sentence for the user; the per-source detail stays
-                    // structured rather than being rendered as a JSON blob.
-                    AgentEvent::err(id, type_name, refresh_failure_message(&outcomes))
-                } else {
-                    AgentEvent::ok(id, type_name, Some(data))
-                };
+                // Something did refresh and the runtime swapped, so this is a
+                // success that reports what failed alongside it — not a failure
+                // that hides the change the user asked for.
+                let event = AgentEvent::ok(id, type_name, Some(data));
                 emit_event_to_broadcast_or_writer(ctx, &event).await;
             }
             // Discovery already persisted what it refreshed, so the per-source

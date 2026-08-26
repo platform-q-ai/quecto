@@ -113,7 +113,12 @@ impl TransportKind {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AuthIdentity {
     ApiKey,
-    OAuth { provider: ProviderId },
+    /// An OAuth identity. `provider` is the credential provider the entry names;
+    /// `None` when the entry declares OAuth without naming one, which is a
+    /// misconfiguration consumers must be able to see rather than infer.
+    OAuth {
+        provider: Option<ProviderId>,
+    },
 }
 
 impl AuthIdentity {
@@ -127,7 +132,7 @@ impl AuthIdentity {
     pub fn oauth_provider(&self) -> Option<&ProviderId> {
         match self {
             Self::ApiKey => None,
-            Self::OAuth { provider } => Some(provider),
+            Self::OAuth { provider } => provider.as_ref(),
         }
     }
 }

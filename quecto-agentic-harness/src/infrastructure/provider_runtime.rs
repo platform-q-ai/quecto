@@ -1,6 +1,5 @@
 use crate::domain::provider::LlmProvider;
 use crate::infrastructure::auth::credential_store::CredentialStore;
-use crate::infrastructure::catalogue_registry::record_to_descriptor_with_credential;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::providers;
 use crate::infrastructure::providers::refreshable::{RefreshableConfig, RefreshableProvider};
@@ -29,9 +28,13 @@ impl<'a> crate::application::ports::ProviderRuntimeFactory<Config, ProviderRunti
 #[path = "provider_runtime_credentials.rs"]
 pub(crate) mod credentials;
 
+#[path = "provider_runtime_descriptors.rs"]
+mod descriptors;
+
+use descriptors::{DescriptorInputs, catalogue_descriptors};
+
 use credentials::{
-    explicit_endpoint_owns_registry_route, registry_api_key, registry_model_credential_available,
-    registry_provider_can_construct,
+    explicit_endpoint_owns_registry_route, registry_api_key, registry_provider_can_construct,
 };
 
 pub(crate) fn build_agent_provider(
@@ -255,7 +258,6 @@ fn compose_agent_provider(
         {
             continue;
         }
-        seen_registry_prefixes.insert(canonical_prefix.clone());
         if explicit_endpoint_owns_registry_route(
             model,
             &configured_endpoint_prefixes,
@@ -287,37 +289,22 @@ fn compose_agent_provider(
         else {
             continue;
         };
+        // The prefix is claimed only once a provider is actually built, so a
+        // credential-less record cannot consume the prefix and hide a later
+        // record (a user model added under a built-in prefix) that can build.
         // A constructed provider owns its prefix, built-in or not, so a later
         // endpoint declaring the same prefix is reported as the duplicate it is
         // rather than producing two providers of one name.
+        seen_registry_prefixes.insert(canonical_prefix.clone());
         custom_prefixes.insert(canonical_prefix);
         provider_list.push(provider);
     }
-    for endpoint in &config.providers.openai_compatible.endpoints {
-        if endpoint.api_key.is_empty() {
-            continue;
-        }
-        let prefix = endpoint.prefix.trim();
-        if prefix.is_empty() || endpoint.api_base.trim().is_empty() {
-            return Err("openai_compatible endpoint requires prefix and api_base".to_string());
-        }
-        let canonical_prefix = prefix.to_ascii_lowercase();
-        if !custom_prefixes.insert(canonical_prefix) {
-            return Err(format!(
-                "duplicate openai_compatible/provider prefix '{}'",
-                prefix
-            ));
-        }
-        let provider = providers::create_openai_compatible_provider(
-            &endpoint.prefix,
-            endpoint.api_key.clone(),
-            endpoint.api_base.clone(),
-            endpoint.allow_remote_http,
-            http_client.clone(),
-        )
-        .map_err(|e| format!("openai_compatible provider configuration error: {}", e))?;
-        provider_list.push(provider);
-    }
+    append_endpoint_providers(
+        config,
+        http_client,
+        &mut custom_prefixes,
+        &mut provider_list,
+    )?;
     let runtime_model_descriptors = catalogue_descriptors(&DescriptorInputs {
         model_registry: &model_registry,
         credentials: &credentials,
@@ -342,67 +329,51 @@ fn compose_agent_provider(
         RetryConfig::default(),
     )))
 }
-/// What the catalogue projection of one composition needs to derive each
-/// record's availability.
-struct DescriptorInputs<'a> {
-    model_registry: &'a crate::infrastructure::model_registry::ModelRegistry,
-    credentials: &'a credentials::CredentialSnapshot,
-    config: &'a Config,
-    canonical_registry_prefixes: &'a HashSet<String>,
-    configured_endpoint_prefixes: &'a HashSet<String>,
-    constructible_registry_prefixes: &'a HashSet<String>,
-    /// Names of the providers actually constructed, lowercased. Availability is
-    /// reconciled against this rather than predicted, so an entry the runtime
-    /// declined to build cannot be published as runnable.
-    constructed_provider_names: &'a HashSet<String>,
-    has_openai_api_key: bool,
-    has_anthropic_api_key: bool,
-}
 
-/// Project the registry into domain descriptors, recording for each entry why
-/// the runtime could not serve it.
-fn catalogue_descriptors(
-    inputs: &DescriptorInputs<'_>,
-) -> Result<Vec<crate::domain::catalogue::ModelDescriptor>, String> {
-    let mut runtime_model_descriptors = Vec::new();
-    for model in inputs.model_registry.models() {
-        let credential_available =
-            registry_model_credential_available(model, inputs.credentials, inputs.config)?;
-        if let Some(mut descriptor) =
-            record_to_descriptor_with_credential(model, Some(credential_available))?
-        {
-            let canonical_provider = model.provider.to_ascii_lowercase();
-            let is_canonical_owner = inputs.canonical_registry_prefixes.contains(&model.provider);
-            let has_direct_runtime = is_canonical_owner
-                && inputs
-                    .constructed_provider_names
-                    .contains(&canonical_provider)
-                && ((canonical_provider == "openai-api" && inputs.has_openai_api_key)
-                    || (canonical_provider == "anthropic-api" && inputs.has_anthropic_api_key)
-                    || inputs
-                        .configured_endpoint_prefixes
-                        .contains(&canonical_provider)
-                    || inputs
-                        .constructible_registry_prefixes
-                        .contains(&canonical_provider));
-            if !is_canonical_owner || !has_direct_runtime {
-                // Keep the reasons derived from the catalogue entry (an
-                // unimplemented transport, a missing credential) and add why the
-                // runtime skipped it, so availability stays a complete account.
-                let mut reasons = descriptor.availability.reasons().to_vec();
-                let skipped = crate::domain::catalogue::UnavailableReason::InvalidConfiguration(
-                    "provider skipped during runtime construction".to_string(),
-                );
-                if !reasons.contains(&skipped) {
-                    reasons.push(skipped);
-                }
-                descriptor.availability =
-                    crate::domain::catalogue::Availability::KnownButUnavailable { reasons };
-            }
-            runtime_model_descriptors.push(descriptor);
+/// Construct the explicitly configured OpenAI-compatible endpoint providers,
+/// rejecting a prefix that is reserved or already owned by another definition.
+fn append_endpoint_providers(
+    config: &Config,
+    http_client: &reqwest::Client,
+    custom_prefixes: &mut HashSet<String>,
+    provider_list: &mut Vec<Arc<dyn LlmProvider>>,
+) -> Result<(), String> {
+    for endpoint in &config.providers.openai_compatible.endpoints {
+        if endpoint.api_key.is_empty() {
+            continue;
         }
+        let prefix = endpoint.prefix.trim();
+        if prefix.is_empty() || endpoint.api_base.trim().is_empty() {
+            return Err("openai_compatible endpoint requires prefix and api_base".to_string());
+        }
+        let canonical_prefix = prefix.to_ascii_lowercase();
+        // A reserved prefix was never the user's to configure twice: say it is
+        // reserved rather than reporting a duplicate they did not create.
+        if providers::RESERVED_PROVIDER_PREFIXES
+            .iter()
+            .any(|reserved| reserved.eq_ignore_ascii_case(prefix))
+        {
+            return Err(format!(
+                "openai_compatible prefix '{prefix}' is reserved for a built-in provider"
+            ));
+        }
+        if !custom_prefixes.insert(canonical_prefix) {
+            return Err(format!(
+                "duplicate openai_compatible/provider prefix '{}'",
+                prefix
+            ));
+        }
+        let provider = providers::create_openai_compatible_provider(
+            &endpoint.prefix,
+            endpoint.api_key.clone(),
+            endpoint.api_base.clone(),
+            endpoint.allow_remote_http,
+            http_client.clone(),
+        )
+        .map_err(|e| format!("openai_compatible provider configuration error: {}", e))?;
+        provider_list.push(provider);
     }
-    Ok(runtime_model_descriptors)
+    Ok(())
 }
 
 fn ensure_providers_configured(

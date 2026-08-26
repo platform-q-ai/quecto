@@ -117,6 +117,9 @@ fn refresh_all_from_models_json(
 fn is_unsupported_refresh_error(error: &str) -> bool {
     error.contains("is not an openai-completions provider")
         || error.contains("uses oauth auth, which models discover does not support")
+        // A metadata-only override (models added to a built-in provider) has no
+        // endpoint of its own to query: nothing to discover, not a failure.
+        || error.contains("is missing baseUrl")
 }
 
 pub(crate) fn discover_once(base_dir: &Path, provider_key: &str) -> Result<usize, String> {
@@ -157,7 +160,8 @@ where
         .get("allowRemoteHttp")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let url = discover_models_url(provider_key, base_url, allow_remote_http)?;
+    // Asked before the URL policy: an OAuth provider is unsupported by discovery
+    // whatever its base URL looks like, and must be skipped rather than failed.
     if provider
         .get("auth")
         .and_then(|auth| auth.get("mode"))
@@ -168,6 +172,7 @@ where
             "provider '{provider_key}' uses oauth auth, which models discover does not support"
         ));
     }
+    let url = discover_models_url(provider_key, base_url, allow_remote_http)?;
     let auth = provider
         .get("auth")
         .and_then(|auth| auth.get("apiKey"))

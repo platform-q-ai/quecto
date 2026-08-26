@@ -126,14 +126,13 @@ pub async fn force_provider_reload(
     let (Some(reload), Some(inputs)) = (reload, inputs) else {
         return None;
     };
+    // Re-seed the change gate before reading the sources, so a forced rebuild
+    // does not make the next poll repeat it for content it already observed —
+    // while a write that lands during the rebuild is still seen by that poll.
+    reload.sources_changed();
     match inputs.rebuild_blocking().await {
         Ok(mut runtime) => {
             runtime.catalogue.generation = next_generation(reload);
-            // A forced rebuild has already observed the current sources (a
-            // refresh just rewrote `models.json`). Re-seed the change gate so the
-            // next poll does not rebuild the whole runtime a second time for the
-            // same content.
-            reload.sources_changed();
             Some(Ok(reload.record_reloaded(runtime)))
         }
         Err(err) => {

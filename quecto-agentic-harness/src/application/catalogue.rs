@@ -207,13 +207,16 @@ impl ResolveModelSelectionUseCase {
     }
 }
 
-/// The per-model limits an active model string resolves to in one snapshot:
-/// `(output cap, context window)`, each `None` when not explicitly declared or
-/// when the model does not resolve to a runnable entry. Startup, REPL, model
+/// The per-model limits a qualified model reference declares in one snapshot:
+/// `(output cap, context window)`, each `None` when not explicitly declared. Startup, REPL, model
 /// switching and reload all read limits through this one rule so a session
 /// cannot silently gain or lose a clamp.
 pub fn model_limits_in(snapshot: &CatalogueSnapshot, model: &str) -> (Option<u32>, Option<usize>) {
-    let Ok(reference) = resolve_model_reference(snapshot, model) else {
+    // Only a qualified `provider/model` reference clamps. A bare name is routed
+    // by the runtime to its first provider, which need not be the provider whose
+    // catalogue entry a bare lookup would find, and applying that entry's limits
+    // would clamp a session by a model it is not talking to.
+    let Ok(reference) = ModelRef::parse_qualified(model) else {
         return (None, None);
     };
     let Some(descriptor) = snapshot.find(&reference) else {

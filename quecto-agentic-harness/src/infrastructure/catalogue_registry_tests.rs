@@ -89,7 +89,7 @@ fn registry_source_keeps_auth_identity_separate_and_marks_missing_runtime_capabi
     assert_eq!(
         anthropic.auth,
         AuthIdentity::OAuth {
-            provider: crate::domain::catalogue::ProviderId::new("anthropic").unwrap()
+            provider: Some(crate::domain::catalogue::ProviderId::new("anthropic").unwrap())
         }
     );
     assert_eq!(
@@ -201,4 +201,27 @@ fn user_layer_reports_malformed_models_json_and_is_empty_without_the_file() {
         Err(error) => error,
     };
     assert!(!error.is_empty());
+}
+
+#[test]
+fn an_oauth_entry_without_a_named_provider_reports_none_rather_than_the_key() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"anthropic-oauth":{"api":"anthropic-messages","auth":{"mode":"oauth"},"models":[{"id":"claude"}]}}}"#,
+    )
+    .unwrap();
+    let source =
+        ModelRegistryCatalogueSource::load_from_path(&tmp.path().join("models.json")).unwrap();
+
+    let model = source
+        .load_valid_descriptors()
+        .unwrap()
+        .into_iter()
+        .find(|model| model.qualified_id() == "anthropic-oauth/claude")
+        .expect("the entry is listed");
+
+    // The entry is misconfigured; projecting the provider key as if it had been
+    // declared would hide that from a client checking for a named provider.
+    assert_eq!(model.auth, AuthIdentity::OAuth { provider: None });
 }

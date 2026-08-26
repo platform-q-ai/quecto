@@ -420,7 +420,7 @@ fn swap_provider_clears_stale_limits_when_descriptors_are_absent() {
 }
 
 #[test]
-fn swap_runtime_keeps_limits_for_a_bare_model_name_resolved_from_the_catalogue() {
+fn swap_runtime_does_not_invent_limits_for_a_bare_model_name() {
     let provider = Arc::new(DescriptorProvider {
         descriptors: vec![descriptor_model(100, 1_000)],
     });
@@ -458,6 +458,8 @@ fn swap_runtime_keeps_limits_for_a_bare_model_name_resolved_from_the_catalogue()
         },
     );
 
-    assert_eq!(agent.model_max_tokens, Some(250));
-    assert_eq!(agent.model_context_window, Some(4_000));
+    // A bare name carries no clamp at startup either, so a reload cannot change
+    // one silently: the session keeps exactly what it began with.
+    assert_eq!(agent.model_max_tokens, None);
+    assert_eq!(agent.model_context_window, None);
 }

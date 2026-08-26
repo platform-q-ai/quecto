@@ -96,13 +96,10 @@ pub fn record_to_descriptor_with_credential(
     let auth = match record.auth {
         AuthMode::ApiKey => AuthIdentity::ApiKey,
         AuthMode::OAuth => AuthIdentity::OAuth {
-            provider: ProviderId::new(
-                record
-                    .oauth_provider
-                    .clone()
-                    .unwrap_or_else(|| provider.as_str().to_string()),
-            )
-            .map_err(|e| e.to_string())?,
+            provider: match record.oauth_provider.clone() {
+                Some(provider) => Some(ProviderId::new(provider).map_err(|e| e.to_string())?),
+                None => None,
+            },
         },
     };
     let credential_available = credential_available_override.unwrap_or_else(|| match record.auth {

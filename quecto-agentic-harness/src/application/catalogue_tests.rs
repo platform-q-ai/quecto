@@ -98,7 +98,7 @@ fn derive_availability_keeps_transport_and_credentials_as_derived_runtime_status
 #[test]
 fn oauth_auth_identity_preserves_auth_billing_provider_identity() {
     let id = AuthIdentity::OAuth {
-        provider: ProviderId::new("openai").unwrap(),
+        provider: Some(ProviderId::new("openai").unwrap()),
     };
 
     assert_eq!(id.stable_id(), "oauth");
@@ -340,7 +340,7 @@ fn a_query_projection_keeps_the_snapshot_open_providers() {
 }
 
 #[test]
-fn model_limits_follow_one_rule_for_qualified_bare_and_unrunnable_models() {
+fn model_limits_apply_only_to_qualified_references() {
     use crate::domain::catalogue::ProviderId;
 
     let mut explicit = descriptor("fireworks", "glm", true);
@@ -358,13 +358,14 @@ fn model_limits_follow_one_rule_for_qualified_bare_and_unrunnable_models() {
     );
     assert_eq!(
         model_limits_in(&snapshot, "glm"),
-        (Some(512), Some(2048)),
-        "a bare name resolves the same way startup, switching and reload do"
+        (None, None),
+        "a bare name is routed to the runtime's first provider, so no catalogue \
+         entry's limits may be applied to it"
     );
     assert_eq!(
         model_limits_in(&snapshot, "google/gemini"),
         (None, None),
-        "an entry the runtime cannot serve clamps nothing"
+        "this entry declares no explicit limits"
     );
     assert_eq!(model_limits_in(&snapshot, "nope/never"), (None, None));
 

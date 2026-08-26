@@ -2,3 +2,6 @@
 *.swp
 *.swo
 .env
+
+# Local agent working state (python lab scratch, runtime artefacts)
+.quecto/

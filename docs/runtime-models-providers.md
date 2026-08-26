@@ -26,4 +26,4 @@ Implement infrastructure loading/refresh behind the application refresh and comp
 
 ## Consumer contract
 
-Startup and reload use the same runtime composer. Listing and model selection read the same effective catalogue generation. Unknown or unavailable models are rejected without changing the session. The TUI requests `/models` and never maintains fallback model metadata.
+Startup and reload use the same runtime composer. Listing and model selection read the same effective catalogue generation. Selecting a model records it and reports why it cannot currently run, rather than refusing the switch; the session keeps working with what the runtime can route. The TUI requests `/models` and never maintains fallback model metadata.

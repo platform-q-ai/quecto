@@ -61,7 +61,7 @@ fn stable_ids_empty_snapshots_and_lookup_ports_are_explicit() {
 
     assert_eq!(AuthIdentity::ApiKey.stable_id(), "apiKey");
     let oauth = AuthIdentity::OAuth {
-        provider: ProviderId::new("anthropic-oauth").unwrap(),
+        provider: Some(ProviderId::new("anthropic-oauth").unwrap()),
     };
     assert_eq!(oauth.stable_id(), "oauth");
     assert_eq!(

@@ -140,7 +140,7 @@ fn list_models_data_serializes_oauth_anthropic_and_google_metadata() {
                 "anthropic-api",
                 "claude-oauth",
                 AuthIdentity::OAuth {
-                    provider: ProviderId::new("anthropic").unwrap(),
+                    provider: Some(ProviderId::new("anthropic").unwrap()),
                 },
             )
             .with_transport(TransportKind::AnthropicMessages),

@@ -200,8 +200,9 @@ fn runtime_rejects_openai_compatible_collision_with_every_builtin_prefix() {
             &format!("{prefix} must be reserved before router construction"),
         );
         assert!(
-            err.contains("duplicate openai_compatible/provider prefix"),
-            "{prefix}: {err}"
+            err.contains("is reserved for a built-in provider"),
+            "a reserved prefix is reported as reserved, not as a duplicate the \
+             user created — {prefix}: {err}"
         );
     }
 }
@@ -510,5 +511,34 @@ fn an_endpoint_repeating_a_builtin_provider_name_reports_a_duplicate_prefix() {
     assert!(
         error.contains("duplicate openai_compatible/provider prefix 'openai-api'"),
         "the collision must be reported as configuration, not as a router invariant: {error}"
+    );
+}
+
+#[test]
+fn a_credential_less_record_does_not_hide_a_later_buildable_one_for_the_same_prefix() {
+    use crate::infrastructure::config::Config;
+    use crate::infrastructure::provider_runtime::build_agent_provider;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    // A user adding a model under a built-in prefix: the shipped, credential-less
+    // records for that prefix are iterated first and must not claim it.
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"http://127.0.0.1:9/v1","auth":{"mode":"apiKey","apiKey":"sk-fw"},"models":[{"id":"accounts/fireworks/models/brand-new"}]}}}"#,
+    )
+    .unwrap();
+
+    let runtime = build_agent_provider(&Config::default(), tmp.path(), &reqwest::Client::new())
+        .expect("the keyed record for the prefix must still build");
+    let model = runtime
+        .model_descriptors()
+        .unwrap()
+        .iter()
+        .find(|model| model.qualified_id() == "fireworks/accounts/fireworks/models/brand-new")
+        .expect("the user's model is listed");
+    assert!(
+        model.availability.runnable(),
+        "a keyed record reached construction: {:?}",
+        model.availability
     );
 }
