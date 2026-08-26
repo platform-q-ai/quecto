@@ -210,7 +210,49 @@ pub struct ModelCapabilities {
     pub max_output_tokens_explicit: bool,
     /// Whether the model supports reasoning/effort controls.
     pub reasoning: bool,
+    /// The reasoning-effort vocabulary this model accepts, in ascending
+    /// order, as API string values (epic #1193, slice 6). Canonical
+    /// capability metadata: every listing/selection surface projects this
+    /// field instead of re-deriving a vocabulary of its own.
+    pub effort_levels: Vec<String>,
     pub cost: ModelCost,
+}
+
+impl ModelCapabilities {
+    /// The canonical reasoning-effort vocabulary for a model reference
+    /// (`provider/model-id`, or a bare model id).
+    ///
+    /// This is the single domain rule that seeds `effort_levels` in
+    /// catalogue metadata. Consumers holding a snapshot read the field;
+    /// surfaces keyed only by an active model string (session state, spawn
+    /// argument validation, open-router ids the catalogue cannot enumerate)
+    /// call this same rule, so every surface speaks one vocabulary.
+    pub fn effort_vocabulary_for(reference: &str) -> Vec<String> {
+        crate::domain::provider::EffortLevel::levels_for_model(reference)
+            .iter()
+            .map(|level| level.as_str().to_string())
+            .collect()
+    }
+
+    /// Parse and validate an effort string against `reference`'s vocabulary.
+    ///
+    /// The one shared membership check (and error message) for every surface
+    /// that accepts an effort string for a known model — UDS `set_effort` and
+    /// spawn-argument validation both call this, so they cannot drift.
+    pub fn parse_effort_for(
+        reference: &str,
+        effort: &str,
+    ) -> Result<crate::domain::provider::EffortLevel, String> {
+        let valid = Self::effort_vocabulary_for(reference);
+        crate::domain::provider::EffortLevel::parse(effort)
+            .filter(|level| valid.iter().any(|v| v == level.as_str()))
+            .ok_or_else(|| {
+                format!(
+                    "invalid effort level \"{effort}\"; valid levels: {}",
+                    valid.join(", ")
+                )
+            })
+    }
 }
 
 /// Why a known model is not runnable.

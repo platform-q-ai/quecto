@@ -43,10 +43,8 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
     // model switch re-clamps subsequent turns and the pruning budget; one
     // registry load feeds both, and set_model takes them atomically so model,
     // cap, and window can never diverge.
-    let (cap, window) = crate::interface::cli::catalogue_bridge::model_limits_from_base_dir(
-        ctx.base_dir,
-        &resolved_model,
-    );
+    let (cap, window) =
+        crate::interface::catalogue_runtime::published_model_limits(ctx.base_dir, &resolved_model);
     // #1573: surface the catalogue's structured selection outcome for the
     // requested model through the UDS response. The switch itself proceeds
     // regardless (open router prefixes accept ids the catalogue cannot
@@ -130,10 +128,11 @@ pub(super) async fn handle_set_effort(
     type_name: &str,
     effort: &str,
 ) -> bool {
-    use crate::domain::provider::EffortLevel;
-    let valid = EffortLevel::levels_for_model(ctx.session.model());
-    let ev = match EffortLevel::parse(effort).filter(|level| valid.contains(level)) {
-        Some(level) => {
+    let ev = match crate::domain::catalogue::ModelCapabilities::parse_effort_for(
+        ctx.session.model(),
+        effort,
+    ) {
+        Ok(level) => {
             if ctx.agent.effort() != Some(level) {
                 ctx.agent.set_effort(level);
                 ctx.session.bump_visible_generation();
@@ -145,14 +144,7 @@ pub(super) async fn handle_set_effort(
                 Some(serde_json::json!({ "effort": level.as_str() })),
             )
         }
-        None => AgentEvent::err(
-            id,
-            type_name,
-            format!(
-                "invalid effort level \"{effort}\"; valid levels: {}",
-                EffortLevel::levels_list(valid)
-            ),
-        ),
+        Err(message) => AgentEvent::err(id, type_name, message),
     };
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
