@@ -3,7 +3,7 @@ use super::{DispatchCtx, emit_event_to_broadcast_or_writer};
 use crate::application::catalogue::{
     ResolveModelSelectionUseCase, SelectionFailure, resolve_model_reference,
 };
-use crate::domain::catalogue::UnavailableReason;
+use crate::domain::catalogue::{ModelRef, UnavailableReason};
 
 pub(super) struct SetModelArgs {
     pub(super) id: Option<String>,
@@ -114,6 +114,12 @@ fn describe_selection(
     snapshot: &crate::domain::catalogue::CatalogueSnapshot,
     model: &str,
 ) -> Option<String> {
+    // A bare name is routed by the runtime to its first provider, not resolved
+    // through the catalogue, so the catalogue cannot say whether it will work —
+    // and must not claim it will not.
+    if ModelRef::parse_qualified(model).is_err() {
+        return None;
+    }
     match resolve_model_reference(snapshot, model) {
         Err(failure) => Some(unresolved_model_message(model, failure)),
         // Resolved against the snapshot already in hand: this runs on every model

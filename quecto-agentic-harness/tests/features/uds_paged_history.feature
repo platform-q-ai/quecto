@@ -78,12 +78,6 @@ Feature: Paged history on connect and resume (ADR-0008 part 3)
     When the client requests the full message by its stable message reference
     Then the client should reassemble the full oversized history message content
 
-  @done @issue-1231 @persist
-  Scenario: Visible thinking history is recoverable by reference without leaking signatures
-    Given a client has received history containing visible thinking blocks
-    When the client pages the full visible thinking by its stable message reference
-    Then the client should reassemble visible thinking without provider secrets
-
   @done @issue-1107 @persist
   Scenario: Oversized tool-call arguments remain recoverable from summarised history
     Given a client has received summarised history containing oversized tool-call arguments

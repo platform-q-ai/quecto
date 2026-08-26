@@ -50,7 +50,18 @@ pub(super) async fn poll_provider_reload_for_ctx(ctx: &mut DispatchCtx<'_>) {
     .await;
     match result {
         Some(Ok(result)) => apply_provider_reload_result(ctx, Some(result)),
-        Some(Err(error)) => ctx.agent.set_catalogue_error(Some(error)),
+        Some(Err(error)) => {
+            // The cause may lie outside the watched sources (an unreadable
+            // credential store, a transient endpoint), so retry once: forget the
+            // fingerprints only on the first failure. A persistent failure then
+            // settles instead of rebuilding the runtime on every command.
+            if ctx.agent.catalogue_error().is_none()
+                && let Some(reload) = ctx.provider_reload.as_deref_mut()
+            {
+                reload.invalidate_sources();
+            }
+            ctx.agent.set_catalogue_error(Some(error));
+        }
         None => {}
     }
 }
@@ -103,6 +114,10 @@ fn refresh_failure_message(outcomes: &[CatalogueRefreshOutcome]) -> String {
     format!("catalogue refresh failed for {}", failed.join("; "))
 }
 
+/// How long a `refresh_models` command may hold the dispatch loop before the
+/// connection is released and the refresh continues without it.
+const DISPATCH_REFRESH_LIMIT: std::time::Duration = std::time::Duration::from_secs(20);
+
 pub(super) async fn handle_refresh_models(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
@@ -121,7 +136,12 @@ pub(super) async fn handle_refresh_models(
     let provider = provider
         .filter(|p| !p.trim().is_empty())
         .map(str::to_string);
-    let outcomes = match tokio::task::spawn_blocking(move || {
+    // The dispatch loop serves one command at a time, so discovery must never
+    // hold it for longer than a user would wait for any other command. The
+    // blocking work is bounded here rather than only inside the adapter: if it
+    // overruns, the loop is released and the detached thread finishes writing
+    // whatever it had already fetched.
+    let refresh = tokio::task::spawn_blocking(move || {
         let refresh_port = ModelsJsonCatalogueRefreshAdapter::new(base_dir);
         let use_case = RefreshCatalogueSourceUseCase::new();
         if let Some(provider) = provider {
@@ -129,17 +149,32 @@ pub(super) async fn handle_refresh_models(
         } else {
             use_case.refresh_all(&refresh_port)
         }
-    })
-    .await
-    {
-        Ok(outcomes) => outcomes,
-        Err(err) => {
+    });
+    let outcomes = match tokio::time::timeout(DISPATCH_REFRESH_LIMIT, refresh).await {
+        Ok(Ok(outcomes)) => outcomes,
+        Ok(Err(err)) => {
             emit_event_to_broadcast_or_writer(
                 ctx,
                 &AgentEvent::err(
                     id,
                     type_name,
                     format!("catalogue refresh task failed: {err}"),
+                ),
+            )
+            .await;
+            return false;
+        }
+        Err(_) => {
+            emit_event_to_broadcast_or_writer(
+                ctx,
+                &AgentEvent::err(
+                    id,
+                    type_name,
+                    format!(
+                        "catalogue refresh is still running after {}s; it will finish in the \
+                         background — reopen the model list to see the result",
+                        DISPATCH_REFRESH_LIMIT.as_secs()
+                    ),
                 ),
             )
             .await;

@@ -51,7 +51,8 @@ fn compose_agent_provider(
     http_client: &reqwest::Client,
 ) -> Result<Arc<dyn LlmProvider>, String> {
     let store = CredentialStore::new(base_dir);
-    // One read of the credential store serves the whole composition.
+    // One read of the credential store serves every credential question in this
+    // composition, so a rotation midway cannot make two decisions disagree.
     let credentials = credentials::CredentialSnapshot::load(&store)?;
     let mut provider_list: Vec<Arc<dyn crate::domain::provider::LlmProvider>> = Vec::new();
     let store_arc = Arc::new(CredentialStore::new(base_dir));
@@ -64,10 +65,9 @@ fn compose_agent_provider(
     let openai_api_key = if !config.providers.openai.api_key.is_empty() {
         config.providers.openai.api_key.clone()
     } else {
-        store
+        credentials
             .get("openai")
-            .ok()
-            .flatten()
+            .cloned()
             .filter(|c| {
                 c.method == crate::infrastructure::auth::credential_store::AuthMethod::Token
             })
@@ -94,10 +94,10 @@ fn compose_agent_provider(
             .map_err(|e| format!("openai-api provider configuration error: {}", e))?,
         );
     }
-    if let Some(openai_oauth_cred) =
-        store.get("openai").ok().flatten().filter(|c| {
-            c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
-        })
+    if let Some(openai_oauth_cred) = credentials
+        .get("openai")
+        .cloned()
+        .filter(|c| c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth)
     {
         let openai_oauth_key = openai_oauth_cred.token;
         if !openai_oauth_key.is_empty() {
@@ -131,10 +131,9 @@ fn compose_agent_provider(
     let anthropic_api_key = if !config.providers.anthropic.api_key.is_empty() {
         config.providers.anthropic.api_key.clone()
     } else {
-        store
+        credentials
             .get("anthropic")
-            .ok()
-            .flatten()
+            .cloned()
             .filter(|c| {
                 c.method == crate::infrastructure::auth::credential_store::AuthMethod::Token
             })
@@ -167,10 +166,10 @@ fn compose_agent_provider(
             );
         }
     }
-    if let Some(anthropic_oauth_cred) =
-        store.get("anthropic").ok().flatten().filter(|c| {
-            c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
-        })
+    if let Some(anthropic_oauth_cred) = credentials
+        .get("anthropic")
+        .cloned()
+        .filter(|c| c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth)
     {
         let anthropic_oauth_key = anthropic_oauth_cred.token;
         if !anthropic_oauth_key.is_empty() {
@@ -587,7 +586,7 @@ fn build_registry_provider(
                     model.provider, oauth_provider
                 ));
             }
-            let Some(cred) = store.get(oauth_provider).map_err(|e| e.to_string())? else {
+            let Some(cred) = credentials.get(oauth_provider).cloned() else {
                 return Ok(None);
             };
             if cred.method != crate::infrastructure::auth::credential_store::AuthMethod::OAuth {

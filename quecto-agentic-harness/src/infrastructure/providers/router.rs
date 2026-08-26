@@ -32,6 +32,12 @@ pub struct ProviderRouter {
 impl ProviderRouter {
     /// Create a new router from an ordered list of providers.
     /// The first provider is the default for bare model names.
+    ///
+    /// Panics on case-insensitively duplicate provider names, so it is available
+    /// to tests only; production composition uses
+    /// [`Self::try_with_model_descriptors`], which reports the collision as a
+    /// startup error.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new(providers: Vec<Arc<dyn LlmProvider>>) -> Self {
         let model_descriptors = aggregate_provider_model_descriptors(&providers);
         Self::with_model_descriptors(providers, model_descriptors)
@@ -40,6 +46,7 @@ impl ProviderRouter {
     /// Construction with the router's uniqueness invariant enforced as a panic.
     /// Production composition uses [`Self::try_with_model_descriptors`], which
     /// reports the collision as a startup error instead of aborting.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn with_model_descriptors(
         providers: Vec<Arc<dyn LlmProvider>>,
         model_descriptors: Vec<ModelDescriptor>,
@@ -144,6 +151,15 @@ impl ProviderRouter {
                                     .find(|p| p.name().eq_ignore_ascii_case(owner))
                             })
                             .flatten()
+                    })
+                    .or_else(|| {
+                        // The historical `openai-codex` → `codex` alias maps two
+                        // different names, not two spellings of one, so it applies
+                        // even when the catalogue entry itself cannot run.
+                        self.providers.iter().find(|p| {
+                            !p.name().eq_ignore_ascii_case(owner)
+                                && provider_prefix_matches(owner, p.name())
+                        })
                     });
                 if let Some(provider) = owned {
                     return Ok((provider, bare_model));
@@ -174,6 +190,7 @@ impl ProviderRouter {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn aggregate_provider_model_descriptors(
     providers: &[Arc<dyn LlmProvider>],
 ) -> Vec<ModelDescriptor> {

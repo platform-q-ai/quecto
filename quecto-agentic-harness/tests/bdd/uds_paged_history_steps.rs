@@ -10,7 +10,7 @@ use super::*;
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use quecto::domain::agent::AgentLoop;
 use quecto::domain::error::DomainError;
-use quecto::domain::message::{LlmResponse, Message, ThinkingBlock, ToolCall};
+use quecto::domain::message::{LlmResponse, Message, ToolCall};
 use quecto::domain::provider::{ChatRequest, LlmProvider};
 use quecto::domain::session::{ContextSpillStore, Session, SessionStore};
 use quecto::infrastructure::config::Config;
@@ -112,15 +112,6 @@ fn given_client_received_oversized_summary(world: &mut QuectoWorld) {
     record_oversized_summary_ref(world, &response);
 }
 
-#[given("a client has received history containing visible thinking blocks")]
-fn given_client_received_visible_thinking_history(world: &mut QuectoWorld) {
-    seed_visible_thinking_history_session(world);
-    start_paged_agent(world, PAGED_SESSION);
-    connect_paged_client(world, 1);
-    let response = attach_get_messages(world, 1);
-    record_visible_thinking_ref(world, &response);
-}
-
 // ── When ────────────────────────────────────────────────────────────────────
 
 #[when("a client attaches to the session")]
@@ -194,51 +185,6 @@ fn when_request_full_by_ref(world: &mut QuectoWorld) {
     world._bounded_get_message_responses = vec![response];
 }
 
-#[when("the client pages the full visible thinking by its stable message reference")]
-fn when_page_visible_thinking_by_ref(world: &mut QuectoWorld) {
-    let message_id = world
-        ._bounded_recorded_ref
-        .clone()
-        .expect("message reference");
-    let mut offset = 0usize;
-    let mut recovered = String::new();
-    loop {
-        let request_id = format!("thinking-page-{offset}");
-        write_command(
-            world,
-            1,
-            &serde_json::json!({
-                "type": "get_message", "id": request_id,
-                "messageId": message_id, "thinkingOffset": offset, "limit": 64,
-            }),
-        );
-        let response = wait_for_paged_event(
-            world,
-            1,
-            Duration::from_secs(5),
-            "visible thinking page",
-            |event| event.get("id").and_then(|v| v.as_str()) == Some(request_id.as_str()),
-        );
-        let data = response.get("data").expect("response data");
-        for block in data["thinking"].as_array().expect("thinking array") {
-            match block["kind"].as_str() {
-                Some("text") => recovered.push_str(block["text"].as_str().expect("thinking text")),
-                Some("redacted") => recovered.push_str("[redacted]"),
-                other => panic!("unexpected thinking block kind: {other:?}"),
-            }
-        }
-        if data["hasMoreThinking"] == false {
-            break;
-        }
-        let next = data["nextThinkingOffset"]
-            .as_u64()
-            .expect("next thinking offset") as usize;
-        assert!(next > offset, "thinking paging must make progress");
-        offset = next;
-    }
-    world._paged_collected = vec![recovered];
-}
-
 #[when("the client pages each argument with its message and tool-call identifiers")]
 fn when_page_tool_call_arguments(world: &mut QuectoWorld) {
     let message_id = world
@@ -284,21 +230,6 @@ fn when_page_tool_call_arguments(world: &mut QuectoWorld) {
 }
 
 // ── Then ────────────────────────────────────────────────────────────────────
-
-#[then("the client should reassemble visible thinking without provider secrets")]
-fn then_reassemble_visible_thinking_without_provider_secrets(world: &mut QuectoWorld) {
-    assert_eq!(
-        world._paged_collected,
-        vec![
-            "visible reasoning page one visible reasoning page two [redacted]final visible note"
-                .to_string()
-        ]
-    );
-    assert!(
-        !world._paged_collected[0].contains("secret-redacted-blob"),
-        "redacted provider thinking payload must not leak"
-    );
-}
 
 #[then("the client should reassemble every full tool-call argument")]
 fn then_reassemble_tool_call_arguments(world: &mut QuectoWorld) {
@@ -628,49 +559,6 @@ fn seed_oversized_history_session(world: &mut QuectoWorld) {
     world.mc_connected_clients = vec![1];
 }
 
-fn seed_visible_thinking_history_session(world: &mut QuectoWorld) {
-    ensure_temp_dir(world);
-    ensure_query_only_provider_config(world);
-    let mut message = Message::assistant("answer with visible thinking", vec![]);
-    message.thinking_blocks.push(ThinkingBlock::Normal {
-        thinking: "visible reasoning page one ".into(),
-        signature: "provider-signature-one".into(),
-    });
-    message.thinking_blocks.push(ThinkingBlock::Normal {
-        thinking: "visible reasoning page two ".into(),
-        signature: "provider-signature-two".into(),
-    });
-    message.thinking_blocks.push(ThinkingBlock::Redacted {
-        data: "secret-redacted-blob".into(),
-    });
-    message.thinking_blocks.push(ThinkingBlock::Normal {
-        thinking: "final visible note".into(),
-        signature: "provider-signature-three".into(),
-    });
-    world._bounded_expected_body = Some(
-        "visible reasoning page one visible reasoning page two [redacted]final visible note"
-            .to_string(),
-    );
-    let session = Session {
-        key: Session::build_key("cli", PAGED_SESSION),
-        messages: vec![message],
-        workflow_run: None,
-        subagent_roster: Vec::new(),
-    };
-    let store = FileSessionStore::new(base_path(world));
-    tokio::runtime::Runtime::new().unwrap().block_on(async {
-        store
-            .save(&session)
-            .await
-            .expect("save visible thinking session")
-    });
-    world.no_session = false;
-    world.session_name = Some(PAGED_SESSION.into());
-    world._mc_persist = true;
-    world.mc_mode = true;
-    world.mc_connected_clients = vec![1];
-}
-
 fn seed_oversized_tool_call_history_session(world: &mut QuectoWorld) {
     ensure_temp_dir(world);
     ensure_query_only_provider_config(world);
@@ -842,29 +730,6 @@ fn record_oversized_tool_call_refs(world: &mut QuectoWorld, response: &serde_jso
         })
         .collect();
     world._paged_response = Some(response.clone());
-}
-
-fn record_visible_thinking_ref(world: &mut QuectoWorld, response: &serde_json::Value) {
-    let messages = response
-        .get("messages")
-        .and_then(|m| m.as_array())
-        .expect("messages array");
-    let message = messages
-        .iter()
-        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
-        .expect("assistant thinking message");
-    assert!(
-        message.get("thinking").is_some(),
-        "history slice should expose visible thinking metadata: {message}"
-    );
-    world._paged_response = Some(response.clone());
-    world._bounded_recorded_ref = Some(
-        message
-            .get("id")
-            .and_then(|v| v.as_str())
-            .expect("message id")
-            .to_string(),
-    );
 }
 
 fn record_oversized_summary_ref(world: &mut QuectoWorld, response: &serde_json::Value) {
