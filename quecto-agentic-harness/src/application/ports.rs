@@ -10,4 +10,8 @@ pub use super::catalogue::{
     CatalogueSnapshotStore, CatalogueSource, CatalogueSourceError, CredentialStatusPort,
     ResolvedCatalogue, SkippedRecord, SourceEntries,
 };
+pub use super::catalogue_refresh::{
+    RefreshBounds, RefreshChange, RefreshContext, RefreshError, RefreshRedactionPort,
+    RefreshableCatalogueSource,
+};
 pub use super::provider_runtime::{ProviderRuntimeFactory, RuntimeSnapshotStore};

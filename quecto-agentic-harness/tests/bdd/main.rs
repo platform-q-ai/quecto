@@ -284,6 +284,8 @@ pub struct QuectoWorld {
     pub catalogue_application: catalogue_application_steps::CatalogueApplicationState,
     /// #1573 catalogue runtime slice state (factory, stores, composition, selection).
     pub catalogue_runtime: catalogue_runtime_steps::CatalogueRuntimeState,
+    /// #1574 catalogue refresh slice state (refreshables, store, report).
+    pub catalogue_refresh: catalogue_refresh_steps::CatalogueRefreshState,
     /// #1571 catalogue domain slice state (typed ids, layers, resolution).
     pub catalogue: catalogue_domain_steps::CatalogueDomainState,
     /// #1460 shared-state hardening scenario state (sockets, cred lock, ownership).
@@ -745,6 +747,9 @@ pub struct QuectoWorld {
     pub _gateway_oauth_mock_server: Option<&'static wiremock::MockServer>,
     /// Mock OpenAI-compatible model catalog server for discovery scenarios.
     pub _model_discovery_mock_server: Option<&'static wiremock::MockServer>,
+    /// Snapshot of user-owned models.json taken just before a discover run,
+    /// to prove discovery no longer rewrites it (epic #1193, slice 4).
+    pub model_discovery_registry_snapshot: Option<String>,
     /// Token exchange result (for issue #257 scenarios)
     pub gateway_token_exchange_result: Option<
         Result<
@@ -1361,6 +1366,7 @@ mod audit_log_steps;
 mod auth_steps;
 mod catalogue_application_steps;
 mod catalogue_domain_steps;
+mod catalogue_refresh_steps;
 mod catalogue_runtime_steps;
 mod codex_provider_steps;
 mod config_steps;

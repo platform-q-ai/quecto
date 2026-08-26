@@ -320,6 +320,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/client_classes.rs` | `protocol` command admission classes + test-harness queue constructor (split from `client.rs` for the 750-line baseline, child-progress-freeze fix 2026-07-29) |
 | `protocol/inspection_routing.rs` | `protocol` safe routed subagent inspection command mapping (#1442; split from `client.rs` for the 750-line baseline) |
 | `protocol/client_policy_types.rs` | `protocol` catalogue-backed tool policy wire DTOs (#1334 Phase 4) |
+| `protocol/client_test_api.rs` | `protocol` test-only client constructors/probes (split from `client.rs` for the 750-line baseline, #1574) |
 | `protocol/mod.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/model_payloads.rs` | `protocol` mapper feeding `models` (relocated, #1257 Phase 2) |
 | `protocol/presentation_payloads.rs` | `protocol` typed mapping for turn, history, spawn, and tool display payloads (#1257 Phase 6) |

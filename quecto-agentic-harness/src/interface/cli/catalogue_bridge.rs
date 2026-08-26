@@ -32,48 +32,153 @@ pub fn resolve_and_publish_for(base_dir: &Path) -> (CatalogueSnapshotStore, Reso
 pub(crate) struct CatalogueInputs {
     builtin: BuiltinCatalogueSource,
     user_file: ModelsFileCatalogueSource,
+    /// Persisted discovery caches (generated data), fed in as the discovered
+    /// layer so explicit refreshes participate in normal precedence. Loading
+    /// them touches no network.
+    discovered: Vec<crate::infrastructure::catalogue_discovery::DiscoverySourceCache>,
     pub(crate) credentials: RegistryCredentialStatus,
     /// The parsed user-file records (or the parse error), kept so runtime
     /// composition can build its effective registry from the same read.
     file_records: Result<Vec<crate::infrastructure::model_registry::ModelRecord>, String>,
+    /// Per-provider connection defaults from the same parse, so the refresh
+    /// path can build discovery sources without re-reading `models.json`.
+    provider_defaults: Result<
+        Vec<(
+            String,
+            crate::infrastructure::model_registry::ProviderDefaults,
+        )>,
+        String,
+    >,
+    /// Records synthesized for discovered-cache models under configured
+    /// providers (connection/auth from the provider's defaults), so a
+    /// discovered model is credentialed and routable like a listed one.
+    discovered_records: Vec<crate::infrastructure::model_registry::ModelRecord>,
 }
 
 impl CatalogueInputs {
     /// models.json is read and parsed exactly once per load: the same parse
-    /// feeds both the user-defined source layer and credential status, so the
-    /// published entries and their availability always describe one on-disk
-    /// state (and a resolve costs one file read, not two).
+    /// feeds the user-defined source layer, credential status, discovery
+    /// provider defaults, and the effective registry, so every consumer
+    /// describes one on-disk state (and a resolve costs one file read).
     pub(crate) fn load(base_dir: &Path) -> Self {
-        let file_load = ModelRegistry::load_file_records(&base_dir.join("models.json"))
+        let config = ModelRegistry::load_registry_config(&base_dir.join("models.json"))
             .map_err(|error| error.to_string());
+        let file_load = config
+            .as_ref()
+            .map(|c| c.records.clone())
+            .map_err(Clone::clone);
+        let provider_defaults = config.map(|c| c.providers);
+        let discovered =
+            crate::infrastructure::catalogue_discovery::discovery_cache_sources(base_dir);
+        let discovered_records = synthesize_discovered_records(
+            &discovered,
+            provider_defaults.as_deref().unwrap_or_default(),
+            file_load.as_deref().unwrap_or_default(),
+        );
         let builtin_registry = ModelRegistry::builtin();
         let credentials = RegistryCredentialStatus::from_records(
             builtin_registry
                 .models()
                 .iter()
-                .chain(file_load.as_deref().unwrap_or_default()),
+                .chain(file_load.as_deref().unwrap_or_default())
+                .chain(discovered_records.iter()),
         );
         Self {
             builtin: BuiltinCatalogueSource,
             user_file: ModelsFileCatalogueSource::preloaded(file_load.clone()),
+            discovered,
             credentials,
             file_records: file_load,
+            provider_defaults,
+            discovered_records,
         }
     }
 
-    /// The effective model registry (built-in + user file) from this load's
-    /// records, so catalogue and router always describe one on-disk state.
+    /// The effective model registry (built-in + user file + discovered-cache
+    /// records under configured providers) from this load's records, so
+    /// catalogue and router always describe one on-disk state and a
+    /// discovered model the catalogue publishes as runnable also has a route.
+    /// User-file records win over synthesized discovered ones (upsert order).
     pub(crate) fn effective_registry(
         &self,
     ) -> Result<crate::infrastructure::model_registry::ModelRegistry, String> {
-        self.file_records
-            .clone()
-            .map(crate::infrastructure::model_registry::ModelRegistry::from_file_records)
+        self.file_records.clone().map(|mut records| {
+            let mut merged = self.discovered_records.clone();
+            merged.append(&mut records);
+            crate::infrastructure::model_registry::ModelRegistry::from_file_records(merged)
+        })
     }
 
-    pub(crate) fn sources(&self) -> [&dyn crate::application::catalogue::CatalogueSource; 2] {
-        [&self.builtin, &self.user_file]
+    /// The per-provider connection defaults from this load's parse (or the
+    /// parse error), for composing the refresh path from the same read.
+    pub(crate) fn provider_defaults(
+        &self,
+    ) -> &Result<
+        Vec<(
+            String,
+            crate::infrastructure::model_registry::ProviderDefaults,
+        )>,
+        String,
+    > {
+        &self.provider_defaults
     }
+
+    pub(crate) fn sources(&self) -> Vec<&dyn crate::application::catalogue::CatalogueSource> {
+        let mut sources: Vec<&dyn crate::application::catalogue::CatalogueSource> =
+            vec![&self.builtin];
+        sources.extend(
+            self.discovered
+                .iter()
+                .map(|c| c as &dyn crate::application::catalogue::CatalogueSource),
+        );
+        sources.push(&self.user_file);
+        sources
+    }
+
+    /// Providers that already have a persisted discovery cache feeding the
+    /// discovered layer via [`CatalogueInputs::sources`].
+    pub(crate) fn discovered_providers(&self) -> Vec<&str> {
+        self.discovered.iter().map(|c| c.provider()).collect()
+    }
+}
+
+/// Synthesize model records for discovered-cache models whose provider is
+/// configured in `models.json`: connection and auth come from the provider's
+/// defaults, so a discovered model is credentialed and routable exactly like
+/// a listed one (slice-4 review — the legacy discover flow guaranteed this by
+/// rewriting `models.json`; the cache-only flow must not lose it). Models the
+/// user already lists are skipped (the file's record wins), as are caches for
+/// providers no longer configured.
+fn synthesize_discovered_records(
+    caches: &[crate::infrastructure::catalogue_discovery::DiscoverySourceCache],
+    provider_defaults: &[(
+        String,
+        crate::infrastructure::model_registry::ProviderDefaults,
+    )],
+    file_records: &[crate::infrastructure::model_registry::ModelRecord],
+) -> Vec<crate::infrastructure::model_registry::ModelRecord> {
+    use crate::application::catalogue::CatalogueSource as _;
+    let mut records = Vec::new();
+    for cache in caches {
+        let Some((key, defaults)) = provider_defaults
+            .iter()
+            .find(|(key, _)| key == cache.provider())
+        else {
+            continue;
+        };
+        let Ok(entries) = cache.load() else { continue };
+        for entry in entries.entries {
+            let id = entry.model.reference.model().as_str();
+            if file_records
+                .iter()
+                .any(|r| r.provider == *key && r.id == id)
+            {
+                continue;
+            }
+            records.push(defaults.record_for(key, id, entry.model.display_name.as_deref()));
+        }
+    }
+    records
 }
 
 /// The per-model limits for a qualified `provider/model` string, read from the

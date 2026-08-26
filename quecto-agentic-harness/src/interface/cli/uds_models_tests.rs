@@ -1,4 +1,4 @@
-use super::list_models_data;
+use super::{list_models_data, refresh_models_data};
 
 #[test]
 fn list_models_data_serializes_registry_models() {
@@ -102,4 +102,75 @@ fn list_models_data_surfaces_rejected_and_skipped_records() {
             .any(|r| r["model"].as_str() == Some("custom/")),
         "unmappable records must carry a diagnostic: {rejected:?}"
     );
+}
+
+#[test]
+fn refresh_models_data_reports_per_source_outcomes_on_the_wire() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{"id": "alpha", "name": "Alpha"}]
+            })))
+            .mount(&server)
+            .await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("models.json"),
+            serde_json::json!({"providers": {
+                "openrouter": {
+                    "api": "openai-completions",
+                    "baseUrl": format!("{}/v1", server.uri()),
+                    "models": []
+                },
+                "anthropic-api": {"api": "anthropic-messages", "models": []}
+            }})
+            .to_string(),
+        )
+        .unwrap();
+
+        let base_dir = tmp.path().to_path_buf();
+        let data = tokio::task::spawn_blocking(move || refresh_models_data(&base_dir, None))
+            .await
+            .unwrap();
+
+        let outcomes = data["outcomes"].as_array().expect("outcomes array");
+        let by_source = |source: &str| {
+            outcomes
+                .iter()
+                .find(|o| o["source"] == source)
+                .unwrap_or_else(|| panic!("no outcome for {source}: {data}"))
+                .clone()
+        };
+        assert_eq!(by_source("openrouter")["status"], "updated");
+        assert_eq!(by_source("openrouter")["models"], 1);
+        assert_eq!(by_source("anthropic-api")["status"], "unsupported");
+        assert!(
+            by_source("anthropic-api")["reason"]
+                .as_str()
+                .unwrap()
+                .contains("model listing"),
+            "unsupported reason must be actionable: {data}"
+        );
+        assert!(
+            data["generation"].as_u64().is_some(),
+            "an updating refresh must report the published generation: {data}"
+        );
+
+        // A subset refresh touches only the named source.
+        let base_dir = tmp.path().to_path_buf();
+        let data = tokio::task::spawn_blocking(move || {
+            refresh_models_data(&base_dir, Some("anthropic-api"))
+        })
+        .await
+        .unwrap();
+        let outcomes = data["outcomes"].as_array().unwrap();
+        assert_eq!(outcomes.len(), 1, "subset refresh reports one outcome");
+        assert_eq!(outcomes[0]["source"], "anthropic-api");
+    });
 }

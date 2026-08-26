@@ -71,3 +71,87 @@ fn model_limits_survive_a_malformed_models_json_via_the_builtin_layer() {
         Some(1_000_000)
     );
 }
+
+/// Slice-4 review: a discovered-cache model under a provider configured with
+/// only auth + baseUrl (no listed models) must be credentialed and routable —
+/// the legacy discover flow guaranteed this by rewriting models.json, and the
+/// cache-only flow must not lose it.
+#[test]
+fn discovered_models_inherit_provider_credentials_and_join_the_effective_registry() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        serde_json::json!({"providers": {
+            "openrouter": {
+                "api": "openai-completions",
+                "baseUrl": "https://openrouter.example/v1",
+                "apiKey": "sk-or-key",
+                "models": []
+            }
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    crate::infrastructure::catalogue_discovery::DiscoverySourceCache::new(
+        &crate::infrastructure::catalogue_discovery::discovery_cache_dir(tmp.path()),
+        "openrouter",
+    )
+    .store_models_response(r#"{"data":[{"id":"alpha","name":"Alpha"}]}"#)
+    .unwrap();
+
+    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let entry = resolved
+        .snapshot
+        .find(&crate::domain::catalogue::ModelRef::parse_qualified("openrouter/alpha").unwrap())
+        .expect("discovered model must be published");
+    assert!(
+        entry.model.availability.is_runnable(),
+        "a discovered model under a credentialed provider must be runnable, got {:?}",
+        entry.model.availability
+    );
+
+    let registry = CatalogueInputs::load(tmp.path())
+        .effective_registry()
+        .expect("registry must build");
+    let record = registry
+        .find("openrouter", "alpha")
+        .expect("discovered model must have an effective-registry record (a route)");
+    assert_eq!(record.api_key.as_deref(), Some("sk-or-key"));
+    assert_eq!(
+        record.base_url.as_deref(),
+        Some("https://openrouter.example/v1")
+    );
+}
+
+/// A model the user lists explicitly keeps its own record even when the
+/// discovery cache also carries it (the file wins over synthesis).
+#[test]
+fn user_listed_models_win_over_synthesized_discovered_records() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        serde_json::json!({"providers": {
+            "openrouter": {
+                "api": "openai-completions",
+                "baseUrl": "https://openrouter.example/v1",
+                "apiKey": "sk-or-key",
+                "models": [{"id": "alpha", "name": "Mine", "maxTokens": 999}]
+            }
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    crate::infrastructure::catalogue_discovery::DiscoverySourceCache::new(
+        &crate::infrastructure::catalogue_discovery::discovery_cache_dir(tmp.path()),
+        "openrouter",
+    )
+    .store_models_response(r#"{"data":[{"id":"alpha","name":"Theirs"}]}"#)
+    .unwrap();
+
+    let registry = CatalogueInputs::load(tmp.path())
+        .effective_registry()
+        .expect("registry must build");
+    let record = registry.find("openrouter", "alpha").expect("record");
+    assert_eq!(record.display_name.as_deref(), Some("Mine"));
+    assert_eq!(record.max_tokens, 999);
+}

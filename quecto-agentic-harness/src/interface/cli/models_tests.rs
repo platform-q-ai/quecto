@@ -1,5 +1,17 @@
+//! Tests for the CLI `models discover` adapter (epic #1193, slice 4): the
+//! command drives the application refresh use case and owns no discovery
+//! behaviour itself.
+
 use super::*;
 use wiremock::matchers::{header, method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+fn ctx_for(dir: &std::path::Path) -> CliContext {
+    CliContext {
+        base_dir: Some(dir.to_path_buf()),
+        ..Default::default()
+    }
+}
 
 #[test]
 fn cmd_models_discover_success_reports_count_and_accepts_interval() {
@@ -8,6 +20,7 @@ fn cmd_models_discover_success_reports_count_and_accepts_interval() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/v1/models"))
+            .and(header("authorization", "Bearer test-token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "data": [{"id": "one"}, {"id": "two"}]
             })))
@@ -15,26 +28,20 @@ fn cmd_models_discover_success_reports_count_and_accepts_interval() {
             .await;
 
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(
-            tmp.path().join("models.json"),
-            serde_json::json!({"providers": {"local": {
-                "api": "openai-completions",
-                "baseUrl": format!("{}/v1", server.uri()),
-                "models": []
-            }}})
-            .to_string(),
-        )
-        .unwrap();
-        let ctx = CliContext {
-            base_dir: Some(tmp.path().to_path_buf()),
-            ..Default::default()
-        };
+        let registry = serde_json::json!({"providers": {"local": {
+            "api": "openai-completions",
+            "baseUrl": format!("{}/v1", server.uri()),
+            "apiKey": "test-token",
+            "models": []
+        }}});
+        std::fs::write(tmp.path().join("models.json"), registry.to_string()).unwrap();
+        let ctx = ctx_for(tmp.path());
         let mut stdout = String::new();
         let mut stderr = String::new();
 
         let ctx_for_discovery = ctx.clone();
-        let code = tokio::task::spawn_blocking(move || {
-            cmd_models(
+        let (code, stdout) = tokio::task::spawn_blocking(move || {
+            let code = cmd_models(
                 &ctx_for_discovery,
                 &[
                     "discover".to_string(),
@@ -44,29 +51,37 @@ fn cmd_models_discover_success_reports_count_and_accepts_interval() {
                 ],
                 &mut stdout,
                 &mut stderr,
-            )
+            );
+            (code, stdout)
         })
         .await
         .unwrap();
         assert_eq!(code, 0);
+        assert!(
+            stdout.contains("Discovered 2 model(s) for provider local"),
+            "got: {stdout}"
+        );
+
+        // Discovery persists a source cache — never a rewritten models.json.
+        let after: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(tmp.path().join("models.json")).unwrap())
+                .unwrap();
+        assert_eq!(after, registry, "models.json must stay user-owned");
+        let cache = tmp.path().join("discovered").join("local.json");
+        assert!(cache.is_file(), "discovery must persist the source cache");
     });
 }
 
 #[test]
 fn cmd_models_usage_and_discover_error_paths_are_reported() {
     let tmp = tempfile::tempdir().unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
-
+    let ctx = ctx_for(tmp.path());
     let mut stdout = String::new();
     let mut stderr = String::new();
+
     assert_eq!(cmd_models(&ctx, &[], &mut stdout, &mut stderr), 1);
     assert!(stderr.contains("Usage: quecto models discover"));
-    assert!(stdout.is_empty());
 
-    stdout.clear();
     stderr.clear();
     assert_eq!(
         cmd_models(&ctx, &["discover".to_string()], &mut stdout, &mut stderr),
@@ -74,58 +89,27 @@ fn cmd_models_usage_and_discover_error_paths_are_reported() {
     );
     assert!(stderr.contains("Usage: quecto models discover"));
 
-    std::fs::write(
-        tmp.path().join("models.json"),
-        serde_json::json!({"providers": {"bad": {
-            "api": "anthropic-messages",
-            "baseUrl": "https://example.test/v1",
-            "models": []
-        }}})
-        .to_string(),
-    )
-    .unwrap();
-    stdout.clear();
+    // No models.json means the provider cannot be found to refresh.
     stderr.clear();
     assert_eq!(
         cmd_models(
             &ctx,
-            &["discover".to_string(), "bad".to_string()],
+            &["discover".to_string(), "ghost".to_string()],
             &mut stdout,
             &mut stderr,
         ),
         1
     );
-    assert!(stderr.contains("models discover failed"));
-    assert!(stderr.contains("not an openai-completions provider"));
+    assert!(stderr.contains("models discover failed"), "got: {stderr}");
+    assert!(stderr.contains("ghost"), "got: {stderr}");
 }
 
 #[test]
 fn cmd_models_discover_option_validation_branches_are_reported() {
     let tmp = tempfile::tempdir().unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
+    let ctx = ctx_for(tmp.path());
     let mut stdout = String::new();
     let mut stderr = String::new();
-
-    assert_eq!(
-        cmd_models(
-            &ctx,
-            &[
-                "discover".to_string(),
-                "provider".to_string(),
-                "--watch".to_string(),
-                "--interval".to_string(),
-            ],
-            &mut stdout,
-            &mut stderr,
-        ),
-        1
-    );
-    assert!(stderr.contains("Unknown models discover option: --interval"));
-
-    stderr.clear();
 
     assert_eq!(
         cmd_models(
@@ -177,172 +161,19 @@ fn cmd_models_discover_option_validation_branches_are_reported() {
     assert!(stderr.contains("Unknown models discover option"));
 }
 
-use wiremock::{Mock, MockServer, ResponseTemplate};
-
 #[test]
-fn discover_replaces_only_target_provider_models_and_preserves_auth() {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/v1/models"))
-            .and(header("authorization", "Bearer test-token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "object": "list",
-                "data": [
-                    {"id": "alpha", "owned_by": "vendor"},
-                    {"id": "beta", "name": "Beta Model"}
-                ]
-            })))
-            .mount(&server)
-            .await;
-
-        let tmp = tempfile::tempdir().unwrap();
-        let other_provider = serde_json::json!({
-            "api": "anthropic-messages",
-            "auth": {"mode": "apiKey", "apiKey": "$ANTHROPIC_API_KEY"},
-            "models": [{"id": "claude"}]
-        });
-        std::fs::write(
-            tmp.path().join("models.json"),
-            serde_json::json!({
-                "providers": {
-                    "openrouter": {
-                        "api": "openai-completions",
-                        "baseUrl": format!("{}/v1", server.uri()),
-                        "apiKey": "test-token",
-                        "custom": {"keep": true},
-                        "models": [{"id": "alpha", "maxTokens": 1234, "contextWindow": 4096, "reasoning": true, "cost": {"input": 1.0}}]
-                    },
-                    "anthropic-api": other_provider.clone()
-                }
-            })
-            .to_string(),
-        )
-        .unwrap();
-        let ctx = CliContext {
-            base_dir: Some(tmp.path().to_path_buf()),
-            ..Default::default()
-        };
-
-        let ctx_for_discovery = ctx.clone();
-        assert_eq!(
-            tokio::task::spawn_blocking(move || discover_once(&ctx_for_discovery, "openrouter"))
-                .await
-                .unwrap()
-                .unwrap(),
-            2
-        );
-        let after: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(tmp.path().join("models.json")).unwrap())
-                .unwrap();
-        assert_eq!(after["providers"]["openrouter"]["apiKey"], "test-token");
-        assert_eq!(after["providers"]["openrouter"]["custom"]["keep"], true);
-        assert_eq!(
-            after["providers"]["openrouter"]["models"],
-            serde_json::json!([
-                {"id": "alpha", "name": "vendor"},
-                {"id": "beta", "name": "Beta Model"}
-            ])
-        );
-        assert_eq!(after["providers"]["anthropic-api"], other_provider);
-    });
-}
-
-#[test]
-fn discover_writes_valid_json_and_leaves_no_temp_file_for_literal_provider_key() {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/v1/models"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": [{"id": "local"}]})))
-            .mount(&server)
-            .await;
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("models.json"), serde_json::json!({
-            "providers": {"local/openai": {"api": "openai-completions", "apiBase": format!("{}/v1", server.uri()), "models": []}}
-        }).to_string()).unwrap();
-        let ctx = CliContext { base_dir: Some(tmp.path().to_path_buf()), ..Default::default() };
-
-        let ctx_for_discovery = ctx.clone();
-        tokio::task::spawn_blocking(move || discover_once(&ctx_for_discovery, "local/openai")).await.unwrap().unwrap();
-        let after: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(tmp.path().join("models.json")).unwrap()).unwrap();
-        assert_eq!(after["providers"]["local/openai"]["models"], serde_json::json!([{"id": "local", "name": "local"}]));
-        let leftovers: Vec<_> = std::fs::read_dir(tmp.path()).unwrap()
-            .filter_map(Result::ok)
-            .filter(|e| e.file_name().to_string_lossy().contains(".tmp"))
-            .collect();
-        assert!(leftovers.is_empty(), "atomic temp files left behind: {leftovers:?}");
-    });
-}
-
-#[test]
-fn discover_accepts_default_openai_api_and_rejects_oauth() {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/v1/models"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": [{"id": "default-api"}]})))
-            .mount(&server)
-            .await;
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("models.json"), serde_json::json!({
-            "providers": {
-                "default-api": {"baseUrl": format!("{}/v1", server.uri()), "models": []},
-                "oauth-api": {"api": "openai-completions", "baseUrl": format!("{}/v1", server.uri()), "auth": {"mode": "oauth", "oauthProvider": "openai"}, "models": []}
-            }
-        }).to_string()).unwrap();
-        let ctx = CliContext { base_dir: Some(tmp.path().to_path_buf()), ..Default::default() };
-
-        let ctx_for_discovery = ctx.clone();
-        tokio::task::spawn_blocking(move || discover_once(&ctx_for_discovery, "default-api")).await.unwrap().unwrap();
-        let ctx_for_discovery = ctx.clone();
-        let err = tokio::task::spawn_blocking(move || discover_once(&ctx_for_discovery, "oauth-api")).await.unwrap().unwrap_err();
-        assert!(err.contains("oauth auth"), "unexpected error: {err}");
-    });
-}
-
-#[test]
-fn discover_accepts_camel_case_api_base() {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/v1/models"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": [{"id": "camel"}]})))
-            .mount(&server)
-            .await;
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("models.json"), serde_json::json!({
-            "providers": {"camel-provider": {"api": "openai-completions", "apiBase": format!("{}/v1", server.uri()), "models": []}}
-        }).to_string()).unwrap();
-        let ctx = CliContext { base_dir: Some(tmp.path().to_path_buf()), ..Default::default() };
-
-        let ctx_for_discovery = ctx.clone();
-        tokio::task::spawn_blocking(move || discover_once(&ctx_for_discovery, "camel-provider")).await.unwrap().unwrap();
-        let after: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(tmp.path().join("models.json")).unwrap()).unwrap();
-        assert_eq!(after["providers"]["camel-provider"]["models"], serde_json::json!([{"id": "camel", "name": "camel"}]));
-    });
-}
-
-#[test]
-fn discover_rejects_unsafe_base_urls_before_resolving_auth() {
+fn discover_rejects_unsafe_base_urls_without_leaking_url_secrets() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(tmp.path().join("models.json"), serde_json::json!({
         "providers": {
-            "plain-remote": {"api": "openai-completions", "baseUrl": "http://attacker.example/v1", "auth": {"mode": "apiKey", "apiKey": "$QUECTO_DISCOVERY_MUST_NOT_RESOLVE"}, "models": []},
+            "plain-remote": {"api": "openai-completions", "baseUrl": "http://attacker.example/v1", "models": []},
             "credentialed": {"api": "openai-completions", "baseUrl": "https://user:pass@example.test/v1", "models": []},
             "query": {"api": "openai-completions", "baseUrl": "https://example.test/v1?token=secret", "models": []},
             "fragment": {"api": "openai-completions", "baseUrl": "https://example.test/v1#secret", "models": []},
             "wrong-shape": {"api": "openai-completions", "baseUrl": "https://example.test/latest/meta-data", "models": []}
         }
     }).to_string()).unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
+    let ctx = ctx_for(tmp.path());
 
     for (provider, expected) in [
         ("plain-remote", "http is allowed only for loopback hosts"),
@@ -360,7 +191,6 @@ fn discover_rejects_unsafe_base_urls_before_resolving_auth() {
             "{provider} error should contain {expected:?}, got: {err}"
         );
     }
-    assert!(std::env::var("QUECTO_DISCOVERY_MUST_NOT_RESOLVE").is_err());
     for provider in ["credentialed", "query", "fragment"] {
         let err = discover_once(&ctx, provider).unwrap_err();
         assert!(
@@ -373,182 +203,69 @@ fn discover_rejects_unsafe_base_urls_before_resolving_auth() {
 }
 
 #[test]
-fn discovery_url_policy_allows_remote_http_when_explicitly_enabled() {
-    let url =
-        discover_models_url("remote-http", "http://example.invalid/inference/v1", true).unwrap();
-    assert_eq!(url, "http://example.invalid/inference/v1/models");
-}
-
-#[test]
-fn reqwest_error_urls_are_stripped_before_formatting() {
-    let err = format_reqwest_error(
-        "https://example.test/v1/models",
-        reqwest::blocking::get("http://127.0.0.1:1/v1/models?api_key=secret").unwrap_err(),
-    );
-    assert!(
-        !err.contains("api_key=secret"),
-        "error leaked secret URL: {err}"
-    );
-    assert!(
-        !err.contains("127.0.0.1:1"),
-        "error leaked raw reqwest URL: {err}"
-    );
-    assert!(err.contains("https://example.test/v1/models"));
-}
-
-#[test]
-fn fetch_openai_models_rejects_oversized_body_and_catalog() {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        let body_server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/v1/models"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_string("x".repeat(MAX_MODEL_DISCOVERY_RESPONSE_BYTES + 1)),
-            )
-            .mount(&body_server)
-            .await;
-        let err = tokio::task::spawn_blocking({
-            let url = format!("{}/v1/models", body_server.uri());
-            move || fetch_openai_models(&url, None)
-        })
-        .await
-        .unwrap()
-        .unwrap_err();
-        assert!(
-            err.contains("response body exceeds"),
-            "unexpected body error: {err}"
-        );
-
-        let catalog_server = MockServer::start().await;
-        let data: Vec<_> = (0..=MAX_MODEL_DISCOVERY_MODELS)
-            .map(|i| serde_json::json!({"id": format!("model-{i}")}))
-            .collect();
-        Mock::given(method("GET"))
-            .and(path("/v1/models"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": data})),
-            )
-            .mount(&catalog_server)
-            .await;
-        let err = tokio::task::spawn_blocking({
-            let url = format!("{}/v1/models", catalog_server.uri());
-            move || fetch_openai_models(&url, None)
-        })
-        .await
-        .unwrap()
-        .unwrap_err();
-        assert!(
-            err.contains("model catalog contains more than"),
-            "unexpected catalog error: {err}"
-        );
-    });
-}
-
-#[test]
-fn discovery_rejects_non_string_api_before_fetching() {
+fn discover_rejects_oauth_non_openai_and_non_string_api_providers() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(
         tmp.path().join("models.json"),
-        serde_json::json!({"providers": {"broken": {
-            "api": 123,
-            "baseUrl": "https://example.test/v1",
-            "models": []
-        }}})
+        serde_json::json!({"providers": {
+            "oauthy": {
+                "api": "openai-completions",
+                "baseUrl": "https://example.test/v1",
+                "auth": {"mode": "oauth"},
+                "models": []
+            },
+            "anthropic-api": {"api": "anthropic-messages", "models": []}
+        }})
         .to_string(),
     )
     .unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
+    let ctx = ctx_for(tmp.path());
 
+    let err = discover_once(&ctx, "oauthy").unwrap_err();
+    assert!(err.contains("oauth"), "unexpected error: {err}");
+
+    let err = discover_once(&ctx, "anthropic-api").unwrap_err();
+    assert!(
+        err.contains("model listing"),
+        "unsupported reason must be actionable: {err}"
+    );
+
+    // A file the typed registry parser refuses (non-string api) fails the
+    // whole discover with the parse error — refresh must never re-interpret
+    // models.json more leniently than the runtime does (slice-4 review).
+    std::fs::write(
+        tmp.path().join("models.json"),
+        serde_json::json!({"providers": {
+            "broken": {"api": 123, "baseUrl": "https://example.test/v1", "models": []}
+        }})
+        .to_string(),
+    )
+    .unwrap();
     let err = discover_once(&ctx, "broken").unwrap_err();
     assert!(
-        err.contains("api must be a string"),
+        err.contains("refresh reported no outcome") || err.to_lowercase().contains("parse"),
         "unexpected error: {err}"
     );
 }
 
+/// Guard (epic #1193, slice 4 acceptance): the CLI models adapter performs no
+/// HTTP, parses no registry data, and persists nothing itself — those
+/// behaviours live behind the application refresh use case.
 #[test]
-fn fetched_models_are_deduplicated_by_id() {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/v1/models"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "data": [
-                    {"id": "alpha", "name": "First"},
-                    {"id": "alpha", "name": "Last"}
-                ]
-            })))
-            .mount(&server)
-            .await;
-
-        let models = tokio::task::spawn_blocking({
-            let url = format!("{}/v1/models", server.uri());
-            move || fetch_openai_models(&url, None)
-        })
-        .await
-        .unwrap()
-        .unwrap();
-        assert_eq!(
-            models,
-            vec![serde_json::json!({"id": "alpha", "name": "Last"})]
+fn cli_models_adapter_owns_no_discovery_mechanics() {
+    let source = include_str!("models.rs");
+    for forbidden in [
+        "reqwest",
+        "atomic_write",
+        "models.json",
+        "fetch",
+        "read_registry",
+        "resolve_registry_value",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "interface/cli/models.rs must not mention '{forbidden}': discovery \
+             mechanics belong to infrastructure behind the refresh use case"
         );
-    });
-}
-
-#[test]
-fn discovery_merges_into_registry_reread_after_fetch_and_uses_publisher() {
-    let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("models.json");
-    std::fs::write(
-        &path,
-        serde_json::json!({"providers": {"target": {
-        "api": "openai-completions", "baseUrl": "https://example.test/v1", "models": []
-    }, "other": {"models": [{"id": "before"}]}}})
-        .to_string(),
-    )
-    .unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
-    let published = std::cell::Cell::new(false);
-
-    discover_once_with(
-        &ctx,
-        "target",
-        |_url, _auth| {
-            let mut latest: Value =
-                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-            latest["providers"]["other"]["models"] = serde_json::json!([{"id": "concurrent"}]);
-            std::fs::write(&path, serde_json::to_vec(&latest).unwrap()).unwrap();
-            Ok(vec![serde_json::json!({"id": "new", "name": "new"})])
-        },
-        |publish_path, bytes| {
-            published.set(true);
-            atomic_write(publish_path, bytes, Some(0o600)).map_err(|e| e.to_string())
-        },
-    )
-    .unwrap();
-
-    let after: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert!(
-        published.get(),
-        "discovery did not invoke its atomic publisher seam"
-    );
-    assert_eq!(after["providers"]["other"]["models"][0]["id"], "concurrent");
-    assert_eq!(after["providers"]["target"]["models"][0]["id"], "new");
-}
-
-#[test]
-fn error_urls_are_redacted() {
-    assert_eq!(
-        redact_url_for_error("https://user:pass@example.com/v1/models?token=secret#fragment"),
-        "https://example.com/v1/models"
-    );
+    }
 }

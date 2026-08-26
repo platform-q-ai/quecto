@@ -312,14 +312,31 @@ impl ModelRegistry {
     /// the catalogue source adapters can feed the user-defined layer
     /// separately from the built-in layer. A missing file is an empty layer.
     pub fn load_file_records(path: &Path) -> Result<Vec<ModelRecord>, ModelRegistryError> {
+        Ok(Self::load_registry_config(path)?.records)
+    }
+
+    /// Parse the full user registry file: the model records it defines plus
+    /// the per-provider connection defaults (also for providers that list no
+    /// models). One typed parse is the single truth for `models.json`, so the
+    /// discovery/refresh path and the runtime never re-interpret the file with
+    /// diverging ad-hoc rules (epic #1193 slice-4 review). A missing file is
+    /// an empty configuration.
+    pub fn load_registry_config(path: &Path) -> Result<RegistryConfig, ModelRegistryError> {
         let mut records = Vec::new();
+        let mut provider_defaults = Vec::new();
         if !path.exists() {
-            return Ok(records);
+            return Ok(RegistryConfig {
+                records,
+                providers: provider_defaults,
+            });
         }
         let content = std::fs::read_to_string(path).map_err(ModelRegistryError::Io)?;
         let file: RegistryFile =
             serde_json::from_str(&content).map_err(ModelRegistryError::Parse)?;
-        for (provider_key, provider) in file.providers {
+        // Deterministic provider order regardless of the map's iteration.
+        let mut providers: Vec<_> = file.providers.into_iter().collect();
+        providers.sort_by(|a, b| a.0.cmp(&b.0));
+        for (provider_key, provider) in providers {
             let api = ProviderApi::parse(provider.api.as_deref().unwrap_or("openai-completions"))?;
 
             // Resolve the auth mode. An explicit `auth` block wins; otherwise we
@@ -349,6 +366,15 @@ impl ModelRegistry {
                 block_api_key.or_else(|| provider.api_key.map(|v| resolve_registry_value(&v, env)));
             let auth_header = provider.auth_header.unwrap_or(true);
             let allow_remote_http = provider.allow_remote_http.unwrap_or(false);
+            let defaults = ProviderDefaults {
+                api,
+                auth,
+                oauth_provider: oauth_provider.clone(),
+                base_url: base_url.clone(),
+                api_key: api_key.clone(),
+                auth_header,
+                allow_remote_http,
+            };
             for model in provider.models {
                 let mut record = ModelRecord::with_defaults(
                     &provider_key,
@@ -386,8 +412,12 @@ impl ModelRegistry {
                 }
                 records.push(record);
             }
+            provider_defaults.push((provider_key, defaults));
         }
-        Ok(records)
+        Ok(RegistryConfig {
+            records,
+            providers: provider_defaults,
+        })
     }
 
     pub fn find(&self, provider: &str, id: &str) -> Option<&ModelRecord> {
@@ -465,6 +495,49 @@ impl ModelRecord {
     pub fn qualified_id(&self) -> String {
         format!("{}/{}", self.provider, self.id)
     }
+}
+
+/// Per-provider connection defaults parsed from the user registry file,
+/// available also for providers that list no models. The single typed parse
+/// feeding these is shared with the record loading, so every consumer of
+/// `models.json` (runtime, catalogue, discovery/refresh) sees one semantics.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProviderDefaults {
+    pub api: ProviderApi,
+    pub auth: AuthMode,
+    pub oauth_provider: Option<String>,
+    pub base_url: Option<String>,
+    /// The resolved key value (env interpolation applied). Secret material —
+    /// never render it.
+    pub api_key: Option<String>,
+    pub auth_header: bool,
+    pub allow_remote_http: bool,
+}
+
+impl ProviderDefaults {
+    /// Synthesize a full model record for a model discovered under this
+    /// provider (catalogue refresh, epic #1193 slice 4): connection and auth
+    /// come from the provider's configuration; listing metadata uses the
+    /// registry's synthesized defaults, exactly like a models.json entry that
+    /// declares only an id.
+    pub fn record_for(&self, provider_key: &str, id: &str, name: Option<&str>) -> ModelRecord {
+        let mut record = ModelRecord::with_defaults(provider_key, id, name, self.api);
+        record.base_url = self.base_url.clone();
+        record.api_key = self.api_key.clone();
+        record.auth_header = self.auth_header;
+        record.allow_remote_http = self.allow_remote_http;
+        record.auth = self.auth;
+        record.oauth_provider = self.oauth_provider.clone();
+        record
+    }
+}
+
+/// The full parsed user registry file: model records plus per-provider
+/// defaults, in deterministic (sorted) provider order.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RegistryConfig {
+    pub records: Vec<ModelRecord>,
+    pub providers: Vec<(String, ProviderDefaults)>,
 }
 
 pub fn resolve_registry_value<F>(value: &str, env: F) -> String

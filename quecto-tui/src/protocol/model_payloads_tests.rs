@@ -173,3 +173,48 @@ fn non_object_entries_are_dropped() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].id, "kept/model");
 }
+
+// ── parse_refresh_outcomes (#1574) ───────────────────────────────────────
+
+#[test]
+fn refresh_outcomes_render_each_status_and_flag_unsuccessful_ones() {
+    let lines = super::parse_refresh_outcomes(
+        &serde_json::json!({"outcomes": [
+            {"source": "a", "status": "updated", "models": 2},
+            {"source": "b", "status": "unchanged"},
+            {"source": "c", "status": "unsupported", "reason": "no listing"},
+            {"source": "d", "status": "failed", "reason": "boom"},
+            {"source": "e", "status": "cancelled"}
+        ]}),
+        &|s| s.to_string(),
+    );
+    assert_eq!(
+        lines.summaries,
+        vec![
+            "a: 2 model(s)",
+            "b: unchanged",
+            "c: not refreshable (no listing)",
+            "d: failed (boom)",
+            "e: cancelled",
+        ]
+    );
+    assert!(lines.any_unsuccessful);
+}
+
+#[test]
+fn refresh_outcomes_skip_malformed_entries_and_sanitize_text() {
+    let lines = super::parse_refresh_outcomes(
+        &serde_json::json!({"outcomes": [
+            {"status": "updated"},
+            {"source": "ok", "status": "mystery"},
+            {"source": "s\u{0007}", "status": "failed", "reason": "r\u{0007}"}
+        ]}),
+        &|s| s.replace('\u{0007}', ""),
+    );
+    assert_eq!(lines.summaries, vec!["s: failed (r)"]);
+    assert!(lines.any_unsuccessful);
+
+    let empty = super::parse_refresh_outcomes(&serde_json::json!({}), &|s| s.to_string());
+    assert!(empty.summaries.is_empty());
+    assert!(!empty.any_unsuccessful);
+}
