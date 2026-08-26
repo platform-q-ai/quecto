@@ -284,6 +284,8 @@ pub struct QuectoWorld {
     pub catalogue_application: catalogue_application_steps::CatalogueApplicationState,
     /// #1573 catalogue runtime slice state (factory, stores, composition, selection).
     pub catalogue_runtime: catalogue_runtime_steps::CatalogueRuntimeState,
+    /// #1574 catalogue refresh slice state (refreshables, store, report).
+    pub catalogue_refresh: catalogue_refresh_steps::CatalogueRefreshState,
     /// #1571 catalogue domain slice state (typed ids, layers, resolution).
     pub catalogue: catalogue_domain_steps::CatalogueDomainState,
     /// #1460 shared-state hardening scenario state (sockets, cred lock, ownership).
@@ -1361,6 +1363,7 @@ mod audit_log_steps;
 mod auth_steps;
 mod catalogue_application_steps;
 mod catalogue_domain_steps;
+mod catalogue_refresh_steps;
 mod catalogue_runtime_steps;
 mod codex_provider_steps;
 mod config_steps;
