@@ -1,8 +1,6 @@
-use serde::Deserialize;
+use std::path::Path;
 
 use crate::domain::message::claude_sonnet_5_pricing;
-use std::collections::HashMap;
-use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelRegistry {
@@ -677,99 +675,9 @@ where
     out
 }
 
-#[derive(Deserialize)]
-struct RegistryFile {
-    #[serde(default)]
-    providers: HashMap<String, RegistryProvider>,
-    /// Stable-ID metadata overrides keyed by qualified `provider/model` id.
-    #[serde(default)]
-    overrides: HashMap<String, RegistryOverride>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RegistryOverride {
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    context_window: Option<u32>,
-    #[serde(default)]
-    max_tokens: Option<u32>,
-    /// Credential reference (`$ENV`); literals are rejected downstream.
-    #[serde(default)]
-    api_key: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RegistryProvider {
-    #[serde(default)]
-    base_url: Option<String>,
-    #[serde(default)]
-    api_base: Option<String>,
-    #[serde(default)]
-    api_key: Option<String>,
-    #[serde(default)]
-    api: Option<String>,
-    #[serde(default)]
-    auth_header: Option<bool>,
-    #[serde(default)]
-    allow_remote_http: Option<bool>,
-    #[serde(default)]
-    auth: Option<RegistryAuth>,
-    #[serde(default)]
-    models: Vec<RegistryModel>,
-}
-
-/// Explicit auth declaration for a registry provider.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RegistryAuth {
-    /// "apiKey" (default) or "oauth".
-    #[serde(default)]
-    mode: Option<String>,
-    /// For `apiKey` mode: the key (supports `$ENV` interpolation).
-    #[serde(default)]
-    api_key: Option<String>,
-    /// For `oauth` mode: the kernel OAuth provider identity to resolve against.
-    #[serde(default)]
-    oauth_provider: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RegistryModel {
-    id: String,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    reasoning: Option<bool>,
-    #[serde(default)]
-    input: Option<Vec<String>>,
-    #[serde(default)]
-    context_window: Option<u32>,
-    #[serde(default)]
-    max_tokens: Option<u32>,
-    #[serde(default)]
-    cost: Option<RegistryCost>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RegistryCost {
-    #[serde(default)]
-    input: Option<f64>,
-    #[serde(default)]
-    output: Option<f64>,
-    #[serde(default, rename = "cacheRead")]
-    cache_read_camel: Option<f64>,
-    #[serde(default, rename = "cacheWrite")]
-    cache_write_camel: Option<f64>,
-    #[serde(default, rename = "cache_read")]
-    cache_read: Option<f64>,
-    #[serde(default, rename = "cache_write")]
-    cache_write: Option<f64>,
-}
+#[path = "model_registry_file.rs"]
+mod file_format;
+use file_format::RegistryFile;
 
 #[path = "model_registry_gpt56_pricing.rs"]
 mod gpt56_pricing;
