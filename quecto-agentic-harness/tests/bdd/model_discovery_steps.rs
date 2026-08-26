@@ -67,6 +67,8 @@ fn given_catalog_one(world: &mut QuectoWorld, provider: String, model: String) {
 
 #[when(expr = "I discover models for provider {string}")]
 fn when_discover(world: &mut QuectoWorld, provider: String) {
+    world.model_discovery_registry_snapshot =
+        Some(std::fs::read_to_string(base_path(world).join("models.json")).unwrap());
     let output = run_with_output(
         vec![
             "quecto".into(),
@@ -79,11 +81,11 @@ fn when_discover(world: &mut QuectoWorld, provider: String) {
     assert_eq!(output.exit_code, 0, "{}{}", output.stdout, output.stderr);
 }
 
-#[then(expr = "the {string} catalog should contain models {string} and {string}")]
-fn then_catalog_contains(world: &mut QuectoWorld, provider: String, first: String, second: String) {
-    let registry = read_registry(world);
+#[then(expr = "the {string} discovery cache should contain models {string} and {string}")]
+fn then_cache_contains(world: &mut QuectoWorld, provider: String, first: String, second: String) {
+    let cache = read_discovery_cache(world, &provider);
     assert_eq!(
-        registry["providers"][provider]["models"],
+        cache,
         serde_json::json!([
             {"id": first, "name": "vendor"},
             {"id": second, "name": "Beta Model"}
@@ -91,45 +93,51 @@ fn then_catalog_contains(world: &mut QuectoWorld, provider: String, first: Strin
     );
 }
 
-#[then(expr = "the {string} auth and custom settings should be unchanged")]
-fn then_settings_unchanged(world: &mut QuectoWorld, provider: String) {
-    let registry = read_registry(world);
+#[then(expr = "the user-owned models registry should be unchanged by discovery")]
+fn then_registry_unchanged(world: &mut QuectoWorld) {
+    let before = world
+        .model_discovery_registry_snapshot
+        .as_deref()
+        .expect("registry snapshot captured before discovery");
+    let after = std::fs::read_to_string(base_path(world).join("models.json")).unwrap();
     assert_eq!(
-        registry["providers"][&provider]["auth"],
-        serde_json::json!({"mode": "apiKey", "apiKey": "test-token"})
-    );
-    assert_eq!(
-        registry["providers"][&provider]["custom"],
-        serde_json::json!({"keep": true})
-    );
-}
-
-#[then(expr = "the {string} provider should be unchanged")]
-fn then_other_unchanged(world: &mut QuectoWorld, provider: String) {
-    let registry = read_registry(world);
-    assert_eq!(
-        registry["providers"][provider],
-        serde_json::json!({
-            "api": "anthropic-messages",
-            "auth": {"mode": "apiKey", "apiKey": "$ANTHROPIC_API_KEY"},
-            "models": [{"id": "claude"}]
-        })
+        before, after,
+        "discovery must not rewrite user-owned models.json"
     );
 }
 
-#[then(expr = "the models registry should remain valid JSON")]
-fn then_valid_json(world: &mut QuectoWorld) {
-    let _: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(base_path(world).join("models.json")).unwrap(),
-    )
-    .unwrap();
+#[then(expr = "no discovery cache should exist for provider {string}")]
+fn then_no_cache_for(world: &mut QuectoWorld, provider: String) {
+    let path = discovery_cache_path(world, &provider);
+    assert!(
+        !path.exists(),
+        "unexpected discovery cache at {}",
+        path.display()
+    );
+}
+
+#[then(expr = "the {string} discovery cache should be valid JSON")]
+fn then_valid_json(world: &mut QuectoWorld, provider: String) {
+    let cache = read_discovery_cache(world, &provider);
+    assert!(
+        cache.as_array().is_some_and(|models| !models.is_empty()),
+        "discovery cache should be a non-empty JSON array, got: {cache}"
+    );
 }
 
 #[then(expr = "no discovery temporary file should remain")]
 fn then_no_tmp(world: &mut QuectoWorld) {
+    let discovered =
+        base_path(world).join(quecto::infrastructure::catalogue_discovery::DISCOVERY_CACHE_DIR);
     let leftovers: Vec<_> = std::fs::read_dir(base_path(world))
         .unwrap()
         .filter_map(Result::ok)
+        .chain(
+            std::fs::read_dir(&discovered)
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok),
+        )
         .filter(|e| e.file_name().to_string_lossy().contains(".tmp"))
         .collect();
     assert!(
@@ -153,6 +161,21 @@ fn mount_catalog(world: &mut QuectoWorld, provider: &str, response: serde_json::
     registry["providers"][provider]["baseUrl"] = serde_json::json!(format!("{}/v1", server.uri()));
     std::fs::write(base_path(world).join("models.json"), registry.to_string()).unwrap();
     world._model_discovery_mock_server = Some(Box::leak(Box::new(server)));
+}
+
+fn discovery_cache_path(world: &QuectoWorld, provider: &str) -> std::path::PathBuf {
+    base_path(world)
+        .join(quecto::infrastructure::catalogue_discovery::DISCOVERY_CACHE_DIR)
+        .join(format!("{provider}.json"))
+}
+
+fn read_discovery_cache(world: &QuectoWorld, provider: &str) -> serde_json::Value {
+    let path = discovery_cache_path(world, provider);
+    serde_json::from_str(
+        &std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to read discovery cache {}: {e}", path.display())),
+    )
+    .unwrap()
 }
 
 fn read_registry(world: &QuectoWorld) -> serde_json::Value {

@@ -747,6 +747,9 @@ pub struct QuectoWorld {
     pub _gateway_oauth_mock_server: Option<&'static wiremock::MockServer>,
     /// Mock OpenAI-compatible model catalog server for discovery scenarios.
     pub _model_discovery_mock_server: Option<&'static wiremock::MockServer>,
+    /// Snapshot of user-owned models.json taken just before a discover run,
+    /// to prove discovery no longer rewrites it (epic #1193, slice 4).
+    pub model_discovery_registry_snapshot: Option<String>,
     /// Token exchange result (for issue #257 scenarios)
     pub gateway_token_exchange_result: Option<
         Result<
