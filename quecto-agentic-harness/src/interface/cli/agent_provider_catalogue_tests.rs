@@ -391,3 +391,64 @@ fn a_keyless_endpoint_does_not_advertise_its_prefix_as_runnable() {
         );
     }
 }
+
+#[test]
+fn a_catalogue_of_only_unimplemented_transports_reports_why_nothing_composed() {
+    use crate::infrastructure::config::Config;
+    use crate::infrastructure::provider_runtime::build_agent_provider;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"google":{"api":"google-generative-ai","auth":{"mode":"apiKey","apiKey":"k"},"models":[{"id":"gemini"}]}}}"#,
+    )
+    .unwrap();
+
+    let error = build_agent_provider(&Config::default(), tmp.path(), &reqwest::Client::new())
+        .expect_err("a google-only catalogue composes no provider");
+
+    assert!(
+        error.contains("google-generative-ai") && error.contains("not implemented"),
+        "the user must be told the transport is unimplemented, not to add a key: {error}"
+    );
+}
+
+#[test]
+fn availability_of_an_oauth_record_without_an_oauth_provider_is_false_not_an_error() {
+    use crate::infrastructure::config::Config;
+    use crate::infrastructure::model_registry::{AuthMode, ModelRecord, ProviderApi};
+    use crate::infrastructure::provider_runtime::credentials::{
+        CredentialSnapshot, registry_model_credential_available,
+    };
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = crate::infrastructure::auth::credential_store::CredentialStore::new(tmp.path());
+    let credentials = CredentialSnapshot::load(&store).unwrap();
+    let record = ModelRecord {
+        provider: "anthropic-oauth".to_string(),
+        id: "claude".to_string(),
+        display_name: None,
+        api: ProviderApi::AnthropicMessages,
+        base_url: None,
+        api_key: None,
+        auth_header: true,
+        allow_remote_http: false,
+        input: Vec::new(),
+        context_window: 0,
+        max_tokens: 0,
+        max_tokens_explicit: false,
+        context_window_explicit: false,
+        cost: Default::default(),
+        reasoning: false,
+        auth: AuthMode::OAuth,
+        oauth_provider: None,
+    };
+
+    // Asking whether a credential exists must not fail a whole composition: an
+    // entry that cannot name its OAuth provider simply has none. Constructing
+    // that provider still reports the configuration error.
+    assert!(
+        !registry_model_credential_available(&record, &credentials, &Config::default())
+            .expect("an availability query must not error")
+    );
+}

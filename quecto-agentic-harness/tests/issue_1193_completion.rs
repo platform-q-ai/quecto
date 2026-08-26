@@ -24,15 +24,20 @@ fn application_resolution_query_and_selection_are_production_wired() {
 }
 
 #[test]
-fn selection_rejects_unknown_and_unavailable_before_mutation() {
+fn selection_reports_a_structured_reason_and_limits_from_the_published_snapshot() {
     let select = flat("src/interface/cli/uds_dispatch_runtime.rs");
     let resolve = select
         .find("ResolveModelSelectionUseCase")
         .expect("selection use case");
     let mutate = select.find("ctx.agent.set_model").expect("agent mutation");
+    // The reason is derived from the published snapshot before the session
+    // changes, and travels with the response; selecting a model records it
+    // rather than refusing, which is the pre-existing UDS contract.
     assert!(resolve < mutate);
-    assert!(select.contains("SelectionFailure::UnknownModel"));
     assert!(select.contains("SelectionFailure::Unavailable"));
+    assert!(select.contains("\"unavailable\": reason"));
+    assert!(select.contains("model_limits_in"));
+    assert!(!select.contains("model_limits_from_base_dir"));
 }
 
 #[test]
@@ -104,7 +109,7 @@ fn composition_root_repl_and_uds_share_the_published_snapshot() {
     assert!(repl.contains("ctx.runtime.catalogue") && !repl.contains("model_limits_from_base_dir"));
     assert!(agent.contains("catalogue_store: CatalogueSnapshotStore"));
     assert!(list.contains("agent.catalogue_store.clone()"));
-    assert!(select.contains("agent.catalogue_store.clone()"));
+    assert!(select.contains("agent.catalogue_store.current()"));
 }
 
 #[test]

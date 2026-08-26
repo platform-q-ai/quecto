@@ -1,7 +1,7 @@
 use super::AgentEvent;
 use super::{DispatchCtx, emit_event_to_broadcast_or_writer};
 use crate::application::catalogue::{
-    ModelSelection, ResolveModelSelectionUseCase, SelectionFailure, resolve_model_reference,
+    ResolveModelSelectionUseCase, SelectionFailure, resolve_model_reference,
 };
 use crate::domain::catalogue::UnavailableReason;
 
@@ -67,19 +67,6 @@ fn describe_unavailable_reasons(reasons: &[UnavailableReason]) -> String {
         .join("; ")
 }
 
-/// Model-switch failures reach both the request's response and the session's
-/// error broadcast, so a TUI watching either surface reports the same cause.
-async fn emit_set_model_error(
-    ctx: &mut DispatchCtx<'_>,
-    id: Option<&str>,
-    type_name: &str,
-    message: String,
-) {
-    let ev = AgentEvent::err(id, type_name, message.clone());
-    emit_event_to_broadcast_or_writer(ctx, &ev).await;
-    emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(None, "agent_error", message)).await;
-}
-
 pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'_>) -> bool {
     super::super::uds_reload::poll_provider_reload_for_ctx(ctx).await;
     let request_id = args.id.clone();
@@ -92,46 +79,13 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
             return false;
         }
     };
+    // Selecting a model records it and reports what the catalogue knows about
+    // it; it does not refuse the switch. A client may legitimately select a
+    // model before its credential exists, and refusing here would also surface
+    // as a run-level failure for a sub-agent whose model was merely mistyped.
     let snapshot = ctx.agent.catalogue_store.current();
-    let reference = match resolve_model_reference(&snapshot, &resolved_model) {
-        Ok(reference) => reference,
-        Err(failure) => {
-            let message = unresolved_model_message(&resolved_model, failure);
-            emit_set_model_error(ctx, request_id.as_deref(), &type_name, message).await;
-            return false;
-        }
-    };
-    let selection = ResolveModelSelectionUseCase::new(ctx.agent.catalogue_store.clone());
-    let (cap, window) = match selection.resolve(&reference) {
-        Ok(ModelSelection::Known(descriptor)) => (
-            descriptor
-                .capabilities
-                .max_tokens_explicit
-                .then_some(descriptor.capabilities.max_tokens),
-            descriptor
-                .capabilities
-                .context_window_explicit
-                .then_some(descriptor.capabilities.context_window as usize),
-        ),
-        // A configured endpoint routes ids the catalogue cannot enumerate, so
-        // no per-model limits are known and none are clamped.
-        Ok(ModelSelection::OpenRoute(_)) => (None, None),
-        Err(
-            failure @ (SelectionFailure::UnknownModel | SelectionFailure::AmbiguousModel { .. }),
-        ) => {
-            let message = unresolved_model_message(reference.qualified_id().as_str(), failure);
-            emit_set_model_error(ctx, request_id.as_deref(), &type_name, message).await;
-            return false;
-        }
-        Err(SelectionFailure::Unavailable { reasons }) => {
-            let message = format!(
-                "model is unavailable: {}",
-                describe_unavailable_reasons(&reasons)
-            );
-            emit_set_model_error(ctx, request_id.as_deref(), &type_name, message).await;
-            return false;
-        }
-    };
+    let unavailable = describe_selection(&snapshot, &resolved_model);
+    let (cap, window) = crate::application::catalogue::model_limits_in(&snapshot, &resolved_model);
     ctx.agent.set_model(resolved_model.clone(), cap, window);
     ctx.session.set_model(resolved_model);
     // Every model switch resets the session effort to `low` (#1067): a level
@@ -145,9 +99,38 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
         ctx.session.bump_visible_generation();
     }
     tracing::debug!(new_model = %ctx.session.model(), "UDS: model switched; effort reset to low");
-    let ev = AgentEvent::ok(request_id.as_deref(), &type_name, None);
+    // The structured reason travels with the successful response so a client can
+    // warn about a model that cannot currently run, rather than discovering it
+    // at the next turn.
+    let data = unavailable.map(|reason| serde_json::json!({ "unavailable": reason }));
+    let ev = AgentEvent::ok(request_id.as_deref(), &type_name, data);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
+}
+
+/// Why the selected model cannot currently run, or `None` when it can.
+fn describe_selection(
+    snapshot: &crate::domain::catalogue::CatalogueSnapshot,
+    model: &str,
+) -> Option<String> {
+    match resolve_model_reference(snapshot, model) {
+        Err(failure) => Some(unresolved_model_message(model, failure)),
+        Ok(reference) => match ResolveModelSelectionUseCase::new(
+            crate::application::catalogue::CatalogueSnapshotStore::new(snapshot.clone()),
+        )
+        .resolve(&reference)
+        {
+            Ok(_) => None,
+            Err(SelectionFailure::Unavailable { reasons }) => Some(format!(
+                "model is unavailable: {}",
+                describe_unavailable_reasons(&reasons)
+            )),
+            Err(failure) => Some(unresolved_model_message(
+                reference.qualified_id().as_str(),
+                failure,
+            )),
+        },
+    }
 }
 
 /// Switch the session's reasoning effort at runtime (#1067).

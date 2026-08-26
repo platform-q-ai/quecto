@@ -72,18 +72,21 @@ pub(super) fn explicit_endpoint_owns_registry_route(
 
 /// `registry_provider_can_construct` ignoring endpoint-supplied credentials, so
 /// route ownership does not depend on the endpoint it is being compared with.
+/// Whether the record could construct its own provider without an endpoint's
+/// credential. Asked with a flag rather than a doctored copy of the config,
+/// which would clone the whole config once per registry record.
 fn registry_provider_can_construct_without_endpoint(
     model: &crate::infrastructure::model_registry::ModelRecord,
     store: &CredentialSnapshot,
     config: &Config,
 ) -> Result<bool, String> {
-    let mut without_endpoints = config.clone();
-    without_endpoints
-        .providers
-        .openai_compatible
-        .endpoints
-        .clear();
-    registry_provider_can_construct(model, store, &without_endpoints)
+    can_construct(model, store, config, EndpointCredentials::Excluded)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EndpointCredentials {
+    Included,
+    Excluded,
 }
 
 fn endpoint_for_prefix<'a>(
@@ -112,10 +115,19 @@ fn same_api_base(left: &str, right: &str) -> bool {
         .eq_ignore_ascii_case(right.trim().trim_end_matches('/'))
 }
 
-pub(super) fn registry_model_credential_available(
+pub(crate) fn registry_model_credential_available(
     model: &crate::infrastructure::model_registry::ModelRecord,
     store: &CredentialSnapshot,
     config: &Config,
+) -> Result<bool, String> {
+    credential_available(model, store, config, EndpointCredentials::Included)
+}
+
+fn credential_available(
+    model: &crate::infrastructure::model_registry::ModelRecord,
+    store: &CredentialSnapshot,
+    config: &Config,
+    endpoints: EndpointCredentials,
 ) -> Result<bool, String> {
     use crate::infrastructure::auth::credential_store::AuthMethod;
     use crate::infrastructure::model_registry::AuthMode;
@@ -127,15 +139,17 @@ pub(super) fn registry_model_credential_available(
     }
     match model.auth {
         AuthMode::ApiKey => Ok(model.api_key.as_deref().is_some_and(|key| !key.is_empty())
-            || endpoint_credential_for_prefix(&model.provider, config)
+            || (endpoints == EndpointCredentials::Included
+                && endpoint_credential_for_prefix(&model.provider, config))
             || builtin_api_key_available(model, store, config)?),
         AuthMode::OAuth => {
-            let oauth_provider = model.oauth_provider.as_deref().ok_or_else(|| {
-                format!(
-                    "models.json provider '{}' uses oauth auth but is missing oauthProvider",
-                    model.provider
-                )
-            })?;
+            // Availability is a question, not a validation: a record that cannot
+            // name its OAuth provider simply has no credential. Constructing
+            // that provider still reports the configuration error, so a record
+            // whose prefix is never built no longer fails the whole composition.
+            let Some(oauth_provider) = model.oauth_provider.as_deref() else {
+                return Ok(false);
+            };
             Ok(store
                 .get(oauth_provider)
                 .is_some_and(|cred| cred.method == AuthMethod::OAuth && !cred.token.is_empty()))
@@ -192,10 +206,19 @@ pub(super) fn registry_provider_can_construct(
     store: &CredentialSnapshot,
     config: &Config,
 ) -> Result<bool, String> {
+    can_construct(model, store, config, EndpointCredentials::Included)
+}
+
+fn can_construct(
+    model: &crate::infrastructure::model_registry::ModelRecord,
+    store: &CredentialSnapshot,
+    config: &Config,
+    endpoints: EndpointCredentials,
+) -> Result<bool, String> {
     use crate::infrastructure::model_registry::ProviderApi;
     if matches!(model.api, ProviderApi::GoogleGenerativeAi) {
         return Ok(false);
     }
     // Both auth modes reduce to "is a credential available for this record".
-    registry_model_credential_available(model, store, config)
+    credential_available(model, store, config, endpoints)
 }

@@ -61,17 +61,16 @@ pub struct RefreshableConfig {
 /// A provider decorator that intercepts 401 errors and attempts to refresh
 /// the OAuth token before retrying the request with a rebuilt provider.
 pub struct RefreshableProvider {
-    inner: RwLock<Arc<dyn LlmProvider>>,
+    /// The active provider together with the OAuth token it was built from.
+    /// They move as one so a 401 cannot compare a new provider against an old
+    /// token (or the reverse) and take the wrong recovery branch.
+    inner: RwLock<(Arc<dyn LlmProvider>, Option<String>)>,
     store: Arc<CredentialStore>,
     provider_name: String,
     credential_provider: String,
     refresh_fn: RefreshFn,
     factory: ProviderFactory,
     refresh_lock: Mutex<()>,
-    /// The OAuth token `inner` was built from, so a 401 can tell "another task
-    /// already refreshed" from "this token is genuinely stale" without reading
-    /// the credential store on every request.
-    inner_token: RwLock<Option<String>>,
 }
 
 impl std::fmt::Debug for RefreshableProvider {
@@ -94,22 +93,20 @@ impl RefreshableProvider {
             .filter(|cred| cred.method == AuthMethod::OAuth)
             .map(|cred| cred.token);
         Self {
-            inner: RwLock::new(config.inner),
+            inner: RwLock::new((config.inner, inner_token)),
             store: config.store,
             provider_name: config.provider_name,
             credential_provider: config.credential_provider,
             refresh_fn: config.refresh_fn,
             factory: config.factory,
             refresh_lock: Mutex::new(()),
-            inner_token: RwLock::new(inner_token),
         }
     }
 
     /// Install a rebuilt inner provider together with the token it was built
     /// from, so both move as one state change.
     async fn install_inner(&self, provider: Arc<dyn LlmProvider>, token: String) {
-        *self.inner.write().await = provider;
-        *self.inner_token.write().await = Some(token);
+        *self.inner.write().await = (provider, Some(token));
     }
 
     /// Check if the error is a 401 that might be fixable by refreshing.
@@ -174,7 +171,7 @@ impl RefreshableProvider {
             // stored credential is current, but this provider may still hold the
             // superseded token, and a stream cannot retry once it is open.
             if let Some(stored) = self.current_credential().map(|cred| cred.token)
-                && self.inner_token.read().await.as_ref() != Some(&stored)
+                && self.inner.read().await.1.as_ref() != Some(&stored)
             {
                 let new_inner = (self.factory)(&stored);
                 self.install_inner(new_inner, stored).await;
@@ -247,7 +244,7 @@ impl LlmProvider for RefreshableProvider {
         // when the stored token is already expired before opening the stream.
         Box::pin(async move {
             self.refresh_if_expired().await;
-            let inner = self.inner.read().await.clone();
+            let inner = self.inner.read().await.0.clone();
             inner.chat_stream_incremental(request).await
         })
     }
@@ -327,11 +324,11 @@ impl RefreshableProvider {
             Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'b>,
         >,
     {
-        let inner = self.inner.read().await.clone();
-        // The token this attempt is about to use. On a 401 it distinguishes "the
-        // token I used is stale" from "another task already refreshed while I was
-        // in flight", without reading the credential store on the happy path.
-        let attempted_token = self.inner_token.read().await.clone();
+        // Provider and token are read together: on a 401 the token compared
+        // against the store is exactly the one this attempt used, which
+        // distinguishes "my token is stale" from "another task already
+        // refreshed" without reading the credential store on the happy path.
+        let (inner, attempted_token) = self.inner.read().await.clone();
         // Happy path: shallow clone (copies slice pointers + small Option fields,
         // not the underlying message/tool vecs). No credential I/O happens here;
         // the store is only read once a 401 proves the token needs attention.

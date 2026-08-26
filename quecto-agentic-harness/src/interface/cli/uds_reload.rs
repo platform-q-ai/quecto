@@ -71,6 +71,10 @@ pub(super) async fn handle_reload(
             emit_event_to_broadcast_or_writer(ctx, &AgentEvent::ok(id, type_name, None)).await;
         }
         Some(Err(err)) => {
+            // The published generation stays the last valid one, so anyone
+            // listing models afterwards must still learn the catalogue on disk
+            // is broken.
+            ctx.agent.set_catalogue_error(Some(err.clone()));
             emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(id, type_name, err)).await;
         }
         None => {

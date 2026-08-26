@@ -121,9 +121,12 @@ impl CatalogueSnapshotStore {
     }
 
     pub fn current(&self) -> CatalogueSnapshot {
+        // A panic elsewhere must not turn every later catalogue read into a
+        // process-killing panic (#1128): the snapshot behind a poisoned lock is
+        // still a valid published generation.
         self.current
             .read()
-            .expect("catalogue snapshot lock poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
     }
 
@@ -131,7 +134,7 @@ impl CatalogueSnapshotStore {
         *self
             .current
             .write()
-            .expect("catalogue snapshot lock poisoned") = snapshot;
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = snapshot;
     }
 }
 
@@ -216,9 +219,9 @@ pub fn model_limits_in(snapshot: &CatalogueSnapshot, model: &str) -> (Option<u32
     let Some(descriptor) = snapshot.find(&reference) else {
         return (None, None);
     };
-    if !descriptor.availability.runnable() && !snapshot.accepts_any_model(reference.provider()) {
-        return (None, None);
-    }
+    // Declared limits are metadata, not a runtime capability: a model that
+    // cannot run right now must not silently drop the clamp for a session that
+    // is still using it.
     (
         descriptor
             .capabilities

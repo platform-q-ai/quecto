@@ -129,6 +129,11 @@ pub async fn force_provider_reload(
     match inputs.rebuild_blocking().await {
         Ok(mut runtime) => {
             runtime.catalogue.generation = next_generation(reload);
+            // A forced rebuild has already observed the current sources (a
+            // refresh just rewrote `models.json`). Re-seed the change gate so the
+            // next poll does not rebuild the whole runtime a second time for the
+            // same content.
+            reload.sources_changed();
             Some(Ok(reload.record_reloaded(runtime)))
         }
         Err(err) => {

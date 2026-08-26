@@ -320,7 +320,7 @@ fn compose_agent_provider(
         .map_err(|e| format!("openai_compatible provider configuration error: {}", e))?;
         provider_list.push(provider);
     }
-    ensure_providers_configured(&provider_list)?;
+    ensure_providers_configured(&provider_list, &model_registry)?;
     let router: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::try_with_model_descriptors(
         provider_list,
         runtime_model_descriptors,
@@ -386,13 +386,31 @@ fn catalogue_descriptors(
     Ok(runtime_model_descriptors)
 }
 
-fn ensure_providers_configured(providers: &[Arc<dyn LlmProvider>]) -> Result<(), String> {
-    if providers.is_empty() {
+fn ensure_providers_configured(
+    providers: &[Arc<dyn LlmProvider>],
+    model_registry: &crate::infrastructure::model_registry::ModelRegistry,
+) -> Result<(), String> {
+    if !providers.is_empty() {
+        return Ok(());
+    }
+    // An entry naming an unimplemented transport cannot become a provider no
+    // matter what the user configures, so say so rather than sending them to
+    // look for a missing key.
+    let declares_unimplemented_transport = model_registry.models().iter().any(|model| {
+        matches!(
+            model.api,
+            crate::infrastructure::model_registry::ProviderApi::GoogleGenerativeAi
+        )
+    });
+    if declares_unimplemented_transport {
         return Err(
-            "no LLM providers configured (set an API key or run 'quecto auth login')".to_string(),
+            "no LLM providers configured (set an API key or run 'quecto auth login'); note: \
+             models.json declares google-generative-ai providers, and that wire protocol is \
+             not implemented yet"
+                .to_string(),
         );
     }
-    Ok(())
+    Err("no LLM providers configured (set an API key or run 'quecto auth login')".to_string())
 }
 
 fn validate_endpoint_count(config: &Config) -> Result<(), String> {
