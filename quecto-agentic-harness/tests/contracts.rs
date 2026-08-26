@@ -5,8 +5,14 @@
 mod agent_loop;
 #[path = "contracts/audit_sink.rs"]
 mod audit_sink;
+#[path = "contracts/catalogue_consumers.rs"]
+mod catalogue_consumers;
+#[path = "contracts/catalogue_source.rs"]
+mod catalogue_source;
 #[path = "contracts/context_spill_store.rs"]
 mod context_spill_store;
+#[path = "contracts/credential_status_port.rs"]
+mod credential_status_port;
 #[path = "contracts/environment_finalization_port.rs"]
 mod environment_finalization_port;
 #[path = "contracts/environment_kill_port.rs"]

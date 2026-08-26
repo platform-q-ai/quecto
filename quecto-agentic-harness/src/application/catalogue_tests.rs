@@ -1,4 +1,4 @@
-//! RED tests for issue #1572 (epic #1193 slice 2): application resolve/query
+//! Tests for issue #1572 (epic #1193 slice 2): application resolve/query
 //! use cases, snapshot store, and the shared listing projection, exercised
 //! against fake ports only.
 
@@ -48,13 +48,11 @@ fn entry(provider_id: &str, model: &str, display: &str) -> CatalogueEntry {
     }
 }
 
-/// Fake source port: entries or a load error, with a load counter so tests can
-/// prove queries never re-read sources.
+/// Fake source port: entries or a load error.
 struct FakeSource {
     id: String,
     layer: SourceLayer,
     result: Mutex<Result<Vec<CatalogueEntry>, String>>,
-    loads: Mutex<usize>,
 }
 
 impl FakeSource {
@@ -63,7 +61,6 @@ impl FakeSource {
             id: id.to_string(),
             layer,
             result: Mutex::new(Ok(entries)),
-            loads: Mutex::new(0),
         }
     }
 
@@ -72,16 +69,11 @@ impl FakeSource {
             id: id.to_string(),
             layer,
             result: Mutex::new(Err(error.to_string())),
-            loads: Mutex::new(0),
         }
     }
 
     fn set_result(&self, result: Result<Vec<CatalogueEntry>, String>) {
         *self.result.lock().unwrap() = result;
-    }
-
-    fn load_count(&self) -> usize {
-        *self.loads.lock().unwrap()
     }
 }
 
@@ -93,7 +85,6 @@ impl CatalogueSource for FakeSource {
         self.layer
     }
     fn load(&self) -> Result<Vec<CatalogueEntry>, String> {
-        *self.loads.lock().unwrap() += 1;
         self.result.lock().unwrap().clone()
     }
 }
@@ -270,6 +261,12 @@ fn derive_availability_composes_adapter_and_credential_status() {
     );
 }
 
+/// Documents the `CredentialStatusPort` contract: the port answers yes/no
+/// only, so `resolve_and_publish` never holds credential material and the
+/// snapshot cannot carry it. Today the rendered-snapshot assertion cannot fail
+/// by construction; it stays as a tripwire for future domain-type growth (a
+/// config or diagnostics field populated from provider data could start
+/// echoing secrets).
 #[test]
 fn secrets_never_appear_in_a_published_snapshot() {
     let builtin = FakeSource::ok(
@@ -304,8 +301,10 @@ fn query_reads_the_snapshot_only_and_never_reloads_sources() {
         &FakeCredentials::granting(&["openai-api"]),
         &store,
     );
-    let loads_after_resolve = builtin.load_count();
     // Source grows a new model AFTER publication; queries must not see it.
+    // (That queries cannot re-read sources at all is enforced by construction:
+    // `QueryCatalogueUseCase` holds only the snapshot store, so no source port
+    // is even reachable from `query`.)
     builtin.set_result(Ok(vec![
         entry("openai-api", "gpt-5", "Builtin GPT"),
         entry("openai-api", "gpt-6", "Next GPT"),
@@ -314,11 +313,6 @@ fn query_reads_the_snapshot_only_and_never_reloads_sources() {
     let all = query.query(CatalogueQuery::All);
     assert_eq!(all.entries().len(), 1);
     assert_eq!(all.generation(), 1);
-    assert_eq!(
-        builtin.load_count(),
-        loads_after_resolve,
-        "query must never re-read sources"
-    );
 }
 
 #[test]
@@ -340,6 +334,15 @@ fn query_filters_narrow_by_availability() {
     let query = QueryCatalogueUseCase::new(store.clone());
     assert_eq!(query.query(CatalogueQuery::All).entries().len(), 2);
     assert_eq!(query.query(CatalogueQuery::Known).entries().len(), 2);
+    // openai-api is Available-but-not-Runnable (credential missing): it must
+    // appear under `Available` and be excluded from `Runnable`.
+    let available = query.query(CatalogueQuery::Available);
+    assert_eq!(available.entries().len(), 2);
+    assert!(
+        available
+            .find(&ModelRef::parse("openai-api", "gpt-5").unwrap())
+            .is_some()
+    );
     let runnable = query.query(CatalogueQuery::Runnable);
     assert_eq!(runnable.entries().len(), 1);
     assert_eq!(
@@ -351,7 +354,7 @@ fn query_filters_narrow_by_availability() {
 }
 
 #[test]
-fn all_consumer_surfaces_project_the_same_generation() {
+fn model_listing_projection_carries_generation_and_rows() {
     let builtin = FakeSource::ok(
         "builtin",
         SourceLayer::BuiltIn,
@@ -363,15 +366,67 @@ fn all_consumer_surfaces_project_the_same_generation() {
         &FakeCredentials::granting(&["openai-api"]),
         &store,
     );
-    // CLI, UDS, and TUI all render this one projection over the store.
-    let cli = project_model_listing(&store.current());
-    let uds = project_model_listing(&store.current());
-    let tui = project_model_listing(&store.current());
-    assert_eq!(cli.generation, 1);
-    assert_eq!(cli, uds);
-    assert_eq!(uds, tui);
-    assert_eq!(cli.rows.len(), 1);
-    assert_eq!(cli.rows[0].qualified_id, "openai-api/gpt-5");
-    assert_eq!(cli.rows[0].display_name.as_deref(), Some("Builtin GPT"));
-    assert!(cli.rows[0].runnable);
+    // The real CLI/UDS/TUI surfaces are covered by the consumer contract test
+    // (tests/contracts/catalogue_consumers.rs); this pins the projection shape.
+    let listing = project_model_listing(&store.current());
+    assert_eq!(listing.generation, 1);
+    assert_eq!(listing.rows.len(), 1);
+    assert_eq!(listing.rows[0].qualified_id, "openai-api/gpt-5");
+    assert_eq!(listing.rows[0].display_name.as_deref(), Some("Builtin GPT"));
+    assert!(listing.rows[0].runnable);
+}
+
+#[test]
+fn a_second_successful_resolve_advances_the_generation() {
+    let builtin = FakeSource::ok(
+        "builtin",
+        SourceLayer::BuiltIn,
+        vec![entry("openai-api", "gpt-5", "Builtin GPT")],
+    );
+    let store = CatalogueSnapshotStore::empty();
+    let credentials = FakeCredentials::granting(&["openai-api"]);
+    ResolveCatalogueUseCase.resolve_and_publish(&[&builtin], &credentials, &store);
+    assert_eq!(store.current().generation(), 1);
+
+    builtin.set_result(Ok(vec![entry("openai-api", "gpt-5", "Renamed GPT")]));
+    let resolved = ResolveCatalogueUseCase.resolve_and_publish(&[&builtin], &credentials, &store);
+    assert_eq!(resolved.snapshot.generation(), 2);
+    assert_eq!(store.current().generation(), 2);
+    assert_eq!(
+        store.current().entries()[0].model.display_name.as_deref(),
+        Some("Renamed GPT"),
+        "the advanced generation must carry the re-resolved content"
+    );
+}
+
+#[test]
+fn resolve_rejects_domain_invalid_entries_but_publishes_valid_siblings() {
+    let mut invalid = entry("openai-api", "gpt-5", "Zero Window");
+    invalid.model.capabilities.context_window = 0;
+    let builtin = FakeSource::ok(
+        "builtin",
+        SourceLayer::BuiltIn,
+        vec![invalid, entry("openai-api", "gpt-6", "Valid GPT")],
+    );
+    let store = CatalogueSnapshotStore::empty();
+    let resolved = ResolveCatalogueUseCase.resolve_and_publish(
+        &[&builtin],
+        &FakeCredentials::granting(&["openai-api"]),
+        &store,
+    );
+    assert_eq!(resolved.rejected.len(), 1);
+    assert_eq!(
+        resolved.rejected[0].entry.reference().qualified_id(),
+        "openai-api/gpt-5"
+    );
+    assert_eq!(resolved.snapshot.entries().len(), 1);
+    assert_eq!(
+        resolved.snapshot.entries()[0].reference().qualified_id(),
+        "openai-api/gpt-6"
+    );
+    assert_eq!(
+        store.current(),
+        resolved.snapshot,
+        "publication still happens"
+    );
 }

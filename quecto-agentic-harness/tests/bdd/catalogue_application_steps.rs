@@ -8,22 +8,25 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use quecto::application::catalogue::{
-    CatalogueQuery, CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort,
+    CatalogueQuery, CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, ModelListing,
     QueryCatalogueUseCase, ResolveCatalogueUseCase, ResolvedCatalogue, project_model_listing,
 };
 use quecto::domain::catalogue::{
-    AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
-    ModelRef, ProviderDescriptor, ProviderId, SourceLayer, TransportKind, UnavailableReason,
+    AuthIdentity, Availability, CatalogueEntry, CatalogueSnapshot, ModelCapabilities, ModelCost,
+    ModelDescriptor, ModelRef, ProviderDescriptor, SourceLayer, TransportKind, UnavailableReason,
 };
-
-const APP_FAKE_SECRET: &str = "sk-secret-123";
 
 #[derive(Debug, Default)]
 pub struct CatalogueApplicationState {
     sources: Vec<Arc<AppFakeSource>>,
     credential_denied: Vec<String>,
+    /// Secret credential material declared by a Given step. It lives only
+    /// inside the fake credential port, which answers yes/no by contract.
+    secret: Option<String>,
     store: Option<CatalogueSnapshotStore>,
     resolved: Option<ResolvedCatalogue>,
+    query_result: Option<CatalogueSnapshot>,
+    projected: Option<ModelListing>,
 }
 
 #[derive(Debug)]
@@ -47,13 +50,13 @@ impl CatalogueSource for AppFakeSource {
 
 struct AppFakeCredentials {
     denied: Vec<String>,
-    secret: String,
+    secret: Option<String>,
 }
 
 impl CredentialStatusPort for AppFakeCredentials {
     fn credential_available(&self, provider: &ProviderDescriptor) -> bool {
         // The secret stays inside the port: only a boolean ever leaves.
-        debug_assert!(!self.secret.is_empty());
+        let _secret_never_leaves = &self.secret;
         !self.denied.iter().any(|p| p == provider.id.as_str())
     }
 }
@@ -100,11 +103,46 @@ fn app_layer(name: &str) -> SourceLayer {
     }
 }
 
+fn app_filter(name: &str) -> CatalogueQuery {
+    match name {
+        "all" => CatalogueQuery::All,
+        "known" => CatalogueQuery::Known,
+        "available" => CatalogueQuery::Available,
+        "runnable" => CatalogueQuery::Runnable,
+        other => panic!("unknown filter '{other}'"),
+    }
+}
+
 fn app_store(world: &mut QuectoWorld) -> CatalogueSnapshotStore {
     world
         .catalogue_application
         .store
         .get_or_insert_with(CatalogueSnapshotStore::empty)
+        .clone()
+}
+
+fn resolve_and_publish(world: &mut QuectoWorld) {
+    let store = app_store(world);
+    let credentials = AppFakeCredentials {
+        denied: world.catalogue_application.credential_denied.clone(),
+        secret: world.catalogue_application.secret.clone(),
+    };
+    let sources = world.catalogue_application.sources.clone();
+    let refs: Vec<&dyn CatalogueSource> = sources
+        .iter()
+        .map(|source| source.as_ref() as &dyn CatalogueSource)
+        .collect();
+    world.catalogue_application.resolved =
+        Some(ResolveCatalogueUseCase.resolve_and_publish(&refs, &credentials, &store));
+}
+
+fn find_source(world: &QuectoWorld, id: &str) -> Arc<AppFakeSource> {
+    world
+        .catalogue_application
+        .sources
+        .iter()
+        .find(|source| source.id == id)
+        .expect("unknown source")
         .clone()
 }
 
@@ -145,45 +183,47 @@ fn given_no_credential(world: &mut QuectoWorld, provider: String) {
     world.catalogue_application.credential_denied.push(provider);
 }
 
-#[when(expr = "the resolve-effective-catalogue use case runs")]
-fn when_resolve_runs(world: &mut QuectoWorld) {
-    let store = app_store(world);
-    let credentials = AppFakeCredentials {
-        denied: world.catalogue_application.credential_denied.clone(),
-        secret: APP_FAKE_SECRET.to_string(),
-    };
-    let sources = world.catalogue_application.sources.clone();
-    let refs: Vec<&dyn CatalogueSource> = sources
-        .iter()
-        .map(|source| source.as_ref() as &dyn CatalogueSource)
-        .collect();
-    world.catalogue_application.resolved =
-        Some(ResolveCatalogueUseCase.resolve_and_publish(&refs, &credentials, &store));
+#[given(expr = "the credential store holds the secret {string} for provider {string}")]
+fn given_secret_credential(world: &mut QuectoWorld, secret: String, _provider: String) {
+    world.catalogue_application.secret = Some(secret);
 }
 
-#[when(expr = "the source {string} becomes malformed failing with {string}")]
-fn when_source_becomes_malformed(world: &mut QuectoWorld, id: String, error: String) {
-    let source = world
-        .catalogue_application
-        .sources
-        .iter()
-        .find(|source| source.id == id)
-        .expect("unknown source");
+#[given(expr = "the effective catalogue has been resolved and published")]
+fn given_catalogue_resolved(world: &mut QuectoWorld) {
+    resolve_and_publish(world);
+}
+
+#[given(expr = "the source {string} becomes malformed failing with {string}")]
+fn given_source_becomes_malformed(world: &mut QuectoWorld, id: String, error: String) {
+    let source = find_source(world, &id);
     *source.result.lock().unwrap() = Err(error);
 }
 
-#[when(expr = "the source {string} additionally defines model {string} named {string}")]
-fn when_source_grows(world: &mut QuectoWorld, id: String, qualified: String, display: String) {
-    let source = world
-        .catalogue_application
-        .sources
-        .iter()
-        .find(|source| source.id == id)
-        .expect("unknown source");
+#[given(expr = "the source {string} additionally defines model {string} named {string}")]
+fn given_source_grows(world: &mut QuectoWorld, id: String, qualified: String, display: String) {
+    let source = find_source(world, &id);
     let mut result = source.result.lock().unwrap();
     let mut entries = result.clone().expect("source not loadable");
     entries.push(app_entry(&qualified, &display));
     *result = Ok(entries);
+}
+
+#[when(expr = "the effective catalogue is resolved and published")]
+fn when_resolve_runs(world: &mut QuectoWorld) {
+    resolve_and_publish(world);
+}
+
+#[when(expr = "the model listing is queried with filter {string}")]
+fn when_query_runs(world: &mut QuectoWorld, filter: String) {
+    let store = app_store(world);
+    let query = QueryCatalogueUseCase::new(store);
+    world.catalogue_application.query_result = Some(query.query(app_filter(&filter)));
+}
+
+#[when(expr = "the model listing is projected from the current snapshot")]
+fn when_listing_projected(world: &mut QuectoWorld) {
+    let store = app_store(world);
+    world.catalogue_application.projected = Some(project_model_listing(&store.current()));
 }
 
 #[then(expr = "the published snapshot has {int} model")]
@@ -242,7 +282,12 @@ fn then_model_missing_credential(world: &mut QuectoWorld, qualified: String) {
     );
 }
 
-#[then(expr = "the published snapshot never contains the credential value {string}")]
+// This scenario documents the `CredentialStatusPort` contract: the port
+// answers yes/no only, so the resolve use case never even holds credential
+// material. The rendered-snapshot check additionally guards future domain-type
+// growth (a config or diagnostics field populated from provider data could
+// start echoing secrets); today it cannot fail by construction.
+#[then(expr = "the published snapshot does not contain the secret {string}")]
 fn then_no_secret_in_snapshot(world: &mut QuectoWorld, secret: String) {
     let store = app_store(world);
     let snapshot = store.current();
@@ -257,24 +302,38 @@ fn then_no_secret_in_snapshot(world: &mut QuectoWorld, secret: String) {
     );
 }
 
-#[then(expr = "the query use case still lists {int} model for filter {string}")]
-fn then_query_lists(world: &mut QuectoWorld, count: usize, filter: String) {
-    let store = app_store(world);
-    let query = QueryCatalogueUseCase::new(store);
-    let filter = match filter.as_str() {
-        "all" => CatalogueQuery::All,
-        "known" => CatalogueQuery::Known,
-        "available" => CatalogueQuery::Available,
-        "runnable" => CatalogueQuery::Runnable,
-        other => panic!("unknown filter '{other}'"),
-    };
-    assert_eq!(query.query(filter).entries().len(), count);
+#[then(expr = "the query result lists {int} model(s)")]
+fn then_query_lists(world: &mut QuectoWorld, count: usize) {
+    let result = world
+        .catalogue_application
+        .query_result
+        .as_ref()
+        .expect("query did not run");
+    assert_eq!(result.entries().len(), count);
 }
 
-#[then(expr = "the shared model listing projection lists model {string} at generation {int}")]
+#[then(expr = "the query result contains model {string}")]
+fn then_query_contains(world: &mut QuectoWorld, qualified: String) {
+    let result = world
+        .catalogue_application
+        .query_result
+        .as_ref()
+        .expect("query did not run");
+    assert!(
+        result
+            .find(&ModelRef::parse_qualified(&qualified).unwrap())
+            .is_some(),
+        "query result missing '{qualified}'"
+    );
+}
+
+#[then(expr = "the projected listing shows model {string} at generation {int}")]
 fn then_projection_lists(world: &mut QuectoWorld, qualified: String, generation: u64) {
-    let store = app_store(world);
-    let listing = project_model_listing(&store.current());
+    let listing = world
+        .catalogue_application
+        .projected
+        .as_ref()
+        .expect("listing was not projected");
     assert_eq!(listing.generation, generation);
     assert!(
         listing.rows.iter().any(|row| row.qualified_id == qualified),
