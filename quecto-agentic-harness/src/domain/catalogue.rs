@@ -233,6 +233,26 @@ impl ModelCapabilities {
             .map(|level| level.as_str().to_string())
             .collect()
     }
+
+    /// Parse and validate an effort string against `reference`'s vocabulary.
+    ///
+    /// The one shared membership check (and error message) for every surface
+    /// that accepts an effort string for a known model — UDS `set_effort` and
+    /// spawn-argument validation both call this, so they cannot drift.
+    pub fn parse_effort_for(
+        reference: &str,
+        effort: &str,
+    ) -> Result<crate::domain::provider::EffortLevel, String> {
+        let valid = Self::effort_vocabulary_for(reference);
+        crate::domain::provider::EffortLevel::parse(effort)
+            .filter(|level| valid.iter().any(|v| v == level.as_str()))
+            .ok_or_else(|| {
+                format!(
+                    "invalid effort level \"{effort}\"; valid levels: {}",
+                    valid.join(", ")
+                )
+            })
+    }
 }
 
 /// Why a known model is not runnable.

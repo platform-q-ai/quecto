@@ -128,13 +128,11 @@ pub(super) async fn handle_set_effort(
     type_name: &str,
     effort: &str,
 ) -> bool {
-    use crate::domain::provider::EffortLevel;
-    let valid =
-        crate::domain::catalogue::ModelCapabilities::effort_vocabulary_for(ctx.session.model());
-    let ev = match EffortLevel::parse(effort)
-        .filter(|level| valid.iter().any(|v| v == level.as_str()))
-    {
-        Some(level) => {
+    let ev = match crate::domain::catalogue::ModelCapabilities::parse_effort_for(
+        ctx.session.model(),
+        effort,
+    ) {
+        Ok(level) => {
             if ctx.agent.effort() != Some(level) {
                 ctx.agent.set_effort(level);
                 ctx.session.bump_visible_generation();
@@ -146,14 +144,7 @@ pub(super) async fn handle_set_effort(
                 Some(serde_json::json!({ "effort": level.as_str() })),
             )
         }
-        None => AgentEvent::err(
-            id,
-            type_name,
-            format!(
-                "invalid effort level \"{effort}\"; valid levels: {}",
-                valid.join(", ")
-            ),
-        ),
+        Err(message) => AgentEvent::err(id, type_name, message),
     };
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false

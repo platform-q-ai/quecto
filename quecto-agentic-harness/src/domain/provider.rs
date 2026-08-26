@@ -193,17 +193,6 @@ impl EffortLevel {
         }
     }
 
-    /// Render a level slice as the comma-separated list used in error
-    /// messages and selector vocabularies (e.g. "none, low, medium, high,
-    /// xhigh").
-    pub fn levels_list(levels: &[Self]) -> String {
-        levels
-            .iter()
-            .map(|l| l.as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-
     /// Parse a string into an `EffortLevel`.
     ///
     /// Returns `None` for unrecognised values.

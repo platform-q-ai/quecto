@@ -65,22 +65,6 @@ fn request<'a>(messages: &'a [Message], tools: &'a [ToolDefinition]) -> ChatRequ
 }
 
 #[test]
-fn effort_levels_list_renders_empty_single_and_multiple_slices() {
-    assert_eq!(EffortLevel::levels_list(&[]), "");
-    assert_eq!(EffortLevel::levels_list(&[EffortLevel::Max]), "max");
-    assert_eq!(
-        EffortLevel::levels_list(&[
-            EffortLevel::None,
-            EffortLevel::Low,
-            EffortLevel::Medium,
-            EffortLevel::High,
-            EffortLevel::XHigh,
-        ]),
-        "none, low, medium, high, xhigh"
-    );
-}
-
-#[test]
 fn effort_levels_for_model_selects_anthropic_or_openai_scale() {
     assert_eq!(
         EffortLevel::levels_for_model("anthropic-api/claude-sonnet-4.6"),

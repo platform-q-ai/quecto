@@ -141,7 +141,7 @@ fn then_all_models_carry_effort(world: &mut QuectoWorld) {
     let models = listing_models(world);
     assert!(!models.is_empty(), "builtin listing is empty");
     for model in &models {
-        let levels = model["effort_levels"].as_array();
+        let levels = model["effortLevels"].as_array();
         assert!(
             levels.is_some_and(|l| !l.is_empty()),
             "listed model lacks a snapshot effort vocabulary: {model}"
@@ -156,7 +156,7 @@ fn then_model_effort_vocabulary(world: &mut QuectoWorld, qualified: String, expe
         .iter()
         .find(|m| m["model"].as_str() == Some(qualified.as_str()))
         .unwrap_or_else(|| panic!("model {qualified} not listed"));
-    let got = model["effort_levels"]
+    let got = model["effortLevels"]
         .as_array()
         .unwrap_or_else(|| panic!("model {qualified} carries no effort vocabulary"))
         .iter()
@@ -180,15 +180,12 @@ fn when_contributor_reads_docs(world: &mut QuectoWorld) {
 
 #[then("it maps layer ownership across domain, application, infrastructure, and interface")]
 fn then_docs_map_layer_ownership(world: &mut QuectoWorld) {
-    let ownership =
-        conformance::doc_section(world.catalogue_convergence.docs(), "## Layer ownership")
-            .to_ascii_lowercase();
-    for layer in ["domain", "application", "infrastructure", "interface"] {
-        assert!(
-            ownership.contains(&format!("`{layer}`")),
-            "layer ownership map missing layer: {layer}"
-        );
-    }
+    let missing =
+        conformance::layers_missing_from_ownership_map(world.catalogue_convergence.docs());
+    assert!(
+        missing.is_empty(),
+        "layer ownership map missing layers: {missing:?}"
+    );
 }
 
 #[then("it explains how to add domain metadata")]
@@ -223,11 +220,10 @@ fn then_docs_explain_user_overrides(world: &mut QuectoWorld) {
 
 #[then("it warns against creating another authority")]
 fn then_docs_warn_single_authority(world: &mut QuectoWorld) {
-    let ownership =
-        conformance::doc_section(world.catalogue_convergence.docs(), "## Layer ownership")
-            .to_ascii_lowercase();
     assert!(
-        ownership.contains("another authority"),
+        conformance::ownership_map_warns_against_another_authority(
+            world.catalogue_convergence.docs()
+        ),
         "layer ownership map must warn against creating another authority"
     );
 }

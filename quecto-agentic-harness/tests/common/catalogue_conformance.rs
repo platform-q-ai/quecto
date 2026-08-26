@@ -172,16 +172,33 @@ pub fn has_doc_section(docs: &str, heading: &str) -> bool {
     docs.contains(heading)
 }
 
-pub fn assert_contributor_docs_structure(docs: &str) {
+/// Layers the ownership map fails to name inside its own section
+/// (empty = the map names every layer).
+pub fn layers_missing_from_ownership_map(docs: &str) -> Vec<String> {
     let ownership = doc_section(docs, "## Layer ownership").to_ascii_lowercase();
-    for layer in ["domain", "application", "infrastructure", "interface"] {
-        assert!(
-            ownership.contains(&format!("`{layer}`")),
-            "layer ownership map missing layer: {layer}"
-        );
-    }
+    ["domain", "application", "infrastructure", "interface"]
+        .iter()
+        .filter(|layer| !ownership.contains(&format!("`{layer}`")))
+        .map(|layer| layer.to_string())
+        .collect()
+}
+
+/// Whether the layer-ownership map explicitly warns against creating
+/// another authority.
+pub fn ownership_map_warns_against_another_authority(docs: &str) -> bool {
+    doc_section(docs, "## Layer ownership")
+        .to_ascii_lowercase()
+        .contains("another authority")
+}
+
+pub fn assert_contributor_docs_structure(docs: &str) {
+    let missing_layers = layers_missing_from_ownership_map(docs);
     assert!(
-        ownership.contains("another authority"),
+        missing_layers.is_empty(),
+        "layer ownership map missing layers: {missing_layers:?}"
+    );
+    assert!(
+        ownership_map_warns_against_another_authority(docs),
         "layer ownership map must warn against creating another authority"
     );
     for heading in REQUIRED_DOC_SECTIONS {

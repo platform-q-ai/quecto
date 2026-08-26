@@ -16,7 +16,7 @@ use crate::infrastructure::model_registry::ModelRegistry;
 
 /// The real catalogue sources and credential status for one base directory,
 /// loaded once so a resolve (or runtime composition) reads one on-disk state.
-pub struct CatalogueInputs {
+pub(crate) struct CatalogueInputs {
     builtin: BuiltinCatalogueSource,
     user_file: ModelsFileCatalogueSource,
     /// The user's stable-ID `overrides` section as the `UserOverride` layer
@@ -26,7 +26,7 @@ pub struct CatalogueInputs {
     /// layer so explicit refreshes participate in normal precedence. Loading
     /// them touches no network.
     discovered: Vec<crate::infrastructure::catalogue_discovery::DiscoverySourceCache>,
-    pub credentials: RegistryCredentialStatus,
+    pub(crate) credentials: RegistryCredentialStatus,
     /// The parsed user-file records (or the parse error), kept so runtime
     /// composition can build its effective registry from the same read.
     file_records: Result<Vec<crate::infrastructure::model_registry::ModelRecord>, String>,
@@ -54,7 +54,7 @@ impl CatalogueInputs {
     /// feeds the user-defined source layer, credential status, discovery
     /// provider defaults, and the effective registry, so every consumer
     /// describes one on-disk state (and a resolve costs one file read).
-    pub fn load(base_dir: &Path) -> Self {
+    pub(crate) fn load(base_dir: &Path) -> Self {
         let config = ModelRegistry::load_registry_config(&base_dir.join("models.json"))
             .map_err(|error| error.to_string());
         let file_load = config
@@ -123,7 +123,7 @@ impl CatalogueInputs {
     /// catalogue and router always describe one on-disk state and a
     /// discovered model the catalogue publishes as runnable also has a route.
     /// User-file records win over synthesized discovered ones (upsert order).
-    pub fn effective_registry(
+    pub(crate) fn effective_registry(
         &self,
     ) -> Result<crate::infrastructure::model_registry::ModelRegistry, String> {
         self.file_records.clone().map(|mut records| {
@@ -138,7 +138,7 @@ impl CatalogueInputs {
 
     /// The per-provider connection defaults from this load's parse (or the
     /// parse error), for composing the refresh path from the same read.
-    pub fn provider_defaults(
+    pub(crate) fn provider_defaults(
         &self,
     ) -> &Result<
         Vec<(
@@ -150,7 +150,7 @@ impl CatalogueInputs {
         &self.provider_defaults
     }
 
-    pub fn sources(&self) -> Vec<&dyn crate::application::ports::CatalogueSource> {
+    pub(crate) fn sources(&self) -> Vec<&dyn crate::application::ports::CatalogueSource> {
         let mut sources: Vec<&dyn crate::application::ports::CatalogueSource> = vec![&self.builtin];
         sources.extend(
             self.discovered
@@ -164,7 +164,7 @@ impl CatalogueInputs {
 
     /// Providers that already have a persisted discovery cache feeding the
     /// discovered layer via [`CatalogueInputs::sources`].
-    pub fn discovered_providers(&self) -> Vec<&str> {
+    pub(crate) fn discovered_providers(&self) -> Vec<&str> {
         self.discovered.iter().map(|c| c.provider()).collect()
     }
 }

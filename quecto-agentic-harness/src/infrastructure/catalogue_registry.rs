@@ -152,7 +152,7 @@ fn unsupported_entry(
 /// declares only an id (nothing explicit, so nothing clamps). The numbers
 /// come from the registry's shared constants so every layer synthesizes the
 /// same defaults (#1581 review).
-pub fn default_capabilities(reference: &str) -> ModelCapabilities {
+pub(crate) fn default_capabilities(reference: &str) -> ModelCapabilities {
     ModelCapabilities {
         effort_levels: ModelCapabilities::effort_vocabulary_for(reference),
         input_modalities: vec!["text".to_string()],

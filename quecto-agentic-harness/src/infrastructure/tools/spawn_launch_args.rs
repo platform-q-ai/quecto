@@ -70,22 +70,17 @@ pub(super) fn parse_effort_arg(
 /// vocabulary when a model is specified. Returns the normalized level string.
 pub(super) fn validate_effort(level: &str, model: Option<&str>) -> Result<String, String> {
     use crate::domain::provider::EffortLevel;
-    let parsed = EffortLevel::parse(level).ok_or_else(|| {
-        format!(
-            "invalid effort '{level}'; valid values: {}",
-            EffortLevel::VALID_VALUES
-        )
-    })?;
-    if let Some(valid) =
-        model.map(crate::domain::catalogue::ModelCapabilities::effort_vocabulary_for)
-    {
-        if !valid.iter().any(|v| v == parsed.as_str()) {
-            return Err(format!(
-                "invalid effort '{level}'; valid values: {}",
-                valid.join(", ")
-            ));
-        }
-    }
+    let parsed = match model {
+        // The shared domain check: same membership rule and error message as
+        // UDS `set_effort`, so the two surfaces cannot drift.
+        Some(model) => crate::domain::catalogue::ModelCapabilities::parse_effort_for(model, level)?,
+        None => EffortLevel::parse(level).ok_or_else(|| {
+            format!(
+                "invalid effort level \"{level}\"; valid levels: {}",
+                EffortLevel::VALID_VALUES
+            )
+        })?,
+    };
     Ok(parsed.as_str().to_string())
 }
 

@@ -100,7 +100,7 @@ fn render_listing(
                     "cacheWrite": entry.model.capabilities.cost.cache_write,
                 },
                 "reasoning": entry.model.capabilities.reasoning,
-                "effort_levels": entry.model.capabilities.effort_levels,
+                "effortLevels": entry.model.capabilities.effort_levels,
                 "configured": row.runnable,
             }))
         }).collect::<Vec<_>>()

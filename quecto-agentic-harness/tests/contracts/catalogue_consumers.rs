@@ -209,7 +209,7 @@ fn listing_and_session_state_surfaces_report_the_snapshot_effort_vocabulary() {
     let models = response["models"].as_array().unwrap();
     assert!(!models.is_empty(), "builtin listing is empty");
     for model in models {
-        let levels = model["effort_levels"].as_array();
+        let levels = model["effortLevels"].as_array();
         assert!(
             levels.is_some_and(|l| !l.is_empty()),
             "listed model lacks a snapshot effort vocabulary: {model}"
@@ -219,7 +219,7 @@ fn listing_and_session_state_surfaces_report_the_snapshot_effort_vocabulary() {
         models
             .iter()
             .find(|m| m["model"].as_str() == Some(id))
-            .unwrap_or_else(|| panic!("model {id} not listed"))["effort_levels"]
+            .unwrap_or_else(|| panic!("model {id} not listed"))["effortLevels"]
             .as_array()
             .map(|l| {
                 l.iter()
