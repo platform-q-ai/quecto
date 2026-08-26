@@ -164,6 +164,30 @@ fn gpt5() -> CatalogueEntry {
 }
 
 #[test]
+fn use_case_constructors_return_ready_instances() {
+    let _compose = ComposeProviderRuntimeUseCase::new();
+    let _select = ResolveModelSelectionUseCase::new();
+}
+
+#[test]
+fn composition_error_debug_includes_cause() {
+    let error = RuntimeCompositionError {
+        error: "boom".to_string(),
+        retained: None,
+    };
+
+    assert!(format!("{error:?}").contains("boom"));
+}
+
+#[test]
+fn composed_runtime_debug_reports_generation() {
+    let fixture = Fixture::new(vec![gpt5()]);
+    let composed = fixture.compose().expect("composition succeeds");
+
+    assert!(format!("{composed:?}").contains("generation"));
+}
+
+#[test]
 fn compose_publishes_runtime_and_catalogue_as_one_generation() {
     let fixture = Fixture::new(vec![gpt5()]);
     let composed = fixture.compose().expect("composition succeeds");
