@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::application::provider_runtime::ProviderRuntimeFactory;
+use crate::application::ports::ProviderRuntimeFactory;
 use crate::infrastructure::providers::refreshable::{ProviderFactory, RefreshFn};
 
 use crate::domain::provider::LlmProvider;

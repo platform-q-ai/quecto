@@ -21,6 +21,8 @@ mod environment_kill_port;
 mod extension;
 #[path = "contracts/llm_provider.rs"]
 mod llm_provider;
+#[path = "contracts/provider_runtime_factory.rs"]
+mod provider_runtime_factory;
 #[path = "contracts/runtime_composition.rs"]
 mod runtime_composition;
 #[path = "contracts/runtime_tool_lifecycle_registry.rs"]
