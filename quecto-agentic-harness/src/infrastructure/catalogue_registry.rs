@@ -20,7 +20,9 @@ use crate::domain::catalogue::{
     ModelDescriptor, ModelRef, ProviderDescriptor, ProviderId, SourceLayer, TransportKind,
 };
 use crate::infrastructure::model_registry::{
-    AuthMode, ModelRecord, ModelRegistry, ProviderApi, UnsupportedProviderConfig,
+    AuthMode, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS, ModelOverride, ModelRecord,
+    ModelRegistry, ProviderApi, SkippedProviderBlock, UnsupportedProviderConfig,
+    resolve_registry_value,
 };
 
 /// Map one legacy registry record into a domain catalogue entry. Availability
@@ -102,29 +104,7 @@ pub(crate) fn entries_for_unsupported_provider(
 ) -> SourceEntries {
     let mut loaded = SourceEntries::default();
     for (model_id, name) in &config.models {
-        let build = || -> Result<CatalogueEntry, String> {
-            let provider_id =
-                ProviderId::new(config.provider.clone()).map_err(|e| e.to_string())?;
-            let reference = ModelRef::parse(config.provider.clone(), model_id.clone())
-                .map_err(|e| e.to_string())?;
-            Ok(CatalogueEntry {
-                provider: ProviderDescriptor {
-                    id: provider_id,
-                    display_name: Some(config.provider.clone()),
-                    transport: TransportKind::Unsupported {
-                        declared: config.declared_transport.clone(),
-                    },
-                    auth: AuthIdentity::ApiKey,
-                },
-                model: ModelDescriptor {
-                    reference,
-                    display_name: name.clone(),
-                    capabilities: default_capabilities(),
-                    availability: Availability::runnable(),
-                },
-            })
-        };
-        match build() {
+        match unsupported_entry(config, model_id, name.as_deref()) {
             Ok(entry) => loaded.entries.push(entry),
             Err(error) => loaded.skipped.push(SkippedRecord {
                 record: format!("{}/{}", config.provider, model_id),
@@ -135,13 +115,44 @@ pub(crate) fn entries_for_unsupported_provider(
     loaded
 }
 
+/// One unsupported-transport model as a catalogue entry (known but never
+/// runnable). Shared by the user-file layer and the override layer, so an
+/// override can patch a known-but-unrunnable entry (#1581 review).
+fn unsupported_entry(
+    config: &UnsupportedProviderConfig,
+    model_id: &str,
+    name: Option<&str>,
+) -> Result<CatalogueEntry, String> {
+    let provider_id = ProviderId::new(config.provider.clone()).map_err(|e| e.to_string())?;
+    let reference = ModelRef::parse(config.provider.clone(), model_id.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(CatalogueEntry {
+        provider: ProviderDescriptor {
+            id: provider_id,
+            display_name: Some(config.provider.clone()),
+            transport: TransportKind::Unsupported {
+                declared: config.declared_transport.clone(),
+            },
+            auth: AuthIdentity::ApiKey,
+        },
+        model: ModelDescriptor {
+            reference,
+            display_name: name.map(str::to_string),
+            capabilities: default_capabilities(),
+            availability: Availability::runnable(),
+        },
+    })
+}
+
 /// The synthesized capability defaults matching a `models.json` entry that
-/// declares only an id (nothing explicit, so nothing clamps).
-fn default_capabilities() -> ModelCapabilities {
+/// declares only an id (nothing explicit, so nothing clamps). The numbers
+/// come from the registry's shared constants so every layer synthesizes the
+/// same defaults (#1581 review).
+pub(crate) fn default_capabilities() -> ModelCapabilities {
     ModelCapabilities {
         input_modalities: vec!["text".to_string()],
-        context_window: 128_000,
-        max_output_tokens: 16_384,
+        context_window: DEFAULT_CONTEXT_WINDOW,
+        max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
         context_window_explicit: false,
         max_output_tokens_explicit: false,
         reasoning: false,
@@ -208,7 +219,17 @@ impl CatalogueSource for ModelsFileCatalogueSource {
             ModelsFileInput::Path(path) => {
                 let config =
                     ModelRegistry::load_registry_config(path).map_err(|error| error.to_string())?;
-                Ok(user_file_entries(&config.records, &config.unsupported))
+                // This source is the UserDefined layer only: the file's
+                // `overrides` section is a separate UserOverride layer,
+                // applied by [`apply_overrides`] against built-in and
+                // discovered patch targets this standalone source cannot
+                // see. Compositions build both layers from one parse (see
+                // `CatalogueInputs::load`).
+                Ok(user_file_entries(
+                    &config.records,
+                    &config.unsupported,
+                    &config.skipped,
+                ))
             }
             ModelsFileInput::Preloaded(result) => result.clone(),
         }
@@ -221,12 +242,21 @@ impl CatalogueSource for ModelsFileCatalogueSource {
 pub(crate) fn user_file_entries(
     records: &[ModelRecord],
     unsupported: &[UnsupportedProviderConfig],
+    skipped_blocks: &[SkippedProviderBlock],
 ) -> SourceEntries {
     let mut loaded = entries_from_records(records);
     for block in unsupported {
         let mut mapped = entries_for_unsupported_provider(block);
         loaded.entries.append(&mut mapped.entries);
         loaded.skipped.append(&mut mapped.skipped);
+    }
+    // Provider blocks the parse skipped (e.g. an unknown auth mode) surface
+    // as per-record diagnostics so the degradation is never silent.
+    for block in skipped_blocks {
+        loaded.skipped.push(SkippedRecord {
+            record: block.provider.clone(),
+            error: block.error.clone(),
+        });
     }
     loaded
 }
@@ -235,11 +265,14 @@ pub(crate) fn user_file_entries(
 /// patched full entries built by the interface bridge from the same
 /// `models.json` parse, plus per-override diagnostics (#1575, AC1/AC5).
 pub struct UserOverrideCatalogueSource {
-    entries: SourceEntries,
+    entries: Result<SourceEntries, String>,
 }
 
 impl UserOverrideCatalogueSource {
-    pub fn preloaded(entries: SourceEntries) -> Self {
+    /// A failed parse is carried as the layer's error so the resolve
+    /// retains the layer's last-good entries instead of publishing an empty
+    /// override layer.
+    pub fn preloaded(entries: Result<SourceEntries, String>) -> Self {
         Self { entries }
     }
 }
@@ -252,7 +285,7 @@ impl CatalogueSource for UserOverrideCatalogueSource {
         SourceLayer::UserOverride
     }
     fn load(&self) -> Result<SourceEntries, String> {
-        Ok(self.entries.clone())
+        self.entries.clone()
     }
 }
 
@@ -284,6 +317,139 @@ impl CredentialStatusPort for RegistryCredentialStatus {
     fn credential_available(&self, entry: &CatalogueEntry) -> bool {
         self.configured.contains(&entry.reference().qualified_id())
     }
+}
+
+/// The outcome of applying the user's `overrides` section to its base
+/// records and entries.
+pub(crate) struct AppliedOverrides {
+    /// Full patched records for override targets that have a routable base
+    /// record (user file, discovered, built-in), so overridden connection or
+    /// credential references are also routable and credential-checked.
+    pub(crate) records: Vec<ModelRecord>,
+    /// Patched entries for override targets that are known-but-unrunnable
+    /// unsupported-transport declarations (no `ModelRecord` exists for
+    /// them, but they are published catalogue entries and stay patchable).
+    pub(crate) unsupported_entries: Vec<CatalogueEntry>,
+    /// Per-override diagnostics for overrides that could not apply.
+    pub(crate) skipped: Vec<SkippedRecord>,
+}
+
+/// Apply the user's stable-ID `overrides` to their base entries (#1575,
+/// AC1): the base is the effective entry beneath the override layer (user
+/// file, then discovered, then built-in, including unsupported-transport
+/// declarations), and only declared fields change. Every override that
+/// cannot apply becomes a per-record diagnostic instead of failing the
+/// layer: an unknown target, a literal secret — catalogue files carry
+/// credential *references* (`$ENV`), never key material (AC5) — or a
+/// reference to an unset/empty environment variable, which must never
+/// silently clobber a working credential with an empty key (#1581 review).
+pub(crate) fn apply_overrides(
+    overrides: &[(String, ModelOverride)],
+    file_records: &[ModelRecord],
+    discovered_records: &[ModelRecord],
+    builtin: &ModelRegistry,
+    unsupported: &[UnsupportedProviderConfig],
+) -> AppliedOverrides {
+    let mut applied = AppliedOverrides {
+        records: Vec::new(),
+        unsupported_entries: Vec::new(),
+        skipped: Vec::new(),
+    };
+    for (qualified, patch) in overrides {
+        let mut reject = |error: String| {
+            applied.skipped.push(SkippedRecord {
+                record: qualified.clone(),
+                error,
+            });
+        };
+        let Some((provider, id)) = qualified.split_once('/') else {
+            reject(format!(
+                "override key '{qualified}' must be a qualified provider/model id"
+            ));
+            continue;
+        };
+        let mut resolved_key = None;
+        if let Some(reference) = patch.api_key.as_deref() {
+            if !reference.starts_with('$') {
+                reject(format!(
+                    "override for '{qualified}' declares a literal apiKey; catalogue files accept only a credential reference like \"$MY_KEY\", never literal secrets"
+                ));
+                continue;
+            }
+            let value = resolve_registry_value(reference, |name| std::env::var(name).ok());
+            if value.is_empty() {
+                reject(format!(
+                    "override for '{qualified}' references credential '{reference}' but that environment variable is unset or empty; the base credential was kept"
+                ));
+                continue;
+            }
+            resolved_key = Some(value);
+        }
+        let base = file_records
+            .iter()
+            .chain(discovered_records)
+            .find(|r| r.provider == provider && r.id == id)
+            .or_else(|| builtin.find(provider, id));
+        if let Some(base) = base {
+            let mut record = base.clone();
+            if let Some(name) = &patch.name {
+                record.display_name = Some(name.clone());
+            }
+            if let Some(window) = patch.context_window {
+                record.context_window = window;
+                record.context_window_explicit = true;
+            }
+            if let Some(cap) = patch.max_tokens {
+                record.max_tokens = cap;
+                record.max_tokens_explicit = true;
+            }
+            if let Some(key) = resolved_key {
+                record.api_key = Some(key);
+            }
+            applied.records.push(record);
+            continue;
+        }
+        // An unsupported-transport declaration has no ModelRecord, but it is
+        // a known published entry and must stay patchable by stable ID
+        // (#1581 review): metadata fields apply to the entry directly. A
+        // credential reference is validated but carried nowhere — the entry
+        // can never become runnable in this build.
+        let unsupported_base = unsupported.iter().find_map(|config| {
+            (config.provider == provider)
+                .then(|| {
+                    config
+                        .models
+                        .iter()
+                        .find(|(model_id, _)| model_id == id)
+                        .map(|(model_id, name)| (config, model_id.as_str(), name.clone()))
+                })
+                .flatten()
+        });
+        if let Some((config, model_id, name)) = unsupported_base {
+            match unsupported_entry(config, model_id, name.as_deref()) {
+                Ok(mut entry) => {
+                    if let Some(name) = &patch.name {
+                        entry.model.display_name = Some(name.clone());
+                    }
+                    if let Some(window) = patch.context_window {
+                        entry.model.capabilities.context_window = window;
+                        entry.model.capabilities.context_window_explicit = true;
+                    }
+                    if let Some(cap) = patch.max_tokens {
+                        entry.model.capabilities.max_output_tokens = cap;
+                        entry.model.capabilities.max_output_tokens_explicit = true;
+                    }
+                    applied.unsupported_entries.push(entry);
+                }
+                Err(error) => reject(error),
+            }
+            continue;
+        }
+        reject(format!(
+            "override target '{qualified}' does not match any known model"
+        ));
+    }
+    applied
 }
 
 /// The process-wide snapshot store for one base directory. Every read surface

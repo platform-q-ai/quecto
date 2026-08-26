@@ -89,7 +89,10 @@ fn ucfg_given_override(world: &mut QuectoWorld, qualified: String, name: String,
 fn ucfg_given_override_literal_secret(world: &mut QuectoWorld, qualified: String, secret: String) {
     ucfg_write(
         world,
-        &serde_json::json!({"overrides": {qualified: {"apiKey": secret}}}),
+        // The override also declares metadata, so the keeps-its-built-in-name
+        // assertion discriminates a rejected override from an applied one
+        // (#1581 review — an apiKey-only patch never touches the name).
+        &serde_json::json!({"overrides": {qualified: {"apiKey": secret, "name": "Injected Name"}}}),
     );
 }
 
@@ -274,18 +277,23 @@ fn ucfg_then_unsupported(world: &mut QuectoWorld, qualified: String) {
     );
 }
 
-#[then(expr = "the snapshot resolved before the rewrite does not list model {string}")]
-fn ucfg_then_absent_before_rewrite(world: &mut QuectoWorld, qualified: String) {
+#[then(
+    expr = "the republished snapshot has a higher generation than the snapshot resolved before the rewrite"
+)]
+fn ucfg_then_new_generation(world: &mut QuectoWorld) {
     let before = world
         .catalogue_user_config
         .snapshot_before_rewrite
         .as_ref()
-        .expect("a snapshot was resolved before the rewrite");
+        .expect("a snapshot was resolved before the rewrite")
+        .generation();
+    let after = ucfg_resolved(world).snapshot.generation();
+    // Discriminates a real re-read-and-republish from returning the stale
+    // pre-rewrite snapshot (#1581 review — the previous absent-before
+    // assertion was tautological: no implementation change could fail it).
     assert!(
-        before
-            .find(&ModelRef::parse_qualified(&qualified).expect("qualified id"))
-            .is_none(),
-        "'{qualified}' must only appear after the file edit was re-read"
+        after > before,
+        "hot reload must publish a new generation (before={before}, after={after})"
     );
 }
 

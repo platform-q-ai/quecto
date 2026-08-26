@@ -445,19 +445,42 @@ fn registry_parses_explicit_api_key_auth_block() {
 }
 
 #[test]
-fn registry_rejects_unknown_auth_mode() {
+fn registry_skips_a_provider_block_with_an_unknown_auth_mode() {
+    // An unknown auth mode degrades that provider block alone (with a
+    // diagnostic) instead of failing the whole file — the same per-block
+    // isolation an unknown `api` gets (#1581 review).
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("models.json");
     std::fs::write(
         &path,
-        r#"{"providers":{"x":{"api":"openai-completions","auth":{"mode":"vault"},"models":[{"id":"m"}]}}}"#,
+        r#"{"providers":{
+            "x":{"api":"openai-completions","auth":{"mode":"vault"},"models":[{"id":"m"}]},
+            "y":{"api":"openai-completions","models":[{"id":"ok-model"}]}
+        }}"#,
     )
     .unwrap();
 
-    let err = ModelRegistry::load_from_path(&path)
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("unknown auth mode 'vault'"), "{err}");
+    let config = ModelRegistry::load_registry_config(&path).unwrap();
+    assert!(
+        config
+            .records
+            .iter()
+            .any(|r| r.provider == "y" && r.id == "ok-model"),
+        "the valid sibling block must still load"
+    );
+    assert!(
+        !config.records.iter().any(|r| r.provider == "x"),
+        "the bad block's models must not load"
+    );
+    assert_eq!(config.skipped.len(), 1);
+    assert_eq!(config.skipped[0].provider, "x");
+    assert!(
+        config.skipped[0]
+            .error
+            .contains("unknown auth mode 'vault'"),
+        "{}",
+        config.skipped[0].error
+    );
 }
 
 #[serial_test::serial]

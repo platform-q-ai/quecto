@@ -9,14 +9,12 @@ use std::path::Path;
 
 use crate::application::catalogue::{ResolveCatalogueUseCase, ResolvedCatalogue, model_limits_in};
 use crate::application::ports::CatalogueSnapshotStore;
-use crate::application::ports::SkippedRecord;
 use crate::infrastructure::catalogue_registry::{
     BuiltinCatalogueSource, ModelsFileCatalogueSource, RegistryCredentialStatus,
-    UserOverrideCatalogueSource, entries_from_records, snapshot_store_for, user_file_entries,
+    UserOverrideCatalogueSource, apply_overrides, entries_from_records, snapshot_store_for,
+    user_file_entries,
 };
-use crate::infrastructure::model_registry::{
-    ModelOverride, ModelRecord, ModelRegistry, resolve_registry_value,
-};
+use crate::infrastructure::model_registry::ModelRegistry;
 
 /// Run the resolve-effective-catalogue use case over the real sources for
 /// `base_dir` and publish into its shared store. Startup calls this once to
@@ -80,12 +78,12 @@ impl CatalogueInputs {
             .map_err(Clone::clone);
         let user_entries = config
             .as_ref()
-            .map(|c| user_file_entries(&c.records, &c.unsupported))
+            .map(|c| user_file_entries(&c.records, &c.unsupported, &c.skipped))
             .map_err(Clone::clone);
         let overrides = config
             .as_ref()
-            .map(|c| c.overrides.clone())
-            .unwrap_or_default();
+            .map(|c| (c.overrides.clone(), c.unsupported.clone()))
+            .map_err(Clone::clone);
         let provider_defaults = config.map(|c| c.providers);
         let discovered =
             crate::infrastructure::catalogue_discovery::discovery_cache_sources(base_dir);
@@ -95,14 +93,25 @@ impl CatalogueInputs {
             file_load.as_deref().unwrap_or_default(),
         );
         let builtin_registry = ModelRegistry::builtin();
-        let (override_records, override_skipped) = apply_overrides(
-            &overrides,
-            file_load.as_deref().unwrap_or_default(),
-            &discovered_records,
-            &builtin_registry,
-        );
-        let mut override_entries = entries_from_records(&override_records);
-        override_entries.skipped.extend(override_skipped);
+        // A malformed parse propagates as the override layer's error (so its
+        // last-good entries are retained by the resolve) instead of
+        // publishing an empty override layer.
+        let (override_records, override_entries) = match &overrides {
+            Ok((overrides, unsupported)) => {
+                let applied = apply_overrides(
+                    overrides,
+                    file_load.as_deref().unwrap_or_default(),
+                    &discovered_records,
+                    &builtin_registry,
+                    unsupported,
+                );
+                let mut entries = entries_from_records(&applied.records);
+                entries.entries.extend(applied.unsupported_entries);
+                entries.skipped.extend(applied.skipped);
+                (applied.records, Ok(entries))
+            }
+            Err(error) => (Vec::new(), Err(error.clone())),
+        };
         let credentials = RegistryCredentialStatus::from_records(
             builtin_registry
                 .models()
@@ -213,74 +222,6 @@ fn synthesize_discovered_records(
         }
     }
     records
-}
-
-/// Apply the user's stable-ID `overrides` to their base records (#1575, AC1):
-/// the base is the effective entry beneath the override layer (user file,
-/// then discovered, then built-in), and only declared fields change. Every
-/// override that cannot apply becomes a per-record diagnostic instead of
-/// failing the layer: an unknown target, or a literal secret — catalogue
-/// files carry credential *references* (`$ENV`), never key material (AC5).
-fn apply_overrides(
-    overrides: &[(String, ModelOverride)],
-    file_records: &[ModelRecord],
-    discovered_records: &[ModelRecord],
-    builtin: &ModelRegistry,
-) -> (Vec<ModelRecord>, Vec<SkippedRecord>) {
-    let mut records = Vec::new();
-    let mut skipped = Vec::new();
-    for (qualified, patch) in overrides {
-        let mut reject = |error: String| {
-            skipped.push(SkippedRecord {
-                record: qualified.clone(),
-                error,
-            });
-        };
-        let Some((provider, id)) = qualified.split_once('/') else {
-            reject(format!(
-                "override key '{qualified}' must be a qualified provider/model id"
-            ));
-            continue;
-        };
-        if let Some(key) = patch.api_key.as_deref()
-            && !key.starts_with('$')
-        {
-            reject(format!(
-                "override for '{qualified}' declares a literal apiKey; catalogue files accept only a credential reference like \"$MY_KEY\", never literal secrets"
-            ));
-            continue;
-        }
-        let base = file_records
-            .iter()
-            .chain(discovered_records)
-            .find(|r| r.provider == provider && r.id == id)
-            .or_else(|| builtin.find(provider, id));
-        let Some(base) = base else {
-            reject(format!(
-                "override target '{qualified}' does not match any known model"
-            ));
-            continue;
-        };
-        let mut record = base.clone();
-        if let Some(name) = &patch.name {
-            record.display_name = Some(name.clone());
-        }
-        if let Some(window) = patch.context_window {
-            record.context_window = window;
-            record.context_window_explicit = true;
-        }
-        if let Some(cap) = patch.max_tokens {
-            record.max_tokens = cap;
-            record.max_tokens_explicit = true;
-        }
-        if let Some(reference) = &patch.api_key {
-            record.api_key = Some(resolve_registry_value(reference, |name| {
-                std::env::var(name).ok()
-            }));
-        }
-        records.push(record);
-    }
-    (records, skipped)
 }
 
 /// The per-model limits for a qualified `provider/model` string, read from the

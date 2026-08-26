@@ -6,7 +6,8 @@
 //! UDS queries, TUI model list) consumes query results projected from the
 //! current snapshot.
 
-use std::sync::{Arc, RwLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::domain::catalogue::{
     Availability, AvailabilityStatus, CatalogueEntry, CatalogueSnapshot, RejectedEntry,
@@ -78,17 +79,43 @@ pub struct ResolvedCatalogue {
     pub skipped: Vec<(String, SkippedRecord)>,
 }
 
-/// Atomic holder of the current published snapshot generation.
+/// Atomic holder of the current published snapshot generation, plus the
+/// last successfully loaded entries per source so one failing source
+/// degrades to its own last-good contribution instead of freezing every
+/// other layer's updates (#1581 review — a stale discovery cache must not
+/// block a valid `models.json` edit from publishing).
 #[derive(Debug, Clone)]
 pub struct CatalogueSnapshotStore {
     current: Arc<RwLock<Arc<CatalogueSnapshot>>>,
+    /// Last-good raw entries per source id (pre-availability derivation).
+    last_good_layers: Arc<Mutex<HashMap<String, Vec<CatalogueEntry>>>>,
 }
 
 impl CatalogueSnapshotStore {
     pub fn new(initial: CatalogueSnapshot) -> Self {
         Self {
             current: Arc::new(RwLock::new(Arc::new(initial))),
+            last_good_layers: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Remember one source's successfully loaded entries as its retention
+    /// fallback for later resolves.
+    fn remember_layer(&self, source_id: &str, entries: &[CatalogueEntry]) {
+        self.last_good_layers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(source_id.to_string(), entries.to_vec());
+    }
+
+    /// The last successfully loaded entries for a source, if any resolve on
+    /// this store has loaded it.
+    fn last_good_layer(&self, source_id: &str) -> Option<Vec<CatalogueEntry>> {
+        self.last_good_layers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(source_id)
+            .cloned()
     }
 
     pub fn empty() -> Self {
@@ -151,6 +178,7 @@ impl ResolveCatalogueUseCase {
         let mut layers = Vec::with_capacity(sources.len());
         let mut source_errors = Vec::new();
         let mut skipped = Vec::new();
+        let mut fresh_loads = 0usize;
         for source in sources {
             match source.load() {
                 Ok(loaded) => {
@@ -160,31 +188,40 @@ impl ResolveCatalogueUseCase {
                             .into_iter()
                             .map(|record| (source.id().to_string(), record)),
                     );
+                    store.remember_layer(source.id(), &loaded.entries);
+                    fresh_loads += 1;
                     layers.push((source.layer(), loaded.entries));
                 }
-                Err(error) => source_errors.push(CatalogueSourceError {
-                    source: source.id().to_string(),
-                    error,
-                }),
+                Err(error) => {
+                    source_errors.push(CatalogueSourceError {
+                        source: source.id().to_string(),
+                        error,
+                    });
+                    // Per-source retention (#1581 review): a source that
+                    // fails to load degrades to its own last-good entries on
+                    // this store, so the other layers' valid updates still
+                    // publish (#1575, AC4b — a malformed user file keeps its
+                    // last valid contribution, while an unrelated edit or a
+                    // broken discovery cache never freezes the catalogue).
+                    // A source that never loaded on this store contributes
+                    // nothing (malformed-source isolation keeps built-ins
+                    // resolving on a broken first read).
+                    if let Some(entries) = store.last_good_layer(source.id()) {
+                        layers.push((source.layer(), entries));
+                    }
+                }
             }
         }
-        if !source_errors.is_empty() {
-            let current = store.current();
-            // A failed source never partially replaces published state: once
-            // a valid generation exists, it is retained wholesale and the
-            // errors are surfaced (#1575, AC4b — a malformed user file keeps
-            // the last valid catalogue). Before any generation is published
-            // there is nothing valid to retain, so the surviving layers still
-            // publish (malformed-source isolation keeps built-ins resolving
-            // on a broken first read) — unless every source failed.
-            if current.generation() > 0 || layers.is_empty() {
-                return ResolvedCatalogue {
-                    snapshot: current,
-                    rejected: Vec::new(),
-                    source_errors,
-                    skipped,
-                };
-            }
+        // When every source failed there is nothing fresh to describe: the
+        // last valid generation is retained wholesale (never republished as
+        // a spurious new generation) and the errors are surfaced.
+        if fresh_loads == 0 && !source_errors.is_empty() {
+            return ResolvedCatalogue {
+                snapshot: store.current(),
+                rejected: Vec::new(),
+                source_errors,
+                skipped,
+            };
         }
         for (_, entries) in &mut layers {
             for entry in entries {

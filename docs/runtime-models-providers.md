@@ -4,7 +4,7 @@ Quecto has one **effective catalogue** of provider/model descriptors. The domain
 
 ## Source precedence
 
-Catalogue sources are resolved as ordered layers, lowest precedence first: built-in metadata, then discovered (refresh-cached) models, then the user-owned `models.json` provider/model declarations, then the user's stable-ID `overrides` section. Later layers upsert earlier ones by stable `provider/model` identity and keep the earlier entry's position, so listing order is stable when a user overrides shipped metadata. A base source that fails to load is reported and skipped; the remaining layers still publish a coherent generation. The runtime layer is different: if the composed runtime cannot be built — a malformed `models.json`, a configuration the providers reject — resolution fails and the last valid generation is retained, because a catalogue without the routing it describes is not a usable generation.
+Catalogue sources are resolved as ordered layers, lowest precedence first: built-in metadata, then discovered (refresh-cached) models, then the user-owned `models.json` provider/model declarations, then the user's stable-ID `overrides` section. Later layers upsert earlier ones by stable `provider/model` identity and keep the earlier entry's position, so listing order is stable when a user overrides shipped metadata. A source that fails to load is reported and degrades to its own last successfully loaded entries on that store (or contributes nothing if it never loaded), so the remaining layers still publish a coherent generation and one broken input — a malformed `models.json`, a corrupt discovery cache — never freezes unrelated valid updates. A provider block the parse must skip (an unknown transport per AC3, or an unknown auth mode) degrades alone with a per-record diagnostic instead of failing the file. The runtime layer is different: if the composed runtime cannot be built — a malformed `models.json`, a configuration the providers reject — resolution fails and the last valid generation is retained, because a catalogue without the routing it describes is not a usable generation.
 
 Queries are derived views over that one snapshot, narrowing in order: `Known` (every entry), `Configured` (usable local configuration), `Available` (configured and backed by a transport adapter), `Runnable` (can run right now).
 
@@ -50,11 +50,11 @@ Supported override fields: `name`, `contextWindow`, `maxTokens`, `apiKey` (crede
 
 ### Secrets
 
-The `overrides` surface accepts only `$ENV`-style credential references; a literal secret is a structured error. The legacy provider-level `apiKey` field continues to accept literal values for compatibility with existing `models.json` files (which keep working unchanged), but references are the documented, recommended form everywhere.
+The `overrides` surface accepts only `$ENV`-style credential references; a literal secret is a structured error, and a reference to an unset or empty environment variable is also rejected with a diagnostic (the base credential is kept) rather than silently clobbering a working key. The top-level `overrides` section patches any known entry by qualified id, including known-but-unrunnable unsupported-transport declarations (metadata fields only). The legacy provider-level `apiKey` field continues to accept literal values for compatibility with existing `models.json` files (which keep working unchanged), but references are the documented, recommended form everywhere.
 
 ### Hot reload
 
-Reload is pull-based (ADR-0002): every read surface (CLI listing, UDS `/models`, TUI projection via UDS) resolves through the same publish path, re-reading `models.json` and re-publishing a new immutable generation, so a valid edit is visible without restarting Quecto or the TUI, and no network is touched. A malformed edit retains the last valid generation wholesale — never a partial publish — and surfaces the parse error to CLI/UDS/TUI diagnostics.
+Reload is pull-based (ADR-0002): every read surface (CLI listing, UDS `/models`, TUI projection via UDS) resolves through the same publish path, re-reading `models.json` and re-publishing a new immutable generation, so a valid edit is visible without restarting Quecto or the TUI, and no network is touched. A malformed edit retains the user layers' last valid contribution — never a partial publish of a half-parsed file — and surfaces the parse error to CLI/UDS/TUI diagnostics, while the other source layers keep publishing their own updates.
 
 ## Add a new transport or authentication flow
 

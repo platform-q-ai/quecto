@@ -15,8 +15,8 @@ use crate::application::ports::{
     RefreshableCatalogueSource, SkippedRecord, SourceEntries,
 };
 use crate::domain::catalogue::{
-    AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
-    ModelRef, ProviderDescriptor, ProviderId, SourceLayer, TransportKind,
+    AuthIdentity, Availability, CatalogueEntry, ModelDescriptor, ModelRef, ProviderDescriptor,
+    ProviderId, SourceLayer, TransportKind,
 };
 use crate::infrastructure::atomic_write::atomic_write;
 use crate::infrastructure::model_registry::{AuthMode, ProviderApi, ProviderDefaults};
@@ -215,15 +215,7 @@ fn cached_entry(provider: &str, model: &CachedModel) -> Result<CatalogueEntry, S
         model: ModelDescriptor {
             reference,
             display_name: Some(model.name.clone()),
-            capabilities: ModelCapabilities {
-                input_modalities: vec!["text".to_string()],
-                context_window: 128_000,
-                max_output_tokens: 16_384,
-                context_window_explicit: false,
-                max_output_tokens_explicit: false,
-                reasoning: false,
-                cost: ModelCost::default(),
-            },
+            capabilities: crate::infrastructure::catalogue_registry::default_capabilities(),
             availability: Availability::runnable(),
         },
     })

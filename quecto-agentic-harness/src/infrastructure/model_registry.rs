@@ -334,6 +334,7 @@ impl ModelRegistry {
         let mut providers: Vec<_> = file.providers.into_iter().collect();
         providers.sort_by(|a, b| a.0.cmp(&b.0));
         let mut unsupported = Vec::new();
+        let mut skipped = Vec::new();
         for (provider_key, provider) in providers {
             let declared_api = provider.api.as_deref().unwrap_or("openai-completions");
             let api = match ProviderApi::parse(declared_api) {
@@ -370,8 +371,19 @@ impl ModelRegistry {
                             block.api_key.map(|v| resolve_registry_value(&v, env)),
                         ),
                         "oauth" => (AuthMode::OAuth, block.oauth_provider, None),
+                        // An unknown auth mode must not fail the whole file
+                        // (the same per-block degradation AC3 gives an
+                        // unknown `api`): this provider's models are skipped
+                        // with a diagnostic and the other blocks still load
+                        // (#1581 review).
                         other => {
-                            return Err(ModelRegistryError::UnknownAuthMode(other.to_string()));
+                            skipped.push(SkippedProviderBlock {
+                                provider: provider_key.clone(),
+                                error: format!(
+                                    "provider '{provider_key}' declares unknown auth mode '{other}' (supported: apiKey, oauth); its models were skipped"
+                                ),
+                            });
+                            continue;
                         }
                     }
                 }
@@ -452,6 +464,7 @@ impl ModelRegistry {
             providers: provider_defaults,
             overrides,
             unsupported,
+            skipped,
         })
     }
 
@@ -516,8 +529,8 @@ impl ModelRecord {
             auth_header: true,
             allow_remote_http: false,
             input: vec!["text".to_string()],
-            context_window: 128_000,
-            max_tokens: 16_384,
+            context_window: DEFAULT_CONTEXT_WINDOW,
+            max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
             max_tokens_explicit: false,
             context_window_explicit: false,
             cost: ModelCost::default(),
@@ -567,6 +580,14 @@ impl ProviderDefaults {
     }
 }
 
+/// Synthesized capability defaults for an entry that declares only an id:
+/// the single truth shared by `ModelRecord::with_defaults`, the discovery
+/// cache mapping, and unsupported-transport entries, so the layers can never
+/// drift apart (#1581 review). Marked non-explicit downstream, so nothing
+/// clamps on these values.
+pub(crate) const DEFAULT_CONTEXT_WINDOW: u32 = 128_000;
+pub(crate) const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 16_384;
+
 /// The full parsed user registry file: model records plus per-provider
 /// defaults, in deterministic (sorted) provider order.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -580,6 +601,16 @@ pub struct RegistryConfig {
     /// models become known-but-unrunnable catalogue entries instead of
     /// erasing the file (#1575, AC3).
     pub unsupported: Vec<UnsupportedProviderConfig>,
+    /// Provider blocks skipped with a diagnostic (e.g. an unknown auth mode)
+    /// so one bad block never erases the file's valid neighbours.
+    pub skipped: Vec<SkippedProviderBlock>,
+}
+
+/// One provider block `load_registry_config` skipped, with the reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedProviderBlock {
+    pub provider: String,
+    pub error: String,
 }
 
 /// One stable-ID metadata override (`overrides` section of `models.json`):

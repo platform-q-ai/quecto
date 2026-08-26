@@ -52,7 +52,7 @@ Feature: User-owned catalogue extension surface and hot reload (epic #1193, slic
     And the user catalogue file has been rewritten to add model "second" named "Second" to provider "openai-api"
     When the effective catalogue is resolved from the user's configuration
     Then the published snapshot lists model "openai-api/second" named "Second"
-    And the snapshot resolved before the rewrite does not list model "openai-api/second"
+    And the republished snapshot has a higher generation than the snapshot resolved before the rewrite
 
   # AC4a — hot reload is visible through the UDS models listing surface
   @done

@@ -352,3 +352,56 @@ fn override_of_unknown_model_is_reported_not_dropped() {
         resolved.skipped
     );
 }
+
+/// #1581 review: an override apiKey referencing an unset environment
+/// variable must be rejected with a diagnostic and keep the base
+/// credential, never silently clobber it with an empty key.
+#[test]
+fn override_referencing_unset_env_var_is_rejected_and_keeps_base_credential() {
+    let tmp = tempfile::tempdir().unwrap();
+    slice5_write(
+        &tmp,
+        r#"{"overrides":{"openai-api/gpt-5.5":{"apiKey":"$QUECTO_TEST_DEFINITELY_UNSET_VAR"}}}"#,
+    );
+    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    assert!(
+        resolved.skipped.iter().any(|(_, s)| {
+            s.record == "openai-api/gpt-5.5" && s.error.contains("unset or empty")
+        }),
+        "an unset credential reference must surface as a diagnostic, got {:?}",
+        resolved.skipped
+    );
+}
+
+/// #1581 review: an override can patch a known-but-unrunnable
+/// unsupported-transport declaration (it is a published entry, so it is
+/// patchable by stable ID like any other known entry).
+#[test]
+fn override_patches_an_unsupported_transport_entry() {
+    use crate::domain::catalogue::ModelRef;
+    let tmp = tempfile::tempdir().unwrap();
+    slice5_write(
+        &tmp,
+        r#"{"providers":{"wsprov":{"api":"websocket-frames","models":[{"id":"m2"}]}},
+            "overrides":{"wsprov/m2":{"name":"My WS","contextWindow":42000}}}"#,
+    );
+    let (_store, resolved) = resolve_and_publish_for(tmp.path());
+    let entry = resolved
+        .snapshot
+        .find(&ModelRef::parse_qualified("wsprov/m2").unwrap())
+        .expect("unsupported entry listed");
+    assert_eq!(entry.model.display_name.as_deref(), Some("My WS"));
+    assert_eq!(entry.model.capabilities.context_window, 42_000);
+    assert!(
+        !entry.model.availability.is_runnable(),
+        "patching metadata must not make an unsupported transport runnable"
+    );
+    assert!(
+        !resolved
+            .skipped
+            .iter()
+            .any(|(_, s)| s.record == "wsprov/m2"),
+        "the override must apply, not be rejected: {:?}",
+        resolved.skipped
+    );
+}
