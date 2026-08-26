@@ -101,20 +101,22 @@ fn compose_agent_provider(
     {
         let openai_oauth_key = openai_oauth_cred.token;
         if !openai_oauth_key.is_empty() {
+            // Codex routing stays on for the OAuth path regardless of
+            // `disable_codex_routing`: the plain Chat Completions backend would
+            // send the OAuth access token as an API key and 401 on every turn.
+            // The flag governs API-key sessions, as it did before this refactor.
             let inner = build_single_provider(
                 "openai",
                 &openai_oauth_key,
                 &openai_base,
                 http_client,
-                config.providers.openai.disable_codex_routing,
+                false,
             )?;
-            let factory =
-                crate::infrastructure::oauth_runtime::make_provider_factory_with_codex_routing(
-                    "openai",
-                    openai_base.clone(),
-                    http_client.clone(),
-                    config.providers.openai.disable_codex_routing,
-                );
+            let factory = crate::infrastructure::oauth_runtime::make_provider_factory(
+                "openai",
+                openai_base.clone(),
+                http_client.clone(),
+            );
             provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
                 inner,
                 store: store_arc.clone(),
@@ -321,10 +323,10 @@ fn compose_agent_provider(
         has_anthropic_api_key,
     })?;
     ensure_providers_configured(&provider_list, &model_registry)?;
-    let router: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::try_with_model_descriptors(
-        provider_list,
-        runtime_model_descriptors,
-    )?);
+    let router: Arc<dyn LlmProvider> = Arc::new(
+        ProviderRouter::try_with_model_descriptors(provider_list, runtime_model_descriptors)?
+            .with_open_prefixes(configured_endpoint_prefixes.iter().cloned().collect()),
+    );
     Ok(Arc::new(RetryingProvider::new(
         router,
         RetryConfig::default(),

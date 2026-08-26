@@ -57,10 +57,10 @@ pub fn compose_catalogue_runtime<C, R, F: ProviderRuntimeFactory<C, R>>(
             "catalogue source skipped; resolving remaining layers"
         );
     }
-    // The runtime is the authority on which prefixes it can route, including
-    // providers whose model ids the catalogue cannot enumerate.
+    // The runtime is the authority on which of its prefixes accept ids the
+    // catalogue cannot enumerate.
     let routable = provider
-        .routable_provider_names()
+        .open_provider_names()
         .into_iter()
         .filter_map(|name| crate::domain::catalogue::ProviderId::new(name).ok())
         .collect();

@@ -32,6 +32,9 @@ struct ModelsJsonPublishLock {
 }
 
 impl ModelsJsonPublishLock {
+    /// How long to wait for another process's publication to finish.
+    const LOCK_WAIT: Duration = Duration::from_secs(5);
+
     // `File::lock` stabilized in 1.89, which the crate already depends on for
     // the credential and session locks; clippy.toml's declared 1.85 predates it.
     #[expect(clippy::incompatible_msrv)]
@@ -59,9 +62,26 @@ impl ModelsJsonPublishLock {
             .write(true)
             .open(&lock_path);
         let file = opened.map_err(|e| format!("failed to open {}: {e}", lock_path.display()))?;
-        file.lock()
-            .map_err(|e| format!("failed to lock {}: {e}", lock_path.display()))?;
-        Ok(Self { file })
+        // Bounded: another process holding the lock must not stall discovery (and
+        // with it the command loop that awaits it) for an unbounded time.
+        let deadline = std::time::Instant::now() + Self::LOCK_WAIT;
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(Self { file }),
+                Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    return Err(format!(
+                        "timed out waiting for {} (another process is publishing)",
+                        lock_path.display()
+                    ));
+                }
+                Err(e) => {
+                    return Err(format!("failed to lock {}: {e}", lock_path.display()));
+                }
+            }
+        }
     }
 }
 

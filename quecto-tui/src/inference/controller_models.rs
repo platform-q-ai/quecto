@@ -111,6 +111,16 @@ impl App {
             }
             return;
         };
+        if let Some(error) = crate::protocol::model_payloads::parse_model_list_error(
+            &data,
+            &crate::components::ansi::sanitize_control,
+        ) {
+            // The list is the last valid generation, not the file's contents.
+            self.notify(
+                &format!("Model catalogue could not be reloaded: {error}"),
+                NotifyLevel::Warning,
+            );
+        }
         self.inference.model_registry.entries = parse_model_entries(&data);
         if self.inference.model_registry.open_pending {
             self.inference.model_registry.open_pending = false;

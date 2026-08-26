@@ -29,7 +29,7 @@ fn seed(
     )
     .with_open_providers(
         provider
-            .routable_provider_names()
+            .open_provider_names()
             .into_iter()
             .filter_map(|name| crate::domain::catalogue::ProviderId::new(name).ok())
             .collect(),

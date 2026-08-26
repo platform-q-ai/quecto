@@ -60,7 +60,7 @@ pub(super) fn catalogue_descriptors(
                 // runtime skipped it, so availability stays a complete account.
                 let mut reasons = descriptor.availability.reasons().to_vec();
                 let skipped = crate::domain::catalogue::UnavailableReason::InvalidConfiguration(
-                    "provider skipped during runtime construction".to_string(),
+                    "no provider was constructed for this prefix".to_string(),
                 );
                 if !reasons.contains(&skipped) {
                     reasons.push(skipped);

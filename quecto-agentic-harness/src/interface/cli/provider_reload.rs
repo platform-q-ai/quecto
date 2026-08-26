@@ -72,7 +72,7 @@ pub fn seeded_provider_reload(
     )
     .with_open_providers(
         initial_provider
-            .routable_provider_names()
+            .open_provider_names()
             .into_iter()
             .filter_map(|name| crate::domain::catalogue::ProviderId::new(name).ok())
             .collect(),

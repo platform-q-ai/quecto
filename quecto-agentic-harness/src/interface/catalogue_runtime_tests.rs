@@ -30,7 +30,7 @@ fn runtime_snapshot_reports_missing_provider_configuration() {
 }
 
 #[test]
-fn every_constructed_provider_is_published_as_a_routable_prefix() {
+fn only_configured_endpoints_are_published_as_open_prefixes() {
     use crate::infrastructure::config::OpenAiCompatibleEndpoint;
 
     let temp = TempDir::new().unwrap();
@@ -58,12 +58,8 @@ fn every_constructed_provider_is_published_as_a_routable_prefix() {
         .iter()
         .map(|provider| provider.as_str().to_string())
         .collect();
-    // Every constructed provider routes ids the catalogue may not enumerate,
-    // and a keyless endpoint constructs nothing.
-    assert!(open.contains(&"spark".to_string()));
-    assert!(open.contains(&"openai-api".to_string()));
-    assert!(
-        !open.contains(&"keyless".to_string()),
-        "a keyless endpoint constructs no provider: {open:?}"
-    );
+    // Only a directly configured endpoint accepts ids the catalogue cannot
+    // enumerate; a catalogue-backed provider like `openai-api` does not, so an
+    // unknown id under it is still worth reporting to the user.
+    assert_eq!(open, ["spark"], "{open:?}");
 }

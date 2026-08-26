@@ -173,3 +173,33 @@ fn non_object_entries_are_dropped() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].id, "kept/model");
 }
+
+#[test]
+fn refresh_failures_and_catalogue_errors_reach_the_view() {
+    let sanitize = |s: &str| s.to_string();
+
+    let partial = serde_json::json!({"sources": [
+        {"source": "openai-api", "status": "refreshed", "models": 12},
+        {"source": "spark", "status": "failed", "reason": "connection refused"},
+        {"source": "anthropic-oauth", "status": "skipped", "reason": "oauth"},
+    ]});
+    assert_eq!(
+        parse_refresh_failures(&partial, &sanitize),
+        ["spark: connection refused"],
+        "a refresh that partly failed must name what failed"
+    );
+    assert!(parse_refresh_failures(&serde_json::json!({}), &sanitize).is_empty());
+
+    assert_eq!(
+        parse_model_list_error(
+            &serde_json::json!({"models": [], "error": "failed to parse models.json"}),
+            &sanitize
+        )
+        .as_deref(),
+        Some("failed to parse models.json")
+    );
+    assert_eq!(
+        parse_model_list_error(&serde_json::json!({"models": []}), &sanitize),
+        None
+    );
+}

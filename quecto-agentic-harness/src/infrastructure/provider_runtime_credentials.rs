@@ -41,13 +41,15 @@ pub(super) fn explicit_endpoint_owns_registry_route(
     use crate::infrastructure::model_registry::AuthMode;
     use crate::infrastructure::model_registry::ProviderApi;
     let prefix = model.provider.to_ascii_lowercase();
-    // A Google route, or one whose catalogue entry declares OAuth, keeps its
-    // auth/billing identity: an api-key endpoint must collide with it rather
-    // than silently take it over.
-    if !endpoint_prefixes.contains(&prefix)
-        || matches!(model.api, ProviderApi::GoogleGenerativeAi)
-        || matches!(model.auth, AuthMode::OAuth)
+    // A Google route has no adapter at all. An OAuth route keeps its auth and
+    // billing identity only while it can actually run: an api-key endpoint must
+    // not take over a working OAuth route, but a declared-and-uncredentialled
+    // one is not an identity to protect.
+    if !endpoint_prefixes.contains(&prefix) || matches!(model.api, ProviderApi::GoogleGenerativeAi)
     {
+        return Ok(false);
+    }
+    if matches!(model.auth, AuthMode::OAuth) && oauth_credential_available(model, _store)? {
         return Ok(false);
     }
     let Some(endpoint) = endpoint_for_prefix(&model.provider, config) else {
@@ -67,6 +69,20 @@ pub(super) fn explicit_endpoint_owns_registry_route(
 
 /// `registry_provider_can_construct` ignoring endpoint-supplied credentials, so
 /// route ownership does not depend on the endpoint it is being compared with.
+/// Whether the record's declared OAuth provider has a usable credential.
+fn oauth_credential_available(
+    model: &crate::infrastructure::model_registry::ModelRecord,
+    store: &CredentialSnapshot,
+) -> Result<bool, String> {
+    use crate::infrastructure::auth::credential_store::AuthMethod;
+    let Some(oauth_provider) = model.oauth_provider.as_deref() else {
+        return Ok(false);
+    };
+    Ok(store
+        .get(oauth_provider)
+        .is_some_and(|cred| cred.method == AuthMethod::OAuth && !cred.token.is_empty()))
+}
+
 fn endpoint_for_prefix<'a>(
     provider: &str,
     config: &'a Config,
@@ -106,9 +122,14 @@ pub(crate) fn registry_model_credential_available(
     ) {
         return Ok(false);
     }
+    // A configured endpoint supplies the credential for the prefix it serves,
+    // whichever auth path the catalogue entry declares: the endpoint replaces
+    // that path rather than satisfying it.
+    if endpoint_credential_for_prefix(&model.provider, config) {
+        return Ok(true);
+    }
     match model.auth {
         AuthMode::ApiKey => Ok(model.api_key.as_deref().is_some_and(|key| !key.is_empty())
-            || endpoint_credential_for_prefix(&model.provider, config)
             || builtin_api_key_available(model, store, config)?),
         AuthMode::OAuth => {
             // Availability is a question, not a validation: a record that cannot

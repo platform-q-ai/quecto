@@ -24,6 +24,9 @@ use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 pub struct ProviderRouter {
     providers: Vec<Arc<dyn LlmProvider>>,
     model_descriptors: Vec<ModelDescriptor>,
+    /// Prefixes configured directly by the user, whose model ids the catalogue
+    /// cannot enumerate.
+    open_prefixes: Vec<String>,
 }
 
 impl ProviderRouter {
@@ -45,6 +48,12 @@ impl ProviderRouter {
             .unwrap_or_else(|error| panic!("{error}"))
     }
 
+    /// Declare the prefixes whose ids cannot be enumerated (configured endpoints).
+    pub fn with_open_prefixes(mut self, open_prefixes: Vec<String>) -> Self {
+        self.open_prefixes = open_prefixes;
+        self
+    }
+
     pub fn try_with_model_descriptors(
         providers: Vec<Arc<dyn LlmProvider>>,
         model_descriptors: Vec<ModelDescriptor>,
@@ -62,6 +71,7 @@ impl ProviderRouter {
         Ok(Self {
             providers,
             model_descriptors,
+            open_prefixes: Vec::new(),
         })
     }
 
@@ -209,11 +219,8 @@ impl LlmProvider for ProviderRouter {
         self
     }
 
-    fn routable_provider_names(&self) -> Vec<String> {
-        self.providers
-            .iter()
-            .map(|provider| provider.name().to_string())
-            .collect()
+    fn open_provider_names(&self) -> Vec<String> {
+        self.open_prefixes.clone()
     }
 
     fn model_descriptors(&self) -> Option<&[ModelDescriptor]> {

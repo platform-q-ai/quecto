@@ -133,7 +133,7 @@ fn runtime_catalogue_skips_unsupported_google_oauth_without_rejecting_valid_prov
             if reasons.iter().any(|reason| matches!(
                 reason,
                 UnavailableReason::InvalidConfiguration(message)
-                    if message.contains("provider skipped during runtime construction")
+                    if message.contains("no provider was constructed for this prefix")
             ))
     ));
 }

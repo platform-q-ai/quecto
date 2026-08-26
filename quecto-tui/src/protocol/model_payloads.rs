@@ -48,45 +48,105 @@ pub struct ModelListEntry {
 /// a presentation concern owned by the feature/view layer, which the protocol
 /// layer must not depend on (rule 3). All *derivation* rules — including the
 /// empty-after-sanitization skip — stay here (rule 4).
+/// One source's outcome in a catalogue refresh response.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct RefreshOutcome {
+    source: Option<String>,
+    status: Option<String>,
+    reason: Option<String>,
+}
+
+/// A catalogue refresh response: per-source outcomes.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct RefreshResponse {
+    sources: Vec<RefreshOutcome>,
+}
+
+/// The sources a catalogue refresh could not refresh, as `source: reason`.
+pub fn parse_refresh_failures(
+    data: &serde_json::Value,
+    sanitize: &dyn Fn(&str) -> String,
+) -> Vec<String> {
+    let parsed: RefreshResponse = serde_json::from_value(data.clone()).unwrap_or_default();
+    parsed
+        .sources
+        .into_iter()
+        .filter(|outcome| outcome.status.as_deref() == Some("failed"))
+        .map(|outcome| {
+            sanitize(&format!(
+                "{}: {}",
+                outcome.source.as_deref().unwrap_or("unknown source"),
+                outcome.reason.as_deref().unwrap_or("no reason reported"),
+            ))
+        })
+        .collect()
+}
+
+/// A `list_models` response: the published list, and the catalogue error when
+/// the file on disk could not be resolved into a new generation.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct ModelListResponse {
+    models: Vec<serde_json::Value>,
+    error: Option<String>,
+}
+
+/// The catalogue error reported alongside a model list: the published list is
+/// the last valid one, and the user needs to know the file on disk is broken.
+pub fn parse_model_list_error(
+    data: &serde_json::Value,
+    sanitize: &dyn Fn(&str) -> String,
+) -> Option<String> {
+    let parsed: ModelListResponse = serde_json::from_value(data.clone()).unwrap_or_default();
+    parsed.error.as_deref().map(sanitize)
+}
+
 pub fn parse_model_list(
     data: &serde_json::Value,
     sanitize: &dyn Fn(&str) -> String,
 ) -> Vec<ModelListEntry> {
-    let Some(models) = data.get("models").and_then(|v| v.as_array()) else {
-        return Vec::new();
-    };
-    models
+    let parsed: ModelListResponse = serde_json::from_value(data.clone()).unwrap_or_default();
+    parsed
+        .models
         .iter()
         .filter_map(|model| parse_model_list_entry(model, sanitize))
         .collect()
+}
+
+/// One listed model as the harness projects it.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct ModelListRow {
+    /// Legacy parity: older harness payloads carried the identifier as `id`,
+    /// current ones as `model`. `model` wins when both are present.
+    model: Option<String>,
+    id: Option<String>,
+    provider: Option<String>,
+    auth: Option<String>,
 }
 
 fn parse_model_list_entry(
     model: &serde_json::Value,
     sanitize: &dyn Fn(&str) -> String,
 ) -> Option<ModelListEntry> {
-    // Legacy parity: older harness payloads carried the identifier as `id`,
-    // current ones as `model`. `model` wins when both are present.
-    let raw_model = model
-        .get("model")
-        .or_else(|| model.get("id"))
-        .and_then(|v| v.as_str())?;
-    let id = sanitize(raw_model);
+    let row: ModelListRow = serde_json::from_value(model.clone()).ok()?;
+    let id = sanitize(row.model.as_deref().or(row.id.as_deref())?);
     if id.is_empty() {
         return None;
     }
     let provider = sanitize(
-        model
-            .get("provider")
-            .and_then(|v| v.as_str())
+        row.provider
+            .as_deref()
             .or_else(|| id.split_once('/').map(|(provider, _)| provider))
             .unwrap_or("Model"),
     );
-    let auth = model
-        .get("auth")
-        .and_then(|v| v.as_str())
+    let auth = row
+        .auth
+        .as_deref()
         .map(sanitize)
-        .filter(|s| !s.is_empty());
+        .filter(|auth| !auth.is_empty());
     Some(ModelListEntry { id, provider, auth })
 }
 
