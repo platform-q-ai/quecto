@@ -21,24 +21,59 @@ use crate::infrastructure::model_registry::ModelRegistry;
 /// 4-5). No network is touched.
 pub fn resolve_and_publish_for(base_dir: &Path) -> (CatalogueSnapshotStore, ResolvedCatalogue) {
     let store = snapshot_store_for(base_dir);
-    let builtin = BuiltinCatalogueSource;
-    // models.json is read and parsed exactly once per resolve: the same parse
-    // feeds both the user-defined source layer and credential status, so the
-    // published entries and their availability always describe one on-disk
-    // state (and a resolve costs one file read, not two).
-    let file_load = ModelRegistry::load_file_records(&base_dir.join("models.json"))
-        .map_err(|error| error.to_string());
-    let builtin_registry = ModelRegistry::builtin();
-    let credentials = RegistryCredentialStatus::from_records(
-        builtin_registry
-            .models()
-            .iter()
-            .chain(file_load.as_deref().unwrap_or_default()),
-    );
-    let user_file = ModelsFileCatalogueSource::preloaded(file_load);
+    let inputs = CatalogueInputs::load(base_dir);
     let resolved =
-        ResolveCatalogueUseCase.resolve_and_publish(&[&builtin, &user_file], &credentials, &store);
+        ResolveCatalogueUseCase.resolve_and_publish(&inputs.sources(), &inputs.credentials, &store);
     (store, resolved)
+}
+
+/// The real catalogue sources and credential status for one base directory,
+/// loaded once so a resolve (or runtime composition) reads one on-disk state.
+pub(crate) struct CatalogueInputs {
+    builtin: BuiltinCatalogueSource,
+    user_file: ModelsFileCatalogueSource,
+    pub(crate) credentials: RegistryCredentialStatus,
+    /// The parsed user-file records (or the parse error), kept so runtime
+    /// composition can build its effective registry from the same read.
+    file_records: Result<Vec<crate::infrastructure::model_registry::ModelRecord>, String>,
+}
+
+impl CatalogueInputs {
+    /// models.json is read and parsed exactly once per load: the same parse
+    /// feeds both the user-defined source layer and credential status, so the
+    /// published entries and their availability always describe one on-disk
+    /// state (and a resolve costs one file read, not two).
+    pub(crate) fn load(base_dir: &Path) -> Self {
+        let file_load = ModelRegistry::load_file_records(&base_dir.join("models.json"))
+            .map_err(|error| error.to_string());
+        let builtin_registry = ModelRegistry::builtin();
+        let credentials = RegistryCredentialStatus::from_records(
+            builtin_registry
+                .models()
+                .iter()
+                .chain(file_load.as_deref().unwrap_or_default()),
+        );
+        Self {
+            builtin: BuiltinCatalogueSource,
+            user_file: ModelsFileCatalogueSource::preloaded(file_load.clone()),
+            credentials,
+            file_records: file_load,
+        }
+    }
+
+    /// The effective model registry (built-in + user file) from this load's
+    /// records, so catalogue and router always describe one on-disk state.
+    pub(crate) fn effective_registry(
+        &self,
+    ) -> Result<crate::infrastructure::model_registry::ModelRegistry, String> {
+        self.file_records
+            .clone()
+            .map(crate::infrastructure::model_registry::ModelRegistry::from_file_records)
+    }
+
+    pub(crate) fn sources(&self) -> [&dyn crate::application::catalogue::CatalogueSource; 2] {
+        [&self.builtin, &self.user_file]
+    }
 }
 
 /// The per-model limits for a qualified `provider/model` string, read from the

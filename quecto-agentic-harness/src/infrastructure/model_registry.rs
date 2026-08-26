@@ -294,11 +294,18 @@ impl ModelRegistry {
     }
 
     pub fn load_from_path(path: &Path) -> Result<Self, ModelRegistryError> {
+        Ok(Self::from_file_records(Self::load_file_records(path)?))
+    }
+
+    /// The effective registry (built-in table + the given user-file records),
+    /// built from records already parsed elsewhere so one on-disk read can
+    /// feed both the catalogue resolve and the runtime composition (#1193).
+    pub fn from_file_records(records: Vec<ModelRecord>) -> Self {
         let mut registry = Self::builtin();
-        for record in Self::load_file_records(path)? {
+        for record in records {
             registry.upsert(record);
         }
-        Ok(registry)
+        registry
     }
 
     /// Parse only the records `path` itself defines (no built-in table), so

@@ -1,4 +1,5 @@
 use super::*;
+use crate::interface::cli::ConfigError;
 use tokio::io::AsyncWriteExt;
 
 async fn stub_agent(dir: &tempfile::TempDir) -> std::path::PathBuf {
@@ -83,4 +84,42 @@ fn server_error_display_is_informative() {
             .contains("quecto agent")
     );
     assert!(ServerError::Bind("y".into()).to_string().contains("bind"));
+    assert!(
+        ServerError::Config(ConfigError::MissingSocket)
+            .to_string()
+            .contains("configuration error")
+    );
+}
+
+#[tokio::test]
+async fn bind_reports_invalid_socket_address_as_config_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = stub_agent(&dir).await;
+    let config = Config {
+        socket,
+        host: "not a host".into(),
+        port: 8080,
+    };
+
+    let err = bind(&config).await.unwrap_err();
+    assert!(matches!(
+        err,
+        ServerError::Config(ConfigError::InvalidPort(_))
+    ));
+}
+
+#[tokio::test]
+async fn bind_reports_tcp_bind_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = stub_agent(&dir).await;
+    let occupied = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = occupied.local_addr().unwrap().port();
+    let config = Config {
+        socket,
+        host: "127.0.0.1".into(),
+        port,
+    };
+
+    let err = bind(&config).await.unwrap_err();
+    assert!(matches!(err, ServerError::Bind(_)));
 }

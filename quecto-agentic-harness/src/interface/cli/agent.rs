@@ -601,10 +601,6 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     }
 
     let base_dir = ctx.base_dir();
-    // Publish the initial effective-catalogue generation once at startup so
-    // every read surface (CLI listing, UDS queries, TUI projection) renders
-    // from the shared snapshot store (epic #1193, slice 2).
-    super::catalogue_bridge::resolve_and_publish_for(&base_dir);
     let config_path = ctx.config_path();
     // Create the broadcast channel early so the WorkflowTool emitter can
     // send workflow_state events from the moment it is constructed (#598).

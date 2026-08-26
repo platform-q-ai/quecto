@@ -15,6 +15,7 @@ mod environment_control_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod extension_tool;
 pub mod ports;
+pub mod provider_runtime;
 pub mod subagent;
 pub mod subagent_launch;
 #[cfg(test)]

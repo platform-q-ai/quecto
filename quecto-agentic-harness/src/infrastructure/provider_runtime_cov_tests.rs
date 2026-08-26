@@ -2,6 +2,33 @@ use super::*;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential};
 use crate::infrastructure::model_registry::{AuthMode, ModelCost, ModelRecord, ProviderApi};
 
+/// Test shim keeping the legacy call shape: composes via the real
+/// infrastructure factory with interface-wired inputs.
+fn build_agent_provider(
+    config: &Config,
+    base_dir: &std::path::Path,
+    http_client: &reqwest::Client,
+) -> Result<Arc<dyn LlmProvider>, String> {
+    compose_agent_provider(config, &test_inputs(base_dir, http_client))
+}
+
+fn test_inputs(base_dir: &std::path::Path, http_client: &reqwest::Client) -> AgentRuntimeInputs {
+    AgentRuntimeInputs {
+        base_dir: base_dir.to_path_buf(),
+        http_client: http_client.clone(),
+        refresh_fn: crate::interface::shared::make_oauth_refresh_fn(),
+        openai_oauth_factory: crate::interface::shared::make_provider_factory(
+            "openai",
+            None,
+            http_client.clone(),
+        ),
+        model_registry: crate::infrastructure::model_registry::ModelRegistry::load_from_path(
+            &base_dir.join("models.json"),
+        )
+        .map_err(|e| e.to_string()),
+    }
+}
+
 fn model(provider: &str, api: ProviderApi, auth: AuthMode) -> ModelRecord {
     ModelRecord {
         provider: provider.to_string(),
@@ -25,10 +52,10 @@ fn model(provider: &str, api: ProviderApi, auth: AuthMode) -> ModelRecord {
 }
 
 #[test]
-fn non_empty_trims_blank_strings() {
+fn non_empty_trims_padding_and_rejects_blank_strings() {
     assert_eq!(
         non_empty(" https://example.test ".to_string()).as_deref(),
-        Some(" https://example.test ")
+        Some("https://example.test")
     );
     assert_eq!(non_empty("   \t\n".to_string()), None);
 }
@@ -573,6 +600,123 @@ fn build_registry_provider_rejects_noncanonical_openai_oauth_base_url() {
         .expect_err("OAuth registry providers must pin canonical hosts");
     assert!(err.contains("canonical OAuth host"), "got: {err}");
     assert!(err.contains("evil-openai-oauth"), "got: {err}");
+}
+
+#[test]
+fn build_agent_provider_wraps_builtin_oauth_credentials() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    for provider in ["openai", "anthropic"] {
+        store
+            .store(Credential {
+                provider: provider.to_string(),
+                token: format!("{provider}-oauth-token"),
+                method: AuthMethod::OAuth,
+                expires_at: Some(i64::MAX),
+                refresh_token: Some("rt".to_string()),
+                account_id: None,
+            })
+            .unwrap();
+    }
+    let mut config = Config::default();
+    config.providers.anthropic.api_base = "http://127.0.0.1:9".to_string();
+
+    let built = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
+
+    assert_eq!(built.name(), "router");
+}
+
+#[test]
+fn build_registry_provider_skips_api_key_openai_models_without_base_url() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = Arc::new(CredentialStore::new(tmp.path()));
+    let refresh = crate::interface::shared::make_oauth_refresh_fn();
+    let mut m = model(
+        "missing-base",
+        ProviderApi::OpenAiCompletions,
+        AuthMode::ApiKey,
+    );
+    m.api_key = Some("api-token".to_string());
+
+    let built = build_registry_provider(&m, tmp.path(), &store, &refresh, &reqwest::Client::new())
+        .expect("openai-compatible models without a base URL are skipped");
+
+    assert!(built.is_none());
+}
+
+#[test]
+fn oauth_registry_base_url_accepts_xai_canonical_host() {
+    let mut m = model(
+        "xai-custom",
+        ProviderApi::OpenAiCompletions,
+        AuthMode::OAuth,
+    );
+    m.base_url = Some("https://api.x.ai/v1".to_string());
+
+    let got = oauth_registry_base_url(&m, "xai").unwrap();
+
+    assert_eq!(got.as_deref(), Some("https://api.x.ai/v1"));
+}
+
+#[test]
+fn google_oauth_base_url_without_config_remains_absent() {
+    let m = model("google", ProviderApi::GoogleGenerativeAi, AuthMode::OAuth);
+
+    let got = oauth_registry_base_url(&m, "google").unwrap();
+
+    assert!(got.is_none());
+}
+
+#[test]
+fn validate_oauth_base_url_accepts_missing_config_as_canonical() {
+    let got = validate_oauth_base_url(
+        "custom-anthropic",
+        "anthropic",
+        None,
+        "https://api.anthropic.com",
+    )
+    .unwrap();
+
+    assert_eq!(got, "https://api.anthropic.com");
+}
+
+#[test]
+fn build_agent_provider_skips_empty_openai_compatible_endpoint_keys() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut config = Config::default();
+    config.providers.openai.api_key = "sk-test".to_string();
+    config.providers.openai_compatible.endpoints =
+        vec![crate::infrastructure::config::OpenAiCompatibleEndpoint {
+            prefix: "".to_string(),
+            api_key: "".to_string(),
+            api_base: "".to_string(),
+            allow_remote_http: false,
+        }];
+
+    let built = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
+
+    assert_eq!(built.name(), "router");
+}
+
+#[test]
+fn build_agent_provider_rejects_endpoint_prefix_colliding_with_registry_provider() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"local":{"api":"openai-completions","baseUrl":"http://127.0.0.1:9/v1","apiKey":"k","allowRemoteHttp":true,"models":[{"id":"m","input":["text"],"contextWindow":128000,"maxTokens":4096}]}}}"#,
+    )
+    .unwrap();
+    let mut config = Config::default();
+    config.providers.openai_compatible.endpoints =
+        vec![endpoint("LOCAL", "http://127.0.0.1:10/v1")];
+
+    let err = build_agent_provider(&config, tmp.path(), &reqwest::Client::new())
+        .expect_err("endpoint prefixes must not collide with registry providers");
+
+    assert!(
+        err.contains("duplicate openai_compatible/provider prefix"),
+        "{err}"
+    );
 }
 
 #[test]

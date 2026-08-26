@@ -47,6 +47,12 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
         ctx.base_dir,
         &resolved_model,
     );
+    // #1573: surface the catalogue's structured selection outcome for the
+    // requested model through the UDS response. The switch itself proceeds
+    // regardless (open router prefixes accept ids the catalogue cannot
+    // enumerate), so runtime behaviour is unchanged — the payload only adds
+    // the application-layer selection verdict for this generation.
+    let selection = selection_status(ctx.base_dir, &resolved_model);
     ctx.agent.set_model(resolved_model.clone(), cap, window);
     ctx.session.set_model(resolved_model);
     // Every model switch resets the session effort to `low` (#1067): a level
@@ -60,9 +66,55 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
         ctx.session.bump_visible_generation();
     }
     tracing::debug!(new_model = %ctx.session.model(), "UDS: model switched; effort reset to low");
-    let ev = AgentEvent::ok(args.id.as_deref(), &args.type_name, None);
+    let ev = AgentEvent::ok(
+        args.id.as_deref(),
+        &args.type_name,
+        selection.map(|selection| serde_json::json!({ "selection": selection })),
+    );
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
+}
+
+/// The structured selection outcome for one qualified model reference against
+/// the published runtime generation for `base_dir` — the application
+/// selection use case's verdict rendered for the UDS wire. `None` before any
+/// runtime has been composed (legacy sessions and tests without a composed
+/// runtime keep the legacy response shape).
+pub(super) fn selection_status(
+    base_dir: &std::path::Path,
+    qualified: &str,
+) -> Option<serde_json::Value> {
+    use crate::application::provider_runtime::SelectionError;
+    use crate::domain::catalogue::UnavailableReason;
+
+    match crate::interface::catalogue_runtime::select_model(base_dir, qualified) {
+        Ok(selection) => Some(serde_json::json!({
+            "status": "ok",
+            "provider": selection.entry.provider.id.as_str(),
+            "generation": selection.generation,
+        })),
+        Err(SelectionError::NoRuntime) => None,
+        Err(SelectionError::UnknownModel { reference }) => Some(serde_json::json!({
+            "status": "unknown_model",
+            "model": reference,
+        })),
+        Err(SelectionError::NotRunnable { reference, reasons }) => Some(serde_json::json!({
+            "status": "not_runnable",
+            "model": reference.qualified_id(),
+            "reasons": reasons
+                .iter()
+                .map(|reason| match reason {
+                    UnavailableReason::MissingCredential => "missing-credential".to_string(),
+                    UnavailableReason::UnsupportedTransport { transport } =>
+                        format!("unsupported-transport: {transport:?}"),
+                    UnavailableReason::InvalidConfiguration(detail) =>
+                        format!("invalid-configuration: {detail}"),
+                    UnavailableReason::PolicyDenied(detail) =>
+                        format!("policy-denied: {detail}"),
+                })
+                .collect::<Vec<_>>(),
+        })),
+    }
 }
 
 /// Switch the session's reasoning effort at runtime (#1067).
@@ -105,3 +157,7 @@ pub(super) async fn handle_set_effort(
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
 }
+
+#[cfg(test)]
+#[path = "uds_dispatch_runtime_tests.rs"]
+mod selection_status_tests;

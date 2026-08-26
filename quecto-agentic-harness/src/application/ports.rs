@@ -10,3 +10,4 @@ pub use super::catalogue::{
     CatalogueSnapshotStore, CatalogueSource, CatalogueSourceError, CredentialStatusPort,
     ResolvedCatalogue, SkippedRecord, SourceEntries,
 };
+pub use super::provider_runtime::{ProviderRuntimeFactory, RuntimeSnapshotStore};
