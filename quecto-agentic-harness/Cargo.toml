@@ -1,6 +1,6 @@
 [package]
 name = "quecto-agentic-harness"
-version = "0.105.32"
+version = "0.106.0"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
 license = "LicenseRef-Proprietary"
