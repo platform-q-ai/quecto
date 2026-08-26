@@ -55,3 +55,110 @@ fn persisted_cache_never_contains_secret_material() {
         "the model itself must be cached"
     );
 }
+
+#[test]
+fn malformed_response_fails_and_preserves_the_previous_cache() {
+    let dir = TempDir::new().unwrap();
+    let cache = DiscoverySourceCache::new(dir.path(), "openrouter");
+    cache
+        .store_models_response(r#"{"data":[{"id":"alpha"}]}"#)
+        .expect("seeding the cache must succeed");
+    let before = std::fs::read_to_string(cache.cache_path()).unwrap();
+
+    for body in ["not json", r#"{"models":[]}"#, r#"{"data":[{"id":42}]}"#] {
+        cache
+            .store_models_response(body)
+            .expect_err("a malformed body must be an error");
+        let after = std::fs::read_to_string(cache.cache_path()).unwrap();
+        assert_eq!(after, before, "a failed store must leave the cache intact");
+    }
+}
+
+#[test]
+fn empty_model_list_persists_an_empty_cache() {
+    let dir = TempDir::new().unwrap();
+    let cache = DiscoverySourceCache::new(dir.path(), "openrouter");
+    let stored = cache
+        .store_models_response(r#"{"data":[]}"#)
+        .expect("an empty listing is a valid response");
+    assert_eq!(stored, 0);
+    let loaded = cache.load().expect("load must succeed");
+    assert!(
+        loaded.entries.is_empty(),
+        "an empty cache must load as an empty discovered layer"
+    );
+}
+
+#[test]
+fn response_at_the_byte_cap_is_read_in_full() {
+    let body = vec![b'x'; 1024];
+    let read = read_capped(body.as_slice(), 1024).expect("a body at the cap must be accepted");
+    assert_eq!(read.len(), 1024);
+}
+
+#[test]
+fn response_over_the_byte_cap_is_rejected() {
+    let body = vec![b'x'; 1025];
+    let error = read_capped(body.as_slice(), 1024).expect_err("a body over the cap must error");
+    assert!(error.contains("1024"), "got: {error}");
+}
+
+#[test]
+fn stored_models_are_deduplicated_by_id_with_last_writer_winning() {
+    let dir = TempDir::new().unwrap();
+    let cache = DiscoverySourceCache::new(dir.path(), "openrouter");
+    cache
+        .store_models_response(
+            r#"{"data":[{"id":"alpha","name":"First"},{"id":"alpha","name":"Last"}]}"#,
+        )
+        .expect("store must succeed");
+    let loaded = cache.load().unwrap();
+    assert_eq!(loaded.entries.len(), 1, "duplicate ids must collapse");
+    assert_eq!(
+        loaded.entries[0].model.display_name.as_deref(),
+        Some("Last")
+    );
+}
+
+#[test]
+fn oversized_model_catalogue_is_rejected() {
+    let dir = TempDir::new().unwrap();
+    let cache = DiscoverySourceCache::new(dir.path(), "openrouter");
+    let data: Vec<String> = (0..=10_000)
+        .map(|i| format!(r#"{{"id":"model-{i}"}}"#))
+        .collect();
+    let body = format!(r#"{{"data":[{}]}}"#, data.join(","));
+    let err = cache
+        .store_models_response(&body)
+        .expect_err("an oversized catalogue must be rejected");
+    assert!(err.contains("more than"), "got: {err}");
+}
+
+#[test]
+fn discovery_endpoint_derivation_applies_url_policy() {
+    let endpoint = DiscoveryEndpoint::for_openai_compatible(
+        "remote-http",
+        "http://example.invalid/inference/v1",
+        true,
+        None,
+    )
+    .expect("explicitly allowed remote http must derive");
+    assert_eq!(endpoint.url, "http://example.invalid/inference/v1/models");
+
+    let err = DiscoveryEndpoint::for_openai_compatible(
+        "plain",
+        "http://attacker.example/v1",
+        false,
+        None,
+    )
+    .expect_err("remote http must be rejected by default");
+    assert!(err.contains("loopback"), "got: {err}");
+}
+
+#[test]
+fn error_urls_are_redacted() {
+    assert_eq!(
+        redact_url_for_error("https://user:pass@example.com/v1/models?token=secret#fragment"),
+        "https://example.com/v1/models"
+    );
+}

@@ -110,6 +110,60 @@ fn render_listing(
     })
 }
 
+pub(super) fn refresh_models_response(
+    ctx: &DispatchCtx<'_>,
+    source: Option<&str>,
+) -> serde_json::Value {
+    refresh_models_data(ctx.base_dir, source)
+}
+
+/// UDS `refresh_models` operation (epic #1193, slice 4): drive the one
+/// application refresh use case and render per-source outcomes on the wire.
+/// A refresh issued from a live session holds up the dispatch loop, so it
+/// runs under a tighter per-source budget than an interactive CLI discover.
+pub fn refresh_models_data(base_dir: &std::path::Path, source: Option<&str>) -> serde_json::Value {
+    use crate::application::catalogue_refresh::{
+        RefreshBounds, RefreshSelection, SourceRefreshStatus,
+    };
+    let selection = match source {
+        Some(name) => RefreshSelection::Only(vec![name.to_string()]),
+        None => RefreshSelection::All,
+    };
+    let bounds = RefreshBounds {
+        timeout: std::time::Duration::from_secs(4),
+        ..RefreshBounds::default()
+    };
+    let report = super::catalogue_refresh_bridge::refresh_catalogue(base_dir, &selection, bounds);
+    let outcomes: Vec<serde_json::Value> = report
+        .outcomes
+        .iter()
+        .map(|outcome| {
+            let (status, models, reason) = match &outcome.status {
+                SourceRefreshStatus::Updated { models } => ("updated", Some(*models), None),
+                SourceRefreshStatus::Unchanged => ("unchanged", None, None),
+                SourceRefreshStatus::Unsupported { reason } => {
+                    ("unsupported", None, Some(reason.clone()))
+                }
+                SourceRefreshStatus::Failed { reason } => ("failed", None, Some(reason.clone())),
+                SourceRefreshStatus::Cancelled => ("cancelled", None, None),
+            };
+            serde_json::json!({
+                "source": outcome.source,
+                "status": status,
+                "models": models,
+                "reason": reason,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "outcomes": outcomes,
+        "generation": report
+            .resolved
+            .as_ref()
+            .map(|resolved| resolved.snapshot.generation()),
+    })
+}
+
 #[cfg(test)]
 #[path = "uds_models_tests.rs"]
 mod tests;

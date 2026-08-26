@@ -516,3 +516,135 @@ fn failure_reasons_are_redacted() {
         other => panic!("expected failed outcome, got {other:?}"),
     }
 }
+
+/// A fake whose refresh sleeps for a fixed time before reporting an update,
+/// for exercising both sides of the timeout bound.
+struct SleepyRefreshable {
+    id: String,
+    sleep: Duration,
+}
+
+impl CatalogueSource for SleepyRefreshable {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn layer(&self) -> SourceLayer {
+        SourceLayer::Discovered
+    }
+    fn load(&self) -> Result<SourceEntries, String> {
+        Ok(SourceEntries::default())
+    }
+}
+
+impl RefreshableCatalogueSource for SleepyRefreshable {
+    fn refresh(&self, _ctx: &RefreshContext) -> Result<RefreshChange, RefreshError> {
+        std::thread::sleep(self.sleep);
+        Ok(RefreshChange::Unchanged)
+    }
+}
+
+fn sleepy_report(sleep: Duration, timeout: Duration) -> CatalogueRefreshReport {
+    let slow = SleepyRefreshable {
+        id: "slow".to_string(),
+        sleep,
+    };
+    let store = CatalogueSnapshotStore::empty();
+    let refreshables: Vec<&dyn RefreshableCatalogueSource> = vec![&slow];
+    let sources: Vec<&dyn CatalogueSource> = vec![&slow];
+    let ports = RefreshPorts {
+        refreshables: &refreshables,
+        sources: &sources,
+        credentials: &AllowAllCredentials,
+        store: &store,
+        redaction: &NoopRedaction,
+    };
+    RefreshCatalogueSourcesUseCase.refresh(
+        &ports,
+        &RefreshSelection::All,
+        &RefreshContext::new(RefreshBounds {
+            timeout,
+            ..RefreshBounds::default()
+        }),
+    )
+}
+
+#[test]
+fn refresh_outliving_the_timeout_is_reported_failed() {
+    let report = sleepy_report(Duration::from_millis(80), Duration::from_millis(20));
+    match &outcome(&report, "slow").status {
+        SourceRefreshStatus::Failed { reason } => {
+            assert!(reason.contains("timeout"), "got: {reason}");
+        }
+        other => panic!("an over-timeout refresh must be failed, got {other:?}"),
+    }
+}
+
+#[test]
+fn refresh_within_the_timeout_keeps_its_own_outcome() {
+    let report = sleepy_report(Duration::from_millis(1), Duration::from_secs(5));
+    assert_eq!(
+        outcome(&report, "slow").status,
+        SourceRefreshStatus::Unchanged,
+        "a refresh inside the timeout must not be reclassified"
+    );
+}
+
+#[test]
+fn all_unchanged_run_republishes_nothing() {
+    let seed = StaticSource {
+        id: "seed".to_string(),
+        layer: SourceLayer::BuiltIn,
+        entries: vec![entry("openai-api/gpt-5", "GPT 5")],
+    };
+    let local = FakeRefreshable::new("local", Behaviour::Unchanged);
+    let store = CatalogueSnapshotStore::empty();
+    prepublish(&store, &[&seed as &dyn CatalogueSource]);
+    assert_eq!(store.current().generation(), 1);
+
+    let report = run(
+        &[&local],
+        &[&seed],
+        &store,
+        &RefreshSelection::All,
+        &RefreshContext::default(),
+        &NoopRedaction,
+    );
+
+    assert_eq!(
+        outcome(&report, "local").status,
+        SourceRefreshStatus::Unchanged
+    );
+    assert!(
+        report.resolved.is_none(),
+        "an all-unchanged run must not republish"
+    );
+    assert_eq!(
+        store.current().generation(),
+        1,
+        "an all-unchanged run keeps the previous generation published"
+    );
+}
+
+#[test]
+fn selecting_an_unknown_source_reports_a_failed_outcome() {
+    let local = FakeRefreshable::new("local", Behaviour::Unchanged);
+    let store = CatalogueSnapshotStore::empty();
+
+    let report = run(
+        &[&local],
+        &[],
+        &store,
+        &RefreshSelection::Only(vec!["nonexistent".to_string()]),
+        &RefreshContext::default(),
+        &NoopRedaction,
+    );
+
+    match &outcome(&report, "nonexistent").status {
+        SourceRefreshStatus::Failed { reason } => {
+            assert!(reason.contains("nonexistent"), "got: {reason}");
+        }
+        other => panic!("an unknown selected source must be failed, got {other:?}"),
+    }
+    assert_eq!(local.calls(), 0, "no configured source may be refreshed");
+    assert!(report.resolved.is_none());
+}

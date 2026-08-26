@@ -32,6 +32,10 @@ pub fn resolve_and_publish_for(base_dir: &Path) -> (CatalogueSnapshotStore, Reso
 pub(crate) struct CatalogueInputs {
     builtin: BuiltinCatalogueSource,
     user_file: ModelsFileCatalogueSource,
+    /// Persisted discovery caches (generated data), fed in as the discovered
+    /// layer so explicit refreshes participate in normal precedence. Loading
+    /// them touches no network.
+    discovered: Vec<crate::infrastructure::catalogue_discovery::DiscoverySourceCache>,
     pub(crate) credentials: RegistryCredentialStatus,
     /// The parsed user-file records (or the parse error), kept so runtime
     /// composition can build its effective registry from the same read.
@@ -56,6 +60,9 @@ impl CatalogueInputs {
         Self {
             builtin: BuiltinCatalogueSource,
             user_file: ModelsFileCatalogueSource::preloaded(file_load.clone()),
+            discovered: crate::infrastructure::catalogue_discovery::discovery_cache_sources(
+                base_dir,
+            ),
             credentials,
             file_records: file_load,
         }
@@ -71,8 +78,16 @@ impl CatalogueInputs {
             .map(crate::infrastructure::model_registry::ModelRegistry::from_file_records)
     }
 
-    pub(crate) fn sources(&self) -> [&dyn crate::application::catalogue::CatalogueSource; 2] {
-        [&self.builtin, &self.user_file]
+    pub(crate) fn sources(&self) -> Vec<&dyn crate::application::catalogue::CatalogueSource> {
+        let mut sources: Vec<&dyn crate::application::catalogue::CatalogueSource> =
+            vec![&self.builtin];
+        sources.extend(
+            self.discovered
+                .iter()
+                .map(|c| c as &dyn crate::application::catalogue::CatalogueSource),
+        );
+        sources.push(&self.user_file);
+        sources
     }
 }
 

@@ -122,6 +122,10 @@ impl App {
                     self.handle_effort_command(arg);
                     return;
                 }
+                "/refresh-models" => {
+                    self.send_refresh_models();
+                    return;
+                }
                 _ if trimmed.starts_with("/model") => {
                     let model_name = trimmed["/model".len()..].trim();
                     if !model_name.is_empty() {

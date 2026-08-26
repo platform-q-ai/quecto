@@ -30,6 +30,7 @@ pub struct CatalogueRefreshState {
     static_sources: Vec<Arc<RefStaticSource>>,
     store: Option<CatalogueSnapshotStore>,
     secret: Option<String>,
+    bounds: Option<RefreshBounds>,
     report: Option<CatalogueRefreshReport>,
     generation_before: Option<u64>,
 }
@@ -41,6 +42,9 @@ enum RefBehaviour {
     Unsupported(String),
     Fail(String),
     TriggerCancel,
+    /// Sleep past the run's timeout before returning, so the run observes an
+    /// over-budget refresh.
+    OutliveTimeout,
 }
 
 #[derive(Debug)]
@@ -49,7 +53,6 @@ struct RefFakeSource {
     behaviour: RefBehaviour,
     cached: Mutex<Vec<CatalogueEntry>>,
     refresh_calls: AtomicUsize,
-    observed_bounds: Mutex<Option<RefreshBounds>>,
 }
 
 impl CatalogueSource for RefFakeSource {
@@ -67,7 +70,6 @@ impl CatalogueSource for RefFakeSource {
 impl RefreshableCatalogueSource for RefFakeSource {
     fn refresh(&self, ctx: &RefreshContext) -> Result<RefreshChange, RefreshError> {
         self.refresh_calls.fetch_add(1, Ordering::SeqCst);
-        *self.observed_bounds.lock().unwrap() = Some(ctx.bounds);
         match &self.behaviour {
             RefBehaviour::Update(entries) => {
                 let models = entries.len();
@@ -84,6 +86,10 @@ impl RefreshableCatalogueSource for RefFakeSource {
             RefBehaviour::TriggerCancel => {
                 ctx.cancel();
                 Err(RefreshError::Cancelled)
+            }
+            RefBehaviour::OutliveTimeout => {
+                std::thread::sleep(ctx.bounds.timeout + Duration::from_millis(50));
+                Ok(RefreshChange::Unchanged)
             }
         }
     }
@@ -231,7 +237,6 @@ fn given_refreshable_updating(world: &mut QuectoWorld, id: String, first: String
             behaviour: RefBehaviour::Update(entries),
             cached: Mutex::new(Vec::new()),
             refresh_calls: AtomicUsize::new(0),
-            observed_bounds: Mutex::new(None),
         }));
 }
 
@@ -246,7 +251,6 @@ fn given_refreshable_unchanged(world: &mut QuectoWorld, id: String) {
             behaviour: RefBehaviour::Unchanged,
             cached: Mutex::new(cached),
             refresh_calls: AtomicUsize::new(0),
-            observed_bounds: Mutex::new(None),
         }));
 }
 
@@ -260,7 +264,6 @@ fn given_refreshable_unsupported(world: &mut QuectoWorld, id: String, reason: St
             behaviour: RefBehaviour::Unsupported(reason),
             cached: Mutex::new(Vec::new()),
             refresh_calls: AtomicUsize::new(0),
-            observed_bounds: Mutex::new(None),
         }));
 }
 
@@ -274,11 +277,12 @@ fn given_refreshable_failing(world: &mut QuectoWorld, id: String, reason: String
             behaviour: RefBehaviour::Fail(reason),
             cached: Mutex::new(Vec::new()),
             refresh_calls: AtomicUsize::new(0),
-            observed_bounds: Mutex::new(None),
         }));
 }
 
-#[given(expr = "a refreshable catalogue source {string} whose refresh triggers cancellation")]
+#[given(
+    expr = "a refreshable catalogue source {string} that is still refreshing when the refresh is cancelled"
+)]
 fn given_refreshable_cancelling(world: &mut QuectoWorld, id: String) {
     world
         .catalogue_refresh
@@ -288,7 +292,6 @@ fn given_refreshable_cancelling(world: &mut QuectoWorld, id: String) {
             behaviour: RefBehaviour::TriggerCancel,
             cached: Mutex::new(Vec::new()),
             refresh_calls: AtomicUsize::new(0),
-            observed_bounds: Mutex::new(None),
         }));
 }
 
@@ -309,8 +312,45 @@ fn given_user_override_source(
         }));
 }
 
-#[given(expr = "the refresh credential secret is {string}")]
-fn given_refresh_secret(world: &mut QuectoWorld, secret: String) {
+#[given(expr = "a refresh timeout of {int} milliseconds")]
+fn given_refresh_timeout(world: &mut QuectoWorld, millis: u64) {
+    world.catalogue_refresh.bounds = Some(RefreshBounds {
+        timeout: Duration::from_millis(millis),
+        ..RefreshBounds::default()
+    });
+}
+
+#[given(
+    expr = "a refreshable catalogue source {string} whose refresh outlives the refresh timeout"
+)]
+fn given_refreshable_outliving_timeout(world: &mut QuectoWorld, id: String) {
+    world
+        .catalogue_refresh
+        .refreshables
+        .push(Arc::new(RefFakeSource {
+            id,
+            behaviour: RefBehaviour::OutliveTimeout,
+            cached: Mutex::new(Vec::new()),
+            refresh_calls: AtomicUsize::new(0),
+        }));
+}
+
+#[given(
+    expr = "a refreshable catalogue source {string} whose refresh fails with an error containing the credential secret {string}"
+)]
+fn given_refreshable_failing_with_secret(world: &mut QuectoWorld, id: String, secret: String) {
+    // One Given establishes both the failing error text and the secret the
+    // redactor knows, so the two can never drift apart and silently turn the
+    // no-secret Then vacuous.
+    world
+        .catalogue_refresh
+        .refreshables
+        .push(Arc::new(RefFakeSource {
+            id,
+            behaviour: RefBehaviour::Fail(format!("401 unauthorized for bearer {secret}")),
+            cached: Mutex::new(Vec::new()),
+            refresh_calls: AtomicUsize::new(0),
+        }));
     world.catalogue_refresh.secret = Some(secret);
 }
 
@@ -329,7 +369,8 @@ fn given_prepublished(world: &mut QuectoWorld) {
 
 #[when(expr = "all catalogue sources are refreshed")]
 fn when_refresh_all(world: &mut QuectoWorld) {
-    run_refresh(world, RefreshSelection::All, RefreshContext::default());
+    let bounds = world.catalogue_refresh.bounds.unwrap_or_default();
+    run_refresh(world, RefreshSelection::All, RefreshContext::new(bounds));
 }
 
 #[when(expr = "only catalogue source {string} is refreshed")]
@@ -338,20 +379,6 @@ fn when_refresh_only(world: &mut QuectoWorld, id: String) {
         world,
         RefreshSelection::Only(vec![id]),
         RefreshContext::default(),
-    );
-}
-
-#[when(
-    expr = "all catalogue sources are refreshed with a timeout of {int} seconds and a response cap of {int} bytes"
-)]
-fn when_refresh_bounded(world: &mut QuectoWorld, seconds: u64, bytes: u64) {
-    run_refresh(
-        world,
-        RefreshSelection::All,
-        RefreshContext::new(RefreshBounds {
-            timeout: Duration::from_secs(seconds),
-            max_response_bytes: bytes,
-        }),
     );
 }
 
@@ -399,10 +426,17 @@ fn then_outcome_cancelled(world: &mut QuectoWorld, source: String) {
     );
 }
 
-#[then(expr = "the refresh publishes catalogue generation {int}")]
-fn then_publishes_generation(world: &mut QuectoWorld, generation: u64) {
+#[then(expr = "a new catalogue generation is published")]
+fn then_new_generation_published(world: &mut QuectoWorld) {
+    let before = world
+        .catalogue_refresh
+        .generation_before
+        .expect("refresh has not run");
     let store = ref_store(world);
-    assert_eq!(store.current().generation(), generation);
+    assert!(
+        store.current().generation() > before,
+        "a successful refresh must publish a new catalogue generation"
+    );
 }
 
 #[then(expr = "the published snapshot contains model {string}")]
@@ -433,28 +467,6 @@ fn then_previous_generation_retained(world: &mut QuectoWorld) {
 fn then_never_refreshed(world: &mut QuectoWorld, id: String) {
     let source = ref_source(world, &id);
     assert_eq!(source.refresh_calls.load(Ordering::SeqCst), 0);
-}
-
-#[then(expr = "source {string} observed a refresh timeout of {int} seconds")]
-fn then_observed_timeout(world: &mut QuectoWorld, id: String, seconds: u64) {
-    let source = ref_source(world, &id);
-    let bounds = source
-        .observed_bounds
-        .lock()
-        .unwrap()
-        .expect("source observed no refresh bounds");
-    assert_eq!(bounds.timeout, Duration::from_secs(seconds));
-}
-
-#[then(expr = "source {string} observed a refresh response cap of {int} bytes")]
-fn then_observed_cap(world: &mut QuectoWorld, id: String, bytes: u64) {
-    let source = ref_source(world, &id);
-    let bounds = source
-        .observed_bounds
-        .lock()
-        .unwrap()
-        .expect("source observed no refresh bounds");
-    assert_eq!(bounds.max_response_bytes, bytes);
 }
 
 #[then(expr = "the refresh-published model {string} is named {string}")]

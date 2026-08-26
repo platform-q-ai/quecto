@@ -128,3 +128,70 @@ fn a_malformed_models_json_reports_an_error_and_keeps_a_coherent_snapshot() {
         valid_count
     );
 }
+
+/// Slice-4 (#1574) consumer contract: an explicit catalogue refresh runs
+/// through the one application refresh operation, its per-source outcomes
+/// render on the wire the TUI consumes, and the refreshed models appear in
+/// the same published listing every surface reads — with no consumer parsing
+/// discovery data itself.
+#[test]
+fn refresh_surfaces_share_one_operation_and_one_published_generation() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{"id": "fresh-model", "name": "Fresh Model"}]
+            })))
+            .mount(&server)
+            .await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        write_models_json(
+            tmp.path(),
+            &serde_json::json!({"providers": {"contractish": {
+                "api": "openai-completions",
+                "baseUrl": format!("{}/v1", server.uri()),
+                "apiKey": "sk-contract",
+                "models": []
+            }}})
+            .to_string(),
+        );
+
+        // The UDS refresh operation drives the one refresh use case.
+        let base_dir = tmp.path().to_path_buf();
+        let refresh = tokio::task::spawn_blocking(move || {
+            quecto::interface::cli::uds_models::refresh_models_data(&base_dir, None)
+        })
+        .await
+        .unwrap();
+
+        // The TUI renders those per-source outcomes without interpreting
+        // discovery data itself.
+        let rendered =
+            quecto_tui::protocol::model_payloads::parse_refresh_outcomes(&refresh, &|s| {
+                s.to_string()
+            });
+        assert_eq!(
+            rendered.summaries,
+            vec!["contractish: 1 model(s)".to_string()],
+            "refresh outcome must render for the TUI: {refresh}"
+        );
+        assert!(!rendered.any_unsuccessful);
+
+        // The refreshed model participates in the ordinary published listing
+        // every surface reads (network-free read path).
+        let response = list_models_data(tmp.path());
+        assert!(
+            response["models"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["model"] == "contractish/fresh-model"),
+            "refreshed model must appear in the shared listing: {response}"
+        );
+    });
+}

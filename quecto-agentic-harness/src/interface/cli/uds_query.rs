@@ -143,6 +143,9 @@ pub(super) fn query_response_data_result(
             "tools": ctx.agent.tool_catalogue_entries(),
         })),
         AgentCommand::ListModels { .. } => Some(super::uds_models::list_models_response(ctx)),
+        AgentCommand::RefreshModels { source, .. } => Some(
+            super::uds_models::refresh_models_response(ctx, source.as_deref()),
+        ),
         AgentCommand::GetSubagents { since, .. } => Some(
             serde_json::to_value(super::protocol::build_compact_subagent_roster(
                 &ctx.subagent_registry,

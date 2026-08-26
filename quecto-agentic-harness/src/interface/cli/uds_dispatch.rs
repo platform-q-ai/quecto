@@ -140,6 +140,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         AgentCommand::ClearHistory { .. }
         | AgentCommand::DeleteAllSubagents { .. }
         | AgentCommand::ListModels { .. }
+        | AgentCommand::RefreshModels { .. }
         | AgentCommand::GetToolCatalogue { .. }
         | AgentCommand::GetSubagents { .. }
         | AgentCommand::GetMessage { .. }
