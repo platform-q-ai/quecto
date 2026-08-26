@@ -27,6 +27,7 @@ pub fn compose_and_publish_runtime(
     base_dir: &Path,
     http_client: &reqwest::Client,
 ) -> Result<Arc<CatalogueRuntimeSnapshot>, RuntimeCompositionError> {
+    let catalogue_inputs = CatalogueInputs::load(base_dir);
     let inputs = AgentRuntimeInputs {
         base_dir: base_dir.to_path_buf(),
         http_client: http_client.clone(),
@@ -36,8 +37,11 @@ pub fn compose_and_publish_runtime(
             openai_api_base(config),
             http_client.clone(),
         ),
+        // Same on-disk read as the catalogue sources above: one compose never
+        // pairs a catalogue and a router built from different models.json
+        // states (and models.json is parsed once per compose, not twice).
+        model_registry: catalogue_inputs.effective_registry(),
     };
-    let catalogue_inputs = CatalogueInputs::load(base_dir);
     let catalogue_store = snapshot_store_for(base_dir);
     let runtime_store = runtime_store_for(base_dir);
     let composed = ComposeProviderRuntimeUseCase::new().compose_and_publish(
@@ -54,13 +58,10 @@ pub fn compose_and_publish_runtime(
     Ok(composed.snapshot)
 }
 
+/// Delegates to the factory's own blank/trim helper so the initially composed
+/// provider and the post-refresh rebuilt provider share one base-URL reading.
 fn openai_api_base(config: &Config) -> Option<String> {
-    let base = config.providers.openai.api_base.trim();
-    if base.is_empty() {
-        None
-    } else {
-        Some(base.to_string())
-    }
+    crate::infrastructure::provider_runtime::non_empty(config.providers.openai.api_base.clone())
 }
 
 /// Resolve a qualified model reference against the published runtime

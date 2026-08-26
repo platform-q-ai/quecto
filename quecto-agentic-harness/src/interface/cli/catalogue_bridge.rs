@@ -33,6 +33,9 @@ pub(crate) struct CatalogueInputs {
     builtin: BuiltinCatalogueSource,
     user_file: ModelsFileCatalogueSource,
     pub(crate) credentials: RegistryCredentialStatus,
+    /// The parsed user-file records (or the parse error), kept so runtime
+    /// composition can build its effective registry from the same read.
+    file_records: Result<Vec<crate::infrastructure::model_registry::ModelRecord>, String>,
 }
 
 impl CatalogueInputs {
@@ -52,9 +55,20 @@ impl CatalogueInputs {
         );
         Self {
             builtin: BuiltinCatalogueSource,
-            user_file: ModelsFileCatalogueSource::preloaded(file_load),
+            user_file: ModelsFileCatalogueSource::preloaded(file_load.clone()),
             credentials,
+            file_records: file_load,
         }
+    }
+
+    /// The effective model registry (built-in + user file) from this load's
+    /// records, so catalogue and router always describe one on-disk state.
+    pub(crate) fn effective_registry(
+        &self,
+    ) -> Result<crate::infrastructure::model_registry::ModelRegistry, String> {
+        self.file_records
+            .clone()
+            .map(crate::infrastructure::model_registry::ModelRegistry::from_file_records)
     }
 
     pub(crate) fn sources(&self) -> [&dyn crate::application::catalogue::CatalogueSource; 2] {

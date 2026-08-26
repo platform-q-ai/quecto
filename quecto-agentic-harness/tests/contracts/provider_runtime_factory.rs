@@ -42,13 +42,12 @@ impl LlmProvider for Provider {
     }
 }
 
-struct Config {
-    marker: &'static str,
-}
+// Opaque caller-owned types: the use case is generic over them with no
+// bounds, so the compiler itself guarantees pass-through — the application
+// layer cannot inspect, clone, or substitute them.
+struct Config;
 
-struct RuntimeInputs {
-    client_marker: &'static str,
-}
+struct RuntimeInputs;
 
 struct Factory;
 
@@ -58,10 +57,9 @@ impl ProviderRuntimeFactory<Config, RuntimeInputs> for Factory {
         config: &Config,
         runtime_inputs: &RuntimeInputs,
     ) -> Result<Arc<dyn LlmProvider>, String> {
-        // The port receives the caller's own config and runtime-input types
-        // untouched: the application layer never inspects or clones them.
-        assert_eq!(config.marker, "contract");
-        assert_eq!(runtime_inputs.client_marker, "test-client");
+        // Pass-through of `config`/`runtime_inputs` is enforced by the
+        // unbounded generics on the use case, not asserted here.
+        let (_, _) = (config, runtime_inputs);
         Ok(Arc::new(Provider))
     }
 }
@@ -95,10 +93,8 @@ fn provider_runtime_factory_composes_through_application_use_case() {
     let composed = ComposeProviderRuntimeUseCase::new()
         .compose_and_publish(
             &Factory,
-            &Config { marker: "contract" },
-            &RuntimeInputs {
-                client_marker: "test-client",
-            },
+            &Config,
+            &RuntimeInputs,
             &CompositionPorts {
                 sources: &[&EmptySource],
                 credentials: &AllowAll,

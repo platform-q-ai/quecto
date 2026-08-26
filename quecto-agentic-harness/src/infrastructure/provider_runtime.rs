@@ -33,6 +33,10 @@ pub struct AgentRuntimeInputs {
     pub refresh_fn: RefreshFn,
     /// Rebuilds the `openai` OAuth provider (Codex-aware) after a refresh.
     pub openai_oauth_factory: ProviderFactory,
+    /// The effective model registry (or the models.json parse error) from the
+    /// same on-disk read that fed the catalogue resolve, so router and
+    /// catalogue in one composed generation describe one on-disk state.
+    pub model_registry: Result<crate::infrastructure::model_registry::ModelRegistry, String>,
 }
 
 /// Infrastructure implementation of the application's runtime-factory port:
@@ -69,11 +73,10 @@ pub fn compose_agent_provider(
 
     // #1066: the endpoint router needs the *effective* registry (builtin +
     // ~/.quecto/models.json overrides) so user `reasoning` overrides steer
-    // Responses-vs-Chat-Completions routing. Loaded once, reused below.
-    let model_registry = crate::infrastructure::model_registry::ModelRegistry::load_from_path(
-        &base_dir.join("models.json"),
-    )
-    .map_err(|e| e.to_string())?;
+    // Responses-vs-Chat-Completions routing. Wired by the entry point from
+    // the same models.json read that fed the catalogue resolve, so router and
+    // catalogue never describe different on-disk states.
+    let model_registry = inputs.model_registry.as_ref().map_err(Clone::clone)?;
 
     // Built-in providers are explicit by billing/auth mode. We deliberately do
     // not resolve a single `openai`/`anthropic` slot by precedence because that
@@ -503,11 +506,15 @@ fn build_registry_provider(
     Ok(Some(inner))
 }
 
-fn non_empty(value: String) -> Option<String> {
-    if value.trim().is_empty() {
+/// The trimmed value, or `None` when blank. Trimming here keeps the initially
+/// composed providers on exactly the base URL the post-refresh factories
+/// (which trim via this same helper) rebuild with.
+pub(crate) fn non_empty(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
         None
     } else {
-        Some(value)
+        Some(trimmed.to_string())
     }
 }
 

@@ -40,7 +40,15 @@ fn set_model_payload_carries_the_structured_selection_verdicts() {
     let ok = selection_status(tmp.path(), "udsish/uds-model").expect("runtime published");
     assert_eq!(ok["status"], "ok");
     assert_eq!(ok["provider"], "udsish");
-    assert!(ok["generation"].as_u64().unwrap() >= 1);
+    // Exact equality against the published snapshot: a hardcoded wire
+    // constant cannot satisfy this once the runtime is recomposed below.
+    let published = crate::infrastructure::catalogue_registry::snapshot_store_for(tmp.path())
+        .current()
+        .generation();
+    assert_eq!(ok["generation"].as_u64().unwrap(), published);
+    compose(tmp.path());
+    let recomposed = selection_status(tmp.path(), "udsish/uds-model").expect("runtime published");
+    assert_eq!(recomposed["generation"].as_u64().unwrap(), published + 1);
 
     let unknown = selection_status(tmp.path(), "udsish/no-such-model").expect("runtime published");
     assert_eq!(unknown["status"], "unknown_model");

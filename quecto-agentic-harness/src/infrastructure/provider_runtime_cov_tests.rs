@@ -22,6 +22,10 @@ fn test_inputs(base_dir: &std::path::Path, http_client: &reqwest::Client) -> Age
             None,
             http_client.clone(),
         ),
+        model_registry: crate::infrastructure::model_registry::ModelRegistry::load_from_path(
+            &base_dir.join("models.json"),
+        )
+        .map_err(|e| e.to_string()),
     }
 }
 
@@ -48,10 +52,10 @@ fn model(provider: &str, api: ProviderApi, auth: AuthMode) -> ModelRecord {
 }
 
 #[test]
-fn non_empty_trims_blank_strings() {
+fn non_empty_trims_padding_and_rejects_blank_strings() {
     assert_eq!(
         non_empty(" https://example.test ".to_string()).as_deref(),
-        Some(" https://example.test ")
+        Some("https://example.test")
     );
     assert_eq!(non_empty("   \t\n".to_string()), None);
 }
