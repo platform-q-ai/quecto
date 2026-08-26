@@ -280,6 +280,8 @@ impl std::fmt::Debug for DebugPythonLab {
 
 #[derive(Debug, Default, World)]
 pub struct QuectoWorld {
+    /// #1572 catalogue application slice state (sources, store, resolution).
+    pub catalogue_application: catalogue_application_steps::CatalogueApplicationState,
     /// #1571 catalogue domain slice state (typed ids, layers, resolution).
     pub catalogue: catalogue_domain_steps::CatalogueDomainState,
     /// #1460 shared-state hardening scenario state (sockets, cred lock, ownership).
@@ -1355,6 +1357,7 @@ mod agent_tools_steps;
 mod architecture_steps;
 mod audit_log_steps;
 mod auth_steps;
+mod catalogue_application_steps;
 mod catalogue_domain_steps;
 mod codex_provider_steps;
 mod config_steps;
