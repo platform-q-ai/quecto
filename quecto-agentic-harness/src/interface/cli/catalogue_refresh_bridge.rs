@@ -13,6 +13,10 @@ use crate::infrastructure::catalogue_discovery::{SecretsRedaction, configured_di
 use crate::infrastructure::catalogue_registry::snapshot_store_for;
 use crate::interface::cli::catalogue_bridge::CatalogueInputs;
 
+/// Outcome-source id used when the registry file itself (rather than one
+/// provider) fails to parse.
+pub const REGISTRY_FILE_SOURCE: &str = "models.json";
+
 /// Refresh the configured refreshable catalogue sources for `base_dir` in one
 /// operation and republish the effective catalogue through the normal resolve
 /// path. Network happens only here — ordinary catalogue reads stay
@@ -22,21 +26,27 @@ pub fn refresh_catalogue(
     selection: &RefreshSelection,
     bounds: RefreshBounds,
 ) -> CatalogueRefreshReport {
-    let discovery = match configured_discovery(base_dir) {
-        Ok(discovery) => discovery,
+    // One models.json read feeds both the refreshable-source enumeration and
+    // the post-refresh resolve, so a concurrent edit can never make the
+    // refreshed source set and the republished catalogue describe two
+    // different files in one report (slice-4 review).
+    let inputs = CatalogueInputs::load(base_dir);
+    let discovery = match inputs.provider_defaults() {
+        Ok(providers) => configured_discovery(base_dir, providers),
         // A catalogue file that cannot be enumerated is one failed outcome,
         // not a crash: the previous valid snapshot stays published.
         Err(error) => {
             return CatalogueRefreshReport {
                 outcomes: vec![SourceRefreshOutcome {
-                    source: "models.json".to_string(),
-                    status: SourceRefreshStatus::Failed { reason: error },
+                    source: REGISTRY_FILE_SOURCE.to_string(),
+                    status: SourceRefreshStatus::Failed {
+                        reason: error.clone(),
+                    },
                 }],
                 resolved: None,
             };
         }
     };
-    let inputs = CatalogueInputs::load(base_dir);
     let refreshables: Vec<&dyn crate::application::catalogue_refresh::RefreshableCatalogueSource> =
         discovery.sources.iter().map(AsRef::as_ref).collect();
     // Resolve inputs: `inputs.sources()` already feeds the discovered layer
@@ -72,7 +82,9 @@ pub fn describe_outcome(outcome: &SourceRefreshOutcome) -> String {
         SourceRefreshStatus::Updated { models } => {
             format!("{}: discovered {models} model(s)", outcome.source)
         }
-        SourceRefreshStatus::Unchanged => format!("{}: unchanged", outcome.source),
+        SourceRefreshStatus::Unchanged { models } => {
+            format!("{}: unchanged ({models} model(s) cached)", outcome.source)
+        }
         SourceRefreshStatus::Unsupported { reason } => {
             format!("{}: not refreshable ({reason})", outcome.source)
         }

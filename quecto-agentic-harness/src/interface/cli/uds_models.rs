@@ -110,17 +110,12 @@ fn render_listing(
     })
 }
 
-pub(super) fn refresh_models_response(
-    ctx: &DispatchCtx<'_>,
-    source: Option<&str>,
-) -> serde_json::Value {
-    refresh_models_data(ctx.base_dir, source)
-}
-
 /// UDS `refresh_models` operation (epic #1193, slice 4): drive the one
 /// application refresh use case and render per-source outcomes on the wire.
-/// A refresh issued from a live session holds up the dispatch loop, so it
-/// runs under a tighter per-source budget than an interactive CLI discover.
+/// The dispatch loop runs this on a blocking worker thread (see
+/// `dispatch_fieldless_command`), so other UDS commands stay serviced while
+/// a refresh is in flight; the per-source budget is still kept tight so an
+/// unattended refresh converges quickly.
 pub fn refresh_models_data(base_dir: &std::path::Path, source: Option<&str>) -> serde_json::Value {
     use crate::application::catalogue_refresh::{
         RefreshBounds, RefreshSelection, SourceRefreshStatus,
@@ -140,7 +135,7 @@ pub fn refresh_models_data(base_dir: &std::path::Path, source: Option<&str>) -> 
         .map(|outcome| {
             let (status, models, reason) = match &outcome.status {
                 SourceRefreshStatus::Updated { models } => ("updated", Some(*models), None),
-                SourceRefreshStatus::Unchanged => ("unchanged", None, None),
+                SourceRefreshStatus::Unchanged { models } => ("unchanged", Some(*models), None),
                 SourceRefreshStatus::Unsupported { reason } => {
                     ("unsupported", None, Some(reason.clone()))
                 }

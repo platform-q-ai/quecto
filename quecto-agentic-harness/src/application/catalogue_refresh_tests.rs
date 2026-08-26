@@ -101,7 +101,9 @@ impl RefreshableCatalogueSource for FakeRefreshable {
                 *self.cached.lock().unwrap() = entries.clone();
                 Ok(RefreshChange::Updated { models })
             }
-            Behaviour::Unchanged => Ok(RefreshChange::Unchanged),
+            Behaviour::Unchanged => Ok(RefreshChange::Unchanged {
+                models: self.cached.lock().unwrap().len(),
+            }),
             Behaviour::Unsupported(reason) => Err(RefreshError::Unsupported {
                 reason: reason.clone(),
             }),
@@ -222,7 +224,7 @@ fn refresh_all_reports_outcomes_and_publishes_next_generation() {
     );
     assert_eq!(
         outcome(&report, "local").status,
-        SourceRefreshStatus::Unchanged
+        SourceRefreshStatus::Unchanged { models: 1 }
     );
     assert!(
         report.resolved.is_some(),
@@ -539,7 +541,7 @@ impl CatalogueSource for SleepyRefreshable {
 impl RefreshableCatalogueSource for SleepyRefreshable {
     fn refresh(&self, _ctx: &RefreshContext) -> Result<RefreshChange, RefreshError> {
         std::thread::sleep(self.sleep);
-        Ok(RefreshChange::Unchanged)
+        Ok(RefreshChange::Unchanged { models: 0 })
     }
 }
 
@@ -634,7 +636,7 @@ fn refresh_within_the_timeout_keeps_its_own_outcome() {
     let report = sleepy_report(Duration::from_millis(1), Duration::from_secs(5));
     assert_eq!(
         outcome(&report, "slow").status,
-        SourceRefreshStatus::Unchanged,
+        SourceRefreshStatus::Unchanged { models: 0 },
         "a refresh inside the timeout must not be reclassified"
     );
 }
@@ -662,7 +664,7 @@ fn all_unchanged_run_republishes_nothing() {
 
     assert_eq!(
         outcome(&report, "local").status,
-        SourceRefreshStatus::Unchanged
+        SourceRefreshStatus::Unchanged { models: 0 }
     );
     assert!(
         report.resolved.is_none(),

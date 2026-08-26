@@ -12,7 +12,11 @@ fn store_persists_models_and_load_round_trips_as_discovered_source() {
     let stored = cache
         .store_models_response(r#"{"data":[{"id":"alpha"},{"id":"beta"}]}"#)
         .expect("store must succeed");
-    assert_eq!(stored, 2, "both models must be persisted");
+    assert_eq!(
+        stored,
+        RefreshChange::Updated { models: 2 },
+        "both models must be persisted"
+    );
     assert!(
         cache.cache_path().is_file(),
         "the source cache file must exist"
@@ -81,7 +85,7 @@ fn empty_model_list_persists_an_empty_cache() {
     let stored = cache
         .store_models_response(r#"{"data":[]}"#)
         .expect("an empty listing is a valid response");
-    assert_eq!(stored, 0);
+    assert_eq!(stored, RefreshChange::Updated { models: 0 });
     let loaded = cache.load().expect("load must succeed");
     assert!(
         loaded.entries.is_empty(),
@@ -160,5 +164,63 @@ fn error_urls_are_redacted() {
     assert_eq!(
         redact_url_for_error("https://user:pass@example.com/v1/models?token=secret#fragment"),
         "https://example.com/v1/models"
+    );
+}
+
+/// Slice-4 review: the provider key becomes the cache file stem, so a key
+/// that could traverse outside the cache dir (or nest a subdirectory the
+/// enumerator would never re-list) must be refused before touching disk.
+#[test]
+fn unsafe_provider_keys_never_reach_the_filesystem() {
+    let dir = TempDir::new().unwrap();
+    for key in [
+        "../../escape",
+        "nested/provider",
+        "back\\slash",
+        ".hidden",
+        "",
+    ] {
+        let cache = DiscoverySourceCache::new(dir.path(), key);
+        let err = cache
+            .store_models_response(r#"{"data":[{"id":"alpha"}]}"#)
+            .expect_err("an unsafe key must be rejected");
+        assert!(
+            err.contains("cannot name a discovery cache file"),
+            "got: {err}"
+        );
+    }
+    assert!(
+        std::fs::read_dir(dir.path()).unwrap().next().is_none(),
+        "no cache file may be created for an unsafe key"
+    );
+}
+
+/// Slice-4 review: a refresh whose mapped listing equals the existing cache
+/// reports Unchanged (with the cached count) and skips the rewrite entirely.
+#[test]
+fn identical_listing_is_unchanged_and_skips_the_cache_rewrite() {
+    let dir = TempDir::new().unwrap();
+    let cache = DiscoverySourceCache::new(dir.path(), "openrouter");
+    let body = r#"{"data":[{"id":"alpha"},{"id":"beta"}]}"#;
+    assert_eq!(
+        cache.store_models_response(body).unwrap(),
+        RefreshChange::Updated { models: 2 }
+    );
+    let mtime_before = std::fs::metadata(cache.cache_path())
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert_eq!(
+        cache.store_models_response(body).unwrap(),
+        RefreshChange::Unchanged { models: 2 },
+        "an identical listing must be reported unchanged with the cached count"
+    );
+    let mtime_after = std::fs::metadata(cache.cache_path())
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert_eq!(
+        mtime_before, mtime_after,
+        "an unchanged listing must not rewrite the cache file"
     );
 }

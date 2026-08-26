@@ -126,44 +126,54 @@ fn user_override_still_wins_over_refreshed_discovered_data_at_the_interface() {
     });
 }
 
+/// Falsifiable redaction guard (slice-4 review): the provider's baseUrl path
+/// embeds the configured apiKey value, and the invalid-baseUrl failure reason
+/// echoes the (userinfo/query-stripped) URL — so without the `SecretsRedaction`
+/// wiring the secret WOULD appear verbatim in the outcome text. The test
+/// asserts the reason was actually transformed, so reverting the redaction
+/// wiring (or making it a no-op) fails it.
 #[test]
 fn failure_reasons_never_contain_configured_credentials() {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/v1/models"))
-            .respond_with(
-                ResponseTemplate::new(401).set_body_string("unauthorized for sk-secret-123"),
-            )
-            .mount(&server)
-            .await;
+    let tmp = tempfile::tempdir().unwrap();
+    write_registry(
+        tmp.path(),
+        serde_json::json!({
+            "openrouter": {
+                "api": "openai-completions",
+                // Remote plain-http is rejected; the failure reason echoes the
+                // URL, whose path deliberately contains the secret value.
+                "baseUrl": "http://models.example.com/sk-secret-123/v1",
+                "apiKey": "sk-secret-123",
+                "models": []
+            }
+        }),
+    );
 
-        let tmp = tempfile::tempdir().unwrap();
-        write_registry(
-            tmp.path(),
-            serde_json::json!({
-                "openrouter": {
-                    "api": "openai-completions",
-                    "baseUrl": format!("{}/v1", server.uri()),
-                    "apiKey": "sk-secret-123",
-                    "models": []
-                }
-            }),
-        );
-
-        let base_dir = tmp.path().to_path_buf();
-        let report = tokio::task::spawn_blocking(move || {
-            refresh_catalogue(&base_dir, &RefreshSelection::All, RefreshBounds::default())
-        })
-        .await
-        .unwrap();
-        let text = format!("{:?}", report.outcomes);
-        assert!(
-            !text.contains("sk-secret-123"),
-            "refresh outcomes leaked a credential: {text}"
-        );
-    });
+    let report = refresh_catalogue(tmp.path(), &RefreshSelection::All, RefreshBounds::default());
+    let status = &report
+        .outcomes
+        .iter()
+        .find(|o| o.source == "openrouter")
+        .expect("openrouter must report an outcome")
+        .status;
+    match status {
+        SourceRefreshStatus::Failed { reason } => {
+            assert!(
+                !reason.contains("sk-secret-123"),
+                "refresh outcome leaked a credential: {reason}"
+            );
+            assert!(
+                reason.contains("[redacted]"),
+                "the reason must show the secret was redacted (not merely absent): {reason}"
+            );
+        }
+        other => panic!("expected a failed outcome, got {other:?}"),
+    }
+    let text = format!("{:?}", report.outcomes);
+    assert!(
+        !text.contains("sk-secret-123"),
+        "refresh outcomes leaked a credential: {text}"
+    );
 }
 
 #[test]
@@ -184,7 +194,7 @@ fn malformed_registry_is_one_failed_outcome() {
 fn describe_outcome_covers_every_status() {
     let cases = [
         (SourceRefreshStatus::Updated { models: 3 }, "discovered 3"),
-        (SourceRefreshStatus::Unchanged, "unchanged"),
+        (SourceRefreshStatus::Unchanged { models: 3 }, "unchanged"),
         (
             SourceRefreshStatus::Unsupported {
                 reason: "no listing".to_string(),

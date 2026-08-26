@@ -28,7 +28,9 @@ impl Default for RefreshBounds {
     fn default() -> Self {
         Self {
             timeout: Duration::from_secs(30),
-            max_response_bytes: 4 * 1024 * 1024,
+            // The pre-slice-4 discovery path allowed 5 MiB bodies; keep that
+            // bound so no previously discoverable listing silently fails.
+            max_response_bytes: 5 * 1024 * 1024,
         }
     }
 }
@@ -60,8 +62,14 @@ impl RefreshContext {
 /// What a successful source refresh changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshChange {
-    Updated { models: usize },
-    Unchanged,
+    Updated {
+        models: usize,
+    },
+    /// Nothing changed; `models` is the count the (unchanged) cache holds, so
+    /// adapters can still report a meaningful total.
+    Unchanged {
+        models: usize,
+    },
 }
 
 /// Why a source refresh did not succeed.
@@ -88,10 +96,19 @@ pub trait RefreshableCatalogueSource: CatalogueSource {
 /// Terminal status of one source in a refresh run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceRefreshStatus {
-    Updated { models: usize },
-    Unchanged,
-    Unsupported { reason: String },
-    Failed { reason: String },
+    Updated {
+        models: usize,
+    },
+    /// Nothing changed; `models` is the count the unchanged cache holds.
+    Unchanged {
+        models: usize,
+    },
+    Unsupported {
+        reason: String,
+    },
+    Failed {
+        reason: String,
+    },
     Cancelled,
 }
 
@@ -214,9 +231,10 @@ fn selected_targets<'a>(
 }
 
 /// Refresh one source under the run's bounds. A cancellation observed before
-/// the source starts skips it as `Cancelled`; a refresh that outlives the
-/// timeout is reported failed even if it eventually returned, because its
-/// result arrived outside the budget an unattended caller allowed for.
+/// the source starts skips it as `Cancelled`; a side-effect-free refresh that
+/// outlives the timeout is reported failed even if it eventually returned,
+/// because its result arrived outside the budget an unattended caller allowed
+/// for (an over-budget *update* keeps its Updated outcome — see below).
 fn refresh_one(
     source: &dyn RefreshableCatalogueSource,
     ctx: &RefreshContext,
@@ -232,7 +250,14 @@ fn refresh_one(
     if matches!(result, Err(RefreshError::Cancelled)) {
         return SourceRefreshStatus::Cancelled;
     }
-    if started.elapsed() > ctx.bounds.timeout {
+    // An over-budget refresh that persisted an update is still reported
+    // Updated: the new cache is on disk and will be resolved either way, so
+    // reclassifying it as failed would suppress the republish and report a
+    // state the next resolve contradicts (slice-4 review). Only outcomes with
+    // no new side effects are reclassified as timeout failures.
+    if !matches!(result, Ok(RefreshChange::Updated { .. }))
+        && started.elapsed() > ctx.bounds.timeout
+    {
         return SourceRefreshStatus::Failed {
             reason: format!(
                 "refresh exceeded the {}ms timeout",
@@ -242,7 +267,7 @@ fn refresh_one(
     }
     match result {
         Ok(RefreshChange::Updated { models }) => SourceRefreshStatus::Updated { models },
-        Ok(RefreshChange::Unchanged) => SourceRefreshStatus::Unchanged,
+        Ok(RefreshChange::Unchanged { models }) => SourceRefreshStatus::Unchanged { models },
         Err(RefreshError::Unsupported { reason }) => SourceRefreshStatus::Unsupported {
             reason: redaction.redact(&reason),
         },

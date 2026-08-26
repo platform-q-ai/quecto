@@ -73,8 +73,14 @@ fn cmd_discover(
 
     loop {
         match discover_once(ctx, &provider) {
-            Ok(count) => stdout.push_str(&format!(
-                "Discovered {count} model(s) for provider {provider}\n"
+            Ok(DiscoverOutcome::Updated { models }) => stdout.push_str(&format!(
+                "Discovered {models} model(s) for provider {provider}\n"
+            )),
+            // An unchanged listing is not zero models discovered: report the
+            // cached total so users/scripts keying off the count never
+            // conclude a stable provider lost its models (slice-4 review).
+            Ok(DiscoverOutcome::Unchanged { models }) => stdout.push_str(&format!(
+                "Model listing unchanged for provider {provider} ({models} model(s) cached)\n"
             )),
             Err(error) => {
                 stderr.push_str(&format!("models discover failed: {error}\n"));
@@ -88,9 +94,16 @@ fn cmd_discover(
     }
 }
 
+/// What one discover run did, for rendering.
+#[derive(Debug)]
+enum DiscoverOutcome {
+    Updated { models: usize },
+    Unchanged { models: usize },
+}
+
 /// Refresh one provider through the application refresh use case. The user is
 /// waiting on this directly, so the (generous) default bounds apply.
-fn discover_once(ctx: &CliContext, provider_key: &str) -> Result<usize, String> {
+fn discover_once(ctx: &CliContext, provider_key: &str) -> Result<DiscoverOutcome, String> {
     let report = refresh_catalogue(
         &ctx.base_dir(),
         &RefreshSelection::Only(vec![provider_key.to_string()]),
@@ -100,10 +113,21 @@ fn discover_once(ctx: &CliContext, provider_key: &str) -> Result<usize, String> 
         .outcomes
         .iter()
         .find(|o| o.source == provider_key)
+        // A registry file the typed parser refuses is reported as one
+        // file-level failed outcome; surface its reason instead of a
+        // confusing "no outcome" message.
+        .or_else(|| {
+            report
+                .outcomes
+                .iter()
+                .find(|o| o.source == super::catalogue_refresh_bridge::REGISTRY_FILE_SOURCE)
+        })
         .ok_or_else(|| format!("refresh reported no outcome for '{provider_key}'"))?;
     match &outcome.status {
-        SourceRefreshStatus::Updated { models } => Ok(*models),
-        SourceRefreshStatus::Unchanged => Ok(0),
+        SourceRefreshStatus::Updated { models } => Ok(DiscoverOutcome::Updated { models: *models }),
+        SourceRefreshStatus::Unchanged { models } => {
+            Ok(DiscoverOutcome::Unchanged { models: *models })
+        }
         SourceRefreshStatus::Unsupported { reason } | SourceRefreshStatus::Failed { reason } => {
             Err(reason.clone())
         }

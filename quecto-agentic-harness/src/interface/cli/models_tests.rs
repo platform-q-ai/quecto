@@ -214,8 +214,7 @@ fn discover_rejects_oauth_non_openai_and_non_string_api_providers() {
                 "auth": {"mode": "oauth"},
                 "models": []
             },
-            "anthropic-api": {"api": "anthropic-messages", "models": []},
-            "broken": {"api": 123, "baseUrl": "https://example.test/v1", "models": []}
+            "anthropic-api": {"api": "anthropic-messages", "models": []}
         }})
         .to_string(),
     )
@@ -231,9 +230,20 @@ fn discover_rejects_oauth_non_openai_and_non_string_api_providers() {
         "unsupported reason must be actionable: {err}"
     );
 
+    // A file the typed registry parser refuses (non-string api) fails the
+    // whole discover with the parse error — refresh must never re-interpret
+    // models.json more leniently than the runtime does (slice-4 review).
+    std::fs::write(
+        tmp.path().join("models.json"),
+        serde_json::json!({"providers": {
+            "broken": {"api": 123, "baseUrl": "https://example.test/v1", "models": []}
+        }})
+        .to_string(),
+    )
+    .unwrap();
     let err = discover_once(&ctx, "broken").unwrap_err();
     assert!(
-        err.contains("api must be a string"),
+        err.contains("refresh reported no outcome") || err.to_lowercase().contains("parse"),
         "unexpected error: {err}"
     );
 }

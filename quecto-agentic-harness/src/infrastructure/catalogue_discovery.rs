@@ -19,6 +19,7 @@ use crate::domain::catalogue::{
     ModelRef, ProviderDescriptor, ProviderId, SourceLayer, TransportKind,
 };
 use crate::infrastructure::atomic_write::atomic_write;
+use crate::infrastructure::model_registry::{AuthMode, ProviderApi, ProviderDefaults};
 use crate::infrastructure::providers::{
     ProviderFactoryError, validate_provider_api_base_with_options,
 };
@@ -75,19 +76,55 @@ impl DiscoverySourceCache {
     /// entries and atomically persist them as this provider's source cache.
     /// Only mapped model entries are persisted — never the raw response, so
     /// credential material a server might echo can never reach disk. A body
-    /// that fails to map leaves any previous cache untouched.
-    /// Returns the number of models persisted.
-    pub fn store_models_response(&self, body: &str) -> Result<usize, String> {
+    /// that fails to map leaves any previous cache untouched. When the mapped
+    /// bytes equal the existing cache the write is skipped entirely (no
+    /// steady-state write amplification for stable providers).
+    /// Returns the refresh change, carrying the number of models cached.
+    pub fn store_models_response(&self, body: &str) -> Result<RefreshChange, String> {
+        if !safe_cache_key(&self.provider) {
+            // Defense in depth: the provider key becomes the cache file name,
+            // so a key that could traverse outside the cache dir must never
+            // reach the filesystem (slice-4 review).
+            return Err(unsafe_key_reason(&self.provider));
+        }
         let models = map_models_response(body)?;
         let bytes = serde_json::to_vec_pretty(&models)
             .map_err(|e| format!("failed to serialize discovery cache: {e}"))?;
+        let path = self.cache_path();
+        if let Ok(existing) = std::fs::read(&path)
+            && existing == bytes
+        {
+            return Ok(RefreshChange::Unchanged {
+                models: models.len(),
+            });
+        }
         std::fs::create_dir_all(&self.dir)
             .map_err(|e| format!("failed to create {}: {e}", self.dir.display()))?;
-        let path = self.cache_path();
         atomic_write(&path, &bytes, Some(0o600))
             .map_err(|e| format!("failed to write {} atomically: {e}", path.display()))?;
-        Ok(models.len())
+        Ok(RefreshChange::Updated {
+            models: models.len(),
+        })
     }
+}
+
+/// Whether a provider key is safe to use as a cache file stem: it must stay a
+/// single plain path component, so a hostile or mistyped key in `models.json`
+/// can never write outside the discovery cache dir, and every cache written
+/// is re-enumerable by [`discovery_cache_sources`] (which lists only direct
+/// `*.json` children).
+fn safe_cache_key(key: &str) -> bool {
+    !key.is_empty()
+        && !key.starts_with('.')
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+fn unsafe_key_reason(key: &str) -> String {
+    format!(
+        "provider key '{key}' cannot name a discovery cache file (allowed: ASCII letters, digits, '-', '_', '.'; must not start with '.'); rename the provider in models.json"
+    )
 }
 
 /// Map a `/models` response body into cached models, sorted by id with
@@ -328,24 +365,11 @@ impl RefreshableCatalogueSource for HttpDiscoverySource {
             .map_err(|reason| RefreshError::Failed {
                 reason: reason.clone(),
             })?;
-        let previous = std::fs::read_to_string(self.cache.cache_path()).ok();
         let body =
             fetch_models_body(endpoint, ctx).map_err(|reason| RefreshError::Failed { reason })?;
-        let models = self
-            .cache
+        self.cache
             .store_models_response(&body)
-            .map_err(|reason| RefreshError::Failed { reason })?;
-        let current = match std::fs::read_to_string(self.cache.cache_path()) {
-            Ok(text) => text,
-            // The write itself succeeded; if the read-back fails, report
-            // Updated conservatively so the new cache is still republished.
-            Err(_) => return Ok(RefreshChange::Updated { models }),
-        };
-        if previous.as_deref() == Some(current.as_str()) {
-            Ok(RefreshChange::Unchanged)
-        } else {
-            Ok(RefreshChange::Updated { models })
-        }
+            .map_err(|reason| RefreshError::Failed { reason })
     }
 }
 
@@ -421,111 +445,69 @@ pub struct ConfiguredDiscovery {
     pub secrets: Vec<String>,
 }
 
-/// Enumerate the providers in `models.json` as refreshable catalogue
-/// sources: OpenAI-compatible providers refresh over HTTP into their
-/// discovery cache; every other configuration reports an actionable
-/// unsupported outcome. A missing `models.json` means nothing is
-/// discoverable; a malformed one is an error.
-pub fn configured_discovery(base_dir: &Path) -> Result<ConfiguredDiscovery, String> {
-    let path = base_dir.join("models.json");
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(ConfiguredDiscovery {
-                sources: Vec::new(),
-                secrets: Vec::new(),
-            });
-        }
-        Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
-    };
-    let registry: Value = serde_json::from_str(&text)
-        .map_err(|e| format!("failed to parse {}: {e}", path.display()))?;
+/// Map the typed provider configuration from one `models.json` parse into
+/// refreshable catalogue sources: OpenAI-compatible api-key providers refresh
+/// over HTTP into their discovery cache; every other configuration reports an
+/// actionable unsupported outcome. Taking the already-parsed
+/// [`ProviderDefaults`] (rather than re-reading the file) keeps one typed
+/// parse as the single truth for the file's semantics and lets the caller
+/// feed refresh and resolve from the same on-disk read (slice-4 review).
+pub fn configured_discovery(
+    base_dir: &Path,
+    providers: &[(String, ProviderDefaults)],
+) -> ConfiguredDiscovery {
     let cache_dir = discovery_cache_dir(base_dir);
     let mut sources: Vec<Box<dyn RefreshableCatalogueSource>> = Vec::new();
     let mut secrets = Vec::new();
-    let Some(providers) = registry.get("providers").and_then(Value::as_object) else {
-        return Ok(ConfiguredDiscovery { sources, secrets });
-    };
-    for (key, provider) in providers {
-        sources.push(provider_discovery_source(
-            &cache_dir,
-            key,
-            provider,
-            &mut secrets,
-        ));
+    for (key, defaults) in providers {
+        // Collect every configured secret for redaction regardless of which
+        // source shape the provider maps to.
+        if let Some(secret) = &defaults.api_key {
+            secrets.push(secret.clone());
+        }
+        sources.push(provider_discovery_source(&cache_dir, key, defaults));
     }
-    Ok(ConfiguredDiscovery { sources, secrets })
+    ConfiguredDiscovery { sources, secrets }
 }
 
 /// Map one configured provider into its refreshable source.
 fn provider_discovery_source(
     cache_dir: &Path,
     key: &str,
-    provider: &Value,
-    secrets: &mut Vec<String>,
+    defaults: &ProviderDefaults,
 ) -> Box<dyn RefreshableCatalogueSource> {
-    let api = match provider.get("api") {
-        None | Some(Value::Null) => "openai-completions",
-        Some(Value::String(api)) => api,
-        Some(_) => {
-            return Box::new(HttpDiscoverySource::new(
-                DiscoverySourceCache::new(cache_dir, key),
-                Err(format!("provider '{key}' api must be a string")),
-            ));
-        }
-    };
-    if api != "openai-completions" {
+    if defaults.api != ProviderApi::OpenAiCompletions {
         return Box::new(UnsupportedRefreshSource::new(
             key,
-            format!(
-                "provider api '{api}' does not expose an OpenAI-compatible model listing endpoint; maintain its models in models.json directly"
-            ),
+            "provider api does not expose an OpenAI-compatible model listing endpoint; maintain its models in models.json directly",
         ));
     }
-    if provider
-        .get("auth")
-        .and_then(|auth| auth.get("mode"))
-        .and_then(Value::as_str)
-        .is_some_and(|mode| mode == "oauth")
-    {
+    if defaults.auth == AuthMode::OAuth {
         return Box::new(UnsupportedRefreshSource::new(
             key,
             "provider uses oauth auth, which catalogue refresh does not support; maintain its models in models.json directly",
         ));
     }
-    let Some(base_url) = provider
-        .get("baseUrl")
-        .or_else(|| provider.get("apiBase"))
-        .and_then(Value::as_str)
-    else {
+    if !safe_cache_key(key) {
+        return Box::new(HttpDiscoverySource::new(
+            DiscoverySourceCache::new(cache_dir, key),
+            Err(unsafe_key_reason(key)),
+        ));
+    }
+    let Some(base_url) = defaults.base_url.as_deref() else {
         return Box::new(UnsupportedRefreshSource::new(
             key,
             "provider declares no baseUrl to discover models from; add one or maintain its models in models.json directly",
         ));
     };
-    let allow_remote_http = provider
-        .get("allowRemoteHttp")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    // Validate the URL before touching credential material: an unsafe
+    // Validate the URL before attaching credential material: an unsafe
     // endpoint must never cause a secret to be resolved for it.
-    let endpoint = DiscoveryEndpoint::for_openai_compatible(key, base_url, allow_remote_http, None)
-        .map(|mut endpoint| {
-            endpoint.api_key = provider
-                .get("auth")
-                .and_then(|auth| auth.get("apiKey"))
-                .or_else(|| provider.get("apiKey"))
-                .and_then(Value::as_str)
-                .map(|value| {
-                    crate::infrastructure::model_registry::resolve_registry_value(value, |name| {
-                        std::env::var(name).ok()
-                    })
-                });
-            if let Some(secret) = &endpoint.api_key {
-                secrets.push(secret.clone());
-            }
-            endpoint
-        });
+    let endpoint =
+        DiscoveryEndpoint::for_openai_compatible(key, base_url, defaults.allow_remote_http, None)
+            .map(|mut endpoint| {
+                endpoint.api_key = defaults.api_key.clone();
+                endpoint
+            });
     Box::new(HttpDiscoverySource::new(
         DiscoverySourceCache::new(cache_dir, key),
         endpoint,
