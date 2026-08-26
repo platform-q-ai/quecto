@@ -42,6 +42,11 @@ pub type ProviderFactory = Arc<dyn Fn(&str) -> Arc<dyn LlmProvider> + Send + Syn
 pub struct RefreshableConfig {
     /// The initial inner provider.
     pub inner: Arc<dyn LlmProvider>,
+    /// The OAuth token `inner` was built from. Supplied by the composition that
+    /// built it, so the pair is consistent by construction: reading it back from
+    /// the store here could observe a token another process rotated in between,
+    /// and a later 401 would then refresh unnecessarily.
+    pub initial_token: Option<String>,
     /// Credential store for checking/persisting tokens.
     pub store: Arc<CredentialStore>,
     /// Router-facing provider name (e.g. "anthropic", "anthropic-oauth").
@@ -85,13 +90,7 @@ impl std::fmt::Debug for RefreshableProvider {
 impl RefreshableProvider {
     /// Create a new refreshable provider from a config.
     pub fn new(config: RefreshableConfig) -> Self {
-        let inner_token = config
-            .store
-            .get(&config.credential_provider)
-            .ok()
-            .flatten()
-            .filter(|cred| cred.method == AuthMethod::OAuth)
-            .map(|cred| cred.token);
+        let inner_token = config.initial_token;
         Self {
             inner: RwLock::new((config.inner, inner_token)),
             store: config.store,

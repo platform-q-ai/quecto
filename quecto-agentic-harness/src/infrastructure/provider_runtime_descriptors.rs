@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use super::credentials::{self, registry_model_credential_available};
+use super::credentials::{self, record_has_own_credential, registry_model_credential_available};
 use crate::infrastructure::catalogue_registry::record_to_descriptor_with_credential;
 use crate::infrastructure::config::Config;
 
@@ -15,9 +15,9 @@ use crate::infrastructure::config::Config;
 /// record's availability.
 pub(super) struct DescriptorInputs<'a> {
     pub(super) model_registry: &'a crate::infrastructure::model_registry::ModelRegistry,
+    pub(super) canonical_registry_prefixes: &'a HashSet<String>,
     pub(super) credentials: &'a credentials::CredentialSnapshot,
     pub(super) config: &'a Config,
-    pub(super) canonical_registry_prefixes: &'a HashSet<String>,
     pub(super) configured_endpoint_prefixes: &'a HashSet<String>,
     pub(super) constructible_registry_prefixes: &'a HashSet<String>,
     /// Names of the providers actually constructed, lowercased. Availability is
@@ -46,9 +46,16 @@ pub(super) fn catalogue_descriptors(
         if let Some(mut descriptor) =
             record_to_descriptor_with_credential(model, Some(credential_available))?
         {
+            // Availability follows the route, which is the lowercased prefix, so
+            // one key's odd capitalisation does not mark every other spelling's
+            // models — including the shipped ones — unusable. A spelling that
+            // carries its own credential is different: it is a rival definition
+            // of the route, and only the one that built it can be trusted to
+            // serve requests.
             let canonical_provider = model.provider.to_ascii_lowercase();
-            let is_canonical_owner = inputs.canonical_registry_prefixes.contains(&model.provider);
-            let has_direct_runtime = is_canonical_owner
+            let rival_definition = !inputs.canonical_registry_prefixes.contains(&model.provider)
+                && record_has_own_credential(model, inputs.credentials, inputs.config)?;
+            let has_direct_runtime = !rival_definition
                 && inputs
                     .constructed_provider_names
                     .contains(&canonical_provider)
@@ -60,7 +67,7 @@ pub(super) fn catalogue_descriptors(
                     || inputs
                         .constructible_registry_prefixes
                         .contains(&canonical_provider));
-            if !is_canonical_owner || !has_direct_runtime {
+            if !has_direct_runtime {
                 // Keep the reasons derived from the catalogue entry (an
                 // unimplemented transport, a missing credential) and add why the
                 // runtime skipped it, so availability stays a complete account.

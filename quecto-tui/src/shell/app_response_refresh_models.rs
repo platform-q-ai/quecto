@@ -37,13 +37,15 @@ impl App {
                 )
             })
             .unwrap_or_default();
-        if failures.is_empty() && !refreshed_any && !skipped.is_empty() {
+        if failures.is_empty() && !refreshed_any {
             // Nothing was queried: saying "complete" would claim work
             // that did not happen.
-            self.notify(
-                &format!("Nothing to refresh: {}", skipped.join("; ")),
-                NotifyLevel::Info,
-            );
+            let detail = if skipped.is_empty() {
+                "no discoverable providers are configured".to_string()
+            } else {
+                skipped.join("; ")
+            };
+            self.notify(&format!("Nothing to refresh: {detail}"), NotifyLevel::Info);
         } else if failures.is_empty() {
             self.notify("Model catalogue refresh complete", NotifyLevel::Info);
         } else {

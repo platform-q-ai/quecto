@@ -114,6 +114,7 @@ async fn concurrent_401s_coalesce_oauth_refresh() {
     });
     let provider = Arc::new(RefreshableProvider::new(RefreshableConfig {
         inner,
+        initial_token: Some("old-access".to_string()),
         store: store.clone(),
         provider_name: "anthropic".to_string(),
         credential_provider: "anthropic".to_string(),
@@ -232,6 +233,7 @@ async fn retried_requests_run_concurrently_after_the_refresh_lock_is_released() 
             barrier: Arc::new(Barrier::new(1)),
             fail: true,
         }),
+        initial_token: Some("old-access".to_string()),
         store: store.clone(),
         provider_name: "anthropic".to_string(),
         credential_provider: "anthropic".to_string(),
@@ -286,6 +288,7 @@ async fn a_successful_call_never_reads_the_credential_store() {
     });
     let provider = RefreshableProvider::new(RefreshableConfig {
         inner: Arc::new(MockRetryProvider::new(Arc::new(AtomicU32::new(0)), 0)),
+        initial_token: Some("old-access".to_string()),
         store: store.clone(),
         provider_name: "anthropic".to_string(),
         credential_provider: "anthropic".to_string(),

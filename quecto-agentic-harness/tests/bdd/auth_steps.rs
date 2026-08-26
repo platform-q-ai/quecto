@@ -1260,6 +1260,7 @@ fn given_provider_401_first(world: &mut QuectoWorld) {
     });
     let refreshable = RefreshableProvider::new(RefreshableConfig {
         inner,
+        initial_token: None,
         store: store_arc,
         provider_name: "anthropic".to_string(),
         credential_provider: "anthropic".to_string(),
@@ -1285,6 +1286,7 @@ fn given_provider_500(world: &mut QuectoWorld) {
         Arc::new(|_| Arc::new(BddMock500Provider) as Arc<dyn LlmProvider>);
     let refreshable = RefreshableProvider::new(RefreshableConfig {
         inner,
+        initial_token: None,
         store: store_arc,
         provider_name: "anthropic".to_string(),
         credential_provider: "anthropic".to_string(),
@@ -1305,6 +1307,7 @@ fn given_provider_success(world: &mut QuectoWorld) {
         Arc::new(|_| Arc::new(BddMockSuccessProvider) as Arc<dyn LlmProvider>);
     let refreshable = RefreshableProvider::new(RefreshableConfig {
         inner,
+        initial_token: None,
         store: store_arc,
         provider_name: "anthropic".to_string(),
         credential_provider: "anthropic".to_string(),

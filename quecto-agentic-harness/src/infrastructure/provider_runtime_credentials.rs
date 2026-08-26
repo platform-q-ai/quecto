@@ -72,6 +72,24 @@ pub(super) fn explicit_endpoint_owns_registry_route(
 
 /// `registry_provider_can_construct` ignoring endpoint-supplied credentials, so
 /// route ownership does not depend on the endpoint it is being compared with.
+/// Whether this record carries a credential of its own — a key on the entry, a
+/// built-in key for its prefix, or its declared OAuth credential. A record with
+/// none is metadata for a route someone else builds; a record with one is a
+/// rival definition of that route.
+pub(super) fn record_has_own_credential(
+    model: &crate::infrastructure::model_registry::ModelRecord,
+    store: &CredentialSnapshot,
+    config: &Config,
+) -> Result<bool, String> {
+    if model.api_key.as_deref().is_some_and(|key| !key.is_empty()) {
+        return Ok(true);
+    }
+    if builtin_api_key_available(model, store, config)? {
+        return Ok(true);
+    }
+    oauth_credential_available(model, store)
+}
+
 /// Whether the record's declared OAuth provider has a usable credential.
 fn oauth_credential_available(
     model: &crate::infrastructure::model_registry::ModelRecord,

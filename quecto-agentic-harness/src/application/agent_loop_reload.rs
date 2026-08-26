@@ -36,10 +36,13 @@ impl AgentLoopImpl {
     #[cfg(any(test, feature = "test-support"))]
     pub fn swap_provider(&mut self, provider: Arc<dyn LlmProvider>) {
         let generation = self.catalogue_store.current().generation.saturating_add(1);
+        // Carry the routable prefixes across, or this seam would answer
+        // differently from the composition it stands in for.
         let catalogue = CatalogueSnapshot::new(
             generation,
             provider.model_descriptors().unwrap_or(&[]).to_vec(),
-        );
+        )
+        .with_open_providers(self.catalogue_store.current().open_providers().to_vec());
         self.swap_runtime(CatalogueRuntimeSnapshot {
             catalogue,
             provider,

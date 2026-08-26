@@ -595,3 +595,35 @@ fn a_case_variant_key_does_not_hide_the_record_that_can_build_the_prefix() {
         "the route reached its provider: {error}"
     );
 }
+
+#[test]
+fn an_oddly_capitalised_user_key_does_not_disable_the_shipped_models() {
+    use crate::infrastructure::config::Config;
+    use crate::infrastructure::provider_runtime::build_agent_provider;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    // The user's spelling sorts before the shipped one; the shipped records
+    // carry no credential of their own, so they are metadata for the same route
+    // rather than a rival definition of it.
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"Fireworks":{"api":"openai-completions","baseUrl":"http://127.0.0.1:9/v1","auth":{"mode":"apiKey","apiKey":"sk-fw"},"models":[{"id":"mine"}]}}}"#,
+    )
+    .unwrap();
+
+    let runtime = build_agent_provider(&Config::default(), tmp.path(), &reqwest::Client::new())
+        .expect("the user's keyed record builds the route");
+    let shipped = runtime
+        .model_descriptors()
+        .unwrap()
+        .iter()
+        .find(|model| model.qualified_id().starts_with("fireworks/accounts/"))
+        .expect("a shipped fireworks model is listed");
+
+    assert!(
+        shipped.availability.runnable(),
+        "{}: {:?}",
+        shipped.qualified_id(),
+        shipped.availability
+    );
+}

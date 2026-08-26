@@ -1,8 +1,6 @@
 use super::AgentEvent;
 use super::{DispatchCtx, emit_event_to_broadcast_or_writer};
-use crate::application::catalogue::{
-    ResolveModelSelectionUseCase, SelectionFailure, resolve_model_reference,
-};
+use crate::application::catalogue::{ResolveModelSelectionUseCase, SelectionFailure};
 use crate::domain::catalogue::{ModelRef, UnavailableReason};
 
 pub(super) struct SetModelArgs {
@@ -148,25 +146,22 @@ fn describe_selection(
     // A bare name is routed by the runtime to its first provider, not resolved
     // through the catalogue, so the catalogue cannot say whether it will work —
     // and must not claim it will not.
-    if ModelRef::parse_qualified(model).is_err() {
+    let Ok(reference) = ModelRef::parse_qualified(model) else {
         return None;
-    }
-    match resolve_model_reference(snapshot, model) {
-        Err(failure) => Some(unresolved_model_message(snapshot, model, failure)),
-        // Resolved against the snapshot already in hand: this runs on every model
-        // switch, and a discovered catalogue can hold thousands of entries.
-        Ok(reference) => match ResolveModelSelectionUseCase::resolve_in(snapshot, &reference) {
-            Ok(_) => None,
-            Err(SelectionFailure::Unavailable { reasons }) => Some(format!(
-                "model is unavailable: {}",
-                describe_unavailable_reasons(&reasons)
-            )),
-            Err(failure) => Some(unresolved_model_message(
-                snapshot,
-                reference.qualified_id().as_str(),
-                failure,
-            )),
-        },
+    };
+    // Resolved against the snapshot already in hand: this runs on every model
+    // switch, and a discovered catalogue can hold thousands of entries.
+    match ResolveModelSelectionUseCase::resolve_in(snapshot, &reference) {
+        Ok(_) => None,
+        Err(SelectionFailure::Unavailable { reasons }) => Some(format!(
+            "model is unavailable: {}",
+            describe_unavailable_reasons(&reasons)
+        )),
+        Err(failure) => Some(unresolved_model_message(
+            snapshot,
+            reference.qualified_id().as_str(),
+            failure,
+        )),
     }
 }
 

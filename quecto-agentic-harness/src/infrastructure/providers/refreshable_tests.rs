@@ -168,6 +168,7 @@ async fn test_refreshable_retries_on_401() {
     let factory = make_mock_factory(call_count, 1);
     let refreshable = RefreshableProvider::new(RefreshableConfig {
         inner,
+        initial_token: None,
         store: store.clone(),
         provider_name: "anthropic".to_string(),
         credential_provider: "anthropic".to_string(),
@@ -192,6 +193,7 @@ async fn test_refreshable_passes_through_non_401_errors() {
     let inner = Arc::new(MockServerErrorProvider);
     let refreshable = RefreshableProvider::new(RefreshableConfig {
         inner,
+        initial_token: None,
         store,
         provider_name: "anthropic".to_string(),
         credential_provider: "anthropic".to_string(),
@@ -213,6 +215,7 @@ async fn test_refreshable_passes_through_success() {
     let inner = Arc::new(MockSuccessProvider);
     let refreshable = RefreshableProvider::new(RefreshableConfig {
         inner,
+        initial_token: None,
         store,
         provider_name: "anthropic".to_string(),
         credential_provider: "anthropic".to_string(),
@@ -235,6 +238,7 @@ async fn test_refreshable_does_not_retry_when_no_oauth_credential() {
     let factory = make_mock_factory(call_count, 999);
     let refreshable = RefreshableProvider::new(RefreshableConfig {
         inner,
+        initial_token: None,
         store,
         provider_name: "anthropic".to_string(),
         credential_provider: "anthropic".to_string(),
@@ -273,6 +277,7 @@ async fn test_refreshable_rebuilds_provider_with_new_token() {
     let inner = Arc::new(MockRetryProvider::new(call_count, 1));
     let refreshable = RefreshableProvider::new(RefreshableConfig {
         inner,
+        initial_token: None,
         store: store.clone(),
         provider_name: "anthropic".to_string(),
         credential_provider: "anthropic".to_string(),
@@ -327,6 +332,7 @@ async fn test_refreshable_forwards_without_cloning_on_happy_path() {
     let inner_ref = inner.clone();
     let refreshable = RefreshableProvider::new(RefreshableConfig {
         inner: inner.clone() as Arc<dyn LlmProvider>,
+        initial_token: None,
         store,
         provider_name: "test".to_string(),
         credential_provider: "test".to_string(),
@@ -403,6 +409,7 @@ async fn test_streaming_preemptively_refreshes_expired_token() {
     let inner = Arc::new(MockRetryProvider::new(call_count, 999));
     let refreshable = RefreshableProvider::new(RefreshableConfig {
         inner,
+        initial_token: None,
         store: store.clone(),
         provider_name: "anthropic".to_string(),
         credential_provider: "anthropic".to_string(),
@@ -448,6 +455,7 @@ async fn test_streaming_does_not_refresh_when_token_valid() {
 
     let refreshable = RefreshableProvider::new(RefreshableConfig {
         inner: Arc::new(MockSuccessProvider),
+        initial_token: None,
         store,
         provider_name: "anthropic".to_string(),
         credential_provider: "anthropic".to_string(),
@@ -600,6 +608,7 @@ fn wave3_refreshable_debug_names_decorator() {
     let tmp = tempfile::TempDir::new().unwrap();
     let provider = RefreshableProvider::new(RefreshableConfig {
         inner: Arc::new(MockSuccessProvider),
+        initial_token: None,
         store: Arc::new(CredentialStore::new(tmp.path())),
         provider_name: "anthropic".to_string(),
         credential_provider: "anthropic".to_string(),
@@ -720,6 +729,7 @@ async fn refreshable_delegates_chat_stream_incremental_to_inner_provider() {
     let tmp = tempfile::TempDir::new().unwrap();
     let provider = RefreshableProvider::new(RefreshableConfig {
         inner: Arc::new(MockStreamingProvider),
+        initial_token: None,
         store: Arc::new(CredentialStore::new(tmp.path())),
         provider_name: "anthropic".to_string(),
         credential_provider: "anthropic".to_string(),

@@ -119,6 +119,7 @@ fn compose_agent_provider(
             );
             provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
                 inner,
+                initial_token: Some(openai_oauth_key.clone()),
                 store: store_arc.clone(),
                 provider_name: "openai-oauth".to_string(),
                 credential_provider: "openai".to_string(),
@@ -175,7 +176,7 @@ fn compose_agent_provider(
         if !anthropic_oauth_key.is_empty() {
             let inner = providers::create_anthropic_compatible_provider(
                 "anthropic-oauth",
-                anthropic_oauth_key,
+                anthropic_oauth_key.clone(),
                 anthropic_base.clone(),
                 false,
                 http_client.clone(),
@@ -190,6 +191,7 @@ fn compose_agent_provider(
             );
             provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
                 inner,
+                initial_token: Some(anthropic_oauth_key.clone()),
                 store: store_arc.clone(),
                 provider_name: "anthropic-oauth".to_string(),
                 credential_provider: "anthropic".to_string(),
@@ -312,9 +314,9 @@ fn compose_agent_provider(
     )?;
     let runtime_model_descriptors = catalogue_descriptors(&DescriptorInputs {
         model_registry: &model_registry,
+        canonical_registry_prefixes: &canonical_registry_prefixes,
         credentials: &credentials,
         config,
-        canonical_registry_prefixes: &canonical_registry_prefixes,
         configured_endpoint_prefixes: &configured_endpoint_prefixes,
         constructible_registry_prefixes: &constructible_registry_prefixes,
         constructed_provider_names: &provider_list
@@ -639,6 +641,7 @@ fn build_registry_provider(
         return Ok(Some(Arc::new(RefreshableProvider::new(
             RefreshableConfig {
                 inner,
+                initial_token: Some(auth_key.clone()),
                 store: (*store).clone(),
                 provider_name: model.provider.clone(),
                 credential_provider: oauth_provider,

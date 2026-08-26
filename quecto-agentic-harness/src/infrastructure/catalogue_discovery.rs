@@ -31,7 +31,7 @@ pub(crate) const MAX_MODEL_DISCOVERY_RESPONSE_BYTES: usize = 5 * 1024 * 1024;
 const DISCOVERY_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// The tighter timeout used when refreshing every source at once from a live
 /// session, where a slow endpoint would otherwise hold up the others.
-const BULK_DISCOVERY_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const BULK_DISCOVERY_REQUEST_TIMEOUT: Duration = Duration::from_secs(4);
 pub(crate) const MAX_MODEL_DISCOVERY_MODELS: usize = 10_000;
 
 struct ModelsJsonPublishLock {
@@ -40,7 +40,7 @@ struct ModelsJsonPublishLock {
 
 impl ModelsJsonPublishLock {
     /// How long to wait for another process's publication to finish.
-    const LOCK_WAIT: Duration = Duration::from_secs(5);
+    const LOCK_WAIT: Duration = Duration::from_secs(1);
 
     // `File::lock` stabilized in 1.89, which the crate already depends on for
     // the credential and session locks; clippy.toml's declared 1.85 predates it.
@@ -131,7 +131,10 @@ impl ModelsJsonCatalogueRefreshAdapter {
     /// Wall-clock budget for refreshing every source. Discovery runs on the
     /// command loop, so a catalogue full of unreachable endpoints must not stall
     /// every other UDS command for `sources × request timeout`.
-    pub(crate) const REFRESH_ALL_BUDGET: Duration = Duration::from_secs(10);
+    /// Sized to fit inside the caller's dispatch budget together with one
+    /// in-flight request and a lock wait, so a refresh that succeeds reports its
+    /// per-source outcomes instead of overrunning the command that asked for it.
+    pub(crate) const REFRESH_ALL_BUDGET: Duration = Duration::from_secs(3);
 }
 
 impl CatalogueRefreshAllPort for ModelsJsonCatalogueRefreshAdapter {
