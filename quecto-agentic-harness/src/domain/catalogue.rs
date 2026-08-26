@@ -120,11 +120,30 @@ impl ModelRef {
 
 /// Transport capability identifier. Names the wire protocol an adapter must
 /// implement; carries no concrete HTTP types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TransportKind {
     OpenAiCompletions,
     AnthropicMessages,
     GoogleGenerativeAi,
+    /// A transport a catalogue file declared but no adapter in this build
+    /// implements. Carries the declared name so a known-but-unrunnable entry
+    /// can say exactly which transport it is waiting on (#1575, AC3).
+    Unsupported {
+        declared: String,
+    },
+}
+
+impl TransportKind {
+    /// The stable wire identifier for this transport, as written in
+    /// catalogue files and rendered by read surfaces.
+    pub fn stable_id(&self) -> &str {
+        match self {
+            Self::OpenAiCompletions => "openai-completions",
+            Self::AnthropicMessages => "anthropic-messages",
+            Self::GoogleGenerativeAi => "google-generative-ai",
+            Self::Unsupported { declared } => declared,
+        }
+    }
 }
 
 /// Authentication identity as a property of provider identity. API-key and

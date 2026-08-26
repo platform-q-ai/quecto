@@ -468,3 +468,49 @@ fn concurrent_resolves_publish_distinct_generations() {
     );
     assert_eq!(store.current().generation(), 8);
 }
+
+/// #1581 review: one failing source degrades to its own last-good entries so
+/// the other layers' valid updates still publish — a broken discovery cache
+/// (or malformed user file) must never freeze the whole catalogue.
+#[test]
+fn a_failed_source_keeps_its_last_good_layer_without_freezing_other_updates() {
+    let builtin = FakeSource::ok(
+        "builtin",
+        SourceLayer::BuiltIn,
+        vec![entry("openai-api", "gpt-5", "Builtin GPT")],
+    );
+    let user = FakeSource::ok(
+        "user",
+        SourceLayer::UserDefined,
+        vec![entry("openai-api", "custom", "Custom")],
+    );
+    let store = CatalogueSnapshotStore::empty();
+    let credentials = FakeCredentials::granting(&["openai-api"]);
+    ResolveCatalogueUseCase.resolve_and_publish(&[&builtin, &user], &credentials, &store);
+    assert_eq!(store.current().entries().len(), 2);
+
+    // The user source breaks while the builtin layer gains a valid update.
+    user.set_result(Err("corrupt file".to_string()));
+    builtin.set_result(Ok(vec![
+        entry("openai-api", "gpt-5", "Builtin GPT"),
+        entry("openai-api", "gpt-6", "Newer GPT"),
+    ]));
+    let resolved =
+        ResolveCatalogueUseCase.resolve_and_publish(&[&builtin, &user], &credentials, &store);
+
+    assert_eq!(resolved.source_errors.len(), 1, "the failure is surfaced");
+    let snapshot = store.current();
+    assert!(
+        snapshot
+            .find(&ModelRef::parse("openai-api", "gpt-6").unwrap())
+            .is_some(),
+        "the healthy layer's update must publish despite the broken sibling"
+    );
+    assert!(
+        snapshot
+            .find(&ModelRef::parse("openai-api", "custom").unwrap())
+            .is_some(),
+        "the broken source's last-good entries must be retained"
+    );
+    assert!(snapshot.generation() > 1, "a new generation was published");
+}

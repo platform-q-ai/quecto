@@ -6,7 +6,8 @@
 //! UDS queries, TUI model list) consumes query results projected from the
 //! current snapshot.
 
-use std::sync::{Arc, RwLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::domain::catalogue::{
     Availability, AvailabilityStatus, CatalogueEntry, CatalogueSnapshot, RejectedEntry,
@@ -78,17 +79,43 @@ pub struct ResolvedCatalogue {
     pub skipped: Vec<(String, SkippedRecord)>,
 }
 
-/// Atomic holder of the current published snapshot generation.
+/// Atomic holder of the current published snapshot generation, plus the
+/// last successfully loaded entries per source so one failing source
+/// degrades to its own last-good contribution instead of freezing every
+/// other layer's updates (#1581 review — a stale discovery cache must not
+/// block a valid `models.json` edit from publishing).
 #[derive(Debug, Clone)]
 pub struct CatalogueSnapshotStore {
     current: Arc<RwLock<Arc<CatalogueSnapshot>>>,
+    /// Last-good raw entries per source id (pre-availability derivation).
+    last_good_layers: Arc<Mutex<HashMap<String, Vec<CatalogueEntry>>>>,
 }
 
 impl CatalogueSnapshotStore {
     pub fn new(initial: CatalogueSnapshot) -> Self {
         Self {
             current: Arc::new(RwLock::new(Arc::new(initial))),
+            last_good_layers: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Remember one source's successfully loaded entries as its retention
+    /// fallback for later resolves.
+    fn remember_layer(&self, source_id: &str, entries: &[CatalogueEntry]) {
+        self.last_good_layers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(source_id.to_string(), entries.to_vec());
+    }
+
+    /// The last successfully loaded entries for a source, if any resolve on
+    /// this store has loaded it.
+    fn last_good_layer(&self, source_id: &str) -> Option<Vec<CatalogueEntry>> {
+        self.last_good_layers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(source_id)
+            .cloned()
     }
 
     pub fn empty() -> Self {
@@ -151,6 +178,7 @@ impl ResolveCatalogueUseCase {
         let mut layers = Vec::with_capacity(sources.len());
         let mut source_errors = Vec::new();
         let mut skipped = Vec::new();
+        let mut fresh_loads = 0usize;
         for source in sources {
             match source.load() {
                 Ok(loaded) => {
@@ -160,17 +188,34 @@ impl ResolveCatalogueUseCase {
                             .into_iter()
                             .map(|record| (source.id().to_string(), record)),
                     );
+                    store.remember_layer(source.id(), &loaded.entries);
+                    fresh_loads += 1;
                     layers.push((source.layer(), loaded.entries));
                 }
-                Err(error) => source_errors.push(CatalogueSourceError {
-                    source: source.id().to_string(),
-                    error,
-                }),
+                Err(error) => {
+                    source_errors.push(CatalogueSourceError {
+                        source: source.id().to_string(),
+                        error,
+                    });
+                    // Per-source retention (#1581 review): a source that
+                    // fails to load degrades to its own last-good entries on
+                    // this store, so the other layers' valid updates still
+                    // publish (#1575, AC4b — a malformed user file keeps its
+                    // last valid contribution, while an unrelated edit or a
+                    // broken discovery cache never freezes the catalogue).
+                    // A source that never loaded on this store contributes
+                    // nothing (malformed-source isolation keeps built-ins
+                    // resolving on a broken first read).
+                    if let Some(entries) = store.last_good_layer(source.id()) {
+                        layers.push((source.layer(), entries));
+                    }
+                }
             }
         }
-        if layers.is_empty() && !source_errors.is_empty() {
-            // Every source failed: the last valid snapshot stays published so
-            // consumers keep a coherent catalogue instead of an empty one.
+        // When every source failed there is nothing fresh to describe: the
+        // last valid generation is retained wholesale (never republished as
+        // a spurious new generation) and the errors are surfaced.
+        if fresh_loads == 0 && !source_errors.is_empty() {
             return ResolvedCatalogue {
                 snapshot: store.current(),
                 rejected: Vec::new(),
@@ -182,8 +227,8 @@ impl ResolveCatalogueUseCase {
             for entry in entries {
                 let credential_available = credentials.credential_available(entry);
                 entry.model.availability = derive_availability(
-                    entry.provider.transport,
-                    transport_has_adapter(entry.provider.transport),
+                    entry.provider.transport.clone(),
+                    transport_has_adapter(&entry.provider.transport),
                     credential_available,
                 );
             }
@@ -244,11 +289,12 @@ impl QueryCatalogueUseCase {
     }
 }
 
-/// Whether a transport adapter exists for this transport kind. Every kind the
-/// domain enumerates has an adapter today; the parameter stays explicit on
-/// [`derive_availability`] so a future transport without one derives honestly.
-fn transport_has_adapter(_transport: TransportKind) -> bool {
-    true
+/// Whether a transport adapter exists for this transport kind. Every named
+/// kind the domain enumerates has an adapter today; a transport a catalogue
+/// file declared that no adapter implements does not (#1575, AC3), so its
+/// entries stay known-but-unrunnable by construction.
+fn transport_has_adapter(transport: &TransportKind) -> bool {
+    !matches!(transport, TransportKind::Unsupported { .. })
 }
 
 /// Translate adapter support and credential status into derived availability.

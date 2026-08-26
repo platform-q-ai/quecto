@@ -10,7 +10,9 @@ use std::path::Path;
 use crate::application::catalogue::{ResolveCatalogueUseCase, ResolvedCatalogue, model_limits_in};
 use crate::application::ports::CatalogueSnapshotStore;
 use crate::infrastructure::catalogue_registry::{
-    BuiltinCatalogueSource, ModelsFileCatalogueSource, RegistryCredentialStatus, snapshot_store_for,
+    BuiltinCatalogueSource, ModelsFileCatalogueSource, RegistryCredentialStatus,
+    UserOverrideCatalogueSource, apply_overrides, entries_from_records, snapshot_store_for,
+    user_file_entries,
 };
 use crate::infrastructure::model_registry::ModelRegistry;
 
@@ -32,6 +34,9 @@ pub fn resolve_and_publish_for(base_dir: &Path) -> (CatalogueSnapshotStore, Reso
 pub(crate) struct CatalogueInputs {
     builtin: BuiltinCatalogueSource,
     user_file: ModelsFileCatalogueSource,
+    /// The user's stable-ID `overrides` section as the `UserOverride` layer
+    /// (#1575): patched full entries plus per-override diagnostics.
+    user_overrides: UserOverrideCatalogueSource,
     /// Persisted discovery caches (generated data), fed in as the discovered
     /// layer so explicit refreshes participate in normal precedence. Loading
     /// them touches no network.
@@ -53,6 +58,10 @@ pub(crate) struct CatalogueInputs {
     /// providers (connection/auth from the provider's defaults), so a
     /// discovered model is credentialed and routable like a listed one.
     discovered_records: Vec<crate::infrastructure::model_registry::ModelRecord>,
+    /// Full records produced by applying the user's stable-ID overrides to
+    /// their base records, so overridden connection/credential references are
+    /// also routable and credential-checked.
+    override_records: Vec<crate::infrastructure::model_registry::ModelRecord>,
 }
 
 impl CatalogueInputs {
@@ -67,6 +76,14 @@ impl CatalogueInputs {
             .as_ref()
             .map(|c| c.records.clone())
             .map_err(Clone::clone);
+        let user_entries = config
+            .as_ref()
+            .map(|c| user_file_entries(&c.records, &c.unsupported, &c.skipped))
+            .map_err(Clone::clone);
+        let overrides = config
+            .as_ref()
+            .map(|c| (c.overrides.clone(), c.unsupported.clone()))
+            .map_err(Clone::clone);
         let provider_defaults = config.map(|c| c.providers);
         let discovered =
             crate::infrastructure::catalogue_discovery::discovery_cache_sources(base_dir);
@@ -76,21 +93,43 @@ impl CatalogueInputs {
             file_load.as_deref().unwrap_or_default(),
         );
         let builtin_registry = ModelRegistry::builtin();
+        // A malformed parse propagates as the override layer's error (so its
+        // last-good entries are retained by the resolve) instead of
+        // publishing an empty override layer.
+        let (override_records, override_entries) = match &overrides {
+            Ok((overrides, unsupported)) => {
+                let applied = apply_overrides(
+                    overrides,
+                    file_load.as_deref().unwrap_or_default(),
+                    &discovered_records,
+                    &builtin_registry,
+                    unsupported,
+                );
+                let mut entries = entries_from_records(&applied.records);
+                entries.entries.extend(applied.unsupported_entries);
+                entries.skipped.extend(applied.skipped);
+                (applied.records, Ok(entries))
+            }
+            Err(error) => (Vec::new(), Err(error.clone())),
+        };
         let credentials = RegistryCredentialStatus::from_records(
             builtin_registry
                 .models()
                 .iter()
                 .chain(file_load.as_deref().unwrap_or_default())
-                .chain(discovered_records.iter()),
+                .chain(discovered_records.iter())
+                .chain(override_records.iter()),
         );
         Self {
             builtin: BuiltinCatalogueSource,
-            user_file: ModelsFileCatalogueSource::preloaded(file_load.clone()),
+            user_file: ModelsFileCatalogueSource::preloaded(user_entries),
+            user_overrides: UserOverrideCatalogueSource::preloaded(override_entries),
             discovered,
             credentials,
             file_records: file_load,
             provider_defaults,
             discovered_records,
+            override_records,
         }
     }
 
@@ -105,6 +144,9 @@ impl CatalogueInputs {
         self.file_records.clone().map(|mut records| {
             let mut merged = self.discovered_records.clone();
             merged.append(&mut records);
+            // Overrides win over both (upsert order): an overridden
+            // credential reference or limit is what the runtime routes with.
+            merged.extend(self.override_records.iter().cloned());
             crate::infrastructure::model_registry::ModelRegistry::from_file_records(merged)
         })
     }
@@ -132,6 +174,7 @@ impl CatalogueInputs {
                 .map(|c| c as &dyn crate::application::catalogue::CatalogueSource),
         );
         sources.push(&self.user_file);
+        sources.push(&self.user_overrides);
         sources
     }
 

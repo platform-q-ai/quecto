@@ -106,7 +106,7 @@ pub(super) fn selection_status(
                 .map(|reason| match reason {
                     UnavailableReason::MissingCredential => "missing-credential".to_string(),
                     UnavailableReason::UnsupportedTransport { transport } =>
-                        format!("unsupported-transport: {transport:?}"),
+                        format!("unsupported-transport: {}", transport.stable_id()),
                     UnavailableReason::InvalidConfiguration(detail) =>
                         format!("invalid-configuration: {detail}"),
                     UnavailableReason::PolicyDenied(detail) =>

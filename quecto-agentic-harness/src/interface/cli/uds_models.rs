@@ -10,7 +10,7 @@ use crate::application::catalogue::ResolvedCatalogue;
 use crate::application::catalogue::{
     CatalogueQuery, ModelListing, QueryCatalogueUseCase, project_model_listing,
 };
-use crate::domain::catalogue::{AuthIdentity, CatalogueSnapshot, TransportKind};
+use crate::domain::catalogue::{AuthIdentity, CatalogueSnapshot};
 
 use super::uds::DispatchCtx;
 
@@ -84,11 +84,7 @@ fn render_listing(
                 "id": entry.reference().model().as_str(),
                 "model": row.qualified_id,
                 "name": row.display_name,
-                "api": match entry.provider.transport {
-                    TransportKind::OpenAiCompletions => "openai-completions",
-                    TransportKind::AnthropicMessages => "anthropic-messages",
-                    TransportKind::GoogleGenerativeAi => "google-generative-ai",
-                },
+                "api": entry.provider.transport.stable_id(),
                 "auth": match entry.provider.auth {
                     AuthIdentity::ApiKey => "apiKey",
                     AuthIdentity::OAuth { .. } => "oauth",
