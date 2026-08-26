@@ -66,6 +66,10 @@ pub(crate) fn sanitize_url_for_error(raw: &str) -> String {
             url.set_fragment(None);
             url.to_string()
         }
+        // A value that does not parse cannot be redacted field by field, and it
+        // may still contain a credential (`https://user:tok@exa mple.com/v1`
+        // fails to parse). The placeholder is deliberate: the reason string that
+        // accompanies it already says why the value was rejected.
         Err(_) => "<invalid url>".to_string(),
     }
 }

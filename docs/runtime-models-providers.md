@@ -4,9 +4,13 @@ Quecto has one **effective catalogue** of provider/model descriptors. The domain
 
 ## Source precedence
 
-Catalogue sources are resolved as ordered layers, lowest precedence first: built-in metadata, then user-owned `models.json`, then the composed runtime layer that carries credential- and adapter-derived availability. Later layers upsert earlier ones by stable `provider/model` identity and keep the earlier entry's position, so listing order is stable when a user overrides shipped metadata. A source that fails to load is reported and skipped; the remaining layers still publish a coherent generation.
+Catalogue sources are resolved as ordered layers, lowest precedence first: built-in metadata, then user-owned `models.json`, then the composed runtime layer that carries credential- and adapter-derived availability. Later layers upsert earlier ones by stable `provider/model` identity and keep the earlier entry's position, so listing order is stable when a user overrides shipped metadata. A base source that fails to load is reported and skipped; the remaining layers still publish a coherent generation. The runtime layer is different: if the composed runtime cannot be built — a malformed `models.json`, a configuration the providers reject — resolution fails and the last valid generation is retained, because a catalogue without the routing it describes is not a usable generation.
 
 Queries are derived views over that one snapshot, narrowing in order: `Known` (every entry), `Configured` (usable local configuration), `Available` (configured and backed by a transport adapter), `Runnable` (can run right now).
+
+`configured` on a listed model means the runtime has what it needs to talk to that provider — a key in config, a credential in the store, an OAuth token, or an endpoint that supplies one — not merely that the entry declared a key or a base URL.
+
+Two definitions of one route are a configuration error, not a precedence question: an `openai_compatible` endpoint pointing at a different base URL than the `models.json` entry of the same prefix is reported as a duplicate prefix rather than one silently winning.
 
 ## Add or correct model metadata
 

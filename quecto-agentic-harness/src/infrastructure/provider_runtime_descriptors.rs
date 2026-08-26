@@ -35,8 +35,14 @@ pub(super) fn catalogue_descriptors(
 ) -> Result<Vec<crate::domain::catalogue::ModelDescriptor>, String> {
     let mut runtime_model_descriptors = Vec::new();
     for model in inputs.model_registry.models() {
-        let credential_available =
-            registry_model_credential_available(model, inputs.credentials, inputs.config)?;
+        // Providers are constructed per prefix, not per record: once one record
+        // under a prefix supplied the key, every record under it routes through
+        // that provider. Asking per record would report a shipped, key-less
+        // entry as uncredentialled while it works.
+        let credential_available = inputs
+            .constructed_provider_names
+            .contains(&model.provider.to_ascii_lowercase())
+            || registry_model_credential_available(model, inputs.credentials, inputs.config)?;
         if let Some(mut descriptor) =
             record_to_descriptor_with_credential(model, Some(credential_available))?
         {

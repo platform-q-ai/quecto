@@ -64,6 +64,15 @@ impl ReloadSource {
     /// The observed fingerprint advances on every successful read. In
     /// particular, a touch-only update advances the mtime cache so subsequent
     /// polls are stat-only no-ops.
+    /// Forget this source's fingerprint so the next probe re-reads and reports
+    /// a change. Used when a rebuild failed for a reason outside the watched
+    /// sources: the gate must retry rather than treat the failure as settled.
+    pub fn invalidate(&mut self) {
+        self.last_mtime = None;
+        self.last_len = None;
+        self.last_hash = 0;
+    }
+
     pub fn changed(&mut self) -> SourceChange {
         let Ok(metadata) = fs::metadata(&self.path) else {
             return SourceChange::MissingOrUnreadable;
@@ -137,6 +146,13 @@ impl<T: Clone> RuntimeReload<T> {
             any_changed |= matches!(source.changed(), SourceChange::Changed);
         }
         any_changed
+    }
+
+    /// Forget every source fingerprint so the next poll rebuilds again.
+    pub fn invalidate_sources(&mut self) {
+        for source in &mut self.sources {
+            source.invalidate();
+        }
     }
 
     /// Record a successful reload.

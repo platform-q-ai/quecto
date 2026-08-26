@@ -280,7 +280,14 @@ pub async fn resolve_api_key_with_refresh_async_with_oauth_config(
                 };
 
                 if let Some(token) =
-                    persist_refreshed_token(store, provider, refresh_token, refresh_result)
+                    // One implementation of the rotation-aware credential write:
+                    // divergent copies are how a rotated refresh token gets lost.
+                    crate::infrastructure::oauth_runtime::persist_refreshed_token(
+                            store,
+                            provider,
+                            refresh_token,
+                            refresh_result,
+                        )
                 {
                     return token;
                 }
@@ -289,61 +296,6 @@ pub async fn resolve_api_key_with_refresh_async_with_oauth_config(
     }
 
     config_key.to_string()
-}
-
-/// Process an OAuth token refresh result: build and persist the new credential.
-///
-/// Returns `Some(access_token)` on success, `None` on failure (logged as warning).
-/// Shared by both sync and async refresh paths to avoid credential-building duplication.
-///
-/// `previous_refresh_token` is preserved when the server response omits
-/// `refresh_token` (valid per RFC 6749 §5.1 — the field is OPTIONAL).
-fn persist_refreshed_token(
-    store: &crate::infrastructure::auth::credential_store::CredentialStore,
-    provider: &str,
-    previous_refresh_token: &str,
-    refresh_result: Result<
-        crate::infrastructure::auth::oauth::OAuthTokenResponse,
-        crate::domain::error::DomainError,
-    >,
-) -> Option<String> {
-    match refresh_result {
-        Ok(token_resp) => {
-            let expires_at = expires_at_with_margin(token_resp.expires_in);
-            let account_id = if provider == "openai" {
-                crate::infrastructure::auth::oauth::extract_openai_account_id(
-                    &token_resp.access_token,
-                )
-            } else {
-                None
-            };
-            let effective_refresh = token_resp
-                .refresh_token
-                .unwrap_or_else(|| previous_refresh_token.to_string());
-            let new_cred = Credential {
-                provider: provider.to_string(),
-                token: token_resp.access_token.clone(),
-                method: crate::infrastructure::auth::credential_store::AuthMethod::OAuth,
-                expires_at: Some(expires_at),
-                refresh_token: Some(effective_refresh),
-                account_id,
-            };
-            // Rotation-aware persist: if another agent process refreshed
-            // concurrently (its rotated refresh token is already on disk),
-            // keep its credential instead of overwriting it (#1460 review).
-            match store.store_refreshed(new_cred, previous_refresh_token) {
-                Ok(authoritative) => Some(authoritative.token),
-                Err(e) => {
-                    tracing::warn!("failed to persist refreshed token for {}: {}", provider, e);
-                    Some(token_resp.access_token)
-                }
-            }
-        }
-        Err(e) => {
-            tracing::warn!("failed to refresh OAuth token for {}: {}", provider, e);
-            None
-        }
-    }
 }
 
 /// Resolve the effective workspace directory for an agent or REPL invocation.

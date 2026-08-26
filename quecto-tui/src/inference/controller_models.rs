@@ -1,22 +1,30 @@
 use super::*;
 use crate::components::model_selector::{ModelEntry, ModelSelector};
 
+#[cfg(test)]
 pub(super) fn parse_model_entries(data: &serde_json::Value) -> Vec<ModelEntry> {
-    // Protocol boundary (#1220): raw payload interpretation lives in the
-    // protocol-layer mapper; this seam only adapts the typed DTO into the
-    // presentation layer's own view model.
-    crate::protocol::model_payloads::parse_model_list(
+    parse_model_response(data).0
+}
+
+/// Protocol boundary (#1220): raw payload interpretation lives in the
+/// protocol-layer mapper; this seam only adapts the typed DTO into the
+/// presentation layer's own view model. Mapped once, because a discovered
+/// catalogue can hold thousands of entries.
+pub(super) fn parse_model_response(data: &serde_json::Value) -> (Vec<ModelEntry>, Option<String>) {
+    let (entries, catalogue_error) = crate::protocol::model_payloads::parse_model_list_response(
         data,
         &crate::components::ansi::sanitize_control,
-    )
-    .into_iter()
-    .map(|entry| ModelEntry {
-        id: entry.id,
-        provider: entry.provider,
-        auth: entry.auth,
-        is_current: false,
-    })
-    .collect()
+    );
+    let entries = entries
+        .into_iter()
+        .map(|entry| ModelEntry {
+            id: entry.id,
+            provider: entry.provider,
+            auth: entry.auth,
+            is_current: false,
+        })
+        .collect();
+    (entries, catalogue_error)
 }
 
 impl App {
@@ -111,17 +119,15 @@ impl App {
             }
             return;
         };
-        if let Some(error) = crate::protocol::model_payloads::parse_model_list_error(
-            &data,
-            &crate::components::ansi::sanitize_control,
-        ) {
+        let (entries, catalogue_error) = parse_model_response(&data);
+        if let Some(error) = catalogue_error {
             // The list is the last valid generation, not the file's contents.
             self.notify(
                 &format!("Model catalogue could not be reloaded: {error}"),
                 NotifyLevel::Warning,
             );
         }
-        self.inference.model_registry.entries = parse_model_entries(&data);
+        self.inference.model_registry.entries = entries;
         if self.inference.model_registry.open_pending {
             self.inference.model_registry.open_pending = false;
             self.open_model_selector_now();

@@ -521,3 +521,77 @@ fn a_credential_less_record_does_not_hide_a_later_buildable_one_for_the_same_pre
         model.availability
     );
 }
+
+#[test]
+fn shipped_records_are_runnable_once_a_user_key_builds_their_prefix() {
+    use crate::infrastructure::config::Config;
+    use crate::infrastructure::provider_runtime::build_agent_provider;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"http://127.0.0.1:9/v1","auth":{"mode":"apiKey","apiKey":"sk-fw"},"models":[{"id":"mine"}]}}}"#,
+    )
+    .unwrap();
+
+    let runtime = build_agent_provider(&Config::default(), tmp.path(), &reqwest::Client::new())
+        .expect("the keyed record builds the prefix");
+    let shipped = runtime
+        .model_descriptors()
+        .unwrap()
+        .iter()
+        .find(|model| model.qualified_id().starts_with("fireworks/accounts/"))
+        .expect("a shipped fireworks model is listed");
+
+    // The provider is constructed per prefix, so the shipped entry routes
+    // through it; reporting it as uncredentialled would warn about a model that
+    // works.
+    assert!(
+        shipped.availability.runnable(),
+        "{}: {:?}",
+        shipped.qualified_id(),
+        shipped.availability
+    );
+    assert!(shipped.configured);
+}
+
+#[test]
+fn a_case_variant_key_does_not_hide_the_record_that_can_build_the_prefix() {
+    use crate::infrastructure::config::Config;
+    use crate::infrastructure::provider_runtime::build_agent_provider;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    // "MyCo" sorts before "myco" but carries no credential; the buildable
+    // spelling must still construct the route.
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"MyCo":{"api":"openai-completions","baseUrl":"http://127.0.0.1:9/v1","models":[{"id":"a"}]},"myco":{"api":"openai-completions","baseUrl":"http://127.0.0.1:9/v1","auth":{"mode":"apiKey","apiKey":"sk-myco"},"models":[{"id":"b"}]}}}"#,
+    )
+    .unwrap();
+
+    let runtime = build_agent_provider(&Config::default(), tmp.path(), &reqwest::Client::new())
+        .expect("the credentialled spelling builds the prefix");
+    let request = crate::domain::provider::ChatRequest {
+        messages: &[],
+        tools: &[],
+        model: "myco/b",
+        max_tokens: 16,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let error = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(runtime.chat(request))
+        .expect_err("nothing is listening on the configured base");
+    assert!(
+        error.to_string().contains("127.0.0.1:9"),
+        "the route reached its provider: {error}"
+    );
+}

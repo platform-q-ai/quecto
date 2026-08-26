@@ -93,26 +93,35 @@ struct ModelListResponse {
     error: Option<String>,
 }
 
+/// A `list_models` response mapped once: the models to show, and the catalogue
+/// error when the file on disk could not be resolved into a new generation.
+pub fn parse_model_list_response(
+    data: &serde_json::Value,
+    sanitize: &dyn Fn(&str) -> String,
+) -> (Vec<ModelListEntry>, Option<String>) {
+    let parsed: ModelListResponse = serde_json::from_value(data.clone()).unwrap_or_default();
+    let entries = parsed
+        .models
+        .iter()
+        .filter_map(|model| parse_model_list_entry(model, sanitize))
+        .collect();
+    (entries, parsed.error.as_deref().map(sanitize))
+}
+
 /// The catalogue error reported alongside a model list: the published list is
 /// the last valid one, and the user needs to know the file on disk is broken.
 pub fn parse_model_list_error(
     data: &serde_json::Value,
     sanitize: &dyn Fn(&str) -> String,
 ) -> Option<String> {
-    let parsed: ModelListResponse = serde_json::from_value(data.clone()).unwrap_or_default();
-    parsed.error.as_deref().map(sanitize)
+    parse_model_list_response(data, sanitize).1
 }
 
 pub fn parse_model_list(
     data: &serde_json::Value,
     sanitize: &dyn Fn(&str) -> String,
 ) -> Vec<ModelListEntry> {
-    let parsed: ModelListResponse = serde_json::from_value(data.clone()).unwrap_or_default();
-    parsed
-        .models
-        .iter()
-        .filter_map(|model| parse_model_list_entry(model, sanitize))
-        .collect()
+    parse_model_list_response(data, sanitize).0
 }
 
 /// One listed model as the harness projects it.
@@ -120,18 +129,36 @@ pub fn parse_model_list(
 #[serde(default)]
 struct ModelListRow {
     /// Legacy parity: older harness payloads carried the identifier as `id`,
-    /// current ones as `model`. `model` wins when both are present.
+    /// current ones as `model`. `model` wins when both are present. Every field
+    /// tolerates a wrong-typed value: one bad field must not drop a row whose
+    /// identifier is perfectly good.
+    #[serde(deserialize_with = "string_or_none")]
     model: Option<String>,
+    #[serde(deserialize_with = "string_or_none")]
     id: Option<String>,
+    #[serde(deserialize_with = "string_or_none")]
     provider: Option<String>,
+    #[serde(deserialize_with = "string_or_none")]
     auth: Option<String>,
+}
+
+/// Read a string field, treating any other JSON type as absent.
+fn string_or_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    Ok(match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::String(value) => Some(value),
+        _ => None,
+    })
 }
 
 fn parse_model_list_entry(
     model: &serde_json::Value,
     sanitize: &dyn Fn(&str) -> String,
 ) -> Option<ModelListEntry> {
-    let row: ModelListRow = serde_json::from_value(model.clone()).ok()?;
+    let row: ModelListRow = serde_json::from_value(model.clone()).unwrap_or_default();
     let id = sanitize(row.model.as_deref().or(row.id.as_deref())?);
     if id.is_empty() {
         return None;

@@ -106,6 +106,9 @@ pub fn persist_refreshed_token(
                 refresh_token: Some(effective_refresh),
                 account_id,
             };
+            // Rotation-aware persist: if another agent process refreshed
+            // concurrently (its rotated refresh token is already on disk),
+            // keep its credential instead of overwriting it (#1460 review).
             match store.store_refreshed(new_cred, previous_refresh_token) {
                 Ok(authoritative) => Some(authoritative.token),
                 Err(e) => {

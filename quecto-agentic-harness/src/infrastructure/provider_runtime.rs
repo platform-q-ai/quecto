@@ -253,10 +253,13 @@ fn compose_agent_provider(
     }
     for model in model_registry.models() {
         let canonical_prefix = model.provider.to_ascii_lowercase();
-        if !canonical_registry_prefixes.contains(&model.provider)
-            || provider_list
-                .iter()
-                .any(|p| p.name().eq_ignore_ascii_case(&model.provider))
+        // Keyed by the canonical (lowercased) prefix, not by one chosen spelling:
+        // two keys differing only in case are one route, and the record that can
+        // actually build it must not be skipped because another spelling sorted
+        // first.
+        if provider_list
+            .iter()
+            .any(|p| p.name().eq_ignore_ascii_case(&model.provider))
             || seen_registry_prefixes.contains(&canonical_prefix)
         {
             continue;

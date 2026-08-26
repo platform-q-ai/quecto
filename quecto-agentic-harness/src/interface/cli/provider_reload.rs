@@ -123,6 +123,11 @@ pub async fn poll_provider_reload(
         }
         Err(err) => {
             tracing::warn!(target: "reload", error = %err, "reload rebuild failed; keeping last-good");
+            // The failure may be outside the watched sources (an unreadable
+            // credential store, a transient endpoint), so forget the fingerprints
+            // and retry on the next poll instead of leaving the session stuck
+            // reporting a catalogue error nothing can clear.
+            reload.invalidate_sources();
             Some(Err(err))
         }
     }
@@ -154,6 +159,7 @@ pub async fn force_provider_reload(
         }
         Err(err) => {
             tracing::warn!(target: "reload", error = %err, "forced reload failed; keeping last-good");
+            reload.invalidate_sources();
             Some(Err(err))
         }
     }
