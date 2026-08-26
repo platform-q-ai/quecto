@@ -29,8 +29,11 @@ pub struct ProviderId(String);
 
 impl ProviderId {
     pub fn new(value: impl Into<String>) -> Result<Self, CatalogueDomainError> {
-        let _ = value.into();
-        unimplemented!("issue #1571 slice 1: ProviderId::new")
+        let value = value.into();
+        if value.trim().is_empty() {
+            return Err(CatalogueDomainError::EmptyProviderId);
+        }
+        Ok(Self(value))
     }
 
     pub fn as_str(&self) -> &str {
@@ -50,8 +53,11 @@ pub struct ModelId(String);
 
 impl ModelId {
     pub fn new(value: impl Into<String>) -> Result<Self, CatalogueDomainError> {
-        let _ = value.into();
-        unimplemented!("issue #1571 slice 1: ModelId::new")
+        let value = value.into();
+        if value.trim().is_empty() {
+            return Err(CatalogueDomainError::EmptyModelId);
+        }
+        Ok(Self(value))
     }
 
     pub fn as_str(&self) -> &str {
@@ -83,13 +89,19 @@ impl ModelRef {
         provider: impl Into<String>,
         model: impl Into<String>,
     ) -> Result<Self, CatalogueDomainError> {
-        let _ = (provider.into(), model.into());
-        unimplemented!("issue #1571 slice 1: ModelRef::parse")
+        Ok(Self {
+            provider: ProviderId::new(provider)?,
+            model: ModelId::new(model)?,
+        })
     }
 
-    /// Parse the qualified `provider/model` string form.
-    pub fn parse_qualified(_value: &str) -> Result<Self, CatalogueDomainError> {
-        unimplemented!("issue #1571 slice 1: ModelRef::parse_qualified")
+    /// Parse the qualified `provider/model` string form. Only the first `/`
+    /// separates provider from model, so model ids may themselves contain `/`.
+    pub fn parse_qualified(value: &str) -> Result<Self, CatalogueDomainError> {
+        let (provider, model) = value
+            .split_once('/')
+            .ok_or_else(|| CatalogueDomainError::UnqualifiedModelRef(value.to_string()))?;
+        Self::parse(provider, model)
     }
 
     pub fn provider(&self) -> &ProviderId {
@@ -102,7 +114,7 @@ impl ModelRef {
 
     /// The exact `provider/model` string used by CLI/config/UDS today.
     pub fn qualified_id(&self) -> String {
-        unimplemented!("issue #1571 slice 1: ModelRef::qualified_id")
+        format!("{}/{}", self.provider, self.model)
     }
 }
 
@@ -117,7 +129,11 @@ pub enum TransportKind {
 
 impl TransportKind {
     pub fn stable_id(self) -> &'static str {
-        unimplemented!("issue #1571 slice 1: TransportKind::stable_id")
+        match self {
+            Self::OpenAiCompletions => "openai-completions",
+            Self::AnthropicMessages => "anthropic-messages",
+            Self::GoogleGenerativeAi => "google-generative-ai",
+        }
     }
 }
 
@@ -136,11 +152,17 @@ pub enum AuthIdentity {
 
 impl AuthIdentity {
     pub fn stable_id(&self) -> &'static str {
-        unimplemented!("issue #1571 slice 1: AuthIdentity::stable_id")
+        match self {
+            Self::ApiKey => "apiKey",
+            Self::OAuth { .. } => "oauth",
+        }
     }
 
     pub fn oauth_provider(&self) -> Option<&ProviderId> {
-        unimplemented!("issue #1571 slice 1: AuthIdentity::oauth_provider")
+        match self {
+            Self::ApiKey => None,
+            Self::OAuth { provider } => provider.as_ref(),
+        }
     }
 }
 
@@ -158,8 +180,7 @@ pub struct ProviderDescriptor {
 impl ProviderDescriptor {
     /// Whether two descriptors name the same provider identity (id + auth).
     pub fn same_identity(&self, other: &Self) -> bool {
-        let _ = other;
-        unimplemented!("issue #1571 slice 1: ProviderDescriptor::same_identity")
+        self.id == other.id && self.auth == other.auth
     }
 }
 
@@ -222,7 +243,10 @@ pub struct Availability {
 
 impl Availability {
     pub fn runnable() -> Self {
-        unimplemented!("issue #1571 slice 1: Availability::runnable")
+        Self {
+            status: AvailabilityStatus::Runnable,
+            reasons: Vec::new(),
+        }
     }
 
     /// A non-runnable availability. Returns an error when `status` is
@@ -232,8 +256,13 @@ impl Availability {
         status: AvailabilityStatus,
         reasons: Vec<UnavailableReason>,
     ) -> Result<Self, CatalogueDomainError> {
-        let _ = (status, reasons);
-        unimplemented!("issue #1571 slice 1: Availability::unavailable")
+        if status == AvailabilityStatus::Runnable {
+            return Err(CatalogueDomainError::RunnableWithReasons);
+        }
+        if reasons.is_empty() {
+            return Err(CatalogueDomainError::UnavailableWithoutReason);
+        }
+        Ok(Self { status, reasons })
     }
 
     pub fn status(&self) -> AvailabilityStatus {
@@ -241,7 +270,7 @@ impl Availability {
     }
 
     pub fn is_runnable(&self) -> bool {
-        unimplemented!("issue #1571 slice 1: Availability::is_runnable")
+        self.status == AvailabilityStatus::Runnable
     }
 
     pub fn reasons(&self) -> &[UnavailableReason] {
@@ -303,8 +332,10 @@ pub struct CatalogueSnapshot {
 
 impl CatalogueSnapshot {
     pub fn empty(generation: u64) -> Self {
-        let _ = generation;
-        unimplemented!("issue #1571 slice 1: CatalogueSnapshot::empty")
+        Self {
+            generation,
+            entries: Vec::new(),
+        }
     }
 
     pub fn generation(&self) -> u64 {
@@ -316,8 +347,9 @@ impl CatalogueSnapshot {
     }
 
     pub fn find(&self, reference: &ModelRef) -> Option<&CatalogueEntry> {
-        let _ = reference;
-        unimplemented!("issue #1571 slice 1: CatalogueSnapshot::find")
+        self.entries
+            .iter()
+            .find(|entry| entry.reference() == reference)
     }
 }
 
@@ -332,8 +364,23 @@ pub struct CatalogueResolution {
 /// Validate a single entry: the model reference must name the entry's own
 /// provider, and declared limits must be non-zero.
 pub fn validate_entry(entry: &CatalogueEntry) -> Result<(), CatalogueDomainError> {
-    let _ = entry;
-    unimplemented!("issue #1571 slice 1: validate_entry")
+    if entry.model.reference.provider() != &entry.provider.id {
+        return Err(CatalogueDomainError::ProviderMismatch {
+            entry_provider: entry.provider.id.as_str().to_string(),
+            model_provider: entry.model.reference.provider().as_str().to_string(),
+        });
+    }
+    if entry.model.capabilities.context_window == 0 {
+        return Err(CatalogueDomainError::ZeroLimit(
+            "context_window".to_string(),
+        ));
+    }
+    if entry.model.capabilities.max_output_tokens == 0 {
+        return Err(CatalogueDomainError::ZeroLimit(
+            "max_output_tokens".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Deterministically resolve source layers into a snapshot.
@@ -346,10 +393,44 @@ pub fn validate_entry(entry: &CatalogueEntry) -> Result<(), CatalogueDomainError
 /// reference wins (last-writer within the layer).
 pub fn resolve_catalogue(
     generation: u64,
-    layers: Vec<(SourceLayer, Vec<CatalogueEntry>)>,
+    mut layers: Vec<(SourceLayer, Vec<CatalogueEntry>)>,
 ) -> CatalogueResolution {
-    let _ = (generation, layers, HashMap::<ModelRef, usize>::new());
-    unimplemented!("issue #1571 slice 1: resolve_catalogue")
+    // Precedence is a property of the layer, not the input order. The sort is
+    // stable, so multiple inputs for the same layer keep their relative order
+    // and last-writer-wins applies within a layer.
+    layers.sort_by_key(|(layer, _)| *layer);
+
+    let mut entries: Vec<CatalogueEntry> = Vec::new();
+    let mut positions: HashMap<ModelRef, usize> = HashMap::new();
+    let mut rejected: Vec<RejectedEntry> = Vec::new();
+
+    for (layer, layer_entries) in layers {
+        for entry in layer_entries {
+            if let Err(error) = validate_entry(&entry) {
+                rejected.push(RejectedEntry {
+                    entry,
+                    layer,
+                    error,
+                });
+                continue;
+            }
+            match positions.get(entry.reference()) {
+                Some(&position) => entries[position] = entry,
+                None => {
+                    positions.insert(entry.reference().clone(), entries.len());
+                    entries.push(entry);
+                }
+            }
+        }
+    }
+
+    CatalogueResolution {
+        snapshot: CatalogueSnapshot {
+            generation,
+            entries,
+        },
+        rejected,
+    }
 }
 
 /// Domain-level catalogue errors.
