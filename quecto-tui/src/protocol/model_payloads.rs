@@ -98,6 +98,23 @@ pub struct RefreshOutcomeLines {
     pub any_unsuccessful: bool,
 }
 
+/// One per-source outcome as the harness reports it on the wire.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct RefreshOutcomeDto {
+    source: Option<String>,
+    status: Option<String>,
+    models: Option<u64>,
+    reason: Option<String>,
+}
+
+/// The typed `refresh_models` payload.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct RefreshPayloadDto {
+    outcomes: Vec<RefreshOutcomeDto>,
+}
+
 /// Map a `refresh_models` payload into per-source summary lines. Unknown or
 /// malformed outcome entries are skipped; all rendered text is sanitized at
 /// this protocol boundary like the model-list mapper (#1220).
@@ -105,26 +122,21 @@ pub fn parse_refresh_outcomes(
     data: &serde_json::Value,
     sanitize: &dyn Fn(&str) -> String,
 ) -> RefreshOutcomeLines {
+    use serde::Deserialize as _;
+    let payload = RefreshPayloadDto::deserialize(data).unwrap_or_default();
     let mut lines = RefreshOutcomeLines::default();
-    let Some(outcomes) = data.get("outcomes").and_then(|v| v.as_array()) else {
-        return lines;
-    };
-    for outcome in outcomes {
-        let Some(source) = outcome.get("source").and_then(|v| v.as_str()) else {
+    for outcome in payload.outcomes {
+        let Some(source) = outcome.source.as_deref() else {
             continue;
         };
         let source = sanitize(source);
-        let status = outcome.get("status").and_then(|v| v.as_str()).unwrap_or("");
         let reason = outcome
-            .get("reason")
-            .and_then(|v| v.as_str())
+            .reason
+            .as_deref()
             .map(sanitize)
             .filter(|s| !s.is_empty());
-        let summary = match status {
-            "updated" => {
-                let models = outcome.get("models").and_then(|v| v.as_u64()).unwrap_or(0);
-                format!("{source}: {models} model(s)")
-            }
+        let summary = match outcome.status.as_deref().unwrap_or_default() {
+            "updated" => format!("{source}: {} model(s)", outcome.models.unwrap_or(0)),
             "unchanged" => format!("{source}: unchanged"),
             "unsupported" => {
                 lines.any_unsuccessful = true;

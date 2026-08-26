@@ -10,9 +10,9 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::application::catalogue::{CatalogueSource, SourceEntries};
-use crate::application::catalogue_refresh::{
-    RefreshChange, RefreshContext, RefreshError, RefreshableCatalogueSource,
+use crate::application::ports::{
+    CatalogueSource, RefreshChange, RefreshContext, RefreshError, RefreshRedactionPort,
+    RefreshableCatalogueSource, SkippedRecord, SourceEntries,
 };
 use crate::domain::catalogue::{
     AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
@@ -151,12 +151,10 @@ impl CatalogueSource for DiscoverySourceCache {
         for model in models {
             match cached_entry(&self.provider, &model) {
                 Ok(entry) => entries.entries.push(entry),
-                Err(error) => entries
-                    .skipped
-                    .push(crate::application::catalogue::SkippedRecord {
-                        record: format!("{}/{}", self.provider, model.id),
-                        error,
-                    }),
+                Err(error) => entries.skipped.push(SkippedRecord {
+                    record: format!("{}/{}", self.provider, model.id),
+                    error,
+                }),
             }
         }
         Ok(entries)
@@ -400,7 +398,7 @@ impl SecretsRedaction {
     }
 }
 
-impl crate::application::catalogue_refresh::RefreshRedactionPort for SecretsRedaction {
+impl RefreshRedactionPort for SecretsRedaction {
     fn redact(&self, text: &str) -> String {
         let mut redacted = text.to_string();
         for secret in &self.secrets {
