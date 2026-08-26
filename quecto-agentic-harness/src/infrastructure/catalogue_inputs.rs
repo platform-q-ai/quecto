@@ -1,37 +1,22 @@
-//! Interface-level composition of the effective-catalogue read path (epic
-//! #1193, slice 2): wires the infrastructure source/credential adapters into
-//! the application resolve use case and exposes snapshot-backed reads to the
-//! CLI/UDS/REPL surfaces. Lives in the interface layer because it is the only
-//! layer allowed to see both application use cases and infrastructure
-//! adapters.
+//! One-read composition inputs for the effective catalogue (epic #1193,
+//! slice 6): the real catalogue sources, credential status, and effective
+//! model registry for one base directory, all derived from a single
+//! `models.json` parse. Lives in infrastructure because only source adapters
+//! may see the models.json wire format and the legacy registry parser; the
+//! interface composition root consumes these inputs without ever touching
+//! the wire format itself.
 
 use std::path::Path;
 
-use crate::application::catalogue::{ResolveCatalogueUseCase, ResolvedCatalogue, model_limits_in};
-use crate::application::ports::CatalogueSnapshotStore;
 use crate::infrastructure::catalogue_registry::{
     BuiltinCatalogueSource, ModelsFileCatalogueSource, RegistryCredentialStatus,
-    UserOverrideCatalogueSource, apply_overrides, entries_from_records, snapshot_store_for,
-    user_file_entries,
+    UserOverrideCatalogueSource, apply_overrides, entries_from_records, user_file_entries,
 };
 use crate::infrastructure::model_registry::ModelRegistry;
 
-/// Run the resolve-effective-catalogue use case over the real sources for
-/// `base_dir` and publish into its shared store. Startup calls this once to
-/// publish the initial generation; the read surfaces call it again to stay
-/// level with on-disk edits until explicit refresh arrives (epic #1193 slices
-/// 4-5). No network is touched.
-pub fn resolve_and_publish_for(base_dir: &Path) -> (CatalogueSnapshotStore, ResolvedCatalogue) {
-    let store = snapshot_store_for(base_dir);
-    let inputs = CatalogueInputs::load(base_dir);
-    let resolved =
-        ResolveCatalogueUseCase.resolve_and_publish(&inputs.sources(), &inputs.credentials, &store);
-    (store, resolved)
-}
-
 /// The real catalogue sources and credential status for one base directory,
 /// loaded once so a resolve (or runtime composition) reads one on-disk state.
-pub(crate) struct CatalogueInputs {
+pub struct CatalogueInputs {
     builtin: BuiltinCatalogueSource,
     user_file: ModelsFileCatalogueSource,
     /// The user's stable-ID `overrides` section as the `UserOverride` layer
@@ -41,7 +26,7 @@ pub(crate) struct CatalogueInputs {
     /// layer so explicit refreshes participate in normal precedence. Loading
     /// them touches no network.
     discovered: Vec<crate::infrastructure::catalogue_discovery::DiscoverySourceCache>,
-    pub(crate) credentials: RegistryCredentialStatus,
+    pub credentials: RegistryCredentialStatus,
     /// The parsed user-file records (or the parse error), kept so runtime
     /// composition can build its effective registry from the same read.
     file_records: Result<Vec<crate::infrastructure::model_registry::ModelRecord>, String>,
@@ -69,7 +54,7 @@ impl CatalogueInputs {
     /// feeds the user-defined source layer, credential status, discovery
     /// provider defaults, and the effective registry, so every consumer
     /// describes one on-disk state (and a resolve costs one file read).
-    pub(crate) fn load(base_dir: &Path) -> Self {
+    pub fn load(base_dir: &Path) -> Self {
         let config = ModelRegistry::load_registry_config(&base_dir.join("models.json"))
             .map_err(|error| error.to_string());
         let file_load = config
@@ -138,7 +123,7 @@ impl CatalogueInputs {
     /// catalogue and router always describe one on-disk state and a
     /// discovered model the catalogue publishes as runnable also has a route.
     /// User-file records win over synthesized discovered ones (upsert order).
-    pub(crate) fn effective_registry(
+    pub fn effective_registry(
         &self,
     ) -> Result<crate::infrastructure::model_registry::ModelRegistry, String> {
         self.file_records.clone().map(|mut records| {
@@ -153,7 +138,7 @@ impl CatalogueInputs {
 
     /// The per-provider connection defaults from this load's parse (or the
     /// parse error), for composing the refresh path from the same read.
-    pub(crate) fn provider_defaults(
+    pub fn provider_defaults(
         &self,
     ) -> &Result<
         Vec<(
@@ -165,13 +150,12 @@ impl CatalogueInputs {
         &self.provider_defaults
     }
 
-    pub(crate) fn sources(&self) -> Vec<&dyn crate::application::catalogue::CatalogueSource> {
-        let mut sources: Vec<&dyn crate::application::catalogue::CatalogueSource> =
-            vec![&self.builtin];
+    pub fn sources(&self) -> Vec<&dyn crate::application::ports::CatalogueSource> {
+        let mut sources: Vec<&dyn crate::application::ports::CatalogueSource> = vec![&self.builtin];
         sources.extend(
             self.discovered
                 .iter()
-                .map(|c| c as &dyn crate::application::catalogue::CatalogueSource),
+                .map(|c| c as &dyn crate::application::ports::CatalogueSource),
         );
         sources.push(&self.user_file);
         sources.push(&self.user_overrides);
@@ -180,7 +164,7 @@ impl CatalogueInputs {
 
     /// Providers that already have a persisted discovery cache feeding the
     /// discovered layer via [`CatalogueInputs::sources`].
-    pub(crate) fn discovered_providers(&self) -> Vec<&str> {
+    pub fn discovered_providers(&self) -> Vec<&str> {
         self.discovered.iter().map(|c| c.provider()).collect()
     }
 }
@@ -200,7 +184,7 @@ fn synthesize_discovered_records(
     )],
     file_records: &[crate::infrastructure::model_registry::ModelRecord],
 ) -> Vec<crate::infrastructure::model_registry::ModelRecord> {
-    use crate::application::catalogue::CatalogueSource as _;
+    use crate::application::ports::CatalogueSource as _;
     let mut records = Vec::new();
     for cache in caches {
         let Some((key, defaults)) = provider_defaults
@@ -223,23 +207,3 @@ fn synthesize_discovered_records(
     }
     records
 }
-
-/// The per-model limits for a qualified `provider/model` string, read from the
-/// published catalogue snapshot: `(output cap, context window)`, each `None`
-/// unless explicitly declared. Replaces the legacy private re-parse in
-/// `ModelRegistry` so the registry is no longer an independent truth for
-/// listing metadata (epic #1193, slice 2). The resolve keeps the legacy
-/// freshness (a re-read per call) until explicit refresh lands in slices 4-5;
-/// a malformed models.json still falls back to the built-in layer via
-/// malformed-source isolation.
-pub fn model_limits_from_base_dir(
-    base_dir: &Path,
-    qualified: &str,
-) -> (Option<u32>, Option<usize>) {
-    let (store, _) = resolve_and_publish_for(base_dir);
-    model_limits_in(&store.current(), qualified)
-}
-
-#[cfg(test)]
-#[path = "catalogue_bridge_tests.rs"]
-mod tests;

@@ -197,11 +197,13 @@ fn refresh_surfaces_share_one_operation_and_one_published_generation() {
 }
 
 #[test]
-fn every_listing_surface_reports_the_snapshot_effort_vocabulary() {
+fn listing_and_session_state_surfaces_report_the_snapshot_effort_vocabulary() {
     // Slice 6 (#1576): capability metadata — including the reasoning-effort
     // vocabulary formerly inferred per surface from provider/model names — is
-    // projected from the canonical snapshot, so every consumer renders the
-    // same vocabulary for the same generation.
+    // projected from one canonical rule, so every consumer renders the same
+    // vocabulary. Asserted surfaces: the UDS/CLI listing (which the TUI model
+    // list projects) and the get_state session payload (which the TUI effort
+    // selector consumes).
     let tmp = tempfile::tempdir().unwrap();
     let response = list_models_data(tmp.path());
     let models = response["models"].as_array().unwrap();
@@ -234,5 +236,84 @@ fn every_listing_surface_reports_the_snapshot_effort_vocabulary() {
     assert_eq!(
         vocab("openai-api/gpt-5.5"),
         "none, low, medium, high, xhigh"
+    );
+
+    // The get_state/session projection for a selected model must publish the
+    // same canonical vocabulary the listing does — not a per-surface one.
+    for qualified in ["anthropic-api/claude-opus-4-6", "openai-api/gpt-5.5"] {
+        let state = quecto::interface::cli::uds_session::AgentSession::new(
+            qualified.to_string(),
+            "conformance".to_string(),
+        )
+        .state_snapshot(0, None, 0, None);
+        assert_eq!(
+            state.effort_levels.join(", "),
+            vocab(qualified),
+            "get_state and listing must publish one effort vocabulary for {qualified}"
+        );
+    }
+}
+
+#[test]
+fn set_model_limits_and_selection_come_from_the_published_snapshot() {
+    // Positive counterpart to the `model_limits_from_base_dir` removal grep
+    // (#1576): the limits a set_model applies (via
+    // `interface::catalogue_runtime::published_model_limits`) must equal the
+    // capability metadata the published snapshot itself carries for that
+    // model — one authority, one read path.
+    let tmp = tempfile::tempdir().unwrap();
+    write_models_json(
+        tmp.path(),
+        r#"{"providers":{"contractish":{"api":"openai-completions","apiKey":"sk-contract",
+            "models":[{"id":"limited-model","name":"Limited",
+                       "maxTokens":50,"contextWindow":1234}]}}}"#,
+    );
+    let (cap, window) = quecto::interface::catalogue_runtime::published_model_limits(
+        tmp.path(),
+        "contractish/limited-model",
+    );
+    assert_eq!(cap, Some(50));
+    assert_eq!(window, Some(1234));
+    let snapshot = snapshot_store_for(tmp.path()).current();
+    let entry = snapshot
+        .entries()
+        .iter()
+        .find(|e| e.reference().qualified_id() == "contractish/limited-model")
+        .expect("model published");
+    assert_eq!(entry.model.capabilities.max_output_tokens, 50);
+    assert_eq!(entry.model.capabilities.context_window, 1234);
+}
+
+#[test]
+fn active_selection_and_agent_startup_observe_the_published_generation() {
+    // AC2 (#1576): agent startup composes and publishes runtime + catalogue
+    // as one generation, and active selection (the set_model verdict path,
+    // `interface::catalogue_runtime::select_model`) reports that same
+    // generation — no surface observes a private one.
+    let tmp = tempfile::tempdir().unwrap();
+    write_models_json(
+        tmp.path(),
+        r#"{"providers":{"contractish":{"api":"openai-completions","apiKey":"sk-contract",
+            "baseUrl":"https://api.example.test/v1",
+            "models":[{"id":"gen-model","name":"Gen Model"}]}}}"#,
+    );
+    let config = quecto::infrastructure::config::Config::default();
+    quecto::interface::cli::build_agent_provider(&config, tmp.path(), &reqwest::Client::new())
+        .expect("agent startup composes a runtime");
+    let published = quecto::infrastructure::catalogue_registry::runtime_store_for(tmp.path())
+        .current()
+        .expect("startup published a runtime generation");
+    let selection =
+        quecto::interface::catalogue_runtime::select_model(tmp.path(), "contractish/gen-model")
+            .expect("published model selects");
+    assert_eq!(
+        selection.generation,
+        published.generation(),
+        "active selection must observe the generation agent startup published"
+    );
+    assert_eq!(
+        published.generation(),
+        snapshot_store_for(tmp.path()).current().generation(),
+        "runtime and catalogue stores publish one generation"
     );
 }

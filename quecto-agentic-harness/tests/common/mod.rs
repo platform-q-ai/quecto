@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod catalogue_conformance;
 pub mod repo_docs;
 
 use std::fs;

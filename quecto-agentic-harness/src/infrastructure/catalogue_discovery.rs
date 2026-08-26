@@ -215,7 +215,9 @@ fn cached_entry(provider: &str, model: &CachedModel) -> Result<CatalogueEntry, S
         model: ModelDescriptor {
             reference,
             display_name: Some(model.name.clone()),
-            capabilities: crate::infrastructure::catalogue_registry::default_capabilities(),
+            capabilities: crate::infrastructure::catalogue_registry::default_capabilities(
+                &format!("{provider}/{}", model.id),
+            ),
             availability: Availability::runnable(),
         },
     })

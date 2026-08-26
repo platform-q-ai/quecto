@@ -65,6 +65,10 @@ fn entry_from_record(record: &ModelRecord) -> Result<CatalogueEntry, String> {
                 context_window_explicit: record.context_window_explicit,
                 max_output_tokens_explicit: record.max_tokens_explicit,
                 reasoning: record.reasoning,
+                effort_levels: ModelCapabilities::effort_vocabulary_for(&format!(
+                    "{}/{}",
+                    record.provider, record.id
+                )),
                 cost: DomainModelCost {
                     input: record.cost.input,
                     output: record.cost.output,
@@ -138,7 +142,7 @@ fn unsupported_entry(
         model: ModelDescriptor {
             reference,
             display_name: name.map(str::to_string),
-            capabilities: default_capabilities(),
+            capabilities: default_capabilities(&format!("{}/{model_id}", config.provider)),
             availability: Availability::runnable(),
         },
     })
@@ -148,8 +152,9 @@ fn unsupported_entry(
 /// declares only an id (nothing explicit, so nothing clamps). The numbers
 /// come from the registry's shared constants so every layer synthesizes the
 /// same defaults (#1581 review).
-pub(crate) fn default_capabilities() -> ModelCapabilities {
+pub fn default_capabilities(reference: &str) -> ModelCapabilities {
     ModelCapabilities {
+        effort_levels: ModelCapabilities::effort_vocabulary_for(reference),
         input_modalities: vec!["text".to_string()],
         context_window: DEFAULT_CONTEXT_WINDOW,
         max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,

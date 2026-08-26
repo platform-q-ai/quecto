@@ -69,7 +69,7 @@ fn refresh_all_reports_per_source_outcomes_and_publishes_discovered_models() {
 
         // The refreshed model is published and readable through the ordinary
         // network-free listing path (UDS list_models shape).
-        let listing = super::super::uds_models::list_models_data(tmp.path());
+        let listing = crate::interface::cli::uds_models::list_models_data(tmp.path());
         let listed = listing["models"]
             .as_array()
             .unwrap()

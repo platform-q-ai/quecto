@@ -1,90 +1,110 @@
 //! Steps for catalogue_convergence.feature (issue #1576, epic #1193 slice 6).
 //!
 //! Slice 6 removes or subordinates every legacy provider/model authority left
-//! by slices 1-5. These steps check the convergence directly: source-tree
-//! scans for the grep-able "no duplicate authority" criteria, and the real
-//! UDS listing surface for canonical-capability projection.
+//! by slices 1-5. The scans, canonical-capability checks, and docs-structure
+//! checks live in `tests/common/catalogue_conformance.rs`, shared with the
+//! `issue_1193_completion` acceptance guard and the consumer contract tests;
+//! these steps drive them over world state.
 
 use super::*;
+use common::catalogue_conformance as conformance;
 use quecto::interface::cli::uds_models::list_models_data;
 
 #[derive(Debug, Default)]
 pub struct CatalogueConvergenceState {
+    source_root: Option<PathBuf>,
+    /// Production sources per scanned layer, keyed by layer directory name.
+    scanned_layers: Vec<(String, Vec<(String, String)>)>,
     base_dir: Option<tempfile::TempDir>,
-    uds_listing: Option<serde_json::Value>,
+    listing: Option<serde_json::Value>,
+    contributor_docs: Option<String>,
 }
 
-fn harness_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-/// Collect the production portion (everything before a trailing `#[cfg(test)]`
-/// module marker) of every non-test `.rs` file under `dir`, as
-/// `(path, content)` pairs. `_tests.rs` companions are skipped entirely.
-fn production_sources(dir: &Path) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    let entries = fs::read_dir(dir).expect("readable source dir");
-    for entry in entries {
-        let path = entry.expect("dir entry").path();
-        if path.is_dir() {
-            out.extend(production_sources(&path));
-            continue;
-        }
-        let name = path.file_name().unwrap().to_string_lossy().to_string();
-        if !name.ends_with(".rs") || name.ends_with("_tests.rs") {
-            continue;
-        }
-        let raw = fs::read_to_string(&path).expect("readable source file");
-        let production = raw.split("#[cfg(test)]").next().unwrap().to_string();
-        out.push((path.display().to_string(), production));
+impl CatalogueConvergenceState {
+    fn layer(&self, name: &str) -> &[(String, String)] {
+        &self
+            .scanned_layers
+            .iter()
+            .find(|(layer, _)| layer == name)
+            .expect("source tree scanned")
+            .1
     }
-    out
+    fn docs(&self) -> &str {
+        self.contributor_docs.as_deref().expect("docs read")
+    }
 }
 
 #[given("the harness source tree")]
-fn given_harness_source_tree(_world: &mut QuectoWorld) {}
+fn given_harness_source_tree(world: &mut QuectoWorld) {
+    world.catalogue_convergence.source_root = Some(conformance::harness_root());
+}
+
+#[when("the source tree is scanned for legacy authorities")]
+fn when_source_tree_scanned(world: &mut QuectoWorld) {
+    let root = world
+        .catalogue_convergence
+        .source_root
+        .clone()
+        .expect("source tree given");
+    world.catalogue_convergence.scanned_layers = ["src/interface", "src/infrastructure"]
+        .into_iter()
+        .map(|layer| {
+            (
+                layer.to_string(),
+                conformance::production_sources(&root.join(layer)),
+            )
+        })
+        .collect();
+}
 
 #[then("the CLI interface declares no catalogue bridge modules")]
 fn then_no_bridge_modules(_world: &mut QuectoWorld) {
-    for legacy in [
-        "src/interface/cli/catalogue_bridge.rs",
-        "src/interface/cli/catalogue_refresh_bridge.rs",
-    ] {
-        assert!(
-            !harness_root().join(legacy).exists(),
-            "legacy interface catalogue authority still present: {legacy}"
-        );
-    }
+    let present = conformance::legacy_bridge_modules_present();
+    assert!(
+        present.is_empty(),
+        "legacy interface catalogue authorities still present: {present:?}"
+    );
 }
 
 #[then("no interface module reads the legacy model registry")]
-fn then_interface_reads_no_registry(_world: &mut QuectoWorld) {
-    for (path, content) in production_sources(&harness_root().join("src/interface")) {
-        assert!(
-            !content.contains("infrastructure::model_registry"),
-            "interface module still reads the legacy model registry: {path}"
-        );
-    }
+fn then_interface_reads_no_registry(world: &mut QuectoWorld) {
+    let readers =
+        conformance::model_registry_readers(world.catalogue_convergence.layer("src/interface"));
+    assert!(
+        readers.is_empty(),
+        "interface modules still read the legacy model registry: {readers:?}"
+    );
+}
+
+#[then("no infrastructure module defines canonical catalogue types")]
+fn then_infrastructure_defines_no_canonical_types(world: &mut QuectoWorld) {
+    let redefinitions = conformance::canonical_type_redefinitions(
+        world.catalogue_convergence.layer("src/infrastructure"),
+    );
+    assert!(
+        redefinitions.is_empty(),
+        "infrastructure redefines canonical catalogue types: {redefinitions:?}"
+    );
 }
 
 #[then("canonical model capabilities declare an effort vocabulary")]
 fn then_capabilities_declare_effort(_world: &mut QuectoWorld) {
-    let domain = fs::read_to_string(harness_root().join("src/domain/catalogue.rs")).unwrap();
+    let missing = conformance::builtin_entries_missing_effort_vocabulary();
     assert!(
-        domain.contains("effort_levels"),
-        "domain ModelCapabilities does not carry an effort vocabulary"
+        missing.is_empty(),
+        "builtin entries lack a canonical effort vocabulary: {missing:?}"
     );
 }
 
 #[then("no interface or infrastructure module infers effort levels from model names")]
-fn then_no_effort_name_inference(_world: &mut QuectoWorld) {
+fn then_no_effort_name_inference(world: &mut QuectoWorld) {
     for layer in ["src/interface", "src/infrastructure"] {
-        for (path, content) in production_sources(&harness_root().join(layer)) {
-            assert!(
-                !content.contains("levels_for_model"),
-                "effort capability still inferred from model names outside canonical metadata: {path}"
-            );
-        }
+        let sites =
+            conformance::effort_name_inference_sites(world.catalogue_convergence.layer(layer));
+        assert!(
+            sites.is_empty(),
+            "effort capability inferred from model names in {layer}: {sites:?}"
+        );
     }
 }
 
@@ -93,8 +113,8 @@ fn given_builtin_only_base_dir(world: &mut QuectoWorld) {
     world.catalogue_convergence.base_dir = Some(tempfile::tempdir().expect("tempdir"));
 }
 
-#[when("the UDS model listing is rendered")]
-fn when_uds_listing_rendered(world: &mut QuectoWorld) {
+#[when("the model listing is requested")]
+fn when_model_listing_requested(world: &mut QuectoWorld) {
     let base = world
         .catalogue_convergence
         .base_dir
@@ -102,15 +122,15 @@ fn when_uds_listing_rendered(world: &mut QuectoWorld) {
         .expect("base dir prepared")
         .path()
         .to_path_buf();
-    world.catalogue_convergence.uds_listing = Some(list_models_data(&base));
+    world.catalogue_convergence.listing = Some(list_models_data(&base));
 }
 
 fn listing_models(world: &QuectoWorld) -> Vec<serde_json::Value> {
     world
         .catalogue_convergence
-        .uds_listing
+        .listing
         .as_ref()
-        .expect("listing rendered")["models"]
+        .expect("listing requested")["models"]
         .as_array()
         .expect("models array")
         .clone()
@@ -146,49 +166,68 @@ fn then_model_effort_vocabulary(world: &mut QuectoWorld, qualified: String, expe
     assert_eq!(got, expected, "effort vocabulary mismatch for {qualified}");
 }
 
-#[given("the contributor documentation")]
-fn given_contributor_docs(_world: &mut QuectoWorld) {
-    assert!(
-        harness_root()
-            .join("../docs/runtime-models-providers.md")
-            .exists(),
-        "contributor documentation missing"
-    );
+#[given("the contributor documentation exists")]
+fn given_contributor_docs(world: &mut QuectoWorld) {
+    // Context only: remember where the documentation lives; reading and
+    // verifying happen in the When/Then steps.
+    world.catalogue_convergence.source_root = Some(conformance::harness_root());
 }
 
-fn contributor_docs() -> String {
-    fs::read_to_string(harness_root().join("../docs/runtime-models-providers.md"))
-        .unwrap()
-        .to_ascii_lowercase()
+#[when("a contributor reads it")]
+fn when_contributor_reads_docs(world: &mut QuectoWorld) {
+    world.catalogue_convergence.contributor_docs = Some(conformance::contributor_docs());
 }
 
 #[then("it maps layer ownership across domain, application, infrastructure, and interface")]
-fn then_docs_map_layer_ownership(_world: &mut QuectoWorld) {
-    let docs = contributor_docs();
-    assert!(
-        docs.contains("layer ownership"),
-        "missing layer ownership map"
-    );
+fn then_docs_map_layer_ownership(world: &mut QuectoWorld) {
+    let ownership =
+        conformance::doc_section(world.catalogue_convergence.docs(), "## Layer ownership")
+            .to_ascii_lowercase();
     for layer in ["domain", "application", "infrastructure", "interface"] {
         assert!(
-            docs.contains(layer),
+            ownership.contains(&format!("`{layer}`")),
             "layer ownership map missing layer: {layer}"
         );
     }
 }
 
 #[then("it explains how to add domain metadata")]
-fn then_docs_explain_domain_metadata(_world: &mut QuectoWorld) {
+fn then_docs_explain_domain_metadata(world: &mut QuectoWorld) {
     assert!(
-        contributor_docs().contains("domain metadata"),
-        "missing guidance on adding domain metadata"
+        conformance::has_doc_section(
+            world.catalogue_convergence.docs(),
+            "## Add or change domain metadata",
+        ),
+        "missing domain-metadata guidance"
+    );
+}
+
+#[then("it explains how to add a catalogue source")]
+fn then_docs_explain_catalogue_source(world: &mut QuectoWorld) {
+    assert!(
+        conformance::has_doc_section(
+            world.catalogue_convergence.docs(),
+            "## Add a catalogue source",
+        ),
+        "missing catalogue-source guidance"
+    );
+}
+
+#[then("it explains user overrides")]
+fn then_docs_explain_user_overrides(world: &mut QuectoWorld) {
+    assert!(
+        conformance::has_doc_section(world.catalogue_convergence.docs(), "### User overrides"),
+        "missing user-override guidance"
     );
 }
 
 #[then("it warns against creating another authority")]
-fn then_docs_warn_single_authority(_world: &mut QuectoWorld) {
+fn then_docs_warn_single_authority(world: &mut QuectoWorld) {
+    let ownership =
+        conformance::doc_section(world.catalogue_convergence.docs(), "## Layer ownership")
+            .to_ascii_lowercase();
     assert!(
-        contributor_docs().contains("another authority"),
-        "missing warning against creating another catalogue authority"
+        ownership.contains("another authority"),
+        "layer ownership map must warn against creating another authority"
     );
 }

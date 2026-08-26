@@ -8,8 +8,8 @@
 use std::time::Duration;
 
 use super::CliContext;
-use super::catalogue_refresh_bridge::refresh_catalogue;
 use crate::application::catalogue_refresh::{RefreshBounds, RefreshSelection, SourceRefreshStatus};
+use crate::interface::catalogue_runtime::refresh_catalogue;
 
 pub fn cmd_models(
     ctx: &CliContext,
@@ -120,7 +120,7 @@ fn discover_once(ctx: &CliContext, provider_key: &str) -> Result<DiscoverOutcome
             report
                 .outcomes
                 .iter()
-                .find(|o| o.source == super::catalogue_refresh_bridge::REGISTRY_FILE_SOURCE)
+                .find(|o| o.source == crate::interface::catalogue_runtime::REGISTRY_FILE_SOURCE)
         })
         .ok_or_else(|| format!("refresh reported no outcome for '{provider_key}'"))?;
     match &outcome.status {

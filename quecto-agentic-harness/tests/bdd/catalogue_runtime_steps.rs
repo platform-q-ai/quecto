@@ -121,6 +121,7 @@ fn rt_auth(name: &str, provider: &ProviderId) -> AuthIdentity {
 
 fn rt_capabilities() -> ModelCapabilities {
     ModelCapabilities {
+        effort_levels: Vec::new(),
         input_modalities: vec!["text".to_string()],
         context_window: 128_000,
         max_output_tokens: 4096,

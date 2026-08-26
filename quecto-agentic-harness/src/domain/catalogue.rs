@@ -210,7 +210,29 @@ pub struct ModelCapabilities {
     pub max_output_tokens_explicit: bool,
     /// Whether the model supports reasoning/effort controls.
     pub reasoning: bool,
+    /// The reasoning-effort vocabulary this model accepts, in ascending
+    /// order, as API string values (epic #1193, slice 6). Canonical
+    /// capability metadata: every listing/selection surface projects this
+    /// field instead of re-deriving a vocabulary of its own.
+    pub effort_levels: Vec<String>,
     pub cost: ModelCost,
+}
+
+impl ModelCapabilities {
+    /// The canonical reasoning-effort vocabulary for a model reference
+    /// (`provider/model-id`, or a bare model id).
+    ///
+    /// This is the single domain rule that seeds `effort_levels` in
+    /// catalogue metadata. Consumers holding a snapshot read the field;
+    /// surfaces keyed only by an active model string (session state, spawn
+    /// argument validation, open-router ids the catalogue cannot enumerate)
+    /// call this same rule, so every surface speaks one vocabulary.
+    pub fn effort_vocabulary_for(reference: &str) -> Vec<String> {
+        crate::domain::provider::EffortLevel::levels_for_model(reference)
+            .iter()
+            .map(|level| level.as_str().to_string())
+            .collect()
+    }
 }
 
 /// Why a known model is not runnable.

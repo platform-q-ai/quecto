@@ -76,11 +76,13 @@ pub(super) fn validate_effort(level: &str, model: Option<&str>) -> Result<String
             EffortLevel::VALID_VALUES
         )
     })?;
-    if let Some(valid) = model.map(EffortLevel::levels_for_model) {
-        if !valid.contains(&parsed) {
+    if let Some(valid) =
+        model.map(crate::domain::catalogue::ModelCapabilities::effort_vocabulary_for)
+    {
+        if !valid.iter().any(|v| v == parsed.as_str()) {
             return Err(format!(
                 "invalid effort '{level}'; valid values: {}",
-                EffortLevel::levels_list(valid)
+                valid.join(", ")
             ));
         }
     }

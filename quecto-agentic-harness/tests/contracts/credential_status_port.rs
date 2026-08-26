@@ -23,6 +23,7 @@ fn catalogue_entry(provider: &str, model: &str) -> CatalogueEntry {
             reference,
             display_name: None,
             capabilities: ModelCapabilities {
+                effort_levels: Vec::new(),
                 input_modalities: vec!["text".to_string()],
                 context_window: 128_000,
                 max_output_tokens: 4096,

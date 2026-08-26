@@ -5,6 +5,8 @@
 mod agent_loop;
 #[path = "contracts/audit_sink.rs"]
 mod audit_sink;
+#[path = "common/catalogue_conformance.rs"]
+mod catalogue_conformance;
 #[path = "contracts/catalogue_consumers.rs"]
 mod catalogue_consumers;
 #[path = "contracts/catalogue_source.rs"]

@@ -23,7 +23,7 @@ pub fn list_models_data(base_dir: &std::path::Path) -> serde_json::Value {
     // exactly as the legacy per-request parse did; explicit refresh replaces
     // this in epic #1193 slices 4-5. The read below still goes through the
     // published snapshot only.
-    let (store, resolved) = super::catalogue_bridge::resolve_and_publish_for(base_dir);
+    let (store, resolved) = crate::interface::catalogue_runtime::resolve_and_publish_for(base_dir);
     if let Some(error) = resolved.source_errors.first() {
         // Legacy parity: a malformed models.json returned no models plus an
         // error, rather than silently listing a catalogue the user's file no
@@ -100,6 +100,7 @@ fn render_listing(
                     "cacheWrite": entry.model.capabilities.cost.cache_write,
                 },
                 "reasoning": entry.model.capabilities.reasoning,
+                "effort_levels": entry.model.capabilities.effort_levels,
                 "configured": row.runnable,
             }))
         }).collect::<Vec<_>>()
@@ -124,7 +125,8 @@ pub fn refresh_models_data(base_dir: &std::path::Path, source: Option<&str>) -> 
         timeout: std::time::Duration::from_secs(4),
         ..RefreshBounds::default()
     };
-    let report = super::catalogue_refresh_bridge::refresh_catalogue(base_dir, &selection, bounds);
+    let report =
+        crate::interface::catalogue_runtime::refresh_catalogue(base_dir, &selection, bounds);
     let outcomes: Vec<serde_json::Value> = report
         .outcomes
         .iter()

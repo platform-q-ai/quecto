@@ -1,7 +1,5 @@
 mod agent;
 mod auth;
-pub mod catalogue_bridge;
-pub mod catalogue_refresh_bridge;
 mod commands;
 mod models;
 pub mod protocol;

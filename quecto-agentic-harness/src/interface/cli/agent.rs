@@ -399,7 +399,8 @@ pub(crate) fn build_agent_from_config(
     // #935/#1044: one registry load supplies the per-model output cap (clamps
     // max_tokens so low-limit models never get a larger value; set_model
     // re-derives on switch) and the known context window (bounds the budget).
-    let (cap, window) = super::catalogue_bridge::model_limits_from_base_dir(base_dir, &model);
+    let (cap, window) =
+        crate::interface::catalogue_runtime::published_model_limits(base_dir, &model);
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),

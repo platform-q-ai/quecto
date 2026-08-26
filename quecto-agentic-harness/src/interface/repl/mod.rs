@@ -338,7 +338,7 @@ pub fn run_repl<R: BufRead, W: Write>(
     // #1044: the model's known window bounds the pruning budget; one registry
     // load supplies both per-model limits.
     let (model_max_tokens, model_context_window) =
-        crate::interface::cli::catalogue_bridge::model_limits_from_base_dir(ctx.base_dir, &model);
+        crate::interface::catalogue_runtime::published_model_limits(ctx.base_dir, &model);
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: ctx.provider.clone(),
         tool_registry: Box::new(registry),

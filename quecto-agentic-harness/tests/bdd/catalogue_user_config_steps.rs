@@ -10,7 +10,7 @@ use std::sync::Arc;
 use super::*;
 use quecto::application::catalogue::ResolvedCatalogue;
 use quecto::domain::catalogue::{CatalogueSnapshot, ModelRef, UnavailableReason};
-use quecto::interface::cli::catalogue_bridge::resolve_and_publish_for;
+use quecto::interface::catalogue_runtime::resolve_and_publish_for;
 use quecto::interface::cli::uds_models::list_models_data;
 
 #[derive(Debug, Default)]
