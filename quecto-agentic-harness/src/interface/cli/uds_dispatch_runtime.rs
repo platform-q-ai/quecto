@@ -36,17 +36,45 @@ pub(super) fn resolve_set_model_target(
 /// One user-facing sentence for a model reference that did not resolve. An
 /// unknown provider prefix is a configuration problem; an unknown or ambiguous
 /// model id is a naming problem, and the two must not read the same.
-fn unresolved_model_message(model: &str, failure: SelectionFailure) -> String {
+fn unresolved_model_message(
+    snapshot: &crate::domain::catalogue::CatalogueSnapshot,
+    model: &str,
+    failure: SelectionFailure,
+) -> String {
     match failure {
         SelectionFailure::AmbiguousModel { candidates } => format!(
             "model '{model}' is ambiguous; qualify it as one of: {}",
             candidates.join(", ")
         ),
         _ => match model.split_once('/') {
-            Some((provider, _)) => format!("no configured provider '{provider}'"),
+            // Whether the prefix is configured is a question for the snapshot,
+            // not for the string: telling a user their working provider is
+            // unconfigured because they mistyped a model id sends them to fix
+            // the wrong thing.
+            Some((provider, _)) if !snapshot_knows_provider(snapshot, provider) => {
+                format!("no configured provider '{provider}'")
+            }
+            Some((provider, model_id)) => {
+                format!("provider '{provider}' has no model '{model_id}'")
+            }
             None => format!("unknown model '{model}'"),
         },
     }
+}
+
+/// Whether the catalogue or the runtime knows this provider prefix at all.
+fn snapshot_knows_provider(
+    snapshot: &crate::domain::catalogue::CatalogueSnapshot,
+    provider: &str,
+) -> bool {
+    let Ok(provider) = crate::domain::catalogue::ProviderId::new(provider.to_string()) else {
+        return false;
+    };
+    snapshot.accepts_any_model(&provider)
+        || snapshot
+            .models()
+            .iter()
+            .any(|model| model.reference.provider() == &provider)
 }
 
 fn describe_unavailable_reasons(reasons: &[UnavailableReason]) -> String {
@@ -121,7 +149,7 @@ fn describe_selection(
         return None;
     }
     match resolve_model_reference(snapshot, model) {
-        Err(failure) => Some(unresolved_model_message(model, failure)),
+        Err(failure) => Some(unresolved_model_message(snapshot, model, failure)),
         // Resolved against the snapshot already in hand: this runs on every model
         // switch, and a discovered catalogue can hold thousands of entries.
         Ok(reference) => match ResolveModelSelectionUseCase::resolve_in(snapshot, &reference) {
@@ -131,6 +159,7 @@ fn describe_selection(
                 describe_unavailable_reasons(&reasons)
             )),
             Err(failure) => Some(unresolved_model_message(
+                snapshot,
                 reference.qualified_id().as_str(),
                 failure,
             )),

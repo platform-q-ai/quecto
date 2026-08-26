@@ -89,8 +89,25 @@ pub fn parse_refresh_failures(
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 struct ModelListResponse {
+    /// Tolerant like the rows: version skew in one field must not empty the
+    /// selector, which (with no fallback catalogue) would leave the user with
+    /// no models and no explanation.
+    #[serde(deserialize_with = "array_or_empty")]
     models: Vec<serde_json::Value>,
+    #[serde(deserialize_with = "string_or_none")]
     error: Option<String>,
+}
+
+/// Read an array field, treating any other JSON type as absent.
+fn array_or_empty<'de, D>(deserializer: D) -> Result<Vec<serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    Ok(match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Array(values) => values,
+        _ => Vec::new(),
+    })
 }
 
 /// A `list_models` response mapped once: the models to show, and the catalogue

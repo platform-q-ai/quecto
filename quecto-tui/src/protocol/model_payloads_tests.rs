@@ -203,3 +203,27 @@ fn refresh_failures_and_catalogue_errors_reach_the_view() {
         None
     );
 }
+
+#[test]
+fn one_unexpected_field_does_not_empty_the_model_list() {
+    let sanitize = |s: &str| s.to_string();
+
+    // Version skew: `error` arrives as a number. The models must still list.
+    let (entries, error) = parse_model_list_response(
+        &serde_json::json!({
+            "models": [{"model": "openai-api/gpt-5.5", "provider": "openai-api"}],
+            "error": 7,
+        }),
+        &sanitize,
+    );
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert_eq!(error, None);
+
+    // A row with a wrong-typed secondary field keeps its identifier.
+    let (entries, _) = parse_model_list_response(
+        &serde_json::json!({"models": [{"model": "openai-api/gpt-5.5", "id": 42}]}),
+        &sanitize,
+    );
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].id, "openai-api/gpt-5.5");
+}

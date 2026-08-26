@@ -42,6 +42,20 @@ pub(super) fn apply_provider_reload_result(
     }
 }
 
+/// Record a failed rebuild: the session keeps its last valid generation, learns
+/// why, and retries once. The cause may lie outside the watched sources (an
+/// unreadable credential store, a transient endpoint), so the fingerprints are
+/// forgotten on the first failure only — a persistent failure then settles
+/// instead of recomposing the runtime on every command.
+fn record_reload_failure(ctx: &mut DispatchCtx<'_>, error: String) {
+    if ctx.agent.catalogue_error().is_none()
+        && let Some(reload) = ctx.provider_reload.as_deref_mut()
+    {
+        reload.invalidate_sources();
+    }
+    ctx.agent.set_catalogue_error(Some(error));
+}
+
 pub(super) async fn poll_provider_reload_for_ctx(ctx: &mut DispatchCtx<'_>) {
     let result = provider_reload::poll_provider_reload(
         ctx.provider_reload.as_deref_mut(),
@@ -50,18 +64,7 @@ pub(super) async fn poll_provider_reload_for_ctx(ctx: &mut DispatchCtx<'_>) {
     .await;
     match result {
         Some(Ok(result)) => apply_provider_reload_result(ctx, Some(result)),
-        Some(Err(error)) => {
-            // The cause may lie outside the watched sources (an unreadable
-            // credential store, a transient endpoint), so retry once: forget the
-            // fingerprints only on the first failure. A persistent failure then
-            // settles instead of rebuilding the runtime on every command.
-            if ctx.agent.catalogue_error().is_none()
-                && let Some(reload) = ctx.provider_reload.as_deref_mut()
-            {
-                reload.invalidate_sources();
-            }
-            ctx.agent.set_catalogue_error(Some(error));
-        }
+        Some(Err(error)) => record_reload_failure(ctx, error),
         None => {}
     }
 }
@@ -84,8 +87,10 @@ pub(super) async fn handle_reload(
         Some(Err(err)) => {
             // The published generation stays the last valid one, so anyone
             // listing models afterwards must still learn the catalogue on disk
-            // is broken.
-            ctx.agent.set_catalogue_error(Some(err.clone()));
+            // is broken — and the gate retries once, so a cause outside the
+            // watched files does not leave the error stuck until an unrelated
+            // edit.
+            record_reload_failure(ctx, err.clone());
             emit_event_to_broadcast_or_writer(ctx, &AgentEvent::err(id, type_name, err)).await;
         }
         None => {
@@ -115,8 +120,11 @@ fn refresh_failure_message(outcomes: &[CatalogueRefreshOutcome]) -> String {
 }
 
 /// How long a `refresh_models` command may hold the dispatch loop before the
-/// connection is released and the refresh continues without it.
-const DISPATCH_REFRESH_LIMIT: std::time::Duration = std::time::Duration::from_secs(20);
+/// connection is released and the refresh continues without it. Derived from
+/// the adapter's own worst case so an ordinary refresh reports its per-source
+/// outcomes rather than always timing out here.
+const DISPATCH_REFRESH_LIMIT: std::time::Duration =
+    ModelsJsonCatalogueRefreshAdapter::REFRESH_ALL_WORST_CASE;
 
 pub(super) async fn handle_refresh_models(
     ctx: &mut DispatchCtx<'_>,

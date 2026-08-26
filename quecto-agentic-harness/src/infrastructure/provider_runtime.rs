@@ -344,7 +344,9 @@ fn append_endpoint_providers(
     provider_list: &mut Vec<Arc<dyn LlmProvider>>,
 ) -> Result<(), String> {
     for endpoint in &config.providers.openai_compatible.endpoints {
-        if endpoint.api_key.is_empty() {
+        // Trimmed, like the catalogue bookkeeping: a whitespace-only key must
+        // not build a provider the catalogue believes does not exist.
+        if endpoint.api_key.trim().is_empty() {
             continue;
         }
         let prefix = endpoint.prefix.trim();

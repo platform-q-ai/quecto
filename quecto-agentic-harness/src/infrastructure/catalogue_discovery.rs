@@ -25,6 +25,9 @@ use crate::infrastructure::providers::{
 // Keep unattended discovery bounded: provider catalogs are small JSON lists,
 // while compromised endpoints can otherwise stream arbitrary bytes/items.
 pub(crate) const MAX_MODEL_DISCOVERY_RESPONSE_BYTES: usize = 5 * 1024 * 1024;
+/// Per-source request timeout. Discovery runs while a user waits, so it is far
+/// shorter than a chat request's.
+const DISCOVERY_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const MAX_MODEL_DISCOVERY_MODELS: usize = 10_000;
 
 struct ModelsJsonPublishLock {
@@ -112,6 +115,15 @@ impl ModelsJsonCatalogueRefreshAdapter {
     /// command loop, so a catalogue full of unreachable endpoints must not stall
     /// every other UDS command for `sources × request timeout`.
     pub(crate) const REFRESH_ALL_BUDGET: Duration = Duration::from_secs(20);
+
+    /// The worst case a caller must allow for: the budget may be checked just
+    /// before a source starts, so one whole request and one lock wait can follow
+    /// it.
+    pub(crate) const REFRESH_ALL_WORST_CASE: Duration = Duration::from_secs(
+        Self::REFRESH_ALL_BUDGET.as_secs()
+            + DISCOVERY_REQUEST_TIMEOUT.as_secs()
+            + ModelsJsonPublishLock::LOCK_WAIT.as_secs(),
+    );
 }
 
 impl CatalogueRefreshAllPort for ModelsJsonCatalogueRefreshAdapter {
@@ -399,7 +411,7 @@ pub(crate) fn format_reqwest_error(display_url: &str, e: reqwest::Error) -> Stri
 pub(crate) fn fetch_openai_models(url: &str, auth: Option<&str>) -> Result<Vec<Value>, String> {
     let display_url = redact_url_for_error(url);
     let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(30))
+        .timeout(DISCOVERY_REQUEST_TIMEOUT)
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
     let mut req = client.get(url);

@@ -348,13 +348,15 @@ impl RefreshableProvider {
                 // can use it independently of the original borrow.
                 let owned = OwnedRequest::from(&request);
 
-                // The lock serialises obtaining a fresh token, not the retried
-                // request: holding it across the call would block every other
+                // The lock serialises obtaining a fresh token and installing the
+                // provider built from it — both, so a task that adopted an older
+                // token cannot install over a newer one. It is released before
+                // the retried request, which would otherwise block every other
                 // 401 for the length of a full generation.
                 let refreshed = {
                     let _guard = self.refresh_lock.lock().await;
                     let stored = self.current_credential().map(|cred| cred.token);
-                    match stored {
+                    let token = match stored {
                         // Another task refreshed while this request was in
                         // flight: adopt its token instead of refreshing again.
                         // Compared against the token this attempt used, not the
@@ -369,19 +371,19 @@ impl RefreshableProvider {
                                     "token refreshed — rebuilding provider"
                                 );
                             }),
+                    };
+                    match token {
+                        Ok(new_token) => {
+                            let new_inner = (self.factory)(&new_token);
+                            self.install_inner(new_inner.clone(), new_token).await;
+                            Ok(new_inner)
+                        }
+                        Err(refresh_err) => Err(refresh_err),
                     }
                 };
 
                 match refreshed {
-                    Ok(new_token) => {
-                        // Install before retrying: a concurrent 401 must be able
-                        // to see the fresh token and adopt it instead of
-                        // refreshing again (which would rotate the refresh token
-                        // a second time).
-                        let new_inner = (self.factory)(&new_token);
-                        self.install_inner(new_inner.clone(), new_token).await;
-                        call(&new_inner, owned.as_request()).await
-                    }
+                    Ok(new_inner) => call(&new_inner, owned.as_request()).await,
                     Err(refresh_err) => {
                         tracing::warn!(
                             provider = self.provider_name.as_str(),
