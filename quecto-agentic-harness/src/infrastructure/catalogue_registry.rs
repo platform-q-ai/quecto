@@ -96,10 +96,15 @@ pub fn record_to_descriptor_with_credential(
     let auth = match record.auth {
         AuthMode::ApiKey => AuthIdentity::ApiKey,
         AuthMode::OAuth => AuthIdentity::OAuth {
-            provider: match record.oauth_provider.clone() {
-                Some(provider) => Some(ProviderId::new(provider).map_err(|e| e.to_string())?),
-                None => None,
-            },
+            // A blank name is the same as none for the catalogue: the entry
+            // declares OAuth without naming a provider. Construction reports it
+            // with its provider key and file, where the user can act on it,
+            // rather than aborting the whole composition here with a
+            // context-free "provider id must not be empty".
+            provider: record
+                .oauth_provider
+                .clone()
+                .and_then(|provider| ProviderId::new(provider).ok()),
         },
     };
     let credential_available = credential_available_override.unwrap_or_else(|| match record.auth {

@@ -25,9 +25,13 @@ use crate::infrastructure::providers::{
 // Keep unattended discovery bounded: provider catalogs are small JSON lists,
 // while compromised endpoints can otherwise stream arbitrary bytes/items.
 pub(crate) const MAX_MODEL_DISCOVERY_RESPONSE_BYTES: usize = 5 * 1024 * 1024;
-/// Per-source request timeout. Discovery runs while a user waits, so it is far
-/// shorter than a chat request's.
-const DISCOVERY_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// Per-source request timeout for an explicitly requested discovery
+/// (`quecto models discover`), which the user is waiting on directly and which
+/// may target a slow self-hosted gateway.
+const DISCOVERY_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// The tighter timeout used when refreshing every source at once from a live
+/// session, where a slow endpoint would otherwise hold up the others.
+const BULK_DISCOVERY_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const MAX_MODEL_DISCOVERY_MODELS: usize = 10_000;
 
 struct ModelsJsonPublishLock {
@@ -98,12 +102,25 @@ impl Drop for ModelsJsonPublishLock {
 #[derive(Debug, Clone)]
 pub struct ModelsJsonCatalogueRefreshAdapter {
     base_dir: PathBuf,
+    /// A refresh a user is waiting on directly (`quecto models discover`) allows
+    /// a slow self-hosted gateway its time; one issued from a live session is
+    /// held to a tighter budget, because the session waits behind it.
+    interactive_session: bool,
 }
 
 impl ModelsJsonCatalogueRefreshAdapter {
     pub fn new(base_dir: impl Into<PathBuf>) -> Self {
         Self {
             base_dir: base_dir.into(),
+            interactive_session: false,
+        }
+    }
+
+    /// The adapter used from a live session's dispatch loop.
+    pub fn for_session(base_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            base_dir: base_dir.into(),
+            interactive_session: true,
         }
     }
 
@@ -115,15 +132,6 @@ impl ModelsJsonCatalogueRefreshAdapter {
     /// command loop, so a catalogue full of unreachable endpoints must not stall
     /// every other UDS command for `sources × request timeout`.
     pub(crate) const REFRESH_ALL_BUDGET: Duration = Duration::from_secs(10);
-
-    /// The worst case a caller must allow for: the budget may be checked just
-    /// before a source starts, so one whole request and one lock wait can follow
-    /// it.
-    pub(crate) const REFRESH_ALL_WORST_CASE: Duration = Duration::from_secs(
-        Self::REFRESH_ALL_BUDGET.as_secs()
-            + DISCOVERY_REQUEST_TIMEOUT.as_secs()
-            + ModelsJsonPublishLock::LOCK_WAIT.as_secs(),
-    );
 }
 
 impl CatalogueRefreshAllPort for ModelsJsonCatalogueRefreshAdapter {
@@ -134,7 +142,12 @@ impl CatalogueRefreshAllPort for ModelsJsonCatalogueRefreshAdapter {
 
 impl CatalogueRefreshPort for ModelsJsonCatalogueRefreshAdapter {
     fn refresh_source(&self, source: &str) -> CatalogueRefreshOutcome {
-        let status = match discover_once(&self.base_dir, source) {
+        let discovered = if self.interactive_session {
+            discover_once_bulk(&self.base_dir, source)
+        } else {
+            discover_once(&self.base_dir, source)
+        };
+        let status = match discovered {
             Ok(models) => CatalogueRefreshStatus::Refreshed { models },
             Err(DiscoveryError::NotDiscoverable(reason)) => {
                 CatalogueRefreshStatus::Skipped { reason }
@@ -217,6 +230,17 @@ pub(crate) fn discover_once(base_dir: &Path, provider_key: &str) -> Result<usize
         base_dir,
         provider_key,
         fetch_openai_models,
+        |path, bytes| atomic_write(path, bytes, Some(0o600)).map_err(|e| e.to_string()),
+    )
+}
+
+/// Refresh one source from a live session, where a slow endpoint holds up the
+/// rest of the catalogue and the user's next command.
+fn discover_once_bulk(base_dir: &Path, provider_key: &str) -> Result<usize, DiscoveryError> {
+    discover_once_with(
+        base_dir,
+        provider_key,
+        fetch_openai_models_bulk,
         |path, bytes| atomic_write(path, bytes, Some(0o600)).map_err(|e| e.to_string()),
     )
 }
@@ -409,9 +433,21 @@ pub(crate) fn format_reqwest_error(display_url: &str, e: reqwest::Error) -> Stri
 }
 
 pub(crate) fn fetch_openai_models(url: &str, auth: Option<&str>) -> Result<Vec<Value>, String> {
+    fetch_openai_models_with_timeout(url, auth, DISCOVERY_REQUEST_TIMEOUT)
+}
+
+fn fetch_openai_models_bulk(url: &str, auth: Option<&str>) -> Result<Vec<Value>, String> {
+    fetch_openai_models_with_timeout(url, auth, BULK_DISCOVERY_REQUEST_TIMEOUT)
+}
+
+fn fetch_openai_models_with_timeout(
+    url: &str,
+    auth: Option<&str>,
+    timeout: Duration,
+) -> Result<Vec<Value>, String> {
     let display_url = redact_url_for_error(url);
     let client = reqwest::blocking::Client::builder()
-        .timeout(DISCOVERY_REQUEST_TIMEOUT)
+        .timeout(timeout)
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
     let mut req = client.get(url);

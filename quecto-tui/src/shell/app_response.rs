@@ -1,3 +1,9 @@
+// Handlers split out for the module size gate; they are part of this seam.
+#[path = "app_response_refresh_models.rs"]
+mod app_response_refresh_models;
+#[path = "app_response_set_model.rs"]
+mod app_response_set_model;
+
 use super::*;
 
 fn routed_subagent_id<'a>(id: &'a str, prefix: &str) -> Option<&'a str> {
@@ -241,28 +247,7 @@ impl App {
             "get_session_stats" if success => {
                 self.handle_session_stats_response(id.as_deref(), data)
             }
-            "refresh_models" if success => {
-                // A refresh can succeed for some sources and fail for others;
-                // reporting only the success would hide the part that did not.
-                let failures = data
-                    .as_ref()
-                    .map(|d| {
-                        crate::protocol::model_payloads::parse_refresh_failures(
-                            d,
-                            &crate::components::ansi::sanitize_control,
-                        )
-                    })
-                    .unwrap_or_default();
-                if failures.is_empty() {
-                    self.notify("Model catalogue refresh complete", NotifyLevel::Info);
-                } else {
-                    self.notify(
-                        &format!("Model catalogue refreshed, except {}", failures.join("; ")),
-                        NotifyLevel::Warning,
-                    );
-                }
-                self.open_model_selector();
-            }
+            "refresh_models" if success => self.handle_refresh_models_success(data),
             "refresh_models" => self.notify_response_error("Model catalogue refresh failed", error),
             "list_models" if success => self.handle_list_models(data),
             "list_models" => {

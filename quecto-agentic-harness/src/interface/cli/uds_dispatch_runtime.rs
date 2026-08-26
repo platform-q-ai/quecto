@@ -54,9 +54,12 @@ fn unresolved_model_message(
             Some((provider, _)) if !snapshot_knows_provider(snapshot, provider) => {
                 format!("no configured provider '{provider}'")
             }
-            Some((provider, model_id)) => {
-                format!("provider '{provider}' has no model '{model_id}'")
-            }
+            // The runtime routes any id under a configured prefix, so this is a
+            // note about what the catalogue knows — not a claim that the switch
+            // will fail.
+            Some((provider, model_id)) => format!(
+                "'{model_id}' is not in the catalogue for '{provider}', so its limits are unknown"
+            ),
             None => format!("unknown model '{model}'"),
         },
     }

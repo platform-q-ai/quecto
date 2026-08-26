@@ -343,6 +343,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_methods_send.rs` | `shell` send/selection helpers split for line budget (#1465) |
 | `shell/app_render_helpers.rs` | `shell` render helper extraction (line-count split, #1334 PR 4) |
 | `shell/app_response.rs` | `shell` response dispatch seam (relocated, #1257 Phase 6; protocol-mapper allowlist #1220) |
+| `shell/app_response_refresh_models.rs` | `shell` `refresh_models` response handler, split from the dispatch seam for the module size gate (#1193) |
 | `shell/app_response_set_model.rs` | `shell` `set_model` response handler, split from the dispatch seam for the module size gate (#1193) |
 | `shell/app_response_test_api.rs` | `shell` multi-tab test/harness API (#1465) |
 | `shell/app_selection.rs` | `shell` focus/selection routing (relocated, #1257 Phase 6) |

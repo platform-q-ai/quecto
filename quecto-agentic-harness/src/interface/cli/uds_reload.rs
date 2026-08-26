@@ -56,6 +56,16 @@ fn record_reload_failure(ctx: &mut DispatchCtx<'_>, error: String) {
     ctx.agent.set_catalogue_error(Some(error));
 }
 
+/// Ask the reload gate to rebuild again when the session is carrying a
+/// catalogue error, so a fixed cause outside the watched files is picked up.
+pub(super) fn retry_catalogue_error_for_ctx(ctx: &mut DispatchCtx<'_>) {
+    if ctx.agent.catalogue_error().is_some()
+        && let Some(reload) = ctx.provider_reload.as_deref_mut()
+    {
+        reload.invalidate_sources();
+    }
+}
+
 pub(super) async fn poll_provider_reload_for_ctx(ctx: &mut DispatchCtx<'_>) {
     let result = provider_reload::poll_provider_reload(
         ctx.provider_reload.as_deref_mut(),
@@ -120,11 +130,11 @@ fn refresh_failure_message(outcomes: &[CatalogueRefreshOutcome]) -> String {
 }
 
 /// How long a `refresh_models` command may hold the dispatch loop before the
-/// connection is released and the refresh continues without it. Derived from
-/// the adapter's own worst case so an ordinary refresh reports its per-source
-/// outcomes rather than always timing out here.
-const DISPATCH_REFRESH_LIMIT: std::time::Duration =
-    ModelsJsonCatalogueRefreshAdapter::REFRESH_ALL_WORST_CASE;
+/// connection is released and the refresh continues without it. This is a UI
+/// budget, not the adapter's worst case: the loop serves one command at a time,
+/// so anything longer reads as a frozen session. A refresh that overruns still
+/// finishes and republishes `models.json`, which the reload gate then picks up.
+const DISPATCH_REFRESH_LIMIT: std::time::Duration = std::time::Duration::from_secs(8);
 
 pub(super) async fn handle_refresh_models(
     ctx: &mut DispatchCtx<'_>,
@@ -150,7 +160,7 @@ pub(super) async fn handle_refresh_models(
     // overruns, the loop is released and the detached thread finishes writing
     // whatever it had already fetched.
     let refresh = tokio::task::spawn_blocking(move || {
-        let refresh_port = ModelsJsonCatalogueRefreshAdapter::new(base_dir);
+        let refresh_port = ModelsJsonCatalogueRefreshAdapter::for_session(base_dir);
         let use_case = RefreshCatalogueSourceUseCase::new();
         if let Some(provider) = provider {
             vec![use_case.refresh(&refresh_port, &provider)]

@@ -66,16 +66,35 @@ struct RefreshResponse {
     sources: Vec<RefreshOutcome>,
 }
 
-/// The sources a catalogue refresh could not refresh, as `source: reason`.
-pub fn parse_refresh_failures(
+/// The sources a catalogue refresh did not query, as `source: reason`. A
+/// skipped source is not a failure — there was nothing to discover — but a
+/// refresh where nothing was queried must not report itself as complete.
+pub fn parse_refresh_skipped(
     data: &serde_json::Value,
     sanitize: &dyn Fn(&str) -> String,
 ) -> Vec<String> {
-    let parsed = RefreshResponse::deserialize(data).unwrap_or_default();
-    parsed
+    refresh_outcomes_with_status(data, "skipped", sanitize)
+}
+
+/// Whether any source actually refreshed.
+pub fn parse_refresh_refreshed_any(data: &serde_json::Value) -> bool {
+    RefreshResponse::deserialize(data)
+        .unwrap_or_default()
+        .sources
+        .iter()
+        .any(|outcome| outcome.status.as_deref() == Some("refreshed"))
+}
+
+fn refresh_outcomes_with_status(
+    data: &serde_json::Value,
+    status: &str,
+    sanitize: &dyn Fn(&str) -> String,
+) -> Vec<String> {
+    RefreshResponse::deserialize(data)
+        .unwrap_or_default()
         .sources
         .into_iter()
-        .filter(|outcome| outcome.status.as_deref() == Some("failed"))
+        .filter(|outcome| outcome.status.as_deref() == Some(status))
         .map(|outcome| {
             sanitize(&format!(
                 "{}: {}",
@@ -84,6 +103,14 @@ pub fn parse_refresh_failures(
             ))
         })
         .collect()
+}
+
+/// The sources a catalogue refresh could not refresh, as `source: reason`.
+pub fn parse_refresh_failures(
+    data: &serde_json::Value,
+    sanitize: &dyn Fn(&str) -> String,
+) -> Vec<String> {
+    refresh_outcomes_with_status(data, "failed", sanitize)
 }
 
 /// A `list_models` response: the published list, and the catalogue error when

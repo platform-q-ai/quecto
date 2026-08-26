@@ -33,6 +33,11 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
     // Catalogue reads are on-consume: poll the local reload gate before the
     // fieldless-query fast path. This performs no network discovery.
     if matches!(&cmd, AgentCommand::ListModels { .. }) {
+        // Listing models is user-initiated and infrequent, so it is also the
+        // place to retry a catalogue error whose cause lay outside the watched
+        // files (an unreadable credential store, a transient endpoint): without
+        // this the error would stand for the life of the session.
+        super::super::uds_reload::retry_catalogue_error_for_ctx(ctx);
         super::super::uds_reload::poll_provider_reload_for_ctx(ctx).await;
     }
     // Fast path: queries + clear_history (defers id/type_name clones).

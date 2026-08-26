@@ -74,3 +74,23 @@ fn forced_reload_result_preserves_error_without_replacing_last_good() {
 fn hash_changes_with_content() {
     assert_ne!(hash_bytes(b"a"), hash_bytes(b"b"));
 }
+
+#[test]
+fn invalidating_sources_makes_the_next_probe_report_a_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("watched.json");
+    std::fs::write(&path, "v1").unwrap();
+    let mut reload: RuntimeReload<u8> = RuntimeReload::new(vec![ReloadSource::new(path)]);
+
+    assert!(
+        reload.sources_changed(),
+        "first probe seeds the fingerprint"
+    );
+    assert!(!reload.sources_changed(), "unchanged content settles");
+
+    // A rebuild that failed for a reason outside the watched files must be able
+    // to ask for another attempt without the file changing.
+    reload.invalidate_sources();
+
+    assert!(reload.sources_changed());
+}

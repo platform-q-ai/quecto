@@ -135,8 +135,14 @@ fn registry_source_keeps_auth_identity_separate_and_marks_missing_runtime_capabi
         auth: AuthMode::OAuth,
         oauth_provider: Some("   ".to_string()),
     };
-    let error = record_to_descriptor(&custom_oauth_record).unwrap_err();
-    assert!(error.contains("provider id must not be empty"));
+    // A blank oauth provider name is "none named", not a fatal catalogue error:
+    // the entry stays listed and unavailable, and construction reports the
+    // misconfiguration where the user can see which entry it came from.
+    let descriptor = record_to_descriptor(&custom_oauth_record)
+        .expect("a blank oauth provider must not fail the projection")
+        .expect("the entry stays listed");
+    assert_eq!(descriptor.auth, AuthIdentity::OAuth { provider: None });
+    assert!(!descriptor.availability.runnable());
 }
 
 #[test]

@@ -397,3 +397,36 @@ fn refresh_all_reports_nothing_to_do_when_no_user_catalogue_exists() {
 
     assert!(outcomes.is_empty(), "{outcomes:?}");
 }
+
+#[test]
+fn a_session_refresh_discovers_through_the_interactive_adapter() {
+    let tmp = tempfile::tempdir().unwrap();
+    let url = serve_models_response(200, r#"{"data":[{"id":"m-1"},{"id":"m-2"}]}"#);
+    let base = url.trim_end_matches("/models").to_string();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        serde_json::json!({"providers": {"open": {
+            "api": "openai-completions",
+            "baseUrl": base,
+            "allowRemoteHttp": true,
+            "apiKey": "sk-test",
+            "models": []
+        }}})
+        .to_string(),
+    )
+    .unwrap();
+
+    // The session adapter holds discovery to a tighter request budget than the
+    // explicitly requested `models discover`, but discovers the same catalogue.
+    let outcomes =
+        ModelsJsonCatalogueRefreshAdapter::for_session(tmp.path().to_path_buf()).refresh_all();
+
+    assert_eq!(outcomes.len(), 1);
+    assert!(
+        matches!(
+            outcomes[0].status,
+            CatalogueRefreshStatus::Refreshed { models: 2 }
+        ),
+        "{outcomes:?}"
+    );
+}
