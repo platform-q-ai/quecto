@@ -54,7 +54,10 @@ impl std::fmt::Display for ProviderFactoryError {
     }
 }
 
-fn sanitize_url_for_error(raw: &str) -> String {
+/// Strip credentials, query and fragment from a URL before it appears in an
+/// error message. One definition: divergent copies are how a credential ends up
+/// in a log line.
+pub(crate) fn sanitize_url_for_error(raw: &str) -> String {
     match reqwest::Url::parse(raw) {
         Ok(mut url) => {
             let _ = url.set_username("");

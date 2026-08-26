@@ -6,7 +6,7 @@ use crate::infrastructure::catalogue_discovery::{
 };
 
 fn discover_once(ctx: &CliContext, provider_key: &str) -> Result<usize, String> {
-    discovery_discover_once(&ctx.base_dir(), provider_key)
+    discovery_discover_once(&ctx.base_dir(), provider_key).map_err(|error| error.message())
 }
 
 fn discover_once_with<F, W>(
@@ -20,6 +20,7 @@ where
     W: FnOnce(&std::path::Path, &[u8]) -> Result<(), String>,
 {
     discovery_discover_once_with(&ctx.base_dir(), provider_key, fetch, publish)
+        .map_err(|error| error.message())
 }
 use serde_json::Value;
 use wiremock::matchers::{header, method, path};

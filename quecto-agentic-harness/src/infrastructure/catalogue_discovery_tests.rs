@@ -116,6 +116,7 @@ fn discover_once_with_reports_registry_validation_and_publish_failures() {
             |_path, _bytes| Ok(())
         )
         .unwrap_err()
+        .message()
         .contains("provider 'open' not found")
     );
 
@@ -132,6 +133,7 @@ fn discover_once_with_reports_registry_validation_and_publish_failures() {
             |_path, _bytes| Ok(())
         )
         .unwrap_err()
+        .message()
         .contains("api must be a string")
     );
 
@@ -153,6 +155,7 @@ fn discover_once_with_reports_registry_validation_and_publish_failures() {
             |_path, _bytes| Ok(())
         )
         .unwrap_err()
+        .message()
         .contains("is not an openai-completions provider")
     );
     assert!(
@@ -163,6 +166,7 @@ fn discover_once_with_reports_registry_validation_and_publish_failures() {
             |_path, _bytes| Ok(())
         )
         .unwrap_err()
+        .message()
         .contains("uses oauth auth")
     );
 
@@ -185,7 +189,7 @@ fn discover_once_with_reports_registry_validation_and_publish_failures() {
         },
         |_path, _bytes| Err("disk full".to_string()),
     )
-    .unwrap_err();
+    .unwrap_err().message();
     assert!(published.contains("failed to write"));
 }
 
@@ -222,7 +226,8 @@ fn stale_discovery_is_discarded_when_provider_configuration_changes_before_publi
         },
         |_path, _bytes| Ok(()),
     )
-    .unwrap_err();
+    .unwrap_err()
+    .message();
 
     assert!(error.contains("changed during discovery"));
     let registry: serde_json::Value =

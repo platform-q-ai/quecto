@@ -5,6 +5,7 @@ use crate::infrastructure::providers;
 use crate::infrastructure::providers::refreshable::{RefreshableConfig, RefreshableProvider};
 use crate::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
 use crate::infrastructure::providers::router::ProviderRouter;
+use crate::infrastructure::providers::sanitize_url_for_error;
 use std::collections::HashSet;
 use std::sync::Arc;
 const MAX_OPENAI_COMPATIBLE_ENDPOINTS: usize = 32;
@@ -537,18 +538,6 @@ fn validate_oauth_base_url(
         sanitize_url_for_error(configured),
         canonical
     ))
-}
-fn sanitize_url_for_error(raw: &str) -> String {
-    match reqwest::Url::parse(raw) {
-        Ok(mut url) => {
-            let _ = url.set_username("");
-            let _ = url.set_password(None);
-            url.set_query(None);
-            url.set_fragment(None);
-            url.to_string()
-        }
-        Err(_) => "<invalid url>".to_string(),
-    }
 }
 /// Everything a registry record needs to become a concrete provider, resolved
 /// once per composition rather than per record.

@@ -369,7 +369,7 @@ fn swap_provider_rederives_active_model_limits_from_reloaded_generation() {
     );
 
     assert!(Arc::ptr_eq(&agent.provider, &reloaded_provider));
-    assert_eq!(agent.catalogue.generation, 42);
+    assert_eq!(agent.catalogue_store.current().generation, 42);
     assert_eq!(agent.catalogue_store.current().generation, 42);
     assert_eq!(
         agent.catalogue_store.current().models()[0]
@@ -377,7 +377,12 @@ fn swap_provider_rederives_active_model_limits_from_reloaded_generation() {
             .max_tokens,
         250
     );
-    assert_eq!(agent.catalogue.models()[0].capabilities.max_tokens, 250);
+    assert_eq!(
+        agent.catalogue_store.current().models()[0]
+            .capabilities
+            .max_tokens,
+        250
+    );
     assert_eq!(agent.model_max_tokens, Some(250));
     assert_eq!(agent.model_context_window, Some(4000));
 }

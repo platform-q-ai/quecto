@@ -19,8 +19,7 @@ impl AgentLoopImpl {
             .set_model_context_window(model_context_window);
         self.provider = runtime.provider;
         self.set_catalogue_error(None);
-        self.catalogue_store.publish(runtime.catalogue.clone());
-        self.catalogue = runtime.catalogue;
+        self.catalogue_store.publish(runtime.catalogue);
     }
 
     /// Record why the catalogue could not be re-resolved, or clear it once a
@@ -36,7 +35,7 @@ impl AgentLoopImpl {
     /// Test compatibility entry point for provider-only swaps.
     #[cfg(any(test, feature = "test-support"))]
     pub fn swap_provider(&mut self, provider: Arc<dyn LlmProvider>) {
-        let generation = self.catalogue.generation.saturating_add(1);
+        let generation = self.catalogue_store.current().generation.saturating_add(1);
         let catalogue = CatalogueSnapshot::new(
             generation,
             provider.model_descriptors().unwrap_or(&[]).to_vec(),

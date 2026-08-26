@@ -58,7 +58,8 @@ fn describe_unavailable_reasons(reasons: &[UnavailableReason]) -> String {
         .map(|reason| match reason {
             UnavailableReason::MissingCredential => "no credential is configured".to_string(),
             UnavailableReason::UnsupportedTransport { transport } => {
-                format!("no adapter for transport {transport:?}")
+                // The wire spelling, matching `list_models`, not the Rust name.
+                format!("no adapter for transport {}", transport.stable_id())
             }
             UnavailableReason::InvalidConfiguration(detail) => detail.clone(),
             UnavailableReason::PolicyDenied(detail) => format!("policy denied: {detail}"),
@@ -115,11 +116,9 @@ fn describe_selection(
 ) -> Option<String> {
     match resolve_model_reference(snapshot, model) {
         Err(failure) => Some(unresolved_model_message(model, failure)),
-        Ok(reference) => match ResolveModelSelectionUseCase::new(
-            crate::application::catalogue::CatalogueSnapshotStore::new(snapshot.clone()),
-        )
-        .resolve(&reference)
-        {
+        // Resolved against the snapshot already in hand: this runs on every model
+        // switch, and a discovered catalogue can hold thousands of entries.
+        Ok(reference) => match ResolveModelSelectionUseCase::resolve_in(snapshot, &reference) {
             Ok(_) => None,
             Err(SelectionFailure::Unavailable { reasons }) => Some(format!(
                 "model is unavailable: {}",

@@ -2,9 +2,11 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::Arc;
 
 use crate::application::provider_runtime::CatalogueRuntimeSnapshot;
+#[cfg(any(test, feature = "test-support"))]
 use crate::domain::provider::LlmProvider;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::reload::{ReloadResult, ReloadSource, RuntimeReload};
@@ -64,26 +66,41 @@ pub fn seeded_provider_reload(
     config_path: impl Into<PathBuf>,
     initial_provider: Arc<dyn LlmProvider>,
 ) -> ProviderReload {
-    seeded_provider_reload_with_base(config_path, None, initial_provider)
+    let catalogue = crate::domain::catalogue::CatalogueSnapshot::new(
+        0,
+        initial_provider.model_descriptors().unwrap_or(&[]).to_vec(),
+    )
+    .with_open_providers(
+        initial_provider
+            .routable_provider_names()
+            .into_iter()
+            .filter_map(|name| crate::domain::catalogue::ProviderId::new(name).ok())
+            .collect(),
+    );
+    seeded_provider_reload_with_base(
+        config_path,
+        None,
+        CatalogueRuntimeSnapshot {
+            provider: initial_provider,
+            catalogue,
+        },
+    )
 }
 
+/// Seed the reload gate with the runtime the session is actually running, so
+/// the retained last-good generation is the published one — not a reconstruction
+/// that would answer differently about what the runtime can route.
 pub fn seeded_provider_reload_with_base(
     config_path: impl Into<PathBuf>,
     base_dir: Option<PathBuf>,
-    initial_provider: Arc<dyn LlmProvider>,
+    initial_runtime: CatalogueRuntimeSnapshot,
 ) -> ProviderReload {
     let mut sources = vec![ReloadSource::new(config_path.into())];
     if let Some(base_dir) = base_dir {
         sources.push(ReloadSource::new(base_dir.join("models.json")));
     }
     let mut reload = RuntimeReload::new(sources);
-    let descriptors = initial_provider.model_descriptors().unwrap_or(&[]).to_vec();
-    let catalogue =
-        crate::application::catalogue::ResolveCatalogueUseCase.resolve(0, [descriptors]);
-    reload.seed(CatalogueRuntimeSnapshot {
-        provider: initial_provider,
-        catalogue,
-    });
+    reload.seed(initial_runtime);
     reload
 }
 

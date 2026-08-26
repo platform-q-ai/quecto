@@ -35,7 +35,7 @@ impl CredentialSnapshot {
 pub(super) fn explicit_endpoint_owns_registry_route(
     model: &crate::infrastructure::model_registry::ModelRecord,
     endpoint_prefixes: &HashSet<String>,
-    store: &CredentialSnapshot,
+    _store: &CredentialSnapshot,
     config: &Config,
 ) -> Result<bool, String> {
     use crate::infrastructure::model_registry::AuthMode;
@@ -59,36 +59,14 @@ pub(super) fn explicit_endpoint_owns_registry_route(
         .map(str::trim)
         .filter(|base| !base.is_empty())
         .is_none_or(|base| same_api_base(base, &endpoint.api_base));
-    // A route the entry can serve on its own is owned by the endpoint sharing
-    // its prefix (the endpoint is the more specific, explicitly configured
-    // definition). A credential-less entry is instead *completed* by the
-    // endpoint, but only when the endpoint does not redirect it: an entry
-    // naming a different base URL stays an ambiguous duplicate.
-    if registry_provider_can_construct_without_endpoint(model, store, config)? {
-        return Ok(true);
-    }
+    // The endpoint may serve the prefix only when it does not redirect it: an
+    // entry naming a different base URL stays an ambiguous duplicate, whether or
+    // not it carries its own credential, and is reported as one.
     Ok(base_agrees)
 }
 
 /// `registry_provider_can_construct` ignoring endpoint-supplied credentials, so
 /// route ownership does not depend on the endpoint it is being compared with.
-/// Whether the record could construct its own provider without an endpoint's
-/// credential. Asked with a flag rather than a doctored copy of the config,
-/// which would clone the whole config once per registry record.
-fn registry_provider_can_construct_without_endpoint(
-    model: &crate::infrastructure::model_registry::ModelRecord,
-    store: &CredentialSnapshot,
-    config: &Config,
-) -> Result<bool, String> {
-    can_construct(model, store, config, EndpointCredentials::Excluded)
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum EndpointCredentials {
-    Included,
-    Excluded,
-}
-
 fn endpoint_for_prefix<'a>(
     provider: &str,
     config: &'a Config,
@@ -120,15 +98,6 @@ pub(crate) fn registry_model_credential_available(
     store: &CredentialSnapshot,
     config: &Config,
 ) -> Result<bool, String> {
-    credential_available(model, store, config, EndpointCredentials::Included)
-}
-
-fn credential_available(
-    model: &crate::infrastructure::model_registry::ModelRecord,
-    store: &CredentialSnapshot,
-    config: &Config,
-    endpoints: EndpointCredentials,
-) -> Result<bool, String> {
     use crate::infrastructure::auth::credential_store::AuthMethod;
     use crate::infrastructure::model_registry::AuthMode;
     if matches!(
@@ -139,8 +108,7 @@ fn credential_available(
     }
     match model.auth {
         AuthMode::ApiKey => Ok(model.api_key.as_deref().is_some_and(|key| !key.is_empty())
-            || (endpoints == EndpointCredentials::Included
-                && endpoint_credential_for_prefix(&model.provider, config))
+            || endpoint_credential_for_prefix(&model.provider, config)
             || builtin_api_key_available(model, store, config)?),
         AuthMode::OAuth => {
             // Availability is a question, not a validation: a record that cannot
@@ -206,19 +174,10 @@ pub(super) fn registry_provider_can_construct(
     store: &CredentialSnapshot,
     config: &Config,
 ) -> Result<bool, String> {
-    can_construct(model, store, config, EndpointCredentials::Included)
-}
-
-fn can_construct(
-    model: &crate::infrastructure::model_registry::ModelRecord,
-    store: &CredentialSnapshot,
-    config: &Config,
-    endpoints: EndpointCredentials,
-) -> Result<bool, String> {
     use crate::infrastructure::model_registry::ProviderApi;
     if matches!(model.api, ProviderApi::GoogleGenerativeAi) {
         return Ok(false);
     }
     // Both auth modes reduce to "is a credential available for this record".
-    credential_available(model, store, config, endpoints)
+    registry_model_credential_available(model, store, config)
 }

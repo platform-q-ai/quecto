@@ -90,7 +90,8 @@ pub struct AgentLoopConfig {
 }
 pub struct AgentLoopImpl {
     pub provider: Arc<dyn LlmProvider>,
-    pub catalogue: CatalogueSnapshot,
+    /// The published effective catalogue. One copy: readers take it from the
+    /// store, which is what every consumer (listing, selection, limits) reads.
     pub catalogue_store: CatalogueSnapshotStore,
     /// Why the last catalogue reload failed, if it did. The published snapshot
     /// stays the last valid one, so consumers listing models must be able to say
@@ -142,9 +143,8 @@ impl std::fmt::Debug for AgentLoopImpl {
     }
 }
 impl AgentLoopImpl {
-    pub fn with_catalogue(mut self, catalogue: CatalogueSnapshot) -> Self {
-        self.catalogue_store.publish(catalogue.clone());
-        self.catalogue = catalogue;
+    pub fn with_catalogue(self, catalogue: CatalogueSnapshot) -> Self {
+        self.catalogue_store.publish(catalogue);
         self
     }
     pub fn new(config: AgentLoopConfig) -> Self {
@@ -162,9 +162,8 @@ impl AgentLoopImpl {
             config.provider.model_descriptors().unwrap_or(&[]).to_vec(),
         );
         Self {
-            catalogue_store: CatalogueSnapshotStore::new(catalogue.clone()),
+            catalogue_store: CatalogueSnapshotStore::new(catalogue),
             catalogue_error: None,
-            catalogue,
             provider: config.provider,
             tool_registry: config.tool_registry,
             model: config.model.clone(),

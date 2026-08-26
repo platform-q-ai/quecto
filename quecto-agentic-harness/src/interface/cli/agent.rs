@@ -316,7 +316,7 @@ pub(crate) fn build_agent_from_config(
     let provider_reload = crate::interface::cli::provider_reload::seeded_provider_reload_with_base(
         config_path,
         Some(base_dir.to_path_buf()),
-        initial_runtime.provider.clone(),
+        initial_runtime.clone(),
     );
     let provider_reload_inputs = crate::interface::cli::provider_reload::ProviderReloadInputs::new(
         config_path.to_path_buf(),

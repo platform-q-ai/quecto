@@ -152,7 +152,7 @@ fn production_used_application_seams_remain_declared_and_wired() {
     assert!(
         dispatch.contains("agent .catalogue")
             || dispatch.contains("agent. catalogue")
-            || dispatch.contains("agent.catalogue")
+            || dispatch.contains("agent.catalogue_store")
     );
 }
 
@@ -167,7 +167,7 @@ fn production_reload_installs_the_composed_snapshot_atomically() {
     );
     assert!(
         agent_reload.contains("self.provider = runtime.provider")
-            && agent_reload.contains("self.catalogue = runtime.catalogue"),
+            && agent_reload.contains("self.catalogue_store.publish(runtime.catalogue)"),
         "AgentLoop does not install provider and catalogue from one snapshot"
     );
     assert!(

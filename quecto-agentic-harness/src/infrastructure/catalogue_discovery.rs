@@ -11,7 +11,6 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use fs2::FileExt;
 use serde_json::{Value, json};
 
 use crate::application::ports::{
@@ -33,24 +32,43 @@ struct ModelsJsonPublishLock {
 }
 
 impl ModelsJsonPublishLock {
+    // `File::lock` stabilized in 1.89, which the crate already depends on for
+    // the credential and session locks; clippy.toml's declared 1.85 predates it.
+    #[expect(clippy::incompatible_msrv)]
     fn acquire(base_dir: &Path) -> Result<Self, String> {
         let lock_path = base_dir.join("models.json.lock");
-        let file = OpenOptions::new()
+        // Mode 0600 like the credential lock: a world-readable lock file would
+        // let any co-resident user take the exclusive lock and wedge catalogue
+        // publication indefinitely.
+        #[cfg(unix)]
+        let opened = {
+            use std::os::unix::fs::OpenOptionsExt;
+            OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .mode(0o600)
+                .open(&lock_path)
+        };
+        #[cfg(not(unix))]
+        let opened = OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
-            .open(&lock_path)
-            .map_err(|e| format!("failed to open {}: {e}", lock_path.display()))?;
-        file.lock_exclusive()
+            .open(&lock_path);
+        let file = opened.map_err(|e| format!("failed to open {}: {e}", lock_path.display()))?;
+        file.lock()
             .map_err(|e| format!("failed to lock {}: {e}", lock_path.display()))?;
         Ok(Self { file })
     }
 }
 
 impl Drop for ModelsJsonPublishLock {
+    #[expect(clippy::incompatible_msrv)]
     fn drop(&mut self) {
-        let _ = FileExt::unlock(&self.file);
+        let _ = self.file.unlock();
     }
 }
 
@@ -69,6 +87,11 @@ impl ModelsJsonCatalogueRefreshAdapter {
     pub fn refresh_all(&self) -> Vec<CatalogueRefreshOutcome> {
         refresh_all_from_models_json(self, &self.base_dir.join("models.json"))
     }
+
+    /// Wall-clock budget for refreshing every source. Discovery runs on the
+    /// command loop, so a catalogue full of unreachable endpoints must not stall
+    /// every other UDS command for `sources × request timeout`.
+    pub(crate) const REFRESH_ALL_BUDGET: Duration = Duration::from_secs(60);
 }
 
 impl CatalogueRefreshAllPort for ModelsJsonCatalogueRefreshAdapter {
@@ -79,19 +102,16 @@ impl CatalogueRefreshAllPort for ModelsJsonCatalogueRefreshAdapter {
 
 impl CatalogueRefreshPort for ModelsJsonCatalogueRefreshAdapter {
     fn refresh_source(&self, source: &str) -> CatalogueRefreshOutcome {
-        match discover_once(&self.base_dir, source) {
-            Ok(models) => CatalogueRefreshOutcome {
-                source: source.to_string(),
-                status: CatalogueRefreshStatus::Refreshed { models },
-            },
-            Err(error) if is_unsupported_refresh_error(&error) => CatalogueRefreshOutcome {
-                source: source.to_string(),
-                status: CatalogueRefreshStatus::Skipped { reason: error },
-            },
-            Err(error) => CatalogueRefreshOutcome {
-                source: source.to_string(),
-                status: CatalogueRefreshStatus::Failed { error },
-            },
+        let status = match discover_once(&self.base_dir, source) {
+            Ok(models) => CatalogueRefreshStatus::Refreshed { models },
+            Err(DiscoveryError::NotDiscoverable(reason)) => {
+                CatalogueRefreshStatus::Skipped { reason }
+            }
+            Err(DiscoveryError::Failed(error)) => CatalogueRefreshStatus::Failed { error },
+        };
+        CatalogueRefreshOutcome {
+            source: source.to_string(),
+            status,
         }
     }
 }
@@ -106,7 +126,26 @@ fn refresh_all_from_models_json(
         return Vec::new();
     }
     match provider_keys(path) {
-        Ok(keys) => keys.iter().map(|key| port.refresh_source(key)).collect(),
+        Ok(keys) => {
+            let deadline =
+                std::time::Instant::now() + ModelsJsonCatalogueRefreshAdapter::REFRESH_ALL_BUDGET;
+            keys.iter()
+                .map(|key| {
+                    if std::time::Instant::now() >= deadline {
+                        // Reported rather than silently dropped: the user can see
+                        // which sources the budget did not reach.
+                        return CatalogueRefreshOutcome {
+                            source: key.clone(),
+                            status: CatalogueRefreshStatus::Skipped {
+                                reason: "catalogue refresh budget exhausted before this source"
+                                    .to_string(),
+                            },
+                        };
+                    }
+                    port.refresh_source(key)
+                })
+                .collect()
+        }
         Err(error) => vec![CatalogueRefreshOutcome {
             source: "models.json".to_string(),
             status: CatalogueRefreshStatus::Failed { error },
@@ -114,15 +153,34 @@ fn refresh_all_from_models_json(
     }
 }
 
-fn is_unsupported_refresh_error(error: &str) -> bool {
-    error.contains("is not an openai-completions provider")
-        || error.contains("uses oauth auth, which models discover does not support")
-        // A metadata-only override (models added to a built-in provider) has no
-        // endpoint of its own to query: nothing to discover, not a failure.
-        || error.contains("is missing baseUrl")
+/// Why one source produced no models. `NotDiscoverable` is an ordinary state —
+/// the provider has nothing for discovery to query — and is reported as skipped
+/// rather than failed. Typed so rewording a message cannot silently reclassify
+/// an outcome.
+#[derive(Debug)]
+pub(crate) enum DiscoveryError {
+    NotDiscoverable(String),
+    Failed(String),
 }
 
-pub(crate) fn discover_once(base_dir: &Path, provider_key: &str) -> Result<usize, String> {
+impl From<String> for DiscoveryError {
+    /// Any error that is not explicitly an ordinary "nothing to discover" state
+    /// is a failure worth reporting.
+    fn from(error: String) -> Self {
+        Self::Failed(error)
+    }
+}
+
+impl DiscoveryError {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn message(self) -> String {
+        match self {
+            Self::NotDiscoverable(message) | Self::Failed(message) => message,
+        }
+    }
+}
+
+pub(crate) fn discover_once(base_dir: &Path, provider_key: &str) -> Result<usize, DiscoveryError> {
     discover_once_with(
         base_dir,
         provider_key,
@@ -136,7 +194,7 @@ pub(crate) fn discover_once_with<F, W>(
     provider_key: &str,
     fetch: F,
     publish: W,
-) -> Result<usize, String>
+) -> Result<usize, DiscoveryError>
 where
     F: FnOnce(&str, Option<&str>) -> Result<Vec<Value>, String>,
     W: FnOnce(&Path, &[u8]) -> Result<(), String>,
@@ -147,15 +205,19 @@ where
     let initial_provider = Value::Object(provider.clone());
     let api = provider_api(provider, provider_key)?;
     if api != "openai-completions" {
-        return Err(format!(
+        return Err(DiscoveryError::NotDiscoverable(format!(
             "provider '{provider_key}' is not an openai-completions provider"
-        ));
+        )));
     }
     let base_url = provider
         .get("baseUrl")
         .or_else(|| provider.get("apiBase"))
         .and_then(Value::as_str)
-        .ok_or_else(|| format!("provider '{provider_key}' is missing baseUrl"))?;
+        .ok_or_else(|| {
+            DiscoveryError::NotDiscoverable(format!(
+                "provider '{provider_key}' has no baseUrl to query"
+            ))
+        })?;
     let allow_remote_http = provider
         .get("allowRemoteHttp")
         .and_then(Value::as_bool)
@@ -168,9 +230,9 @@ where
         .and_then(Value::as_str)
         .is_some_and(|mode| mode == "oauth")
     {
-        return Err(format!(
+        return Err(DiscoveryError::NotDiscoverable(format!(
             "provider '{provider_key}' uses oauth auth, which models discover does not support"
-        ));
+        )));
     }
     let url = discover_models_url(provider_key, base_url, allow_remote_http)?;
     let auth = provider
@@ -190,9 +252,9 @@ where
     let latest_provider = provider_object(&latest, provider_key, &path)?;
     let latest_provider_without_models = provider_without_models(latest_provider);
     if latest_provider_without_models != initial_provider_without_models(&initial_provider) {
-        return Err(format!(
+        return Err(DiscoveryError::Failed(format!(
             "provider '{provider_key}' changed during discovery; discarding stale catalogue refresh"
-        ));
+        )));
     }
     provider_object_mut(&mut latest, provider_key, &path)?
         .insert("models".to_string(), Value::Array(discovered));
@@ -304,17 +366,9 @@ pub(crate) fn discover_models_url(
     Ok(models_url.to_string())
 }
 
+/// Discovery's name for the shared error-URL sanitiser.
 pub(crate) fn redact_url_for_error(url: &str) -> String {
-    match reqwest::Url::parse(url) {
-        Ok(mut parsed) => {
-            let _ = parsed.set_username("");
-            let _ = parsed.set_password(None);
-            parsed.set_query(None);
-            parsed.set_fragment(None);
-            parsed.to_string()
-        }
-        Err(_) => "<invalid url>".to_string(),
-    }
+    crate::infrastructure::providers::sanitize_url_for_error(url)
 }
 
 pub(crate) fn format_reqwest_error(display_url: &str, e: reqwest::Error) -> String {

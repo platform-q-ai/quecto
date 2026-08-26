@@ -273,7 +273,7 @@ fn builtin_prefix_models_are_runnable_when_an_endpoint_supplies_the_key() {
 }
 
 #[test]
-fn an_endpoint_owns_a_same_prefix_route_that_carries_its_own_credential() {
+fn an_endpoint_pointing_elsewhere_collides_with_a_catalogue_route() {
     use crate::infrastructure::config::{Config, OpenAiCompatibleEndpoint};
     use crate::infrastructure::provider_runtime::build_agent_provider;
 
@@ -291,35 +291,14 @@ fn an_endpoint_owns_a_same_prefix_route_that_carries_its_own_credential() {
         allow_remote_http: true,
     }];
 
-    // The explicitly configured endpoint is the single owner of the prefix: one
-    // provider is constructed, not two competing definitions of one route.
-    let runtime = build_agent_provider(&config, tmp.path(), &reqwest::Client::new())
-        .expect("an endpoint owns a catalogue route sharing its prefix");
-    // Two providers of the same name would be rejected by the router, so a
-    // successful composition already proves the prefix resolved to one owner;
-    // routing confirms which one: requests must reach the endpoint's base.
-    let request = crate::domain::provider::ChatRequest {
-        messages: &[],
-        tools: &[],
-        model: "spark/qwen3",
-        max_tokens: 16,
-        temperature: 0.0,
-        session_id: None,
-        tool_choice: None,
-        metadata: None,
-        thinking_level: None,
-        cancel_flag: None,
-        effort: None,
-    };
-    let error = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(runtime.chat(request))
-        .expect_err("nothing is listening on the endpoint base");
+    // The endpoint names a different base URL than the catalogue entry, so which
+    // one should serve `spark/*` is ambiguous: report it rather than silently
+    // redirecting the route.
+    let error = build_agent_provider(&config, tmp.path(), &reqwest::Client::new())
+        .expect_err("a redirected catalogue route stays ambiguous");
     assert!(
-        error.to_string().contains("127.0.0.1:10"),
-        "the endpoint owns the route: {error}"
+        error.contains("duplicate openai_compatible/provider prefix 'spark'"),
+        "{error}"
     );
 }
 

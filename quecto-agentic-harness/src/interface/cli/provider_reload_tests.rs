@@ -18,6 +18,28 @@ fn write_config(dir: &TempDir, body: &str) -> std::path::PathBuf {
     path
 }
 
+/// The runtime a seeded gate should retain: the published snapshot, including
+/// the prefixes the provider can route.
+fn seed(
+    provider: Arc<dyn LlmProvider>,
+) -> crate::application::provider_runtime::CatalogueRuntimeSnapshot {
+    let catalogue = crate::domain::catalogue::CatalogueSnapshot::new(
+        0,
+        provider.model_descriptors().unwrap_or(&[]).to_vec(),
+    )
+    .with_open_providers(
+        provider
+            .routable_provider_names()
+            .into_iter()
+            .filter_map(|name| crate::domain::catalogue::ProviderId::new(name).ok())
+            .collect(),
+    );
+    crate::application::provider_runtime::CatalogueRuntimeSnapshot {
+        provider,
+        catalogue,
+    }
+}
+
 fn inputs(path: std::path::PathBuf, dir: &TempDir) -> ProviderReloadInputs {
     ProviderReloadInputs::new(
         path,
@@ -134,7 +156,7 @@ async fn forced_reload_publishes_owned_catalogue_snapshot_from_models_json() {
     )
     .unwrap();
     let mut reload =
-        seeded_provider_reload_with_base(&path, Some(dir.path().to_path_buf()), provider());
+        seeded_provider_reload_with_base(&path, Some(dir.path().to_path_buf()), seed(provider()));
     let inputs = inputs(path, &dir);
 
     let result = force_provider_reload(Some(&mut reload), Some(&inputs))
@@ -161,7 +183,7 @@ async fn models_json_only_change_reloads_catalogue_and_runtime_together() {
     let models_path = dir.path().join("models.json");
     std::fs::write(&models_path, r#"{"providers":{}}"#).unwrap();
     let mut reload =
-        seeded_provider_reload_with_base(&path, Some(dir.path().to_path_buf()), provider());
+        seeded_provider_reload_with_base(&path, Some(dir.path().to_path_buf()), seed(provider()));
     std::fs::write(
         &models_path,
         r#"{"providers":{"custom":{"api":"openai-completions","baseUrl":"https://example.test/v1","auth":{"mode":"apiKey","apiKey":"sk-custom"},"models":[{"id":"after-race"}]}}}"#,
@@ -212,7 +234,7 @@ async fn forced_reload_catalogue_matches_runtime_descriptors_with_oauth_credenti
         })
         .unwrap();
     let mut reload =
-        seeded_provider_reload_with_base(&path, Some(dir.path().to_path_buf()), provider());
+        seeded_provider_reload_with_base(&path, Some(dir.path().to_path_buf()), seed(provider()));
     let inputs = inputs(path, &dir);
 
     let crate::infrastructure::reload::ReloadResult::Reloaded(runtime) =
@@ -239,7 +261,7 @@ async fn reload_generations_are_monotonic() {
     let dir = TempDir::new().unwrap();
     let path = write_config(&dir, r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
     let mut reload =
-        seeded_provider_reload_with_base(&path, Some(dir.path().to_path_buf()), provider());
+        seeded_provider_reload_with_base(&path, Some(dir.path().to_path_buf()), seed(provider()));
     let inputs = inputs(path.clone(), &dir);
 
     let first = force_provider_reload(Some(&mut reload), Some(&inputs))

@@ -182,6 +182,15 @@ impl ResolveModelSelectionUseCase {
 
     pub fn resolve(&self, reference: &ModelRef) -> Result<ModelSelection, SelectionFailure> {
         let snapshot = self.store.current();
+        Self::resolve_in(&snapshot, reference)
+    }
+
+    /// Resolve against a snapshot the caller already holds, so a caller with one
+    /// does not clone the whole catalogue again to ask about it.
+    pub fn resolve_in(
+        snapshot: &CatalogueSnapshot,
+        reference: &ModelRef,
+    ) -> Result<ModelSelection, SelectionFailure> {
         let Some(model) = snapshot.find(reference) else {
             // A configured endpoint routes ids the catalogue cannot enumerate;
             // rejecting them would make explicitly configured providers
