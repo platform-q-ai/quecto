@@ -77,7 +77,11 @@ impl ProviderRouter {
         &self.providers
     }
 
-    fn canonical_catalogue_owner(&self, prefix: &str) -> Option<&str> {
+    /// The catalogue entry owning `prefix`, and whether the catalogue says it can
+    /// run. A prefix the catalogue knows but cannot run must not fall through to
+    /// prefix matching, or a losing case variant would route to the winner's
+    /// provider.
+    fn canonical_catalogue_owner(&self, prefix: &str) -> Option<(&str, bool)> {
         self.model_descriptors
             .iter()
             .find(|descriptor| {
@@ -87,7 +91,12 @@ impl ProviderRouter {
                     .as_str()
                     .eq_ignore_ascii_case(prefix)
             })
-            .map(|descriptor| descriptor.reference.provider().as_str())
+            .map(|descriptor| {
+                (
+                    descriptor.reference.provider().as_str(),
+                    descriptor.availability.runnable(),
+                )
+            })
     }
 
     /// Resolve which provider and effective model to use for a request.
@@ -102,11 +111,26 @@ impl ProviderRouter {
         model: &'b str,
     ) -> Result<(&'a Arc<dyn LlmProvider>, &'b str), DomainError> {
         if let Some((prefix, bare_model)) = parse_qualified_model(model) {
-            if let Some(owner) = self.canonical_catalogue_owner(prefix) {
-                // Exact match on purpose: case-variant prefixes are distinct
-                // catalogue identities, so a losing variant must report itself
+            if let Some((owner, runnable)) = self.canonical_catalogue_owner(prefix) {
+                // A runnable entry routes to its provider even when the two
+                // spellings differ in case (a `models.json` key and a config
+                // endpoint prefix are written independently). An unavailable
+                // entry does not: a losing case variant must report itself
                 // unavailable rather than route to the winner's provider.
-                if let Some(provider) = self.providers.iter().find(|p| p.name() == owner) {
+                let owned = self
+                    .providers
+                    .iter()
+                    .find(|p| p.name() == owner)
+                    .or_else(|| {
+                        runnable
+                            .then(|| {
+                                self.providers
+                                    .iter()
+                                    .find(|p| p.name().eq_ignore_ascii_case(owner))
+                            })
+                            .flatten()
+                    });
+                if let Some(provider) = owned {
                     return Ok((provider, bare_model));
                 }
                 let truncated = truncate_prefix(prefix, MAX_PREFIX_IN_ERROR);

@@ -267,7 +267,7 @@ fn compose_agent_provider(
             continue;
         }
         if !builtin_registry_prefixes.contains(&canonical_prefix) {
-            custom_prefixes.insert(canonical_prefix);
+            custom_prefixes.insert(canonical_prefix.clone());
         }
         if matches!(
             model.api,
@@ -289,6 +289,10 @@ fn compose_agent_provider(
         else {
             continue;
         };
+        // A constructed provider owns its prefix, built-in or not, so a later
+        // endpoint declaring the same prefix is reported as the duplicate it is
+        // rather than producing two providers of one name.
+        custom_prefixes.insert(canonical_prefix);
         provider_list.push(provider);
     }
     for endpoint in &config.providers.openai_compatible.endpoints {

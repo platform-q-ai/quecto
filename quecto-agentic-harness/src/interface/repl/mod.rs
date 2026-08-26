@@ -329,25 +329,8 @@ pub fn run_repl<R: BufRead, W: Write>(
     // 3. Otherwise (non-TTY pipe/redirect), use None (silent).
     let (progress_callback, spinner_handle) = resolve_progress_callback(ctx, is_tty);
 
-    let (model_max_tokens, model_context_window) = ctx
-        .runtime
-        .catalogue
-        .models()
-        .iter()
-        .find(|descriptor| descriptor.qualified_id() == model && descriptor.availability.runnable())
-        .map(|descriptor| {
-            (
-                descriptor
-                    .capabilities
-                    .max_tokens_explicit
-                    .then_some(descriptor.capabilities.max_tokens),
-                descriptor
-                    .capabilities
-                    .context_window_explicit
-                    .then_some(descriptor.capabilities.context_window as usize),
-            )
-        })
-        .unwrap_or((None, None));
+    let (model_max_tokens, model_context_window) =
+        crate::application::catalogue::model_limits_in(&ctx.runtime.catalogue, &model);
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: ctx.runtime.provider.clone(),
         tool_registry: Box::new(registry),

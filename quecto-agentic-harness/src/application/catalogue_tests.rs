@@ -285,21 +285,33 @@ fn an_unknown_id_under_a_routable_provider_is_selectable_without_limits() {
 }
 
 #[test]
-fn a_known_but_unavailable_model_is_still_rejected_under_a_routable_provider() {
+fn availability_is_overridden_only_when_the_runtime_actually_routes_the_prefix() {
     use crate::domain::catalogue::ProviderId;
 
-    let snapshot = CatalogueSnapshot::new(3, vec![descriptor("openai-api", "gpt-5", false)])
-        .with_open_providers(vec![ProviderId::new("openai-api").unwrap()]);
-    let selection = ResolveModelSelectionUseCase::new(CatalogueSnapshotStore::new(snapshot));
+    // A catalogue entry can be marked unavailable per-record (an OAuth entry
+    // with no OAuth credential) while a configured endpoint constructs a
+    // provider for the same prefix. The runtime is the authority on routing, so
+    // the entry stays selectable and keeps its limits.
+    let routed = CatalogueSnapshot::new(3, vec![descriptor("xai", "grok", false)])
+        .with_open_providers(vec![ProviderId::new("xai").unwrap()]);
+    let selection = ResolveModelSelectionUseCase::new(CatalogueSnapshotStore::new(routed));
+    assert!(matches!(
+        selection
+            .resolve(&ModelRef::parse("xai", "grok").unwrap())
+            .unwrap(),
+        ModelSelection::Known(_)
+    ));
 
+    // With no provider constructed for the prefix, the recorded reason stands.
+    let unrouted = CatalogueSnapshot::new(3, vec![descriptor("xai", "grok", false)]);
+    let selection = ResolveModelSelectionUseCase::new(CatalogueSnapshotStore::new(unrouted));
     assert_eq!(
         selection
-            .resolve(&ModelRef::parse("openai-api", "gpt-5").unwrap())
+            .resolve(&ModelRef::parse("xai", "grok").unwrap())
             .unwrap_err(),
         SelectionFailure::Unavailable {
             reasons: vec![UnavailableReason::MissingCredential]
-        },
-        "an enumerated model keeps its recorded unavailability"
+        }
     );
 }
 
@@ -324,5 +336,43 @@ fn a_query_projection_keeps_the_snapshot_open_providers() {
     assert!(
         runnable.accepts_any_model(&ProviderId::new("spark").unwrap()),
         "narrowing the model list must not drop the runtime's routing"
+    );
+}
+
+#[test]
+fn model_limits_follow_one_rule_for_qualified_bare_and_unrunnable_models() {
+    use crate::domain::catalogue::ProviderId;
+
+    let mut explicit = descriptor("fireworks", "glm", true);
+    explicit.capabilities.max_tokens = 512;
+    explicit.capabilities.max_tokens_explicit = true;
+    explicit.capabilities.context_window = 2048;
+    explicit.capabilities.context_window_explicit = true;
+    let unavailable = descriptor("google", "gemini", false);
+
+    let snapshot = CatalogueSnapshot::new(1, vec![explicit, unavailable]);
+
+    assert_eq!(
+        model_limits_in(&snapshot, "fireworks/glm"),
+        (Some(512), Some(2048))
+    );
+    assert_eq!(
+        model_limits_in(&snapshot, "glm"),
+        (Some(512), Some(2048)),
+        "a bare name resolves the same way startup, switching and reload do"
+    );
+    assert_eq!(
+        model_limits_in(&snapshot, "google/gemini"),
+        (None, None),
+        "an entry the runtime cannot serve clamps nothing"
+    );
+    assert_eq!(model_limits_in(&snapshot, "nope/never"), (None, None));
+
+    let routed = CatalogueSnapshot::new(1, vec![descriptor("xai", "grok", false)])
+        .with_open_providers(vec![ProviderId::new("xai").unwrap()]);
+    assert_eq!(
+        model_limits_in(&routed, "xai/grok"),
+        (None, None),
+        "a routed entry without explicit limits still declares none"
     );
 }

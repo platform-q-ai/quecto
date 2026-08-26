@@ -52,10 +52,10 @@ impl App {
         self.ac_mut().sessions.context_stats_requested = false;
     }
 
-    pub(super) fn send_models_refresh(&mut self) {
+    pub(super) fn send_models_refresh(&mut self, provider: Option<String>) {
         self.send_command(Command::RefreshModels {
             id: Some(self.ac().namespaced_id("models-refresh")),
-            provider: None,
+            provider,
         });
     }
 

@@ -190,12 +190,45 @@ impl ResolveModelSelectionUseCase {
             };
         };
         if !model.availability.runnable() {
-            return Err(SelectionFailure::Unavailable {
-                reasons: model.availability.reasons().to_vec(),
-            });
+            // Availability is derived per catalogue entry, but the composed
+            // runtime is the authority on what it can route: a prefix served by
+            // a constructed provider stays selectable, keeping the entry's
+            // metadata (and therefore its limits).
+            if !snapshot.accepts_any_model(reference.provider()) {
+                return Err(SelectionFailure::Unavailable {
+                    reasons: model.availability.reasons().to_vec(),
+                });
+            }
         }
         Ok(ModelSelection::Known(model.clone()))
     }
+}
+
+/// The per-model limits an active model string resolves to in one snapshot:
+/// `(output cap, context window)`, each `None` when not explicitly declared or
+/// when the model does not resolve to a runnable entry. Startup, REPL, model
+/// switching and reload all read limits through this one rule so a session
+/// cannot silently gain or lose a clamp.
+pub fn model_limits_in(snapshot: &CatalogueSnapshot, model: &str) -> (Option<u32>, Option<usize>) {
+    let Ok(reference) = resolve_model_reference(snapshot, model) else {
+        return (None, None);
+    };
+    let Some(descriptor) = snapshot.find(&reference) else {
+        return (None, None);
+    };
+    if !descriptor.availability.runnable() && !snapshot.accepts_any_model(reference.provider()) {
+        return (None, None);
+    }
+    (
+        descriptor
+            .capabilities
+            .max_tokens_explicit
+            .then_some(descriptor.capabilities.max_tokens),
+        descriptor
+            .capabilities
+            .context_window_explicit
+            .then_some(descriptor.capabilities.context_window as usize),
+    )
 }
 
 /// Resolve a user-supplied model string against one snapshot: a qualified

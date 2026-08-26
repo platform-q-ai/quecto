@@ -386,24 +386,8 @@ pub(crate) fn build_agent_from_config(
     // #935/#1044: one registry load supplies the per-model output cap (clamps
     // max_tokens so low-limit models never get a larger value; set_model
     // re-derives on switch) and the known context window (bounds the budget).
-    let (cap, window) = initial_runtime
-        .catalogue
-        .models()
-        .iter()
-        .find(|descriptor| descriptor.qualified_id() == model && descriptor.availability.runnable())
-        .map(|descriptor| {
-            (
-                descriptor
-                    .capabilities
-                    .max_tokens_explicit
-                    .then_some(descriptor.capabilities.max_tokens),
-                descriptor
-                    .capabilities
-                    .context_window_explicit
-                    .then_some(descriptor.capabilities.context_window as usize),
-            )
-        })
-        .unwrap_or((None, None));
+    let (cap, window) =
+        crate::application::catalogue::model_limits_in(&initial_runtime.catalogue, &model);
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: initial_runtime.provider,
         tool_registry: Box::new(registry),

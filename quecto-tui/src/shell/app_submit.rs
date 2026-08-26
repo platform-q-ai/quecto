@@ -122,8 +122,12 @@ impl App {
                     self.handle_effort_command(arg);
                     return;
                 }
-                _ if trimmed == "/models-refresh" => {
-                    self.send_models_refresh();
+                // Matched before `/model` so an argument cannot fall through and
+                // be read as a model name; the argument selects one source.
+                _ if trimmed.starts_with("/models-refresh") => {
+                    let provider = trimmed["/models-refresh".len()..].trim();
+                    let provider = (!provider.is_empty()).then(|| provider.to_string());
+                    self.send_models_refresh(provider);
                     return;
                 }
                 _ if trimmed.starts_with("/model") => {

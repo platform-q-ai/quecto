@@ -170,6 +170,15 @@ impl RefreshableProvider {
 
         let _guard = self.refresh_lock.lock().await;
         if !self.credential_needs_refresh() {
+            // Someone else refreshed while this task waited for the lock. The
+            // stored credential is current, but this provider may still hold the
+            // superseded token, and a stream cannot retry once it is open.
+            if let Some(stored) = self.current_credential().map(|cred| cred.token)
+                && self.inner_token.read().await.as_ref() != Some(&stored)
+            {
+                let new_inner = (self.factory)(&stored);
+                self.install_inner(new_inner, stored).await;
+            }
             return;
         }
 
@@ -319,6 +328,10 @@ impl RefreshableProvider {
         >,
     {
         let inner = self.inner.read().await.clone();
+        // The token this attempt is about to use. On a 401 it distinguishes "the
+        // token I used is stale" from "another task already refreshed while I was
+        // in flight", without reading the credential store on the happy path.
+        let attempted_token = self.inner_token.read().await.clone();
         // Happy path: shallow clone (copies slice pointers + small Option fields,
         // not the underlying message/tool vecs). No credential I/O happens here;
         // the store is only read once a 401 proves the token needs attention.
@@ -344,11 +357,13 @@ impl RefreshableProvider {
                 let refreshed = {
                     let _guard = self.refresh_lock.lock().await;
                     let stored = self.current_credential().map(|cred| cred.token);
-                    let built_from = self.inner_token.read().await.clone();
                     match stored {
                         // Another task refreshed while this request was in
                         // flight: adopt its token instead of refreshing again.
-                        Some(token) if Some(&token) != built_from.as_ref() => Ok(token),
+                        // Compared against the token this attempt used, not the
+                        // provider's current one, which a concurrent refresh may
+                        // already have advanced.
+                        Some(token) if Some(&token) != attempted_token.as_ref() => Ok(token),
                         _ => (self.refresh_fn)(self.store.clone(), &self.credential_provider)
                             .await
                             .inspect(|_| {
