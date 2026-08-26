@@ -90,24 +90,10 @@ fn model_ref_round_trips_existing_string_ids() {
 }
 
 #[test]
-fn transport_and_auth_expose_stable_ids() {
-    assert_eq!(
-        TransportKind::OpenAiCompletions.stable_id(),
-        "openai-completions"
-    );
-    assert_eq!(
-        TransportKind::AnthropicMessages.stable_id(),
-        "anthropic-messages"
-    );
-    assert_eq!(
-        TransportKind::GoogleGenerativeAi.stable_id(),
-        "google-generative-ai"
-    );
-    assert_eq!(AuthIdentity::ApiKey.stable_id(), "apiKey");
+fn auth_identity_exposes_oauth_provider() {
     let oauth = AuthIdentity::OAuth {
         provider: Some(ProviderId::new("anthropic-oauth").unwrap()),
     };
-    assert_eq!(oauth.stable_id(), "oauth");
     assert_eq!(
         oauth.oauth_provider().map(ProviderId::as_str),
         Some("anthropic-oauth")
@@ -116,7 +102,6 @@ fn transport_and_auth_expose_stable_ids() {
     // OAuth without a named credential provider is a visible misconfiguration:
     // still an OAuth identity, with no provider to report.
     let anonymous = AuthIdentity::OAuth { provider: None };
-    assert_eq!(anonymous.stable_id(), "oauth");
     assert!(anonymous.oauth_provider().is_none());
 }
 
@@ -334,14 +319,34 @@ fn resolve_rejects_invalid_entries_without_corrupting_the_rest() {
 
 #[test]
 fn resolve_is_deterministic_and_last_writer_wins_within_a_layer() {
+    // Multiple distinct keys so the assertions below can actually catch an
+    // order-nondeterministic implementation (e.g. draining a HashMap), plus a
+    // duplicate key to exercise last-writer-wins within the layer.
     let layer = vec![
         entry("openai-api", "gpt-5", "First"),
+        entry("anthropic-api", "claude", "Claude"),
+        entry("google-api", "gemini", "Gemini"),
         entry("openai-api", "gpt-5", "Second"),
     ];
     let a = resolve_catalogue(5, vec![(SourceLayer::Generated, layer.clone())]);
     let b = resolve_catalogue(5, vec![(SourceLayer::Generated, layer)]);
     assert_eq!(a, b);
-    assert_eq!(a.snapshot.entries().len(), 1);
+    let qualified: Vec<String> = a
+        .snapshot
+        .entries()
+        .iter()
+        .map(|e| e.reference().qualified_id())
+        .collect();
+    // First-seen positions are preserved deterministically even when a later
+    // duplicate replaces an entry's payload.
+    assert_eq!(
+        qualified,
+        vec![
+            "openai-api/gpt-5".to_string(),
+            "anthropic-api/claude".to_string(),
+            "google-api/gemini".to_string(),
+        ]
+    );
     assert_eq!(
         a.snapshot.entries()[0].model.display_name.as_deref(),
         Some("Second")

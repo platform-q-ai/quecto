@@ -127,16 +127,6 @@ pub enum TransportKind {
     GoogleGenerativeAi,
 }
 
-impl TransportKind {
-    pub fn stable_id(self) -> &'static str {
-        match self {
-            Self::OpenAiCompletions => "openai-completions",
-            Self::AnthropicMessages => "anthropic-messages",
-            Self::GoogleGenerativeAi => "google-generative-ai",
-        }
-    }
-}
-
 /// Authentication identity as a property of provider identity. API-key and
 /// OAuth identities stay distinct even when they share vendor model metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -151,13 +141,6 @@ pub enum AuthIdentity {
 }
 
 impl AuthIdentity {
-    pub fn stable_id(&self) -> &'static str {
-        match self {
-            Self::ApiKey => "apiKey",
-            Self::OAuth { .. } => "oauth",
-        }
-    }
-
     pub fn oauth_provider(&self) -> Option<&ProviderId> {
         match self {
             Self::ApiKey => None,
