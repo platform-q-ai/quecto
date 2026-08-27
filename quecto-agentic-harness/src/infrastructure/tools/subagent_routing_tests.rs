@@ -216,3 +216,39 @@ fn routable_command_mapping_covers_uds_allowlist_and_rejects_mutating_commands()
     assert_eq!(RoutableInspectionCommand::from_uds_type("prompt"), None);
     assert_eq!(RoutableInspectionCommand::from_uds_type("abort"), None);
 }
+
+#[test]
+fn resolve_inspection_route_recovers_from_poisoned_registry() {
+    let reg = new_registry();
+    reg.lock()
+        .unwrap()
+        .insert("child".into(), entry("/tmp/child.sock", Some("parent")));
+    let poison = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = reg.lock().unwrap();
+        panic!("poison registry for coverage test");
+    }));
+    assert!(poison.is_err());
+    assert!(reg.is_poisoned(), "registry mutex must be poisoned");
+
+    assert_eq!(
+        resolve_inspection_route(&reg, "child").unwrap(),
+        InspectionRoute::Direct {
+            socket_path: PathBuf::from("/tmp/child.sock"),
+        },
+        "direct route must still resolve despite the poisoned lock"
+    );
+}
+
+#[test]
+fn rejects_unresolvable_parent_reference_as_missing_or_ambiguous() {
+    let reg = new_registry();
+    let mut child = entry("", Some("vanished-parent"));
+    child.display_name = "child".into();
+    reg.lock().unwrap().insert("child".into(), child);
+
+    let err = resolve_inspection_route(&reg, "child").unwrap_err();
+    assert!(
+        err.contains("its parent 'vanished-parent' is missing or ambiguous"),
+        "unexpected error: {err}"
+    );
+}

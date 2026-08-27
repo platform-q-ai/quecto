@@ -241,6 +241,8 @@ impl App {
             "get_session_stats" if success => {
                 self.handle_session_stats_response(id.as_deref(), data)
             }
+            "refresh_models" if success => self.handle_refresh_models(data),
+            "refresh_models" => self.notify_response_error("Model catalogue refresh failed", error),
             "list_models" if success => self.handle_list_models(data),
             "list_models" => {
                 let was_pending = self.inference.model_registry.open_pending;

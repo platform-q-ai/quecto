@@ -364,10 +364,9 @@ impl AgentSession {
             pending_message_count: self.pending.len(),
             max_context_tokens,
             effort,
-            effort_levels: crate::domain::provider::EffortLevel::levels_for_model(&self.model)
-                .iter()
-                .map(|l| l.as_str().to_string())
-                .collect(),
+            effort_levels: crate::domain::catalogue::ModelCapabilities::effort_vocabulary_for(
+                &self.model,
+            ),
             workflow,
             execution: None,
             sync: 1,

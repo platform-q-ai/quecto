@@ -141,7 +141,7 @@ cargo test --workspace --lib --bins
 cargo clippy --workspace --all-targets --features quecto-agentic-harness/test-support -- -D warnings
 ```
 
-Some crates also have BDD test targets and package-specific quality scripts. Before requesting review, contributors must run at least two complete built-in Quecto adversarial-review workflow loops and include the evidence in the PR description. See [CONTRIBUTIONS.md](CONTRIBUTIONS.md) and the package READMEs for details.
+Some crates also have BDD test targets and package-specific quality scripts. Before asking for PR review, also follow the checklist in [CONTRIBUTIONS.md](CONTRIBUTIONS.md#pull-request-checklist): run the built-in Quecto workflow through at least two complete adversarial-review loops and record the evidence in the PR description. See the package READMEs for package-specific details.
 
 ## Documentation links
 

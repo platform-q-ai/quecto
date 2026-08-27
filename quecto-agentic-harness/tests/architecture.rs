@@ -173,11 +173,44 @@ fn application_has_no_interface_imports() {
 
 #[test]
 fn infrastructure_has_no_application_imports() {
-    assert_no_imports(
-        "infrastructure",
-        Path::new("src/infrastructure"),
-        &["crate::application"],
-    );
+    // Dependency inversion (epic #1193): infrastructure adapters implement
+    // application-defined contracts, so references to `crate::application` are
+    // allowed only through `crate::application::ports`, the module that names
+    // the inward-facing surface. Anything else is a use-case dependency
+    // pointing the wrong way.
+    assert_application_imports_are_ports_only(Path::new("src/infrastructure"));
+}
+
+/// Application references from infrastructure are allowed only through
+/// `crate::application::ports`. See `infrastructure_has_no_application_imports`.
+fn assert_application_imports_are_ports_only(dir: &Path) {
+    let mut files = Vec::new();
+    collect_rs_files(dir, &mut files);
+
+    for file_content in &files {
+        let (file_path, _) = file_content.split_once(":\n").unwrap();
+        for line in file_content.lines().skip(1) {
+            let trimmed = line.trim();
+            // Convention (see assert_no_imports): #[cfg(test)] ends the
+            // production portion of a file.
+            if trimmed == "#[cfg(test)]" {
+                break;
+            }
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if trimmed.contains("crate::application::")
+                && !trimmed.contains("crate::application::ports")
+            {
+                panic!(
+                    "Architecture violation in infrastructure: {file_path}\n\
+                     Line: {trimmed}\n\
+                     Rule: infrastructure may depend on application only via \
+                     crate::application::ports"
+                );
+            }
+        }
+    }
 }
 
 #[test]

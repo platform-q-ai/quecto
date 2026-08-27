@@ -69,6 +69,10 @@ static BUILTIN_COMMANDS: LazyLock<Vec<SlashCommand>> = LazyLock::new(|| {
             description: "Switch model".into(),
         },
         SlashCommand {
+            name: "refresh-models".into(),
+            description: "Refresh the model catalogue from provider listings".into(),
+        },
+        SlashCommand {
             name: "effort".into(),
             description: "Switch reasoning effort".into(),
         },

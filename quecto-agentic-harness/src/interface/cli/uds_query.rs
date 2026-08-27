@@ -143,6 +143,9 @@ pub(super) fn query_response_data_result(
             "tools": ctx.agent.tool_catalogue_entries(),
         })),
         AgentCommand::ListModels { .. } => Some(super::uds_models::list_models_response(ctx)),
+        // RefreshModels is handled earlier in `dispatch_fieldless_command` on
+        // a blocking worker thread: its sequential HTTP must never run inline
+        // on the async dispatch loop (slice-4 review).
         AgentCommand::GetSubagents { since, .. } => Some(
             serde_json::to_value(super::protocol::build_compact_subagent_roster(
                 &ctx.subagent_registry,

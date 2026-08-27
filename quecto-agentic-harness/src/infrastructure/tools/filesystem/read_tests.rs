@@ -579,3 +579,27 @@ fn test_read_description_includes_example() {
         def.description
     );
 }
+
+#[tokio::test]
+async fn test_read_missing_file_returns_tool_error() {
+    let (ws, sb, _tmp) = test_tools();
+    let tool = ReadTool::new(ws, sb);
+    let err = tool
+        .execute(r#"{"path": "does-not-exist.txt"}"#)
+        .await
+        .unwrap_err();
+    let msg = format!("{err}");
+    assert!(msg.contains("read failed"), "unexpected error: {msg}");
+}
+
+#[tokio::test]
+async fn test_read_non_utf8_file_returns_tool_error() {
+    let (ws, sb, tmp) = test_tools();
+    let tool = ReadTool::new(ws, sb);
+    // Not a known image magic, and not valid UTF-8.
+    std::fs::write(tmp.path().join("binary.bin"), [0x00u8, 0xFF, 0xFE, 0x80]).unwrap();
+
+    let err = tool.execute(r#"{"path": "binary.bin"}"#).await.unwrap_err();
+    let msg = format!("{err}");
+    assert!(msg.contains("not valid UTF-8"), "unexpected error: {msg}");
+}

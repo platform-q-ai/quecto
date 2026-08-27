@@ -1,8 +1,6 @@
-use serde::Deserialize;
+use std::path::Path;
 
 use crate::domain::message::claude_sonnet_5_pricing;
-use std::collections::HashMap;
-use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelRegistry {
@@ -294,15 +292,68 @@ impl ModelRegistry {
     }
 
     pub fn load_from_path(path: &Path) -> Result<Self, ModelRegistryError> {
+        Ok(Self::from_file_records(Self::load_file_records(path)?))
+    }
+
+    /// The effective registry (built-in table + the given user-file records),
+    /// built from records already parsed elsewhere so one on-disk read can
+    /// feed both the catalogue resolve and the runtime composition (#1193).
+    pub fn from_file_records(records: Vec<ModelRecord>) -> Self {
         let mut registry = Self::builtin();
+        for record in records {
+            registry.upsert(record);
+        }
+        registry
+    }
+
+    /// Parse only the records `path` itself defines (no built-in table), so
+    /// the catalogue source adapters can feed the user-defined layer
+    /// separately from the built-in layer. A missing file is an empty layer.
+    pub fn load_file_records(path: &Path) -> Result<Vec<ModelRecord>, ModelRegistryError> {
+        Ok(Self::load_registry_config(path)?.records)
+    }
+
+    /// Parse the full user registry file: the model records it defines plus
+    /// the per-provider connection defaults (also for providers that list no
+    /// models). One typed parse is the single truth for `models.json`, so the
+    /// discovery/refresh path and the runtime never re-interpret the file with
+    /// diverging ad-hoc rules (epic #1193 slice-4 review). A missing file is
+    /// an empty configuration.
+    pub fn load_registry_config(path: &Path) -> Result<RegistryConfig, ModelRegistryError> {
+        let mut records = Vec::new();
+        let mut provider_defaults = Vec::new();
         if !path.exists() {
-            return Ok(registry);
+            return Ok(RegistryConfig::default());
         }
         let content = std::fs::read_to_string(path).map_err(ModelRegistryError::Io)?;
         let file: RegistryFile =
             serde_json::from_str(&content).map_err(ModelRegistryError::Parse)?;
-        for (provider_key, provider) in file.providers {
-            let api = ProviderApi::parse(provider.api.as_deref().unwrap_or("openai-completions"))?;
+        // Deterministic provider order regardless of the map's iteration.
+        let mut providers: Vec<_> = file.providers.into_iter().collect();
+        providers.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut unsupported = Vec::new();
+        let mut skipped = Vec::new();
+        for (provider_key, provider) in providers {
+            let declared_api = provider.api.as_deref().unwrap_or("openai-completions");
+            let api = match ProviderApi::parse(declared_api) {
+                Ok(api) => api,
+                // A transport this build has no adapter for must not fail the
+                // whole file: the provider's models stay known-but-unrunnable
+                // catalogue entries with a structured reason (#1575, AC3).
+                Err(ModelRegistryError::UnknownApi(declared)) => {
+                    unsupported.push(UnsupportedProviderConfig {
+                        provider: provider_key,
+                        declared_transport: declared,
+                        models: provider
+                            .models
+                            .into_iter()
+                            .map(|m| (m.id, m.name))
+                            .collect(),
+                    });
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
 
             // Resolve the auth mode. An explicit `auth` block wins; otherwise we
             // default to ApiKey (the historical behaviour). The block's apiKey
@@ -318,8 +369,19 @@ impl ModelRegistry {
                             block.api_key.map(|v| resolve_registry_value(&v, env)),
                         ),
                         "oauth" => (AuthMode::OAuth, block.oauth_provider, None),
+                        // An unknown auth mode must not fail the whole file
+                        // (the same per-block degradation AC3 gives an
+                        // unknown `api`): this provider's models are skipped
+                        // with a diagnostic and the other blocks still load
+                        // (#1581 review).
                         other => {
-                            return Err(ModelRegistryError::UnknownAuthMode(other.to_string()));
+                            skipped.push(SkippedProviderBlock {
+                                provider: provider_key.clone(),
+                                error: format!(
+                                    "provider '{provider_key}' declares unknown auth mode '{other}' (supported: apiKey, oauth); its models were skipped"
+                                ),
+                            });
+                            continue;
                         }
                     }
                 }
@@ -331,6 +393,15 @@ impl ModelRegistry {
                 block_api_key.or_else(|| provider.api_key.map(|v| resolve_registry_value(&v, env)));
             let auth_header = provider.auth_header.unwrap_or(true);
             let allow_remote_http = provider.allow_remote_http.unwrap_or(false);
+            let defaults = ProviderDefaults {
+                api,
+                auth,
+                oauth_provider: oauth_provider.clone(),
+                base_url: base_url.clone(),
+                api_key: api_key.clone(),
+                auth_header,
+                allow_remote_http,
+            };
             for model in provider.models {
                 let mut record = ModelRecord::with_defaults(
                     &provider_key,
@@ -366,10 +437,33 @@ impl ModelRegistry {
                         cache_write: cost.cache_write.or(cost.cache_write_camel).unwrap_or(0.0),
                     };
                 }
-                registry.upsert(record);
+                records.push(record);
             }
+            provider_defaults.push((provider_key, defaults));
         }
-        Ok(registry)
+        let mut overrides: Vec<(String, ModelOverride)> = file
+            .overrides
+            .into_iter()
+            .map(|(qualified, patch)| {
+                (
+                    qualified,
+                    ModelOverride {
+                        name: patch.name,
+                        context_window: patch.context_window,
+                        max_tokens: patch.max_tokens,
+                        api_key: patch.api_key,
+                    },
+                )
+            })
+            .collect();
+        overrides.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(RegistryConfig {
+            records,
+            providers: provider_defaults,
+            overrides,
+            unsupported,
+            skipped,
+        })
     }
 
     pub fn find(&self, provider: &str, id: &str) -> Option<&ModelRecord> {
@@ -394,23 +488,6 @@ impl ModelRegistry {
         self.find(provider, id)
             .filter(|m| m.max_tokens_explicit)
             .map(|m| m.max_tokens)
-    }
-
-    /// Load the registry from `<base_dir>/models.json` **once** (falling back
-    /// to the built-in registry on any error) and return both per-model
-    /// limits: `(output cap, context window)` (#935/#1044). This is the single
-    /// per-model-limits accessor — the former single-value wrappers were
-    /// folded away (PR #1048) once they had no production consumers.
-    pub fn model_limits_from_base_dir(
-        base_dir: &Path,
-        qualified: &str,
-    ) -> (Option<u32>, Option<usize>) {
-        let registry =
-            Self::load_from_path(&base_dir.join("models.json")).unwrap_or_else(|_| Self::builtin());
-        (
-            registry.max_tokens_for(qualified),
-            registry.context_window_for(qualified),
-        )
     }
 
     /// The known context window for a `provider/id` qualified model string
@@ -450,8 +527,8 @@ impl ModelRecord {
             auth_header: true,
             allow_remote_http: false,
             input: vec!["text".to_string()],
-            context_window: 128_000,
-            max_tokens: 16_384,
+            context_window: DEFAULT_CONTEXT_WINDOW,
+            max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
             max_tokens_explicit: false,
             context_window_explicit: false,
             cost: ModelCost::default(),
@@ -464,6 +541,95 @@ impl ModelRecord {
     pub fn qualified_id(&self) -> String {
         format!("{}/{}", self.provider, self.id)
     }
+}
+
+/// Per-provider connection defaults parsed from the user registry file,
+/// available also for providers that list no models. The single typed parse
+/// feeding these is shared with the record loading, so every consumer of
+/// `models.json` (runtime, catalogue, discovery/refresh) sees one semantics.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProviderDefaults {
+    pub api: ProviderApi,
+    pub auth: AuthMode,
+    pub oauth_provider: Option<String>,
+    pub base_url: Option<String>,
+    /// The resolved key value (env interpolation applied). Secret material —
+    /// never render it.
+    pub api_key: Option<String>,
+    pub auth_header: bool,
+    pub allow_remote_http: bool,
+}
+
+impl ProviderDefaults {
+    /// Synthesize a full model record for a model discovered under this
+    /// provider (catalogue refresh, epic #1193 slice 4): connection and auth
+    /// come from the provider's configuration; listing metadata uses the
+    /// registry's synthesized defaults, exactly like a models.json entry that
+    /// declares only an id.
+    pub fn record_for(&self, provider_key: &str, id: &str, name: Option<&str>) -> ModelRecord {
+        let mut record = ModelRecord::with_defaults(provider_key, id, name, self.api);
+        record.base_url = self.base_url.clone();
+        record.api_key = self.api_key.clone();
+        record.auth_header = self.auth_header;
+        record.allow_remote_http = self.allow_remote_http;
+        record.auth = self.auth;
+        record.oauth_provider = self.oauth_provider.clone();
+        record
+    }
+}
+
+/// Synthesized capability defaults for an entry that declares only an id:
+/// the single truth shared by `ModelRecord::with_defaults`, the discovery
+/// cache mapping, and unsupported-transport entries, so the layers can never
+/// drift apart (#1581 review). Marked non-explicit downstream, so nothing
+/// clamps on these values.
+pub(crate) const DEFAULT_CONTEXT_WINDOW: u32 = 128_000;
+pub(crate) const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 16_384;
+
+/// The full parsed user registry file: model records plus per-provider
+/// defaults, in deterministic (sorted) provider order.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RegistryConfig {
+    pub records: Vec<ModelRecord>,
+    pub providers: Vec<(String, ProviderDefaults)>,
+    /// Stable-ID metadata overrides from the file's `overrides` section, in
+    /// deterministic (sorted) qualified-id order (#1575, AC1).
+    pub overrides: Vec<(String, ModelOverride)>,
+    /// Providers whose declared transport has no adapter in this build: their
+    /// models become known-but-unrunnable catalogue entries instead of
+    /// erasing the file (#1575, AC3).
+    pub unsupported: Vec<UnsupportedProviderConfig>,
+    /// Provider blocks skipped with a diagnostic (e.g. an unknown auth mode)
+    /// so one bad block never erases the file's valid neighbours.
+    pub skipped: Vec<SkippedProviderBlock>,
+}
+
+/// One provider block `load_registry_config` skipped, with the reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedProviderBlock {
+    pub provider: String,
+    pub error: String,
+}
+
+/// One stable-ID metadata override (`overrides` section of `models.json`):
+/// only the declared fields replace the base entry's metadata. `api_key` is a
+/// credential *reference* (`$ENV`); the catalogue layer rejects literals.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ModelOverride {
+    pub name: Option<String>,
+    pub context_window: Option<u32>,
+    pub max_tokens: Option<u32>,
+    pub api_key: Option<String>,
+}
+
+/// A provider block whose declared transport this build cannot run, kept so
+/// the catalogue can list its models as known with a structured reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsupportedProviderConfig {
+    pub provider: String,
+    pub declared_transport: String,
+    /// `(model id, display name)` pairs the block listed.
+    pub models: Vec<(String, Option<String>)>,
 }
 
 pub fn resolve_registry_value<F>(value: &str, env: F) -> String
@@ -509,82 +675,9 @@ where
     out
 }
 
-#[derive(Deserialize)]
-struct RegistryFile {
-    #[serde(default)]
-    providers: HashMap<String, RegistryProvider>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RegistryProvider {
-    #[serde(default)]
-    base_url: Option<String>,
-    #[serde(default)]
-    api_base: Option<String>,
-    #[serde(default)]
-    api_key: Option<String>,
-    #[serde(default)]
-    api: Option<String>,
-    #[serde(default)]
-    auth_header: Option<bool>,
-    #[serde(default)]
-    allow_remote_http: Option<bool>,
-    #[serde(default)]
-    auth: Option<RegistryAuth>,
-    #[serde(default)]
-    models: Vec<RegistryModel>,
-}
-
-/// Explicit auth declaration for a registry provider.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RegistryAuth {
-    /// "apiKey" (default) or "oauth".
-    #[serde(default)]
-    mode: Option<String>,
-    /// For `apiKey` mode: the key (supports `$ENV` interpolation).
-    #[serde(default)]
-    api_key: Option<String>,
-    /// For `oauth` mode: the kernel OAuth provider identity to resolve against.
-    #[serde(default)]
-    oauth_provider: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RegistryModel {
-    id: String,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    reasoning: Option<bool>,
-    #[serde(default)]
-    input: Option<Vec<String>>,
-    #[serde(default)]
-    context_window: Option<u32>,
-    #[serde(default)]
-    max_tokens: Option<u32>,
-    #[serde(default)]
-    cost: Option<RegistryCost>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RegistryCost {
-    #[serde(default)]
-    input: Option<f64>,
-    #[serde(default)]
-    output: Option<f64>,
-    #[serde(default, rename = "cacheRead")]
-    cache_read_camel: Option<f64>,
-    #[serde(default, rename = "cacheWrite")]
-    cache_write_camel: Option<f64>,
-    #[serde(default, rename = "cache_read")]
-    cache_read: Option<f64>,
-    #[serde(default, rename = "cache_write")]
-    cache_write: Option<f64>,
-}
+#[path = "model_registry_file.rs"]
+mod file_format;
+use file_format::RegistryFile;
 
 #[path = "model_registry_gpt56_pricing.rs"]
 mod gpt56_pricing;

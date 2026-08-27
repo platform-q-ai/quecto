@@ -128,6 +128,25 @@ pub(super) async fn dispatch_fieldless_command(
         .await;
         return Some(false);
     }
+    // Catalogue refresh performs (sequential, bounded) blocking HTTP; running
+    // it inline would freeze every other UDS command for the whole run, so it
+    // executes on a dedicated blocking worker thread while the dispatch loop
+    // stays responsive (slice-4 review). `reqwest::blocking` is also only
+    // safe off the async runtime's core threads.
+    if let AgentCommand::RefreshModels { source, .. } = cmd {
+        let base_dir = ctx.base_dir.to_path_buf();
+        let source = source.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            super::super::uds_models::refresh_models_data(&base_dir, source.as_deref())
+        })
+        .await;
+        let event = match result {
+            Ok(data) => AgentEvent::ok(id, tn, Some(data)),
+            Err(join_err) => AgentEvent::err(id, tn, format!("refresh task failed: {join_err}")),
+        };
+        emit_response_or_frame_limit_error(ctx, id, tn, event).await;
+        return Some(false);
+    }
     match query_response_data_result(cmd, ctx) {
         Ok(Some(data)) => {
             emit_response_or_frame_limit_error(ctx, id, tn, AgentEvent::ok(id, tn, Some(data)))

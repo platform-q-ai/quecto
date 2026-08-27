@@ -37,7 +37,10 @@ fn registry_loads_pi_shaped_models_json_with_defaults() {
 }
 
 #[test]
-fn registry_rejects_unknown_wire_protocols() {
+fn registry_keeps_unknown_wire_protocols_as_unsupported_blocks() {
+    // #1575 (AC3): a transport this build has no adapter for must not fail
+    // the whole file — the block is kept as known-but-unrunnable data and
+    // produces no runtime records.
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("models.json");
     std::fs::write(
@@ -46,10 +49,17 @@ fn registry_rejects_unknown_wire_protocols() {
     )
     .unwrap();
 
-    let err = ModelRegistry::load_from_path(&path)
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("unknown api 'cohere-chat'"), "{err}");
+    let config = ModelRegistry::load_registry_config(&path).unwrap();
+    assert!(
+        config.records.is_empty(),
+        "no runtime record for an unrunnable transport"
+    );
+    assert!(config.providers.is_empty());
+    assert_eq!(config.unsupported.len(), 1);
+    let block = &config.unsupported[0];
+    assert_eq!(block.provider, "x");
+    assert_eq!(block.declared_transport, "cohere-chat");
+    assert_eq!(block.models, vec![("m".to_string(), None)]);
 }
 
 #[test]
@@ -435,19 +445,42 @@ fn registry_parses_explicit_api_key_auth_block() {
 }
 
 #[test]
-fn registry_rejects_unknown_auth_mode() {
+fn registry_skips_a_provider_block_with_an_unknown_auth_mode() {
+    // An unknown auth mode degrades that provider block alone (with a
+    // diagnostic) instead of failing the whole file — the same per-block
+    // isolation an unknown `api` gets (#1581 review).
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("models.json");
     std::fs::write(
         &path,
-        r#"{"providers":{"x":{"api":"openai-completions","auth":{"mode":"vault"},"models":[{"id":"m"}]}}}"#,
+        r#"{"providers":{
+            "x":{"api":"openai-completions","auth":{"mode":"vault"},"models":[{"id":"m"}]},
+            "y":{"api":"openai-completions","models":[{"id":"ok-model"}]}
+        }}"#,
     )
     .unwrap();
 
-    let err = ModelRegistry::load_from_path(&path)
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("unknown auth mode 'vault'"), "{err}");
+    let config = ModelRegistry::load_registry_config(&path).unwrap();
+    assert!(
+        config
+            .records
+            .iter()
+            .any(|r| r.provider == "y" && r.id == "ok-model"),
+        "the valid sibling block must still load"
+    );
+    assert!(
+        !config.records.iter().any(|r| r.provider == "x"),
+        "the bad block's models must not load"
+    );
+    assert_eq!(config.skipped.len(), 1);
+    assert_eq!(config.skipped[0].provider, "x");
+    assert!(
+        config.skipped[0]
+            .error
+            .contains("unknown auth mode 'vault'"),
+        "{}",
+        config.skipped[0].error
+    );
 }
 
 #[serial_test::serial]
@@ -535,32 +568,12 @@ fn max_tokens_for_returns_none_when_model_omits_max_tokens() {
 }
 
 #[test]
-fn model_record_qualified_id_and_registry_fallback_limits_are_covered() {
+fn model_record_qualified_id_is_covered() {
     let registry = ModelRegistry::builtin();
     let model = registry
         .find("anthropic-api", "claude-sonnet-5")
         .expect("builtin model");
     assert_eq!(model.qualified_id(), "anthropic-api/claude-sonnet-5");
-
-    let tmp = tempfile::tempdir().unwrap();
-    let (cap, window) = ModelRegistry::model_limits_from_base_dir(tmp.path(), "not-qualified");
-    assert_eq!(cap, None);
-    assert_eq!(window, None);
-}
-
-#[test]
-fn model_limits_from_base_dir_reads_output_cap_from_models_json() {
-    let tmp = tempfile::tempdir().unwrap();
-    std::fs::write(
-        tmp.path().join("models.json"),
-        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","apiKey":"k","models":[{"id":"qwen3p7-plus","maxTokens":65536}]}}}"#,
-    )
-    .unwrap();
-
-    let (cap, window) =
-        ModelRegistry::model_limits_from_base_dir(tmp.path(), "fireworks/qwen3p7-plus");
-    assert_eq!(cap, Some(65_536));
-    assert_eq!(window, None, "no declared window must not clamp");
 }
 
 // --- #1044: known context windows for the window-aware budget ---
@@ -583,26 +596,6 @@ fn context_window_for_returns_declared_windows_only() {
     // Unknown models and non-qualified ids are unknown.
     assert_eq!(registry.context_window_for("nope/never-heard-of-it"), None);
     assert_eq!(registry.context_window_for("not-qualified"), None);
-}
-
-#[test]
-fn model_limits_from_base_dir_reads_context_window_from_models_json() {
-    let tmp = tempfile::tempdir().unwrap();
-    std::fs::write(
-        tmp.path().join("models.json"),
-        r#"{"providers":{"fireworks":{"api":"openai-completions","baseUrl":"https://e.example/v1","apiKey":"k","models":[{"id":"small-window","contextWindow":32768},{"id":"no-window"}]}}}"#,
-    )
-    .unwrap();
-
-    assert_eq!(
-        ModelRegistry::model_limits_from_base_dir(tmp.path(), "fireworks/small-window").1,
-        Some(32_768)
-    );
-    assert_eq!(
-        ModelRegistry::model_limits_from_base_dir(tmp.path(), "fireworks/no-window").1,
-        None,
-        "a listed model without a declared window must not clamp"
-    );
 }
 
 // --- xAI (Grok) builtin models (PR #1087) ---

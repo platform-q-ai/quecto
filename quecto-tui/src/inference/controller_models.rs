@@ -121,3 +121,47 @@ mod app_models_protocol_characterization_tests;
 #[cfg(test)]
 #[path = "app_models_tests.rs"]
 mod tests;
+
+impl App {
+    /// Ask the harness to refresh the refreshable catalogue sources through
+    /// the one application refresh use case (epic #1193, slice 4). The TUI
+    /// performs no discovery and keeps no parallel model list: it only
+    /// renders the per-source outcomes the harness reports.
+    pub(super) fn send_refresh_models(&mut self) {
+        self.notify("Refreshing model catalogue…", NotifyLevel::Info);
+        self.send_command(Command::RefreshModels {
+            id: Some(self.ac().namespaced_id("refresh-models")),
+            source: None,
+        });
+    }
+
+    /// Render a `refresh_models` response: one line per source outcome, at
+    /// warning level when any source did not succeed.
+    pub(super) fn handle_refresh_models(&mut self, data: Option<serde_json::Value>) {
+        let lines = data
+            .as_ref()
+            .map(|d| {
+                crate::protocol::model_payloads::parse_refresh_outcomes(
+                    d,
+                    &crate::components::ansi::sanitize_control,
+                )
+            })
+            .unwrap_or_default();
+        if lines.summaries.is_empty() {
+            self.notify(
+                "Nothing to refresh: no refreshable catalogue sources are configured",
+                NotifyLevel::Info,
+            );
+            return;
+        }
+        let level = if lines.any_unsuccessful {
+            NotifyLevel::Warning
+        } else {
+            NotifyLevel::Info
+        };
+        self.notify(
+            &format!("Model catalogue refresh: {}", lines.summaries.join("; ")),
+            level,
+        );
+    }
+}

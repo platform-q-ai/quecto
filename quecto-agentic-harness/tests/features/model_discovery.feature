@@ -1,22 +1,22 @@
 Feature: Runtime model discovery
   As a Quecto user
-  I want provider catalogs to update my runtime model registry
-  So that changing OpenAI-compatible model lists are available without kernel-side discovery
+  I want provider catalogs to refresh into the discovered-layer cache
+  So that changing OpenAI-compatible model lists reach the effective catalogue without rewriting my models.json
 
   @done
-  Scenario: Discovery updates only the selected provider catalog
+  Scenario: Discovery caches only the selected provider's models
     Given provider "openrouter" has auth, custom settings, and an old model
     And provider "anthropic-api" has its own auth and models
     And the OpenAI-compatible catalog for "openrouter" returns models "alpha" and "beta"
     When I discover models for provider "openrouter"
-    Then the "openrouter" catalog should contain models "alpha" and "beta"
-    And the "openrouter" auth and custom settings should be unchanged
-    And the "anthropic-api" provider should be unchanged
+    Then the "openrouter" discovery cache should contain models "alpha" and "beta"
+    And the user-owned models registry should be unchanged by discovery
+    And no discovery cache should exist for provider "anthropic-api"
 
   @done
-  Scenario: Discovery publishes a complete registry atomically
+  Scenario: Discovery publishes a complete cache atomically
     Given provider "local-openai" has an empty model catalog
     And the OpenAI-compatible catalog for "local-openai" returns model "local"
     When I discover models for provider "local-openai"
-    Then the models registry should remain valid JSON
+    Then the "local-openai" discovery cache should be valid JSON
     And no discovery temporary file should remain

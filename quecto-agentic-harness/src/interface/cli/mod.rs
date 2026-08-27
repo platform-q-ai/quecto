@@ -136,7 +136,7 @@ mod uds_execution_state_tests;
 mod uds_ext_protocol;
 mod uds_extensions;
 mod uds_lifecycle;
-mod uds_models;
+pub mod uds_models;
 mod uds_multi;
 mod uds_multi_accept;
 mod uds_query;

@@ -1,6 +1,5 @@
 use super::AgentEvent;
 use super::{DispatchCtx, emit_event_to_broadcast_or_writer};
-use crate::infrastructure::model_registry::ModelRegistry;
 
 pub(super) struct SetModelArgs {
     pub(super) id: Option<String>,
@@ -44,7 +43,14 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
     // model switch re-clamps subsequent turns and the pruning budget; one
     // registry load feeds both, and set_model takes them atomically so model,
     // cap, and window can never diverge.
-    let (cap, window) = ModelRegistry::model_limits_from_base_dir(ctx.base_dir, &resolved_model);
+    let (cap, window) =
+        crate::interface::catalogue_runtime::published_model_limits(ctx.base_dir, &resolved_model);
+    // #1573: surface the catalogue's structured selection outcome for the
+    // requested model through the UDS response. The switch itself proceeds
+    // regardless (open router prefixes accept ids the catalogue cannot
+    // enumerate), so runtime behaviour is unchanged — the payload only adds
+    // the application-layer selection verdict for this generation.
+    let selection = selection_status(ctx.base_dir, &resolved_model);
     ctx.agent.set_model(resolved_model.clone(), cap, window);
     ctx.session.set_model(resolved_model);
     // Every model switch resets the session effort to `low` (#1067): a level
@@ -58,9 +64,55 @@ pub(super) async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'
         ctx.session.bump_visible_generation();
     }
     tracing::debug!(new_model = %ctx.session.model(), "UDS: model switched; effort reset to low");
-    let ev = AgentEvent::ok(args.id.as_deref(), &args.type_name, None);
+    let ev = AgentEvent::ok(
+        args.id.as_deref(),
+        &args.type_name,
+        selection.map(|selection| serde_json::json!({ "selection": selection })),
+    );
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
+}
+
+/// The structured selection outcome for one qualified model reference against
+/// the published runtime generation for `base_dir` — the application
+/// selection use case's verdict rendered for the UDS wire. `None` before any
+/// runtime has been composed (legacy sessions and tests without a composed
+/// runtime keep the legacy response shape).
+pub(super) fn selection_status(
+    base_dir: &std::path::Path,
+    qualified: &str,
+) -> Option<serde_json::Value> {
+    use crate::application::provider_runtime::SelectionError;
+    use crate::domain::catalogue::UnavailableReason;
+
+    match crate::interface::catalogue_runtime::select_model(base_dir, qualified) {
+        Ok(selection) => Some(serde_json::json!({
+            "status": "ok",
+            "provider": selection.entry.provider.id.as_str(),
+            "generation": selection.generation,
+        })),
+        Err(SelectionError::NoRuntime) => None,
+        Err(SelectionError::UnknownModel { reference }) => Some(serde_json::json!({
+            "status": "unknown_model",
+            "model": reference,
+        })),
+        Err(SelectionError::NotRunnable { reference, reasons }) => Some(serde_json::json!({
+            "status": "not_runnable",
+            "model": reference.qualified_id(),
+            "reasons": reasons
+                .iter()
+                .map(|reason| match reason {
+                    UnavailableReason::MissingCredential => "missing-credential".to_string(),
+                    UnavailableReason::UnsupportedTransport { transport } =>
+                        format!("unsupported-transport: {}", transport.stable_id()),
+                    UnavailableReason::InvalidConfiguration(detail) =>
+                        format!("invalid-configuration: {detail}"),
+                    UnavailableReason::PolicyDenied(detail) =>
+                        format!("policy-denied: {detail}"),
+                })
+                .collect::<Vec<_>>(),
+        })),
+    }
 }
 
 /// Switch the session's reasoning effort at runtime (#1067).
@@ -76,10 +128,11 @@ pub(super) async fn handle_set_effort(
     type_name: &str,
     effort: &str,
 ) -> bool {
-    use crate::domain::provider::EffortLevel;
-    let valid = EffortLevel::levels_for_model(ctx.session.model());
-    let ev = match EffortLevel::parse(effort).filter(|level| valid.contains(level)) {
-        Some(level) => {
+    let ev = match crate::domain::catalogue::ModelCapabilities::parse_effort_for(
+        ctx.session.model(),
+        effort,
+    ) {
+        Ok(level) => {
             if ctx.agent.effort() != Some(level) {
                 ctx.agent.set_effort(level);
                 ctx.session.bump_visible_generation();
@@ -91,15 +144,12 @@ pub(super) async fn handle_set_effort(
                 Some(serde_json::json!({ "effort": level.as_str() })),
             )
         }
-        None => AgentEvent::err(
-            id,
-            type_name,
-            format!(
-                "invalid effort level \"{effort}\"; valid levels: {}",
-                EffortLevel::levels_list(valid)
-            ),
-        ),
+        Err(message) => AgentEvent::err(id, type_name, message),
     };
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
 }
+
+#[cfg(test)]
+#[path = "uds_dispatch_runtime_tests.rs"]
+mod selection_status_tests;

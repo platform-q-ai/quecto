@@ -1,4 +1,6 @@
 use super::*;
+#[path = "subagent_registry_cov_tests.rs"]
+mod cov_tests;
 
 #[test]
 fn exit_signal_kind_wire_strings_cover_all_variants() {

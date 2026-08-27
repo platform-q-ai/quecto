@@ -90,6 +90,79 @@ fn parse_model_list_entry(
     Some(ModelListEntry { id, provider, auth })
 }
 
+/// The rendered view of a `refresh_models` response: one human-readable
+/// summary per source outcome, plus whether any outcome was unsuccessful.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct RefreshOutcomeLines {
+    pub summaries: Vec<String>,
+    pub any_unsuccessful: bool,
+}
+
+/// One per-source outcome as the harness reports it on the wire.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct RefreshOutcomeDto {
+    source: Option<String>,
+    status: Option<String>,
+    models: Option<u64>,
+    reason: Option<String>,
+}
+
+/// The typed `refresh_models` payload.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct RefreshPayloadDto {
+    outcomes: Vec<RefreshOutcomeDto>,
+}
+
+/// Map a `refresh_models` payload into per-source summary lines. Unknown or
+/// malformed outcome entries are skipped; all rendered text is sanitized at
+/// this protocol boundary like the model-list mapper (#1220).
+pub fn parse_refresh_outcomes(
+    data: &serde_json::Value,
+    sanitize: &dyn Fn(&str) -> String,
+) -> RefreshOutcomeLines {
+    use serde::Deserialize as _;
+    let payload = RefreshPayloadDto::deserialize(data).unwrap_or_default();
+    let mut lines = RefreshOutcomeLines::default();
+    for outcome in payload.outcomes {
+        let Some(source) = outcome.source.as_deref() else {
+            continue;
+        };
+        let source = sanitize(source);
+        let reason = outcome
+            .reason
+            .as_deref()
+            .map(sanitize)
+            .filter(|s| !s.is_empty());
+        let summary = match outcome.status.as_deref().unwrap_or_default() {
+            "updated" => format!("{source}: {} model(s)", outcome.models.unwrap_or(0)),
+            "unchanged" => format!("{source}: unchanged"),
+            "unsupported" => {
+                lines.any_unsuccessful = true;
+                match &reason {
+                    Some(reason) => format!("{source}: not refreshable ({reason})"),
+                    None => format!("{source}: not refreshable"),
+                }
+            }
+            "failed" => {
+                lines.any_unsuccessful = true;
+                match &reason {
+                    Some(reason) => format!("{source}: failed ({reason})"),
+                    None => format!("{source}: failed"),
+                }
+            }
+            "cancelled" => {
+                lines.any_unsuccessful = true;
+                format!("{source}: cancelled")
+            }
+            _ => continue,
+        };
+        lines.summaries.push(summary);
+    }
+    lines
+}
+
 #[cfg(test)]
 #[path = "model_payloads_tests.rs"]
 mod tests;

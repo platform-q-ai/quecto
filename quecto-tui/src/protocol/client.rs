@@ -119,6 +119,12 @@ pub enum Command {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    RefreshModels {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+    },
     ListSessions {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -409,6 +415,7 @@ impl Command {
             Self::GetToolCatalogue { .. } => "get_tool_catalogue",
             Self::SetToolPolicy { .. } => "set_tool_policy",
             Self::ListModels { .. } => "list_models",
+            Self::RefreshModels { .. } => "refresh_models",
             Self::ListSessions { .. } => "list_sessions",
             Self::NewSession { .. } => "new_session",
             Self::ResumeSession { .. } => "resume_session",
@@ -695,23 +702,6 @@ impl Client {
     pub async fn recv(&mut self) -> Option<Event> {
         self.event_rx.recv().await
     }
-    /// Try to receive an event without blocking (tests only).
-    #[cfg(test)]
-    pub fn try_recv(&mut self) -> Option<Event> {
-        self.event_rx.try_recv().ok()
-    }
-    #[cfg(any(test, feature = "test-harness"))]
-    pub fn disconnected_for_tests() -> Self {
-        let (cmd_tx, cmd_rx) = mpsc::channel::<String>(1);
-        drop(cmd_rx);
-        let (_event_tx, event_rx) = mpsc::channel::<Event>(1);
-        Self {
-            cmd_tx,
-            event_rx,
-            dropped_oversized: Default::default(),
-            speaks_frames: true,
-        }
-    }
 }
 #[cfg(test)]
 #[path = "client_1060_tests.rs"]
@@ -739,6 +729,9 @@ mod client_policy_tests;
 #[cfg(test)]
 #[path = "client_sync_tests.rs"]
 mod client_sync_tests;
+#[cfg(any(test, feature = "test-harness"))]
+#[path = "client_test_api.rs"]
+mod client_test_api;
 #[cfg(test)]
 #[path = "client_workspace_tests.rs"]
 mod client_workspace_tests;

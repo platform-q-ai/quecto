@@ -4,6 +4,10 @@ Quecto is a Rust workspace centred on a lightweight personal AI assistant. The m
 
 The workspace also includes companion binaries for terminal UI access (`quecto-tui`), HTTP/WebSocket gateway access (`quecto-api`), MCP tool bridging (`quecto-mcp`), and managed runtime orchestration (`quecto-runtime-manager`). Quecto runs on a VPS, small Linux host, or container with no non-Rust application runtime.
 
+## Release Notes
+
+Current version: **0.106.3**.
+
 ## Quick Start
 
 ```bash
