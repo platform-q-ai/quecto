@@ -55,7 +55,7 @@ pub(crate) fn status_colored_name(status: &str, name: &str) -> String {
         // #1461 persisted-roster liveness: dead reads as an error state,
         // detached dims like exited so it can't pass for a live agent.
         "error" | "errored" | "dead" => theme::red(name),
-        "exited" | "detached" => theme::dim(name),
+        "exited" | "detached" | "historical" => theme::dim(name),
         _ => name.to_string(),
     }
 }

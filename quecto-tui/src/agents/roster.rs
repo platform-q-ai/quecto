@@ -48,6 +48,13 @@ pub(crate) fn subagent_status_is_terminal(status: &str) -> bool {
     matches!(status, "dead" | "exited")
 }
 
+/// Whether a subagent status represents durable historical context rather than
+/// a freshly observed terminal transition. Historical rows are visible and
+/// non-live, but are not subject to the short exited-row GC grace window.
+pub(crate) fn subagent_status_is_historical(status: &str) -> bool {
+    status == "historical"
+}
+
 pub(crate) fn next_exited_subagent_gc_deadline<I: RosterInfo>(
     map: &BTreeMap<String, TrackedSubagent<I>>,
     grace: Duration,
@@ -133,15 +140,20 @@ pub(crate) fn gc_exited_subagents<I: RosterInfo>(
         return false;
     }
     let mut removed = false;
-    map.retain(|_, entry| match entry.exited_at {
-        Some(exited_at) => {
-            let keep = now.saturating_duration_since(exited_at) < grace;
-            if !keep {
-                removed = true;
-            }
-            keep
+    map.retain(|_, entry| {
+        if subagent_status_is_historical(entry.info.status()) {
+            return true;
         }
-        None => true,
+        match entry.exited_at {
+            Some(exited_at) => {
+                let keep = now.saturating_duration_since(exited_at) < grace;
+                if !keep {
+                    removed = true;
+                }
+                keep
+            }
+            None => true,
+        }
     });
     removed
 }

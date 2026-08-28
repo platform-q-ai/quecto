@@ -195,10 +195,15 @@ fn compact_roster_includes_dead_and_exited_subagents_retained_in_registry() {
     assert_eq!(
         rows.subagents
             .iter()
-            .map(|row| row.agent_id.as_str())
+            .map(|row| (row.agent_id.as_str(), row.status.as_str()))
             .collect::<Vec<_>>(),
-        vec!["dead", "detached", "exited", "live"],
-        "compact roster must expose retained historical subagents"
+        vec![
+            ("dead", "historical"),
+            ("detached", "historical"),
+            ("exited", "historical"),
+            ("live", "idle"),
+        ],
+        "compact roster must expose retained historical subagents distinctly from transient terminal rows"
     );
 }
 
@@ -232,10 +237,14 @@ fn compact_roster_delta_includes_changed_dead_and_exited_subagents_retained_in_r
     assert_eq!(
         rows.subagents
             .iter()
-            .map(|row| row.agent_id.as_str())
+            .map(|row| (row.agent_id.as_str(), row.status.as_str()))
             .collect::<Vec<_>>(),
-        vec!["dead", "exited", "live"],
-        "compact delta must expose changed historical rows"
+        vec![
+            ("dead", "historical"),
+            ("exited", "historical"),
+            ("live", "idle"),
+        ],
+        "compact delta must expose changed historical rows distinctly from transient terminal rows"
     );
 }
 

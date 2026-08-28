@@ -363,7 +363,7 @@ pub fn build_compact_subagent_roster(
                 || effective == SubagentStatus::Exited;
             let display_name = entry.effective_display_name(id).to_string();
             let status = if terminal {
-                "dead"
+                "historical"
             } else if entry.run_error.is_some() || effective == SubagentStatus::Error {
                 "errored"
             } else if effective == SubagentStatus::Idle {

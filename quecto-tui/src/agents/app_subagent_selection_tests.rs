@@ -123,6 +123,26 @@ fn gc_reclaims_expired_once_batch_is_quiescent() {
 }
 
 #[test]
+fn gc_keeps_historical_subagent_indefinitely() {
+    let mut map = std::collections::BTreeMap::new();
+    let (id, mut entry) = make_tracked("old-history", "historical");
+    entry.exited_at = Some(tokio::time::Instant::now() - Duration::from_secs(10));
+    map.insert(id, entry);
+
+    let removed = super::gc_exited_subagents(
+        &mut map,
+        tokio::time::Instant::now(),
+        Duration::from_secs(5),
+    );
+
+    assert!(
+        !removed,
+        "historical rows are durable context, not transient exits"
+    );
+    assert!(map.contains_key("old-history"));
+}
+
+#[test]
 fn tracked_subagent_new_sets_exited_at_for_exited() {
     let entry = super::TrackedSubagent::new(crate::protocol::client::SubagentInfoEvent {
         agent_uuid: None,
@@ -141,6 +161,27 @@ fn tracked_subagent_new_sets_exited_at_for_exited() {
         environment: None,
     });
     assert!(entry.exited_at.is_some());
+}
+
+#[test]
+fn tracked_subagent_new_no_exited_at_for_historical() {
+    let entry = super::TrackedSubagent::new(crate::protocol::client::SubagentInfoEvent {
+        agent_uuid: None,
+        display_name: None,
+        agent_id: "w1".into(),
+        status: "historical".into(),
+        last_tool: None,
+        last_error: None,
+        compact: false,
+        pid: 0,
+        socket_path: None,
+        parent_id: None,
+        workflow: None,
+        read_only: false,
+        execution_backend: None,
+        environment: None,
+    });
+    assert!(entry.exited_at.is_none());
 }
 
 #[test]
