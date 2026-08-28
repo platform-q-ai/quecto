@@ -2,6 +2,7 @@
 // the survivor-only `subagent_state_changed` so connected clients (the TUI
 // panel) drop the whole dead sub-tree promptly instead of letting it linger.
 use super::*;
+use crate::domain::session::SubagentLiveness;
 use crate::infrastructure::tools::subagent_registry::SubagentStatus;
 use std::path::PathBuf;
 
@@ -194,6 +195,33 @@ async fn kill_parent_sigterms_descendant_processes_not_just_named_agent() {
     );
     let _ = gchild_proc.kill();
     let _ = gchild_proc.wait();
+}
+
+#[tokio::test]
+async fn kill_historical_agent_by_exact_uuid_is_not_command_targetable() {
+    let registry = new_registry();
+    {
+        let mut g = registry.lock().unwrap();
+        let mut e = SubagentEntry::new(PathBuf::from("/tmp/dead.sock"), 0);
+        e.status = SubagentStatus::Exited;
+        e.persisted_liveness = SubagentLiveness::Dead;
+        g.insert("dead-worker".to_string(), e);
+    }
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
+    let tool = AgentCmdTool::new(registry.clone()).with_broadcast(Some(tx));
+
+    let result = tool.kill_agent("dead-worker").await;
+
+    assert!(result.is_error);
+    assert!(result.content.contains("not found"));
+    assert!(
+        registry.lock().unwrap().contains_key("dead-worker"),
+        "historical row must remain visible after rejected kill"
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "no broadcast for non-targetable historical row"
+    );
 }
 
 #[tokio::test]

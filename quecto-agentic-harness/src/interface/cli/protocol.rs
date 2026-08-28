@@ -361,9 +361,6 @@ pub fn build_compact_subagent_roster(
                     .unwrap_or_else(|| entry.status.clone());
             let terminal = entry.persisted_liveness != SubagentLiveness::Live
                 || effective == SubagentStatus::Exited;
-            if terminal && (since.is_none() || entry.parent_id.is_none()) {
-                continue;
-            }
             let display_name = entry.effective_display_name(id).to_string();
             let status = if terminal {
                 "dead"

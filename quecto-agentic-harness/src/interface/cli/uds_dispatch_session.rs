@@ -6,7 +6,8 @@ use super::{
     DispatchCtx, emit_event_to_broadcast_or_writer, emit_ledger_advanced, inject_system_prompt,
     remove_injected_system_prompt,
 };
-use crate::domain::session::{PersistedSubagentRosterEntry, Session};
+use crate::domain::session::{PersistedSubagentRosterEntry, Session, SubagentLiveness};
+use crate::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentStatus};
 
 fn sync_message_count(ctx: &DispatchCtx<'_>) {
     if let Ok(mut state) = ctx.execution_state.lock() {
@@ -124,42 +125,43 @@ pub(crate) fn restore_persisted_subagent_roster(
     roster: Vec<PersistedSubagentRosterEntry>,
 ) {
     let Some(registry) = registry else { return };
-    // #1474: only rehydrate agents that are currently verifiably live. Dead and
-    // unreachable (or previously detached-but-gone) entries become grey panel
-    // "ghosts" outside the active container context if we keep them as
-    // Detached/Exited historical rows. Kill already cascade-removes from the
-    // live registry; resume must apply the same current-set policy.
-    //
     // Probe sockets BEFORE taking the registry mutex (N1): verify does blocking
     // UDS IO with up to 500ms timeouts, and holding the lock across that stalls
     // concurrent get_subagents / spawn registration during resume.
-    let mut live_entries = Vec::new();
+    let mut restored_entries = Vec::new();
     for persisted in roster {
-        if persisted.liveness == crate::domain::session::SubagentLiveness::Dead {
+        if persisted.agent_uuid.is_empty() {
             continue;
         }
-        if !verify_persisted_live_subagent(&persisted) {
-            continue;
-        }
-        let mut entry =
-            crate::infrastructure::tools::subagent_registry::SubagentEntry::with_identity(
-                crate::domain::ids::AgentUuid::from(persisted.agent_uuid.clone()),
-                persisted.display_name.clone(),
-                persisted.socket_path.clone(),
-                persisted.pid,
-            );
-        entry.status = crate::infrastructure::tools::subagent_registry::SubagentStatus::Idle;
-        entry.persisted_liveness = crate::domain::session::SubagentLiveness::Live;
+        let verified_live = persisted.liveness != SubagentLiveness::Dead
+            && verify_persisted_live_subagent(&persisted);
+        let restored_pid = if verified_live { persisted.pid } else { 0 };
+        let mut entry = SubagentEntry::with_identity(
+            crate::domain::ids::AgentUuid::from(persisted.agent_uuid.clone()),
+            persisted.display_name.clone(),
+            persisted.socket_path.clone(),
+            restored_pid,
+        );
+        entry.status = if verified_live {
+            SubagentStatus::Idle
+        } else {
+            SubagentStatus::Exited
+        };
+        entry.persisted_liveness = if verified_live {
+            SubagentLiveness::Live
+        } else {
+            SubagentLiveness::Dead
+        };
         entry.parent_id = persisted.parent_id;
         entry.read_only = persisted.read_only;
         entry.delivered_message_ordinal = persisted.delivered_message_ordinal;
         entry.pending_message_ordinal = persisted.pending_message_reports.back().map(|p| p.ordinal);
         entry.pending_message_reports = persisted.pending_message_reports;
-        live_entries.push((persisted.agent_uuid, entry));
+        restored_entries.push((persisted.agent_uuid, entry));
     }
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     entries.clear();
-    for (agent_uuid, entry) in live_entries {
+    for (agent_uuid, entry) in restored_entries {
         entries.insert(agent_uuid, entry);
     }
 }

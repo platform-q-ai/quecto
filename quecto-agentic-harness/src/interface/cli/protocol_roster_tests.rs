@@ -162,7 +162,7 @@ fn get_subagents_command_round_trips_since_cursor() {
 }
 
 #[test]
-fn compact_roster_omits_dead_and_exited_subagents_retained_in_registry() {
+fn compact_roster_includes_dead_and_exited_subagents_retained_in_registry() {
     let reg = new_registry();
     {
         let mut guard = reg.lock().unwrap();
@@ -197,13 +197,13 @@ fn compact_roster_omits_dead_and_exited_subagents_retained_in_registry() {
             .iter()
             .map(|row| row.agent_id.as_str())
             .collect::<Vec<_>>(),
-        vec!["live"],
-        "compact roster must expose only surviving subagents"
+        vec!["dead", "detached", "exited", "live"],
+        "compact roster must expose retained historical subagents"
     );
 }
 
 #[test]
-fn compact_roster_delta_omits_changed_dead_and_exited_subagents_retained_in_registry() {
+fn compact_roster_delta_includes_changed_dead_and_exited_subagents_retained_in_registry() {
     let reg = new_registry();
     {
         let mut guard = reg.lock().unwrap();
@@ -226,7 +226,7 @@ fn compact_roster_delta_omits_changed_dead_and_exited_subagents_retained_in_regi
     let rows = build_compact_subagent_roster(&Some(reg), Some(1)).unwrap();
     assert_eq!(
         rows.sequence, 4,
-        "cursor must advance across tombstone changes even though they are hidden"
+        "cursor must advance across historical row changes"
     );
     assert_eq!(rows.unchanged, Some(false));
     assert_eq!(
@@ -234,8 +234,8 @@ fn compact_roster_delta_omits_changed_dead_and_exited_subagents_retained_in_regi
             .iter()
             .map(|row| row.agent_id.as_str())
             .collect::<Vec<_>>(),
-        vec!["live"],
-        "compact delta must not reintroduce changed tombstones"
+        vec!["dead", "exited", "live"],
+        "compact delta must expose changed historical rows"
     );
 }
 

@@ -113,7 +113,7 @@ fn serve_matching_session_stats(
 }
 
 #[tokio::test]
-async fn e2e_resume_restores_transcript_and_prunes_subagent_roster() {
+async fn e2e_resume_restores_transcript_and_historical_subagent_roster() {
     let mut fx = Fixture::new();
     let dir = tempfile::tempdir().unwrap();
     let live_socket = dir.path().join("live.sock");
@@ -182,14 +182,26 @@ async fn e2e_resume_restores_transcript_and_prunes_subagent_roster() {
     restored.sort();
     assert_eq!(
         restored,
-        vec!["detached".to_string(), "live".to_string()],
-        "resume should restore only currently verifiable live/detached roster entries"
+        vec![
+            "dead".to_string(),
+            "detached".to_string(),
+            "detached-gone".to_string(),
+            "live".to_string(),
+            "unreachable".to_string(),
+        ],
+        "resume should restore verifiable rows as live and dead/unreachable rows as historical"
     );
     assert_eq!(
         entries.get("detached").unwrap().persisted_liveness,
         SubagentLiveness::Live,
-        "reachable detached entries are restored as live; dead and unreachable rows are pruned"
+        "reachable detached entries are restored as live"
     );
+    for id in ["dead", "detached-gone", "unreachable"] {
+        let entry = entries.get(id).unwrap();
+        assert_eq!(entry.persisted_liveness, SubagentLiveness::Dead);
+        assert_eq!(entry.status.to_wire_str(), "exited");
+        assert_eq!(entry.pid, 0, "historical rows must not retain stale PIDs");
+    }
 
     drop(entries);
     live_server.join().unwrap();

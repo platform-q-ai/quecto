@@ -114,9 +114,65 @@ async fn verify_persisted_live_subagent_requires_matching_session_stats_identity
     server.await.unwrap();
 }
 
-/// #1474: resume must not rehydrate dead / unverifiable roster rows as grey
-/// "ghost" panel agents. Only currently verifiable live agents re-enter the
-/// registry; dead and failed-verify live/detached entries are pruned.
+#[tokio::test]
+async fn verify_persisted_live_subagent_rejects_non_success_and_wrong_response_identity() {
+    async fn check_response(response: serde_json::Value) {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("child.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (reader, mut writer) = tokio::io::split(stream);
+            let mut reader = tokio::io::BufReader::new(reader);
+            let _request =
+                quecto_line_io::read_frame(&mut reader, quecto_line_io::PROTOCOL_FRAME_CAP_BYTES)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            quecto_line_io::write_frame(
+                &mut writer,
+                response.to_string().as_bytes(),
+                quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
+            )
+            .await
+            .unwrap();
+        });
+
+        let entry = roster_entry("child", socket);
+        assert!(
+            !tokio::task::spawn_blocking(move || verify_persisted_live_subagent(&entry))
+                .await
+                .unwrap()
+        );
+        server.await.unwrap();
+    }
+
+    check_response(serde_json::json!({
+        "type": "response",
+        "id": "wrong-id",
+        "success": true,
+        "data": { "sessionKey": "child" }
+    }))
+    .await;
+    check_response(serde_json::json!({
+        "type": "response",
+        "id": "restore-verify-child",
+        "success": false,
+        "data": { "sessionKey": "child" }
+    }))
+    .await;
+    check_response(serde_json::json!({
+        "type": "event",
+        "id": "restore-verify-child",
+        "success": true,
+        "data": { "sessionKey": "child" }
+    }))
+    .await;
+}
+
+/// #1586: resume restores verifiably live entries as live and keeps dead or
+/// unreachable entries as historical non-live rows so roster context survives
+/// ordinary TUI shutdown.
 fn serve_matching_session_stats(
     listener: std::os::unix::net::UnixListener,
     session_key: &'static str,
@@ -160,7 +216,7 @@ fn serve_matching_session_stats(
 }
 
 #[test]
-fn restore_persisted_roster_keeps_only_verifiably_live_agents() {
+fn restore_persisted_roster_keeps_historical_rows_for_dead_and_unreachable_agents() {
     let registry = new_registry();
     let dir = tempfile::tempdir().unwrap();
     let live_socket = dir.path().join("live.sock");
@@ -192,21 +248,21 @@ fn restore_persisted_roster_keeps_only_verifiably_live_agents() {
     let entries = registry.lock().unwrap();
     assert_eq!(
         entries.len(),
-        2,
-        "dead and unverifiable live/detached entries must not reappear as ghosts: {:?}",
+        5,
+        "dead and unverifiable live/detached entries must reappear as historical rows: {:?}",
         entries.keys().collect::<Vec<_>>()
     );
     assert!(
-        !entries.contains_key("gone"),
-        "unreachable live entry must be pruned on restore"
+        entries.contains_key("gone"),
+        "unreachable live entry must be restored as historical"
     );
     assert!(
-        !entries.contains_key("dead"),
-        "dead entry must be pruned on restore"
+        entries.contains_key("dead"),
+        "dead entry must be restored as historical"
     );
     assert!(
-        !entries.contains_key("old-container"),
-        "detached unreachable entry must be pruned on restore"
+        entries.contains_key("old-container"),
+        "detached unreachable entry must be restored as historical"
     );
 
     let live_entry = entries.get("live").expect("verified live agent restored");
@@ -220,6 +276,14 @@ fn restore_persisted_roster_keeps_only_verifiably_live_agents() {
     assert_eq!(detached_entry.persisted_liveness, SubagentLiveness::Live);
     assert_eq!(detached_entry.status.to_wire_str(), "idle");
     assert_eq!(detached_entry.display_name, "Detached but reachable");
+
+    for id in ["gone", "dead", "old-container"] {
+        let entry = entries.get(id).expect("historical entry restored");
+        assert_eq!(entry.persisted_liveness, SubagentLiveness::Dead);
+        assert_eq!(entry.status.to_wire_str(), "exited");
+        assert_eq!(entry.pid, 0, "historical rows must not retain stale PIDs");
+        assert!(entry.read_only, "metadata survives for {id}");
+    }
 
     live_server.join().unwrap();
     detached_server.join().unwrap();
@@ -303,6 +367,56 @@ fn restore_persisted_roster_does_not_hold_registry_lock_during_verify() {
         registry.lock().unwrap().contains_key("slow"),
         "verified agent must still be restored after lock is released during probe"
     );
+}
+
+#[test]
+fn restore_persisted_roster_keeps_identifiable_malformed_rows_historical() {
+    let registry = new_registry();
+    let mut empty_session = roster_entry("empty-session", "/tmp/empty-session.sock".into());
+    empty_session.session_key.clear();
+    let empty_socket = roster_entry("empty-socket", "".into());
+    let empty_uuid = roster_entry("", "/tmp/no-uuid.sock".into());
+
+    restore_persisted_subagent_roster(
+        &Some(registry.clone()),
+        vec![empty_session, empty_socket, empty_uuid],
+    );
+
+    let entries = registry.lock().unwrap();
+    assert_eq!(entries.len(), 2);
+    assert!(entries.contains_key("empty-session"));
+    assert!(entries.contains_key("empty-socket"));
+    assert!(
+        !entries.contains_key(""),
+        "rows without stable identity are dropped"
+    );
+    for id in ["empty-session", "empty-socket"] {
+        let entry = entries.get(id).unwrap();
+        assert_eq!(entry.persisted_liveness, SubagentLiveness::Dead);
+        assert_eq!(entry.status.to_wire_str(), "exited");
+        assert_eq!(entry.pid, 0, "historical rows must not retain stale PIDs");
+    }
+}
+
+#[test]
+fn restored_historical_rows_are_not_command_targetable() {
+    let registry = new_registry();
+    let dead = roster_entry("dead-worker", "/tmp/dead-worker.sock".into());
+
+    restore_persisted_subagent_roster(&Some(registry.clone()), vec![dead]);
+
+    let exact_error = crate::infrastructure::tools::subagent_registry::lookup_subagent_socket(
+        &registry,
+        "dead-worker",
+    )
+    .unwrap_err();
+    assert!(exact_error.contains("not command-targetable"));
+    let display_error = crate::infrastructure::tools::subagent_registry::lookup_subagent_socket(
+        &registry,
+        "worker-dead-worker",
+    )
+    .unwrap_err();
+    assert!(display_error.contains("no live subagent"));
 }
 
 #[test]
