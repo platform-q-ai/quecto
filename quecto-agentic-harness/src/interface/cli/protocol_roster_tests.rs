@@ -176,12 +176,12 @@ fn compact_roster_includes_dead_and_exited_subagents_retained_in_registry() {
         exited.notification_sequence = 2;
         guard.insert("exited".into(), exited);
 
-        let mut dead = SubagentEntry::new("/tmp/dead.sock".into(), 3);
+        let mut dead = SubagentEntry::new("/tmp/dead.sock".into(), 0);
         dead.persisted_liveness = SubagentLiveness::Dead;
         dead.notification_sequence = 3;
         guard.insert("dead".into(), dead);
 
-        let mut detached = SubagentEntry::new("/tmp/detached.sock".into(), 4);
+        let mut detached = SubagentEntry::new("/tmp/detached.sock".into(), 0);
         detached.persisted_liveness = SubagentLiveness::Detached;
         detached.notification_sequence = 4;
         guard.insert("detached".into(), detached);
@@ -200,7 +200,7 @@ fn compact_roster_includes_dead_and_exited_subagents_retained_in_registry() {
         vec![
             ("dead", "historical"),
             ("detached", "historical"),
-            ("exited", "historical"),
+            ("exited", "dead"),
             ("live", "idle"),
         ],
         "compact roster must expose retained historical subagents distinctly from transient terminal rows"
@@ -222,7 +222,7 @@ fn compact_roster_delta_includes_changed_dead_and_exited_subagents_retained_in_r
         exited.notification_sequence = 3;
         guard.insert("exited".into(), exited);
 
-        let mut dead = SubagentEntry::new("/tmp/dead.sock".into(), 3);
+        let mut dead = SubagentEntry::new("/tmp/dead.sock".into(), 0);
         dead.persisted_liveness = SubagentLiveness::Dead;
         dead.notification_sequence = 4;
         guard.insert("dead".into(), dead);
@@ -239,11 +239,7 @@ fn compact_roster_delta_includes_changed_dead_and_exited_subagents_retained_in_r
             .iter()
             .map(|row| (row.agent_id.as_str(), row.status.as_str()))
             .collect::<Vec<_>>(),
-        vec![
-            ("dead", "historical"),
-            ("exited", "historical"),
-            ("live", "idle"),
-        ],
+        vec![("dead", "historical"), ("exited", "dead"), ("live", "idle"),],
         "compact delta must expose changed historical rows distinctly from transient terminal rows"
     );
 }
