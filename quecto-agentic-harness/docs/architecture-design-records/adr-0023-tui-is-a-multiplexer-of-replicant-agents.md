@@ -1,6 +1,6 @@
 # ADR-0023 — The TUI Is a Multiplexer of Replicant Agents
 
-**Status:** Proposed.
+**Status:** Rejected — superseded by ADR-0025.
 
 **Implementation status:** Phase 0 (shared-state hardening, #1460) landed;
 remaining phases tracked by epic #1467.

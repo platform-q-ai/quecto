@@ -8,7 +8,7 @@ edit a superseded ADR receives — its reasoning stays intact as history).
 
 **Status vocabulary:** `Accepted` · `Proposed` (may be deferred) ·
 `Rejected — superseded by ADR-00NN`.
-**Numbering** is monotonic and may skip (0004 was never used). Next free: 0025.
+**Numbering** is monotonic and may skip (0004 was never used). Next free: 0026.
 
 | ADR | Title | Status | Decides |
 |----:|-------|--------|---------|
@@ -33,8 +33,9 @@ edit a superseded ADR receives — its reasoning stays intact as history).
 | [0020](adr-0020-unified-tool-model-with-native-and-uds-adapters.md) | Unified Tool Model with Native and UDS Delivery Adapters | ✅ Accepted | Quecto has one tool model and policy pipeline; native and UDS are delivery adapters with descriptor-owned runtime availability. |
 | [0021](adr-0021-script-managed-subagent-launch.md) | Script-Managed Subagent Launch Uses Clean Architecture Ports | ✅ Accepted | Script-managed subagent launch uses pure domain/application ports, infrastructure adapters, thin interfaces, session registry wiring, and runtime-agnostic scripts. |
 | [0022](adr-0022-self-contained-container-configs.md) | Self-Contained Named Container Configs | ✅ Accepted | Container configs are named, self-contained working-context definitions (baked repo + auth, default label, roster in the tool schema); Quecto resolves no source and the parent's location is irrelevant. |
-| [0023](adr-0023-tui-is-a-multiplexer-of-replicant-agents.md) | The TUI Is a Multiplexer of Replicant Agents | 🕒 Proposed | One replicant agent per tab, one session per agent (multi-session-in-one-agent rejected via `spike-tui-tabs`); `--persist` lifecycle inversion; cross-process shared-state invariants (session single-writer ownership, credentials locking, liveness-probed reaping). |
+| [0023](adr-0023-tui-is-a-multiplexer-of-replicant-agents.md) | The TUI Is a Multiplexer of Replicant Agents | ❌ Rejected → [0025](adr-0025-tui-ordinary-exit-terminates-owned-agents.md) | One replicant agent per tab, one session per agent; superseded for ordinary-exit lifecycle semantics. |
 | [0024](adr-0024-observation-tool-output-contract.md) | Observation Tools Use Projection, Delta, or Snapshot-to-File Outputs | ✅ Accepted | Observation tools default to bounded projections, use cursor deltas for polling, spill full-fidelity snapshots to files, exclude static echo data, carry freshness metadata, and degrade over-cap payloads to truncation plus file pointers. |
+| [0025](adr-0025-tui-ordinary-exit-terminates-owned-agents.md) | TUI Ordinary Exit Terminates Owned Agents After Durable Roster Capture | 🕒 Proposed | Ctrl-D, `/exit`, and `/quit` terminate TUI-owned agents after durable per-tab roster capture; `/resume` restores killed agents as historical non-live rows. |
 
 ## The ADR-0008 protocol series
 
