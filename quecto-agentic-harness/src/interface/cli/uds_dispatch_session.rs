@@ -152,6 +152,7 @@ pub(crate) fn restore_persisted_subagent_roster(
         } else {
             SubagentLiveness::Dead
         };
+        entry.durable_historical = !verified_live;
         entry.parent_id = persisted.parent_id;
         entry.read_only = persisted.read_only;
         entry.delivered_message_ordinal = persisted.delivered_message_ordinal;

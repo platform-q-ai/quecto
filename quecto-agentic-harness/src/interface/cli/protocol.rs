@@ -319,7 +319,6 @@ pub fn build_compact_subagent_roster(
     registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     since: Option<u64>,
 ) -> Result<CompactSubagentRoster, String> {
-    use crate::domain::session::SubagentLiveness;
     use crate::infrastructure::tools::subagent_registry::SubagentStatus;
     let Some(reg) = registry else {
         if since.unwrap_or(0) > 0 {
@@ -359,7 +358,7 @@ pub fn build_compact_subagent_roster(
             let effective =
                 crate::infrastructure::tools::subagent_registry::effective_status(&guard, id)
                     .unwrap_or_else(|| entry.status.clone());
-            let historical = entry.persisted_liveness != SubagentLiveness::Live && entry.pid == 0;
+            let historical = entry.durable_historical;
             let display_name = entry.effective_display_name(id).to_string();
             let status = if historical {
                 "historical"

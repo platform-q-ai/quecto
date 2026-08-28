@@ -178,11 +178,13 @@ fn compact_roster_includes_dead_and_exited_subagents_retained_in_registry() {
 
         let mut dead = SubagentEntry::new("/tmp/dead.sock".into(), 0);
         dead.persisted_liveness = SubagentLiveness::Dead;
+        dead.durable_historical = true;
         dead.notification_sequence = 3;
         guard.insert("dead".into(), dead);
 
         let mut detached = SubagentEntry::new("/tmp/detached.sock".into(), 0);
         detached.persisted_liveness = SubagentLiveness::Detached;
+        detached.durable_historical = true;
         detached.notification_sequence = 4;
         guard.insert("detached".into(), detached);
     }
@@ -224,6 +226,7 @@ fn compact_roster_delta_includes_changed_dead_and_exited_subagents_retained_in_r
 
         let mut dead = SubagentEntry::new("/tmp/dead.sock".into(), 0);
         dead.persisted_liveness = SubagentLiveness::Dead;
+        dead.durable_historical = true;
         dead.notification_sequence = 4;
         guard.insert("dead".into(), dead);
     }

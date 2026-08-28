@@ -1,3 +1,8 @@
+use super::process_tree::ProcessOwner;
+#[cfg(test)]
+use super::subagent_lifecycle::SubagentLifecycleEvent;
+use super::subagent_lifecycle::SubagentLifecycleState;
+pub use super::subagent_status::SubagentStatus;
 use crate::domain::ids::AgentUuid;
 use crate::domain::session::SubagentLiveness;
 use crate::domain::subagent::{DisplayNameResolutionEntry, resolve_live_display_name};
@@ -5,12 +10,6 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-
-use super::process_tree::ProcessOwner;
-#[cfg(test)]
-use super::subagent_lifecycle::SubagentLifecycleEvent;
-use super::subagent_lifecycle::SubagentLifecycleState;
-pub use super::subagent_status::SubagentStatus;
 
 /// Entry for a spawned subagent in the shared registry.
 #[derive(Debug, Clone)]
@@ -85,10 +84,10 @@ pub struct SubagentEntry {
     pub pending_message_ordinal: Option<u64>,
     pub pending_message_reports: VecDeque<PendingMessageReport>,
     pub persisted_liveness: SubagentLiveness,
+    pub durable_historical: bool,
 }
 
 pub use crate::domain::session::PendingMessageReport;
-
 pub(super) fn seed_bound_workflow(
     entry: &mut SubagentEntry,
     workflow_spec: Option<&crate::domain::workflow::WorkflowSpec>,
@@ -167,6 +166,7 @@ impl SubagentEntry {
             pending_message_ordinal: None,
             pending_message_reports: VecDeque::new(),
             persisted_liveness: SubagentLiveness::Live,
+            durable_historical: false,
         }
     }
 }
