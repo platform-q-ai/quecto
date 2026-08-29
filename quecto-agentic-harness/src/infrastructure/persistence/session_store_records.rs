@@ -1,5 +1,34 @@
 use crate::domain::session::PersistedSubagentRosterEntry;
 use crate::domain::workflow::WorkflowRunPersisted;
+use serde::Deserialize;
+
+fn deserialize_subagent_roster_lossy<'de, D>(
+    deserializer: D,
+) -> Result<Vec<PersistedSubagentRosterEntry>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let rows = Option::<Vec<serde_json::Value>>::deserialize(deserializer)?.unwrap_or_default();
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| serde_json::from_value(row).ok())
+        .collect())
+}
+
+fn deserialize_optional_subagent_roster_lossy<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<PersistedSubagentRosterEntry>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<Vec<serde_json::Value>>::deserialize(deserializer).map(|rows| {
+        rows.map(|rows| {
+            rows.into_iter()
+                .filter_map(|row| serde_json::from_value(row).ok())
+                .collect()
+        })
+    })
+}
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct SessionFile {
@@ -7,7 +36,11 @@ pub(super) struct SessionFile {
     pub(super) messages: Vec<MessageRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) workflow_run: Option<WorkflowRunPersisted>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_subagent_roster_lossy",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub(super) subagent_roster: Vec<PersistedSubagentRosterEntry>,
 }
 
@@ -35,7 +68,11 @@ pub(super) enum SessionRecord {
         workflow_run: Option<WorkflowRunPersisted>,
         #[serde(default, skip_serializing_if = "skip_if_false")]
         workflow_run_cleared: bool,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            deserialize_with = "deserialize_optional_subagent_roster_lossy",
+            skip_serializing_if = "Option::is_none"
+        )]
         subagent_roster: Option<Vec<PersistedSubagentRosterEntry>>,
     },
 }

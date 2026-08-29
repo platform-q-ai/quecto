@@ -21,6 +21,7 @@ fn roster_entry(
         socket_path: format!("/tmp/{id}.sock").into(),
         pid: 100,
         liveness,
+        restore_reason: crate::domain::session::SubagentRestoreReason::LegacyUnspecified,
         parent_id: Some("root".to_string()),
         read_only: id == "dead",
         delivered_message_ordinal: None,
@@ -76,6 +77,50 @@ async fn subagent_roster_roundtrips_and_legacy_files_load_empty_roster() {
     .unwrap();
     let legacy = store.load("cli:legacy").await.unwrap().unwrap();
     assert!(legacy.subagent_roster.is_empty());
+}
+
+#[tokio::test]
+async fn malformed_subagent_roster_rows_do_not_poison_session_load() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+    store.ensure_dir().await.unwrap();
+    let path = store.session_path("cli:lossy-roster");
+    let snapshot = serde_json::json!({
+        "type": "snapshot",
+        "key": "cli:lossy-roster",
+        "messages": [{"role":"user","content":"old"}],
+        "subagent_roster": []
+    });
+    let append = serde_json::json!({
+        "type": "append",
+        "messages": [{"role":"assistant","content":"new"}],
+        "subagent_roster": [
+            {
+                "agentUuid":"good",
+                "displayName":"good worker",
+                "sessionKey":"good",
+                "socketPath":"/tmp/good.sock",
+                "pid":1,
+                "liveness":"dead",
+                "restoreReason":"explicitly_killed"
+            },
+            {"agentUuid":"bad", "liveness":"future_liveness"},
+            {"agentUuid":"bad-pid", "pid":"not-a-number"}
+        ]
+    });
+    tokio::fs::write(path, format!("{}\n{}\n", snapshot, append))
+        .await
+        .unwrap();
+
+    let loaded = store.load("cli:lossy-roster").await.unwrap().unwrap();
+
+    assert_eq!(
+        loaded.messages.len(),
+        2,
+        "malformed roster rows do not drop append messages"
+    );
+    assert_eq!(loaded.subagent_roster.len(), 1);
+    assert_eq!(loaded.subagent_roster[0].agent_uuid, "good");
 }
 
 #[tokio::test]
