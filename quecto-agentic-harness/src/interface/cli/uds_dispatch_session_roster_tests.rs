@@ -1,8 +1,11 @@
 use crate::domain::ids::AgentUuid;
 use crate::domain::session::{PersistedSubagentRosterEntry, SubagentLiveness};
-use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+use crate::infrastructure::tools::subagent_registry::{
+    SubagentEntry, SubagentStatus, new_registry,
+};
 use crate::interface::cli::uds::uds_dispatch_session::{
-    restore_persisted_subagent_roster, snapshot_subagent_roster, verify_persisted_live_subagent,
+    restore_persisted_subagent_roster, snapshot_subagent_roster,
+    snapshot_subagent_roster_with_restore_reason, verify_persisted_live_subagent,
 };
 
 fn roster_entry(id: &str, socket_path: std::path::PathBuf) -> PersistedSubagentRosterEntry {
@@ -13,6 +16,7 @@ fn roster_entry(id: &str, socket_path: std::path::PathBuf) -> PersistedSubagentR
         socket_path,
         pid: 1,
         liveness: SubagentLiveness::Live,
+        restore_reason: crate::domain::session::SubagentRestoreReason::LegacyUnspecified,
         parent_id: Some("parent".to_string()),
         read_only: true,
         delivered_message_ordinal: None,
@@ -56,6 +60,75 @@ fn snapshot_subagent_roster_serializes_sorted_liveness_metadata() {
     assert_eq!(roster[1].liveness, SubagentLiveness::Dead);
     assert_eq!(roster[1].parent_id.as_deref(), Some("root"));
     assert!(roster[1].read_only);
+}
+
+#[test]
+fn ordinary_exit_snapshot_marks_dead_tombstones_non_restorable() {
+    let registry = new_registry();
+    {
+        let mut entries = registry.lock().unwrap();
+        let mut live = SubagentEntry::with_identity(
+            AgentUuid::from("live"),
+            "Live worker".into(),
+            "/tmp/live.sock".into(),
+            1,
+        );
+        live.status = SubagentStatus::Idle;
+        live.persisted_liveness = SubagentLiveness::Live;
+        entries.insert("live".into(), live);
+        let mut killed = SubagentEntry::with_identity(
+            AgentUuid::from("killed"),
+            "Killed worker".into(),
+            "/tmp/killed.sock".into(),
+            2,
+        );
+        killed.status = SubagentStatus::Exited;
+        killed.persisted_liveness = SubagentLiveness::Dead;
+        entries.insert("killed".into(), killed);
+    }
+
+    let roster = snapshot_subagent_roster_with_restore_reason(
+        &Some(registry),
+        crate::domain::session::SubagentRestoreReason::OrdinaryTuiExitStopped,
+    );
+
+    assert_eq!(
+        roster
+            .iter()
+            .find(|entry| entry.agent_uuid == "live")
+            .unwrap()
+            .restore_reason,
+        crate::domain::session::SubagentRestoreReason::OrdinaryTuiExitStopped
+    );
+    assert_eq!(
+        roster
+            .iter()
+            .find(|entry| entry.agent_uuid == "killed")
+            .unwrap()
+            .restore_reason,
+        crate::domain::session::SubagentRestoreReason::ExplicitlyKilled,
+        "ordinary-exit snapshot must not convert pre-killed tombstones into restorable rows"
+    );
+
+    let restored = new_registry();
+    restore_persisted_subagent_roster(&Some(restored.clone()), roster);
+    assert!(!restored.lock().unwrap().contains_key("killed"));
+}
+
+#[test]
+fn restore_rejects_dead_rows_even_if_marked_ordinary_exit_stopped() {
+    let mut bad = roster_entry("bad", "/tmp/bad.sock".into());
+    bad.restore_reason = crate::domain::session::SubagentRestoreReason::OrdinaryTuiExitStopped;
+    bad.liveness = SubagentLiveness::Dead;
+    bad.status = Some("exited".into());
+
+    let registry = new_registry();
+    restore_persisted_subagent_roster(&Some(registry.clone()), vec![bad]);
+
+    assert!(
+        registry.lock().unwrap().is_empty(),
+        "defensive restore must not re-show killed/dead rows from stale persisted data"
+    );
 }
 
 #[test]
@@ -308,4 +381,144 @@ fn restore_persisted_roster_does_not_hold_registry_lock_during_verify() {
 #[test]
 fn restore_persisted_roster_no_registry_is_noop() {
     restore_persisted_subagent_roster(&None, vec![roster_entry("ignored", "".into())]);
+}
+
+#[test]
+fn restore_classifier_respects_explicit_restore_reasons() {
+    use crate::domain::session::SubagentRestoreReason;
+
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let mut restored = roster_entry("restored", dir.path().join("stale-restored.sock"));
+    restored.restore_reason = SubagentRestoreReason::OrdinaryTuiExitStopped;
+    restored.pid = 42;
+    restored.display_name = "Restored worker".into();
+    let mut killed = roster_entry("killed", dir.path().join("killed.sock"));
+    killed.restore_reason = SubagentRestoreReason::ExplicitlyKilled;
+    let mut legacy_dead = roster_entry("legacy-dead", dir.path().join("legacy-dead.sock"));
+    legacy_dead.liveness = SubagentLiveness::Dead;
+
+    restore_persisted_subagent_roster(&Some(registry.clone()), vec![restored, killed, legacy_dead]);
+
+    let entries = registry.lock().unwrap();
+    assert!(
+        entries.contains_key("restored"),
+        "ordinary-exit-stopped rows return"
+    );
+    assert!(
+        !entries.contains_key("killed"),
+        "explicitly killed rows do not return"
+    );
+    assert!(
+        !entries.contains_key("legacy-dead"),
+        "legacy dead rows do not return"
+    );
+    let restored = entries.get("restored").unwrap();
+    assert_eq!(restored.status.to_wire_str(), "idle");
+    assert_ne!(
+        restored.persisted_liveness,
+        SubagentLiveness::Live,
+        "restored rows are visible but not direct-socket command-targetable in PR2"
+    );
+    assert!(
+        restored.socket_path.as_os_str().is_empty(),
+        "stale socket is not retained for dispatch"
+    );
+    assert_eq!(restored.pid, 0, "stale pid is not retained");
+}
+
+#[test]
+fn restored_ordinary_exit_rows_are_not_socket_or_kill_targetable() {
+    use crate::domain::session::SubagentRestoreReason;
+    use crate::domain::tool::Tool;
+    use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
+
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let stale_socket = dir.path().join("stale.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&stale_socket).unwrap();
+    let mut restored = roster_entry("restored", stale_socket);
+    restored.display_name = "Restored worker".into();
+    restored.restore_reason = SubagentRestoreReason::OrdinaryTuiExitStopped;
+    restore_persisted_subagent_roster(&Some(registry.clone()), vec![restored]);
+
+    let lookup = crate::infrastructure::tools::subagent_registry::lookup_subagent_socket(
+        &registry, "restored",
+    );
+    assert!(lookup.is_err(), "restored row must not expose stale socket");
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    for agent_ref in ["Restored worker", "restored"] {
+        let result = rt
+            .block_on(
+                AgentCmdTool::new(registry.clone())
+                    .execute(&format!(r#"{{"agent_id":"{agent_ref}","command":"kill"}}"#)),
+            )
+            .unwrap();
+        assert!(
+            result.is_error,
+            "restored row must not be kill-targetable by {agent_ref}"
+        );
+        assert!(registry.lock().unwrap().contains_key("restored"));
+    }
+}
+
+#[test]
+fn restore_is_scoped_to_the_resumed_session_without_bleed() {
+    use crate::domain::session::SubagentRestoreReason;
+
+    let dir = tempfile::tempdir().unwrap();
+    let registry_a = new_registry();
+    let registry_b = new_registry();
+    let mut a = roster_entry("agent-a", dir.path().join("a.sock"));
+    a.display_name = "same-label".into();
+    a.session_key = "session-a".into();
+    a.restore_reason = SubagentRestoreReason::OrdinaryTuiExitStopped;
+    let mut b = roster_entry("agent-b", dir.path().join("b.sock"));
+    b.display_name = "same-label".into();
+    b.session_key = "session-b".into();
+    b.restore_reason = SubagentRestoreReason::ExplicitlyKilled;
+
+    restore_persisted_subagent_roster(&Some(registry_a.clone()), vec![a.clone()]);
+    restore_persisted_subagent_roster(&Some(registry_b.clone()), vec![b.clone()]);
+
+    assert!(registry_a.lock().unwrap().contains_key("agent-a"));
+    assert!(!registry_a.lock().unwrap().contains_key("agent-b"));
+    assert!(
+        registry_b.lock().unwrap().is_empty(),
+        "killed row in another session does not bleed or return"
+    );
+}
+
+#[test]
+fn persisted_roster_entry_tolerates_unknown_reason_and_missing_required_legacy_fields() {
+    let unknown: PersistedSubagentRosterEntry = serde_json::from_value(serde_json::json!({
+        "agentUuid": "future",
+        "displayName": "Future worker",
+        "sessionKey": "future",
+        "socketPath": "/tmp/future.sock",
+        "pid": 9,
+        "liveness": "live",
+        "restoreReason": "future_reason"
+    }))
+    .unwrap();
+    assert_eq!(
+        unknown.restore_reason,
+        crate::domain::session::SubagentRestoreReason::Unknown
+    );
+
+    let malformed: PersistedSubagentRosterEntry = serde_json::from_value(serde_json::json!({
+        "displayName": "missing identity"
+    }))
+    .unwrap();
+    assert!(malformed.agent_uuid.is_empty());
+    assert_eq!(malformed.liveness, SubagentLiveness::Dead);
+    assert_eq!(
+        malformed.restore_reason,
+        crate::domain::session::SubagentRestoreReason::LegacyUnspecified
+    );
+
+    let registry = new_registry();
+    restore_persisted_subagent_roster(&Some(registry.clone()), vec![unknown, malformed]);
+    assert!(registry.lock().unwrap().is_empty());
 }

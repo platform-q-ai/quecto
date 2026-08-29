@@ -187,9 +187,11 @@ impl AgentCmdTool {
             entries
                 .iter()
                 .find(|(key, entry)| {
-                    key.as_str() == agent_id
-                        || (entry.display_name == agent_id
-                            && entry.status != super::subagent_registry::SubagentStatus::Exited)
+                    let command_targetable = entry.persisted_liveness
+                        == crate::domain::session::SubagentLiveness::Live
+                        && entry.status != super::subagent_registry::SubagentStatus::Exited;
+                    command_targetable
+                        && (key.as_str() == agent_id || entry.display_name == agent_id)
                 })
                 .map(|(key, _)| key.clone())
         };

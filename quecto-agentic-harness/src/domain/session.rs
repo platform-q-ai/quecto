@@ -40,12 +40,29 @@ pub struct SessionSummary {
 }
 
 /// Cross-process liveness of a persisted sub-agent roster entry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SubagentLiveness {
     Live,
     Detached,
+    #[default]
     Dead,
+}
+
+/// Why a persisted sub-agent roster row may be restored on session resume.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubagentRestoreReason {
+    /// Legacy rows omitted the field. Only verified live rows may restore.
+    #[default]
+    LegacyUnspecified,
+    /// Ordinary TUI exit intentionally stopped this previously live row.
+    OrdinaryTuiExitStopped,
+    /// The user explicitly killed this row before ordinary TUI exit.
+    ExplicitlyKilled,
+    /// Forward-compatible safe default for unknown explicit values.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Pending default get_messages delivery awaiting parent-context acknowledgement.
@@ -63,12 +80,20 @@ pub struct PendingMessageReport {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PersistedSubagentRosterEntry {
+    #[serde(default)]
     pub agent_uuid: String,
+    #[serde(default)]
     pub display_name: String,
+    #[serde(default)]
     pub session_key: String,
+    #[serde(default)]
     pub socket_path: PathBuf,
+    #[serde(default)]
     pub pid: u32,
+    #[serde(default)]
     pub liveness: SubagentLiveness,
+    #[serde(default)]
+    pub restore_reason: SubagentRestoreReason,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
     #[serde(default)]

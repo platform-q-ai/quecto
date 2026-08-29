@@ -6,7 +6,10 @@ use super::{
     DispatchCtx, emit_event_to_broadcast_or_writer, emit_ledger_advanced, inject_system_prompt,
     remove_injected_system_prompt,
 };
-use crate::domain::session::{PersistedSubagentRosterEntry, Session};
+use crate::domain::session::{
+    PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
+};
+use crate::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentStatus};
 
 fn sync_message_count(ctx: &DispatchCtx<'_>) {
     if let Ok(mut state) = ctx.execution_state.lock() {
@@ -40,24 +43,43 @@ pub(super) fn set_workflow_run(
 pub(crate) fn snapshot_subagent_roster(
     registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 ) -> Vec<PersistedSubagentRosterEntry> {
+    snapshot_subagent_roster_with_restore_reason(registry, SubagentRestoreReason::LegacyUnspecified)
+}
+
+pub(crate) fn snapshot_subagent_roster_with_restore_reason(
+    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    restore_reason: SubagentRestoreReason,
+) -> Vec<PersistedSubagentRosterEntry> {
     let Some(registry) = registry else {
         return Vec::new();
     };
     let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     let mut roster: Vec<_> = entries
         .iter()
-        .map(|(key, entry)| PersistedSubagentRosterEntry {
-            agent_uuid: entry.agent_uuid.as_str().to_string(),
-            display_name: entry.effective_display_name(key).to_string(),
-            session_key: entry.agent_uuid.as_str().to_string(),
-            socket_path: entry.socket_path.clone(),
-            pid: entry.pid,
-            liveness: entry.persisted_liveness,
-            parent_id: entry.parent_id.clone(),
-            read_only: entry.read_only,
-            status: Some(entry.status.to_wire_str().to_string()),
-            delivered_message_ordinal: entry.delivered_message_ordinal,
-            pending_message_reports: entry.pending_message_reports.clone(),
+        .map(|(key, entry)| {
+            let final_restore_reason = if restore_reason
+                == SubagentRestoreReason::OrdinaryTuiExitStopped
+                && (entry.persisted_liveness == SubagentLiveness::Dead
+                    || entry.status == SubagentStatus::Exited)
+            {
+                SubagentRestoreReason::ExplicitlyKilled
+            } else {
+                restore_reason
+            };
+            PersistedSubagentRosterEntry {
+                agent_uuid: entry.agent_uuid.as_str().to_string(),
+                display_name: entry.effective_display_name(key).to_string(),
+                session_key: entry.agent_uuid.as_str().to_string(),
+                socket_path: entry.socket_path.clone(),
+                pid: entry.pid,
+                liveness: entry.persisted_liveness,
+                restore_reason: final_restore_reason,
+                parent_id: entry.parent_id.clone(),
+                read_only: entry.read_only,
+                status: Some(entry.status.to_wire_str().to_string()),
+                delivered_message_ordinal: entry.delivered_message_ordinal,
+                pending_message_reports: entry.pending_message_reports.clone(),
+            }
         })
         .collect();
     roster.sort_by(|a, b| a.agent_uuid.cmp(&b.agent_uuid));
@@ -119,47 +141,94 @@ pub(crate) fn verify_persisted_live_subagent(entry: &PersistedSubagentRosterEntr
             == Some(entry.session_key.as_str())
 }
 
+enum RosterRestoreDecision {
+    Live,
+    OrdinaryTuiExitStopped,
+    Drop,
+}
+
+fn classify_persisted_subagent_restore(
+    persisted: &PersistedSubagentRosterEntry,
+) -> RosterRestoreDecision {
+    if persisted.agent_uuid.is_empty() || persisted.session_key.is_empty() {
+        return RosterRestoreDecision::Drop;
+    }
+    match persisted.restore_reason {
+        SubagentRestoreReason::OrdinaryTuiExitStopped => {
+            if persisted.liveness == SubagentLiveness::Dead
+                || persisted.status.as_deref() == Some("exited")
+                || persisted.status.as_deref() == Some("dead")
+            {
+                RosterRestoreDecision::Drop
+            } else {
+                RosterRestoreDecision::OrdinaryTuiExitStopped
+            }
+        }
+        SubagentRestoreReason::ExplicitlyKilled | SubagentRestoreReason::Unknown => {
+            RosterRestoreDecision::Drop
+        }
+        SubagentRestoreReason::LegacyUnspecified => {
+            if persisted.liveness != SubagentLiveness::Dead
+                && verify_persisted_live_subagent(persisted)
+            {
+                RosterRestoreDecision::Live
+            } else {
+                RosterRestoreDecision::Drop
+            }
+        }
+    }
+}
+
+fn entry_from_persisted_subagent(
+    mut persisted: PersistedSubagentRosterEntry,
+    decision: RosterRestoreDecision,
+) -> Option<(String, SubagentEntry)> {
+    let (socket_path, pid, liveness) = match decision {
+        RosterRestoreDecision::Live => (
+            persisted.socket_path.clone(),
+            persisted.pid,
+            SubagentLiveness::Live,
+        ),
+        RosterRestoreDecision::OrdinaryTuiExitStopped => {
+            (std::path::PathBuf::new(), 0, SubagentLiveness::Detached)
+        }
+        RosterRestoreDecision::Drop => return None,
+    };
+    let key = persisted.agent_uuid.clone();
+    let mut entry = SubagentEntry::with_identity(
+        crate::domain::ids::AgentUuid::from(persisted.agent_uuid),
+        persisted.display_name,
+        socket_path,
+        pid,
+    );
+    entry.status = SubagentStatus::Idle;
+    entry.persisted_liveness = liveness;
+    entry.parent_id = persisted.parent_id.take();
+    entry.read_only = persisted.read_only;
+    entry.delivered_message_ordinal = persisted.delivered_message_ordinal;
+    entry.pending_message_ordinal = persisted.pending_message_reports.back().map(|p| p.ordinal);
+    entry.pending_message_reports = persisted.pending_message_reports;
+    Some((key, entry))
+}
+
 pub(crate) fn restore_persisted_subagent_roster(
     registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     roster: Vec<PersistedSubagentRosterEntry>,
 ) {
     let Some(registry) = registry else { return };
-    // #1474: only rehydrate agents that are currently verifiably live. Dead and
-    // unreachable (or previously detached-but-gone) entries become grey panel
-    // "ghosts" outside the active container context if we keep them as
-    // Detached/Exited historical rows. Kill already cascade-removes from the
-    // live registry; resume must apply the same current-set policy.
-    //
     // Probe sockets BEFORE taking the registry mutex (N1): verify does blocking
     // UDS IO with up to 500ms timeouts, and holding the lock across that stalls
     // concurrent get_subagents / spawn registration during resume.
-    let mut live_entries = Vec::new();
-    for persisted in roster {
-        if persisted.liveness == crate::domain::session::SubagentLiveness::Dead {
-            continue;
-        }
-        if !verify_persisted_live_subagent(&persisted) {
-            continue;
-        }
-        let mut entry =
-            crate::infrastructure::tools::subagent_registry::SubagentEntry::with_identity(
-                crate::domain::ids::AgentUuid::from(persisted.agent_uuid.clone()),
-                persisted.display_name.clone(),
-                persisted.socket_path.clone(),
-                persisted.pid,
-            );
-        entry.status = crate::infrastructure::tools::subagent_registry::SubagentStatus::Idle;
-        entry.persisted_liveness = crate::domain::session::SubagentLiveness::Live;
-        entry.parent_id = persisted.parent_id;
-        entry.read_only = persisted.read_only;
-        entry.delivered_message_ordinal = persisted.delivered_message_ordinal;
-        entry.pending_message_ordinal = persisted.pending_message_reports.back().map(|p| p.ordinal);
-        entry.pending_message_reports = persisted.pending_message_reports;
-        live_entries.push((persisted.agent_uuid, entry));
-    }
+    let restored_entries: Vec<_> = roster
+        .into_iter()
+        .filter_map(|persisted| {
+            let decision = classify_persisted_subagent_restore(&persisted);
+            entry_from_persisted_subagent(persisted, decision)
+        })
+        .collect();
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     entries.clear();
-    for (agent_uuid, entry) in live_entries {
+    for (agent_uuid, entry) in restored_entries {
         entries.insert(agent_uuid, entry);
     }
 }
