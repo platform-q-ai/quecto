@@ -185,11 +185,17 @@ fn compact_roster_omits_dead_and_exited_subagents_retained_in_registry() {
         detached.persisted_liveness = SubagentLiveness::Detached;
         detached.notification_sequence = 4;
         guard.insert("detached".into(), detached);
+
+        let mut restored = SubagentEntry::new(std::path::PathBuf::new(), 0);
+        restored.persisted_liveness = SubagentLiveness::Detached;
+        restored.parent_id = Some("restored-parent".into());
+        restored.notification_sequence = 5;
+        guard.insert("ordinary-exit-restored".into(), restored);
     }
 
     let rows = build_compact_subagent_roster(&Some(reg), None).unwrap();
     assert_eq!(
-        rows.sequence, 4,
+        rows.sequence, 5,
         "cursor still reflects the retained registry"
     );
     assert_eq!(
@@ -197,8 +203,8 @@ fn compact_roster_omits_dead_and_exited_subagents_retained_in_registry() {
             .iter()
             .map(|row| row.agent_id.as_str())
             .collect::<Vec<_>>(),
-        vec!["live"],
-        "compact roster must expose only surviving subagents"
+        vec!["live", "ordinary-exit-restored"],
+        "compact roster must expose surviving subagents plus ordinary-exit restored rows"
     );
 }
 
