@@ -89,6 +89,7 @@ impl super::App {
             .and_then(|c| c.socket_path.clone())
             .filter(|p| crate::shell::tab_registry::socket_path_is_live(p));
         let policy = self.tab_spawn_policy.clone().unwrap_or_default();
+        let pending_child_watches = self.pending_tab_child_watches.clone();
         // Unit tests may call lifecycle helpers without a running runtime; the
         // pending_attach flag is still set by the caller for AC1/AC2 coverage.
         if tokio::runtime::Handle::try_current().is_err() {
@@ -100,12 +101,21 @@ impl super::App {
                     let out = attach_existing_socket(tab, path).await;
                     // Dead/stale socket: Tier-2 spawn + resume_session (AC6).
                     if out.result.is_err() {
-                        spawn_and_attach_new_agent(tab, resume_session, policy).await
+                        spawn_and_attach_new_agent(
+                            tab,
+                            resume_session,
+                            policy,
+                            pending_child_watches,
+                        )
+                        .await
                     } else {
                         out
                     }
                 }
-                None => spawn_and_attach_new_agent(tab, resume_session, policy).await,
+                None => {
+                    spawn_and_attach_new_agent(tab, resume_session, policy, pending_child_watches)
+                        .await
+                }
             };
             outcome.generation = generation;
             let _ = tx.send(outcome).await;
@@ -377,12 +387,24 @@ impl super::App {
         &mut self,
     ) -> Vec<crate::shell::child_watch::ChildWatch> {
         let mut out = Vec::new();
+        if let Ok(mut pending) = self.pending_tab_child_watches.lock() {
+            out.extend(pending.drain(..));
+        }
         for state in self.tabs.values_mut() {
             if let Some(w) = state.child_exit_watch.take() {
                 out.push(w);
             }
         }
         out
+    }
+
+    fn remove_pending_tab_child_watch(&self, watch: &crate::shell::child_watch::ChildWatch) {
+        let Ok(mut pending) = self.pending_tab_child_watches.lock() else {
+            return;
+        };
+        if let Some(pos) = pending.iter().position(|w| w.same_child_as(watch)) {
+            pending.swap_remove(pos);
+        }
     }
 
     /// Replace a tab's transport with a live connection (spawn success path).
@@ -392,6 +414,9 @@ impl super::App {
         transport: Connection,
         child_watch: Option<crate::shell::child_watch::ChildWatch>,
     ) {
+        if let Some(watch) = child_watch.as_ref() {
+            self.remove_pending_tab_child_watch(watch);
+        }
         let Some(state) = self.tabs.get_mut(&tab) else {
             return;
         };
@@ -605,12 +630,18 @@ async fn spawn_and_attach_new_agent(
     tab: TabId,
     resume_session: Option<String>,
     policy: crate::shell::cli::TabSpawnPolicy,
+    pending_child_watches: std::sync::Arc<
+        std::sync::Mutex<Vec<crate::shell::child_watch::ChildWatch>>,
+    >,
 ) -> TabAttachOutcome {
     let flags = crate::shell::cli::tab_spawn_flags_from_policy(&policy, resume_session.clone());
     match crate::shell::cli::spawn_agent_for_tab(&flags).await {
         Ok((path, child, stderr_tail, announced)) => {
             let pid = child.id();
             let watch = crate::shell::child_watch::watch_child(child, stderr_tail);
+            if let Ok(mut pending) = pending_child_watches.lock() {
+                pending.push(watch.clone());
+            }
             let speaks_frames = announced
                 .is_some_and(|v| u32::from(v) >= u32::from(quecto_line_io::PROTOCOL_VERSION));
             let client = if speaks_frames {

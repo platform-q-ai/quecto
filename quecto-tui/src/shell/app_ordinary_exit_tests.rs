@@ -69,6 +69,28 @@ async fn ordinary_exit_kill_policy_cleans_up_owned_child_watches() {
 }
 
 #[tokio::test]
+async fn ordinary_exit_kill_policy_cleans_up_in_flight_tab_spawn_watch_before_attach() {
+    let mut h = TuiHarness::new().await;
+    let a = h.app_mut();
+    a.pending_tab_child_watches
+        .lock()
+        .unwrap()
+        .push(crate::shell::child_watch::ChildWatch::for_tests(Some(88)));
+    a.set_ordinary_exit_kill_owned(true);
+
+    a.finalize_ordinary_exit().await;
+
+    assert!(
+        a.pending_tab_child_watches.lock().unwrap().is_empty(),
+        "ordinary exit must drain TUI-owned watches registered by in-flight tab spawns"
+    );
+    assert!(
+        a.take_all_child_exit_watches().is_empty(),
+        "drained pending spawn watches must not remain for a later teardown race"
+    );
+}
+
+#[tokio::test]
 async fn ordinary_exit_detach_policy_leaves_owned_child_watches() {
     let mut h = TuiHarness::new().await;
     let a = h.app_mut();
