@@ -334,15 +334,24 @@ async fn final_subagent_roster_snapshot(
     let Ok(Some(previous)) = session_store.load(session_key).await else {
         return snapshot;
     };
-    if !previous.subagent_roster.is_empty()
-        && previous
-            .subagent_roster
-            .iter()
-            .all(|entry| entry.restore_reason == SubagentRestoreReason::OrdinaryTuiExitStopped)
-    {
+    if is_completed_ordinary_exit_barrier_roster(&previous.subagent_roster) {
         return previous.subagent_roster;
     }
     snapshot
+}
+
+fn is_completed_ordinary_exit_barrier_roster(roster: &[PersistedSubagentRosterEntry]) -> bool {
+    !roster.is_empty()
+        && roster
+            .iter()
+            .any(|entry| entry.restore_reason == SubagentRestoreReason::OrdinaryTuiExitStopped)
+        && roster.iter().all(|entry| {
+            matches!(
+                entry.restore_reason,
+                SubagentRestoreReason::OrdinaryTuiExitStopped
+                    | SubagentRestoreReason::ExplicitlyKilled
+            )
+        })
 }
 
 /// Arguments for [`run_dispatch_loop`].
