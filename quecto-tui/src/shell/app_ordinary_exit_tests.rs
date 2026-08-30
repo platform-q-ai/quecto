@@ -42,3 +42,110 @@ async fn ordinary_exit_finalizer_persists_all_visible_tabs_before_terminal_clean
     assert_eq!(tab_cmd["type"], "persist_session");
     assert!(a.should_exit);
 }
+
+#[tokio::test]
+async fn ordinary_exit_default_cleans_up_owned_child_watches() {
+    let mut h = TuiHarness::new().await;
+    let a = h.app_mut();
+    let (mut conn, mut rx) = Connection::live_for_tests();
+    conn.set_tab_for_tests(TabId::MASTER);
+    a.attach_connection_to_tab(
+        TabId::MASTER,
+        conn,
+        Some(crate::shell::child_watch::ChildWatch::for_tests(Some(77))),
+    );
+
+    a.finalize_ordinary_exit().await;
+
+    assert!(rx.try_recv().is_ok(), "persist command still enqueued");
+    assert!(
+        a.take_all_child_exit_watches().is_empty(),
+        "ordinary exit must drain TUI-owned watches by default"
+    );
+}
+
+#[tokio::test]
+async fn ordinary_exit_waits_for_persist_barrier_before_teardown() {
+    let mut h = TuiHarness::new().await;
+    let a = h.app_mut();
+    let (mut conn, mut rx) = Connection::live_for_tests();
+    conn.set_tab_for_tests(TabId::MASTER);
+    a.attach_connection_to_tab(TabId::MASTER, conn, None);
+    let event_tx = a.tab_event_tx.clone().unwrap();
+
+    tokio::spawn(async move {
+        let cmd: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        event_tx
+            .send(crate::shell::connection::SourcedEvent::Tab(
+                TabId::MASTER,
+                crate::protocol::client::Event::Response {
+                    id: cmd["id"].as_str().map(str::to_string),
+                    command: "persist_session".to_string(),
+                    success: true,
+                    data: None,
+                    error: None,
+                },
+            ))
+            .await
+            .unwrap();
+    });
+
+    a.finalize_ordinary_exit().await;
+    assert!(
+        a.notifications.messages().is_empty(),
+        "successful barrier should not raise errors"
+    );
+}
+
+#[tokio::test]
+async fn ordinary_exit_reports_persist_enqueue_error_before_teardown() {
+    let mut h = TuiHarness::new().await;
+    let a = h.app_mut();
+    let (mut conn, rx) = Connection::live_for_tests();
+    drop(rx);
+    conn.set_tab_for_tests(TabId::MASTER);
+    a.attach_connection_to_tab(TabId::MASTER, conn, None);
+
+    a.finalize_ordinary_exit().await;
+
+    let msgs = a.notifications.messages().join("\n");
+    assert!(
+        msgs.contains("ordinary-exit persistence enqueue failed"),
+        "enqueue error must be deliberate and visible: {msgs}"
+    );
+}
+
+#[tokio::test]
+async fn ordinary_exit_reports_persist_barrier_failure_before_teardown() {
+    let mut h = TuiHarness::new().await;
+    let a = h.app_mut();
+    let (mut conn, mut rx) = Connection::live_for_tests();
+    conn.set_tab_for_tests(TabId::MASTER);
+    a.attach_connection_to_tab(TabId::MASTER, conn, None);
+    let event_tx = a.tab_event_tx.clone().unwrap();
+
+    tokio::spawn(async move {
+        let cmd: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        event_tx
+            .send(crate::shell::connection::SourcedEvent::Tab(
+                TabId::MASTER,
+                crate::protocol::client::Event::Response {
+                    id: cmd["id"].as_str().map(str::to_string),
+                    command: "persist_session".to_string(),
+                    success: false,
+                    data: None,
+                    error: Some("disk full".to_string()),
+                },
+            ))
+            .await
+            .unwrap();
+    });
+
+    a.finalize_ordinary_exit().await;
+
+    let msgs = a.notifications.messages().join("\n");
+    assert!(
+        msgs.contains("disk full"),
+        "barrier failure must be deliberate and visible: {msgs}"
+    );
+}

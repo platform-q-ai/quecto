@@ -181,7 +181,7 @@ impl App {
             notifications: NotificationStack::new(),
             kitty: KittyProtocol::new(),
             should_exit: false,
-            ordinary_exit_kill_owned: false,
+            ordinary_exit_kill_owned: true,
             stdin_buffer: crate::shell::stdin_buffer::StdinBuffer::new(),
             inference: InferenceFlow::default(),
             subagents,

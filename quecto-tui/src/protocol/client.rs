@@ -338,6 +338,7 @@ pub enum Event {
     #[serde(other)]
     Unknown,
 }
+
 // Typed subagent roster payloads live in `subagent_payloads` (750-line cap
 // split); re-exported here so existing `protocol::client::…` paths still work.
 pub use crate::protocol::subagent_payloads::{

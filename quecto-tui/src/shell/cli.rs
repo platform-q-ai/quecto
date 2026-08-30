@@ -273,7 +273,7 @@ async fn run_tui(flags: CliFlags) -> i32 {
         app.ac_mut().child_pid = watch.pid();
         app.set_child_exit_watch(watch.clone());
     }
-    app.set_ordinary_exit_kill_owned(flags.kill_on_exit);
+    app.set_ordinary_exit_kill_owned(true);
     // Master ready: capture initial durability snapshot (F3).
     app.persist_default_durability();
     let exit_code = app.run().await;
