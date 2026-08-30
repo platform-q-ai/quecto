@@ -25,8 +25,8 @@ pub(crate) struct CliFlags {
     /// Spawn tab agents with `--persist` (ADR-0023 / #1465). Default true when
     /// the TUI owns the child; ignored for `--socket` attach.
     pub(crate) persist: bool,
-    /// When true, terminate owned child agents on TUI exit. Default false
-    /// (detach-on-exit). `--kill-on-exit` restores legacy teardown.
+    /// When true, terminate owned child agents on ordinary TUI exit. Default true
+    /// for phase-4 cleanup; `--detach-on-exit` explicitly leaves them running.
     pub(crate) kill_on_exit: bool,
 }
 
@@ -56,7 +56,7 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
         system_prompt: None,
         disable_tools: Vec::new(),
         persist: true,
-        kill_on_exit: false,
+        kill_on_exit: true,
     };
     // An explicit `--system` literal takes precedence over `--system-file`
     // regardless of order; track it so a later/earlier `--system-file` can't

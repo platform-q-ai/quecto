@@ -372,7 +372,7 @@ impl super::App {
         Ok(if kill_agent { watch } else { None })
     }
 
-    /// Detach every per-tab `ChildWatch` for explicit kill-on-exit (AC3c).
+    /// Detach every per-tab `ChildWatch` so ordinary-exit cleanup can terminate them (AC3c).
     pub(crate) fn take_all_child_exit_watches(
         &mut self,
     ) -> Vec<crate::shell::child_watch::ChildWatch> {
