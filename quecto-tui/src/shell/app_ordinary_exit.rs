@@ -45,10 +45,17 @@ impl App {
     }
 
     pub(crate) fn emit_ordinary_exit_finalization_errors(errors: &[String]) {
+        let mut stderr = std::io::stderr().lock();
+        Self::emit_ordinary_exit_finalization_errors_to(errors, &mut stderr);
+    }
+
+    pub(crate) fn emit_ordinary_exit_finalization_errors_to(
+        errors: &[String],
+        stderr: &mut impl Write,
+    ) {
         if errors.is_empty() {
             return;
         }
-        let mut stderr = std::io::stderr().lock();
         for error in errors {
             let _ = writeln!(stderr, "quecto: ordinary-exit finalization error: {error}");
         }
@@ -61,11 +68,17 @@ impl App {
         let deadline = tokio::time::Instant::now() + ORDINARY_EXIT_DURABILITY_BARRIER_TIMEOUT;
         while !pending.is_empty() {
             let recv = tokio::time::timeout_at(deadline, self.tab_event_rx.recv()).await;
-            let Ok(Some(crate::shell::connection::SourcedEvent::Tab(tab, event))) = recv else {
-                let msg = "ordinary-exit persistence barrier timed out".to_string();
-                self.notify(&msg, NotifyLevel::Error);
-                errors.push(msg);
-                return errors;
+            let sourced_event = match recv {
+                Ok(Some(event)) => event,
+                Ok(None) | Err(_) => {
+                    let msg = "ordinary-exit persistence barrier timed out".to_string();
+                    self.notify(&msg, NotifyLevel::Error);
+                    errors.push(msg);
+                    return errors;
+                }
+            };
+            let crate::shell::connection::SourcedEvent::Tab(tab, event) = sourced_event else {
+                continue;
             };
             let Some((id, success, error)) =
                 crate::protocol::event_barrier::persist_session_response(event)

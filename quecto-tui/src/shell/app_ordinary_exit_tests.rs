@@ -326,3 +326,95 @@ async fn ordinary_exit_barrier_uses_single_overall_deadline_for_incidental_event
         "timeout must be returned for post-teardown reporting: {finalization_errors:?}"
     );
 }
+
+#[test]
+fn ordinary_exit_finalization_errors_emit_to_post_cleanup_stderr() {
+    let errors = vec![
+        "ordinary-exit persistence enqueue failed: channel closed".to_string(),
+        "tab 0: disk full".to_string(),
+        "ordinary-exit persistence barrier timed out".to_string(),
+    ];
+    let mut stderr = Vec::new();
+
+    crate::shell::app::App::emit_ordinary_exit_finalization_errors_to(&errors, &mut stderr);
+
+    let stderr = String::from_utf8(stderr).expect("stderr utf8");
+    for expected in [
+        "ordinary-exit persistence enqueue failed: channel closed",
+        "tab 0: disk full",
+        "ordinary-exit persistence barrier timed out",
+    ] {
+        assert!(
+            stderr.contains(&format!(
+                "quecto: ordinary-exit finalization error: {expected}"
+            )),
+            "missing post-cleanup stderr emission for {expected}: {stderr}"
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn ordinary_exit_barrier_ignores_closed_sentinel_and_waits_for_remaining_persists() {
+    let mut h = TuiHarness::new().await;
+    let a = h.app_mut();
+    let (mut master_conn, mut master_rx) = Connection::live_for_tests();
+    master_conn.set_tab_for_tests(TabId::MASTER);
+    a.attach_connection_to_tab(TabId::MASTER, master_conn, None);
+    let tab = a.open_placeholder_tab(Some("worker".into()));
+    let (mut tab_conn, mut tab_rx) = Connection::live_for_tests();
+    tab_conn.set_tab_for_tests(tab);
+    a.attach_connection_to_tab(tab, tab_conn, None);
+    let event_tx = a.tab_event_tx.clone().unwrap();
+
+    tokio::spawn(async move {
+        let master_cmd: serde_json::Value =
+            serde_json::from_str(&master_rx.recv().await.unwrap()).unwrap();
+        let tab_cmd: serde_json::Value =
+            serde_json::from_str(&tab_rx.recv().await.unwrap()).unwrap();
+        event_tx
+            .send(crate::shell::connection::SourcedEvent::Closed(
+                TabId::MASTER,
+            ))
+            .await
+            .unwrap();
+        tokio::time::advance(std::time::Duration::from_millis(500)).await;
+        event_tx
+            .send(crate::shell::connection::SourcedEvent::Tab(
+                tab,
+                crate::protocol::client::Event::Response {
+                    id: tab_cmd["id"].as_str().map(str::to_string),
+                    command: "persist_session".to_string(),
+                    success: true,
+                    data: None,
+                    error: None,
+                },
+            ))
+            .await
+            .unwrap();
+        event_tx
+            .send(crate::shell::connection::SourcedEvent::Tab(
+                TabId::MASTER,
+                crate::protocol::client::Event::Response {
+                    id: master_cmd["id"].as_str().map(str::to_string),
+                    command: "persist_session".to_string(),
+                    success: true,
+                    data: None,
+                    error: None,
+                },
+            ))
+            .await
+            .unwrap();
+    });
+
+    let finalization_errors = a.finalize_ordinary_exit().await;
+
+    assert!(
+        finalization_errors.is_empty(),
+        "Closed(tab) is incidental and must not become a global timeout: {finalization_errors:?}"
+    );
+    let msgs = a.notifications.messages().join("\n");
+    assert!(
+        !msgs.contains("barrier timed out"),
+        "barrier must wait for both ids after Closed(tab): {msgs}"
+    );
+}
