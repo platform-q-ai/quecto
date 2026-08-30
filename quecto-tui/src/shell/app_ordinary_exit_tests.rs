@@ -44,7 +44,7 @@ async fn ordinary_exit_finalizer_persists_all_visible_tabs_before_terminal_clean
 }
 
 #[tokio::test]
-async fn ordinary_exit_default_cleans_up_owned_child_watches() {
+async fn ordinary_exit_kill_policy_cleans_up_owned_child_watches() {
     let mut h = TuiHarness::new().await;
     let a = h.app_mut();
     let (mut conn, mut rx) = Connection::live_for_tests();
@@ -54,6 +54,7 @@ async fn ordinary_exit_default_cleans_up_owned_child_watches() {
         conn,
         Some(crate::shell::child_watch::ChildWatch::for_tests(Some(77))),
     );
+    a.set_ordinary_exit_kill_owned(true);
 
     a.finalize_ordinary_exit().await;
 
@@ -61,6 +62,29 @@ async fn ordinary_exit_default_cleans_up_owned_child_watches() {
     assert!(
         a.take_all_child_exit_watches().is_empty(),
         "ordinary exit must drain TUI-owned watches by default"
+    );
+}
+
+#[tokio::test]
+async fn ordinary_exit_detach_policy_leaves_owned_child_watches() {
+    let mut h = TuiHarness::new().await;
+    let a = h.app_mut();
+    let (mut conn, mut rx) = Connection::live_for_tests();
+    conn.set_tab_for_tests(TabId::MASTER);
+    a.attach_connection_to_tab(
+        TabId::MASTER,
+        conn,
+        Some(crate::shell::child_watch::ChildWatch::for_tests(Some(77))),
+    );
+    a.set_ordinary_exit_kill_owned(false);
+
+    a.finalize_ordinary_exit().await;
+
+    assert!(rx.try_recv().is_ok(), "persist command still enqueued");
+    assert_eq!(
+        a.take_all_child_exit_watches().len(),
+        1,
+        "detach-on-exit must leave owned watches for drop/detach instead of termination"
     );
 }
 
@@ -189,6 +213,66 @@ async fn ordinary_exit_partial_enqueue_failure_still_waits_for_successful_barrie
     assert!(
         !msgs.contains("barrier timed out"),
         "successful enqueue was awaited: {msgs}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn ordinary_exit_mixed_barrier_failure_still_waits_for_other_ids() {
+    let mut h = TuiHarness::new().await;
+    let a = h.app_mut();
+    let (mut master_conn, mut master_rx) = Connection::live_for_tests();
+    master_conn.set_tab_for_tests(TabId::MASTER);
+    a.attach_connection_to_tab(TabId::MASTER, master_conn, None);
+    let tab = a.open_placeholder_tab(Some("worker".into()));
+    let (mut tab_conn, mut tab_rx) = Connection::live_for_tests();
+    tab_conn.set_tab_for_tests(tab);
+    a.attach_connection_to_tab(tab, tab_conn, None);
+    let event_tx = a.tab_event_tx.clone().unwrap();
+
+    tokio::spawn(async move {
+        let master_cmd: serde_json::Value =
+            serde_json::from_str(&master_rx.recv().await.unwrap()).unwrap();
+        let tab_cmd: serde_json::Value =
+            serde_json::from_str(&tab_rx.recv().await.unwrap()).unwrap();
+        event_tx
+            .send(crate::shell::connection::SourcedEvent::Tab(
+                TabId::MASTER,
+                crate::protocol::client::Event::Response {
+                    id: master_cmd["id"].as_str().map(str::to_string),
+                    command: "persist_session".to_string(),
+                    success: false,
+                    data: None,
+                    error: Some("disk full".to_string()),
+                },
+            ))
+            .await
+            .unwrap();
+        tokio::time::advance(std::time::Duration::from_millis(500)).await;
+        event_tx
+            .send(crate::shell::connection::SourcedEvent::Tab(
+                tab,
+                crate::protocol::client::Event::Response {
+                    id: tab_cmd["id"].as_str().map(str::to_string),
+                    command: "persist_session".to_string(),
+                    success: true,
+                    data: None,
+                    error: None,
+                },
+            ))
+            .await
+            .unwrap();
+    });
+
+    a.finalize_ordinary_exit().await;
+
+    let msgs = a.notifications.messages().join("\n");
+    assert!(
+        msgs.contains("disk full"),
+        "barrier failure visible: {msgs}"
+    );
+    assert!(
+        !msgs.contains("barrier timed out"),
+        "remaining successful persist id was awaited despite earlier failure: {msgs}"
     );
 }
 

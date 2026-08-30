@@ -713,6 +713,16 @@ fn parse_flags_default_persist_and_detach_on_exit() {
 }
 
 #[test]
+fn parse_flags_explicit_detach_overrides_prior_kill_on_exit() {
+    let f = parse_flags(&[
+        "quecto-tui".into(),
+        "--kill-on-exit".into(),
+        "--detach-on-exit".into(),
+    ]);
+    assert!(!f.kill_on_exit);
+}
+
+#[test]
 fn parse_flags_kill_on_exit_and_no_persist() {
     let f = parse_flags(&[
         "quecto-tui".into(),

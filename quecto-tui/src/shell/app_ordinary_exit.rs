@@ -68,7 +68,6 @@ impl App {
             let msg = error
                 .unwrap_or_else(|| "failed to persist session before ordinary exit".to_string());
             self.notify(&format!("tab {}: {msg}", tab.0), NotifyLevel::Error);
-            return;
         }
     }
 }
