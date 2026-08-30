@@ -16,13 +16,17 @@ impl App {
 
     pub(crate) async fn finalize_ordinary_exit(&mut self) {
         self.request_ordinary_exit();
-        match self.enqueue_ordinary_exit_snapshot_persists() {
-            Ok(ids) => self.await_ordinary_exit_durability_barrier(ids).await,
-            Err(err) => self.notify(
-                &format!("ordinary-exit persistence enqueue failed: {err}"),
-                NotifyLevel::Error,
-            ),
-        }
+        let ids = match self.enqueue_ordinary_exit_snapshot_persists() {
+            Ok(ids) => ids,
+            Err((ids, err)) => {
+                self.notify(
+                    &format!("ordinary-exit persistence enqueue failed: {err}"),
+                    NotifyLevel::Error,
+                );
+                ids
+            }
+        };
+        self.await_ordinary_exit_durability_barrier(ids).await;
         let watches = if self.ordinary_exit_kill_owned {
             self.take_all_child_exit_watches()
         } else {
@@ -39,12 +43,9 @@ impl App {
 
     async fn await_ordinary_exit_durability_barrier(&mut self, ids: Vec<String>) {
         let mut pending: HashSet<String> = ids.into_iter().collect();
+        let deadline = tokio::time::Instant::now() + ORDINARY_EXIT_DURABILITY_BARRIER_TIMEOUT;
         while !pending.is_empty() {
-            let recv = tokio::time::timeout(
-                ORDINARY_EXIT_DURABILITY_BARRIER_TIMEOUT,
-                self.tab_event_rx.recv(),
-            )
-            .await;
+            let recv = tokio::time::timeout_at(deadline, self.tab_event_rx.recv()).await;
             let Ok(Some(crate::shell::connection::SourcedEvent::Tab(tab, event))) = recv else {
                 self.notify(
                     "ordinary-exit persistence barrier timed out",

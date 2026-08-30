@@ -218,7 +218,7 @@ impl super::App {
     /// removes children. Phase 4 owns exit-path wiring and any ack/wait policy.
     pub fn enqueue_ordinary_exit_snapshot_persists(
         &mut self,
-    ) -> Result<Vec<String>, crate::protocol::client::ClientError> {
+    ) -> Result<Vec<String>, (Vec<String>, crate::protocol::client::ClientError)> {
         let reg = crate::shell::tab_registry::default_registry_path();
         let man = crate::shell::workspace_manifest::default_manifest_path();
         self.enqueue_ordinary_exit_snapshot_persists_at(&reg, &man)
@@ -228,7 +228,7 @@ impl super::App {
         &mut self,
         registry_path: &std::path::Path,
         manifest_path: &std::path::Path,
-    ) -> Result<Vec<String>, crate::protocol::client::ClientError> {
+    ) -> Result<Vec<String>, (Vec<String>, crate::protocol::client::ClientError)> {
         let mut ids = Vec::new();
         let mut first_err = None;
         for tab in self.ordered_tab_ids() {
@@ -250,7 +250,7 @@ impl super::App {
         let workspace_id = self.workspace_id.clone();
         self.persist_durability_snapshot(&workspace_id, registry_path, manifest_path);
         if let Some(err) = first_err {
-            Err(err)
+            Err((ids, err))
         } else {
             Ok(ids)
         }
