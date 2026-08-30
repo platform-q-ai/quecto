@@ -8,7 +8,9 @@
 
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::message::Message;
-use crate::domain::session::{Session, SessionStore};
+use crate::domain::session::{
+    PersistedSubagentRosterEntry, Session, SessionStore, SubagentRestoreReason,
+};
 
 use super::protocol::AgentEvent;
 use super::uds::uds_dispatch_session;
@@ -304,21 +306,43 @@ pub(super) async fn multi_client_loop(
 
     if !ephemeral && !session_key.is_empty() {
         remove_injected_system_prompt(&mut messages, &system_prompt);
+        let subagent_roster =
+            final_subagent_roster_snapshot(session_store, &session_key, &subagent_registry).await;
         let session = Session {
             key: session_key,
             messages: std::mem::take(&mut messages),
             workflow_run: wf_state
                 .as_ref()
                 .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run())),
-            subagent_roster: uds_dispatch_session::snapshot_subagent_roster_with_restore_reason(
-                &subagent_registry,
-                crate::domain::session::SubagentRestoreReason::LegacyUnspecified,
-            ),
+            subagent_roster,
         };
         let _ = session_store.save(&session).await;
     }
 
     0
+}
+
+async fn final_subagent_roster_snapshot(
+    session_store: &dyn SessionStore,
+    session_key: &str,
+    subagent_registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+) -> Vec<PersistedSubagentRosterEntry> {
+    let snapshot = uds_dispatch_session::snapshot_subagent_roster_with_restore_reason(
+        subagent_registry,
+        SubagentRestoreReason::LegacyUnspecified,
+    );
+    let Ok(Some(previous)) = session_store.load(session_key).await else {
+        return snapshot;
+    };
+    if !previous.subagent_roster.is_empty()
+        && previous
+            .subagent_roster
+            .iter()
+            .all(|entry| entry.restore_reason == SubagentRestoreReason::OrdinaryTuiExitStopped)
+    {
+        return previous.subagent_roster;
+    }
+    snapshot
 }
 
 /// Arguments for [`run_dispatch_loop`].
