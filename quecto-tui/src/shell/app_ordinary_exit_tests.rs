@@ -1,5 +1,8 @@
+use std::sync::{Arc, Mutex};
+
+use crate::protocol::client::Event;
 use crate::shell::app::tui_harness::TuiHarness;
-use crate::shell::connection::{Connection, TabId};
+use crate::shell::connection::{Connection, SourcedEvent, TabId};
 use crate::shell::keys::Key;
 
 #[tokio::test]
@@ -100,9 +103,9 @@ async fn ordinary_exit_waits_for_persist_barrier_before_teardown() {
     tokio::spawn(async move {
         let cmd: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
         event_tx
-            .send(crate::shell::connection::SourcedEvent::Tab(
+            .send(SourcedEvent::Tab(
                 TabId::MASTER,
-                crate::protocol::client::Event::Response {
+                Event::Response {
                     id: cmd["id"].as_str().map(str::to_string),
                     command: "persist_session".to_string(),
                     success: true,
@@ -130,7 +133,9 @@ async fn ordinary_exit_reports_persist_enqueue_error_before_teardown() {
     conn.set_tab_for_tests(TabId::MASTER);
     a.attach_connection_to_tab(TabId::MASTER, conn, None);
 
+    crate::shell::app::App::take_ordinary_exit_finalization_errors_for_tests();
     let finalization_errors = a.finalize_ordinary_exit().await;
+    let emitted_errors = crate::shell::app::App::take_ordinary_exit_finalization_errors_for_tests();
 
     let msgs = a.notifications.messages().join("\n");
     assert!(
@@ -142,6 +147,12 @@ async fn ordinary_exit_reports_persist_enqueue_error_before_teardown() {
             .iter()
             .any(|msg| msg.contains("ordinary-exit persistence enqueue failed")),
         "enqueue error must be returned for post-teardown reporting: {finalization_errors:?}"
+    );
+    assert!(
+        emitted_errors
+            .iter()
+            .any(|msg| msg.contains("ordinary-exit persistence enqueue failed")),
+        "finalize_ordinary_exit itself must emit enqueue errors after cleanup: {emitted_errors:?}"
     );
 }
 
@@ -157,9 +168,9 @@ async fn ordinary_exit_reports_persist_barrier_failure_before_teardown() {
     tokio::spawn(async move {
         let cmd: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
         event_tx
-            .send(crate::shell::connection::SourcedEvent::Tab(
+            .send(SourcedEvent::Tab(
                 TabId::MASTER,
-                crate::protocol::client::Event::Response {
+                Event::Response {
                     id: cmd["id"].as_str().map(str::to_string),
                     command: "persist_session".to_string(),
                     success: false,
@@ -171,7 +182,9 @@ async fn ordinary_exit_reports_persist_barrier_failure_before_teardown() {
             .unwrap();
     });
 
+    crate::shell::app::App::take_ordinary_exit_finalization_errors_for_tests();
     let finalization_errors = a.finalize_ordinary_exit().await;
+    let emitted_errors = crate::shell::app::App::take_ordinary_exit_finalization_errors_for_tests();
 
     let msgs = a.notifications.messages().join("\n");
     assert!(
@@ -183,6 +196,10 @@ async fn ordinary_exit_reports_persist_barrier_failure_before_teardown() {
             .iter()
             .any(|msg| msg.contains("disk full")),
         "barrier failure must be returned for post-teardown reporting: {finalization_errors:?}"
+    );
+    assert!(
+        emitted_errors.iter().any(|msg| msg.contains("disk full")),
+        "finalize_ordinary_exit itself must emit failed-persist responses after cleanup: {emitted_errors:?}"
     );
 }
 
@@ -204,9 +221,9 @@ async fn ordinary_exit_partial_enqueue_failure_still_waits_for_successful_barrie
         let cmd: serde_json::Value = serde_json::from_str(&ok_rx.recv().await.unwrap()).unwrap();
         tokio::time::advance(std::time::Duration::from_millis(500)).await;
         event_tx
-            .send(crate::shell::connection::SourcedEvent::Tab(
+            .send(SourcedEvent::Tab(
                 tab,
-                crate::protocol::client::Event::Response {
+                Event::Response {
                     id: cmd["id"].as_str().map(str::to_string),
                     command: "persist_session".to_string(),
                     success: true,
@@ -247,9 +264,9 @@ async fn ordinary_exit_mixed_barrier_failure_still_waits_for_other_ids() {
         let tab_cmd: serde_json::Value =
             serde_json::from_str(&tab_rx.recv().await.unwrap()).unwrap();
         event_tx
-            .send(crate::shell::connection::SourcedEvent::Tab(
+            .send(SourcedEvent::Tab(
                 TabId::MASTER,
-                crate::protocol::client::Event::Response {
+                Event::Response {
                     id: master_cmd["id"].as_str().map(str::to_string),
                     command: "persist_session".to_string(),
                     success: false,
@@ -261,9 +278,9 @@ async fn ordinary_exit_mixed_barrier_failure_still_waits_for_other_ids() {
             .unwrap();
         tokio::time::advance(std::time::Duration::from_millis(500)).await;
         event_tx
-            .send(crate::shell::connection::SourcedEvent::Tab(
+            .send(SourcedEvent::Tab(
                 tab,
-                crate::protocol::client::Event::Response {
+                Event::Response {
                     id: tab_cmd["id"].as_str().map(str::to_string),
                     command: "persist_session".to_string(),
                     success: true,
@@ -301,9 +318,9 @@ async fn ordinary_exit_barrier_uses_single_overall_deadline_for_incidental_event
         for i in 0..4 {
             tokio::time::advance(std::time::Duration::from_millis(600)).await;
             event_tx
-                .send(crate::shell::connection::SourcedEvent::Tab(
+                .send(SourcedEvent::Tab(
                     TabId::MASTER,
-                    crate::protocol::client::Event::Token {
+                    Event::Token {
                         token: format!("incidental-{i}"),
                     },
                 ))
@@ -312,7 +329,9 @@ async fn ordinary_exit_barrier_uses_single_overall_deadline_for_incidental_event
         }
     });
 
+    crate::shell::app::App::take_ordinary_exit_finalization_errors_for_tests();
     let finalization_errors = a.finalize_ordinary_exit().await;
+    let emitted_errors = crate::shell::app::App::take_ordinary_exit_finalization_errors_for_tests();
 
     let msgs = a.notifications.messages().join("\n");
     assert!(
@@ -324,6 +343,12 @@ async fn ordinary_exit_barrier_uses_single_overall_deadline_for_incidental_event
             .iter()
             .any(|msg| msg.contains("ordinary-exit persistence barrier timed out")),
         "timeout must be returned for post-teardown reporting: {finalization_errors:?}"
+    );
+    assert!(
+        emitted_errors
+            .iter()
+            .any(|msg| msg.contains("ordinary-exit persistence barrier timed out")),
+        "finalize_ordinary_exit itself must emit timeout errors after cleanup: {emitted_errors:?}"
     );
 }
 
@@ -372,16 +397,14 @@ async fn ordinary_exit_barrier_ignores_closed_sentinel_and_waits_for_remaining_p
         let tab_cmd: serde_json::Value =
             serde_json::from_str(&tab_rx.recv().await.unwrap()).unwrap();
         event_tx
-            .send(crate::shell::connection::SourcedEvent::Closed(
-                TabId::MASTER,
-            ))
+            .send(SourcedEvent::Closed(TabId::MASTER))
             .await
             .unwrap();
         tokio::time::advance(std::time::Duration::from_millis(500)).await;
         event_tx
-            .send(crate::shell::connection::SourcedEvent::Tab(
+            .send(SourcedEvent::Tab(
                 tab,
-                crate::protocol::client::Event::Response {
+                Event::Response {
                     id: tab_cmd["id"].as_str().map(str::to_string),
                     command: "persist_session".to_string(),
                     success: true,
@@ -392,9 +415,9 @@ async fn ordinary_exit_barrier_ignores_closed_sentinel_and_waits_for_remaining_p
             .await
             .unwrap();
         event_tx
-            .send(crate::shell::connection::SourcedEvent::Tab(
+            .send(SourcedEvent::Tab(
                 TabId::MASTER,
-                crate::protocol::client::Event::Response {
+                Event::Response {
                     id: master_cmd["id"].as_str().map(str::to_string),
                     command: "persist_session".to_string(),
                     success: true,
@@ -406,15 +429,83 @@ async fn ordinary_exit_barrier_ignores_closed_sentinel_and_waits_for_remaining_p
             .unwrap();
     });
 
-    let finalization_errors = a.finalize_ordinary_exit().await;
+    let witness = Arc::new(Mutex::new(Vec::new()));
+    let finalize = a.finalize_ordinary_exit();
+    tokio::pin!(finalize);
+
+    tokio::select! {
+        _ = &mut finalize => panic!("Closed(tab) must not let finalize_ordinary_exit complete before delayed acks"),
+        _ = tokio::time::sleep(std::time::Duration::from_millis(499)) => {}
+    }
+    assert!(witness.lock().unwrap().is_empty());
+    tokio::time::advance(std::time::Duration::from_millis(1)).await;
+    let finalization_errors = finalize.await;
+    witness.lock().unwrap().push("finalized".to_string());
 
     assert!(
         finalization_errors.is_empty(),
         "Closed(tab) is incidental and must not become a global timeout: {finalization_errors:?}"
     );
-    let msgs = a.notifications.messages().join("\n");
-    assert!(
-        !msgs.contains("barrier timed out"),
-        "barrier must wait for both ids after Closed(tab): {msgs}"
+    assert_eq!(
+        witness.lock().unwrap().as_slice(),
+        &["finalized"],
+        "barrier completed only after both persist ids were acknowledged"
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn ordinary_exit_barrier_ignores_subagent_event_and_waits_for_remaining_persists() {
+    let mut h = TuiHarness::new().await;
+    let a = h.app_mut();
+    let (mut conn, mut rx) = Connection::live_for_tests();
+    conn.set_tab_for_tests(TabId::MASTER);
+    a.attach_connection_to_tab(TabId::MASTER, conn, None);
+    let event_tx = a.tab_event_tx.clone().unwrap();
+
+    tokio::spawn(async move {
+        let cmd: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        event_tx
+            .send(SourcedEvent::Subagent(
+                TabId::MASTER,
+                "agent-1".to_string(),
+                Event::Token {
+                    token: "incidental".to_string(),
+                },
+            ))
+            .await
+            .unwrap();
+        tokio::time::advance(std::time::Duration::from_millis(500)).await;
+        event_tx
+            .send(SourcedEvent::Tab(
+                TabId::MASTER,
+                Event::Response {
+                    id: cmd["id"].as_str().map(str::to_string),
+                    command: "persist_session".to_string(),
+                    success: true,
+                    data: None,
+                    error: None,
+                },
+            ))
+            .await
+            .unwrap();
+    });
+
+    let witness = Arc::new(Mutex::new(Vec::new()));
+    let finalize = a.finalize_ordinary_exit();
+    tokio::pin!(finalize);
+
+    tokio::select! {
+        _ = &mut finalize => panic!("Subagent event must not let finalize_ordinary_exit complete before delayed ack"),
+        _ = tokio::time::sleep(std::time::Duration::from_millis(499)) => {}
+    }
+    assert!(witness.lock().unwrap().is_empty());
+    tokio::time::advance(std::time::Duration::from_millis(1)).await;
+    let finalization_errors = finalize.await;
+    witness.lock().unwrap().push("finalized".to_string());
+
+    assert!(
+        finalization_errors.is_empty(),
+        "Subagent event is incidental and must not become a global timeout: {finalization_errors:?}"
+    );
+    assert_eq!(witness.lock().unwrap().as_slice(), &["finalized"]);
 }

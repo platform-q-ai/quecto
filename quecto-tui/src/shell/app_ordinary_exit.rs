@@ -1,10 +1,18 @@
 use std::collections::HashSet;
 use std::io::Write;
+#[cfg(test)]
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use super::{App, NotifyLevel};
 
 const ORDINARY_EXIT_DURABILITY_BARRIER_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[cfg(test)]
+fn ordinary_exit_finalization_errors_for_tests() -> &'static Mutex<Vec<String>> {
+    static ERRORS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+    ERRORS.get_or_init(|| Mutex::new(Vec::new()))
+}
 
 impl App {
     pub(crate) fn request_ordinary_exit(&mut self) {
@@ -47,6 +55,25 @@ impl App {
     pub(crate) fn emit_ordinary_exit_finalization_errors(errors: &[String]) {
         let mut stderr = std::io::stderr().lock();
         Self::emit_ordinary_exit_finalization_errors_to(errors, &mut stderr);
+        #[cfg(test)]
+        Self::record_ordinary_exit_finalization_errors_for_tests(errors);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_ordinary_exit_finalization_errors_for_tests() -> Vec<String> {
+        ordinary_exit_finalization_errors_for_tests()
+            .lock()
+            .unwrap()
+            .drain(..)
+            .collect()
+    }
+
+    #[cfg(test)]
+    fn record_ordinary_exit_finalization_errors_for_tests(errors: &[String]) {
+        ordinary_exit_finalization_errors_for_tests()
+            .lock()
+            .unwrap()
+            .extend(errors.iter().cloned());
     }
 
     pub(crate) fn emit_ordinary_exit_finalization_errors_to(

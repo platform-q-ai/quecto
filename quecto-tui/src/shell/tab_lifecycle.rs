@@ -234,13 +234,12 @@ impl super::App {
         for tab in self.ordered_tab_ids() {
             let id = self.conn_for(tab).map(|c| c.namespaced_id("persist-exit"));
             if let (Some(conn), Some(id)) = (self.conn_for(tab), id) {
-                if let Err(err) =
-                    conn.transport
-                        .try_send(&crate::protocol::client::Command::PersistSession {
-                            id: Some(id.clone()),
-                            restore_reason: Some("ordinary_tui_exit_stopped".to_string()),
-                        })
-                {
+                if let Err(err) = conn.transport.clone_sender().try_send_exit_durability(
+                    &crate::protocol::client::Command::PersistSession {
+                        id: Some(id.clone()),
+                        restore_reason: Some("ordinary_tui_exit_stopped".to_string()),
+                    },
+                ) {
                     first_err.get_or_insert(err);
                 } else {
                     ids.push(id);

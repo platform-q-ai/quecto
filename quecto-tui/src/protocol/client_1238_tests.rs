@@ -281,3 +281,31 @@ fn feed_liveness_command_kinds() {
         .is_feed_liveness()
     );
 }
+
+#[tokio::test]
+async fn exit_durability_persist_session_uses_reserved_headroom_during_ordinary_exit() {
+    let (sender, _rx) = production_queue_sender();
+    let background = Command::GetState {
+        id: None,
+        agent_id: None,
+    };
+    let persist = Command::PersistSession {
+        id: Some("persist-exit".into()),
+        restore_reason: Some("ordinary_tui_exit_stopped".into()),
+    };
+    let background_budget = COMMAND_WRITER_QUEUE_CAPACITY - COMMAND_WRITER_USER_RESERVED;
+
+    for index in 0..background_budget {
+        sender.try_send(&background).unwrap_or_else(|err| {
+            panic!("background command {index} should enqueue within budget: {err}")
+        });
+    }
+    assert!(matches!(
+        sender.try_send(&persist),
+        Err(ClientError::Backpressure)
+    ));
+
+    sender
+        .try_send_exit_durability(&persist)
+        .expect("ordinary-exit PersistSession must bypass the background reserve");
+}
