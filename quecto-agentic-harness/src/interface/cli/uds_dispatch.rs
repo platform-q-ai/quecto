@@ -11,12 +11,16 @@ use super::uds_dispatch_runtime::{SetModelArgs, handle_set_effort, handle_set_mo
 #[cfg(test)]
 pub(super) use super::uds_dispatch_session::{
     handle_clear_history, handle_new_session, handle_resume_session, handle_rewind_to,
-    persist_current_session,
+    persist_current_session, persist_current_session_with_restore_reason,
 };
 #[cfg(not(test))]
-use super::uds_dispatch_session::{handle_new_session, handle_resume_session, handle_rewind_to};
+use super::uds_dispatch_session::{
+    handle_new_session, handle_resume_session, handle_rewind_to,
+    persist_current_session_with_restore_reason,
+};
 use super::{AgentCommand, AgentEvent};
 use super::{DispatchCtx, emit_event_to_broadcast_or_writer};
+use crate::domain::session::SubagentRestoreReason;
 use crate::domain::tool::{
     ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyOperation, ToolPolicyReconciliation,
     ToolPolicyRequest,
@@ -130,6 +134,20 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         AgentCommand::NewSession { .. } => handle_new_session(ctx, id.as_deref(), &type_name).await,
         AgentCommand::ResumeSession { session, .. } => {
             handle_resume_session(ctx, id.as_deref(), &type_name, session).await
+        }
+        AgentCommand::PersistSession { restore_reason, .. } => {
+            let reason = match restore_reason.as_deref() {
+                Some(SubagentRestoreReason::ORDINARY_TUI_EXIT_STOPPED_WIRE) => {
+                    SubagentRestoreReason::OrdinaryTuiExitStopped
+                }
+                _ => SubagentRestoreReason::LegacyUnspecified,
+            };
+            let ev = match persist_current_session_with_restore_reason(ctx, reason).await {
+                Ok(()) => AgentEvent::ok(id.as_deref(), &type_name, None),
+                Err(err) => AgentEvent::err(id.as_deref(), &type_name, err.to_string()),
+            };
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
+            false
         }
         AgentCommand::RegisterTools { .. }
         | AgentCommand::UnregisterTools { .. }
@@ -460,6 +478,9 @@ mod resume_persist_tests;
 #[cfg(test)]
 #[path = "uds_dispatch_1093_tests.rs"]
 mod tests_1093;
+#[cfg(test)]
+#[path = "uds_dispatch_1586_tests.rs"]
+mod tests_1586;
 #[cfg(test)]
 #[path = "uds_dispatch_843_tests.rs"]
 mod tests_843;

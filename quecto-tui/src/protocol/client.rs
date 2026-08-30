@@ -99,6 +99,12 @@ pub enum Command {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    PersistSession {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(rename = "restoreReason", skip_serializing_if = "Option::is_none")]
+        restore_reason: Option<String>,
+    },
     GetToolCatalogue {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -412,6 +418,7 @@ impl Command {
             Self::GetMessagesTail { .. } => "get_messages_tail",
             Self::GetMessage { .. } => "get_message",
             Self::GetSessionStats { .. } => "get_session_stats",
+            Self::PersistSession { .. } => "persist_session",
             Self::GetToolCatalogue { .. } => "get_tool_catalogue",
             Self::SetToolPolicy { .. } => "set_tool_policy",
             Self::ListModels { .. } => "list_models",

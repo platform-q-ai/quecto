@@ -65,6 +65,10 @@ pub enum SubagentRestoreReason {
     Unknown,
 }
 
+impl SubagentRestoreReason {
+    pub const ORDINARY_TUI_EXIT_STOPPED_WIRE: &'static str = "ordinary_tui_exit_stopped";
+}
+
 /// Pending default get_messages delivery awaiting parent-context acknowledgement.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

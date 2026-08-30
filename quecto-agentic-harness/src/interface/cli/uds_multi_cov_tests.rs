@@ -248,3 +248,106 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
     }
     assert!(cmd_rx.try_recv().is_err());
 }
+
+#[tokio::test]
+async fn final_roster_snapshot_preserves_completed_ordinary_exit_barrier_with_killed_tombstones() {
+    use crate::domain::message::Message;
+    use crate::domain::session::{
+        PersistedSubagentRosterEntry, Session, SessionStore, SubagentLiveness,
+        SubagentRestoreReason,
+    };
+    use crate::infrastructure::persistence::session_store::FileSessionStore;
+    use crate::infrastructure::tools::subagent_registry::new_registry;
+
+    fn row(
+        agent_uuid: &str,
+        restore_reason: SubagentRestoreReason,
+    ) -> PersistedSubagentRosterEntry {
+        PersistedSubagentRosterEntry {
+            agent_uuid: agent_uuid.into(),
+            display_name: agent_uuid.into(),
+            session_key: agent_uuid.into(),
+            socket_path: format!("/tmp/{agent_uuid}.sock").into(),
+            pid: 123,
+            liveness: SubagentLiveness::Dead,
+            restore_reason,
+            parent_id: None,
+            read_only: false,
+            delivered_message_ordinal: None,
+            pending_message_reports: std::collections::VecDeque::new(),
+            status: None,
+        }
+    }
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+    let previous_roster = vec![
+        row(
+            "live-at-barrier",
+            SubagentRestoreReason::OrdinaryTuiExitStopped,
+        ),
+        row(
+            "dead-before-barrier",
+            SubagentRestoreReason::ExplicitlyKilled,
+        ),
+    ];
+    store
+        .save(&Session {
+            key: "cli:test".into(),
+            messages: vec![Message::user("saved")],
+            workflow_run: None,
+            subagent_roster: previous_roster.clone(),
+        })
+        .await
+        .unwrap();
+
+    let registry = Some(new_registry());
+    let roster = final_subagent_roster_snapshot(&store, "cli:test", &registry).await;
+
+    assert_eq!(roster, previous_roster);
+}
+
+#[tokio::test]
+async fn final_roster_snapshot_preserves_completed_ordinary_exit_barrier() {
+    use crate::domain::message::Message;
+    use crate::domain::session::{
+        PersistedSubagentRosterEntry, Session, SessionStore, SubagentLiveness,
+        SubagentRestoreReason,
+    };
+    use crate::infrastructure::persistence::session_store::FileSessionStore;
+    use crate::infrastructure::tools::subagent_registry::new_registry;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+    store
+        .save(&Session {
+            key: "cli:test".into(),
+            messages: vec![Message::user("saved")],
+            workflow_run: None,
+            subagent_roster: vec![PersistedSubagentRosterEntry {
+                agent_uuid: "child".into(),
+                display_name: "child".into(),
+                session_key: "child".into(),
+                socket_path: "/tmp/child.sock".into(),
+                pid: 123,
+                liveness: SubagentLiveness::Dead,
+                restore_reason: SubagentRestoreReason::OrdinaryTuiExitStopped,
+                parent_id: None,
+                read_only: false,
+                delivered_message_ordinal: None,
+                pending_message_reports: std::collections::VecDeque::new(),
+                status: None,
+            }],
+        })
+        .await
+        .unwrap();
+
+    let registry = Some(new_registry());
+    let roster = final_subagent_roster_snapshot(&store, "cli:test", &registry).await;
+
+    assert_eq!(roster.len(), 1);
+    assert_eq!(
+        roster[0].restore_reason,
+        SubagentRestoreReason::OrdinaryTuiExitStopped
+    );
+}

@@ -1279,7 +1279,10 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// additive stream event usage, not feature/view DTO spread (152 → 154).
 /// #1550 adds one subagent compact-delta merge seam next to the existing full
 /// roster replace seam; this is the scoped bugfix path, not DTO spread.
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 155;
+/// #1586 phase 3 adds the explicit persist-session command at the existing TUI
+/// tab lifecycle protocol seam so every visible tab can snapshot before exit
+/// (155 → 158); this is required barrier fan-out, not DTO spread.
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 158;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///

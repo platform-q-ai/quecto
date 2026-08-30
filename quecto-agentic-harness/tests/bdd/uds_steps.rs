@@ -13,7 +13,9 @@ use super::*;
 
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use quecto::domain::message::Role;
-use quecto::domain::session::Session;
+use quecto::domain::session::{
+    PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
+};
 use quecto::infrastructure::config::Config;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::security::sandbox::Sandbox;
@@ -792,6 +794,16 @@ fn when_send_prompt_with_id(world: &mut QuectoWorld, id: String, message: String
 #[when(expr = "I send command {string} with id {string}")]
 fn when_send_command_with_id(world: &mut QuectoWorld, command: String, id: String) {
     let cmd = serde_json::json!({"type": command, "id": id});
+    world.uds_commands.push(cmd.to_string());
+}
+
+#[when(expr = "I send persist_session with id {string} and ordinary-exit restore reason")]
+fn when_send_persist_session_with_ordinary_exit_reason(world: &mut QuectoWorld, id: String) {
+    let cmd = serde_json::json!({
+        "type": "persist_session",
+        "id": id,
+        "restoreReason": SubagentRestoreReason::ORDINARY_TUI_EXIT_STOPPED_WIRE,
+    });
     world.uds_commands.push(cmd.to_string());
 }
 
@@ -1757,6 +1769,48 @@ fn load_uds_session(world: &QuectoWorld, session_name: &str) -> Session {
     rt.block_on(store.load(&key))
         .expect("failed to load session")
         .expect("session not found")
+}
+
+#[given(expr = "session {string} has a stale persisted subagent roster row")]
+fn given_session_has_stale_persisted_subagent_roster_row(
+    world: &mut QuectoWorld,
+    session_name: String,
+) {
+    save_uds_session(
+        world,
+        &Session {
+            key: uds_session_key(&session_name),
+            messages: vec![Message::user("stale roster seed")],
+            workflow_run: None,
+            subagent_roster: vec![PersistedSubagentRosterEntry {
+                agent_uuid: "stale-child".into(),
+                display_name: "stale child".into(),
+                session_key: "stale-child".into(),
+                socket_path: "/tmp/stale-child.sock".into(),
+                pid: 0,
+                liveness: SubagentLiveness::Dead,
+                restore_reason: SubagentRestoreReason::LegacyUnspecified,
+                parent_id: None,
+                read_only: false,
+                status: None,
+                delivered_message_ordinal: None,
+                pending_message_reports: std::collections::VecDeque::new(),
+            }],
+        },
+    );
+}
+
+#[then(expr = "the session for {string} should have no persisted subagent roster rows")]
+fn then_session_has_no_persisted_subagent_roster_rows(
+    world: &mut QuectoWorld,
+    session_name: String,
+) {
+    let session = load_uds_session(world, &session_name);
+    assert!(
+        session.subagent_roster.is_empty(),
+        "expected empty subagent roster, got {:#?}",
+        session.subagent_roster
+    );
 }
 
 #[given(

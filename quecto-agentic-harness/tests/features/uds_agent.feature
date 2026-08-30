@@ -410,6 +410,18 @@ Feature: UDS mode for headless agent operation
     Then the UDS agent exits with code 0
     And the session "uds-workflow-load" should retain workflow "feature" with 2 completed steps
 
+  @done @issue-1586
+  Scenario: persist_session explicitly replaces a stale roster before process exit
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And session "uds-persist-barrier" has a stale persisted subagent roster row
+    When I start the UDS agent with [session] "uds-persist-barrier"
+    And I send persist_session with id "persist-barrier" and ordinary-exit restore reason
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the agent output should contain a response command "persist_session" with success true
+    And the session for "uds-persist-barrier" should have no persisted subagent roster rows
+
   @done
   Scenario: UDS mode with --no-session does not persist session
     Given a temp base directory
