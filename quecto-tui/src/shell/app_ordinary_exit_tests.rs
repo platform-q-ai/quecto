@@ -130,12 +130,18 @@ async fn ordinary_exit_reports_persist_enqueue_error_before_teardown() {
     conn.set_tab_for_tests(TabId::MASTER);
     a.attach_connection_to_tab(TabId::MASTER, conn, None);
 
-    a.finalize_ordinary_exit().await;
+    let finalization_errors = a.finalize_ordinary_exit().await;
 
     let msgs = a.notifications.messages().join("\n");
     assert!(
         msgs.contains("ordinary-exit persistence enqueue failed"),
         "enqueue error must be deliberate and visible: {msgs}"
+    );
+    assert!(
+        finalization_errors
+            .iter()
+            .any(|msg| msg.contains("ordinary-exit persistence enqueue failed")),
+        "enqueue error must be returned for post-teardown reporting: {finalization_errors:?}"
     );
 }
 
@@ -165,12 +171,18 @@ async fn ordinary_exit_reports_persist_barrier_failure_before_teardown() {
             .unwrap();
     });
 
-    a.finalize_ordinary_exit().await;
+    let finalization_errors = a.finalize_ordinary_exit().await;
 
     let msgs = a.notifications.messages().join("\n");
     assert!(
         msgs.contains("disk full"),
         "barrier failure must be deliberate and visible: {msgs}"
+    );
+    assert!(
+        finalization_errors
+            .iter()
+            .any(|msg| msg.contains("disk full")),
+        "barrier failure must be returned for post-teardown reporting: {finalization_errors:?}"
     );
 }
 
@@ -300,11 +312,17 @@ async fn ordinary_exit_barrier_uses_single_overall_deadline_for_incidental_event
         }
     });
 
-    a.finalize_ordinary_exit().await;
+    let finalization_errors = a.finalize_ordinary_exit().await;
 
     let msgs = a.notifications.messages().join("\n");
     assert!(
         msgs.contains("ordinary-exit persistence barrier timed out"),
         "{msgs}"
+    );
+    assert!(
+        finalization_errors
+            .iter()
+            .any(|msg| msg.contains("ordinary-exit persistence barrier timed out")),
+        "timeout must be returned for post-teardown reporting: {finalization_errors:?}"
     );
 }
