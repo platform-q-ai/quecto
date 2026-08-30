@@ -29,10 +29,6 @@ use tokio::sync::mpsc;
 
 const SPINNER_TICK: Duration = Duration::from_millis(80);
 pub(super) const STREAM_RENDER_INTERVAL: Duration = Duration::from_millis(33);
-const MOUSE_SCROLL_LINES: usize = 3;
-/// Raw unmarked paste is delimited by a quiet period. Unlike escape-key
-/// disambiguation, each arriving chunk resets this deadline and there is no
-/// read-count cap on the paste lifetime.
 const RAW_PASTE_QUIET_TIMEOUT: Duration = Duration::from_millis(10);
 
 #[path = "app_commands.rs"]
@@ -72,6 +68,7 @@ pub struct App {
     notifications: NotificationStack,
     kitty: KittyProtocol,
     should_exit: bool,
+    ordinary_exit_kill_owned: bool,
     stdin_buffer: crate::shell::stdin_buffer::StdinBuffer,
     /// Global selector-overlay half of the inference flow; per-tab
     /// model/effort state lives on `conn` (#1463).
@@ -184,6 +181,7 @@ impl App {
             notifications: NotificationStack::new(),
             kitty: KittyProtocol::new(),
             should_exit: false,
+            ordinary_exit_kill_owned: false,
             stdin_buffer: crate::shell::stdin_buffer::StdinBuffer::new(),
             inference: InferenceFlow::default(),
             subagents,
@@ -328,6 +326,8 @@ mod app_methods;
 mod app_methods_send;
 #[path = "../inference/controller_models.rs"]
 mod app_models;
+#[path = "app_ordinary_exit.rs"]
+mod app_ordinary_exit;
 #[path = "../conversation/controller_paged_history.rs"]
 mod app_paged_history;
 #[path = "app_render_helpers.rs"]

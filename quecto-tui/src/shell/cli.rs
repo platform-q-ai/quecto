@@ -273,23 +273,14 @@ async fn run_tui(flags: CliFlags) -> i32 {
         app.ac_mut().child_pid = watch.pid();
         app.set_child_exit_watch(watch.clone());
     }
+    app.set_ordinary_exit_kill_owned(flags.kill_on_exit);
     // Master ready: capture initial durability snapshot (F3).
     app.persist_default_durability();
     let exit_code = app.run().await;
 
-    // Clean exit: flush registry/manifest before teardown (F3).
-    app.persist_default_durability();
-
-    // Detach-on-exit by default (ADR-0023); `--kill-on-exit` terminates every tab child.
-    if flags.kill_on_exit {
-        let mut watches = app.take_all_child_exit_watches();
-        if let Some(watch) = child_watch {
-            watches.push(watch);
-        }
-        for watch in watches {
-            watch.terminate().await;
-        }
-    }
+    // Ordinary-exit finalizer already flushed registry/manifest and applied any
+    // owned-child teardown policy before terminal cleanup.
+    drop(child_watch);
 
     exit_code
 }

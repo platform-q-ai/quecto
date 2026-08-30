@@ -1,6 +1,8 @@
 use super::app_selection::{SelectionAnchor, TextSelection};
 use super::*;
 
+const MOUSE_SCROLL_LINES: usize = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum StreamRenderDecision {
     RenderNow,
@@ -377,11 +379,7 @@ impl App {
             }
         }
 
-        // Cleanup.
-        self.kitty.cleanup();
-        self.terminal.show_cursor();
-        self.terminal.exit_raw_mode();
-        self.terminal.write_str("\r\n");
+        self.finalize_ordinary_exit().await;
         0
     }
 
@@ -405,13 +403,10 @@ impl App {
             self.ac_mut().rewind.last_idle_escape = None;
         }
 
-        // Unconditional exit — Ctrl+D must work regardless of overlays,
-        // autocomplete state, or agent activity (#478).
+        // Unconditional ordinary exit — Ctrl+D must work regardless of overlays,
+        // autocomplete state, or agent activity (#478/#1586).
         if matches!(key, Key::Ctrl('d')) {
-            if self.ac().agent_state.is_running() {
-                self.handle_abort();
-            }
-            self.should_exit = true;
+            self.request_ordinary_exit();
             return;
         }
 

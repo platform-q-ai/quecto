@@ -741,6 +741,4 @@ impl App {
     pub(super) fn send_clear_history(&mut self) {
         self.send_command(Command::ClearHistory { id: None });
     }
-
-    // ── Command sending ───────────────────────────────────────────────
 }
