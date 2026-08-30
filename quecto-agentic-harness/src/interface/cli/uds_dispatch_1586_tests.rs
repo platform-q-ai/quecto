@@ -157,6 +157,75 @@ async fn persist_session_empty_roster_replaces_stale_same_session_only() {
 }
 
 #[tokio::test]
+async fn persist_session_non_empty_roster_replaces_stale_same_session_only() {
+    use crate::domain::session::{
+        PersistedSubagentRosterEntry, Session, SessionStore, SubagentLiveness,
+        SubagentRestoreReason,
+    };
+
+    let mut fx = Fixture::new();
+    fx.store
+        .save(&Session {
+            key: "cli:test".into(),
+            messages: vec![Message::user("old")],
+            workflow_run: None,
+            subagent_roster: vec![PersistedSubagentRosterEntry {
+                agent_uuid: "stale-child".into(),
+                display_name: "stale child".into(),
+                session_key: "stale-child".into(),
+                socket_path: "/tmp/stale.sock".into(),
+                pid: 0,
+                liveness: SubagentLiveness::Dead,
+                restore_reason: SubagentRestoreReason::LegacyUnspecified,
+                parent_id: None,
+                read_only: false,
+                delivered_message_ordinal: None,
+                pending_message_reports: std::collections::VecDeque::new(),
+                status: None,
+            }],
+        })
+        .await
+        .unwrap();
+
+    let registry = new_registry();
+    {
+        let mut entries = registry.lock().unwrap();
+        entries.insert(
+            "fresh-child".into(),
+            SubagentEntry::with_identity(
+                AgentUuid::from("fresh-child".to_string()),
+                "fresh child".to_string(),
+                "/tmp/fresh.sock".into(),
+                456,
+            ),
+        );
+    }
+    fx.messages = vec![Message::user("new")];
+    {
+        let mut ctx = fx.ctx();
+        ctx.subagent_registry = Some(registry);
+        persist_current_session_with_restore_reason(
+            &mut ctx,
+            SubagentRestoreReason::OrdinaryTuiExitStopped,
+        )
+        .await
+        .unwrap();
+    }
+
+    let current = fx.store.load("cli:test").await.unwrap().unwrap();
+    let ids: Vec<_> = current
+        .subagent_roster
+        .iter()
+        .map(|entry| entry.agent_uuid.as_str())
+        .collect();
+    assert_eq!(ids, vec!["fresh-child"]);
+    assert_eq!(
+        current.subagent_roster[0].restore_reason,
+        SubagentRestoreReason::OrdinaryTuiExitStopped
+    );
+}
+
+#[tokio::test]
 async fn persist_session_dispatch_success_emits_correlated_ok_event() {
     use crate::domain::session::SessionStore;
 

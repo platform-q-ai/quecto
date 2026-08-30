@@ -597,6 +597,10 @@ fn ordinary_exit_fanout_targets_all_sendable_tabs_without_focus_or_name_collapse
     let (mut tab_conn, mut tab_rx) = crate::shell::connection::Connection::live_for_tests();
     tab_conn.set_tab_for_tests(t1);
     a.attach_connection_to_tab(t1, tab_conn, None);
+    let t2 = a.open_placeholder_tab(Some("worker".into()));
+    let (mut tab2_conn, mut tab2_rx) = crate::shell::connection::Connection::live_for_tests();
+    tab2_conn.set_tab_for_tests(t2);
+    a.attach_connection_to_tab(t2, tab2_conn, None);
     a.switch_tab(TabId::MASTER);
 
     a.enqueue_ordinary_exit_snapshot_persists_at(&registry_path, &manifest_path)
@@ -605,13 +609,18 @@ fn ordinary_exit_fanout_targets_all_sendable_tabs_without_focus_or_name_collapse
     let master_cmd: serde_json::Value =
         serde_json::from_str(&master_rx.try_recv().unwrap()).unwrap();
     let tab_cmd: serde_json::Value = serde_json::from_str(&tab_rx.try_recv().unwrap()).unwrap();
+    let tab2_cmd: serde_json::Value = serde_json::from_str(&tab2_rx.try_recv().unwrap()).unwrap();
     assert_eq!(master_cmd["type"], "persist_session");
     assert_eq!(tab_cmd["type"], "persist_session");
+    assert_eq!(tab2_cmd["type"], "persist_session");
     assert_eq!(master_cmd["restoreReason"], "ordinary_tui_exit_stopped");
     assert_eq!(tab_cmd["restoreReason"], "ordinary_tui_exit_stopped");
+    assert_eq!(tab2_cmd["restoreReason"], "ordinary_tui_exit_stopped");
     assert_ne!(master_cmd["id"], tab_cmd["id"]);
+    assert_ne!(tab_cmd["id"], tab2_cmd["id"]);
     assert!(master_cmd["id"].as_str().unwrap().starts_with("tab0:"));
     assert!(tab_cmd["id"].as_str().unwrap().starts_with("tab1:"));
+    assert!(tab2_cmd["id"].as_str().unwrap().starts_with("tab2:"));
     assert_eq!(a.active_tab, TabId::MASTER);
 }
 
