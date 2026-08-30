@@ -161,7 +161,7 @@ pub(super) struct Fixture {
     pub(super) session: AgentSession,
     pub(super) session_key: String,
     pub(super) store: FileSessionStore,
-    _tmp: tempfile::TempDir,
+    pub(super) _tmp: tempfile::TempDir,
     writer: tokio::io::Sink,
     pub(super) cancel: CancelHandle,
     registry: ClientToolRegistry,

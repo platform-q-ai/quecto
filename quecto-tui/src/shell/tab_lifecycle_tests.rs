@@ -582,3 +582,68 @@ fn snippet_of_strips_control_and_escape_bytes() {
         "printable text must survive sanitization; got {s:?}"
     );
 }
+
+#[test]
+fn ordinary_exit_fanout_targets_all_sendable_tabs_without_focus_or_name_collapse() {
+    let data_home = tempfile::tempdir().expect("isolated tui data");
+    let registry_path = data_home.path().join("tab-registry.json");
+    let manifest_path = data_home.path().join("workspace-manifests.json");
+    let mut a = app();
+    let (mut master_conn, mut master_rx) = crate::shell::connection::Connection::live_for_tests();
+    master_conn.set_tab_for_tests(TabId::MASTER);
+    a.attach_connection_to_tab(TabId::MASTER, master_conn, None);
+
+    let t1 = a.open_placeholder_tab(Some("worker".into()));
+    let (mut tab_conn, mut tab_rx) = crate::shell::connection::Connection::live_for_tests();
+    tab_conn.set_tab_for_tests(t1);
+    a.attach_connection_to_tab(t1, tab_conn, None);
+    a.switch_tab(TabId::MASTER);
+
+    a.enqueue_ordinary_exit_snapshot_persists_at(&registry_path, &manifest_path)
+        .unwrap();
+
+    let master_cmd: serde_json::Value =
+        serde_json::from_str(&master_rx.try_recv().unwrap()).unwrap();
+    let tab_cmd: serde_json::Value = serde_json::from_str(&tab_rx.try_recv().unwrap()).unwrap();
+    assert_eq!(master_cmd["type"], "persist_session");
+    assert_eq!(tab_cmd["type"], "persist_session");
+    assert_eq!(master_cmd["restoreReason"], "ordinary_tui_exit_stopped");
+    assert_eq!(tab_cmd["restoreReason"], "ordinary_tui_exit_stopped");
+    assert_ne!(master_cmd["id"], tab_cmd["id"]);
+    assert!(master_cmd["id"].as_str().unwrap().starts_with("tab0:"));
+    assert!(tab_cmd["id"].as_str().unwrap().starts_with("tab1:"));
+    assert_eq!(a.active_tab, TabId::MASTER);
+}
+
+#[test]
+fn ordinary_exit_fanout_continues_after_first_enqueue_failure() {
+    let data_home = tempfile::tempdir().expect("isolated tui data");
+    let registry_path = data_home.path().join("tab-registry.json");
+    let manifest_path = data_home.path().join("workspace-manifests.json");
+    let mut a = app();
+    a.attach_connection_to_tab(
+        TabId::MASTER,
+        crate::shell::connection::Connection::disconnected_for_tests(),
+        None,
+    );
+
+    let t1 = a.open_placeholder_tab(Some("worker".into()));
+    let (mut tab_conn, mut tab_rx) = crate::shell::connection::Connection::live_for_tests();
+    tab_conn.set_tab_for_tests(t1);
+    a.attach_connection_to_tab(t1, tab_conn, None);
+
+    let err = a
+        .enqueue_ordinary_exit_snapshot_persists_at(&registry_path, &manifest_path)
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        crate::protocol::client::ClientError::Disconnected
+    ));
+    let tab_cmd: serde_json::Value = serde_json::from_str(&tab_rx.try_recv().unwrap()).unwrap();
+    assert_eq!(tab_cmd["type"], "persist_session");
+    assert_eq!(tab_cmd["restoreReason"], "ordinary_tui_exit_stopped");
+
+    let store = WorkspaceManifestStore::load(&manifest_path);
+    assert!(store.get(&a.workspace_id).is_some());
+}

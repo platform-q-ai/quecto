@@ -85,6 +85,18 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Persist the current session immediately, optionally marking subagents
+    /// with an explicit restore reason for ordinary-exit barriers.
+    PersistSession {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(
+            rename = "restoreReason",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        restore_reason: Option<String>,
+    },
     /// Return configured and built-in models from the runtime registry.
     ListModels {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -328,6 +340,7 @@ impl AgentCommand {
             Self::Reload { id } => id.as_deref(),
             Self::GetMessagesTail { id, .. } => id.as_deref(),
             Self::GetSessionStats { id } => id.as_deref(),
+            Self::PersistSession { id, .. } => id.as_deref(),
             Self::ListModels { id } => id.as_deref(),
             Self::RefreshModels { id, .. } => id.as_deref(),
             Self::ListSessions { id } => id.as_deref(),
@@ -358,6 +371,7 @@ impl AgentCommand {
             Self::Sync { .. } => "sync",
             Self::GetMessagesTail { .. } => "get_messages_tail",
             Self::GetSessionStats { .. } => "get_session_stats",
+            Self::PersistSession { .. } => "persist_session",
             Self::ListModels { .. } => "list_models",
             Self::RefreshModels { .. } => "refresh_models",
             Self::ListSessions { .. } => "list_sessions",

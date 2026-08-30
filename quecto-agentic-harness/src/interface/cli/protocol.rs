@@ -643,6 +643,9 @@ mod protocol_roster_tests;
 #[cfg(test)]
 #[path = "protocol_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "protocol_1586_tests.rs"]
+mod tests_1586;
 
 #[cfg(test)]
 #[path = "protocol_event_tests.rs"]

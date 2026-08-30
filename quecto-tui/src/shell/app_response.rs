@@ -226,6 +226,10 @@ impl App {
         match command.as_str() {
             "get_message" => self.handle_get_message_response(id, success, data, error),
             "get_state" if success => self.handle_get_state(data),
+            "persist_session" if !success => {
+                let msg = error.unwrap_or_else(|| "failed to persist session".to_string());
+                self.notify(&msg, NotifyLevel::Error);
+            }
             "set_model" if success => self.handle_set_model_success(data),
             // Late master failure must not toast over a focused child (#1085).
             "set_model" if self.ac().roster.active_agent_id.is_none() => {

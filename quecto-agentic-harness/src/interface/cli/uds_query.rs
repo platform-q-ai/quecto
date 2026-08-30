@@ -128,6 +128,7 @@ pub(super) fn query_response_data_result(
             let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
             Some(messages_tail_json(&visible_messages, *count))
         }
+        AgentCommand::PersistSession { .. } => None,
         AgentCommand::GetSessionStats { .. } => {
             let visible_messages = user_visible_messages(ctx.messages, ctx.system_prompt);
             let stats = compute_session_stats_with_usage(

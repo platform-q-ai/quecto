@@ -213,6 +213,46 @@ impl super::App {
         self.persist_durability_snapshot(&workspace_id, &reg, &man);
     }
 
+    /// Explicit phase-3 ordinary-exit persist request fan-out: enqueue a current
+    /// roster/session persist on every visible tab before any later teardown
+    /// removes children. Phase 4 owns exit-path wiring and any ack/wait policy.
+    pub fn enqueue_ordinary_exit_snapshot_persists(
+        &mut self,
+    ) -> Result<(), crate::protocol::client::ClientError> {
+        let reg = crate::shell::tab_registry::default_registry_path();
+        let man = crate::shell::workspace_manifest::default_manifest_path();
+        self.enqueue_ordinary_exit_snapshot_persists_at(&reg, &man)
+    }
+
+    pub(crate) fn enqueue_ordinary_exit_snapshot_persists_at(
+        &mut self,
+        registry_path: &std::path::Path,
+        manifest_path: &std::path::Path,
+    ) -> Result<(), crate::protocol::client::ClientError> {
+        let mut first_err = None;
+        for tab in self.ordered_tab_ids() {
+            let id = self.conn_for(tab).map(|c| c.namespaced_id("persist-exit"));
+            if let (Some(conn), Some(id)) = (self.conn_for(tab), id) {
+                if let Err(err) =
+                    conn.transport
+                        .try_send(&crate::protocol::client::Command::PersistSession {
+                            id: Some(id),
+                            restore_reason: Some("ordinary_tui_exit_stopped".to_string()),
+                        })
+                {
+                    first_err.get_or_insert(err);
+                }
+            }
+        }
+        let workspace_id = self.workspace_id.clone();
+        self.persist_durability_snapshot(&workspace_id, registry_path, manifest_path);
+        if let Some(err) = first_err {
+            Err(err)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Focus `tab` if present. Returns whether the switch happened.
     pub(crate) fn switch_tab(&mut self, tab: TabId) -> bool {
         if !self.tabs.contains_key(&tab) {

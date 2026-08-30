@@ -236,6 +236,21 @@ pub(crate) fn restore_persisted_subagent_roster(
 pub(super) async fn persist_current_session(
     ctx: &mut DispatchCtx<'_>,
 ) -> Result<(), crate::domain::error::DomainError> {
+    persist_current_session_with_options(ctx, SubagentRestoreReason::LegacyUnspecified, false).await
+}
+
+pub(super) async fn persist_current_session_with_restore_reason(
+    ctx: &mut DispatchCtx<'_>,
+    restore_reason: SubagentRestoreReason,
+) -> Result<(), crate::domain::error::DomainError> {
+    persist_current_session_with_options(ctx, restore_reason, true).await
+}
+
+async fn persist_current_session_with_options(
+    ctx: &mut DispatchCtx<'_>,
+    restore_reason: SubagentRestoreReason,
+    force_full_save: bool,
+) -> Result<(), crate::domain::error::DomainError> {
     if ctx.ephemeral || ctx.session_key.is_empty() {
         return Ok(());
     }
@@ -258,8 +273,13 @@ pub(super) async fn persist_current_session(
         .workflow_state
         .as_ref()
         .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run()));
-    let roster = snapshot_subagent_roster(&ctx.subagent_registry);
-    let result = if ctx.durable_prefix_dirty || ctx.subagent_registry.is_some() {
+    let restore_reason = match restore_reason {
+        SubagentRestoreReason::Unknown => SubagentRestoreReason::LegacyUnspecified,
+        reason => reason,
+    };
+    let roster =
+        snapshot_subagent_roster_with_restore_reason(&ctx.subagent_registry, restore_reason);
+    let result = if force_full_save || ctx.durable_prefix_dirty || ctx.subagent_registry.is_some() {
         ctx.session_store
             .save(&Session {
                 key: ctx.session_key.to_string(),
