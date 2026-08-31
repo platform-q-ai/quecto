@@ -635,13 +635,9 @@ async fn spawn_and_attach_new_agent(
     >,
 ) -> TabAttachOutcome {
     let flags = crate::shell::cli::tab_spawn_flags_from_policy(&policy, resume_session.clone());
-    match crate::shell::cli::spawn_agent_for_tab(&flags).await {
-        Ok((path, child, stderr_tail, announced)) => {
-            let pid = child.id();
-            let watch = crate::shell::child_watch::watch_child(child, stderr_tail);
-            if let Ok(mut pending) = pending_child_watches.lock() {
-                pending.push(watch.clone());
-            }
+    match crate::shell::cli::spawn_agent_for_tab(&flags, pending_child_watches.clone()).await {
+        Ok((path, watch, announced)) => {
+            let pid = watch.pid();
             let speaks_frames = announced
                 .is_some_and(|v| u32::from(v) >= u32::from(quecto_line_io::PROTOCOL_VERSION));
             let client = if speaks_frames {
