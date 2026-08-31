@@ -139,7 +139,23 @@ fn active_descendant_for_agent_covers_missing_parent_fallback_and_none_registry(
     ));
 
     reg.lock().unwrap().get_mut("child").unwrap().status = SubagentStatus::Running;
-    assert!(has_active_descendant_for_agent(&Some(reg), "parent"));
+    assert!(has_active_descendant_for_agent(
+        &Some(reg.clone()),
+        "parent"
+    ));
+
+    {
+        let mut entries = reg.lock().unwrap();
+        entries.get_mut("child").unwrap().persisted_liveness = SubagentLiveness::Detached;
+        let mut grandchild = SubagentEntry::new("/tmp/grandchild.sock".into(), 2);
+        grandchild.status = SubagentStatus::Running;
+        grandchild.parent_id = Some("child".to_string());
+        entries.insert("grandchild".to_string(), grandchild);
+    }
+    assert!(
+        has_active_descendant_for_agent(&Some(reg), "parent"),
+        "detached historical rows must not count as active themselves but must not hide live descendants"
+    );
 }
 
 #[test]

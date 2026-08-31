@@ -120,9 +120,13 @@ fn restore_rejects_dead_rows_even_if_marked_ordinary_exit_stopped() {
     let mut bad = roster_entry("bad", "/tmp/bad.sock".into());
     bad.restore_reason = crate::domain::session::SubagentRestoreReason::OrdinaryTuiExitStopped;
     bad.liveness = SubagentLiveness::Dead;
-    bad.status = Some("exited".into());
+    bad.status = None;
 
     let registry = new_registry();
+    let mut stale = SubagentEntry::new("/tmp/preexisting-stale.sock".into(), 9);
+    stale.updated_at = std::time::Instant::now();
+    stale.registration_generation = 0;
+    registry.lock().unwrap().insert("bad".to_string(), stale);
     restore_persisted_subagent_roster(&Some(registry.clone()), vec![bad]);
 
     assert!(
@@ -353,17 +357,27 @@ fn restore_persisted_roster_does_not_hold_registry_lock_during_verify() {
 
     let restore_registry = registry.clone();
     let restore = std::thread::spawn(move || {
-        restore_persisted_subagent_roster(
-            &Some(restore_registry),
-            vec![roster_entry("slow", socket)],
-        );
+        let mut live = roster_entry("slow", socket);
+        live.restore_reason = crate::domain::session::SubagentRestoreReason::LegacyUnspecified;
+        restore_persisted_subagent_roster(&Some(restore_registry), vec![live]);
     });
 
     connected_rx
         .recv_timeout(Duration::from_secs(2))
         .expect("verify should connect to the slow socket");
-    // While verify is blocked mid-probe, concurrent registry users must not stall.
+    // While verify is blocked mid-probe, concurrent registry users must not stall
+    // or lose rows registered in the same window.
     let lock_acquired_during_verify = registry.try_lock().is_ok();
+    {
+        let mut entries = registry.lock().unwrap();
+        let mut same_uuid = SubagentEntry::new("/tmp/fresh-slow.sock".into(), 7);
+        same_uuid.status = SubagentStatus::Running;
+        entries.insert("slow".to_string(), same_uuid);
+        entries.insert(
+            "concurrent".to_string(),
+            SubagentEntry::new("/tmp/concurrent.sock".into(), 8),
+        );
+    }
     release_tx.send(()).unwrap();
     restore.join().unwrap();
     server.join().unwrap();
@@ -372,9 +386,15 @@ fn restore_persisted_roster_does_not_hold_registry_lock_during_verify() {
         lock_acquired_during_verify,
         "restore must not hold the registry mutex across verify socket IO"
     );
+    let entries = registry.lock().unwrap();
+    let slow = entries.get("slow").expect("slow row remains present");
+    assert_eq!(
+        slow.pid, 7,
+        "fresh same-uuid runtime registration must win over stale resume snapshot"
+    );
     assert!(
-        registry.lock().unwrap().contains_key("slow"),
-        "verified agent must still be restored after lock is released during probe"
+        entries.contains_key("concurrent"),
+        "rehydration must not clear rows registered while slow socket verify was in flight"
     );
 }
 
@@ -388,6 +408,13 @@ fn restore_classifier_respects_explicit_restore_reasons() {
     use crate::domain::session::SubagentRestoreReason;
 
     let registry = new_registry();
+    let mut stale = SubagentEntry::new("/tmp/preexisting-restored.sock".into(), 11);
+    stale.updated_at = std::time::Instant::now();
+    stale.registration_generation = 0;
+    registry
+        .lock()
+        .unwrap()
+        .insert("restored".to_string(), stale);
     let dir = tempfile::tempdir().unwrap();
     let mut restored = roster_entry("restored", dir.path().join("stale-restored.sock"));
     restored.restore_reason = SubagentRestoreReason::OrdinaryTuiExitStopped;

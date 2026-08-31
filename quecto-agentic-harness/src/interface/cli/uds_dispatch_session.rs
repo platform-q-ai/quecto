@@ -141,96 +141,120 @@ pub(crate) fn verify_persisted_live_subagent(entry: &PersistedSubagentRosterEntr
             == Some(entry.session_key.as_str())
 }
 
-enum RosterRestoreDecision {
-    Live,
-    OrdinaryTuiExitStopped,
-    Drop,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RosterRestoreDecision {
+    LiveReattach,
+    OrdinaryExitRestoredNonLive,
+    DropInvalidOrStale,
 }
 
-fn classify_persisted_subagent_restore(
-    persisted: &PersistedSubagentRosterEntry,
-) -> RosterRestoreDecision {
-    if persisted.agent_uuid.is_empty() || persisted.session_key.is_empty() {
-        return RosterRestoreDecision::Drop;
-    }
-    match persisted.restore_reason {
-        SubagentRestoreReason::OrdinaryTuiExitStopped => {
-            if persisted.liveness == SubagentLiveness::Dead
-                || persisted.status.as_deref() == Some("exited")
-                || persisted.status.as_deref() == Some("dead")
-            {
-                RosterRestoreDecision::Drop
-            } else {
-                RosterRestoreDecision::OrdinaryTuiExitStopped
-            }
-        }
-        SubagentRestoreReason::ExplicitlyKilled | SubagentRestoreReason::Unknown => {
-            RosterRestoreDecision::Drop
-        }
-        SubagentRestoreReason::LegacyUnspecified => {
-            if persisted.liveness != SubagentLiveness::Dead
-                && verify_persisted_live_subagent(persisted)
-            {
-                RosterRestoreDecision::Live
-            } else {
-                RosterRestoreDecision::Drop
-            }
-        }
-    }
-}
+/// Resume/roster rehydration boundary for #1586 phase 5.
+///
+/// This is the explicit durable-to-runtime pipeline:
+/// persisted roster snapshot -> runtime classification/probe -> runtime registry
+/// entry.  The boundary is intentionally centralized so killed rows, stale
+/// sockets, and first-class restored/non-live rows cannot be reinterpreted by
+/// scattered UI/routing call sites.
+pub(crate) struct ResumeRosterRehydrator;
 
-fn entry_from_persisted_subagent(
-    mut persisted: PersistedSubagentRosterEntry,
-    decision: RosterRestoreDecision,
-) -> Option<(String, SubagentEntry)> {
-    let (socket_path, pid, liveness) = match decision {
-        RosterRestoreDecision::Live => (
-            persisted.socket_path.clone(),
-            persisted.pid,
-            SubagentLiveness::Live,
-        ),
-        RosterRestoreDecision::OrdinaryTuiExitStopped => {
-            (std::path::PathBuf::new(), 0, SubagentLiveness::Detached)
+impl ResumeRosterRehydrator {
+    fn classify_persisted_subagent_restore(
+        persisted: &PersistedSubagentRosterEntry,
+    ) -> RosterRestoreDecision {
+        if persisted.agent_uuid.is_empty() || persisted.session_key.is_empty() {
+            return RosterRestoreDecision::DropInvalidOrStale;
         }
-        RosterRestoreDecision::Drop => return None,
-    };
-    let key = persisted.agent_uuid.clone();
-    let mut entry = SubagentEntry::with_identity(
-        crate::domain::ids::AgentUuid::from(persisted.agent_uuid),
-        persisted.display_name,
-        socket_path,
-        pid,
-    );
-    entry.status = SubagentStatus::Idle;
-    entry.persisted_liveness = liveness;
-    entry.parent_id = persisted.parent_id.take();
-    entry.read_only = persisted.read_only;
-    entry.delivered_message_ordinal = persisted.delivered_message_ordinal;
-    entry.pending_message_ordinal = persisted.pending_message_reports.back().map(|p| p.ordinal);
-    entry.pending_message_reports = persisted.pending_message_reports;
-    Some((key, entry))
+        match persisted.restore_reason {
+            SubagentRestoreReason::OrdinaryTuiExitStopped => {
+                if persisted.liveness == SubagentLiveness::Dead
+                    || persisted.status.as_deref() == Some("exited")
+                    || persisted.status.as_deref() == Some("dead")
+                {
+                    RosterRestoreDecision::DropInvalidOrStale
+                } else {
+                    RosterRestoreDecision::OrdinaryExitRestoredNonLive
+                }
+            }
+            SubagentRestoreReason::ExplicitlyKilled | SubagentRestoreReason::Unknown => {
+                RosterRestoreDecision::DropInvalidOrStale
+            }
+            SubagentRestoreReason::LegacyUnspecified => {
+                if persisted.liveness != SubagentLiveness::Dead
+                    && verify_persisted_live_subagent(persisted)
+                {
+                    RosterRestoreDecision::LiveReattach
+                } else {
+                    RosterRestoreDecision::DropInvalidOrStale
+                }
+            }
+        }
+    }
+
+    fn entry_from_persisted_subagent(
+        mut persisted: PersistedSubagentRosterEntry,
+        decision: RosterRestoreDecision,
+    ) -> Option<(String, SubagentEntry)> {
+        let (socket_path, pid, liveness) = match decision {
+            RosterRestoreDecision::LiveReattach => (
+                persisted.socket_path.clone(),
+                persisted.pid,
+                SubagentLiveness::Live,
+            ),
+            RosterRestoreDecision::OrdinaryExitRestoredNonLive => {
+                (std::path::PathBuf::new(), 0, SubagentLiveness::Detached)
+            }
+            RosterRestoreDecision::DropInvalidOrStale => return None,
+        };
+        let key = persisted.agent_uuid.clone();
+        let mut entry = SubagentEntry::with_identity(
+            crate::domain::ids::AgentUuid::from(persisted.agent_uuid),
+            persisted.display_name,
+            socket_path,
+            pid,
+        );
+        entry.status = SubagentStatus::Idle;
+        entry.persisted_liveness = liveness;
+        entry.parent_id = persisted.parent_id.take();
+        entry.read_only = persisted.read_only;
+        entry.delivered_message_ordinal = persisted.delivered_message_ordinal;
+        entry.pending_message_ordinal = persisted.pending_message_reports.back().map(|p| p.ordinal);
+        entry.pending_message_reports = persisted.pending_message_reports;
+        Some((key, entry))
+    }
+
+    pub(crate) fn rehydrate(
+        registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+        roster: Vec<PersistedSubagentRosterEntry>,
+    ) {
+        let Some(registry) = registry else { return };
+        let rehydrate_generation =
+            crate::infrastructure::tools::subagent_registry::current_registration_generation();
+        {
+            let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+            entries.retain(|_, entry| entry.registration_generation >= rehydrate_generation);
+        }
+        let restored_entries: Vec<_> = roster
+            .into_iter()
+            .filter_map(|persisted| {
+                let decision = Self::classify_persisted_subagent_restore(&persisted);
+                Self::entry_from_persisted_subagent(persisted, decision)
+            })
+            .collect();
+        let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+        for (agent_uuid, entry) in restored_entries {
+            entries.entry(agent_uuid).or_insert(entry);
+        }
+    }
 }
 
 pub(crate) fn restore_persisted_subagent_roster(
     registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     roster: Vec<PersistedSubagentRosterEntry>,
 ) {
-    let Some(registry) = registry else { return };
     // Probe sockets BEFORE taking the registry mutex (N1): verify does blocking
     // UDS IO with up to 500ms timeouts, and holding the lock across that stalls
     // concurrent get_subagents / spawn registration during resume.
-    let restored_entries: Vec<_> = roster
-        .into_iter()
-        .filter_map(|persisted| {
-            let decision = classify_persisted_subagent_restore(&persisted);
-            entry_from_persisted_subagent(persisted, decision)
-        })
-        .collect();
-    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-    entries.clear();
-    for (agent_uuid, entry) in restored_entries {
-        entries.insert(agent_uuid, entry);
-    }
+    ResumeRosterRehydrator::rehydrate(registry, roster);
 }
 
 pub(super) async fn persist_current_session(

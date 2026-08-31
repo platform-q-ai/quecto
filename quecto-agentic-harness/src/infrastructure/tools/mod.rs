@@ -64,6 +64,7 @@ mod subagent_status;
 pub mod truncate;
 pub mod web_fetch;
 pub mod web_search;
+mod workflow_snapshot;
 pub mod workflow_tool;
 
 #[cfg(test)]

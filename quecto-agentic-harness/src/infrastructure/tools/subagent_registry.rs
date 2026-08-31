@@ -1,3 +1,9 @@
+use super::process_tree::ProcessOwner;
+#[cfg(test)]
+use super::subagent_lifecycle::SubagentLifecycleEvent;
+use super::subagent_lifecycle::SubagentLifecycleState;
+pub use super::subagent_status::SubagentStatus;
+pub use super::workflow_snapshot::WorkflowSnapshot;
 use crate::domain::ids::AgentUuid;
 use crate::domain::session::SubagentLiveness;
 use crate::domain::subagent::{DisplayNameResolutionEntry, resolve_live_display_name};
@@ -6,12 +12,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use super::process_tree::ProcessOwner;
-#[cfg(test)]
-use super::subagent_lifecycle::SubagentLifecycleEvent;
-use super::subagent_lifecycle::SubagentLifecycleState;
-pub use super::subagent_status::SubagentStatus;
-
+#[path = "subagent_registry_generation.rs"]
+mod subagent_registry_generation;
+pub(crate) use subagent_registry_generation::current_registration_generation;
+use subagent_registry_generation::next_registration_generation;
 /// Entry for a spawned subagent in the shared registry.
 #[derive(Debug, Clone)]
 pub struct SubagentEntry {
@@ -42,6 +46,7 @@ pub struct SubagentEntry {
     pub run_error: Option<String>,
     /// When this entry was last updated by the monitor.
     pub updated_at: Instant,
+    pub registration_generation: u64,
     /// Abort handle for the monitor task (if running).
     pub monitor_handle: Option<Arc<tokio::task::JoinHandle<()>>>,
     /// Abort handle for the proxy-endpoint bridge accept loop (#1369 slice
@@ -86,7 +91,6 @@ pub struct SubagentEntry {
     pub pending_message_reports: VecDeque<PendingMessageReport>,
     pub persisted_liveness: SubagentLiveness,
 }
-
 pub use crate::domain::session::PendingMessageReport;
 
 pub(super) fn seed_bound_workflow(
@@ -132,6 +136,8 @@ impl SubagentEntry {
         socket_path: PathBuf,
         pid: u32,
     ) -> Self {
+        let now = Instant::now();
+        let registration_generation = next_registration_generation();
         Self {
             agent_uuid,
             display_name,
@@ -143,7 +149,8 @@ impl SubagentEntry {
             last_tool: None,
             last_error: None,
             run_error: None,
-            updated_at: Instant::now(),
+            updated_at: now,
+            registration_generation,
             monitor_handle: None,
             proxy_bridge_handle: None,
             proxy_bridge_socket: None,
@@ -240,12 +247,8 @@ pub fn has_active_descendant_for_agent_locked(
     agent_id: &str,
 ) -> bool {
     let Some(entry) = entries.get(agent_id) else {
-        return entries.iter().any(|(candidate_id, candidate)| {
-            candidate.parent_id.as_deref() == Some(agent_id)
-                && effective_status(entries, candidate_id)
-                    .unwrap_or_else(|| candidate.status.clone())
-                    .is_active()
-        });
+        let mut visited = std::collections::HashSet::new();
+        return has_active_descendant_inner(entries, vec![agent_id.to_string()], &mut visited);
     };
     has_active_descendant(entries, agent_id, entry)
 }
@@ -273,7 +276,8 @@ fn has_active_descendant_inner(
         }
         entries.iter().any(|(child_id, child)| {
             child.parent_id.as_deref() == Some(parent_id.as_str())
-                && (child.status.is_active()
+                && ((child.persisted_liveness == SubagentLiveness::Live
+                    && child.status.is_active())
                     || has_active_descendant_inner(
                         entries,
                         descendant_parent_ids(entries, child_id, child),
@@ -730,14 +734,6 @@ pub fn validate_agent_id_format(agent_id: &str) -> Result<(), String> {
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
         .then_some(())
         .ok_or_else(|| "agent_id must use only [a-zA-Z0-9_-]".to_string())
-}
-
-/// Snapshot of workflow state reported by a subagent.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-pub struct WorkflowSnapshot {
-    pub mode: String,
-    pub steps_completed: u32,
-    pub steps_total: u32,
 }
 
 #[cfg(test)]
