@@ -2,7 +2,7 @@
 //!
 //! Drives the REAL `App::handle_key` Ctrl+D path through the headless render
 //! harness. Ctrl+D exits unconditionally — regardless of overlays or
-//! autocomplete — and aborts a running agent first before setting the exit flag.
+//! autocomplete — via the ordinary-exit path.
 //!
 //! Also owns the shared `the agent is streaming a response` Given (reused by
 //! `tui_esc_abort_recovery.feature`), which starts a real agent run.
@@ -124,20 +124,20 @@ fn overlay_did_not_consume(world: &mut TuiWorld) {
     );
 }
 
-#[then("handle_abort should be called first")]
-fn handle_abort_called(world: &mut TuiWorld) {
-    // A running agent aborted by Ctrl+D leaves the abort-aware state machine
-    // with the run stopped and a pending abort registered, and appends the
-    // production "Operation aborted" status line to the chat.
+#[then("the active agent should continue without a Ctrl-D abort")]
+fn active_agent_continues_without_ctrl_d_abort(world: &mut TuiWorld) {
     let (running, pending) = with_harness(world, |h| (h.agent_running(), h.pending_aborts()));
-    assert!(!running, "the running agent should have been aborted");
     assert!(
-        pending >= 1,
-        "handle_abort should have registered a pending abort, got {pending}"
+        running,
+        "Ctrl-D ordinary exit should not abort the running agent"
+    );
+    assert_eq!(
+        pending, 0,
+        "Ctrl-D ordinary exit should not register a pending abort"
     );
     let frame = with_harness(world, |h| h.full_frame());
     assert!(
-        frame.contains("Operation aborted"),
-        "handle_abort should have surfaced the abort status, frame:\n{frame}"
+        !frame.contains("Operation aborted"),
+        "Ctrl-D ordinary exit should not surface an abort status, frame:\n{frame}"
     );
 }

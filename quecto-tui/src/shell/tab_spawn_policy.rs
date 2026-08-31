@@ -62,7 +62,7 @@ pub(crate) fn tab_spawn_flags_from_policy(
         system_prompt: policy.system_prompt.clone(),
         disable_tools: policy.disable_tools.clone(),
         persist: policy.persist,
-        kill_on_exit: false,
+        kill_on_exit: true,
     }
 }
 

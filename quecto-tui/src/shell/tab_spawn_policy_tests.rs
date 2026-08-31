@@ -25,6 +25,10 @@ fn tab_spawn_flags_inherit_parent_policy() {
     assert_eq!(flags.system_prompt.as_deref(), Some("be brief"));
     assert_eq!(flags.disable_tools, vec!["bash".to_string()]);
     assert!(flags.persist, "secondary tabs keep persist default");
+    assert!(
+        flags.kill_on_exit,
+        "secondary tabs participate in default ordinary-exit cleanup"
+    );
     let built = build_agent_args(&flags);
     assert!(
         !built.iter().any(|a| a == "sess" || a.contains("resume")),

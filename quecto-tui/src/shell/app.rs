@@ -4,8 +4,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::agents::focus::{Focus, MAX_RETAINED_SESSIONS, SUBAGENT_PANEL_WIDTH};
-use crate::agents::view::FeedState;
-use crate::agents::view::{SessionView, SubagentUi};
+use crate::agents::view::{FeedState, SessionView, SubagentUi};
 use crate::components::autocomplete::{Autocomplete, AutocompleteResult};
 use crate::components::chat::{Chat, ChatEntry};
 use crate::components::component::Component;
@@ -14,11 +13,13 @@ use crate::components::footer::Footer;
 use crate::components::kitty::KittyProtocol;
 use crate::components::model_selector::ModelSelectorResult;
 use crate::components::notification::{Notification, NotificationStack, NotifyLevel};
-use crate::components::select_list::{SelectItem, SelectList};
-use crate::components::selectable_item_modal::SelectableItemModal;
-use crate::components::spinner::Spinner;
-use crate::components::text_input::Editor;
-use crate::components::workflow_bar;
+use crate::components::{
+    select_list::{SelectItem, SelectList},
+    selectable_item_modal::SelectableItemModal,
+    spinner::Spinner,
+    text_input::Editor,
+    workflow_bar,
+};
 use crate::protocol::client::{Client, Command, Event};
 use crate::shell::keys::{self, Key};
 use crate::shell::render::DiffRenderer;
@@ -26,15 +27,9 @@ use crate::shell::terminal::Terminal;
 use crate::workspace::workspace_files::list_workspace_files;
 use app_selection::TextSelection;
 use tokio::sync::mpsc;
-
 const SPINNER_TICK: Duration = Duration::from_millis(80);
 pub(super) const STREAM_RENDER_INTERVAL: Duration = Duration::from_millis(33);
-const MOUSE_SCROLL_LINES: usize = 3;
-/// Raw unmarked paste is delimited by a quiet period. Unlike escape-key
-/// disambiguation, each arriving chunk resets this deadline and there is no
-/// read-count cap on the paste lifetime.
 const RAW_PASTE_QUIET_TIMEOUT: Duration = Duration::from_millis(10);
-
 #[path = "app_commands.rs"]
 mod app_commands;
 #[path = "tool_policy.rs"]
@@ -44,7 +39,6 @@ mod tool_policy;
 mod tui_harness_tool_policy;
 use app_commands::builtin_commands;
 use app_message_recovery::{MessageRecoveryBatch, PendingMessageRecovery};
-
 /// Application state.
 pub struct App {
     terminal: Terminal,
@@ -72,6 +66,7 @@ pub struct App {
     notifications: NotificationStack,
     kitty: KittyProtocol,
     should_exit: bool,
+    ordinary_exit_kill_owned: bool,
     stdin_buffer: crate::shell::stdin_buffer::StdinBuffer,
     /// Global selector-overlay half of the inference flow; per-tab
     /// model/effort state lives on `conn` (#1463).
@@ -122,6 +117,7 @@ pub struct App {
     pub(super) next_attach_generation: u64,
     /// Parent CLI policy inherited by secondary tab spawns (#1465 F8).
     pub(crate) tab_spawn_policy: Option<crate::shell::cli::TabSpawnPolicy>,
+    pub(crate) pending_tab_child_watches: crate::shell::child_watch::ChildWatchRegistry,
 }
 
 /// Id of the TUI's single (master) agent connection. With one replicant
@@ -184,6 +180,7 @@ impl App {
             notifications: NotificationStack::new(),
             kitty: KittyProtocol::new(),
             should_exit: false,
+            ordinary_exit_kill_owned: true,
             stdin_buffer: crate::shell::stdin_buffer::StdinBuffer::new(),
             inference: InferenceFlow::default(),
             subagents,
@@ -207,6 +204,7 @@ impl App {
             tab_attach_rx,
             next_attach_generation: 1,
             tab_spawn_policy: None,
+            pending_tab_child_watches: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         };
         app.set_thinking_visibility(thinking_visible);
         app
@@ -328,6 +326,8 @@ mod app_methods;
 mod app_methods_send;
 #[path = "../inference/controller_models.rs"]
 mod app_models;
+#[path = "app_ordinary_exit.rs"]
+mod app_ordinary_exit;
 #[path = "../conversation/controller_paged_history.rs"]
 mod app_paged_history;
 #[path = "app_render_helpers.rs"]

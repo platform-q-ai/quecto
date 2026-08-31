@@ -706,9 +706,19 @@ async fn spawn_agent_program_rejects_announced_regular_file_socket() {
 }
 
 #[test]
-fn parse_flags_default_persist_and_detach_on_exit() {
+fn parse_flags_default_persist_and_kill_on_exit() {
     let f = parse_flags(&["quecto-tui".into()]);
     assert!(f.persist);
+    assert!(f.kill_on_exit);
+}
+
+#[test]
+fn parse_flags_explicit_detach_overrides_prior_kill_on_exit() {
+    let f = parse_flags(&[
+        "quecto-tui".into(),
+        "--kill-on-exit".into(),
+        "--detach-on-exit".into(),
+    ]);
     assert!(!f.kill_on_exit);
 }
 

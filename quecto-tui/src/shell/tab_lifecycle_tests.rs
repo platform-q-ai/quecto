@@ -645,6 +645,12 @@ fn ordinary_exit_fanout_continues_after_first_enqueue_failure() {
         .enqueue_ordinary_exit_snapshot_persists_at(&registry_path, &manifest_path)
         .unwrap_err();
 
+    let (successful_ids, err) = err;
+    assert_eq!(
+        successful_ids.len(),
+        1,
+        "successful enqueue id is returned for barrier waiting"
+    );
     assert!(matches!(
         err,
         crate::protocol::client::ClientError::Disconnected

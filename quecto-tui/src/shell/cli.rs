@@ -1,8 +1,3 @@
-//! quecto-tui — Lightweight terminal UI client for quecto.
-//!
-//! Spawns (or connects to) a `quecto agent --mode uds` process and provides
-//! a rich interactive terminal interface over the framed JSON UDS protocol.
-
 #[cfg(test)]
 use std::path::Path;
 use std::path::PathBuf;
@@ -11,7 +6,7 @@ pub(crate) use super::socket_path::validate_socket_path;
 #[cfg(test)]
 use super::socket_path::{canonical_allowed_socket_roots, canonicalize_socket_roots};
 
-/// Parsed CLI flags for quecto-tui.
+#[derive(Clone)]
 pub(crate) struct CliFlags {
     pub(crate) socket_path: Option<PathBuf>,
     pub(crate) workflow: bool,
@@ -19,14 +14,8 @@ pub(crate) struct CliFlags {
     pub(crate) workflow_disabled: bool,
     pub(crate) config_path: Option<PathBuf>,
     pub(crate) system_prompt: Option<String>,
-    /// Tool names to forward to the spawned coordinator as `--disable-tool <name>`
-    /// (repeatable). Empty means none are disabled (#957 TUI forward fix).
     pub(crate) disable_tools: Vec<String>,
-    /// Spawn tab agents with `--persist` (ADR-0023 / #1465). Default true when
-    /// the TUI owns the child; ignored for `--socket` attach.
     pub(crate) persist: bool,
-    /// When true, terminate owned child agents on TUI exit. Default false
-    /// (detach-on-exit). `--kill-on-exit` restores legacy teardown.
     pub(crate) kill_on_exit: bool,
 }
 
@@ -45,7 +34,6 @@ pub fn run(args: Vec<String>) -> i32 {
     exit_code
 }
 
-/// Parse CLI flags from command-line arguments.
 pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
     let mut flags = CliFlags {
         socket_path: None,
@@ -56,11 +44,8 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
         system_prompt: None,
         disable_tools: Vec::new(),
         persist: true,
-        kill_on_exit: false,
+        kill_on_exit: true,
     };
-    // An explicit `--system` literal takes precedence over `--system-file`
-    // regardless of order; track it so a later/earlier `--system-file` can't
-    // clobber an operator-supplied literal.
     let mut system_literal_seen = false;
     let mut i = 1;
     while i < args.len() {
@@ -78,10 +63,6 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
                 system_literal_seen = true;
                 i += 2;
             }
-            // `--system-file <path>` reads the file's contents as the system
-            // prompt (handy for long, evolving prompts). An explicit `--system`
-            // literal wins, in either order. A read error is reported and the
-            // prompt is left unset (falling back to defaults) so it's visible.
             "--system-file" if i + 1 < args.len() => {
                 if !system_literal_seen {
                     match std::fs::read_to_string(&args[i + 1]) {
@@ -125,16 +106,11 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
                 flags.workflow_guards = true;
                 i += 1;
             }
-            // `--disable-tool <name>` (repeatable) removes a tool from the
-            // spawned coordinator's registry. Forwarded verbatim to the child so
-            // the operator can launch it read-only (e.g. write/edit off) (#957).
             "--disable-tool" => {
                 if i + 1 < args.len() {
                     flags.disable_tools.push(args[i + 1].clone());
                     i += 2;
                 } else {
-                    // A trailing `--disable-tool` with no value would silently make a
-                    // read-only launch read-write; surface it instead of dropping it.
                     eprintln!(
                         "warning: --disable-tool requires a tool name; ignoring trailing flag"
                     );
@@ -147,7 +123,6 @@ pub(crate) fn parse_flags(args: &[String]) -> CliFlags {
     flags
 }
 
-/// Apply sensible defaults when workflow is enabled.
 fn apply_workflow_defaults(flags: &mut CliFlags) {
     if flags.workflow && flags.system_prompt.is_none() {
         flags.system_prompt = Some(
@@ -161,69 +136,37 @@ fn apply_workflow_defaults(flags: &mut CliFlags) {
 
 pub(crate) use super::tab_spawn_policy::{TabSpawnPolicy, tab_spawn_flags_from_policy};
 
-/// Spawn a secondary tab agent and return socket path + child + stderr tail.
 pub(crate) async fn spawn_agent_for_tab(
     flags: &CliFlags,
-) -> Result<
-    (
-        PathBuf,
-        tokio::process::Child,
-        crate::shell::child_watch::StderrTail,
-        Option<u8>,
-    ),
-    String,
-> {
-    spawn_agent(flags).await
+    pending_child_watches: crate::shell::child_watch::ChildWatchRegistry,
+) -> Result<(PathBuf, crate::shell::child_watch::ChildWatch, Option<u8>), String> {
+    spawn_agent_program_watched_for_tab("quecto", flags, pending_child_watches).await
 }
 
-/// Main async entry point.
 async fn run_tui(flags: CliFlags) -> i32 {
-    // Capture spawn policy before any partial moves out of `flags` (F8).
     let tab_spawn_policy = TabSpawnPolicy::from_flags(&flags);
-    // For a TUI-owned child, the #1047 exit watcher takes ownership of the
-    // `Child` (so it can reap it and record an exit diagnosis for the
-    // disconnect notification). Termination also goes through the watcher —
-    // never by a stored raw PID, which could be recycled after the watcher
-    // reaps the child (#1051 review: PID-reuse race).
-    // A directly-supplied socket has no spawn and no stderr announcement to
-    // inspect, so the peer's protocol version is unknown. During the ADR-0008
-    // NDJSON deprecation window we speak legacy framing (`None`) rather than
-    // assume protocol v2: legacy NDJSON is understood by BOTH agent generations
-    // (a current agent's reader sniffs each message and downshifts its replies),
-    // whereas assuming frames against a pre-#1059 agent would write newline-less
-    // frames its NDJSON reader can never parse — the silent hang ADR-0008
-    // forbids. (When part 3 closes the window this path needs an explicit
-    // version handshake; out of scope for part 1.)
     let (socket, child_watch, announced_protocol) = match flags.socket_path {
         Some(path) => (path, None, None),
-        None => {
-            // Spawn a quecto agent child process
-            match spawn_agent(&flags).await {
-                Ok((path, child, stderr_tail, announced_protocol)) => {
-                    let watch = crate::shell::child_watch::watch_child(child, stderr_tail);
-                    (path, Some(watch), announced_protocol)
-                }
-                Err(e) => {
-                    eprintln!("Failed to start quecto agent: {e}");
-                    return 1;
-                }
+        None => match spawn_agent(&flags).await {
+            Ok((path, child, stderr_tail, announced_protocol)) => {
+                let watch = crate::shell::child_watch::watch_child(child, stderr_tail);
+                (path, Some(watch), announced_protocol)
             }
-        }
+            Err(e) => {
+                eprintln!("Failed to start quecto agent: {e}");
+                return 1;
+            }
+        },
     };
 
-    // Install panic handler to restore terminal before printing panic.
-    // We restore termios via libc directly — the Terminal struct may not be
-    // accessible from the panic hook.
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        // Leave alt screen first, then reset modes on the main buffer.
         let _ = std::io::Write::write_all(
             &mut std::io::stdout(),
             b"\x1b[?1049l\x1b[?2004l\x1b[?25h\x1b[0m\x1b[>4;0m\x1b[<u",
         );
         let _ = std::io::Write::flush(&mut std::io::stdout());
-        // Restore termios to cooked mode (best-effort).
-        // SAFETY: termios calls operate on stdin fd 0; return values are checked before using the struct.
+        // SAFETY: termios calls operate on stdin fd 0; return values are checked before use.
         unsafe {
             let fd = 0; // stdin
             let mut termios: libc::termios = std::mem::zeroed();
@@ -239,12 +182,6 @@ async fn run_tui(flags: CliFlags) -> i32 {
         default_hook(info);
     }));
 
-    // Connect to the agent, in the framing its announcement negotiated:
-    // length-prefixed frames for protocol v2+, legacy NDJSON for agents that
-    // announced no version (deprecation window, ADR-0008 / #1059). The
-    // outcome only picks the connect call here; it is recorded on the
-    // `Client` and carried as per-connection state by the master
-    // `Connection` (#1462), not kept as a `run_tui` local.
     let speaks_frames = should_speak_frames(announced_protocol);
     let connect = async {
         if speaks_frames {
@@ -264,7 +201,6 @@ async fn run_tui(flags: CliFlags) -> i32 {
         }
     };
 
-    // Run the TUI.
     let terminal = crate::shell::terminal::Terminal::new();
     let mut app = crate::shell::app::App::new(terminal, client);
     app.tab_spawn_policy = Some(tab_spawn_policy);
@@ -273,28 +209,15 @@ async fn run_tui(flags: CliFlags) -> i32 {
         app.ac_mut().child_pid = watch.pid();
         app.set_child_exit_watch(watch.clone());
     }
-    // Master ready: capture initial durability snapshot (F3).
+    app.set_ordinary_exit_kill_owned(flags.kill_on_exit);
     app.persist_default_durability();
     let exit_code = app.run().await;
 
-    // Clean exit: flush registry/manifest before teardown (F3).
-    app.persist_default_durability();
-
-    // Detach-on-exit by default (ADR-0023); `--kill-on-exit` terminates every tab child.
-    if flags.kill_on_exit {
-        let mut watches = app.take_all_child_exit_watches();
-        if let Some(watch) = child_watch {
-            watches.push(watch);
-        }
-        for watch in watches {
-            watch.terminate().await;
-        }
-    }
+    drop(child_watch);
 
     exit_code
 }
 
-/// Build the `quecto agent` argv used for an owned TUI child process.
 pub(crate) fn build_agent_args(flags: &CliFlags) -> Vec<String> {
     let mut args = vec!["agent".to_string(), "--mode".to_string(), "uds".to_string()];
     if flags.persist {
@@ -324,16 +247,8 @@ pub(crate) fn build_agent_args(flags: &CliFlags) -> Vec<String> {
     args
 }
 
-/// Spawn→socket-path readiness deadline.
-///
-/// 30s comfortably covers a cold-binary first launch after `cargo install`
-/// (paging the freshly-written kernel binary into the OS page cache + first-run
-/// config/credential load) without letting a genuinely-hung kernel hang too
-/// long. See #808. `scripts/run-tui.sh` pre-warms the binary so this window is
-/// only load-bearing for direct `quecto-tui …` invocations.
 pub const AGENT_SOCKET_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// Status line shown while waiting for the spawned agent to announce its socket,
 /// so the wait is not a silent pause (#808).
 pub fn agent_starting_status() -> &'static str {
     "starting agent… (first launch after install may take a few seconds)"
@@ -376,6 +291,93 @@ pub(crate) async fn spawn_agent(
     spawn_agent_program("quecto", flags).await
 }
 
+pub(crate) async fn spawn_agent_program_watched_for_tab(
+    program: &str,
+    flags: &CliFlags,
+    pending_child_watches: crate::shell::child_watch::ChildWatchRegistry,
+) -> Result<(PathBuf, crate::shell::child_watch::ChildWatch, Option<u8>), String> {
+    use tokio::io::AsyncBufReadExt;
+    let args = build_agent_args(flags);
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let mut child = tokio::process::Command::new(program)
+        .args(&args_ref)
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null())
+        // Create a new process group so ordinary exit can kill the tab agent
+        // and any TUI-owned descendants without touching unrelated agents.
+        .process_group(0)
+        .spawn()
+        .map_err(|e| format!("failed to spawn {program}: {e}"))?;
+
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "failed to capture agent stderr".to_string())?;
+    let stderr_context = crate::shell::child_watch::StderrTail::default();
+    let watch = crate::shell::child_watch::watch_child(child, stderr_context.clone());
+    if let Ok(mut pending) = pending_child_watches.lock() {
+        pending.push(watch.clone());
+    }
+
+    let mut reader = tokio::io::BufReader::new(stderr);
+    let mut line = String::new();
+    let socket_prefix = "quecto-agent-socket: ";
+    let protocol_prefix = quecto_line_io::PROTOCOL_ANNOUNCE_PREFIX;
+    let mut announced_protocol: Option<u8> = None;
+    let deadline = tokio::time::Instant::now() + AGENT_SOCKET_DEADLINE;
+
+    eprintln!("{}", agent_starting_status());
+
+    loop {
+        line.clear();
+        let read_future = reader.read_line(&mut line);
+        let result = tokio::time::timeout_at(deadline, read_future).await;
+
+        match result {
+            Ok(Ok(0)) => {
+                watch.terminate().await;
+                return Err(format_agent_startup_failure(
+                    "agent exited before announcing socket",
+                    &stderr_context.lines(),
+                ));
+            }
+            Ok(Ok(_)) => {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    remember_stderr_line(&stderr_context, trimmed);
+                }
+                if let Some(version) = trimmed.strip_prefix(protocol_prefix) {
+                    announced_protocol = version.trim().parse().ok();
+                }
+                if let Some(path_str) = trimmed.strip_prefix(socket_prefix) {
+                    let path = PathBuf::from(path_str.trim());
+                    if let Err(e) = validate_socket_path(&path) {
+                        watch.terminate().await;
+                        return Err(e);
+                    }
+                    spawn_stderr_drain(reader, stderr_context.clone());
+                    return Ok((path, watch, announced_protocol));
+                }
+            }
+            Ok(Err(e)) => {
+                watch.terminate().await;
+                return Err(format_agent_startup_failure(
+                    &format!("error reading agent stderr: {e}"),
+                    &stderr_context.lines(),
+                ));
+            }
+            Err(_) => {
+                watch.terminate().await;
+                return Err(format_agent_startup_failure(
+                    &agent_socket_timeout_message(),
+                    &stderr_context.lines(),
+                ));
+            }
+        }
+    }
+}
+
 /// [`spawn_agent`] with the agent binary injectable, so tests can drive the
 /// REAL spawn path (socket announcement parsing, post-startup stderr drain
 /// wiring) with a stand-in script — reverting the drain hookup must fail a
@@ -403,11 +405,9 @@ async fn spawn_agent_program(
     String,
 > {
     use tokio::io::AsyncBufReadExt;
-    use tokio::process::Command;
-
     let args = build_agent_args(flags);
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let mut child = Command::new(program)
+    let mut child = tokio::process::Command::new(program)
         .args(&args_ref)
         .stderr(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
@@ -721,6 +721,9 @@ fn format_agent_startup_failure(reason: &str, stderr_lines: &[String]) -> String
 #[path = "cli_cov_tests.rs"]
 mod cli_cov_tests;
 
+#[cfg(test)]
+#[path = "cli_tab_spawn_tests.rs"]
+mod cli_tab_spawn_tests;
 #[cfg(test)]
 #[path = "cli_tests.rs"]
 mod tests;

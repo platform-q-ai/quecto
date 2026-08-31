@@ -100,15 +100,17 @@ async fn handle_key_ctrl_d_sets_exit_flag() {
 }
 
 #[tokio::test]
-async fn handle_key_ctrl_d_aborts_if_agent_running() {
+async fn handle_key_ctrl_d_requests_exit_without_aborting_running_agent() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.ac_mut().agent_state.start();
     assert!(a.ac().agent_state.is_running());
     a.handle_key(Key::Ctrl('d'));
     assert!(a.should_exit);
-    // Abort should have been called (agent_state.abort sets running=false).
-    assert!(!a.ac().agent_state.is_running());
+    assert!(
+        a.ac().agent_state.is_running(),
+        "Ctrl+D ordinary exit should not uniquely abort active turns"
+    );
 }
 
 #[tokio::test]

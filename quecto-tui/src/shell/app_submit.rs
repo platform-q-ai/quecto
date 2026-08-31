@@ -22,7 +22,7 @@ impl App {
             }
             match trimmed {
                 "/quit" | "/exit" => {
-                    self.should_exit = true;
+                    self.request_ordinary_exit();
                     return;
                 }
                 "/clear" => {

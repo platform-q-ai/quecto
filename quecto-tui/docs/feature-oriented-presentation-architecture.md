@@ -318,6 +318,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `protocol/agent_ledger_payloads.rs` | `protocol` (relocated, #1257 Phase 2) |
 | `protocol/client.rs` | `protocol` UDS client and wire DTOs (relocated, #1257 Phase 2) |
 | `protocol/client_classes.rs` | `protocol` command admission classes + test-harness queue constructor (split from `client.rs` for the 750-line baseline, child-progress-freeze fix 2026-07-29) |
+| `protocol/event_barrier.rs` | `protocol` typed persistence barrier response mapping (#1592 ordinary-exit finalizer) |
 | `protocol/inspection_routing.rs` | `protocol` safe routed subagent inspection command mapping (#1442; split from `client.rs` for the 750-line baseline) |
 | `protocol/client_policy_types.rs` | `protocol` catalogue-backed tool policy wire DTOs (#1334 Phase 4) |
 | `protocol/client_test_api.rs` | `protocol` test-only client constructors/probes (split from `client.rs` for the 750-line baseline, #1574) |
@@ -341,6 +342,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/app_idle_efficiency.rs` | `shell` event-loop policy (relocated, #1257 Phase 6) |
 | `shell/app_methods.rs` | `shell` composition methods (relocated, #1257 Phase 6) |
 | `shell/app_methods_send.rs` | `shell` send/selection helpers split for line budget (#1465) |
+| `shell/app_ordinary_exit.rs` | `shell` ordinary-exit finalization (#1586 Phase 4) |
 | `shell/app_render_helpers.rs` | `shell` render helper extraction (line-count split, #1334 PR 4) |
 | `shell/app_response.rs` | `shell` response dispatch seam (relocated, #1257 Phase 6; protocol-mapper allowlist #1220) |
 | `shell/app_response_test_api.rs` | `shell` multi-tab test/harness API (#1465) |

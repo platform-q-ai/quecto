@@ -338,6 +338,7 @@ pub enum Event {
     #[serde(other)]
     Unknown,
 }
+
 // Typed subagent roster payloads live in `subagent_payloads` (750-line cap
 // split); re-exported here so existing `protocol::client::…` paths still work.
 pub use crate::protocol::subagent_payloads::{
@@ -467,23 +468,13 @@ impl CommandSender {
     /// if the writer has gone away.
     ///
     /// Background commands also refuse the last
-    /// [`COMMAND_WRITER_USER_RESERVED`] free slots so a burst of polls /
-    /// recovery fetches cannot exhaust capacity needed for a concurrent
-    /// user follow-up (#1238). Interactive user commands may consume those
-    /// reserved slots; they still fail with backpressure only when the
-    /// queue is completely full.
+    /// [`COMMAND_WRITER_USER_RESERVED`] free slots so polls/recovery fetches
+    /// cannot exhaust capacity needed for a concurrent user follow-up (#1238).
     pub fn try_send(&self, cmd: &Command) -> Result<(), ClientError> {
-        use mpsc::error::TrySendError;
-        // `capacity()` is free permits remaining. Background traffic must leave
-        // the reserved headroom for interactive user commands — but only on
-        // production-sized queues. Tiny test/disconnect stubs (e.g. capacity 1)
-        // cannot host the reserve; skip the gate so closed channels still
-        // surface as Disconnected rather than a false Backpressure (#1238).
-        // Feed-liveness traffic (Sync) may use the OUTER half of the reserve —
-        // refusing it exactly when the queue is pressured froze child feeds —
-        // but never the interactive floor, so an unthrottled sync burst cannot
-        // consume the slots protecting prompt/steer/follow_up/abort (#1238,
-        // PR #1307 review).
+        // Background traffic leaves interactive headroom on production queues.
+        // Tiny test stubs skip the gate so closed channels report Disconnected;
+        // Sync may use only the outer reserve to avoid feed freezes without
+        // consuming prompt/steer/follow_up/abort floor (#1238, #1307 review).
         if !cmd.is_interactive_user() && self.tx.max_capacity() > COMMAND_WRITER_USER_RESERVED {
             let floor = if cmd.is_feed_liveness() {
                 COMMAND_WRITER_INTERACTIVE_FLOOR
@@ -494,6 +485,17 @@ impl CommandSender {
                 return Err(ClientError::Backpressure);
             }
         }
+        use mpsc::error::TrySendError;
+        self.tx
+            .try_send(serialize_command(cmd)?)
+            .map_err(|e| match e {
+                TrySendError::Full(_) => ClientError::Backpressure,
+                TrySendError::Closed(_) => ClientError::Disconnected,
+            })
+    }
+
+    pub(crate) fn try_send_exit_durability(&self, cmd: &Command) -> Result<(), ClientError> {
+        use mpsc::error::TrySendError;
         self.tx
             .try_send(serialize_command(cmd)?)
             .map_err(|e| match e {
