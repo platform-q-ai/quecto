@@ -90,6 +90,69 @@ async fn ordinary_exit_kill_policy_cleans_up_in_flight_tab_spawn_watch_before_at
     );
 }
 
+#[tokio::test(start_paused = true)]
+async fn ordinary_exit_owned_child_cleanup_timeout_does_not_block_terminal_cleanup_or_error_emission()
+ {
+    let mut h = TuiHarness::new().await;
+    let a = h.app_mut();
+    a.kitty.active = true;
+    a.kitty.modify_other_keys = true;
+    let (mut conn, mut rx) = Connection::live_for_tests();
+    conn.set_tab_for_tests(TabId::MASTER);
+    let (watch, mut term_rx) =
+        crate::shell::child_watch::ChildWatch::for_tests_with_termination_probe(Some(99));
+    a.attach_connection_to_tab(TabId::MASTER, conn, Some(watch));
+    let event_tx = a.tab_event_tx.clone().unwrap();
+    tokio::spawn(async move {
+        let cmd: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        event_tx
+            .send(SourcedEvent::Tab(
+                TabId::MASTER,
+                Event::Response {
+                    id: cmd["id"].as_str().map(str::to_string),
+                    command: "persist_session".to_string(),
+                    success: true,
+                    data: None,
+                    error: None,
+                },
+            ))
+            .await
+            .unwrap();
+    });
+
+    crate::shell::app::App::take_ordinary_exit_finalization_errors_for_tests();
+    let finalization_errors = {
+        let finalize = a.finalize_ordinary_exit();
+        tokio::pin!(finalize);
+        let _terminate_ack = tokio::select! {
+            ack = term_rx.recv() => ack.expect("owned watch termination requested"),
+            _ = &mut finalize => panic!("finalizer completed before requesting owned-child termination"),
+        };
+
+        tokio::select! {
+            _ = &mut finalize => panic!("stuck owned-child cleanup must be bounded, not complete immediately"),
+            _ = tokio::time::sleep(std::time::Duration::from_millis(499)) => {}
+        }
+        tokio::time::advance(std::time::Duration::from_millis(1)).await;
+        finalize.await
+    };
+    let emitted_errors = crate::shell::app::App::take_ordinary_exit_finalization_errors_for_tests();
+    let terminal_cleaned = !a.kitty.active && !a.kitty.modify_other_keys;
+
+    assert!(
+        terminal_cleaned,
+        "terminal protocol cleanup must still run after owned-child cleanup timeout"
+    );
+    for errors in [&finalization_errors, &emitted_errors] {
+        assert!(
+            errors
+                .iter()
+                .any(|msg| msg.contains("ordinary-exit owned-child cleanup timed out")),
+            "owned-child cleanup timeout must be surfaced as a finalization error: {errors:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn ordinary_exit_detach_policy_leaves_owned_child_watches() {
     let mut h = TuiHarness::new().await;

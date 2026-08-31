@@ -163,14 +163,27 @@ impl ChildWatch {
     /// Test-only handle that never owns a real process.
     #[cfg(any(test, feature = "test-harness"))]
     pub fn for_tests(pid: Option<u32>) -> Self {
+        let (watch, _term_rx) = Self::for_tests_with_termination_probe(pid);
+        watch
+    }
+
+    /// Test-only handle plus termination-request receiver. Dropping or never
+    /// acknowledging the received oneshot simulates a stuck child watcher.
+    #[cfg(any(test, feature = "test-harness"))]
+    pub fn for_tests_with_termination_probe(
+        pid: Option<u32>,
+    ) -> (Self, mpsc::Receiver<oneshot::Sender<()>>) {
         let (_exit_tx, exit_rx) = watch::channel(None);
-        let (term_tx, _term_rx) = mpsc::channel::<oneshot::Sender<()>>(1);
-        ChildWatch {
-            exit_rx,
-            term_tx,
-            stderr_tail: StderrTail::default(),
-            pid,
-        }
+        let (term_tx, term_rx) = mpsc::channel::<oneshot::Sender<()>>(1);
+        (
+            ChildWatch {
+                exit_rx,
+                term_tx,
+                stderr_tail: StderrTail::default(),
+                pid,
+            },
+            term_rx,
+        )
     }
 
     /// OS pid captured when the watcher was created (may be gone if reaped).
@@ -221,10 +234,20 @@ impl ChildWatch {
     /// possibly recycled — PGID is never signalled (#1051 review: PID-reuse
     /// race; final review: sub-agent orphan leak).
     pub async fn terminate(&self) {
+        let _ = self.terminate_with_timeout(Duration::MAX).await;
+    }
+
+    /// Request termination and wait up to `timeout` for the watcher ack.
+    /// Returns `false` when the request cannot be delivered or the watcher does
+    /// not acknowledge within the caller's bounded cleanup window.
+    pub async fn terminate_with_timeout(&self, timeout: Duration) -> bool {
         let (done_tx, done_rx) = oneshot::channel();
-        if self.term_tx.send(done_tx).await.is_ok() {
-            let _ = done_rx.await;
+        if self.term_tx.send(done_tx).await.is_err() {
+            return false;
         }
+        tokio::time::timeout(timeout, done_rx)
+            .await
+            .is_ok_and(|ack| ack.is_ok())
     }
 }
 

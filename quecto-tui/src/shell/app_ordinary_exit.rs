@@ -7,6 +7,10 @@ use std::time::Duration;
 use super::{App, NotifyLevel};
 
 const ORDINARY_EXIT_DURABILITY_BARRIER_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(not(test))]
+const ORDINARY_EXIT_OWNED_CHILD_CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const ORDINARY_EXIT_OWNED_CHILD_CLEANUP_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[cfg(test)]
 fn ordinary_exit_finalization_errors_for_tests() -> &'static Mutex<Vec<String>> {
@@ -36,19 +40,34 @@ impl App {
             }
         };
         errors.extend(self.await_ordinary_exit_durability_barrier(ids).await);
-        let watches = if self.ordinary_exit_kill_owned {
-            self.take_all_child_exit_watches()
-        } else {
-            Vec::new()
-        };
-        for watch in watches {
-            watch.terminate().await;
-        }
+        errors.extend(self.apply_ordinary_exit_owned_child_policy().await);
         self.kitty.cleanup();
         self.terminal.show_cursor();
         self.terminal.exit_raw_mode();
         self.terminal.write_str("\r\n");
         Self::emit_ordinary_exit_finalization_errors(&errors);
+        errors
+    }
+
+    async fn apply_ordinary_exit_owned_child_policy(&mut self) -> Vec<String> {
+        let mut errors = Vec::new();
+        if !self.ordinary_exit_kill_owned {
+            return errors;
+        }
+        for watch in self.take_all_child_exit_watches() {
+            if watch
+                .terminate_with_timeout(ORDINARY_EXIT_OWNED_CHILD_CLEANUP_TIMEOUT)
+                .await
+            {
+                continue;
+            }
+            let msg = match watch.pid() {
+                Some(pid) => format!("ordinary-exit owned-child cleanup timed out for pid {pid}"),
+                None => "ordinary-exit owned-child cleanup timed out".to_string(),
+            };
+            self.notify(&msg, NotifyLevel::Error);
+            errors.push(msg);
+        }
         errors
     }
 
