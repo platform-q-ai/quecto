@@ -227,22 +227,61 @@ impl ResumeRosterRehydrator {
         roster: Vec<PersistedSubagentRosterEntry>,
     ) {
         let Some(registry) = registry else { return };
-        let rehydrate_generation =
-            crate::infrastructure::tools::subagent_registry::current_registration_generation();
-        {
-            let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-            entries.retain(|_, entry| entry.registration_generation >= rehydrate_generation);
-        }
+        let resume_epoch =
+            crate::infrastructure::tools::subagent_registry::next_registration_generation();
+        let preexisting_generations = {
+            let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+            entries
+                .iter()
+                .map(|(agent_uuid, entry)| (agent_uuid.clone(), entry.registration_generation))
+                .collect::<std::collections::HashMap<_, _>>()
+        };
         let restored_entries: Vec<_> = roster
             .into_iter()
-            .filter_map(|persisted| {
+            .map(|persisted| {
+                let agent_uuid = persisted.agent_uuid.clone();
                 let decision = Self::classify_persisted_subagent_restore(&persisted);
-                Self::entry_from_persisted_subagent(persisted, decision)
+                (
+                    agent_uuid,
+                    Self::entry_from_persisted_subagent(persisted, decision),
+                )
             })
-            .collect();
+            .collect::<Vec<_>>();
         let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-        for (agent_uuid, entry) in restored_entries {
-            entries.entry(agent_uuid).or_insert(entry);
+        let current_epoch = entries
+            .values()
+            .map(|entry| entry.notification_sequence)
+            .max()
+            .unwrap_or(0);
+        if current_epoch > resume_epoch {
+            return;
+        }
+        for (agent_uuid, restored) in restored_entries {
+            match restored {
+                Some((_, mut entry)) => match entries.get(&agent_uuid) {
+                    Some(existing)
+                        if preexisting_generations.get(&agent_uuid)
+                            == Some(&existing.registration_generation) =>
+                    {
+                        entry.notification_sequence = resume_epoch;
+                        entries.insert(agent_uuid, entry);
+                    }
+                    Some(_) => {}
+                    None => {
+                        entry.notification_sequence = resume_epoch;
+                        entries.insert(agent_uuid, entry);
+                    }
+                },
+                None => {
+                    let should_remove = entries.get(&agent_uuid).is_some_and(|entry| {
+                        preexisting_generations.get(&agent_uuid)
+                            == Some(&entry.registration_generation)
+                    });
+                    if should_remove {
+                        entries.remove(&agent_uuid);
+                    }
+                }
+            }
         }
     }
 }

@@ -14,8 +14,7 @@ use std::time::Instant;
 
 #[path = "subagent_registry_generation.rs"]
 mod subagent_registry_generation;
-pub(crate) use subagent_registry_generation::current_registration_generation;
-use subagent_registry_generation::next_registration_generation;
+pub(crate) use subagent_registry_generation::next_registration_generation;
 /// Entry for a spawned subagent in the shared registry.
 #[derive(Debug, Clone)]
 pub struct SubagentEntry {

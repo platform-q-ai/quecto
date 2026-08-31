@@ -399,6 +399,89 @@ fn restore_persisted_roster_does_not_hold_registry_lock_during_verify() {
 }
 
 #[test]
+fn restore_does_not_prune_fresh_live_row_registered_before_rehydration() {
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let mut stale_snapshot = roster_entry("stale", dir.path().join("gone.sock"));
+    stale_snapshot.restore_reason =
+        crate::domain::session::SubagentRestoreReason::LegacyUnspecified;
+
+    {
+        let mut entries = registry.lock().unwrap();
+        let mut fresh = SubagentEntry::new("/tmp/fresh-live.sock".into(), 77);
+        fresh.status = SubagentStatus::Running;
+        fresh.persisted_liveness = SubagentLiveness::Live;
+        entries.insert("fresh".to_string(), fresh);
+    }
+
+    restore_persisted_subagent_roster(&Some(registry.clone()), vec![stale_snapshot]);
+
+    let entries = registry.lock().unwrap();
+    let fresh = entries
+        .get("fresh")
+        .expect("fresh live row must survive resume");
+    assert_eq!(fresh.pid, 77);
+    assert_eq!(fresh.persisted_liveness, SubagentLiveness::Live);
+}
+
+#[test]
+fn older_slow_rehydrate_cannot_insert_after_newer_resume_completes() {
+    use crate::domain::session::SubagentRestoreReason;
+    use std::time::Duration;
+
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let slow_socket = dir.path().join("slow-old.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&slow_socket).unwrap();
+    let (connected_tx, connected_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        use std::io::{Read, Write};
+        let (mut stream, _) = listener.accept().unwrap();
+        connected_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+        let mut prefix = [0u8; 4];
+        stream.read_exact(&mut prefix).unwrap();
+        let len = u32::from_be_bytes(prefix) as usize;
+        let mut request = vec![0u8; len];
+        stream.read_exact(&mut request).unwrap();
+        let request_id = serde_json::from_slice::<serde_json::Value>(&request).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let response = serde_json::json!({"type":"response","id":request_id,"command":"get_session_stats","success":true,"data":{"sessionKey":"old","userMessages":0,"assistantMessages":0,"toolCalls":0,"toolResults":0,"totalMessages":0,"tokens":{},"contextTokens":0,"maxContextTokens":0}}).to_string();
+        stream
+            .write_all(&(response.len() as u32).to_be_bytes())
+            .unwrap();
+        stream.write_all(response.as_bytes()).unwrap();
+    });
+
+    let old_registry = registry.clone();
+    let old = std::thread::spawn(move || {
+        let mut old = roster_entry("old", slow_socket);
+        old.session_key = "old".into();
+        old.restore_reason = SubagentRestoreReason::LegacyUnspecified;
+        restore_persisted_subagent_roster(&Some(old_registry), vec![old]);
+    });
+    connected_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+    let mut newer = roster_entry("new", dir.path().join("new.sock"));
+    newer.restore_reason = SubagentRestoreReason::OrdinaryTuiExitStopped;
+    restore_persisted_subagent_roster(&Some(registry.clone()), vec![newer]);
+
+    release_tx.send(()).unwrap();
+    old.join().unwrap();
+    server.join().unwrap();
+
+    let entries = registry.lock().unwrap();
+    assert!(entries.contains_key("new"));
+    assert!(
+        !entries.contains_key("old"),
+        "older slow resume must not insert stale rows after newer resume wins"
+    );
+}
+
+#[test]
 fn restore_persisted_roster_no_registry_is_noop() {
     restore_persisted_subagent_roster(&None, vec![roster_entry("ignored", "".into())]);
 }
