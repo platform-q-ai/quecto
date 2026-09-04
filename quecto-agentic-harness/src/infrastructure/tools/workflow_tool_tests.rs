@@ -2,11 +2,44 @@
 //! keep the source file within the line-count baseline).
 
 use super::*;
-use crate::domain::workflow::{WorkflowConfig, WorkflowMode};
+use crate::domain::workflow::{
+    WorkflowConfig, WorkflowMode, WorkflowTemplate, WorkflowTemplateStep,
+};
+
+fn simple_template(id: &str) -> WorkflowTemplate {
+    WorkflowTemplate {
+        id: id.into(),
+        label: id.into(),
+        description: "test template".into(),
+        when_to_use: Some("tests".into()),
+        steps: vec![
+            WorkflowTemplateStep {
+                key: "a".into(),
+                label: "A".into(),
+                phase: "x".into(),
+                guidance: Some("first".into()),
+            },
+            WorkflowTemplateStep {
+                key: "b".into(),
+                label: "B".into(),
+                phase: "x".into(),
+                guidance: Some("second".into()),
+            },
+        ],
+        guards: vec![],
+    }
+}
+
+fn workflow_test_config() -> WorkflowConfig {
+    WorkflowConfig {
+        templates: vec![simple_template("feature"), simple_template("bugfix")],
+        ..WorkflowConfig::default()
+    }
+}
 
 fn test_tool() -> WorkflowTool {
     let engine = Arc::new(Mutex::new(
-        WorkflowEngine::new(WorkflowConfig::default(), true).unwrap(),
+        WorkflowEngine::new(workflow_test_config(), true).unwrap(),
     ));
     WorkflowTool::new(engine)
 }
@@ -379,7 +412,7 @@ async fn issue_argument_shapes_keep_existing_behavior() {
 
 #[test]
 fn snapshot_event_contains_mode() {
-    let engine = WorkflowEngine::new(WorkflowConfig::default(), true).unwrap();
+    let engine = WorkflowEngine::new(workflow_test_config(), true).unwrap();
     let event = snapshot_to_event(&engine.snapshot(true));
     assert_eq!(event["type"], "workflow_state");
     assert_eq!(
@@ -415,7 +448,7 @@ fn guard_template(id: &str) -> crate::domain::workflow::WorkflowTemplate {
 #[test]
 fn parsed_rules_cache_reuses_by_id_and_invalidates_on_change() {
     let engine = Arc::new(Mutex::new(
-        WorkflowEngine::new(WorkflowConfig::default(), true).unwrap(),
+        WorkflowEngine::new(workflow_test_config(), true).unwrap(),
     ));
     let guard = WorkflowGuard::new(engine);
 
@@ -498,7 +531,7 @@ async fn mutating_actions_emit_workflow_events_but_status_does_not() {
     let captured = events.clone();
     let tool = WorkflowTool::with_event_emitter(
         Arc::new(Mutex::new(
-            WorkflowEngine::new(WorkflowConfig::default(), true).unwrap(),
+            WorkflowEngine::new(workflow_test_config(), true).unwrap(),
         )),
         Arc::new(move |event| captured.lock().unwrap().push(event)),
     );

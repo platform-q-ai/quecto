@@ -1,8 +1,92 @@
 use super::*;
 
+fn planned_feature_template_with_id(id: &str) -> WorkflowTemplate {
+    let mut template = planned_feature_template();
+    template.id = id.into();
+    template.label = id.into();
+    template
+}
+
+fn planned_feature_template() -> WorkflowTemplate {
+    let keys = [
+        "hooks",
+        "plan_intake",
+        "semantic_contract",
+        "test_design",
+        "test_review",
+        "red",
+        "green",
+        "refactor_harden",
+        "local_review",
+        "verify",
+        "version_bump",
+        "commit",
+        "push",
+        "pr",
+        "pr_reviewers",
+        "fix_pr_review",
+        "resolve_threads",
+        "conformance",
+        "request_ci",
+        "cleanup",
+    ];
+    WorkflowTemplate {
+        id: "feature".into(),
+        label: "Feature".into(),
+        description: "test feature workflow".into(),
+        when_to_use: Some("test feature work".into()),
+        steps: keys
+            .into_iter()
+            .map(|key| WorkflowTemplateStep {
+                key: key.into(),
+                label: if key == "hooks" {
+                    "Install/check local quality hooks".into()
+                } else {
+                    key.into()
+                },
+                phase: "test".into(),
+                guidance: Some(if key == "plan_intake" {
+                    "Read the issue body, comments, and canonical plan comment".into()
+                } else if key == "semantic_contract" {
+                    "Build and challenge the feature semantic state-space".into()
+                } else {
+                    "test guidance".into()
+                }),
+            })
+            .collect(),
+        guards: vec![
+            WorkflowGuardRule {
+                commands: vec!["git commit".into()],
+                before_step_key: "commit".into(),
+                message: "plan intake".into(),
+            },
+            WorkflowGuardRule {
+                commands: vec!["git push".into()],
+                before_step_key: "request_ci".into(),
+                message: "PR review fixes".into(),
+            },
+            WorkflowGuardRule {
+                commands: vec!["gh pr merge".into()],
+                before_step_key: "cleanup".into(),
+                message: "does not merge".into(),
+            },
+        ],
+    }
+}
+
+fn test_workflow_config() -> WorkflowConfig {
+    WorkflowConfig {
+        templates: vec![
+            planned_feature_template(),
+            planned_feature_template_with_id("bugfix"),
+        ],
+        ..WorkflowConfig::default()
+    }
+}
+
 #[test]
 fn restore_with_missing_template_resets_to_selector() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let mut engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     engine.restore_run(WorkflowRunPersisted {
         template_id: Some("missing".into()),
         done: vec![true],
@@ -14,7 +98,7 @@ fn restore_with_missing_template_resets_to_selector() {
 
 #[test]
 fn snapshot_in_selector_mode_lists_templates() {
-    let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     let snap = engine.snapshot(true);
     assert_eq!(snap.mode, WorkflowMode::SelectingTemplate);
     let ids: Vec<&str> = snap
@@ -22,27 +106,13 @@ fn snapshot_in_selector_mode_lists_templates() {
         .iter()
         .map(|t| t.id.as_str())
         .collect();
-    assert_eq!(
-        ids,
-        [
-            "feature",
-            "adversarial-review",
-            "bugfix",
-            "chore",
-            "flake-hunt",
-            "investigate",
-            "plan",
-            "prd",
-            "refactor",
-            "remove",
-        ]
-    );
+    assert_eq!(ids, ["feature", "bugfix"]);
     assert!(snap.steps.is_empty());
 }
 
 #[test]
 fn snapshot_in_active_mode_has_visible_steps_and_current_step() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), true).unwrap();
+    let mut engine = WorkflowEngine::new(test_workflow_config(), true).unwrap();
     engine
         .select_template("feature", Some((9, "feat".into())))
         .unwrap();
@@ -57,7 +127,7 @@ fn snapshot_in_active_mode_has_visible_steps_and_current_step() {
 
 #[test]
 fn selector_status_mentions_select_template() {
-    let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     let status = engine.status_text();
     assert!(status.contains("select_template"));
     assert!(status.contains("feature"));
@@ -65,7 +135,7 @@ fn selector_status_mentions_select_template() {
 
 #[test]
 fn active_status_mentions_guidance() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let mut engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     engine.check(1).unwrap();
     let status = engine.status_text();
@@ -78,7 +148,7 @@ fn active_status_mentions_guidance() {
 fn auto_continue_nudge_uses_continuation_wording() {
     let config = WorkflowConfig {
         auto_continue: true,
-        ..WorkflowConfig::default()
+        ..test_workflow_config()
     };
     let mut engine = WorkflowEngine::new(config, false).unwrap();
     engine.select_template("feature", None).unwrap();
@@ -114,7 +184,7 @@ fn auto_continue_nudge_uses_continuation_wording() {
 fn corrective_nudge_demands_check_off_or_continued_work() {
     let config = WorkflowConfig {
         auto_continue: true,
-        ..WorkflowConfig::default()
+        ..test_workflow_config()
     };
     let mut engine = WorkflowEngine::new(config, false).unwrap();
     engine.select_template("feature", None).unwrap();
@@ -140,7 +210,7 @@ fn corrective_nudge_shares_the_auto_continue_gate() {
     // Disabled auto-continue: no corrective nudge either.
     let disabled = WorkflowConfig {
         auto_continue: false,
-        ..WorkflowConfig::default()
+        ..test_workflow_config()
     };
     let mut engine = WorkflowEngine::new(disabled, false).unwrap();
     engine.select_template("feature", None).unwrap();
@@ -149,7 +219,7 @@ fn corrective_nudge_shares_the_auto_continue_gate() {
     // Enabled but complete: gate closes exactly like the standard nudge's.
     let config = WorkflowConfig {
         auto_continue: true,
-        ..WorkflowConfig::default()
+        ..test_workflow_config()
     };
     let mut engine = WorkflowEngine::new(config, false).unwrap();
     engine.select_template("feature", None).unwrap();
@@ -164,7 +234,7 @@ fn corrective_nudge_shares_the_auto_continue_gate() {
 
 #[test]
 fn no_active_template_errors_for_step_actions() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let mut engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     let err = engine.check(1).unwrap_err();
     assert!(matches!(err, WorkflowError::NoActiveTemplate(_)));
 }
@@ -319,7 +389,7 @@ fn selector_nudge_carries_selector_prompt_and_active_issue() {
 /// must never be nudged to pick a template at idle boundaries.
 #[test]
 fn selector_nudge_requires_explicit_arming() {
-    let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     assert_eq!(engine.mode(), WorkflowMode::SelectingTemplate);
     assert!(
         engine.auto_continue_nudge().is_none(),
@@ -404,7 +474,7 @@ fn status_text_shows_only_contiguous_completed_steps_and_current_step() {
     // Workflow status is an agent-control surface: it should orient the agent
     // with already-completed context plus the current step, without leaking
     // future incomplete step labels or guidance that could encourage read-ahead.
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let mut engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     engine.check(1).unwrap();
     engine.skip(4).unwrap();

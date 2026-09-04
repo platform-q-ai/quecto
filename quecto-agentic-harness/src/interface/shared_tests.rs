@@ -1,5 +1,24 @@
 use super::*;
 
+fn workflow_test_config() -> crate::domain::workflow::WorkflowConfig {
+    crate::domain::workflow::WorkflowConfig {
+        templates: vec![crate::domain::workflow::WorkflowTemplate {
+            id: "feature".into(),
+            label: "Feature".into(),
+            description: "test feature workflow".into(),
+            when_to_use: Some("tests".into()),
+            steps: vec![crate::domain::workflow::WorkflowTemplateStep {
+                key: "a".into(),
+                label: "A".into(),
+                phase: "test".into(),
+                guidance: None,
+            }],
+            guards: vec![],
+        }],
+        ..crate::domain::workflow::WorkflowConfig::default()
+    }
+}
+
 // --- expires_at_with_margin tests (issue #256) ---
 
 #[test]
@@ -108,13 +127,8 @@ fn test_build_system_prompt_spawned_retains_explicit_system() {
 #[tokio::test]
 async fn workflow_subsystem_registers_live_engine_handle() {
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
-    let workflow = register_workflow_tool(
-        &mut registry,
-        crate::domain::workflow::WorkflowConfig::default(),
-        false,
-        None,
-    )
-    .unwrap();
+    let workflow =
+        register_workflow_tool(&mut registry, workflow_test_config(), false, None).unwrap();
 
     workflow
         .lock()

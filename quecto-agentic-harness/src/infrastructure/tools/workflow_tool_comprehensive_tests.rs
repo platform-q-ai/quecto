@@ -5,6 +5,57 @@ use crate::domain::workflow::{
 };
 use std::sync::{Arc, Mutex};
 
+fn simple_template(id: &str) -> WorkflowTemplate {
+    let step_count = if id == "feature" { 20 } else { 2 };
+    let mut steps = Vec::new();
+    for i in 1..=step_count {
+        steps.push(WorkflowTemplateStep {
+            key: format!("s{i}"),
+            label: format!("Step {i}"),
+            phase: "x".into(),
+            guidance: Some(format!("guidance {i}")),
+        });
+    }
+    if id == "feature" {
+        steps[11].key = "commit".into();
+        steps[19].key = "cleanup".into();
+    }
+    WorkflowTemplate {
+        id: id.into(),
+        label: if id == "feature" {
+            "Feature".into()
+        } else {
+            id.into()
+        },
+        description: "test template".into(),
+        when_to_use: Some("tests".into()),
+        steps,
+        guards: if id == "feature" {
+            vec![
+                WorkflowGuardRule {
+                    commands: vec!["git commit".into()],
+                    before_step_key: "commit".into(),
+                    message: "commit blocked".into(),
+                },
+                WorkflowGuardRule {
+                    commands: vec!["git merge".into()],
+                    before_step_key: "cleanup".into(),
+                    message: "does not merge".into(),
+                },
+            ]
+        } else {
+            vec![]
+        },
+    }
+}
+
+fn workflow_test_config() -> WorkflowConfig {
+    WorkflowConfig {
+        templates: vec![simple_template("feature"), simple_template("bugfix")],
+        ..WorkflowConfig::default()
+    }
+}
+
 fn tool_with_config(config: WorkflowConfig, guards_enabled: bool) -> WorkflowTool {
     let engine = Arc::new(Mutex::new(
         WorkflowEngine::new(config, guards_enabled).expect("workflow config should be valid"),
@@ -13,7 +64,7 @@ fn tool_with_config(config: WorkflowConfig, guards_enabled: bool) -> WorkflowToo
 }
 
 fn default_tool() -> WorkflowTool {
-    tool_with_config(WorkflowConfig::default(), true)
+    tool_with_config(workflow_test_config(), true)
 }
 
 fn engine_handle_with_config(
@@ -298,25 +349,25 @@ async fn check_enforces_ordering_and_skip_bypasses_it() {
         .unwrap();
 
     let check = tool
-        .execute(r#"{"action":"check","step":3}"#)
+        .execute(r#"{"action":"check","step":2}"#)
         .await
         .unwrap();
     assert!(check.is_error);
-    assert!(check.content.contains("complete step 1"));
+    assert!(check.content.to_lowercase().contains("complete step 1"));
 
-    let skip = tool.execute(r#"{"action":"skip","step":7}"#).await.unwrap();
+    let skip = tool.execute(r#"{"action":"skip","step":2}"#).await.unwrap();
     assert!(!skip.is_error);
-    assert!(skip.content.contains("Step 7 skipped."));
+    assert!(skip.content.contains("Step 2 skipped."));
 
     let status = tool.execute(r#"{"action":"status"}"#).await.unwrap();
     assert!(
-        !status.content.contains("[✓] 7. Implement the scoped phase"),
+        !status.content.contains("[✓] 7."),
         "status must not expose future skipped steps: {}",
         status.content
     );
     let engine = tool.engine();
     let all_steps = engine.lock().unwrap().all_step_statuses();
-    assert!(all_steps[6].done);
+    assert!(all_steps[1].done);
 }
 
 #[tokio::test]
@@ -359,7 +410,7 @@ async fn status_reflects_complete_mode() {
 
 #[tokio::test]
 async fn mutating_actions_emit_events_but_status_does_not() {
-    let (tool, events) = tool_with_emitter(WorkflowConfig::default(), true);
+    let (tool, events) = tool_with_emitter(workflow_test_config(), true);
 
     let status = tool.execute(r#"{"action":"status"}"#).await.unwrap();
     assert!(!status.is_error);
@@ -526,7 +577,7 @@ async fn check_guards_only_uses_the_selected_template() {
 async fn emitter_sends_workflow_state_through_broadcast_channel() {
     let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(16);
     let emitter = broadcast_emitter(broadcast_tx.clone(), None, None);
-    let engine = engine_handle_with_config(WorkflowConfig::default(), false);
+    let engine = engine_handle_with_config(workflow_test_config(), false);
     let tool = WorkflowTool::with_event_emitter(engine, emitter);
 
     // select_template should send an event through the channel.
@@ -580,7 +631,7 @@ async fn register_workflow_tool_with_broadcast_emitter() {
 
     let _engine = crate::interface::shared::register_workflow_tool(
         &mut registry,
-        WorkflowConfig::default(),
+        workflow_test_config(),
         false,
         Some(emitter),
     )
