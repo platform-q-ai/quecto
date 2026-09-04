@@ -251,8 +251,6 @@ fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, DomainEr
     let mut cmd = tokio::process::Command::new(child.binary);
     cmd.args(child.cli_args);
     apply_common_child_env(&mut cmd, child.base_dir);
-    #[cfg(unix)]
-    cmd.process_group(0);
     let child = cmd
         .spawn()
         .map_err(|e| DomainError::Tool(format!("failed to spawn subagent: {e}")))?;
@@ -261,7 +259,7 @@ fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, DomainEr
         environment_ref: None,
         endpoint: None,
         proxy_bridge: None,
-        process_owner: super::process_tree::ProcessOwner::LocalProcessGroup,
+        process_owner: super::process_tree::ProcessOwner::DirectPid,
         cleanup_environment_id: None,
         cleanup_argv: Vec::new(),
         environments: None,

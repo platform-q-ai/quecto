@@ -164,6 +164,38 @@ fn local_selection_has_no_container_config_requirement() {
     assert!(load_container_config(&config, None, Path::new("/tmp")).is_err());
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn local_subagent_inherits_parent_process_group() {
+    let dir = TempDir::new().unwrap();
+    let cli_args = vec![std::ffi::OsString::from("2")];
+    let mut prepared = spawn_local_child(&ChildCommand {
+        binary: Path::new("/bin/sleep"),
+        cli_args: &cli_args,
+        base_dir: dir.path(),
+    })
+    .expect("local child should spawn");
+
+    let child = prepared.child.as_mut().expect("local launch owns child");
+    let pid = child.id().expect("child pid") as libc::pid_t;
+    // SAFETY: `pid` comes from a live child process we just spawned.
+    let child_pgid = unsafe { libc::getpgid(pid) };
+    // SAFETY: `getpgrp` reads the current process group and has no preconditions.
+    let parent_pgid = unsafe { libc::getpgrp() };
+
+    let _ = child.start_kill();
+    let _ = child.wait().await;
+
+    assert_eq!(
+        child_pgid, parent_pgid,
+        "local subagents must stay in the parent agent's PGID so TUI ordinary-exit cleanup kills the whole spawned tree"
+    );
+    assert_ne!(
+        child_pgid, pid,
+        "local subagents must not create their own process group"
+    );
+}
+
 #[test]
 fn relative_config_path_is_rejected_for_container_config() {
     let mut config = base_config(ContainerSelection::New {
