@@ -15,6 +15,7 @@
 //!
 //! They drive not-yet-existing layout behaviour on purpose (TDD RED).
 
+use super::app_subagent_panel::controller_subagent_panel_helpers::panel_markers;
 use super::tui_harness::*;
 use crate::components::ansi::strip_ansi;
 use crate::protocol::client::{Event, SubagentInfoEvent, SubagentWorkflow};
@@ -691,21 +692,6 @@ async fn subagent_get_state_routes_by_inner_agent_id_not_connection() {
         9,
         "the connected child's get_state must populate ITS bar"
     );
-}
-
-/// Count completed and incomplete cells in panel-only workflow bar rows.
-fn panel_markers(frame: &str) -> (usize, usize) {
-    let cells: String = frame
-        .lines()
-        .filter_map(|line| {
-            let bar = line.trim_start_matches([' ', '│']);
-            bar.starts_with(['=', '>']).then_some(bar.trim_end())
-        })
-        .collect();
-    (
-        cells.matches('=').count(),
-        cells.matches(['>', '.']).count(),
-    )
 }
 
 #[tokio::test]
