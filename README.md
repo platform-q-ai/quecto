@@ -30,14 +30,14 @@ Companion crate versions are declared in each package `Cargo.toml`.
 
 ## Workspace projects
 
-| Project | Package / binary | What it is |
-|---|---|---|
-| [Agentic harness](quecto-agentic-harness/) | `quecto-agentic-harness` / `quecto` | The core CLI and UDS agent kernel. |
-| [Terminal UI](quecto-tui/) | `quecto-tui` | A lightweight terminal client for the `quecto` UDS agent. |
-| [HTTP/WebSocket API](quecto-api/) | `quecto-api` | A REST and WebSocket gateway to a running UDS agent. |
-| [MCP bridge](quecto-mcp/) | `quecto-mcp` | A standalone UDS-driven extension that exposes remote MCP server tools as Quecto tools. |
-| [Runtime manager](quecto-runtime-manager/) | `quecto-runtime-manager` | A small HTTP manager for per-session Quecto runtimes. |
-| [Line/framing I/O](quecto-line-io/) | `quecto-line-io` | Shared bounded JSON/UDS reader and writer library. |
+| Project | Package / binary | What it is | Status |
+|---|---|---|---|
+| [Agentic harness](quecto-agentic-harness/) | `quecto-agentic-harness` / `quecto` | The core CLI and UDS agent kernel. | Late Beta |
+| [Terminal UI](quecto-tui/) | `quecto-tui` | A lightweight terminal client for the `quecto` UDS agent. | Early Beta |
+| [HTTP/WebSocket API](quecto-api/) | `quecto-api` | A REST and WebSocket gateway to a running UDS agent. | Alpha |
+| [MCP bridge](quecto-mcp/) | `quecto-mcp` | A standalone UDS-driven extension that exposes remote MCP server tools as Quecto tools. | Alpha |
+| [Runtime manager](quecto-runtime-manager/) | `quecto-runtime-manager` | A small HTTP manager for per-session Quecto runtimes. | Alpha |
+| [Line/framing I/O](quecto-line-io/) | `quecto-line-io` | Shared bounded JSON/UDS reader and writer library. | Alpha |
 
 Package-specific source, tests, docs, and fixtures are colocated under each package root.
 
