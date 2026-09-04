@@ -24,5 +24,6 @@ Package-specific source, tests, docs, and fixtures are colocated under each pack
 - HTTP/WebSocket gateway: [`quecto-api/README.md`](quecto-api/README.md)
 - Terminal UI: [`quecto-tui/README.md`](quecto-tui/README.md)
 - MCP bridge: [`quecto-mcp/README.md`](quecto-mcp/README.md)
+- Binary releases: [`docs/binary-releases.md`](docs/binary-releases.md) (paired `quecto` + `quecto-tui` bundles for Linux and macOS; Windows users should use WSL2; releases are created only after a merged `master` PR labeled `release-binaries`)
 - Docker harness for local TUI development: [`docs/docker-harness.md`](docs/docker-harness.md)
 - Container runtimes for subagents: [`docs/container-runtimes.md`](docs/container-runtimes.md) (canonical reference runtime: [`scripts/container-runtime/`](scripts/container-runtime/))

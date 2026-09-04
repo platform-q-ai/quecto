@@ -1,0 +1,357 @@
+name: Binary Release
+
+# Automatic releases are intentionally narrow: a release is allowed only after a
+# PR targeting master is merged while carrying the release-binaries label. The
+# pull_request_target trigger runs from the trusted base context after merge;
+# workflow_dispatch uses the same merge-time eligibility check so manual runs can
+# retry or recover a release without allowing arbitrary commits to be published.
+on:
+  pull_request_target:
+    branches: [master]
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Merged master PR number that carried the release-binaries label"
+        required: true
+        type: string
+      target_sha:
+        description: "Optional exact merge commit SHA; when set it must match the PR merge commit"
+        required: false
+        type: string
+
+concurrency:
+  group: binary-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  DEFAULT_BRANCH: master
+  RELEASE_LABEL: release-binaries
+
+jobs:
+  prepare:
+    name: Validate release request
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event_name == 'pull_request_target' && github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release-binaries')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      pr_number: ${{ steps.release.outputs.pr_number }}
+      target_sha: ${{ steps.release.outputs.target_sha }}
+      short_sha: ${{ steps.release.outputs.short_sha }}
+      planned_tag: ${{ steps.release.outputs.planned_tag }}
+      tag_status: ${{ steps.release.outputs.tag_status }}
+    steps:
+      - name: Check out master for ancestry and tag checks
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve eligible release commit and planned UTC tag
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          fail() {
+            echo "::error::$*"
+            exit 1
+          }
+
+          event_name="${GITHUB_EVENT_NAME}"
+          default_branch="${DEFAULT_BRANCH}"
+          release_label="${RELEASE_LABEL}"
+          requested_sha=""
+
+          label_carried_at_merge() {
+            local pr_number="$1"
+            local merged_at="$2"
+            local events_file
+            events_file="$(mktemp)"
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${pr_number}/events?per_page=100" >"${events_file}"
+            local last_label_event
+            last_label_event="$(jq -rs --arg label "${release_label}" --arg merged_at "${merged_at}" '
+              [.[][]
+                | select((.event == "labeled" or .event == "unlabeled")
+                    and .label.name == $label
+                    and .created_at <= $merged_at)]
+              | sort_by(.created_at)
+              | last
+              | .event // ""
+            ' "${events_file}")"
+            rm -f "${events_file}"
+            [[ "${last_label_event}" == "labeled" ]]
+          }
+
+          if [[ "${event_name}" == "pull_request_target" ]]; then
+            pr_number="$(jq -r '.pull_request.number' "${GITHUB_EVENT_PATH}")"
+            merged="$(jq -r '.pull_request.merged' "${GITHUB_EVENT_PATH}")"
+            base_ref="$(jq -r '.pull_request.base.ref' "${GITHUB_EVENT_PATH}")"
+            merge_sha="$(jq -r '.pull_request.merge_commit_sha // ""' "${GITHUB_EVENT_PATH}")"
+            merged_at="$(jq -r '.pull_request.merged_at // ""' "${GITHUB_EVENT_PATH}")"
+          elif [[ "${event_name}" == "workflow_dispatch" ]]; then
+            pr_number="$(jq -r '.inputs.pr_number // ""' "${GITHUB_EVENT_PATH}")"
+            requested_sha="$(jq -r '.inputs.target_sha // ""' "${GITHUB_EVENT_PATH}")"
+            [[ -n "${pr_number}" && "${pr_number}" != "null" ]] || fail "workflow_dispatch requires pr_number"
+
+            pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}")"
+            merged="$(jq -r '.merged' <<<"${pr_json}")"
+            base_ref="$(jq -r '.base.ref' <<<"${pr_json}")"
+            merge_sha="$(jq -r '.merge_commit_sha // ""' <<<"${pr_json}")"
+            merged_at="$(jq -r '.merged_at // ""' <<<"${pr_json}")"
+          else
+            fail "unsupported event ${event_name}"
+          fi
+
+          [[ "${merged}" == "true" ]] || fail "PR #${pr_number} is not merged"
+          [[ "${base_ref}" == "${default_branch}" ]] || fail "PR #${pr_number} targeted ${base_ref}, not ${default_branch}"
+          [[ "${merged_at}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || fail "PR #${pr_number} has no valid merged_at timestamp"
+          [[ "${merge_sha}" =~ ^[0-9a-fA-F]{40}$ ]] || fail "PR #${pr_number} has no valid merge_commit_sha"
+          label_carried_at_merge "${pr_number}" "${merged_at}" || fail "PR #${pr_number} did not carry label ${release_label} at merge time"
+
+          if [[ -n "${requested_sha}" && "${requested_sha}" != "null" ]]; then
+            [[ "${requested_sha}" =~ ^[0-9a-fA-F]{40}$ ]] || fail "target_sha must be a full 40-character commit SHA"
+            [[ "${requested_sha,,}" == "${merge_sha,,}" ]] || fail "target_sha ${requested_sha} does not match PR #${pr_number} merge commit ${merge_sha}"
+          fi
+
+          target_sha="${merge_sha,,}"
+
+          git fetch --force --prune origin \
+            "+refs/heads/${default_branch}:refs/remotes/origin/${default_branch}" \
+            '+refs/tags/v*:refs/tags/v*'
+          git cat-file -e "${target_sha}^{commit}" || fail "target commit ${target_sha} is not present in the checkout"
+          git merge-base --is-ancestor "${target_sha}" "origin/${default_branch}" || fail "target commit ${target_sha} is not reachable from origin/${default_branch}"
+
+          # Reuse an existing date-style tag on the same commit. This makes a
+          # workflow_dispatch retry recover a partially completed release instead
+          # of minting a second tag for the same bits.
+          existing_tag="$(git tag --points-at "${target_sha}" --list 'v[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]*' | sort -V | head -n 1 || true)"
+          if [[ -n "${existing_tag}" ]]; then
+            planned_tag="${existing_tag}"
+            tag_status="existing-on-target"
+          else
+            base_tag="v$(date -u +'%Y.%m.%d')"
+            planned_tag="${base_tag}"
+            suffix=0
+            while git rev-parse -q --verify "refs/tags/${planned_tag}" >/dev/null; do
+              suffix=$((suffix + 1))
+              planned_tag="${base_tag}.${suffix}"
+            done
+            tag_status="new"
+          fi
+
+          short_sha="${target_sha:0:12}"
+          {
+            echo "pr_number=${pr_number}"
+            echo "target_sha=${target_sha}"
+            echo "short_sha=${short_sha}"
+            echo "planned_tag=${planned_tag}"
+            echo "tag_status=${tag_status}"
+          } >>"${GITHUB_OUTPUT}"
+
+          {
+            echo "## Binary release request"
+            echo ""
+            echo "- PR: #${pr_number}"
+            echo "- Target commit: \`${target_sha}\`"
+            echo "- Planned tag: \`${planned_tag}\` (${tag_status})"
+            echo "- Required label: \`${release_label}\`"
+          } >>"${GITHUB_STEP_SUMMARY}"
+
+  build:
+    name: Build ${{ matrix.asset_key }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - asset_key: linux-x86_64
+            os: ubuntu-24.04
+            rust_target: x86_64-unknown-linux-gnu
+          - asset_key: linux-arm64
+            os: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-gnu
+          - asset_key: macos-intel
+            os: macos-13
+            rust_target: x86_64-apple-darwin
+          - asset_key: macos-apple-silicon
+            os: macos-14
+            rust_target: aarch64-apple-darwin
+    steps:
+      - name: Check out exact release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.target_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build and package quecto plus quecto-tui
+        env:
+          ASSET_KEY: ${{ matrix.asset_key }}
+          PLANNED_TAG: ${{ needs.prepare.outputs.planned_tag }}
+          RUST_TARGET: ${{ matrix.rust_target }}
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+
+          actual_sha="$(git rev-parse HEAD)"
+          [[ "${actual_sha}" == "${TARGET_SHA}" ]] || {
+            echo "::error::checked out ${actual_sha}, expected ${TARGET_SHA}"
+            exit 1
+          }
+
+          cargo build --release --locked --target "${RUST_TARGET}" \
+            -p quecto-agentic-harness \
+            -p quecto-tui
+
+          package_name="quecto-${PLANNED_TAG}-${ASSET_KEY}"
+          package_dir="dist/${package_name}"
+          mkdir -p "${package_dir}"
+          cp "target/${RUST_TARGET}/release/quecto" "${package_dir}/quecto"
+          cp "target/${RUST_TARGET}/release/quecto-tui" "${package_dir}/quecto-tui"
+          chmod 0755 "${package_dir}/quecto" "${package_dir}/quecto-tui"
+          cat >"${package_dir}/README.txt" <<EOF
+          Quecto binary bundle
+          =====================
+
+          Tag: ${PLANNED_TAG}
+          Commit: ${TARGET_SHA}
+          Target: ${RUST_TARGET}
+
+          Binaries included together:
+          - quecto
+          - quecto-tui
+
+          Install by copying both binaries to a directory on PATH. See
+          docs/binary-releases.md in the repository for checksum verification,
+          platform selection, WSL2 guidance, and maintainer release procedures.
+          EOF
+
+          tar -C dist -czf "dist/${package_name}.tar.gz" "${package_name}"
+
+      - name: Upload packaged target artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.asset_key }}
+          path: dist/quecto-${{ needs.prepare.outputs.planned_tag }}-${{ matrix.asset_key }}.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub release
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Check out exact release commit with tags
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.target_sha }}
+          fetch-depth: 0
+
+      - name: Download packaged target artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: dist-download
+          merge-multiple: true
+
+      - name: Create or update release with checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLANNED_TAG: ${{ needs.prepare.outputs.planned_tag }}
+          PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+
+          fail() {
+            echo "::error::$*"
+            exit 1
+          }
+
+          actual_sha="$(git rev-parse HEAD)"
+          [[ "${actual_sha}" == "${TARGET_SHA}" ]] || fail "checked out ${actual_sha}, expected ${TARGET_SHA}"
+
+          git fetch --force origin '+refs/tags/v*:refs/tags/v*'
+
+          tag="${PLANNED_TAG}"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            tag_commit="$(git rev-list -n 1 "${tag}")"
+            [[ "${tag_commit}" == "${TARGET_SHA}" ]] || fail "tag ${tag} points at ${tag_commit}, not ${TARGET_SHA}; rerun the workflow so tag collision suffix selection can be recomputed"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "${tag}" "${TARGET_SHA}" -m "Quecto binary release ${tag}"
+            git push origin "refs/tags/${tag}"
+          fi
+
+          shopt -s nullglob
+          archives=(dist-download/*.tar.gz)
+          [[ "${#archives[@]}" -eq 4 ]] || fail "expected 4 target archives, found ${#archives[@]}"
+
+          cd dist-download
+          sha256sum *.tar.gz > SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
+
+          cat >../release-notes.md <<EOF
+          Quecto binary release ${tag}
+          ============================
+
+          Source commit: ${TARGET_SHA}
+          Release PR: #${PR_NUMBER}
+
+          This release contains paired quecto and quecto-tui binaries for:
+
+          - Linux x86_64: quecto-${tag}-linux-x86_64.tar.gz
+          - Linux ARM64: quecto-${tag}-linux-arm64.tar.gz
+          - macOS Intel: quecto-${tag}-macos-intel.tar.gz
+          - macOS Apple Silicon: quecto-${tag}-macos-apple-silicon.tar.gz
+
+          Verify downloads with SHA256SUMS.txt before installing. Windows
+          binaries are not produced; Windows users should use the Linux x86_64
+          bundle inside WSL2.
+          EOF
+
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release upload "${tag}" *.tar.gz SHA256SUMS.txt --clobber
+            gh release edit "${tag}" --title "Quecto ${tag}" --notes-file ../release-notes.md
+          else
+            gh release create "${tag}" *.tar.gz SHA256SUMS.txt \
+              --target "${TARGET_SHA}" \
+              --title "Quecto ${tag}" \
+              --notes-file ../release-notes.md
+          fi
+
+          {
+            echo "## Published binary release"
+            echo ""
+            echo "- Tag: \`${tag}\`"
+            echo "- Commit: \`${TARGET_SHA}\`"
+            echo "- Release PR: #${PR_NUMBER}"
+            echo "- Assets: 4 target bundles plus \`SHA256SUMS.txt\`"
+          } >>"${GITHUB_STEP_SUMMARY}"
