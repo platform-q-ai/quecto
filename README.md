@@ -1,28 +1,30 @@
 # Quecto
 
-Quecto is a small, efficient agentic harness for long-running software work. It is built around a simple belief: agents should be cheap to supervise, easy to interrupt, and able to delegate without forcing every integration to embed a heavyweight runtime.
+Quecto is a tiny, subagent-first orchestration harness for long-running coding agents. A parent agent stays responsive while delegating focused work to fully operational background subagents, optionally containerised, so research, implementation, review, and verification can happen in parallel without collapsing into one oversized conversation. Those subagents idle at around 12 MB of memory, making delegation cheap enough to be a default operating model rather than a special case.
 
-The core `quecto` process can run as a one-shot CLI, an interactive REPL, or a persistent Unix-domain-socket (UDS) event bus. Companion clients and extensions talk to that socket using bounded JSON frames, so the terminal UI, HTTP/WebSocket gateway, MCP bridge, runtime manager, and subagents stay loosely coupled while sharing the same conversation state, tools, workflow engine, and recovery model.
+Quecto’s built-in workflow engine makes that delegation programmable. Instead of relying only on ad-hoc LLM-to-LLM triage, workflows can drive agents through explicit, repeatable processes: spawn reviewers, require checkpoints, run guards, loop fixes through adversarial review, and preserve the evidence needed to resume or audit the work later.
+
+Quecto runs as a small Rust binary with tools, workflows, and the subagent replication system built in. It can run directly as a CLI or REPL, and it can also expose its built-in UDS event bus so external clients, gateways, and tool extensions can integrate without needing to modify the harness.
 
 ## Features at a glance
 
-- **Agentic kernel:** run `quecto` directly, in the REPL, or as a persistent UDS message and event server.
-- **Subagents:** spawn background UDS-mode agents for independent implementation, investigation, and adversarial review while the parent stays responsive.
-- **Provider support:** use OpenAI, Anthropic, ChatGPT Codex, or OpenAI-compatible endpoints through the same provider abstraction and credential store.
+- **Subagent-first orchestration:** keep a parent agent responsive while fully operational child agents handle focused investigation, implementation, review, and verification work.
+- **Cheap replication:** run multiple background agents with a small idle memory and CPU footprint, with optional container runtimes when stronger isolation or reproducible environments matter.
+- **Built-in workflow engine:** steer agents through explicit feature, refactor, chore, bugfix, and adversarial-review processes with checkpoints, guard commands, and live workflow state.
 - **Workspace-aware tools:** give agents shell, file editing, search, docs, recall, workflow, and extension tools rooted in the active workspace and governed by repository hooks.
-- **Container-capable delegation:** run subagents in configured container runtimes when isolation or reproducible environments matter.
-- **Built-in workflows:** drive feature, refactor, chore, and adversarial-review loops with explicit checkpoints, bash guards, and live workflow state events.
-- **Token-saving conversation management:** collapse older tool results and transcript history into recoverable stubs, then use `recall`/paged history when detail is needed again.
-- **Composable interfaces:** use the TUI locally, expose a running agent through HTTP/WebSocket, or register external MCP tools without changing the core harness.
-- **Keyboard shortcuts (planned):** profile-driven shortcut customization for default, Vim-like, and browser-like interaction styles.
+- **Provider support:** use OpenAI, Anthropic, ChatGPT Codex, or OpenAI-compatible endpoints through the same provider abstraction and credential store.
+- **Ultra-long-running sessions:** keep sessions usable over extended work with a configurable, sliding, auto-pruning context window. Older tool results and transcript history collapse into recoverable stubs that the model can retrieve with `recall` when detail is needed again, meaning disruptive manual compaction cycles are no longer required.
+- **Composable interfaces:** run `quecto` directly, use the TUI locally, expose a running agent through HTTP/WebSocket, or register external MCP tools over the UDS event bus.
 
 ## Principles
 
-- **Small core, replaceable edges:** the harness owns model turns, tool execution, persistence, workflows, and UDS orchestration; user interfaces and remote integrations stay separate.
+- **Subagents by default:** delegation should be cheap enough that independent research, implementation, and review can run outside the parent's main conversation instead of competing for one context window.
+- **Predictable process around probabilistic agents:** model judgment remains useful, but workflows, checkpoints, guards, and review loops provide a more inspectable structure for long-running work.
+- **Small core, replaceable edges:** the harness owns model turns, tool execution, persistence, workflows, and subagent orchestration; user interfaces and remote integrations stay separate.
 - **Local-first and long-running:** Quecto is designed for long-lived sessions on laptops, VPSes, small Linux hosts, and containers, without requiring Node.js, Python, or other application runtimes.
 - **Inspectable agent work:** workflows, subagent lifecycle events, paged history, and recoverable context stubs make it possible to supervise and audit long agent runs.
 - **Review before trust:** the built-in development workflow expects tests, local review, PR review, and conformance checks rather than treating a single agent pass as sufficient.
-- **Protocol over embedding:** Terminal UI, MCP bridge, runtime manager, API gateway, and the agentic harness communicate over UDS/HTTP boundaries instead of sharing UI-specific internals.
+- **Protocol over modification:** Terminal UI, MCP bridge, runtime manager, API gateway, and external tools integrate over UDS/HTTP boundaries without needing to share UI internals or modify the harness.
 
 Companion crate versions are declared in each package `Cargo.toml`.
 
@@ -145,7 +147,15 @@ Some crates also have BDD test targets and package-specific quality scripts. Bef
 
 ## Documentation links
 
+- Getting started: [quecto-agentic-harness/docs/getting-started.md](quecto-agentic-harness/docs/getting-started.md)
 - Harness user guide and CLI/UDS reference: [quecto-agentic-harness/README.md](quecto-agentic-harness/README.md)
+- Workflows and templates: [quecto-agentic-harness/docs/workflow.md](quecto-agentic-harness/docs/workflow.md)
+- Subagent spawning and control commands: [quecto-agentic-harness/docs/subagents.md](quecto-agentic-harness/docs/subagents.md)
+- Sessions, context management, spill, and recall: [quecto-agentic-harness/docs/sessions.md](quecto-agentic-harness/docs/sessions.md)
+- Tool policy and command governance: [quecto-agentic-harness/docs/tool-policy.md](quecto-agentic-harness/docs/tool-policy.md)
+- Extending Quecto with tools, clients, and model providers: [quecto-agentic-harness/docs/extending-quecto.md](quecto-agentic-harness/docs/extending-quecto.md)
+- Extensions and external tools: [quecto-agentic-harness/docs/extensions.md](quecto-agentic-harness/docs/extensions.md)
+- Model providers and runtime configuration: [quecto-agentic-harness/docs/runtime-models-providers.md](quecto-agentic-harness/docs/runtime-models-providers.md)
 - UDS wire protocol: [quecto-agentic-harness/docs/uds-protocol.md](quecto-agentic-harness/docs/uds-protocol.md)
 - HTTP/WebSocket gateway: [quecto-api/README.md](quecto-api/README.md)
 - Terminal UI: [quecto-tui/README.md](quecto-tui/README.md)

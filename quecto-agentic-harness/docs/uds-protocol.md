@@ -30,7 +30,7 @@ The agent prints the socket path to stderr on startup. Options:
 - **Direction:** Client sends **commands**, agent emits **events**
 - **Multi-client:** Multiple clients can connect simultaneously. Events are broadcast to all clients; commands from all clients merge into a single serial dispatch loop
 - **Shutdown:** By default the agent exits when all clients disconnect. Pass `--persist` to keep it running.  Socket file is removed on exit
-- **Security:** Socket file is created with `chmod 0600` (owner-only). Stale sockets older than 24h are reaped on startup
+- **Security:** Socket file is created with `chmod 0600` (owner-only). On startup, dead auto-generated sockets are reaped by liveness check; the 24h age threshold is a fallback for sockets whose liveness cannot be determined
 - **See also:** [ADR-0008](architecture-design-records/adr-0008-length-prefixed-uds-framing-and-bounded-events.md) for version negotiation and the NDJSON deprecation window, and the [protocol capability matrix](architecture/protocol-capability-matrix.md) for the current compatibility/evolution map
 
 ## Correlation IDs
@@ -890,7 +890,7 @@ An LLM call completed. After #1060 the assistant body is not re-carried on the w
     "usage": {"input": 150, "output": 42, "total": 192},
     "stopReason": "end_turn",
     "contextTokens": 4200,
-    "maxContextTokens": 300000,
+    "maxContextTokens": 200000,
     "contentLength": 128
   },
   "toolResults": []
