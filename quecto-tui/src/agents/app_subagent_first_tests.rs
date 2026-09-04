@@ -15,7 +15,7 @@
 //!
 //! They drive not-yet-existing layout behaviour on purpose (TDD RED).
 
-use super::app_subagent_panel::controller_subagent_panel_helpers::panel_markers;
+use super::app_subagent_workflow_sticky_tests::panel_markers;
 use super::tui_harness::*;
 use crate::components::ansi::strip_ansi;
 use crate::protocol::client::{Event, SubagentInfoEvent, SubagentWorkflow};

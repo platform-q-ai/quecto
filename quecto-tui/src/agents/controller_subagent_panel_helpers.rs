@@ -14,7 +14,7 @@ pub(super) fn fmt_mss(secs: u64) -> String {
 /// cell per step up to `MAX_CELLS`, else proportional. Column 0 is always blank
 /// so the selection (`▌`) stays one line tall; the tree stalk continues down
 /// through the bar via the agent's continuation prefix.
-pub(super) fn panel_bar_line(prefix: &str, done: u32, total: u32, width: usize) -> String {
+pub(crate) fn panel_bar_line(prefix: &str, done: u32, total: u32, width: usize) -> String {
     use crate::components::utils::visible_width;
     const MAX_CELLS: usize = 20;
     let cont = bar_continuation(prefix);
@@ -80,83 +80,4 @@ pub(crate) fn pad_cell(text: &str, width: usize) -> String {
     } else {
         format!("{}{}", text, " ".repeat(width - visible))
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::components::{ansi::strip_ansi, utils::visible_width};
-
-    #[test]
-    fn ascii_workflow_bar_states_and_colours() {
-        for (done, expected) in [(0, ">...."), (3, "===>."), (5, "====="), (9, "=====")] {
-            let line = panel_bar_line("", done, 5, 7);
-            assert_eq!(strip_ansi(&line), format!(" {expected} "));
-            assert!(line.contains(&theme::green(&"=".repeat(done.min(5) as usize))));
-            assert_eq!(line.contains(&theme::yellow(">")), done < 5);
-            if done < 5 {
-                assert!(line.contains(&theme::dim(&".".repeat((4 - done) as usize))));
-            }
-        }
-    }
-
-    #[test]
-    fn ascii_workflow_bar_preserves_cap_and_proportional_scaling() {
-        assert_eq!(
-            strip_ansi(&panel_bar_line("", 25, 100, 22)),
-            " =====>.............. "
-        );
-        assert_eq!(strip_ansi(&panel_bar_line("", 50, 100, 12)), " =====>.... ");
-        assert_eq!(strip_ansi(&panel_bar_line("", 99, 100, 12)), " =========> ");
-        assert_eq!(
-            strip_ansi(&panel_bar_line("", 100, 100, 12)),
-            " ========== "
-        );
-    }
-
-    #[test]
-    fn ascii_workflow_bar_preserves_tree_and_single_row() {
-        for (prefix, continuation) in [("├ ", "│ "), ("└ ", "  "), ("│ ├ ", "│ │ ")] {
-            let line = panel_bar_line(prefix, 1, 3, 12);
-            assert_eq!(
-                strip_ansi(&line),
-                format!(" {}=>.", continuation) + &" ".repeat(8 - visible_width(continuation))
-            );
-            assert_eq!(line.lines().count(), 1);
-            assert_eq!(visible_width(&line), 12);
-        }
-    }
-
-    #[test]
-    fn ascii_workflow_bar_handles_narrow_and_zero_total() {
-        // Retain the existing one-cell fallback, with pad_cell clamping overshoot.
-        assert_eq!(strip_ansi(&panel_bar_line("", 0, 0, 3)), " > ");
-        assert_eq!(strip_ansi(&panel_bar_line("", 0, 5, 3)), " > ");
-        assert_eq!(strip_ansi(&panel_bar_line("", 5, 5, 3)), " = ");
-        for prefix in ["", "├ ", "│ └ "] {
-            for width in 0..=24 {
-                for (done, total) in [(0, 0), (0, 5), (2, 5), (5, 5), (9, 5)] {
-                    let line = panel_bar_line(prefix, done, total, width);
-                    assert_eq!(visible_width(&line), width);
-                    assert!(!line.contains('\n'));
-                }
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-/// Count completed and incomplete cells in panel-only workflow bar rows.
-pub(crate) fn panel_markers(frame: &str) -> (usize, usize) {
-    let cells: String = frame
-        .lines()
-        .filter_map(|line| {
-            let bar = line.trim_start_matches([' ', '│']);
-            bar.starts_with(['=', '>']).then_some(bar.trim_end())
-        })
-        .collect();
-    (
-        cells.matches('=').count(),
-        cells.matches(['>', '.']).count(),
-    )
 }
