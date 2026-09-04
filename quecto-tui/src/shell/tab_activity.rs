@@ -5,26 +5,31 @@
 use super::*;
 
 /// Max rendered columns of a custom tab name in the bar (spike design).
+#[cfg(test)]
 const TAB_NAME_MAX: usize = 16;
 
 /// What a click on a tab-bar column selects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) enum TabBarHit {
     Select(crate::shell::connection::TabId),
     New,
 }
 
 /// A clickable region of the tab bar: absolute terminal columns → action.
+#[cfg(test)]
 pub(crate) type TabBarHitRange = (std::ops::Range<usize>, TabBarHit);
 
 /// Solid-block styling (spike design): reverse video so the block follows the
 /// terminal theme. Active = cyan block; inactive = dim block. Composed from
 /// `components::theme` helpers (PR #1485 review) so a theme-wide change can
 /// never silently miss the tab bar.
+#[cfg(test)]
 fn active_block(text: &str) -> String {
     crate::components::theme::reverse(&crate::components::theme::cyan(text))
 }
 
+#[cfg(test)]
 fn inactive_block(text: &str) -> String {
     crate::components::theme::reverse(&crate::components::theme::dim(text))
 }
@@ -56,24 +61,9 @@ impl App {
         super::app_event_loop::SourcedRender::Silent
     }
 
-    /// Handle a tab-switch key chord (#1466 decision 5): Alt+digit focuses
-    /// the Nth tab (kitty Ctrl+digit parses to the same key); Alt+Tab /
-    /// Ctrl+Tab cycle forward, Shift variants cycle back. Returns whether the
-    /// key was consumed; unknown ordinals consume and no-op.
-    pub(super) fn handle_tab_switch_key(&mut self, key: &Key) -> bool {
-        match key {
-            Key::Alt(c @ '1'..='9') => {
-                self.focus_tab_ordinal(*c as usize - '0' as usize);
-            }
-            Key::TabSwitchNext => {
-                self.switch_tab_next();
-            }
-            Key::TabSwitchPrev => {
-                self.switch_tab_prev();
-            }
-            _ => return false,
-        }
-        true
+    /// Tab-switch key chords were removed with the tab UI.
+    pub(super) fn handle_tab_switch_key(&mut self, _key: &Key) -> bool {
+        false
     }
     /// Render the tab bar (#1466 fix pass, spike design): herdr-style
     /// reverse-video number blocks — active tab a cyan block, inactive tabs
@@ -87,6 +77,7 @@ impl App {
     /// Overflow (#1466 decision 5): when the strip is wider than the terminal
     /// it scrolls so the ACTIVE tab stays visible — leading cells are dropped
     /// behind a `‹` marker and a trailing `›` marks clipped cells on the right.
+    #[cfg(test)]
     pub(super) fn render_tab_bar(&self, width: usize) -> Option<String> {
         self.tab_bar_layout(width).map(|(line, _)| line)
     }
@@ -94,6 +85,7 @@ impl App {
     /// Mouse hit ranges for the tab bar rendered at `width` body columns:
     /// absolute terminal column ranges (past the optional left panel) mapping
     /// to the tab (or new-tab button) a click there selects.
+    #[cfg(test)]
     pub(crate) fn tab_bar_hit_ranges(&self, width: usize) -> Vec<TabBarHitRange> {
         self.tab_bar_layout(width)
             .map(|(_, hits)| hits)
@@ -102,6 +94,7 @@ impl App {
 
     /// Shared layout for the bar line and its click hit ranges, so the two
     /// can never disagree about geometry.
+    #[cfg(test)]
     fn tab_bar_layout(&self, width: usize) -> Option<(String, Vec<TabBarHitRange>)> {
         use crate::components::theme::{self, SPINNER_FRAMES};
         let ids = self.ordered_tab_ids();
@@ -205,35 +198,6 @@ impl App {
         Some((line, hits))
     }
 
-    /// Handle a mouse press on the tab-bar row (row 0 with 2+ tabs). Clicking
-    /// a tab's block focuses it; clicking the trailing ` + ` opens a live tab.
-    /// Returns whether the click was consumed.
-    pub(super) fn handle_tab_bar_click(&mut self, col: u16, row: u16) -> bool {
-        if row != 0 || !self.tab_bar_visible() {
-            return false;
-        }
-        let (_, _, width) = self.frame_split();
-        let col = col as usize;
-        let hit = self
-            .tab_bar_hit_ranges(width)
-            .into_iter()
-            .find(|(range, _)| range.contains(&col))
-            .map(|(_, hit)| hit);
-        match hit {
-            Some(TabBarHit::Select(tab)) => {
-                let _ = self.switch_tab(tab);
-            }
-            Some(TabBarHit::New) => self.open_new_tab_announced(),
-            None => return false,
-        }
-        true
-    }
-
-    /// Whether the tab bar renders at all (2+ tabs).
-    pub(crate) fn tab_bar_visible(&self) -> bool {
-        self.tabs.len() > 1
-    }
-
     /// Spinner semantics (#1466 decision 4): a tab shows the spinner while its
     /// master turn is in flight.
     pub(crate) fn tab_spinner_active(&self, tab: crate::shell::connection::TabId) -> bool {
@@ -243,6 +207,7 @@ impl App {
 
     /// Unread-dot semantics (#1466 decision 4): any output arrived on this tab
     /// since it was last viewed; cleared on switch.
+    #[cfg(test)]
     pub(crate) fn tab_unread(&self, tab: crate::shell::connection::TabId) -> bool {
         self.conn_for(tab).is_some_and(|c| c.unread_output)
     }

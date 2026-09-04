@@ -583,14 +583,6 @@ impl App {
                 self.open_tool_policy_modal();
                 return;
             }
-            Key::Ctrl('n') => {
-                // New tab (#1466 round 2). Ctrl+T was the first-choice chord
-                // but is taken by the tool-policy selector above; Ctrl+N
-                // (0x0E) arrives unmodified in every terminal and tmux, and
-                // only Ctrl+SHIFT+N (a distinct key) is bound.
-                self.open_new_tab_announced();
-                return;
-            }
             Key::Ctrl('o') => {
                 // Toggle tool output expansion for the ACTIVE session (#828).
                 self.active_chat_mut().toggle_tool_expand();
@@ -611,10 +603,6 @@ impl App {
                 return;
             }
             Key::MousePress(col, row) => {
-                // Tab-bar clicks (#1466): a block focuses its tab; ` + ` opens one.
-                if self.handle_tab_bar_click(*col, *row) {
-                    return;
-                }
                 let (col, row) = (*col, *row);
                 let anchor = SelectionAnchor { col, row };
                 self.selection = Some(TextSelection {

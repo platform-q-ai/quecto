@@ -126,11 +126,10 @@ fn registry_and_manifest_snapshots_track_tabs() {
     let dir = tempfile::tempdir().unwrap();
     let rpath = dir.path().join("r.json");
     let mpath = dir.path().join("m.json");
-    a.persist_durability_snapshot("ws", &rpath, &mpath);
+    let _ = mpath;
+    a.persist_registry_snapshot("ws", &rpath);
     let loaded_r = TabAgentRegistry::load(&rpath);
     assert_eq!(loaded_r.agents.len(), 2);
-    let loaded_m = WorkspaceManifestStore::load(&mpath);
-    assert_eq!(loaded_m.get("ws").unwrap().tabs.len(), 2);
 }
 
 #[test]
@@ -192,17 +191,26 @@ fn close_tab_with_kill_returns_child_watch_for_terminate() {
 }
 
 #[test]
-fn tab_close_slash_command_requests_kill_not_detach() {
-    let mut a = app();
-    let t1 = a.open_placeholder_tab(None);
-    a.active_tab = t1;
-    a.handle_submit("/tab-close");
-    assert_eq!(a.tabs.len(), 1, "tab closed");
-    let msgs = a.notifications.messages().join("\n");
-    assert!(
-        !msgs.to_lowercase().contains("detach"),
-        "AC3a: /tab-close must terminate, not detach; got {msgs:?}"
-    );
+fn removed_tab_slash_commands_are_unknown_and_do_not_mutate_tabs() {
+    for command in ["/tab-new", "/tab-close", "/tab-next", "/tab-prev"] {
+        let mut a = app();
+        let extra = a.open_placeholder_tab(Some("extra".into()));
+        a.switch_tab(extra);
+        let before_active = a.active_tab;
+        a.handle_submit(command);
+        assert_eq!(a.tabs.len(), 2, "{command} must not open/close tabs");
+        assert_eq!(
+            a.active_tab, before_active,
+            "{command} must not switch tabs"
+        );
+        let has_unknown_status = a.ac().master_session.chat.entries().iter().any(|entry| {
+            matches!(entry, crate::components::chat::ChatEntry::Status { text } if text.contains("Unknown slash command"))
+        });
+        assert!(
+            has_unknown_status,
+            "{command} should use ordinary unknown-command UX"
+        );
+    }
 }
 
 #[test]
@@ -249,19 +257,6 @@ fn collect_owned_child_watches_includes_every_tab() {
         Some(crate::shell::child_watch::ChildWatch::for_tests(Some(2)));
     let watches = a.take_all_child_exit_watches();
     assert_eq!(watches.len(), 2, "kill-on-exit must see every tab watch");
-}
-
-#[test]
-fn open_tab_records_spawn_intent_not_dead_placeholder_only() {
-    let mut a = app();
-    a.handle_submit("/tab-new");
-    assert_eq!(a.tabs.len(), 2);
-    let tab = a.active_tab;
-    assert_ne!(tab, TabId::MASTER);
-    assert!(
-        a.tab_has_pending_attach(tab),
-        "AC1/AC2: /tab-new must start a non-blocking live agent attach path, not only a dead placeholder"
-    );
 }
 
 #[test]
@@ -357,22 +352,14 @@ fn pending_attach_queues_prompt_not_disconnect_refusal() {
 }
 
 #[test]
-fn tab_close_help_says_terminate_not_detach() {
+fn tab_commands_are_absent_from_help_registry() {
     let cmds = super::super::builtin_commands();
-    let close = cmds
-        .iter()
-        .find(|c| c.name == "tab-close")
-        .expect("tab-close");
-    assert!(
-        close.description.to_lowercase().contains("terminate"),
-        "F12: help must say terminate: {}",
-        close.description
-    );
-    assert!(
-        !close.description.to_lowercase().contains("detach"),
-        "F12: help must not say detach: {}",
-        close.description
-    );
+    for removed in ["tab-new", "tab-close", "tab-next", "tab-prev"] {
+        assert!(
+            cmds.iter().all(|c| c.name != removed),
+            "removed tab command {removed} must not appear in help/autocomplete registry"
+        );
+    }
 }
 
 #[test]
@@ -439,7 +426,8 @@ fn persist_merges_open_tabs_and_keeps_detached_live_registry_rows() {
     });
     preexisting.store(&rpath).unwrap();
 
-    a.persist_durability_snapshot("ws", &rpath, &mpath);
+    let _ = mpath;
+    a.persist_registry_snapshot("ws", &rpath);
 
     let loaded = TabAgentRegistry::load(&rpath);
     let tab1 = loaded
@@ -549,7 +537,7 @@ fn persist_gc_removes_dead_foreign_rows_and_their_orphan_manifests() {
     });
     store.store(&mpath).unwrap();
 
-    a.persist_durability_snapshot("w-new", &rpath, &mpath);
+    a.persist_registry_snapshot("w-new", &rpath);
 
     let loaded_r = TabAgentRegistry::load(&rpath);
     assert!(
@@ -561,10 +549,13 @@ fn persist_gc_removes_dead_foreign_rows_and_their_orphan_manifests() {
     );
     let loaded_m = WorkspaceManifestStore::load(&mpath);
     assert!(
-        loaded_m.get("w-old").is_none(),
-        "orphan manifest must be pruned once its dead registry row is gone"
+        loaded_m.get("w-old").is_some(),
+        "registry-only persistence no longer prunes legacy workspace manifests"
     );
-    assert!(loaded_m.get("w-new").is_some(), "own row must persist");
+    assert!(
+        loaded_m.get("w-new").is_none(),
+        "registry-only persistence no longer writes own workspace manifests"
+    );
 }
 
 #[test]
@@ -660,5 +651,8 @@ fn ordinary_exit_fanout_continues_after_first_enqueue_failure() {
     assert_eq!(tab_cmd["restoreReason"], "ordinary_tui_exit_stopped");
 
     let store = WorkspaceManifestStore::load(&manifest_path);
-    assert!(store.get(&a.workspace_id).is_some());
+    assert!(
+        store.get(&a.workspace_id).is_none(),
+        "ordinary-exit persistence no longer writes workspace manifests"
+    );
 }

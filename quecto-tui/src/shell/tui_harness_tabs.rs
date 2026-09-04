@@ -34,9 +34,11 @@ impl TuiHarness {
         self.app.tab_spinner_active(TabId(tab))
     }
 
-    /// Whether `tab` carries the unread dot (output since last viewed).
+    /// Whether `tab` carries unread output (output since last viewed).
     pub fn tab_unread(&self, tab: u32) -> bool {
-        self.app.tab_unread(TabId(tab))
+        self.app
+            .conn_for(TabId(tab))
+            .is_some_and(|c| c.unread_output)
     }
 
     /// Switch focus to `tab` through the PRODUCTION key path: the Alt+digit
@@ -188,9 +190,9 @@ impl TuiHarness {
 
     // ── #1466 fix-pass accessors (PR #1485 regressions) ──────────────────
 
-    /// The rendered tab-bar line (empty when hidden).
-    pub fn tab_bar_line(&mut self, width: usize) -> String {
-        self.app.render_tab_bar(width).unwrap_or_default()
+    /// The rendered tab-bar line (empty because tabs were removed).
+    pub fn tab_bar_line(&mut self, _width: usize) -> String {
+        String::new()
     }
 
     /// Left-click at absolute terminal cell (col, row) through the
@@ -209,49 +211,19 @@ impl TuiHarness {
         self.app.tabs.len()
     }
 
-    /// Click the midpoint of the RECORDED hit range for the `ordinal`-th
-    /// (1-based) tab block — no guessed columns.
-    pub fn click_tab_block(&mut self, ordinal: usize) -> &mut Self {
-        use super::super::tab_activity::TabBarHit;
-        let tab = self.app.ordered_tab_ids()[ordinal - 1];
-        let col = self
-            .hit_midpoint(|h| *h == TabBarHit::Select(tab))
-            .expect("tab block hit range recorded");
-        self.click(col, 0)
+    /// Click the old tab-block location. Tab UI was removed, so this is inert.
+    pub fn click_tab_block(&mut self, _ordinal: usize) -> &mut Self {
+        self.click(0, 0)
     }
 
-    /// Click the midpoint of the recorded ` + ` new-tab button range.
+    /// Click the old new-tab button location. Tab UI was removed, so this is inert.
     pub fn click_new_tab_button(&mut self) -> &mut Self {
-        use super::super::tab_activity::TabBarHit;
-        let col = self
-            .hit_midpoint(|h| *h == TabBarHit::New)
-            .expect("new-tab hit range recorded");
-        self.click(col, 0)
+        self.click(0, 0)
     }
 
-    /// Click one column past the LAST recorded hit range (bar dead space).
+    /// Click old tab-bar dead space. Tab UI was removed, so this is an ordinary click.
     pub fn click_past_tab_bar(&mut self) -> &mut Self {
-        let (_, _, width) = self.app.frame_split();
-        let end = self
-            .app
-            .tab_bar_hit_ranges(width)
-            .iter()
-            .map(|(r, _)| r.end)
-            .max()
-            .expect("tab bar hit ranges recorded");
-        self.click((end + 2) as u16, 0)
-    }
-
-    fn hit_midpoint(
-        &self,
-        pred: impl Fn(&super::super::tab_activity::TabBarHit) -> bool,
-    ) -> Option<u16> {
-        let (_, _, width) = self.app.frame_split();
-        self.app
-            .tab_bar_hit_ranges(width)
-            .into_iter()
-            .find(|(_, hit)| pred(hit))
-            .map(|(range, _)| ((range.start + range.end) / 2) as u16)
+        self.click(0, 0)
     }
 
     /// Track a sub-agent roster entry with `status` on the active tab.

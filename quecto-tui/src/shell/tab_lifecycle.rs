@@ -5,9 +5,8 @@ use crate::agents::view::SessionView;
 use crate::components::notification::NotifyLevel;
 use crate::shell::connection::{Connection, TabId};
 use crate::shell::tab_registry::{TabAgentRecord, TabAgentRegistry, TabAgentStatus, unix_now_s};
-use crate::shell::workspace_manifest::{
-    WorkspaceManifest, WorkspaceManifestStore, WorkspaceTabEntry,
-};
+#[cfg(test)]
+use crate::shell::workspace_manifest::{WorkspaceManifest, WorkspaceTabEntry};
 
 impl super::App {
     /// Allocate the next free numeric tab id (monotonic, skips occupied).
@@ -60,19 +59,12 @@ impl super::App {
     }
 
     /// Mark a tab as waiting on a non-blocking live attach/spawn (AC1/AC2).
+    #[cfg(test)]
     pub(crate) fn mark_tab_pending_attach(&mut self, tab: TabId) {
         if let Some(c) = self.conn_mut(tab) {
             c.pending_attach = true;
             c.agent_connected = false;
         }
-    }
-
-    /// Open a connecting placeholder and schedule a live agent spawn/attach.
-    pub(crate) fn open_live_tab(&mut self, name: Option<String>) -> TabId {
-        let tab = self.open_placeholder_tab(name);
-        self.mark_tab_pending_attach(tab);
-        self.spawn_tab_agent_attach(tab, None);
-        tab
     }
 
     /// Background-spawn (or reattach) a persistent agent for `tab` and deliver
@@ -203,11 +195,7 @@ impl super::App {
     /// Best-effort default-path durability write after lifecycle changes.
     pub(crate) fn persist_default_durability(&mut self) {
         let reg = crate::shell::tab_registry::default_registry_path();
-        let man = crate::shell::workspace_manifest::default_manifest_path();
         if let Some(parent) = reg.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Some(parent) = man.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
         // Touch pending-attach query so durability stays aware of in-flight tabs.
@@ -220,7 +208,7 @@ impl super::App {
         // #1466 decision 1: durability is keyed by this TUI's UUID identity,
         // never a shared literal, so two TUIs can never clobber each other.
         let workspace_id = self.workspace_id.clone();
-        self.persist_durability_snapshot(&workspace_id, &reg, &man);
+        self.persist_registry_snapshot(&workspace_id, &reg);
     }
 
     /// Explicit phase-3 ordinary-exit persist request fan-out: enqueue a current
@@ -257,7 +245,8 @@ impl super::App {
             }
         }
         let workspace_id = self.workspace_id.clone();
-        self.persist_durability_snapshot(&workspace_id, registry_path, manifest_path);
+        let _ = manifest_path;
+        self.persist_registry_snapshot(&workspace_id, registry_path);
         if let Some(err) = first_err {
             Err((ids, err))
         } else {
@@ -298,20 +287,8 @@ impl super::App {
         true
     }
 
-    /// Focus the `ordinal`-th tab (1-based, tab-bar order). Ordinals past the
-    /// open tab count no-op (#1466 decision 5).
-    pub(crate) fn focus_tab_ordinal(&mut self, ordinal: usize) -> bool {
-        let Some(tab) = self
-            .ordered_tab_ids()
-            .get(ordinal.saturating_sub(1))
-            .copied()
-        else {
-            return false;
-        };
-        self.switch_tab(tab)
-    }
-
     /// Cycle focus forward/back through sorted tab ids.
+    #[cfg(test)]
     pub(crate) fn switch_tab_next(&mut self) -> TabId {
         let ids = self.ordered_tab_ids();
         let cur = ids.iter().position(|t| *t == self.active_tab).unwrap_or(0);
@@ -320,6 +297,7 @@ impl super::App {
         next
     }
 
+    #[cfg(test)]
     pub(crate) fn switch_tab_prev(&mut self) -> TabId {
         let ids = self.ordered_tab_ids();
         let cur = ids.iter().position(|t| *t == self.active_tab).unwrap_or(0);
@@ -336,6 +314,7 @@ impl super::App {
 
     /// Close `tab`. When `kill_agent`, return its `ChildWatch` so the caller
     /// can terminate (AC3a). Refuses to close the last remaining tab.
+    #[cfg(test)]
     pub(crate) fn close_tab(
         &mut self,
         tab: TabId,
@@ -483,7 +462,8 @@ impl super::App {
         reg
     }
 
-    /// Snapshot the active workspace manifest (AC4/AC5).
+    /// Snapshot the active workspace manifest (legacy test/harness helper).
+    #[cfg(test)]
     pub(crate) fn workspace_manifest_snapshot(&self, workspace_id: &str) -> WorkspaceManifest {
         let ids = self.ordered_tab_ids();
         let active_index = ids.iter().position(|t| *t == self.active_tab).unwrap_or(0);
@@ -524,12 +504,11 @@ impl super::App {
         }
     }
 
-    /// Persist registry + workspace store for `workspace_id` (best-effort).
-    pub(crate) fn persist_durability_snapshot(
+    /// Persist registry entries for `workspace_id` (best-effort).
+    pub(crate) fn persist_registry_snapshot(
         &self,
         workspace_id: &str,
         registry_path: &std::path::Path,
-        manifest_path: &std::path::Path,
     ) {
         // Merge the open-tab snapshot into the on-disk document. A full replace
         // would drop detached-but-live rows (AC3b / AC6): later load/refresh/gc
@@ -558,19 +537,6 @@ impl super::App {
             is_open_own(rec) || crate::shell::tab_registry::default_liveness_probe(rec)
         });
         let _ = on_disk.store(registry_path);
-        let mut store = WorkspaceManifestStore::load(manifest_path);
-        let mut manifest = self.workspace_manifest_snapshot(workspace_id);
-        // Preserve a stored (possibly renamed) label the snapshot doesn't know.
-        if manifest.label.trim().is_empty() {
-            if let Some(prev) = store.get(workspace_id) {
-                manifest.label = prev.label.clone();
-            }
-        }
-        store.upsert(manifest);
-        // Orphaned-workspace GC (#1466): rows with no resumable session key
-        // and no registry record are dead weight in `/resume` — drop them.
-        let _ = store.gc_orphaned(&on_disk);
-        let _ = store.store(manifest_path);
     }
 }
 
@@ -680,6 +646,7 @@ async fn spawn_and_attach_new_agent(
 }
 
 /// Max characters persisted for a tab's `/resume` snippet (#1466 item 3).
+#[cfg(test)]
 const TAB_SUMMARY_MAX_CHARS: usize = 60;
 
 /// First line of `text`, sanitized of control/escape bytes and truncated to
@@ -689,6 +656,7 @@ const TAB_SUMMARY_MAX_CHARS: usize = 60;
 /// (OSC hyperlinks, SGR); the snippet is persisted to the manifest and later
 /// replayed verbatim into the /resume selector, so control bytes must never
 /// reach disk — mirroring how tab names are sanitized.
+#[cfg(test)]
 fn snippet_of(text: &str, max: usize) -> String {
     let raw = text.lines().next().unwrap_or("");
     let (line, _) = crate::components::ansi::sanitize_control_truncated(raw, usize::MAX);

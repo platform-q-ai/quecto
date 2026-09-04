@@ -132,6 +132,13 @@ fn then_second_tab_open(world: &mut TuiWorld) {
     });
 }
 
+#[then("still only one tab is open")]
+fn then_still_one_tab(world: &mut TuiWorld) {
+    with_harness(world, |h| {
+        assert_eq!(h.tab_count(), 1, "the chord must not open a tab");
+    });
+}
+
 #[then("the new tab is the active tab")]
 fn then_new_tab_active(world: &mut TuiWorld) {
     with_harness(world, |h| {
@@ -140,13 +147,6 @@ fn then_new_tab_active(world: &mut TuiWorld) {
             1,
             "the freshly opened tab must take focus"
         );
-    });
-}
-
-#[then("still only one tab is open")]
-fn then_still_one_tab(world: &mut TuiWorld) {
-    with_harness(world, |h| {
-        assert_eq!(h.tab_count(), 1, "the chord must not open a tab");
     });
 }
 
@@ -179,6 +179,21 @@ fn then_help_lists_ctrl_n(world: &mut TuiWorld) {
     assert!(
         line.contains("new tab") || line.contains("open a new tab"),
         "/hotkeys must document plain Ctrl+N as the new-tab chord; help={:?}",
+        world.stdout
+    );
+}
+
+#[then("the help text omits Ctrl+N as the new-tab chord")]
+fn then_help_omits_ctrl_n(world: &mut TuiWorld) {
+    let line = world
+        .stdout
+        .lines()
+        .find(|l| l.contains("Ctrl+N ") && !l.contains("Ctrl+Shift"))
+        .unwrap_or("")
+        .to_lowercase();
+    assert!(
+        !(line.contains("new tab") || line.contains("open a new tab")),
+        "/hotkeys must not document plain Ctrl+N as a new-tab chord; help={:?}",
         world.stdout
     );
 }

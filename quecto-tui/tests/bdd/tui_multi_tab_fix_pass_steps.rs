@@ -108,6 +108,13 @@ fn then_third_tab(world: &mut TuiWorld) {
     });
 }
 
+#[then("still only two tabs are open")]
+fn then_still_two_tabs(world: &mut TuiWorld) {
+    with_harness(world, |h| {
+        assert_eq!(h.tab_count(), 2, "removed tab button must not open a tab");
+    });
+}
+
 #[when("the user clicks past the end of the tab bar")]
 fn when_click_past_bar(world: &mut TuiWorld) {
     with_harness(world, |h| {
@@ -116,6 +123,7 @@ fn when_click_past_bar(world: &mut TuiWorld) {
 }
 
 #[then("the first tab is still the active tab")]
+#[then("the master tab remains active")]
 fn then_first_tab_still_active(world: &mut TuiWorld) {
     with_harness(world, |h| {
         assert_eq!(

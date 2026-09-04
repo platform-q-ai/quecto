@@ -37,47 +37,6 @@ impl App {
                     }
                     return;
                 }
-                "/tab-new" => {
-                    self.open_new_tab_announced();
-                    return;
-                }
-                "/tab-close" => {
-                    let tab = self.active_tab;
-                    // AC3a / ADR-0023: closing a tab terminates that tab's agent.
-                    match self.close_tab(tab, true) {
-                        Ok(watch) => {
-                            if let Some(w) = watch {
-                                tokio::spawn(async move {
-                                    w.terminate().await;
-                                });
-                            }
-                            self.notify(
-                                &format!("Closed tab {} (agent terminated)", tab.0),
-                                crate::components::notification::NotifyLevel::Info,
-                            );
-                        }
-                        Err(msg) => {
-                            self.notify(msg, crate::components::notification::NotifyLevel::Warning)
-                        }
-                    }
-                    return;
-                }
-                "/tab-next" => {
-                    let tab = self.switch_tab_next();
-                    self.notify(
-                        &format!("Active tab {}", tab.0),
-                        crate::components::notification::NotifyLevel::Info,
-                    );
-                    return;
-                }
-                "/tab-prev" => {
-                    let tab = self.switch_tab_prev();
-                    self.notify(
-                        &format!("Active tab {}", tab.0),
-                        crate::components::notification::NotifyLevel::Info,
-                    );
-                    return;
-                }
                 "/help" | "/hotkeys" => {
                     self.show_help();
                     return;
@@ -253,17 +212,6 @@ impl App {
             return;
         }
         self.dispatch_master_user_text(text);
-    }
-
-    /// Open a connecting tab with a live persistent agent and announce it —
-    /// the ONE new-tab path shared by /tab-new, the clickable " + " button
-    /// and the Ctrl+N chord (#1466 round 2; AC1/AC2).
-    pub(super) fn open_new_tab_announced(&mut self) {
-        let tab = self.open_live_tab(None);
-        self.notify(
-            &format!("Opened tab {} (connecting…)", tab.0),
-            crate::components::notification::NotifyLevel::Info,
-        );
     }
 
     /// Surface an undeliverable sub-agent message (#1466 fix pass item 5):
