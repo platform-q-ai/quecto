@@ -244,9 +244,10 @@ jobs:
           - quecto
           - quecto-tui
 
-          Install by copying both binaries to a directory on PATH. See
-          docs/binary-releases.md in the repository for checksum verification,
-          platform selection, WSL2 guidance, and maintainer release procedures.
+          Install by copying both binaries to a directory on PATH. Verify the
+          archive against SHA256SUMS.txt from the GitHub release before
+          installing. Windows users should use the Linux x86_64 bundle in
+          WSL2.
           EOF
 
           tar -C dist -czf "dist/${package_name}.tar.gz" "${package_name}"

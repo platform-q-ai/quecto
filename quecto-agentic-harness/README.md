@@ -10,12 +10,6 @@ Current version: **0.106.6**.
 
 ## Quick Start
 
-Prebuilt release archives are documented in the workspace
-[`docs/binary-releases.md`](../docs/binary-releases.md) guide. Each archive ships
-`quecto` and `quecto-tui` together for Linux x86_64, Linux ARM64, macOS Intel,
-or macOS Apple Silicon. Native Windows archives are not published; use the Linux
-bundle inside WSL2.
-
 ```bash
 # Install both binaries from source (from the repository root). quecto-tui starts
 # the kernel by running `quecto`, so the `quecto` binary must be on PATH unless
