@@ -12,7 +12,7 @@ fn app() -> App {
 }
 
 #[test]
-fn resume_selector_lists_workspaces_above_sessions() {
+fn resume_selector_ignores_removed_workspace_manifest() {
     let mut a = app();
     let dir = tempfile::tempdir().unwrap();
     let mpath = dir.path().join("m.json");
@@ -36,20 +36,17 @@ fn resume_selector_lists_workspaces_above_sessions() {
     });
     a.open_resume_selector_at(&data, &mpath);
     let sel = a.ac().sessions.resume_selector.as_ref().expect("selector");
-    assert!(sel.item_count() >= 2, "count={}", sel.item_count());
+    assert_eq!(
+        sel.item_count(),
+        1,
+        "stale workspace rows must not hide sessions"
+    );
     let values: Vec<_> = sel
         .items_for_tests()
         .iter()
         .map(|i| i.value.clone())
         .collect();
-    assert!(
-        values[0].starts_with("workspace:"),
-        "workspace first: {values:?}"
-    );
-    assert!(
-        values.iter().any(|v| v.starts_with("session:")),
-        "session present: {values:?}"
-    );
+    assert_eq!(values, vec!["session:alpha".to_string()]);
 }
 
 #[test]

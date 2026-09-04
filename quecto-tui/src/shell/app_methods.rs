@@ -216,7 +216,7 @@ impl App {
     pub(super) fn open_resume_selector_at(
         &mut self,
         data: &serde_json::Value,
-        manifest_path: &std::path::Path,
+        _manifest_path: &std::path::Path,
     ) {
         let mut sessions = session_payloads::parse_resume_sessions(data);
         // #1466 fix pass item 3: sessions, like workspaces, list most
@@ -245,8 +245,9 @@ impl App {
                 }
             })
             .collect::<Vec<_>>();
-        // AC5: workspaces above bare sessions.
-        self.open_resume_selector_with_workspaces(session_items, manifest_path, empty_hint);
+        // Single-session TUI: /resume lists persisted sessions directly, not
+        // removed workspace manifests.
+        self.open_resume_selector_with_sessions(session_items, empty_hint);
     }
 
     pub(super) fn handle_resume_selector_key(&mut self, key: &Key) {

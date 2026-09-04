@@ -160,6 +160,7 @@ impl WorkspaceManifestStore {
 impl WorkspaceManifest {
     /// Label to show in `/resume` (#1466 decision 1): the human label, with a
     /// non-UUID fallback for pre-#1466 manifests persisted without one.
+    #[cfg(any(test, feature = "test-harness"))]
     pub fn display_label(&self) -> String {
         let trimmed = self.label.trim();
         if trimmed.is_empty() {
@@ -171,6 +172,7 @@ impl WorkspaceManifest {
 
     /// Best-known last-active instant: the explicit #1466 field, falling back
     /// to the manifest write time for legacy rows.
+    #[cfg(any(test, feature = "test-harness"))]
     pub fn last_active_or_updated_s(&self) -> u64 {
         if self.last_active_unix_s > 0 {
             self.last_active_unix_s
@@ -253,17 +255,6 @@ fn random_bytes_16() -> [u8; 16] {
         chunk.copy_from_slice(&z.to_le_bytes()[..chunk.len()]);
     }
     buf
-}
-
-/// Humanised "how long ago" for `/resume` rows (#1466 decision 1).
-pub fn relative_age_label(now_unix_s: u64, then_unix_s: u64) -> String {
-    let secs = now_unix_s.saturating_sub(then_unix_s);
-    match secs {
-        0..=59 => "moments ago".to_string(),
-        60..=3_599 => format!("{}m ago", secs / 60),
-        3_600..=86_399 => format!("{}h ago", secs / 3_600),
-        _ => format!("{}d ago", secs / 86_400),
-    }
 }
 
 pub fn default_manifest_path() -> PathBuf {
