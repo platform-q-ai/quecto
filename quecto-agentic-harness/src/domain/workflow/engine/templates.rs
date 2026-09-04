@@ -239,3 +239,7 @@ pub(super) fn phase_display_name(phase: &str) -> &str {
         other => other,
     }
 }
+
+#[cfg(test)]
+#[path = "templates_tests.rs"]
+mod tests;
