@@ -10,11 +10,11 @@ pub(super) fn fmt_mss(secs: u64) -> String {
     }
 }
 
-/// Per-step workflow bar beneath an agent's name (`▰` done · `▱` pending), one
+/// Per-step workflow bar beneath an agent's name (`=` done, `>` position, `.` remaining), one
 /// cell per step up to `MAX_CELLS`, else proportional. Column 0 is always blank
 /// so the selection (`▌`) stays one line tall; the tree stalk continues down
 /// through the bar via the agent's continuation prefix.
-pub(super) fn panel_bar_line(prefix: &str, done: u32, total: u32, width: usize) -> String {
+pub(crate) fn panel_bar_line(prefix: &str, done: u32, total: u32, width: usize) -> String {
     use crate::components::utils::visible_width;
     const MAX_CELLS: usize = 20;
     let cont = bar_continuation(prefix);
@@ -23,10 +23,17 @@ pub(super) fn panel_bar_line(prefix: &str, done: u32, total: u32, width: usize) 
     let avail = width.saturating_sub(2 + cont_vis);
     let cells = (total as usize).min(MAX_CELLS).min(avail).max(1);
     let filled = ((done as usize) * cells / (total.max(1) as usize)).min(cells);
+    let remaining = cells - filled;
+    let marker = if remaining > 0 {
+        theme::yellow(">")
+    } else {
+        String::new()
+    };
     let bar = format!(
-        "{}{}",
-        theme::accent(&"▰".repeat(filled)),
-        theme::dim(&"▱".repeat(cells - filled)),
+        "{}{}{}",
+        theme::green(&"=".repeat(filled)),
+        marker,
+        theme::dim(&".".repeat(remaining.saturating_sub(1))),
     );
     // pad_cell adds the trailing gutter and clamps any overshoot to exactly width.
     pad_cell(&format!(" {}{bar}", theme::dim(&cont)), width)

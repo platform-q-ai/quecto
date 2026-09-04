@@ -15,6 +15,7 @@
 //!
 //! They drive not-yet-existing layout behaviour on purpose (TDD RED).
 
+use super::app_subagent_workflow_sticky_tests::panel_markers;
 use super::tui_harness::*;
 use crate::components::ansi::strip_ansi;
 use crate::protocol::client::{Event, SubagentInfoEvent, SubagentWorkflow};
@@ -280,7 +281,7 @@ async fn idle_row_shows_bare_timer_no_status_word() {
 
 #[tokio::test]
 async fn workflowed_agent_renders_step_bar_beneath_name() {
-    // `child()` carries a 3/5 workflow, so the agent renders a ▰/▱ per-step bar
+    // `child()` carries a 3/5 workflow, so the agent renders a ASCII per-step bar
     // on the row DIRECTLY BENEATH its name row.
     let mut h = TuiHarness::new().await;
     h.event(Event::AgentStart);
@@ -292,8 +293,8 @@ async fn workflowed_agent_renders_step_bar_beneath_name() {
         .unwrap_or_else(|| panic!("worker row not found in:\n{}", lines.join("\n")));
     let bar = &lines[name_idx + 1];
     assert!(
-        bar.contains('▰') || bar.contains('▱'),
-        "the row beneath the name should be a ▰/▱ step bar; got: {bar:?}"
+        bar.contains("===>."),
+        "the row beneath the name should be a ASCII step bar; got: {bar:?}"
     );
 }
 
@@ -693,11 +694,6 @@ async fn subagent_get_state_routes_by_inner_agent_id_not_connection() {
     );
 }
 
-/// Count the panel's per-step markers (`▰` filled / `▱` empty) in a frame.
-fn panel_markers(frame: &str) -> (usize, usize) {
-    (frame.matches('▰').count(), frame.matches('▱').count())
-}
-
 #[tokio::test]
 async fn live_workflow_state_renders_full_empty_markers_in_left_panel() {
     // #869 (b): a 3/20 workflow delivered as a live workflow_state for the viewed
@@ -721,7 +717,7 @@ async fn live_workflow_state_renders_full_empty_markers_in_left_panel() {
             available_templates: None,
         },
     );
-    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    let frame = panel_lines(&mut h).join("\n");
     let (filled, empty) = panel_markers(&frame);
     assert_eq!(
         filled, 3,
@@ -743,7 +739,7 @@ async fn get_state_snapshot_renders_full_empty_markers_in_left_panel() {
     h.app_mut().select_agent(Some("C"));
     h.app_mut()
         .route_subagent_event("C", get_state_with_workflow(3, 20, 5));
-    let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
+    let frame = panel_lines(&mut h).join("\n");
     let (filled, empty) = panel_markers(&frame);
     assert_eq!(filled, 3, "get_state 3/20 → 3 filled markers:\n{frame}");
     assert_eq!(empty, 17, "get_state 3/20 → 17 empty markers:\n{frame}");
