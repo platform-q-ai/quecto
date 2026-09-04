@@ -23,10 +23,30 @@ fn test_workflow_config() -> WorkflowConfig {
 }
 
 #[test]
-fn default_config_has_no_templates_when_templates_empty() {
+fn default_config_uses_bundled_templates_when_templates_empty() {
     let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     let templates = engine.list_templates();
-    assert!(templates.is_empty());
+    assert!(!templates.is_empty());
+    assert!(templates.iter().any(|template| template.id == "chore"));
+}
+
+#[test]
+fn bundled_templates_are_generic() {
+    let templates = crate::domain::workflow::default_templates();
+    let serialized = serde_json::to_string(&templates).unwrap().to_lowercase();
+    for forbidden in [
+        "quecto",
+        "github",
+        "pull request",
+        "pr ",
+        "gh ",
+        "issue tracker",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "bundled templates should not contain provider/project-specific assumption: {forbidden}"
+        );
+    }
 }
 
 #[test]

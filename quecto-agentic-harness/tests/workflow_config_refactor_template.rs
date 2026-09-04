@@ -490,8 +490,14 @@ fn guards_block_commit_before_parity_and_forbid_merge() {
 // --- Runtime parity ----------------------------------------------------------------
 
 #[test]
-fn runtime_default_templates_are_empty_after_template_globalization() {
-    // Production no longer bundles repo-local workflow defaults; template
-    // behavior tests above exercise explicit canonical fixtures instead.
-    assert!(quecto::domain::workflow::default_templates().is_empty());
+fn runtime_default_templates_are_generic_after_template_globalization() {
+    // Production bundles only provider-neutral, project-neutral workflow
+    // defaults; template behavior tests above exercise explicit canonical
+    // fixtures instead of assuming those defaults are project-specific.
+    let templates = quecto::domain::workflow::default_templates();
+    assert!(!templates.is_empty());
+    let serialized = serde_json::to_string(&templates).unwrap().to_lowercase();
+    for forbidden in ["quecto", "github", "pull request", "issue tracker"] {
+        assert!(!serialized.contains(forbidden));
+    }
 }
