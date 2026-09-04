@@ -1,5 +1,27 @@
 use super::*;
-use quecto::domain::workflow::{WorkflowConfig, WorkflowEngine};
+use quecto::domain::workflow::{
+    WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
+};
+
+fn bdd_feature_config() -> WorkflowConfig {
+    WorkflowConfig {
+        templates: vec![WorkflowTemplate {
+            id: "feature".into(),
+            label: "Feature".into(),
+            description: "BDD feature workflow fixture".into(),
+            when_to_use: Some("BDD workflow tests".into()),
+            steps: vec![WorkflowTemplateStep {
+                key: "plan".into(),
+                label: "Plan".into(),
+                phase: "test".into(),
+                guidance: None,
+            }],
+            guards: vec![],
+        }],
+        ..WorkflowConfig::default()
+    }
+}
+
 use quecto::infrastructure::tools::subagent_registry::{
     SubagentEntry, SubagentStatus, WorkflowSnapshot, new_registry,
 };
@@ -23,7 +45,7 @@ fn when_agent_emits_workflow_state(world: &mut QuectoWorld) {
         world.event_identity_agent_id.clone(),
         world.event_identity_parent_id.clone(),
     );
-    let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let engine = WorkflowEngine::new(bdd_feature_config(), false).unwrap();
     emitter(snapshot_to_event(&engine.snapshot(true)));
     let line = rx
         .try_recv()
@@ -134,7 +156,7 @@ fn when_child_advances_workflow(world: &mut QuectoWorld, child: String) {
     use quecto::infrastructure::tools::subagent_monitor::forward_child_workflow_event;
     // The child emits its own workflow_state line; the parent's monitor
     // re-stamps it with the child's identity before forwarding.
-    let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let engine = WorkflowEngine::new(bdd_feature_config(), false).unwrap();
     let child_line = serde_json::to_string(&snapshot_to_event(&engine.snapshot(true))).unwrap();
     let parent = world.event_identity_parent_id.clone();
     let forwarded = forward_child_workflow_event(&child_line, &child, parent.as_deref())

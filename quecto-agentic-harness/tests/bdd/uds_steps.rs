@@ -25,6 +25,48 @@ use quecto::interface::cli::provider_reload::{ProviderReloadInputs, seeded_provi
 use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
 use wiremock::Request;
 
+fn bdd_workflow_config_with_feature(
+    mut config: quecto::domain::workflow::WorkflowConfig,
+) -> quecto::domain::workflow::WorkflowConfig {
+    if config
+        .templates
+        .iter()
+        .any(|template| template.id == "feature")
+    {
+        return config;
+    }
+    config
+        .templates
+        .push(quecto::domain::workflow::WorkflowTemplate {
+            id: "feature".into(),
+            label: "Feature".into(),
+            description: "BDD feature workflow fixture".into(),
+            when_to_use: Some("BDD workflow tests".into()),
+            steps: vec![
+                quecto::domain::workflow::WorkflowTemplateStep {
+                    key: "hooks".into(),
+                    label: "Hooks".into(),
+                    phase: "test".into(),
+                    guidance: Some("hooks".into()),
+                },
+                quecto::domain::workflow::WorkflowTemplateStep {
+                    key: "plan_intake".into(),
+                    label: "Plan intake".into(),
+                    phase: "test".into(),
+                    guidance: Some("plan".into()),
+                },
+                quecto::domain::workflow::WorkflowTemplateStep {
+                    key: "verify".into(),
+                    label: "Verify".into(),
+                    phase: "test".into(),
+                    guidance: Some("verify".into()),
+                },
+            ],
+            guards: vec![],
+        });
+    config
+}
+
 // ─── Execution helper ────────────────────────────────────────────────────────
 
 /// Prepared agent + session context for `execute_uds`.
@@ -52,8 +94,11 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         .collect();
 
     let config_path = base.join("config.json");
-    let config = Config::load_with_env(config_path.to_str().unwrap_or(""), &env_overrides)
+    let mut config = Config::load_with_env(config_path.to_str().unwrap_or(""), &env_overrides)
         .map_err(|e| format!("failed to load config: {e}"))?;
+    if world._workflow_enabled {
+        config.workflow = bdd_workflow_config_with_feature(config.workflow);
+    }
 
     let http_client = reqwest::Client::new();
     let provider = build_agent_provider(&config, base, &http_client)

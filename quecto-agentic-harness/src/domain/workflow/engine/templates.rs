@@ -1,136 +1,231 @@
-use crate::domain::workflow::WorkflowTemplate;
+use crate::domain::workflow::{WorkflowTemplate, WorkflowTemplateStep};
 
-/// The built-in workflow templates.
+/// Built-in generic workflow templates shipped with the binary.
 ///
-/// These are defined ONCE in the canonical `workflows/` folder (the single
-/// source of truth per the workflow-composable-templates PRD §3.2 / AC7) and
-/// embedded here at compile time, so the RUNNING workflow is byte-for-byte the
-/// reviewed spec. Template id = filename stem, exactly as the runtime
-/// directory loader (`load_workflow_templates_from_dir`) derives it; the
-/// `runtime_default_templates_match_canonical_folder` drift test pins the two
-/// load paths to resolve identically.
-///
-/// Shared steps live once in `workflows/steps/` and are referenced by string
-/// path from the template files (slice 1 step-entry union). The embedded
-/// resolver below handles exactly the reference forms the canonical files
-/// use; anything else in an embedded file is a compile-tested developer error
-/// and panics at first use (caught by the unit tests in this module).
-///
-/// `include_str!` + `serde_json::from_str` is pure compile-time embedding plus
-/// in-memory parsing (no filesystem or network access at runtime).
+/// Runtime discovery still takes precedence over these defaults: configured
+/// `workflow.dir`, repo-local `.quecto/workflows`, global workflow dirs, and
+/// inline `workflow.templates` are resolved before the engine falls back to this
+/// library. Keep these templates provider-neutral and project-neutral so clean
+/// public checkouts have useful workflows without inheriting this repository's
+/// own process assumptions.
 pub fn default_templates() -> Vec<WorkflowTemplate> {
-    /// The canonical template files: (id = filename stem, embedded content).
-    const TEMPLATE_FILES: &[(&str, &str)] = &[
-        (
-            "feature",
-            include_str!("../../../../workflows/feature.json"),
-        ),
-        (
-            "adversarial-review",
-            include_str!("../../../../workflows/adversarial-review.json"),
-        ),
-        ("bugfix", include_str!("../../../../workflows/bugfix.json")),
-        ("chore", include_str!("../../../../workflows/chore.json")),
-        (
-            "flake-hunt",
-            include_str!("../../../../workflows/flake-hunt.json"),
-        ),
-        (
+    vec![
+        template(
             "investigate",
-            include_str!("../../../../workflows/investigate.json"),
+            "Investigate",
+            "Read-only diagnosis that gathers evidence, identifies root cause or trade-offs, and reports a cited conclusion.",
+            "Use when the task is to understand, triage, or explain something without changing files.",
+            &[
+                (
+                    "scope",
+                    "Define the question",
+                    "setup",
+                    "Restate the question, constraints, and what evidence would answer it. Do not edit files.",
+                ),
+                (
+                    "inspect",
+                    "Inspect evidence",
+                    "analysis",
+                    "Read relevant code, docs, logs, or configuration. Prefer primary sources and record file paths or commands used.",
+                ),
+                (
+                    "verify",
+                    "Challenge the conclusion",
+                    "review",
+                    "Look for contradictory evidence and alternative explanations before settling on an answer.",
+                ),
+                (
+                    "report",
+                    "Report findings",
+                    "handoff",
+                    "Summarize the conclusion, evidence, uncertainty, and suggested next steps. Confirm no files were modified.",
+                ),
+            ],
         ),
-        ("plan", include_str!("../../../../workflows/plan.json")),
-        ("prd", include_str!("../../../../workflows/prd.json")),
-        (
+        template(
+            "chore",
+            "Chore",
+            "Small maintenance workflow for docs, configuration, tooling, or other low-risk repository upkeep.",
+            "Use for maintenance that should not intentionally change product behavior.",
+            &[
+                (
+                    "scope",
+                    "Scope the chore",
+                    "setup",
+                    "Restate the requested maintenance, define done, and identify the files expected to change.",
+                ),
+                (
+                    "change",
+                    "Make the minimal change",
+                    "green",
+                    "Apply the smallest repo-local edit that satisfies the scope. Avoid unrelated cleanup.",
+                ),
+                (
+                    "check",
+                    "Run relevant checks",
+                    "verify",
+                    "Run formatting, linting, tests, or documentation checks appropriate to the changed files.",
+                ),
+                (
+                    "review",
+                    "Review the diff",
+                    "review",
+                    "Inspect the final diff for accidental behavior changes, secrets, generated noise, and scope creep.",
+                ),
+                (
+                    "handoff",
+                    "Handoff",
+                    "handoff",
+                    "Summarize what changed, checks run, and any follow-up risks or skipped validation.",
+                ),
+            ],
+        ),
+        template(
+            "bugfix",
+            "Bugfix",
+            "Reproduce a wrong behavior, fix the smallest cause, and prove the regression is covered.",
+            "Use when existing observable behavior is incorrect and should be corrected.",
+            &[
+                (
+                    "reproduce",
+                    "Reproduce the failure",
+                    "red",
+                    "Capture the wrong behavior with a failing test, fixture, command, or clear manual reproduction.",
+                ),
+                (
+                    "diagnose",
+                    "Diagnose root cause",
+                    "analysis",
+                    "Trace the failure to the smallest responsible code path and check for related cases.",
+                ),
+                (
+                    "fix",
+                    "Implement the fix",
+                    "green",
+                    "Make the minimal code change that addresses the root cause while preserving intended behavior.",
+                ),
+                (
+                    "regression",
+                    "Prove regression coverage",
+                    "verify",
+                    "Run the reproduction and relevant surrounding tests to show the fix holds.",
+                ),
+                (
+                    "handoff",
+                    "Handoff",
+                    "handoff",
+                    "Summarize the defect, fix, validation, and remaining risk.",
+                ),
+            ],
+        ),
+        template(
+            "feature",
+            "Feature",
+            "Implement a planned behavior change with explicit acceptance criteria and verification.",
+            "Use when adding or changing user-visible behavior from an agreed request or plan.",
+            &[
+                (
+                    "intake",
+                    "Confirm acceptance criteria",
+                    "setup",
+                    "Restate the desired behavior, constraints, and how completion will be verified.",
+                ),
+                (
+                    "test_design",
+                    "Design verification",
+                    "red",
+                    "Decide which tests, examples, or checks will prove the behavior before implementation.",
+                ),
+                (
+                    "implement",
+                    "Implement the slice",
+                    "green",
+                    "Build the smallest coherent slice that satisfies the agreed criteria.",
+                ),
+                (
+                    "refine",
+                    "Refine safely",
+                    "refactor",
+                    "Improve clarity or structure only while keeping the new verification green.",
+                ),
+                (
+                    "validate",
+                    "Validate",
+                    "verify",
+                    "Run targeted and relevant broader checks; compare results to acceptance criteria.",
+                ),
+                (
+                    "handoff",
+                    "Handoff",
+                    "handoff",
+                    "Summarize behavior delivered, validation, and follow-up work.",
+                ),
+            ],
+        ),
+        template(
             "refactor",
-            include_str!("../../../../workflows/refactor.json"),
+            "Refactor",
+            "Behavior-preserving restructure backed by characterization and parity checks.",
+            "Use when changing structure, names, or organization without intended behavior change.",
+            &[
+                (
+                    "scope",
+                    "Define invariants",
+                    "setup",
+                    "State what must remain unchanged and what structure is allowed to change.",
+                ),
+                (
+                    "characterize",
+                    "Characterize current behavior",
+                    "verify",
+                    "Run or add checks that would fail if behavior changed accidentally.",
+                ),
+                (
+                    "refactor",
+                    "Refactor incrementally",
+                    "refactor",
+                    "Make small structural changes, keeping characterization checks passing.",
+                ),
+                (
+                    "parity",
+                    "Prove parity",
+                    "verify",
+                    "Run relevant tests and inspect the diff for unintended behavior changes.",
+                ),
+                (
+                    "handoff",
+                    "Handoff",
+                    "handoff",
+                    "Summarize the restructure, parity evidence, and any residual risk.",
+                ),
+            ],
         ),
-        ("remove", include_str!("../../../../workflows/remove.json")),
-    ];
-    /// The canonical shared-step files, keyed by their reference path
-    /// (relative to the workflow dir, `.json` extension omitted).
-    const STEP_FILES: &[(&str, &str)] = &[
-        (
-            "steps/shared/follow_ups",
-            include_str!("../../../../workflows/steps/shared/follow_ups.json"),
-        ),
-        (
-            "steps/shared/hooks",
-            include_str!("../../../../workflows/steps/shared/hooks.json"),
-        ),
-        (
-            "steps/shared/push_fixes",
-            include_str!("../../../../workflows/steps/shared/push_fixes.json"),
-        ),
-        (
-            "steps/shared/resolve_threads",
-            include_str!("../../../../workflows/steps/shared/resolve_threads.json"),
-        ),
-        (
-            "steps/shared/write_scenarios",
-            include_str!("../../../../workflows/steps/shared/write_scenarios.json"),
-        ),
-        (
-            "steps/shared/write_step_tests",
-            include_str!("../../../../workflows/steps/shared/write_step_tests.json"),
-        ),
-    ];
-
-    TEMPLATE_FILES
-        .iter()
-        .map(|(id, content)| parse_embedded_template(id, content, STEP_FILES))
-        .collect()
+    ]
 }
 
-/// Parse one embedded canonical template file: inject the filename-stem id and
-/// resolve string step references against the embedded step library.
-fn parse_embedded_template(
+fn template(
     id: &str,
-    content: &str,
-    step_files: &[(&str, &str)],
+    label: &str,
+    description: &str,
+    when_to_use: &str,
+    steps: &[(&str, &str, &str, &str)],
 ) -> WorkflowTemplate {
-    let mut value: serde_json::Value = serde_json::from_str(content)
-        .unwrap_or_else(|e| panic!("embedded workflow template `{id}` must parse: {e}"));
-    let object = value
-        .as_object_mut()
-        .unwrap_or_else(|| panic!("embedded workflow template `{id}` must be an object"));
-    object.insert("id".into(), serde_json::Value::String(id.to_owned()));
-    let steps = object
-        .get_mut("steps")
-        .and_then(serde_json::Value::as_array_mut)
-        .unwrap_or_else(|| panic!("embedded workflow template `{id}` must have a steps array"));
-    for entry in steps {
-        let reference = match entry {
-            serde_json::Value::String(reference) => Some(reference.clone()),
-            serde_json::Value::Object(object) => object
-                .get("ref")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned),
-            _ => None,
-        };
-        let Some(reference) = reference else { continue };
-        let resolved = step_files
+    WorkflowTemplate {
+        id: id.into(),
+        label: label.into(),
+        description: description.into(),
+        when_to_use: Some(when_to_use.into()),
+        steps: steps
             .iter()
-            .find(|(path, _)| *path == reference || format!("{path}.json") == reference)
-            .map(|(_, step)| step)
-            .unwrap_or_else(|| {
-                panic!("embedded template `{id}` references unembedded step `{reference}`")
-            });
-        let mut resolved_value: serde_json::Value = serde_json::from_str(resolved)
-            .unwrap_or_else(|e| panic!("embedded shared step `{reference}` must parse: {e}"));
-        if let (Some(resolved_object), serde_json::Value::Object(overrides)) =
-            (resolved_value.as_object_mut(), &*entry)
-        {
-            for key in ["key", "label", "phase", "guidance"] {
-                if let Some(value) = overrides.get(key) {
-                    resolved_object.insert(key.to_owned(), value.clone());
-                }
-            }
-        }
-        *entry = resolved_value;
+            .map(|(key, label, phase, guidance)| WorkflowTemplateStep {
+                key: (*key).into(),
+                label: (*label).into(),
+                phase: (*phase).into(),
+                guidance: Some((*guidance).into()),
+            })
+            .collect(),
+        guards: Vec::new(),
     }
-    serde_json::from_value(value)
-        .unwrap_or_else(|e| panic!("embedded workflow template `{id}` must deserialize: {e}"))
 }
 
 pub(super) fn phase_display_name(phase: &str) -> &str {
@@ -138,46 +233,13 @@ pub(super) fn phase_display_name(phase: &str) -> &str {
         "red" => "RED",
         "green" => "GREEN",
         "refactor" => "REFACTOR",
-        "ci_cd" => "CI/CD",
         "review" => "REVIEW",
+        "blue" => "BLUE",
+        "purple" => "PURPLE",
         other => other,
     }
 }
 
 #[cfg(test)]
-#[path = "templates_cov_tests.rs"]
-mod cov_tests;
-#[cfg(test)]
 #[path = "templates_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-mod coverage_tests {
-    use super::*;
-
-    #[test]
-    fn phase_display_name_maps_known_phases_and_borrows_unknown() {
-        assert_eq!(phase_display_name("red"), "RED");
-        assert_eq!(phase_display_name("green"), "GREEN");
-        assert_eq!(phase_display_name("refactor"), "REFACTOR");
-        assert_eq!(phase_display_name("ci_cd"), "CI/CD");
-        assert_eq!(phase_display_name("review"), "REVIEW");
-        assert_eq!(phase_display_name("security"), "security");
-    }
-
-    #[test]
-    fn parse_embedded_template_injects_id_and_accepts_json_extension_references() {
-        let template = parse_embedded_template(
-            "custom",
-            r#"{"label":"Custom","description":"desc","steps":["steps/shared.json"]}"#,
-            &[(
-                "steps/shared",
-                r#"{"key":"shared","label":"Shared","phase":"green","guidance":"from shared"}"#,
-            )],
-        );
-        assert_eq!(template.id, "custom");
-        assert_eq!(template.steps.len(), 1);
-        assert_eq!(template.steps[0].key, "shared");
-        assert_eq!(template.steps[0].guidance.as_deref(), Some("from shared"));
-    }
-}

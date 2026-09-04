@@ -652,7 +652,7 @@ fn test_discover_empty_world_keeps_default_fallback_intact() {
         .expect("an empty world must not fail discovery");
     assert!(
         discovery.templates.is_empty(),
-        "no source anywhere yields an empty library (engine defaults apply)"
+        "no source anywhere yields no discovered templates so engine defaults apply"
     );
     assert_eq!(discovery.source_dir, None);
     assert_eq!(discovery.warning, None);

@@ -8,13 +8,36 @@
 //! and borrow a context from it.
 
 use super::*;
-use crate::domain::workflow::{WorkflowConfig, WorkflowEngine};
+use crate::domain::workflow::{
+    WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
+};
 use crate::interface::shared::WorkflowStateHandle;
+
+fn workflow_test_config() -> WorkflowConfig {
+    WorkflowConfig {
+        templates: vec![WorkflowTemplate {
+            id: "feature".into(),
+            label: "Feature".into(),
+            description: "test feature workflow".into(),
+            when_to_use: Some("tests".into()),
+            steps: (1..=5)
+                .map(|i| WorkflowTemplateStep {
+                    key: format!("s{i}"),
+                    label: format!("Step {i}"),
+                    phase: "test".into(),
+                    guidance: Some(format!("do {i}")),
+                })
+                .collect(),
+            guards: vec![],
+        }],
+        ..WorkflowConfig::default()
+    }
+}
 
 /// A fresh workflow engine handle with no template selected.
 pub(super) fn make_workflow() -> WorkflowStateHandle {
     std::sync::Arc::new(std::sync::Mutex::new(
-        WorkflowEngine::new(WorkflowConfig::default(), false).unwrap(),
+        WorkflowEngine::new(workflow_test_config(), false).unwrap(),
     ))
 }
 
@@ -173,7 +196,7 @@ impl DispatchTestEnv {
             subagent_registry: self.subagent_registry.clone(),
             notification_rx: self.notification_rx.take(),
             workflow_state: Some(self.workflow.clone()),
-            workflow_config: Some(WorkflowConfig::default()),
+            workflow_config: Some(workflow_test_config()),
             provider_reload: None,
             provider_reload_inputs: None,
             last_persisted_message_index: 0,

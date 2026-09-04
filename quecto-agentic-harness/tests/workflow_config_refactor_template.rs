@@ -490,20 +490,14 @@ fn guards_block_commit_before_parity_and_forbid_merge() {
 // --- Runtime parity ----------------------------------------------------------------
 
 #[test]
-fn runtime_refactor_template_matches_canonical_folder() {
-    // Slice 2 collapse of the old native/example mirror parity: the refactor
-    // template a session actually runs must resolve identically to the
-    // canonical workflows/ folder (AC7, Decision 3).
-    let canonical = common::canonical_workflow_templates()
-        .into_iter()
-        .find(|t| t.id == "refactor")
-        .expect("canonical workflows/ folder should define the refactor template");
-    let runtime = quecto::domain::workflow::default_templates()
-        .into_iter()
-        .find(|t| t.id == "refactor")
-        .expect("runtime default templates should include refactor");
-    assert_eq!(
-        canonical, runtime,
-        "the runtime refactor template must resolve identically to the canonical workflows/ folder"
-    );
+fn runtime_default_templates_are_generic_after_template_globalization() {
+    // Production bundles only provider-neutral, project-neutral workflow
+    // defaults; template behavior tests above exercise explicit canonical
+    // fixtures instead of assuming those defaults are project-specific.
+    let templates = quecto::domain::workflow::default_templates();
+    assert!(!templates.is_empty());
+    let serialized = serde_json::to_string(&templates).unwrap().to_lowercase();
+    for forbidden in ["quecto", "github", "pull request", "issue tracker"] {
+        assert!(!serialized.contains(forbidden));
+    }
 }

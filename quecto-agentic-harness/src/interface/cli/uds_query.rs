@@ -200,7 +200,19 @@ mod cov2_tests {
                         completion_nudge: true,
                         selector_prompt: None,
                         dir: None,
-                        templates: vec![],
+                        templates: vec![crate::domain::workflow::WorkflowTemplate {
+                            id: "bugfix".into(),
+                            label: "Bugfix".into(),
+                            description: "test bugfix workflow".into(),
+                            when_to_use: Some("tests".into()),
+                            steps: vec![crate::domain::workflow::WorkflowTemplateStep {
+                                key: "a".into(),
+                                label: "A".into(),
+                                phase: "test".into(),
+                                guidance: None,
+                            }],
+                            guards: vec![],
+                        }],
                     },
                     false,
                 )
