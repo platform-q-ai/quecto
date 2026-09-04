@@ -43,7 +43,7 @@ fn renders_model_list() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        plain.contains("claude-sonnet-4"),
+        plain.contains("claude-fable-5-1"),
         "should contain a model: {}",
         plain
     );
@@ -52,13 +52,16 @@ fn renders_model_list() {
 #[test]
 fn known_models_include_latest_anthropic_models() {
     let known_ids: Vec<String> = known_ids();
-    assert!(
-        known_ids
-            .iter()
-            .any(|id| id == "anthropic-api/claude-fable-5"),
-        "known models should include Claude Fable 5: {:?}",
-        known_ids
-    );
+    for id in ["claude-fable-5-1", "claude-fable-5", "claude-opus-5"] {
+        for auth in ["api", "oauth"] {
+            let full = format!("anthropic-{auth}/{id}");
+            assert!(
+                known_ids.iter().any(|known| known == &full),
+                "known models should include {full}: {:?}",
+                known_ids
+            );
+        }
+    }
     assert!(
         known_ids
             .iter()
@@ -76,9 +79,14 @@ fn known_models_include_latest_anthropic_models() {
 }
 
 #[test]
-fn known_models_include_gpt_5_6_tiers_for_both_auth_modes() {
+fn known_models_include_latest_openai_reasoning_models_for_both_auth_modes() {
     let known_ids: Vec<String> = known_ids();
-    for id in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+    for id in [
+        "gpt-6-astra",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+    ] {
         for auth in ["api", "oauth"] {
             let full = format!("openai-{auth}/{id}");
             assert!(
