@@ -2,30 +2,22 @@ mod common;
 
 use common::read_repo_file;
 use common::repo_docs::{PHASE_0_ADRS, check_phase_0_hardening_links};
-use std::fs;
 use std::path::Path;
 
 #[test]
-fn readme_release_metadata_matches_workspace_package() {
-    let readme = read_repo_file("README.md");
-    let manifest = read_repo_file("Cargo.toml");
-    let version = manifest
-        .lines()
-        .find_map(|line| line.strip_prefix("version = "))
-        .map(|value| value.trim_matches('"'))
-        .expect("root Cargo.toml should declare a package version");
-
+fn readme_release_metadata_omits_workspace_version_number() {
+    let workspace_readme = read_repo_file("../README.md");
     assert!(
-        readme.contains(&format!("Current version: **{version}**")),
-        "README current version should match root package version {version}"
-    );
-    let workspace_readme = fs::read_to_string("../README.md").expect("read workspace README.md");
-    assert!(
-        workspace_readme.contains(&format!("Current version: **{version}**")),
-        "workspace README current version should match root package version {version}"
+        !workspace_readme.contains("Current version:"),
+        "workspace README should not publish a current version line"
     );
     assert!(
-        !readme.contains("CHANGELOG.md"),
+        workspace_readme
+            .contains("Companion crate versions are declared in each package `Cargo.toml`."),
+        "workspace README should direct readers to package manifests for crate versions"
+    );
+    assert!(
+        !workspace_readme.contains("CHANGELOG.md"),
         "README should not link to a missing changelog"
     );
 }

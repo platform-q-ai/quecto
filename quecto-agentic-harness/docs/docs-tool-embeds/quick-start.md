@@ -28,6 +28,7 @@ Do **not** poll `get_subagents`, `get_subagents_all`, or `get_state` in a wait l
 
 - Give each child one clear goal, ownership boundary, and expected deliverable.
 - Children have separate LLM contexts; brief them with needed context.
+- Long sessions are auto-managed: older detail may collapse into recall stubs; use `recall("list")` if you need to recover it.
 - Ask for concise conclusions, evidence, uncertainty, and relevant `file:line` citations.
 - Spawn reviewers, researchers, and other non-editing children with `read_only: true`.
 - `read_only: true` hides write/edit tools but is not a hard sandbox because `bash` remains.
@@ -80,5 +81,7 @@ Inventory distinction:
 
 - `docs {"name":"subagents"}`: full delegation, lifecycle, reuse, safety, containers, inventory details.
 - `docs {"name":"workflow"}`: full template guidance and workflow operation.
+- `docs {"name":"context"}`: sliding context window, spill/recall, and long-running session behavior.
+- `docs {"name":"extending"}`: route requests for new tools, model providers, and clients.
 - `docs {"name":"extensions"}`: extensions.
 - `docs {"name":"models"}`: model configuration.
