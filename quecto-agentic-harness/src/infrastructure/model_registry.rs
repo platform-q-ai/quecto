@@ -145,9 +145,9 @@ impl ModelRegistry {
                     cache_write: pricing.cache_write_micro_usd_per_million as f64 / 1_000_000.0,
                 };
             } else if let Some(cost) = gpt_5_6_cost(id) {
-                // GPT-5.6 tiers share these published limits (2026-07-09);
-                // sources: openai.com/index/previewing-gpt-5-6-sol and
-                // developers.openai.com/api/docs/models/gpt-5.6-{sol,terra,luna}.
+                // GPT-5.6 tiers and GPT-6 Astra share these published limits;
+                // sources: developers.openai.com/api/docs/models/gpt-5.6-{sol,terra,luna}
+                // and developers.openai.com/api/docs/models/gpt-6-astra.
                 record.context_window = 1_050_000;
                 record.context_window_explicit = true;
                 record.max_tokens = 128_000;
@@ -206,6 +206,7 @@ impl ModelRegistry {
             AuthMode::ApiKey,
             None,
             &[
+                ("claude-fable-5-1", "Claude Fable 5.1 (API key)"),
                 ("claude-fable-5", "Claude Fable 5 (API key)"),
                 ("claude-opus-5", "Claude Opus 5 (API key)"),
                 ("claude-opus-4-8", "Claude Opus 4.8 (API key)"),
@@ -223,6 +224,7 @@ impl ModelRegistry {
             AuthMode::OAuth,
             Some("anthropic"),
             &[
+                ("claude-fable-5-1", "Claude Fable 5.1 (OAuth)"),
                 ("claude-fable-5", "Claude Fable 5 (OAuth)"),
                 ("claude-opus-5", "Claude Opus 5 (OAuth)"),
                 ("claude-opus-4-8", "Claude Opus 4.8 (OAuth)"),
@@ -240,6 +242,7 @@ impl ModelRegistry {
             AuthMode::ApiKey,
             None,
             &[
+                ("gpt-6-astra", "GPT 6 Astra (API key)"),
                 ("gpt-5.6-sol", "GPT 5.6 Sol (API key)"),
                 ("gpt-5.6-terra", "GPT 5.6 Terra (API key)"),
                 ("gpt-5.6-luna", "GPT 5.6 Luna (API key)"),
@@ -257,6 +260,7 @@ impl ModelRegistry {
             AuthMode::OAuth,
             Some("openai"),
             &[
+                ("gpt-6-astra", "GPT 6 Astra (OAuth)"),
                 ("gpt-5.6-sol", "GPT 5.6 Sol (OAuth)"),
                 ("gpt-5.6-terra", "GPT 5.6 Terra (OAuth)"),
                 ("gpt-5.6-luna", "GPT 5.6 Luna (OAuth)"),

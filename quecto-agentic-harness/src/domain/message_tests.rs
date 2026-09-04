@@ -83,6 +83,7 @@ fn test_model_pricing_known_models() {
     assert!(model_pricing("claude-opus-4-6").is_some());
     assert!(model_pricing("claude-haiku-4-5").is_some());
     assert!(model_pricing("claude-haiku-4-5-20251001").is_some());
+    assert!(model_pricing("gpt-6-astra").is_some());
     assert!(model_pricing("gpt-5.6-sol").is_some());
     assert!(model_pricing("gpt-5.6-terra").is_some());
     assert!(model_pricing("gpt-5.6-luna").is_some());

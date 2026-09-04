@@ -105,10 +105,18 @@ fn registry_missing_file_returns_builtin_models() {
     let tmp = tempfile::tempdir().unwrap();
     let registry = ModelRegistry::load_from_path(&tmp.path().join("missing-models.json")).unwrap();
 
+    assert!(registry.find("anthropic-api", "claude-fable-5-1").is_some());
+    assert!(
+        registry
+            .find("anthropic-oauth", "claude-fable-5-1")
+            .is_some()
+    );
     assert!(registry.find("anthropic-api", "claude-fable-5").is_some());
     assert!(registry.find("anthropic-oauth", "claude-fable-5").is_some());
     assert!(registry.find("anthropic-api", "claude-opus-5").is_some());
     assert!(registry.find("anthropic-oauth", "claude-opus-5").is_some());
+    assert!(registry.find("openai-api", "gpt-6-astra").is_some());
+    assert!(registry.find("openai-oauth", "gpt-6-astra").is_some());
     assert_eq!(
         registry
             .find("openai-api", "gpt-5.5-mini")
@@ -173,10 +181,11 @@ fn builtin_claude_sonnet_5_resolves_for_api_key_and_oauth_with_published_limits(
 }
 
 #[test]
-fn builtin_gpt_5_6_tiers_resolve_for_api_key_and_oauth_with_published_limits() {
+fn builtin_openai_reasoning_tiers_resolve_for_api_key_and_oauth_with_published_limits() {
     let registry = ModelRegistry::builtin();
     // (id, input $/1M, output $/1M)
     let tiers = [
+        ("gpt-6-astra", 10.0, 50.0),
         ("gpt-5.6-sol", 5.0, 30.0),
         ("gpt-5.6-terra", 2.5, 15.0),
         ("gpt-5.6-luna", 1.0, 6.0),
@@ -202,10 +211,10 @@ fn builtin_gpt_5_6_tiers_resolve_for_api_key_and_oauth_with_published_limits() {
     }
     // Auth modes are wired per listing.
     assert_eq!(
-        registry.find("openai-api", "gpt-5.6-sol").unwrap().auth,
+        registry.find("openai-api", "gpt-6-astra").unwrap().auth,
         AuthMode::ApiKey
     );
-    let oauth = registry.find("openai-oauth", "gpt-5.6-sol").unwrap();
+    let oauth = registry.find("openai-oauth", "gpt-6-astra").unwrap();
     assert_eq!(oauth.auth, AuthMode::OAuth);
     assert_eq!(oauth.oauth_provider.as_deref(), Some("openai"));
 }

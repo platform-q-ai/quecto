@@ -18,7 +18,9 @@ use crate::shell::keys::Key;
 /// `oauth` provider; the Fireworks serverless ids are single-provider.
 fn known_models() -> Vec<ModelEntry> {
     const ANTHROPIC: &[&str] = &[
+        "claude-fable-5-1",
         "claude-fable-5",
+        "claude-opus-5",
         "claude-opus-4-8",
         "claude-opus-4-7",
         "claude-opus-4-6",
@@ -27,6 +29,7 @@ fn known_models() -> Vec<ModelEntry> {
         "claude-sonnet-4-5",
     ];
     const OPENAI: &[&str] = &[
+        "gpt-6-astra",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
