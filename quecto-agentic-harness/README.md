@@ -7,8 +7,8 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 ## Quick Start
 
 ```bash
-# Install both binaries (from the repository root). quecto-tui starts the
-# kernel by running `quecto`, so the `quecto` binary must be on PATH unless
+# Install both binaries from source (from the repository root). quecto-tui starts
+# the kernel by running `quecto`, so the `quecto` binary must be on PATH unless
 # you connect by --socket. The `quecto` binary is built by the
 # quecto-agentic-harness package.
 cargo install --path quecto-agentic-harness

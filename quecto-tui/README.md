@@ -20,7 +20,7 @@ starts that kernel by executing `quecto`, so `quecto` must be on `PATH`.
 
 ## Build and install
 
-Install both binaries from the workspace root:
+Install both binaries from source from the workspace root:
 
 ```bash
 # From the workspace root:
