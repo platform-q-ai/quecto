@@ -73,7 +73,10 @@ fn workflow_reset(agent: &str) -> Event {
 
 /// Any per-step workflow glyph (filled or pending) in the LEFT panel cells.
 fn has_panel_cells(frame: &str) -> bool {
-    frame.contains('▰') || frame.contains('▱')
+    frame.lines().any(|line| {
+        let bar = line.trim_start_matches([' ', '│']);
+        bar.starts_with("===") || bar.starts_with(">...")
+    })
 }
 
 async fn harness_with_worker() -> TuiHarness {
