@@ -522,3 +522,67 @@ fn persisted_roster_entry_tolerates_unknown_reason_and_missing_required_legacy_f
     restore_persisted_subagent_roster(&Some(registry.clone()), vec![unknown, malformed]);
     assert!(registry.lock().unwrap().is_empty());
 }
+
+#[test]
+fn ordinary_exit_resume_full_refresh_preserves_history_but_not_preexisting_dead_children() {
+    use crate::domain::session::SubagentRestoreReason;
+    use crate::interface::cli::protocol::build_compact_subagent_roster;
+
+    // The exit barrier snapshots before stopping live children. A child already
+    // dead at that barrier is deliberately non-restorable (#1608 control case).
+    for already_dead in [false, true] {
+        let registry = new_registry();
+        let mut child = SubagentEntry::with_identity(
+            AgentUuid::from("exit-child"),
+            "Exit worker".into(),
+            "/tmp/exit-child.sock".into(),
+            42,
+        );
+        child.parent_id = Some("parent".into());
+        child.status = if already_dead {
+            SubagentStatus::Exited
+        } else {
+            SubagentStatus::Idle
+        };
+        child.persisted_liveness = if already_dead {
+            SubagentLiveness::Dead
+        } else {
+            SubagentLiveness::Live
+        };
+        registry.lock().unwrap().insert("exit-child".into(), child);
+        let snapshot = snapshot_subagent_roster_with_restore_reason(
+            &Some(registry),
+            SubagentRestoreReason::OrdinaryTuiExitStopped,
+        );
+        assert_eq!(
+            snapshot[0].restore_reason,
+            if already_dead {
+                SubagentRestoreReason::ExplicitlyKilled
+            } else {
+                SubagentRestoreReason::OrdinaryTuiExitStopped
+            }
+        );
+        let restored = new_registry();
+        restore_persisted_subagent_roster(&Some(restored.clone()), snapshot);
+        if !already_dead {
+            let entries = restored.lock().unwrap();
+            let child = &entries["exit-child"];
+            assert_eq!(child.persisted_liveness, SubagentLiveness::Detached);
+            assert_eq!(child.status, SubagentStatus::Idle);
+            assert!(child.socket_path.as_os_str().is_empty());
+            assert_eq!(child.pid, 0);
+        }
+        for _ in 0..3 {
+            let roster = build_compact_subagent_roster(&Some(restored.clone()), None).unwrap();
+            assert_eq!(roster.subagents.len(), usize::from(!already_dead));
+            if !already_dead {
+                assert_eq!(
+                    roster.subagents[0].agent_uuid.as_deref(),
+                    Some("exit-child")
+                );
+                assert_eq!(roster.subagents[0].status, "dead");
+            }
+        }
+        assert_eq!(restored.lock().unwrap().len(), usize::from(!already_dead));
+    }
+}

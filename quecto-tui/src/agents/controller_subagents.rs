@@ -207,13 +207,17 @@ impl App {
             self.rekey_agent_collections(&from, &to);
         }
 
+        let roster = &mut self.ac_mut().roster;
         crate::agents::roster::apply_roster_snapshot(
-            &mut self.ac_mut().roster.tracked,
+            &mut roster.tracked,
             source_agent_id.as_deref(),
             candidates,
-            tokio::time::Instant::now(),
-            EXITED_SUBAGENT_GRACE,
-            OPTIMISTIC_SUBAGENT_GRACE,
+            crate::agents::roster::RosterApplyTiming {
+                now: tokio::time::Instant::now(),
+                exited_grace: EXITED_SUBAGENT_GRACE,
+                optimistic_grace: OPTIMISTIC_SUBAGENT_GRACE,
+            },
+            &mut roster.expired_terminal_uuids,
         );
 
         let warm_ids = self
@@ -258,10 +262,12 @@ impl App {
         if self.ac().roster.tracked.is_empty() {
             return false;
         }
+        let roster = &mut self.ac_mut().roster;
         gc_exited_subagents(
-            &mut self.ac_mut().roster.tracked,
+            &mut roster.tracked,
             tokio::time::Instant::now(),
             EXITED_SUBAGENT_GRACE,
+            &mut roster.expired_terminal_uuids,
         )
     }
 }

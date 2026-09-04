@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 /// Minimal policy-facing view of a roster entry. Implementations adapt concrete
@@ -125,6 +125,7 @@ pub(crate) fn gc_exited_subagents<I: RosterInfo>(
     map: &mut BTreeMap<String, TrackedSubagent<I>>,
     now: tokio::time::Instant,
     grace: Duration,
+    expired_terminal_uuids: &mut BTreeSet<String>,
 ) -> bool {
     if map
         .values()
@@ -137,6 +138,9 @@ pub(crate) fn gc_exited_subagents<I: RosterInfo>(
         Some(exited_at) => {
             let keep = now.saturating_duration_since(exited_at) < grace;
             if !keep {
+                if let Some(uuid) = entry.info.agent_uuid() {
+                    expired_terminal_uuids.insert(uuid.to_string());
+                }
                 removed = true;
             }
             keep
@@ -146,14 +150,23 @@ pub(crate) fn gc_exited_subagents<I: RosterInfo>(
     removed
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct RosterApplyTiming {
+    pub(crate) now: tokio::time::Instant,
+    pub(crate) exited_grace: Duration,
+    pub(crate) optimistic_grace: Duration,
+}
+
 pub(crate) fn apply_roster_snapshot<I: RosterInfo>(
     tracked: &mut BTreeMap<String, TrackedSubagent<I>>,
     source_agent_id: Option<&str>,
     candidates: BTreeMap<String, I>,
-    now: tokio::time::Instant,
-    exited_grace: Duration,
-    optimistic_grace: Duration,
+    timing: RosterApplyTiming,
+    expired_terminal_uuids: &mut BTreeSet<String>,
 ) {
+    let now = timing.now;
+    let exited_grace = timing.exited_grace;
+    let optimistic_grace = timing.optimistic_grace;
     let mut incoming = BTreeMap::new();
     if let Some(source) = source_agent_id {
         // Accept the source's existing subtree plus descendants introduced in
@@ -199,6 +212,14 @@ pub(crate) fn apply_roster_snapshot<I: RosterInfo>(
     }
 
     for (id, info) in incoming {
+        if let Some(uuid) = info.agent_uuid() {
+            if expired_terminal_uuids.contains(uuid) {
+                if subagent_status_is_terminal(info.status()) {
+                    continue;
+                }
+                expired_terminal_uuids.remove(uuid);
+            }
+        }
         if let Some(mut existing) = new_map.remove(&id) {
             existing.optimistic = false;
             if source_agent_id.is_some() || existing.roster_source.is_none() {
@@ -242,15 +263,19 @@ pub(crate) fn apply_roster_snapshot<I: RosterInfo>(
     }
 
     for (id, entry) in leftover {
-        if new_map.contains_key(&id)
-            || source_agent_id.is_some_and(|source| is_descendant_of(&id, source, &new_map))
-        {
+        if new_map.contains_key(&id) {
             continue;
         }
+        let authoritative_source_omission =
+            source_agent_id.is_some_and(|source| is_descendant_of(&id, source, &new_map));
         if let Some(exited_at) = entry.exited_at {
             if now.saturating_duration_since(exited_at) < exited_grace {
                 new_map.entry(id).or_insert(entry);
+            } else if let Some(uuid) = entry.info.agent_uuid() {
+                expired_terminal_uuids.insert(uuid.to_string());
             }
+        } else if authoritative_source_omission {
+            continue;
         } else if entry.optimistic
             && now.saturating_duration_since(entry.started_at) < optimistic_grace
         {
