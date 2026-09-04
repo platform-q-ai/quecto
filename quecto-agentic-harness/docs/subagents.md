@@ -212,7 +212,7 @@ connects to the child's UDS socket directly from Rust.
     },
     "model": {
       "type": "string",
-      "description": "Model for the child in provider/model form (e.g. 'openai/gpt-5.5'), same format as agent_cmd set_model. Forwarded as --model at launch so the child's first turn runs on it"
+      "description": "Model for the child in provider/model form (e.g. 'openai-api/gpt-5.5'), same format as agent_cmd set_model. Forwarded as --model at launch so the child's first turn runs on it"
     },
     "provider": {
       "type": "string",
@@ -242,7 +242,7 @@ connects to the child's UDS socket directly from Rust.
 - **`agent_id`** is a display label and must be unique among live subagents. Spawning with an already-live label returns an error; reusing it after exit starts a fresh hidden identity.
 - Returns immediately (< 1 second) after the child's socket is ready.
 - **`workflow_spec` vs `workflow`.** `workflow: true` makes the workflow tool available so the *child* picks a template; `workflow_spec` hands the child a specific template **by value** and binds it. They are independent of `config`, which supplies the child's runtime (providers/model/default template library).
-- **`model` (optional).** Sets the child's model at launch — accepts either a full `provider/model` string (e.g. `openai/gpt-5.5`) or a `provider` + `model_id` pair, the same format(s) as `agent_cmd set_model` (and validated by the same logic). It is forwarded to the child as `--model`, so the child's **first turn** (if `task` is given) already runs on the chosen model — no follow-up `set_model` round-trip needed. **Precedence:** an explicit `model` arg wins over any model from a forwarded `--config`, which wins over the built-in default. An invalid combination (e.g. `provider` without `model_id`) is a clear spawn error rather than a silent fall-back to the default.
+- **`model` (optional).** Sets the child's model at launch — accepts either a full `provider/model` string (e.g. `openai-api/gpt-5.5`) or a `provider` + `model_id` pair, the same format(s) as `agent_cmd set_model` (and validated by the same logic). It is forwarded to the child as `--model`, so the child's **first turn** (if `task` is given) already runs on the chosen model — no follow-up `set_model` round-trip needed. **Precedence:** an explicit `model` arg wins over any model from a forwarded `--config`, which wins over the built-in default. An invalid combination (e.g. `provider` without `model_id`) is a clear spawn error rather than a silent fall-back to the default.
 - **`effort` (optional).** Sets the child's reasoning effort at launch. Must be one of `none`, `low`, `medium`, `high`, `xhigh`, `max`; when a `model` is also given, the value is additionally checked against that model's effort vocabulary (e.g. OpenAI reasoning models take `none`–`xhigh`; Anthropic 4.6 models take `low`/`medium`/`high`/`max`). Invalid or non-string values are rejected at spawn parse time with an error listing the valid levels. It is forwarded to the child as `--effort`, so the child's **first turn** already runs at the chosen effort. It can be changed on a running child with `agent_cmd set_effort` (or from the TUI effort selector while that child is focused). **Precedence:** explicit spawn `effort` > the child's forwarded `agents.defaults.effort` (from `--config`) > inherited `QUECTO_AGENTS_DEFAULTS_EFFORT` env > the provider default. A running child's effort is reset to the child's own default when its session is reset/resumed (`reset_effort_to_default`).
 
 #### Spawning read-only (`read_only` / `disable_tools`)
@@ -376,10 +376,11 @@ output (see [Notification model](#notification-model)).
     "command": {
       "type": "string",
       "enum": ["prompt", "steer", "follow_up", "abort", "kill",
-               "get_state", "get_messages",
-               "get_session_stats", "get_subagents",
+               "get_state", "get_messages", "get_message",
+               "get_session_stats", "get_subagents", "get_subagents_all",
+               "get_containers", "kill_container",
                "set_model", "set_effort", "clear_history"],
-      "description": "Command to send"
+      "description": "Command to send. For completed spawned work, use get_messages without count/before."
     },
     "message": {
       "type": "string",
@@ -395,7 +396,48 @@ output (see [Notification model](#notification-model)).
     },
     "since": {
       "type": "integer",
-      "description": "Generation cursor for get_state; unchanged state returns only {\"unchanged\": true, \"generation\": N}"
+      "description": "Generation cursor for get_state/get_subagents; unchanged state returns only metadata"
+    },
+    "messageId": {
+      "type": "string",
+      "description": "Message id for get_message"
+    },
+    "offset": {
+      "type": "integer",
+      "description": "Byte offset for get_message"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Byte limit for get_message"
+    },
+    "toolCallId": {
+      "type": "string",
+      "description": "Tool-call id for get_message"
+    },
+    "model": {
+      "type": "string",
+      "description": "set_model as provider/model; alternative to provider+model_id"
+    },
+    "provider": {
+      "type": "string",
+      "description": "set_model provider; use with model_id"
+    },
+    "model_id": {
+      "type": "string",
+      "description": "set_model id; use with provider"
+    },
+    "effort": {
+      "type": "string",
+      "enum": ["none", "low", "medium", "high", "xhigh", "max"],
+      "description": "set_effort value"
+    },
+    "ref": {
+      "type": "string",
+      "description": "Container ref for kill_container, e.g. C1"
+    },
+    "name": {
+      "type": "string",
+      "description": "Container name for kill_container; alternative to ref"
     }
   },
   "required": ["agent_id", "command"]
@@ -413,9 +455,12 @@ output (see [Notification model](#notification-model)).
 | `kill` | Terminate the subagent process (SIGTERM) | No |
 | `get_state` | Inspect live/in-flight supervision state: slim state/effort/model/progress, generation cursor, and selected workflow identity/current step. Pass `since` for an unchanged marker | No |
 | `get_messages` | Default report mode: omit/null `count` and `before` after the completion note to receive the unread report. Explicit `count` and/or `before` requests cursor-neutral history pages; `before` pages older history. A busy snapshot can lag the active turn | No |
+| `get_message` | Retrieve one message or tool-call body, optionally paged with `offset`/`limit` | No |
 | `get_session_stats` | Get token usage and cost | No |
 | `get_subagents` | List nested subagents spawned by the targeted live subagent; not parent/session-wide inventory | No |
 | `get_subagents_all` | With `agent_id: "*"`, list parent/session-wide subagent inventory for cleanup/inspection | No |
+| `get_containers` | With `agent_id: "*"`, list spawned container environments | No |
+| `kill_container` | With `agent_id: "*"`, terminate a spawned container by `ref` or `name` | No |
 | `set_model` | Change the LLM model | No |
 | `set_effort` | Change the reasoning effort (`none`/`low`/`medium`/`high`/`xhigh`/`max`, validated against the child's active model; invalid values are rejected with the valid list) | No |
 | `clear_history` | Clear conversation history | No |
@@ -585,7 +630,7 @@ that need to restrict which subagents can be spawned.
 - **Explicit shutdown**: `shutdown_all()` sends SIGTERM to all tracked children
   and clears the registry
 - **Socket cleanup**: Socket files are removed by the child's UDS server on exit.
-  Stale sockets older than 24h are reaped on next agent startup
+  Dead auto-generated sockets are reaped by liveness check on next agent startup; the 24h age threshold is a fallback when liveness cannot be determined
 
 ### Duplicate prevention
 

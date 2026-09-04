@@ -16,7 +16,7 @@ Quecto resolves one **effective catalogue** from ordered source layers — built
 
 1. Read existing `~/.quecto/models.json` (or start from `{"providers": {}}`).
 2. **Add a model** to an existing provider: append to that provider's `models` array (`id`, optional `name`, `contextWindow`, `maxTokens`).
-3. **Add a provider** on a supported transport (`api`: `openai-completions`, `anthropic-messages`, `google-generative-ai`) with `baseUrl` and a `$ENV` credential reference. A transport with no adapter lists the models as known-but-not-runnable with a structured reason — data cannot enable a protocol.
+3. **Add a provider** on a runnable transport (`api`: `openai-completions` or `anthropic-messages`) with `baseUrl` and a `$ENV` credential reference. `google-generative-ai` is recognized by the registry but not runnable in this build. A transport with no adapter lists the models as known-but-not-runnable with a structured reason — data cannot enable a protocol.
 4. **Fix stale metadata** with the top-level `overrides` map, keyed by qualified id — patches any known entry in place (fields: `name`, `contextWindow`, `maxTokens`, `apiKey` reference):
    ```json
    {"overrides": {"openai-api/gpt-5.5": {"contextWindow": 999000}}}
