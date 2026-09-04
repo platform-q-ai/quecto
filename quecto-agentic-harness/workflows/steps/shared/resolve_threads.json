@@ -1,6 +1,0 @@
-{
-  "key": "resolve_threads",
-  "label": "Reply to the reviewers comments on the PR and mark resolved (use graphql)",
-  "phase": "review",
-  "guidance": "Reply to EVERY review comment on the PR — for accepted findings note the fix and commit, for declined ones explain why — then resolve each thread with the GraphQL resolveReviewThread mutation. Thread ids come from the PR reviewThreads connection. Done when every review thread is resolved."
-}

@@ -1,98 +1,74 @@
 use super::*;
-
-fn feature() -> WorkflowTemplate {
-    default_templates()
-        .into_iter()
-        .find(|t| t.id == "feature")
-        .expect("the embedded canonical folder must define a `feature` template")
-}
+use crate::domain::workflow::{WorkflowConfig, WorkflowEngine};
+use std::collections::HashSet;
 
 #[test]
-fn embedded_canonical_folder_parses_into_both_templates() {
-    // The whole point of embedding the canonical `workflows/` folder at
-    // compile time: the RUNTIME templates are the guard-tested spec, so
-    // they cannot drift, and every shared-step reference must resolve.
+fn built_in_default_templates_include_generic_workflows() {
     let templates = default_templates();
-    let ids: Vec<&str> = templates.iter().map(|t| t.id.as_str()).collect();
+    let ids = template_ids(&templates);
+
     assert_eq!(
         ids,
-        [
-            "feature",
-            "adversarial-review",
-            "bugfix",
-            "chore",
-            "flake-hunt",
-            "investigate",
-            "plan",
-            "prd",
-            "refactor",
-            "remove",
-        ]
+        HashSet::from(["investigate", "chore", "bugfix", "feature", "refactor",]),
     );
-    for t in &templates {
-        assert!(!t.steps.is_empty(), "template `{}` must have steps", t.id);
-    }
 }
 
 #[test]
-fn shared_step_references_resolve_to_inline_steps() {
-    // AC2: `steps/shared/hooks` is defined once on disk and referenced by
-    // both templates; after embedding+resolution each template carries a
-    // fully inlined `hooks` step with the shared guidance.
-    for t in default_templates()
-        .into_iter()
-        .filter(|t| t.steps.iter().any(|s| s.key == "hooks"))
-    {
-        let hooks = t
-            .steps
+fn built_in_default_templates_are_valid_and_usable_by_engine() {
+    let engine = WorkflowEngine::new(WorkflowConfig::default(), false)
+        .expect("bundled generic workflow templates must validate");
+
+    assert_eq!(
+        template_ids(&default_templates()),
+        engine
+            .list_templates()
+            .into_iter()
+            .map(|template| template.id)
+            .collect::<HashSet<_>>()
             .iter()
-            .find(|s| s.key == "hooks")
-            .unwrap_or_else(|| panic!("template `{}` must resolve the shared hooks step", t.id));
+            .map(String::as_str)
+            .collect::<HashSet<_>>(),
+    );
+}
+
+#[test]
+fn built_in_default_templates_have_complete_generic_content() {
+    for template in default_templates() {
+        assert!(!template.label.trim().is_empty(), "{} label", template.id);
         assert!(
-            hooks
-                .guidance
+            !template.description.trim().is_empty(),
+            "{} description",
+            template.id,
+        );
+        assert!(
+            template
+                .when_to_use
                 .as_deref()
-                .unwrap_or("")
-                .contains("install-hooks.sh"),
-            "template `{}` hooks step must carry the shared guidance",
-            t.id
+                .is_some_and(|when_to_use| !when_to_use.trim().is_empty()),
+            "{} when_to_use",
+            template.id,
         );
+        assert!(!template.steps.is_empty(), "{} steps", template.id);
+
+        for step in template.steps {
+            assert!(!step.key.trim().is_empty(), "{} step key", template.id);
+            assert!(!step.label.trim().is_empty(), "{} step label", template.id);
+            assert!(!step.phase.trim().is_empty(), "{} step phase", template.id);
+            assert!(
+                step.guidance
+                    .as_deref()
+                    .is_some_and(|guidance| !guidance.trim().is_empty()),
+                "{}:{} guidance",
+                template.id,
+                step.key,
+            );
+        }
     }
 }
 
-#[test]
-fn runtime_review_steps_are_read_only_at_runtime() {
-    // Regression for the `shared_guidance` bug: the reviewer read-only
-    // instruction MUST live in a field the runtime actually deserializes —
-    // the per-step `guidance` — not a phantom field serde drops. Assert it on
-    // the RUNTIME template returned by `default_templates()`, so a future move
-    // back into an un-deserialized field fails here, not silently in prod.
-    let f = feature();
-    for key in [
-        "semantic_contract",
-        "test_review",
-        "local_review",
-        "pr_reviewers",
-    ] {
-        let g = f
-            .steps
-            .iter()
-            .find(|s| s.key == key)
-            .and_then(|s| s.guidance.as_deref())
-            .unwrap_or("");
-        assert!(
-            g.contains("read-only") || g.contains("read_only"),
-            "runtime `{key}` guidance must instruct read-only reviewer spawns: {g}"
-        );
-        assert!(
-            g.contains("openai-oauth/gpt-5.5") || key == "pr_reviewers",
-            "runtime `{key}` guidance must pin the reviewer model when spawning directly: {g}"
-        );
-    }
-}
-
-#[test]
-fn runtime_feature_template_has_version_bump_step() {
-    // #950 lives in the spec; prove it reaches the runtime template too.
-    assert!(feature().steps.iter().any(|s| s.key == "version_bump"));
+fn template_ids(templates: &[WorkflowTemplate]) -> HashSet<&str> {
+    templates
+        .iter()
+        .map(|template| template.id.as_str())
+        .collect()
 }

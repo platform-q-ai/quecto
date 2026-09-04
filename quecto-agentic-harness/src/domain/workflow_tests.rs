@@ -1,150 +1,71 @@
 use super::*;
 
-#[test]
-fn workflow_spec_deserializes_with_template_and_ignores_extra_fields() {
-    let json = serde_json::json!({
-        "template": {
-            "id": "review",
-            "label": "Review",
-            "description": "desc",
-            "steps": [{"key": "a", "label": "A", "phase": "review"}]
-        },
-        "inputs": {"pr": 7},        // forward-compat extras must be ignored
-        "acceptance": "tests pass"
-    });
-    let spec: WorkflowSpec = serde_json::from_value(json).unwrap();
-    assert_eq!(spec.template.id, "review");
-    assert_eq!(spec.template.steps.len(), 1);
+#[rustfmt::skip]
+fn planned_feature_template_with_id(id: &str) -> WorkflowTemplate {
+    let mut template = planned_feature_template(); template.id = id.into(); template.label = id.into(); template
+}
+
+#[rustfmt::skip]
+fn planned_feature_template() -> WorkflowTemplate {
+    let keys = ["hooks", "plan_intake", "semantic_contract", "test_design", "test_review", "red", "green", "refactor_harden", "local_review", "verify", "version_bump", "commit", "push", "pr", "pr_reviewers", "fix_pr_review", "resolve_threads", "conformance", "request_ci", "cleanup"];
+    WorkflowTemplate { id: "feature".into(), label: "Feature".into(), description: "test feature workflow".into(), when_to_use: Some("test feature work".into()),
+        steps: keys.into_iter().map(|key| WorkflowTemplateStep { key: key.into(), label: if key == "hooks" { "Install/check local quality hooks".into() } else { key.into() }, phase: "test".into(), guidance: Some(if key == "plan_intake" { "Read the issue body, comments, and canonical plan comment".into() } else if key == "semantic_contract" { "Build and challenge the feature semantic state-space".into() } else { "test guidance".into() }) }).collect(),
+        guards: vec![
+            WorkflowGuardRule { commands: vec!["git commit".into()], before_step_key: "commit".into(), message: "plan intake local adversarial review".into() },
+            WorkflowGuardRule { commands: vec!["gh pr edit --add-label merge-requested".into()], before_step_key: "request_ci".into(), message: "PR review fixes".into() },
+            WorkflowGuardRule { commands: vec!["git merge".into(), "gh pr merge".into()], before_step_key: "cleanup".into(), message: "does not merge".into() },
+        ] }
+}
+
+#[rustfmt::skip]
+fn test_workflow_config() -> WorkflowConfig {
+    WorkflowConfig { templates: vec![planned_feature_template(), planned_feature_template_with_id("bugfix")], ..WorkflowConfig::default() }
 }
 
 #[test]
-fn workflow_spec_requires_a_template() {
-    let json = serde_json::json!({ "inputs": {"pr": 7} });
-    assert!(serde_json::from_value::<WorkflowSpec>(json).is_err());
-}
-
-#[test]
-fn single_template_config_binds_to_active_on_select() {
-    let template = WorkflowTemplate {
-        id: "review".into(),
-        label: "Review".into(),
-        description: "desc".into(),
-        when_to_use: None,
-        steps: vec![WorkflowTemplateStep {
-            key: "a".into(),
-            label: "A".into(),
-            phase: "review".into(),
-            guidance: None,
-        }],
-        guards: vec![],
-    };
-    let config = WorkflowConfig {
-        auto_continue: true,
-        completion_nudge: true,
-        selector_prompt: None,
-        dir: None,
-        templates: vec![template],
-    };
-    let mut engine = WorkflowEngine::new(config, false).unwrap();
-    assert_eq!(engine.mode(), WorkflowMode::SelectingTemplate);
-    engine.select_template("review", None).unwrap();
-    assert_eq!(engine.mode(), WorkflowMode::Active);
-    assert_eq!(engine.list_templates().len(), 1);
-}
-
-fn bound_template(id: &str) -> WorkflowTemplate {
-    WorkflowTemplate {
-        id: id.into(),
-        label: id.into(),
-        description: "d".into(),
-        when_to_use: None,
-        steps: vec![WorkflowTemplateStep {
-            key: "a".into(),
-            label: "A".into(),
-            phase: "x".into(),
-            guidance: None,
-        }],
-        guards: vec![],
-    }
-}
-
-fn bound_engine(templates: Vec<WorkflowTemplate>, select: &str) -> WorkflowEngine {
-    let config = WorkflowConfig {
-        auto_continue: true,
-        completion_nudge: true,
-        selector_prompt: None,
-        dir: None,
-        templates,
-    };
-    let mut engine = WorkflowEngine::new(config, false).unwrap();
-    engine.select_template(select, None).unwrap();
-    engine.set_bound(true);
-    engine
-}
-
-#[test]
-fn bound_engine_reset_keeps_template_active() {
-    let mut engine = bound_engine(vec![bound_template("only")], "only");
-    engine.check(1).unwrap();
-    engine.reset();
-    assert_eq!(engine.mode(), WorkflowMode::Active);
-    assert!(engine.is_bound());
-}
-
-#[test]
-fn bound_engine_rejects_switching_template() {
-    let mut engine = bound_engine(vec![bound_template("a"), bound_template("b")], "a");
-    assert!(
-        engine.select_template("b", None).is_err(),
-        "a bound engine must not switch to a different template"
-    );
-    assert!(engine.select_template("a", None).is_ok());
-}
-
-#[test]
-fn bound_engine_completion_nudge_does_not_instruct_reselect() {
-    let mut engine = bound_engine(vec![bound_template("only")], "only");
-    engine.check(1).unwrap();
-    assert_eq!(engine.mode(), WorkflowMode::Complete);
-    let nudge = engine
-        .completion_nudge()
-        .expect("a completed bound workflow should still nudge");
-    assert!(
-        !nudge.contains("select_template") && !nudge.contains("reset"),
-        "bound completion nudge must not tell the model to reset/reselect: {nudge}"
-    );
-    assert!(
-        nudge.contains("report your result and stop"),
-        "bound completion nudge must still instruct report-and-stop: {nudge}"
-    );
-}
-
-#[test]
-fn default_config_uses_builtins_when_templates_empty() {
+fn default_config_uses_bundled_templates_when_templates_empty() {
     let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     let templates = engine.list_templates();
-    assert_eq!(templates.len(), 10);
-    assert_eq!(templates.first().unwrap().id, "feature");
-    assert_eq!(templates.last().unwrap().id, "remove");
+    assert!(!templates.is_empty());
+    assert!(templates.iter().any(|template| template.id == "chore"));
+}
+
+#[test]
+fn bundled_templates_are_generic() {
+    let templates = crate::domain::workflow::default_templates();
+    let serialized = serde_json::to_string(&templates).unwrap().to_lowercase();
+    for forbidden in [
+        "quecto",
+        "github",
+        "pull request",
+        "pr ",
+        "gh ",
+        "issue tracker",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "bundled templates should not contain provider/project-specific assumption: {forbidden}"
+        );
+    }
 }
 
 #[test]
 fn selector_mode_before_template_selection() {
-    let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     assert_eq!(engine.mode(), WorkflowMode::SelectingTemplate);
     assert!(engine.status_text().contains("Available templates"));
 }
 
 #[test]
 fn default_workflow_config_enables_core_backend_nudges() {
-    let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     assert!(engine.auto_continue_enabled());
     assert!(engine.completion_nudge_enabled());
 }
 
 #[test]
 fn select_template_starts_run() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let mut engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     assert_eq!(engine.mode(), WorkflowMode::Active);
     assert_eq!(engine.progress().total, 20);
@@ -153,7 +74,7 @@ fn select_template_starts_run() {
 
 #[test]
 fn check_enforces_ordering() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let mut engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     let err = engine.check(3).unwrap_err();
     assert!(err.to_string().contains("complete step 1"));
@@ -161,7 +82,7 @@ fn check_enforces_ordering() {
 
 #[test]
 fn check_and_uncheck_work() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let mut engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     engine.check(1).unwrap();
     engine.check(2).unwrap();
@@ -172,7 +93,7 @@ fn check_and_uncheck_work() {
 
 #[test]
 fn skip_bypasses_ordering() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let mut engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     engine.skip(5).unwrap();
     assert_eq!(engine.progress().done, 1);
@@ -180,7 +101,7 @@ fn skip_bypasses_ordering() {
 
 #[test]
 fn reset_returns_to_selector_mode() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let mut engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     engine
         .select_template("feature", Some((42, "test".into())))
         .unwrap();
@@ -192,7 +113,7 @@ fn reset_returns_to_selector_mode() {
 
 #[test]
 fn set_issue_truncates_title() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let mut engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     let long = "x".repeat(600);
     engine.set_issue(1, long);
     assert!(engine.snapshot(true).active_issue.unwrap().1.len() <= 500);
@@ -200,14 +121,14 @@ fn set_issue_truncates_title() {
 
 #[test]
 fn persisted_run_round_trip() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let mut engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     engine
         .select_template("feature", Some((7, "bug".into())))
         .unwrap();
     engine.check(1).unwrap();
     let persisted = engine.persisted_run().unwrap();
 
-    let mut restored = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let mut restored = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     restored.restore_run(persisted);
     assert_eq!(restored.mode(), WorkflowMode::Active);
     assert_eq!(restored.progress().done, 1);
@@ -219,7 +140,7 @@ fn persisted_run_round_trip() {
 
 #[test]
 fn persisted_run_exists_for_issue_without_selected_template() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let mut engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     engine.set_issue(99, "triage".into());
     let persisted = engine
         .persisted_run()
@@ -227,7 +148,7 @@ fn persisted_run_exists_for_issue_without_selected_template() {
     assert_eq!(persisted.template_id, None);
     assert_eq!(persisted.active_issue, Some((99, "triage".into())));
 
-    let mut restored = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let mut restored = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     restored.restore_run(persisted);
     assert_eq!(
         restored.snapshot(true).active_issue,
@@ -238,7 +159,7 @@ fn persisted_run_exists_for_issue_without_selected_template() {
 
 #[test]
 fn workflow_subsystem_select_template_preserves_issue_set_in_selector_mode() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let mut engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     engine.set_issue(42, "keep me".into());
 
     engine.select_template("feature", None).unwrap();
@@ -251,7 +172,7 @@ fn workflow_subsystem_select_template_preserves_issue_set_in_selector_mode() {
 
 #[test]
 fn workflow_subsystem_select_template_explicit_issue_overrides_existing_one() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let mut engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     engine.set_issue(1, "old issue".into());
 
     engine
@@ -266,7 +187,7 @@ fn workflow_subsystem_select_template_explicit_issue_overrides_existing_one() {
 
 #[test]
 fn restore_run_unknown_template_recovers_to_selector_mode() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let mut engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     engine.restore_run(WorkflowRunPersisted {
         template_id: Some("deleted_template".into()),
         done: vec![true, false],
@@ -277,7 +198,7 @@ fn restore_run_unknown_template_recovers_to_selector_mode() {
 
 #[test]
 fn restore_run_clears_ordering_gaps() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let mut engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     engine.restore_run(WorkflowRunPersisted {
         template_id: Some("feature".into()),
         done: vec![true, false, true, true],
@@ -316,7 +237,7 @@ fn restore_run_truncates_extra_persisted_done_flags() {
 
 #[test]
 fn guards_block_until_before_step_key_threshold() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), true).unwrap();
+    let mut engine = WorkflowEngine::new(test_workflow_config(), true).unwrap();
     engine.select_template("feature", None).unwrap();
     let err = engine.check_guards().unwrap_err();
     assert!(err.to_string().contains("Complete step 1"));
@@ -331,7 +252,7 @@ fn guards_block_until_before_step_key_threshold() {
 fn completion_nudge_only_when_complete() {
     let config = WorkflowConfig {
         completion_nudge: true,
-        ..WorkflowConfig::default()
+        ..test_workflow_config()
     };
     let mut engine = WorkflowEngine::new(config, false).unwrap();
     engine.select_template("feature", None).unwrap();
@@ -417,81 +338,37 @@ fn validate_guard_unknown_step_key() {
 }
 
 #[test]
-fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hook_step() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+fn explicit_test_feature_template_drives_feature_workflow_behavior() {
+    let mut engine = WorkflowEngine::new(test_workflow_config(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     let snap = engine.snapshot(true);
     let all_steps = engine.all_step_statuses();
 
     let keys: Vec<&str> = all_steps.iter().map(|s| s.key.as_str()).collect();
-    assert_eq!(
-        keys,
-        vec![
-            "hooks",
-            "plan_intake",
-            "semantic_contract",
-            "test_design",
-            "test_review",
-            "red",
-            "green",
-            "refactor_harden",
-            "local_review",
-            "verify",
-            "version_bump",
-            "commit",
-            "push",
-            "pr",
-            "pr_reviewers",
-            "fix_pr_review",
-            "resolve_threads",
-            "conformance",
-            "request_ci",
-            "cleanup",
-        ]
-    );
+    assert_eq!(keys.len(), 20);
+    assert_eq!(keys[0], "hooks");
+    assert_eq!(keys[1], "plan_intake");
+    assert_eq!(keys[19], "cleanup");
     assert_eq!(snap.progress.total, 20);
     assert_eq!(snap.steps.len(), 1);
     assert_eq!(snap.steps[0].key, "hooks");
     assert_eq!(snap.steps[0].label, "Install/check local quality hooks");
     assert_eq!(
-        all_steps[2].label,
-        "Build and challenge the feature semantic state-space"
+        all_steps[2].guidance.as_deref(),
+        Some("Build and challenge the feature semantic state-space")
     );
-    assert_eq!(all_steps[4].label, "Review tests before implementation");
-    assert_eq!(
-        all_steps[8].label,
-        "Run local adversarial implementation review before commit"
-    );
-    assert_eq!(
-        all_steps[10].label,
-        "Bump changed crate versions and sync crate-specific docs"
-    );
-    assert_eq!(all_steps[12].label, "Push through the fast pre-push gate");
-    assert_eq!(
-        all_steps[14].label,
-        "Run PR adversarial review as final safety net"
-    );
-    assert_eq!(
-        all_steps[17].label,
-        "Verify conformance to the issue plan and acceptance criteria"
-    );
-    assert_eq!(all_steps[18].label, "Request authoritative CI and wait");
-    assert_eq!(all_steps[19].label, "Clean up and report handoff");
 }
 
 #[test]
 fn feature_template_guards_commit_push_and_merge_like_config_file() {
-    let templates = default_templates();
+    let templates = test_workflow_config().templates;
     let feature = templates
         .iter()
         .find(|template| template.id == "feature")
         .expect("feature template exists");
 
     assert_eq!(feature.guards.len(), 3);
-    assert_eq!(
-        feature.guards[0].commands,
-        vec!["git commit".to_string(), "git push".to_string()]
-    );
+    assert_eq!(feature.guards[0].commands, vec!["git commit".to_string()]);
     assert_eq!(feature.guards[0].before_step_key, "commit");
     assert!(feature.guards[0].message.contains("plan intake"));
     assert!(

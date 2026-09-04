@@ -1,6 +1,0 @@
-{
-  "key": "push_fixes",
-  "label": "Push changes to remote",
-  "phase": "review",
-  "guidance": "Push the fixes; the fast pre-push gate runs again. Wait for it to pass before resolving threads. Any push removes a stale `merge-requested` label, so reapply it only after all review work is complete."
-}

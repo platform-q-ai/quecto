@@ -1,6 +1,0 @@
-{
-  "key": "hooks",
-  "label": "Install/check local quality hooks",
-  "phase": "setup",
-  "guidance": "Run `scripts/install-hooks.sh`, then verify pre-commit, pre-push, and the git --no-verify wrapper are installed/active before editing code. Hook summary: `git commit` pre-commit runs staged-file hygiene, conditional BDD quality/tag checks, and `cargo fmt --check`; it does not run clippy or tests. `git push` pre-push runs fast repository rules, formatting, changed-package strict clippy, and architecture/contract invariants, normally within 20 seconds. Never bypass hooks with --no-verify. Done when all three hooks are installed and active."
-}

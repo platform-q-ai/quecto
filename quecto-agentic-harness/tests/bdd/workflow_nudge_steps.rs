@@ -12,12 +12,39 @@
 //! recovery instruction) and this module owns the fragment knowledge.
 
 use super::*;
-use quecto::domain::workflow::{WorkflowConfig, WorkflowEngine};
+use quecto::domain::workflow::{
+    WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
+};
+
+fn bdd_feature_template() -> WorkflowTemplate {
+    WorkflowTemplate {
+        id: "feature".into(),
+        label: "Feature".into(),
+        description: "BDD feature workflow fixture".into(),
+        when_to_use: Some("BDD workflow tests".into()),
+        steps: vec![
+            WorkflowTemplateStep {
+                key: "plan".into(),
+                label: "Plan".into(),
+                phase: "test".into(),
+                guidance: Some("plan the work".into()),
+            },
+            WorkflowTemplateStep {
+                key: "verify".into(),
+                label: "Verify".into(),
+                phase: "test".into(),
+                guidance: Some("verify the work".into()),
+            },
+        ],
+        guards: vec![],
+    }
+}
 
 #[given("an active workflow with incomplete steps and auto-continue enabled")]
 fn given_active_workflow_with_auto_continue(world: &mut QuectoWorld) {
     let config = WorkflowConfig {
         auto_continue: true,
+        templates: vec![bdd_feature_template()],
         ..WorkflowConfig::default()
     };
     let mut engine = WorkflowEngine::new(config, false).expect("engine builds");
