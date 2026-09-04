@@ -163,6 +163,22 @@ async fn genuine_reset_event_clears_indicators() {
 }
 
 #[cfg(test)]
+/// Count completed and incomplete cells in panel-only workflow bar rows.
+pub(crate) fn panel_markers(frame: &str) -> (usize, usize) {
+    let cells: String = frame
+        .lines()
+        .filter_map(|line| {
+            let bar = line.trim_start_matches([' ', '│']);
+            bar.starts_with(['=', '>']).then_some(bar.trim_end())
+        })
+        .collect();
+    (
+        cells.matches('=').count(),
+        cells.matches(['>', '.']).count(),
+    )
+}
+
+#[cfg(test)]
 mod tests {
     use super::super::app_subagent_panel::controller_subagent_panel_helpers::panel_bar_line;
     use crate::components::theme;
@@ -224,20 +240,4 @@ mod tests {
             }
         }
     }
-}
-
-#[cfg(test)]
-/// Count completed and incomplete cells in panel-only workflow bar rows.
-pub(crate) fn panel_markers(frame: &str) -> (usize, usize) {
-    let cells: String = frame
-        .lines()
-        .filter_map(|line| {
-            let bar = line.trim_start_matches([' ', '│']);
-            bar.starts_with(['=', '>']).then_some(bar.trim_end())
-        })
-        .collect();
-    (
-        cells.matches('=').count(),
-        cells.matches(['>', '.']).count(),
-    )
 }
