@@ -411,11 +411,10 @@ async fn handle_submit_new_starts_new_session() {
 }
 
 #[tokio::test]
-async fn handle_submit_new_preserves_departing_workspace_manifest() {
+async fn handle_submit_new_starts_fresh_session_without_workspace_manifest() {
     let mut h = harness().await;
     let a = h.app_mut();
     let old_workspace_id = a.workspace_id.clone();
-    let old_workspace_label = a.workspace_label.clone();
     let data_home = tempfile::tempdir().expect("isolated tui data");
     // SAFETY: this test runs before invoking `/new`; the isolated path prevents touching user state.
     unsafe {
@@ -448,28 +447,10 @@ async fn handle_submit_new_preserves_departing_workspace_manifest() {
     let store = crate::shell::workspace_manifest::WorkspaceManifestStore::load(
         &crate::shell::workspace_manifest::default_manifest_path(),
     );
-    let preserved = store
-        .get(&old_workspace_id)
-        .expect("/new must leave the old workspace in the resume manifest");
-    assert_eq!(preserved.label, old_workspace_label);
-    assert_eq!(
-        preserved.tabs.len(),
-        2,
-        "departing workspace tabs must remain resumable"
+    assert!(
+        store.get(&old_workspace_id).is_none(),
+        "/new no longer writes departing workspace manifests"
     );
-    assert_eq!(
-        preserved.active_index, 1,
-        "departing active tab should be preserved"
-    );
-    assert_eq!(
-        preserved.tabs[0].session_key.as_deref(),
-        Some("cli:old-master")
-    );
-    assert_eq!(
-        preserved.tabs[1].session_key.as_deref(),
-        Some("cli:old-tab")
-    );
-    assert_eq!(preserved.tabs[1].name.as_deref(), Some("worker"));
 }
 
 #[tokio::test]

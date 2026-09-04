@@ -81,13 +81,6 @@ impl App {
              \x20 PageUp/Down    Scroll chat\n\
              \x20 Up/Down        Input history\n\
              \n\
-             Tabs:\n\
-             \x20 Ctrl+N         Open a new tab\n\
-             \x20 Ctrl+1-9       Focus tab N\n\
-             \x20 Ctrl+PgUp/PgDn Cycle to previous/next tab\n\
-             \x20 Click a block  Focus that tab (+ opens a new one)\n\
-             \x20 (Alt+1-9 and Alt/Ctrl+Tab also work when the window\n\
-             \x20 manager does not grab them)\n\
              \n\
              Mouse / links:\n\
              \x20 Wheel          Scroll chat\n\
@@ -105,7 +98,7 @@ impl App {
     pub(super) fn show_workflow_status(&mut self) {
         let wf = &self.ac().master_session.workflow_bar;
         let text = if workflow_bar::render_widget(wf, self.terminal.width).is_empty() {
-            "Workflow is not active. Start quecto-tui with --workflow to enable it.".to_string()
+            "Workflow is not active. Ask the agent to select/start a workflow, or launch with `--workflow` to prompt workflow mode immediately.".to_string()
         } else {
             let current = wf
                 .current_step_id()
@@ -245,7 +238,6 @@ impl App {
                 }
             })
             .collect::<Vec<_>>();
-        // AC5: workspaces above bare sessions.
         self.open_resume_selector_with_workspaces(session_items, manifest_path, empty_hint);
     }
 
@@ -433,12 +425,6 @@ impl App {
         let now = tokio::time::Instant::now();
 
         let mut lines = Vec::new();
-
-        // Tab bar (#1466): only with 2+ tabs, so single-tab frames are
-        // byte-identical to the pre-tab layout.
-        if let Some(tab_bar) = self.render_tab_bar(width) {
-            lines.push(tab_bar);
-        }
 
         // ── Render bottom section first to know its height ──────────
         let bottom = self.compose_bottom(width);
@@ -656,7 +642,7 @@ impl App {
         self.render();
     }
 
-    /// Start a fresh `/new` workspace, preserving the old one for `/resume`.
+    /// Start a fresh single `/new` session, preserving the old session for `/resume`.
     pub(super) fn reset_workspace(&mut self) -> Vec<crate::shell::child_watch::ChildWatch> {
         self.persist_default_durability();
 

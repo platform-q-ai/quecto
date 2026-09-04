@@ -1,8 +1,7 @@
-//! Workspace-aware `/resume` (#1465 P4 / AC5–AC6).
+//! Session-only `/resume`.
 //!
-//! Workspaces are listed above bare sessions. Selecting a workspace restores
-//! its tab set (placeholders + per-tab session resume where keys exist).
-//! Bare session selection and `/resume <key>` keep current-tab behaviour.
+//! `/resume` lists persisted sessions directly; selecting a session or using
+//! `/resume <key>` resumes it in the current single session.
 
 use crate::components::notification::NotifyLevel;
 use crate::components::select_list::{SelectItem, SelectList};
@@ -20,54 +19,14 @@ pub(crate) const WORKSPACE_RESUME_PREFIX: &str = "workspace:";
 pub(crate) const SESSION_RESUME_PREFIX: &str = "session:";
 
 impl super::App {
-    /// Merge durable workspaces above agent-listed sessions into the selector.
+    /// Open the resume selector with agent-listed sessions only.
     pub(super) fn open_resume_selector_with_workspaces(
         &mut self,
         session_items: Vec<SelectItem>,
-        manifest_path: &std::path::Path,
+        _manifest_path: &std::path::Path,
         empty_status: Option<&str>,
     ) {
-        let store = WorkspaceManifestStore::load(manifest_path);
-        let now = unix_now_s();
-        // #1466 fix pass item 3: most recently active first.
-        let mut workspaces: Vec<_> = store.workspaces.iter().collect();
-        workspaces.sort_by_key(|ws| std::cmp::Reverse(ws.last_active_or_updated_s()));
-        // #1466 decision 1 + fix pass item 3: list by human label, relative
-        // last-active time, and per-tab conversation snippets so rows are
-        // recognizable by content; the raw UUID stays in `value` for
-        // dispatch, never in the row text.
-        let mut items: Vec<SelectItem> = workspaces
-            .into_iter()
-            .map(|ws| {
-                // Sanitize at read time too (PR #1485 review): manifests
-                // written before snippets were sanitized at persist time may
-                // still carry raw escape/control bytes.
-                let snippets: Vec<String> = ws
-                    .tabs
-                    .iter()
-                    .filter_map(|t| t.summary.as_deref())
-                    .map(|s| crate::components::ansi::sanitize_control_truncated(s, usize::MAX).0)
-                    .filter(|s| !s.trim().is_empty())
-                    .collect();
-                let mut description = format!(
-                    "{} tabs · {}",
-                    ws.tabs.len(),
-                    crate::shell::workspace_manifest::relative_age_label(
-                        now,
-                        ws.last_active_or_updated_s()
-                    )
-                );
-                if !snippets.is_empty() {
-                    description.push_str(&format!(" · {}", snippets.join(" | ")));
-                }
-                SelectItem {
-                    value: format!("{WORKSPACE_RESUME_PREFIX}{}", ws.workspace_id),
-                    label: format!("workspace · {}", ws.display_label()),
-                    description: Some(description),
-                }
-            })
-            .collect();
-        items.extend(session_items);
+        let items = session_items;
         if items.is_empty() {
             self.ac_mut().master_session.chat.add_entry(
                 crate::components::chat::ChatEntry::Status {

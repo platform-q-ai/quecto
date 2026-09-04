@@ -304,7 +304,7 @@ fn labelled_ws(id: &str, label: &str, session_key: Option<&str>) -> WorkspaceMan
 }
 
 #[tokio::test]
-async fn resume_selector_lists_workspaces_by_label_and_last_active() {
+async fn resume_selector_hides_workspace_rows_even_when_manifest_exists() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("manifests.json");
     let uuid = "3f2b6c1e-9d4a-4b6f-8c2d-5e7a1b9c0d42";
@@ -314,27 +314,9 @@ async fn resume_selector_lists_workspaces_by_label_and_last_active() {
 
     let mut app = headless_app();
     app.open_resume_selector_with_workspaces(Vec::new(), &path, None);
-    let sel = app
-        .ac()
-        .sessions
-        .resume_selector
-        .as_ref()
-        .expect("selector");
-    let item = &sel.items_for_tests()[0];
-
     assert!(
-        item.label.contains("Auth spike"),
-        "workspace rows list by human label (#1466 decision 1): {:?}",
-        item.label
-    );
-    assert!(
-        !item.label.contains(uuid) && !item.description.as_deref().unwrap_or("").contains(uuid),
-        "workspace rows must not surface the raw UUID: {item:?}"
-    );
-    assert!(
-        item.description.as_deref().unwrap_or("").contains("ago"),
-        "workspace rows show relative last-active time: {:?}",
-        item.description
+        app.ac().sessions.resume_selector.is_none(),
+        "workspace-only manifests no longer open /resume selector rows"
     );
 }
 
@@ -393,7 +375,7 @@ fn gc_orphaned_keeps_session_less_workspace_with_live_registry_row() {
 }
 
 #[tokio::test]
-async fn legacy_label_less_manifest_gets_a_non_uuid_fallback_row() {
+async fn legacy_label_less_manifest_is_not_listed_in_resume_selector() {
     // Pre-#1466 manifests deserialize with an empty label; `/resume` must
     // still show something human, never the raw UUID.
     let dir = tempfile::tempdir().unwrap();
@@ -405,23 +387,9 @@ async fn legacy_label_less_manifest_gets_a_non_uuid_fallback_row() {
 
     let mut app = headless_app();
     app.open_resume_selector_with_workspaces(Vec::new(), &path, None);
-    let sel = app
-        .ac()
-        .sessions
-        .resume_selector
-        .as_ref()
-        .expect("selector");
-    let item = &sel.items_for_tests()[0];
-
     assert!(
-        item.label.contains("unnamed workspace"),
-        "a legacy label-less workspace must render a human fallback: {:?}",
-        item.label
-    );
-    assert!(
-        !item.label.contains(uuid),
-        "the fallback must not be the raw UUID: {:?}",
-        item.label
+        app.ac().sessions.resume_selector.is_none(),
+        "legacy workspace-only manifests no longer open /resume selector rows"
     );
 }
 
@@ -452,19 +420,13 @@ async fn workspace_creation_mints_uuid_identity_and_non_empty_label() {
 // ── Decision 5: kitty aliases map to the same actions as Alt primaries ──
 
 #[tokio::test]
-async fn alt_digit_primary_focuses_that_tab() {
+async fn alt_digit_primary_no_longer_focuses_tabs() {
     let mut app = two_tab_app();
     app.handle_key(Key::Alt('2'));
     assert_eq!(
         app.active_tab,
-        TabId(1),
-        "Alt+2 (primary) must focus the second tab"
-    );
-    app.handle_key(Key::Alt('1'));
-    assert_eq!(
-        app.active_tab,
         TabId::MASTER,
-        "Alt+1 (primary) must focus the first tab"
+        "Alt+2 no longer switches tabs"
     );
 }
 
@@ -483,8 +445,8 @@ async fn kitty_ctrl_digit_alias_matches_alt_digit_primary() {
     app.handle_key(key);
     assert_eq!(
         app.active_tab,
-        TabId(1),
-        "kitty Ctrl+2 must perform the same action as Alt+2 (#1466 decision 5)"
+        TabId::MASTER,
+        "kitty Ctrl+2 no longer switches tabs"
     );
     let (key, _) = parse_key(b"\x1b[49;5u").expect("kitty Ctrl+1 parses");
     app.handle_key(key);
@@ -529,8 +491,8 @@ async fn kitty_ctrl_tab_alias_cycles_to_next_tab() {
     app.handle_key(key);
     assert_eq!(
         app.active_tab,
-        TabId(1),
-        "kitty Ctrl+Tab must cycle to the next tab"
+        TabId::MASTER,
+        "kitty Ctrl+Tab no longer cycles tabs"
     );
 }
 
@@ -559,25 +521,16 @@ async fn kitty_ctrl_shift_tab_alias_cycles_to_previous_tab() {
     app.handle_key(key);
     assert_eq!(
         app.active_tab,
-        TabId(2),
-        "kitty Ctrl+Shift+Tab must cycle to the previous tab (wraps)"
+        TabId::MASTER,
+        "kitty Ctrl+Shift+Tab no longer cycles tabs"
     );
 }
 
 // ── Decision 4/5: the tab bar is USER-VISIBLE — indicators render in the frame ──
 
-fn plain_tab_bar(app: &App, width: usize) -> Option<String> {
-    app.render_tab_bar(width)
-        .map(|line| super::app_render_helpers::strip_ansi(&line))
-}
-
 #[tokio::test]
 async fn single_tab_renders_no_tab_bar_and_frame_stays_unchanged() {
     let mut app = headless_app();
-    assert!(
-        app.render_tab_bar(80).is_none(),
-        "a single tab must not render a tab bar"
-    );
     let first = super::app_render_helpers::strip_ansi(&app.compose_frame()[0]);
     let body = first.rsplit('│').next().unwrap_or(&first);
     assert_eq!(
@@ -589,97 +542,12 @@ async fn single_tab_renders_no_tab_bar_and_frame_stays_unchanged() {
 }
 
 #[tokio::test]
-async fn tab_bar_renders_as_first_frame_line_with_number_blocks() {
+async fn multiple_tabs_do_not_render_a_tab_bar() {
     let mut app = two_tab_app();
     let first = super::app_render_helpers::strip_ansi(&app.compose_frame()[0]);
-    // Fix pass #1485: unnamed tabs are bare ' N ' number blocks — no colon,
-    // no default name. The bar is the BODY segment (past any panel divider).
-    let bar = first.rsplit('│').next().unwrap_or(&first);
+    let body = first.rsplit('│').next().unwrap_or(&first);
     assert!(
-        bar.contains(" 1 ") && bar.contains(" 2 "),
-        "with 2+ tabs the first frame line must be the tab bar's number \
-         blocks: {first:?}"
-    );
-    assert!(
-        !bar.contains(':'),
-        "unnamed tabs must not render a ':name' suffix: {first:?}"
-    );
-}
-
-#[tokio::test]
-async fn tab_bar_shows_spinner_for_running_background_turn() {
-    let mut app = two_tab_app();
-    let mut coalescer = super::app_event_loop::StreamRenderCoalescer::default();
-    route_and_render(&mut app, &mut coalescer, 1, Event::AgentStart);
-    let bar = plain_tab_bar(&app, 80).expect("two tabs render a bar");
-    assert!(
-        crate::components::theme::SPINNER_FRAMES
-            .iter()
-            .any(|f| bar.contains(f)),
-        "a tab with a turn in flight must show the spinner in the tab bar: {bar:?}"
-    );
-    assert!(
-        !bar.contains('●'),
-        "spinner and unread dot are mutually exclusive per tab: {bar:?}"
-    );
-}
-
-#[tokio::test]
-async fn tab_bar_shows_unread_dot_after_backgrounded_turn_ends() {
-    let mut app = two_tab_app();
-    let mut coalescer = super::app_event_loop::StreamRenderCoalescer::default();
-    route_and_render(&mut app, &mut coalescer, 1, Event::AgentStart);
-    route_and_render(&mut app, &mut coalescer, 1, agent_end());
-    let bar = plain_tab_bar(&app, 80).expect("two tabs render a bar");
-    assert!(
-        bar.contains('●'),
-        "an unread tab must show the dot in the tab bar: {bar:?}"
-    );
-    assert!(
-        !crate::components::theme::SPINNER_FRAMES
-            .iter()
-            .any(|f| bar.contains(f)),
-        "an ended turn must not leave a spinner in the tab bar: {bar:?}"
-    );
-    // Switching to the tab clears the dot from the rendered bar too.
-    assert!(app.switch_tab(TabId(1)));
-    let bar = plain_tab_bar(&app, 80).expect("two tabs render a bar");
-    assert!(
-        !bar.contains('●'),
-        "viewing the tab must clear its dot from the tab bar: {bar:?}"
-    );
-}
-
-#[tokio::test]
-async fn tab_bar_overflow_scrolls_to_keep_active_tab_visible() {
-    let mut app = headless_app();
-    for i in 1..=8 {
-        app.test_insert_disconnected_tab(i);
-    }
-    // Focus the LAST tab; on a narrow strip the bar must scroll to it.
-    assert!(app.switch_tab(TabId(8)));
-    let bar = plain_tab_bar(&app, 20).expect("bar renders");
-    assert!(
-        bar.contains(" 9 "),
-        "overflow must scroll so the active tab's block stays visible: {bar:?}"
-    );
-    assert!(
-        bar.trim_start().starts_with('‹'),
-        "clipped leading tabs must be marked with ‹: {bar:?}"
-    );
-    // Focus the FIRST tab again: the head is visible, the tail is clipped.
-    assert!(app.switch_tab(TabId::MASTER));
-    let bar = plain_tab_bar(&app, 20).expect("bar renders");
-    assert!(
-        bar.contains(" 1 ") && !bar.trim_start().starts_with('‹'),
-        "with the first tab active the strip anchors left: {bar:?}"
-    );
-    assert!(
-        bar.contains('›'),
-        "clipped trailing tabs must be marked with ›: {bar:?}"
-    );
-    assert!(
-        bar.trim_end().ends_with('+'),
-        "the new-tab button must survive overflow at the end of the bar: {bar:?}"
+        !body.contains(" 1 ") && !body.contains(" 2 "),
+        "tab bar number blocks must not render: {first:?}"
     );
 }

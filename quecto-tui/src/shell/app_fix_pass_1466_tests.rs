@@ -195,7 +195,7 @@ fn hit_midpoint(app: &App, pred: impl Fn(&super::tab_activity::TabBarHit) -> boo
 }
 
 #[test]
-fn clicking_a_tab_block_switches_tabs() {
+fn clicking_a_tab_block_switches_tabs_legacy_disabled() {
     use super::tab_activity::TabBarHit;
     let mut app = two_tab_app();
     assert_eq!(app.active_tab, TabId(0));
@@ -206,13 +206,13 @@ fn clicking_a_tab_block_switches_tabs() {
     app.handle_key(Key::MouseRelease(col, 0));
     assert_eq!(
         app.active_tab,
-        TabId(1),
-        "clicking a tab's number block must focus that tab"
+        TabId(0),
+        "clicking the old tab block location must not focus tabs"
     );
 }
 
 #[test]
-fn clicking_the_plus_button_opens_a_tab() {
+fn clicking_the_plus_button_opens_a_tab_legacy_disabled() {
     use super::tab_activity::TabBarHit;
     let mut app = two_tab_app();
     let col = hit_midpoint(&app, |h| *h == TabBarHit::New);
@@ -220,8 +220,8 @@ fn clicking_the_plus_button_opens_a_tab() {
     app.handle_key(Key::MouseRelease(col, 0));
     assert_eq!(
         app.tabs.len(),
-        3,
-        "clicking the trailing ' + ' button must open a new tab"
+        2,
+        "clicking the old trailing ' + ' location must not open a tab"
     );
 }
 
@@ -280,7 +280,7 @@ fn ctrl_page_keys_parse_to_tab_switch_chords_kitty() {
 }
 
 #[test]
-fn ctrl_page_key_dispatch_cycles_with_direction() {
+fn ctrl_page_key_dispatch_cycles_with_direction_legacy_disabled() {
     // Three tabs so direction is falsifiable: from MASTER, prev wraps to
     // TabId(2) while next lands on TabId(1).
     let mut app = two_tab_app();
@@ -289,15 +289,15 @@ fn ctrl_page_key_dispatch_cycles_with_direction() {
     app.handle_key(prev);
     assert_eq!(
         app.active_tab,
-        TabId(2),
-        "Ctrl+PageUp from the first tab must wrap to the LAST tab (prev)"
+        TabId(0),
+        "Ctrl+PageUp no longer switches tabs"
     );
     let (next, _) = parse_key(b"\x1b[6;5~").expect("Ctrl+PgDn parses");
     app.handle_key(next);
     assert_eq!(
         app.active_tab,
         TabId(0),
-        "Ctrl+PageDown must cycle forward (wraps from last to first)"
+        "Ctrl+PageDown no longer switches tabs"
     );
 }
 
@@ -313,28 +313,23 @@ fn hotkeys_text_presents_ctrl_digit_and_ctrl_page_chords_as_primary() {
         .expect("help status entry")
         .to_string();
     assert!(
-        text.contains("Ctrl+1"),
-        "/hotkeys must present Ctrl+1-9 as the primary tab-focus chord; text={text}"
+        !text.contains("Ctrl+1") && !text.contains("Alt+1"),
+        "/hotkeys must not present removed digit tab-focus chords; text={text}"
     );
     assert!(
-        text.contains("Ctrl+PgUp") || text.contains("Ctrl+PageUp"),
-        "/hotkeys must present Ctrl+PgUp/PgDn as the primary tab-cycle chords; text={text}"
+        !text.contains("Ctrl+PgUp") && !text.contains("Ctrl+PageUp"),
+        "/hotkeys must not present removed previous-tab chords; text={text}"
     );
-    // Primary means FIRST: the Ctrl chords must appear before any Alt
-    // fallback mention for the same actions.
-    let ctrl_pos = text.find("Ctrl+1").expect("Ctrl+1 present");
-    if let Some(alt_pos) = text.find("Alt+1") {
-        assert!(
-            ctrl_pos < alt_pos,
-            "Ctrl+1-9 must be presented BEFORE the Alt+1-9 fallback; text={text}"
-        );
-    }
+    assert!(
+        !text.contains("Ctrl+PgDn") && !text.contains("Ctrl+PageDown"),
+        "/hotkeys must not present removed next-tab chords; text={text}"
+    );
 }
 
 // ── Item 3: /resume recency sort + conversation snippets ─────────────────
 
 #[test]
-fn resume_selector_sorts_workspaces_by_last_active_descending() {
+fn resume_selector_ignores_workspace_sort_rows_after_1596() {
     let mut app = headless_app();
     let dir = tempfile::tempdir().unwrap();
     let mpath = dir.path().join("m.json");
@@ -367,25 +362,14 @@ fn resume_selector_sorts_workspaces_by_last_active_descending() {
     store.store(&mpath).unwrap();
 
     app.open_resume_selector_with_workspaces(Vec::new(), &mpath, None);
-    let sel = app
-        .ac()
-        .sessions
-        .resume_selector
-        .as_ref()
-        .expect("selector");
-    let values: Vec<_> = sel
-        .items_for_tests()
-        .iter()
-        .map(|i| i.value.clone())
-        .collect();
-    assert_eq!(
-        values[0], "workspace:ws-newer",
-        "workspaces must be sorted by last-active descending; got {values:?}"
+    assert!(
+        app.ac().sessions.resume_selector.is_none(),
+        "workspace-only manifests no longer open resume selector rows"
     );
 }
 
 #[test]
-fn resume_selector_shows_per_tab_conversation_snippets() {
+fn resume_selector_ignores_workspace_snippet_rows_after_1596() {
     let mut app = headless_app();
     let dir = tempfile::tempdir().unwrap();
     let mpath = dir.path().join("m.json");
@@ -403,32 +387,14 @@ fn resume_selector_shows_per_tab_conversation_snippets() {
     store.store(&mpath).unwrap();
 
     app.open_resume_selector_with_workspaces(Vec::new(), &mpath, None);
-    let sel = app
-        .ac()
-        .sessions
-        .resume_selector
-        .as_ref()
-        .expect("selector");
-    let rows: Vec<_> = sel
-        .items_for_tests()
-        .iter()
-        .map(|i| {
-            format!(
-                "{} | {}",
-                i.label,
-                i.description.clone().unwrap_or_default()
-            )
-        })
-        .collect();
     assert!(
-        rows.iter().any(|r| r.contains("fix the auth bug")),
-        "workspace rows must show a chat-context snippet per tab, not just \
-         label + tab count; rows={rows:?}"
+        app.ac().sessions.resume_selector.is_none(),
+        "workspace-only manifests no longer open resume selector rows"
     );
 }
 
 #[test]
-fn resume_selector_shows_relative_last_active_time_per_workspace_row() {
+fn resume_selector_ignores_workspace_age_rows_after_1596() {
     let mut app = headless_app();
     let dir = tempfile::tempdir().unwrap();
     let mpath = dir.path().join("m.json");
@@ -449,20 +415,9 @@ fn resume_selector_shows_relative_last_active_time_per_workspace_row() {
     store.store(&mpath).unwrap();
 
     app.open_resume_selector_with_workspaces(Vec::new(), &mpath, None);
-    let sel = app
-        .ac()
-        .sessions
-        .resume_selector
-        .as_ref()
-        .expect("selector");
-    let rows: Vec<_> = sel
-        .items_for_tests()
-        .iter()
-        .map(|i| i.description.clone().unwrap_or_default())
-        .collect();
     assert!(
-        rows.iter().any(|r| r.contains("2h ago")),
-        "workspace rows must show a human-relative last-active time; rows={rows:?}"
+        app.ac().sessions.resume_selector.is_none(),
+        "workspace-only manifests no longer open resume selector rows"
     );
 }
 

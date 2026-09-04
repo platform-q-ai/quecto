@@ -2,12 +2,12 @@
 Feature: Repository documentation
   As a maintainer
   I want committed documentation to match the current workspace state
-  So that users see current version, packaging, and license information without obsolete planning artifacts
+  So that users see current packaging and license information without obsolete planning artifacts
 
   @docs
-  Scenario: README documents current release metadata and private license
+  Scenario: README documents release metadata and private license without a pinned version
     When I read the repository file "README.md"
-    Then the output should describe the current package version
+    Then the output should not contain "Current version:"
     And the output should contain "## License"
     And the output should contain "LicenseRef-Proprietary"
     And the output should contain "private repository"

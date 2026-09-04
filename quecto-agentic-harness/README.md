@@ -4,10 +4,6 @@ Quecto is a Rust workspace centred on a lightweight personal AI assistant. The m
 
 The workspace also includes companion binaries for terminal UI access (`quecto-tui`), HTTP/WebSocket gateway access (`quecto-api`), MCP tool bridging (`quecto-mcp`), and managed runtime orchestration (`quecto-runtime-manager`). Quecto runs on a VPS, small Linux host, or container with no non-Rust application runtime.
 
-## Release Notes
-
-Current version: **0.106.6**.
-
 ## Quick Start
 
 ```bash
@@ -727,7 +723,7 @@ Pure-move refactors (for example file extractions, renames, or byte-identical mo
 6 - Implement code (GREEN)
 7 - Refactor (perf, security, clean arch)
 8 - Ensure tests still pass (GREEN)
-9 - Bump semver for every changed crate and sync version docs
+9 - Bump semver for every changed crate and sync crate-specific version assertions
 10 - Commit
 11 - Push through the fast pre-push gate
 12 - Create PR
@@ -862,6 +858,10 @@ Human guides (full reference). The agent `docs` tool embeds a short **operating 
 | [Models & providers](docs/runtime-models-providers.md) | `models.json` registry and provider setup |
 | [Container runtimes](../docs/container-runtimes.md) | Script-managed subagent environments: the `container_configs` contract and the canonical reference runtime |
 | [Contributor Cookbooks](docs/contributor-cookbooks.md) | Change maps for common harness work: tools, UDS commands, providers, events, persistence, subagents, and context policy |
+
+## Contributing
+
+For contribution requirements, follow the root [`CONTRIBUTIONS.md`](../CONTRIBUTIONS.md). Before requesting review, run the built-in Quecto workflow through at least two complete adversarial-review loops on your change and include the workflow evidence in the PR description.
 
 ## Tech stack
 Rust 2024, Tokio, reqwest+rustls, serde/serde_json, uuid, tracing, dirs, thiserror, similar, base64, sha2, rand, urlencoding, macOS unicode-normalization. Dev: cucumber 0.21, futures, tempfile, wiremock 0.6, regex.

@@ -84,7 +84,7 @@ As conversations grow, the agent manages context automatically:
 
 The agent tracks estimated token usage against an application-level context
 budget. When the conversation exceeds `max_context_tokens` (configurable,
-default `300000`), the agent applies context pruning:
+default `200000`), the agent applies context pruning:
 
 1. **Spilling at creation**: Tool outputs *and* conversation (user/assistant)
    messages are written to a spill file when they are created, so anything
@@ -186,7 +186,7 @@ Session behavior is configured in `config.json` under `agents.defaults`:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `max_context_tokens` | `300000` | Application-level token budget before context pruning (clamped down to the model's declared context window when known) |
+| `max_context_tokens` | `200000` | Application-level token budget before context pruning (clamped down to the model's declared context window when known) |
 | `context_collapse_after_tool_calls` | `50` | Collapse the oldest tool outputs once the session exceeds N tool calls. Set to `4294967295` (`u32::MAX`) to disable |
 | `context_collapse_after_messages` | `50` | Collapse the oldest conversation (user/assistant) messages to recall stubs once the session exceeds N live messages. Set to `4294967295` (`u32::MAX`) to disable |
 | `pin_recent_turns` | `2` | How many most-recent turns the context ceiling never demotes or drops |

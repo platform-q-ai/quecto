@@ -1,12 +1,7 @@
 @tui @done @multi-tab-round2
-Feature: Multi-session TUI round-2 fix pass (#1466 / PR #1485 field regressions)
-  As a TUI user who re-tested PR #1485 in the field
-  I want the header line gone, a terminal-safe new-tab chord,
-  and user sends to restored sub-agents delivered
-  So that the multi-tab TUI is clean and messaging never dead-ends
-
-  # Item 1 — the version/help header line is dropped, replaced by a blank
-  # spacer so the tab bar and Master status line keep breathing room.
+Feature: Removed multi-session TUI round-2 affordances (#1596)
+  As a TUI user
+  I keep single-session behavior while old tab shortcuts are gone
 
   Scenario: The frame renders no version header line
     Given a headless TUI
@@ -19,22 +14,16 @@ Feature: Multi-session TUI round-2 fix pass (#1466 / PR #1485 field regressions)
     When the frame renders
     Then the frame height equals the terminal height
 
-  Scenario: The blank spacer follows the tab bar with multiple tabs
+  Scenario: Multiple seeded tabs still do not render a tab bar
     Given a TUI with a second background tab
     When the frame renders
-    Then the first frame line is the tab bar
-    And the second frame line is a blank spacer
+    Then the first frame line is a blank spacer
     And the frame height equals the terminal height
 
-  # Item 2 — new-tab chord. Ctrl+T is already the tool-policy selector, so
-  # the next best terminal-safe plain-control chord is Ctrl+N (0x0E — arrives
-  # unmodified in every terminal and tmux; only Ctrl+SHIFT+N is taken).
-
-  Scenario: Ctrl+N opens a new tab
+  Scenario: Ctrl+N no longer opens a new tab
     Given a headless TUI
     When the user presses Ctrl+N
-    Then a second tab is open
-    And the new tab is the active tab
+    Then still only one tab is open
 
   Scenario: Ctrl+T still opens the tool policy selector
     Given a headless TUI
@@ -42,13 +31,10 @@ Feature: Multi-session TUI round-2 fix pass (#1466 / PR #1485 field regressions)
     Then the tool policy selector is open
     And still only one tab is open
 
-  Scenario: /hotkeys documents the new-tab chord
+  Scenario: /hotkeys does not document the old new-tab chord
     Given a headless TUI
     When the user runs /hotkeys
-    Then the help text lists Ctrl+N as the new-tab chord
-
-  # Item 3 — user sends to restored sub-agents must reach the child, the
-  # same way master-driven messaging does, instead of erroring "not attached".
+    Then the help text omits Ctrl+N as the new-tab chord
 
   Scenario: A user message to a live restored sub-agent is delivered
     Given a running sub-agent restored from a resumed workspace is focused

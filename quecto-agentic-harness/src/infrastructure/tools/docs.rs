@@ -37,6 +37,14 @@ const EMBEDDED_DOCS: &[(&str, &str)] = &[
         include_str!("../../../docs/docs-tool-embeds/workflow.md"),
     ),
     (
+        "context",
+        include_str!("../../../docs/docs-tool-embeds/context.md"),
+    ),
+    (
+        "extending",
+        include_str!("../../../docs/docs-tool-embeds/extending.md"),
+    ),
+    (
         "extensions",
         include_str!("../../../docs/docs-tool-embeds/extensions.md"),
     ),

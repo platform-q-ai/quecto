@@ -42,9 +42,9 @@
     },
     {
       "key": "version_bump",
-      "label": "Bump semver for every changed crate and sync version docs",
+      "label": "Bump semver for every changed crate and sync crate-specific version assertions",
       "phase": "ci_cd",
-      "guidance": "Bump the semver of every crate whose source changed in this PR before committing, so the bump goes through the same gate as the code. Determine which crates you actually modified (e.g. `git diff --name-only master...HEAD` plus unstaged changes) and bump the PATCH version in each such crate's Cargo.toml. Do NOT bump crates you did not change. Keep version docs in lockstep: for the `quecto` kernel, update the README.md 'Current version: **x.y.z**' line and the matching assertion in `quecto-agentic-harness/tests/features/repo_docs.feature`; for `quecto-tui`, its Cargo.toml and any TUI version assertion; for any other crate, whatever doc or test pins its version. Done when every changed crate's Cargo.toml and its version docs show the new, matching version and no unchanged crate was bumped."
+      "guidance": "Bump the semver of every crate whose source changed in this PR before committing, so the bump goes through the same gate as the code. Determine which crates you actually modified (e.g. `git diff --name-only master...HEAD` plus unstaged changes) and bump the PATCH version in each such crate's Cargo.toml. Do NOT bump crates you did not change. Keep crate-specific version assertions in lockstep by updating any non-README test or package-specific doc that pins each changed crate's version; do not add or update README version lines. Done when every changed crate's Cargo.toml and any crate-specific version assertions show the new, matching version and no unchanged crate was bumped."
     },
     {
       "key": "commit",
