@@ -101,6 +101,7 @@ fn then_no_frame_after_settle(world: &mut TuiWorld) {
 
 #[given("the background tab is marked unread")]
 #[then("the background tab is marked unread")]
+#[then("the background tab remains marked unread")]
 fn then_background_unread(world: &mut TuiWorld) {
     with_harness(world, |h| {
         assert!(
@@ -276,6 +277,15 @@ fn given_gc_has_run(world: &mut TuiWorld) {
     // (`gc_orphaned_removes_workspaces_with_no_sessions_and_no_registry_rows`);
     // this scenario asserts only the observable resume behaviour.
     let _removed = TuiHarness::gc_orphaned_workspaces(&path);
+}
+
+#[then("the resume selector is not open")]
+fn then_resume_selector_not_open(world: &mut TuiWorld) {
+    assert!(
+        world.stdout.trim().is_empty(),
+        "workspace-only manifests must not produce resume rows; rows:\n{}",
+        world.stdout
+    );
 }
 
 #[then("the orphaned workspace is not offered for resume")]
