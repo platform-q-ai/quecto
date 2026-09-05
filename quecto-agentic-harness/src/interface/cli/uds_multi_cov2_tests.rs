@@ -318,6 +318,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         DispatchLoopArgs {
             cmd_rx,
             persist: false,
+            shutdown: super::super::uds_shutdown::ShutdownRequest::for_tests().0,
         },
         &live,
     )

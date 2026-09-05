@@ -2,7 +2,11 @@
 //! its PID/PGID cannot be recycled while we signal the group. Linux descendants
 //! in other groups are pinned and signalled individually, never by guessed PGID.
 
-pub const TERMINATE_GRACE_MS: u64 = 200;
+/// SIGTERM-to-SIGKILL window. The harness tears down its subagents and
+/// container environments on SIGTERM (running each environment's kill
+/// script, which can take on the order of a second per environment), so the
+/// window must cover that work; it ends early once the tree has exited.
+pub const TERMINATE_GRACE_MS: u64 = 1500;
 const TERMINATE_POLL_TICK_MS: u64 = 10;
 
 #[cfg(target_os = "linux")]
@@ -87,6 +91,23 @@ pub async fn terminate_child(child: &mut tokio::process::Child, grace_ms: u64) -
     .await
 }
 
+/// The unreaped leader has exited and (on Linux) so has every observed
+/// descendant. Without the descendant verifier, leader exit is all we can see.
+fn tree_exited(pid: i32, #[cfg(target_os = "linux")] owned: &OwnedProcesses) -> bool {
+    let Ok(pid) = u32::try_from(pid) else {
+        return false;
+    };
+    let leader_exited = matches!(observed_exit(pid), Ok(Some(_)));
+    #[cfg(target_os = "linux")]
+    {
+        leader_exited && owned.all_exited()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        leader_exited
+    }
+}
+
 pub(crate) async fn terminate_owned(
     child: &mut tokio::process::Child,
     grace_ms: u64,
@@ -104,6 +125,16 @@ pub(crate) async fn terminate_owned(
     while tokio::time::Instant::now() < deadline {
         #[cfg(target_os = "linux")]
         owned.refresh();
+        // Leader exit alone is not proof of cleanup (#1608), but leader exit
+        // plus every owned descendant exited is: stop waiting out the grace
+        // and go straight to the (now no-op) escalation and verification.
+        if tree_exited(
+            pid,
+            #[cfg(target_os = "linux")]
+            owned,
+        ) {
+            break;
+        }
         tokio::time::sleep(std::time::Duration::from_millis(TERMINATE_POLL_TICK_MS)).await;
     }
     // No try_wait before this signal: even an exited leader still pins its PGID.

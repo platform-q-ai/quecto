@@ -197,6 +197,12 @@ TUI-owned agents and their owned children. Resuming restores transcript history;
 it does **not** recreate killed children as operational agent-panel rows. Old spawn
 and tool messages remain history, not evidence that their processes are alive.
 
+Container environments are outside the TUI's process group, so their teardown
+is the harness's job: on the exit signal it runs every environment's retained
+kill before it exits, so container agents do not outlive the session either.
+The SIGTERM-to-SIGKILL window is 1.5 seconds to cover that work, and it ends
+as soon as the leader and every owned descendant have exited.
+
 Use `--detach-on-exit` to leave owned agents running (`--kill-on-exit` is the
 default). Externally attached agents are not killed merely because this TUI exits.
 Reconnecting to a running harness uses its live registry. Recovery in a new harness
