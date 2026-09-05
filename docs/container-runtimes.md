@@ -396,6 +396,12 @@ Design properties:
   the child as the host uid/gid and, under Podman, adds `--userns=keep-id`
   so the identity-mounted paths keep their ownership inside the container.
   The `metadata.runtime` field reports whichever CLI was used.
+- **A real init at PID 1.** `create.sh` passes `--init` so a minimal init
+  (catatonit under Podman, tini under Docker) reaps orphaned grandchildren
+  and forwards signals. Without it the child is PID 1 itself: nested agents
+  whose parent exited accumulate as zombies, and `stop` hangs until the
+  SIGKILL escalation because PID 1 ignores an unhandled SIGTERM. The child
+  remains the container's liveness; the init exits when the child does.
 - **One container per environment, child as PID 1.** `create.sh` starts the
   child as the container's main process, so Docker's view of the container is
   exactly the child's liveness; `exec.sh` joins later members with
