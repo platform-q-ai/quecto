@@ -446,7 +446,7 @@ Backward compatibility: an inline step that already has `key`, `label`, and `pha
 | Field | Type | Description |
 |-------|------|-------------|
 | `commands` | array | Bash command patterns to block (e.g. `"git commit"`, `"git push"`) |
-| `before_step_key` | string | Block until all steps before this key are done |
+| `before_step_key` | string | Block until all steps strictly before this key are done (checked or skipped); the named step itself is not required |
 | `message` | string | Error shown when a blocked command is attempted |
 
 ### Validation rules
@@ -495,7 +495,7 @@ itself through incomplete steps while workflow progress advances.
 
 ### Complete mode
 
-All steps in the template are checked. If `completion_nudge` is enabled, the
+All steps in the template are done (checked or skipped). If `completion_nudge` is enabled, the
 core agent runtime nudges the agent to close the current issue and begin a new
 cycle.
 
@@ -524,7 +524,7 @@ Available actions:
 | `list_templates` | Show available templates with descriptions and when-to-use guidance |
 | `select_template` | Activate a template and start a new run |
 | `check` | Mark a step as done (enforces ordering) |
-| `uncheck` | Unmark a step |
+| `uncheck` | Clear only the specified step's done flag; later steps remain unchanged |
 | `skip` | Mark a step as done without ordering enforcement |
 | `reset` | Return to selector mode |
 | `set_issue` | Record the active GitHub issue |
@@ -548,6 +548,17 @@ previously set issue.
 ```
 
 Both integer and string-encoded step numbers are accepted. Steps are 1-indexed.
+
+- `check` requires every earlier step to be done; `skip` sets the same done flag
+  without checking ordering. There is no separate skipped status: skipped steps
+  count as done for completion and guard prerequisites.
+- `uncheck` clears only that step, not later done flags. The current step is
+  always the first unfinished step, so unchecking can move it backwards.
+- Status, handoffs, and snapshots show progress through the current step only:
+  later done flags (from out-of-order skips or unchecking an earlier step) remain
+  stored but are hidden from visible progress until the earlier gaps are closed.
+- `check` and `skip` return the next/current unfinished step's guidance;
+  `uncheck` returns the current step's guidance.
 
 ## System prompt injection
 
@@ -581,7 +592,21 @@ Run workflow(action='status') to see current progress.
 ```
 
 Guards only evaluate the **active template's** rules. Switching templates
-changes which guards are active. Non-bash tools are never blocked.
+changes which guards are active. Non-bash tools are never blocked. Before a
+template is selected, enabled bash guards block all bash calls.
+
+`workflow(action="check_guards", command="git commit -m example")` is a
+read-only preflight: `command` is required and is not executed. An active
+template is required even when guards are disabled. It evaluates only rules
+whose command patterns match the supplied bash command, using the same matcher
+as bash interception, not every rule in the template. With an active template,
+disabled guards, no rules, or no matching rules yield success. Success is not
+workflow completion or permission to bypass other checks.
+
+For each matching rule, every step strictly before `before_step_key` must be
+done; the named step itself need not be. Skipped steps satisfy prerequisites.
+The `message` is diagnostic text, not an additional prohibition: even wording
+such as "never merge" does not block once the rule's prerequisites are done.
 
 > **Note:** Guards are a developer convenience, not a security boundary.
 > Any user with config access can modify or remove guard rules.
@@ -781,4 +806,6 @@ quecto agent --mode uds --workflow -s my-session
 
 Simply omit `--workflow-guards`. The agent tracks progress and injects prompt
 state once workflow prompting is active, but no bash commands are intercepted. Templates may still define guard
-rules in their config — they are simply not enforced at runtime.
+rules in their config — neither bash interception nor explicit `check_guards`
+preflight enforces them while guards are disabled (preflight still requires an
+active template and `command`).

@@ -2,6 +2,8 @@
 
 You already have `spawn` and `agent_cmd` tool schemas — use those for parameters and command enums. This page is coordination only.
 
+Save the UUID returned by `spawn` and use it as `agent_cmd.agent_id` for every child-targeted command. Spawn labels are UI-only; `"*"` is for inventory/container commands.
+
 ## Required completion sequence
 
 1. **Spawn** — returns when the socket is ready, not when work finishes.
@@ -9,6 +11,10 @@ You already have `spawn` and `agent_cmd` tool schemas — use those for paramete
 3. **Next turn** — passive one-line completion note arrives automatically.
 4. **Plain `get_messages`** (omit/null `count` and `before`) — the note is **not** the report.
 5. Synthesize for the user; `get_subagents_all` only for inventory/cleanup afterward.
+
+## Report semantics
+
+First bare `get_messages` (omit/null `count` and `before`) returns the latest substantive assistant message, not the entire transcript. Subsequent bare calls return unread deltas across roles; when nothing new is available, `data` is `{ "unchanged": true }`. The report cursor advances only when the result is successfully delivered to the parent model, not merely fetched. Explicit non-null `count` and/or `before` requests are cursor-neutral history pages; `before` pages backward. Reports are bounded; a busy snapshot can lag the active turn.
 
 ## Defaults
 
@@ -20,7 +26,7 @@ You already have `spawn` and `agent_cmd` tool schemas — use those for paramete
 
 ## Reuse
 
-- Live idle child → `prompt`. Active → `steer` or `follow_up`. `agent_id` is only a display label: the same label after exit starts a fresh hidden UUID / clean session, not a resume.
+- Live idle child → `prompt`. Active → `steer` or `follow_up`. Use the child’s returned UUID, not its UI label.
 
 ## Container spawning (named container configs)
 

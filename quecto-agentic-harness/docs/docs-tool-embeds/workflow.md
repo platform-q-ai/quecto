@@ -16,6 +16,8 @@ You already have the `workflow` tool schema (actions, params). This page is when
 ## Runtime notes
 
 - Workflow **state is not** rewritten into the system prompt every step (cache-friendly). State arrives via tool results and idle nudges.
+- `check` requires earlier steps done; `skip` sets the same done flag without ordering checks and satisfies guard prerequisites. `uncheck` clears only that step, leaving later flags intact. The current step is the first unfinished step; visible progress hides later done flags until earlier gaps close.
+- `check_guards` requires an active template and `command`; it is a read-only preflight, not command execution. Only matching active-template rules are evaluated. Disabled guards or no matching rules succeed. Each rule requires steps strictly before `before_step_key`, not the named step; `message` is diagnostic, not an extra prohibition.
 - Guards are a convenience, not a security boundary.
 - Session persistence keeps template/progress/issue across restarts when sessions are enabled.
 

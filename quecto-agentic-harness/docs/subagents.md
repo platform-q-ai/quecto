@@ -120,7 +120,7 @@ redundant work:
 - use `follow_up` to queue related work after its current run;
 - use `steer` to interrupt and redirect active work;
 - spawn a new child for a new independent scope;
-- after a child has exited, deliberately reusing the same `agent_id` display label starts a fresh child session under a new hidden identity; use `get_messages` before cleanup if you need the previous result.
+- retrieve needed results with `get_messages` before cleanup.
 
 Do not reuse stale child context merely to avoid a new session; use it only
 when its prior context is relevant and safe for the new assignment.
@@ -132,7 +132,7 @@ Completion is **multi-turn**. The `agent_cmd await` command has been removed; us
 
 #### Required sequence
 
-1. **Spawn** (and brief the child). Returns immediately.
+1. **Spawn** (and brief the child). Save the returned UUID for every child-targeted `agent_cmd` call; the spawn `agent_id` is a UI label only.
 2. **End this parent turn** (or do other *non-duplicative* work that does not need
    the child’s answer). Stay available to the user.
 3. **Next turn:** a passive one-line completion note arrives automatically when
@@ -179,7 +179,7 @@ process in UDS mode (`--mode uds --persist`). The child process:
 
 - Uses the same quecto binary (`std::env::current_exe()`)
 - Inherits the parent's `QUECTO_BASE_DIR` (config, credentials, sessions)
-- Gets its own hidden session identity minted per spawn; `agent_id` remains the display label used by parent tools for live subagents
+- Gets its own UUID minted per spawn and returned to the parent; use that UUID as `agent_cmd.agent_id`, not the spawn display label
 - Listens on a Unix domain socket for commands
 - Runs in the background — the parent is **not blocked**
 
@@ -200,7 +200,7 @@ connects to the child's UDS socket directly from Rust.
     },
     "agent_id": {
       "type": "string",
-      "description": "Display label for the subagent (used to address live subagents via agent_cmd)"
+      "description": "Optional UI display label; use the UUID returned by spawn for agent_cmd"
     },
     "system": {
       "type": "string",
@@ -239,7 +239,7 @@ connects to the child's UDS socket directly from Rust.
 ```
 
 - **`task` is optional.** Omitting it creates an idle agent ready for prompts via `agent_cmd`.
-- **`agent_id`** is a display label and must be unique among live subagents. Spawning with an already-live label returns an error; reusing it after exit starts a fresh hidden identity.
+- **`agent_id`** on `spawn` is a UI display label and must be unique among live subagents. Save the returned UUID and use it for all child-targeted `agent_cmd` calls.
 - Returns immediately (< 1 second) after the child's socket is ready.
 - **`workflow_spec` vs `workflow`.** `workflow: true` makes the workflow tool available so the *child* picks a template; `workflow_spec` hands the child a specific template **by value** and binds it. They are independent of `config`, which supplies the child's runtime (providers/model/default template library).
 - **`model` (optional).** Sets the child's model at launch — accepts either a full `provider/model` string (e.g. `openai-api/gpt-5.5`) or a `provider` + `model_id` pair, the same format(s) as `agent_cmd set_model` (and validated by the same logic). It is forwarded to the child as `--model`, so the child's **first turn** (if `task` is given) already runs on the chosen model — no follow-up `set_model` round-trip needed. **Precedence:** an explicit `model` arg wins over any model from a forwarded `--config`, which wins over the built-in default. An invalid combination (e.g. `provider` without `model_id`) is a clear spawn error rather than a silent fall-back to the default.
@@ -360,10 +360,13 @@ reports progress without polling:
 - in the TUI, the selected child renders its own workflow status bar.
 
 Read the child's final result the usual way — its one-line auto-note at your next
-idle turn, then `agent_cmd get_messages` for the full
-output (see [Notification model](#notification-model)).
+idle turn, then `agent_cmd get_messages` for the bounded report (see [Notification model](#notification-model)).
 
 ### `agent_cmd` — interact with a subagent
+
+Always target the UUID returned by `spawn`, never its UI display label (except `"*"` for inventory/container commands).
+
+First bare `get_messages` (omit/null `count` and `before`) returns the latest substantive assistant message, not the entire transcript. Subsequent bare calls return unread deltas across roles; when nothing new is available, `data` is `{ "unchanged": true }`. The report cursor advances only when the result is successfully delivered to the parent model, not merely fetched. Explicit non-null `count` and/or `before` requests are cursor-neutral history pages; `before` pages backward. Reports are bounded; a busy snapshot can lag the active turn.
 
 ```json
 {
@@ -371,12 +374,12 @@ output (see [Notification model](#notification-model)).
   "properties": {
     "agent_id": {
       "type": "string",
-      "description": "Display label of a live spawned subagent"
+      "description": "UUID returned by spawn; use * for inventory/container commands"
     },
     "command": {
       "type": "string",
       "enum": ["prompt", "steer", "follow_up", "abort", "kill",
-               "get_state", "get_messages", "get_message",
+               "get_state", "get_messages",
                "get_session_stats", "get_subagents", "get_subagents_all",
                "get_containers", "kill_container",
                "set_model", "set_effort", "clear_history"],
@@ -397,22 +400,6 @@ output (see [Notification model](#notification-model)).
     "since": {
       "type": "integer",
       "description": "Generation cursor for get_state/get_subagents; unchanged state returns only metadata"
-    },
-    "messageId": {
-      "type": "string",
-      "description": "Message id for get_message"
-    },
-    "offset": {
-      "type": "integer",
-      "description": "Byte offset for get_message"
-    },
-    "limit": {
-      "type": "integer",
-      "description": "Byte limit for get_message"
-    },
-    "toolCallId": {
-      "type": "string",
-      "description": "Tool-call id for get_message"
     },
     "model": {
       "type": "string",
@@ -454,8 +441,7 @@ output (see [Notification model](#notification-model)).
 | `abort` | Full stop: cancel the current run, kill in-flight tool/child processes, and suppress workflow auto-continue (does not resume) | No |
 | `kill` | Terminate the subagent process (SIGTERM) | No |
 | `get_state` | Inspect live/in-flight supervision state: slim state/effort/model/progress, generation cursor, and selected workflow identity/current step. Pass `since` for an unchanged marker | No |
-| `get_messages` | Default report mode: omit/null `count` and `before` after the completion note to receive the unread report. Explicit `count` and/or `before` requests cursor-neutral history pages; `before` pages older history. A busy snapshot can lag the active turn | No |
-| `get_message` | Retrieve one message or tool-call body, optionally paged with `offset`/`limit` | No |
+| `get_messages` | Default report mode: omit/null `count` and `before`; first call returns the latest substantive assistant message, subsequent calls return unread deltas, or `unchanged` if none. The cursor advances on successful delivery to the parent model. Explicit `count` and/or `before` requests cursor-neutral history pages; `before` pages older history. A busy snapshot can lag the active turn | No |
 | `get_session_stats` | Get token usage and cost | No |
 | `get_subagents` | List nested subagents spawned by the targeted live subagent; not parent/session-wide inventory | No |
 | `get_subagents_all` | With `agent_id: "*"`, list parent/session-wide subagent inventory for cleanup/inspection | No |
@@ -470,19 +456,19 @@ Tool catalogue commands (`get_tool_catalogue` / `list_tools`) remain available o
 **Examples:**
 
 ```json
-{"name": "agent_cmd", "arguments": {"agent_id": "security-reviewer", "command": "get_state"}}
+{"name": "agent_cmd", "arguments": {"agent_id": "<uuid-returned-by-spawn>", "command": "get_state"}}
 ```
 
 ```json
-{"name": "agent_cmd", "arguments": {"agent_id": "security-reviewer", "command": "get_messages"}}
+{"name": "agent_cmd", "arguments": {"agent_id": "<uuid-returned-by-spawn>", "command": "get_messages"}}
 ```
 
 ```json
-{"name": "agent_cmd", "arguments": {"agent_id": "security-reviewer", "command": "steer", "message": "Focus on auth vulnerabilities only"}}
+{"name": "agent_cmd", "arguments": {"agent_id": "<uuid-returned-by-spawn>", "command": "steer", "message": "Focus on auth vulnerabilities only"}}
 ```
 
 ```json
-{"name": "agent_cmd", "arguments": {"agent_id": "security-reviewer", "command": "set_effort", "effort": "high"}}
+{"name": "agent_cmd", "arguments": {"agent_id": "<uuid-returned-by-spawn>", "command": "set_effort", "effort": "high"}}
 ```
 
 ## Notification model
@@ -536,11 +522,12 @@ commands in a loop waiting for completion.
 // 1. Spawn — returns when the child socket is ready, not when work is done.
 {"name": "spawn", "arguments": {"agent_id": "worker", "task": "do the thing"}}
 
+// Save the UUID returned by spawn; the placeholder below means that exact UUID.
 // 2. End the parent turn or do independent work. At the next idle turn you receive:
 //    Agent 'worker' completed and is ready for inspection
 
 // 3. Inspect the unread report when the note tells you the child is done.
-{"name": "agent_cmd", "arguments": {"agent_id": "worker", "command": "get_messages"}}
+{"name": "agent_cmd", "arguments": {"agent_id": "<uuid-returned-by-spawn>", "command": "get_messages"}}
 ```
 
 **Common mistake:** treating the one-line note as the child's result. Always
@@ -580,12 +567,11 @@ Each subagent gets its own session, persisted under `<base_dir>/sessions/`.
 
 - **Default display label**: `subagent` (if no `agent_id` is provided)
 - **Custom display label**: The `agent_id` value is a user-facing label, not durable identity
-- **Hidden session identity**: each spawn mints a fresh hidden UUID used for the child session, registry, socket bookkeeping, and monitor/reaper keys
-- Reusing a display label after the previous child exits starts a clean session under a new hidden identity
+- **Session UUID**: each spawn mints and returns a UUID used for `agent_cmd` targeting, the child session, registry, socket bookkeeping, and monitor/reaper keys
 
-### Session name validation
+### Display label validation
 
-Agent IDs must contain only alphanumeric characters, hyphens, and underscores
+Spawn display labels must contain only alphanumeric characters, hyphens, and underscores
 (`[a-zA-Z0-9_-]`, 1–64 characters). The following are rejected:
 
 - Path traversal attempts (`../../tmp/evil`)
@@ -613,7 +599,7 @@ that need to restrict which subagents can be spawned.
 1. `spawn` launches the child with `quecto agent --mode uds --socket <path> --persist`
 2. Polls for socket readiness (100ms intervals, 10s timeout)
 3. If the socket does not become ready, the child is killed and an error is returned
-4. Registers the child in the shared `SubagentRegistry` by hidden UUID while retaining `agent_id` as the display label
+4. Registers the child in the shared `SubagentRegistry` by UUID while retaining `agent_id` as the display label
 5. If `task` was provided, sends it as the initial `prompt` via UDS (fire-and-forget)
 
 ### Running
@@ -693,16 +679,16 @@ Parent Agent Process
   │     ├── Rejects if the display label is already live
   │     ├── Launches: quecto agent --mode uds --socket <path> --persist
   │     ├── Polls for socket readiness (up to 10s)
-  │     ├── Registers in SubagentRegistry (hidden UUID → socket_path + PID + display label)
+  │     ├── Registers in SubagentRegistry (UUID → socket_path + PID + display label)
   │     ├── Sends initial task as UDS prompt (if provided)
   │     ├── Spawns background reaper task
-  │     └── Returns immediately: "Subagent 'reviewer' is running."
+  │     └── Returns immediately with the child UUID (uuid=<reviewer-uuid>)
   │
-  ├── LLM calls agent_cmd(agent_id="reviewer", command="get_state")
+  ├── LLM calls agent_cmd(agent_id="<reviewer-uuid>", command="get_state")
   │
   ├── AgentCmdTool::execute()
   │     ├── Validates agent_id format
-  │     ├── Resolves the live display label to a hidden UUID registry entry
+  │     ├── Looks up the returned UUID in the registry
   │     ├── Connects to UDS socket
   │     ├── Sends JSON command, reads response (300s timeout)
   │     └── Returns structured response to LLM
@@ -725,8 +711,8 @@ Parent Agent Process
    environments where external tools may not be available.
 
 3. **Shared registry**: `SubagentRegistry` (`Arc<Mutex<HashMap>>`) maps
-   hidden UUID to socket path + PID + display label. Shared between `spawn` and
-   `agent_cmd` via `Arc`; `agent_cmd` resolves live display labels through the
+   UUID to socket path + PID + display label. Shared between `spawn` and
+   `agent_cmd` via `Arc`; `agent_cmd` uses the returned UUID to locate the child in the
    registry before connecting. Entries are auto-removed when children exit.
 
 4. **Process isolation**: Each subagent is a separate OS process. There is no
@@ -744,7 +730,8 @@ Parent Agent Process
 ### Parallel code review (prefer passive notes)
 
 Spawn multiple reviewers with distinct ownership; prefer passive completion
-notes so the parent stays available:
+notes so the parent stays available. In all examples below, save each spawn
+result UUID and use it (not the label) for every child-targeted command:
 
 ```
 "Spawn three read_only subagents for parallel review (distinct dimensions):
@@ -754,7 +741,7 @@ notes so the parent stays available:
 
 Continue useful non-duplicative parent work. When each one-line completion note
 arrives, read that child's report:
-  agent_cmd(agent_id='…', command='get_messages')
+  agent_cmd(agent_id='<uuid-returned-by-spawn>', command='get_messages')
 
 Synthesize, dedupe, and judge before answering the user. Prefer passive notes; yield the turn if a
 verdict must gate the next action in the same turn."
@@ -795,15 +782,16 @@ researcher finishes; then read the report with agent_cmd get_messages."
 ```
 "Spawn agent_id='helper' with no task (starts idle).
 Later, when I need help:
-  agent_cmd(agent_id='helper', command='prompt', message='Explain this function...')
-  agent_cmd(agent_id='helper', command='get_messages')"
+  agent_cmd(agent_id='<uuid-returned-by-spawn>', command='prompt', message='Explain this function...')
+Wait for the passive completion note, then:
+  agent_cmd(agent_id='<uuid-returned-by-spawn>', command='get_messages')"
 ```
 
 ### Steering a running agent
 
 ```
 "The security reviewer is taking too long on low-priority files.
-  agent_cmd(agent_id='security-review', command='steer', message='Skip test files, focus on src/auth/ only')
+  agent_cmd(agent_id='<uuid-returned-by-spawn>', command='steer', message='Skip test files, focus on src/auth/ only')
 "
 ```
 
@@ -818,7 +806,7 @@ The three control verbs stay distinct — `follow_up` = queue, `steer` = redirec
 
 ```
 "The researcher seems stuck.
-  agent_cmd(agent_id='researcher', command='abort')
+  agent_cmd(agent_id='<uuid-returned-by-spawn>', command='abort')
 "
 ```
 
