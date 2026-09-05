@@ -143,7 +143,11 @@ Feature: Shared script-managed environments
     Then the script-managed runtime should have killed an environment exactly 1 time
     And the container listing should include "C1" with status "stopped" and 0 members
 
-  @done @container-env
+  # @serial: the listing must be observed inside the spawn's 10s readiness
+  # window. Cucumber interleaves scenarios cooperatively, so a co-scheduled
+  # step that blocks the executor (e.g. a spawn waiting out its readiness
+  # timeout) would otherwise push this scenario's next step past the window.
+  @done @container-env @serial
   Scenario: A created environment lists as empty until its first member registers
     Given shared script-managed subagent spawning is available
     When I start spawning subagent "env-empty-slice2" into a gated new environment

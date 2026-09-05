@@ -852,6 +852,9 @@ pub struct QuectoWorld {
     pub gated_spawn: Option<
         std::thread::JoinHandle<(quecto::infrastructure::tools::spawn::SpawnTool, ToolResult)>,
     >,
+    /// The gated spawn tool's environment registry, kept so a failing wait can
+    /// show the spawn side of the picture alongside the listing.
+    pub gated_env_registry: Option<quecto::domain::environment_registry::EnvironmentRegistry>,
     pub gate_path: Option<std::path::PathBuf>,
     /// Environment refs captured per agent_id from successful spawns (#1369 slice 2)
     pub agent_env_refs: std::collections::HashMap<String, String>,
