@@ -229,12 +229,10 @@ fn when_find_with_path(world: &mut QuectoWorld, pattern: String, path: String) {
     regex = r#"^I find files matching "([^"]+)" in a temporary directory outside workspace containing "([^"]+)"$"#
 )]
 fn when_find_outside_workspace(world: &mut QuectoWorld, pattern: String, filename: String) {
-    let tool = make_find_tool(world);
     let outside = TempDir::new().expect("create outside find directory");
     assert!(!outside.path().starts_with(ensure_find_workspace(world)));
     std::fs::write(outside.path().join(filename), "").expect("write outside find file");
-    let args = serde_json::json!({ "pattern": pattern, "path": outside.path() });
-    world.find_result = Some(run_find(tool, args));
+    when_find_with_path(world, pattern, outside.path().to_str().unwrap().to_owned());
 }
 
 // ---------------------------------------------------------------------------
