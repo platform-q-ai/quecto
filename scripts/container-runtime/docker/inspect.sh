@@ -4,7 +4,7 @@
 # Environment: QUECTO_CONTAINER_ENVIRONMENT_ID
 #
 # Reports the container's truth post-mortem. Bounded by Quecto's 5s
-# inspect timeout, so only cheap docker inspect calls happen here.
+# inspect timeout, so only cheap `podman`/`docker inspect` calls happen here.
 set -euo pipefail
 
 log() { printf 'container-runtime-docker inspect: %s\n' "$*" >&2; }
@@ -14,7 +14,22 @@ die() {
 }
 
 command -v jq >/dev/null 2>&1 || die "jq is required to encode the inspect result"
-command -v docker >/dev/null 2>&1 || die "docker is required"
+# Runtime CLI: rootless Podman by default. Membership of the `docker` group
+# is root-equivalent on the host (the daemon runs as root and has no policy
+# layer, so anything holding the socket can mount / and escalate), which is
+# exactly what an autonomous agent spawner must not hand out. Rootless
+# Podman runs the container as the invoking user with a user namespace, so
+# an escape lands as that user, not root. QUECTO_CONTAINER_CLI overrides;
+# Docker stays a fallback for hosts without Podman.
+cli="${QUECTO_CONTAINER_CLI:-}"
+if [ -z "$cli" ]; then
+  if command -v podman >/dev/null 2>&1; then
+    cli=podman
+  elif command -v docker >/dev/null 2>&1; then
+    cli=docker
+  fi
+fi
+[ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman (preferred) or docker is required"
 
 state_dir=""
 while [ "$#" -gt 0 ]; do
@@ -43,9 +58,9 @@ case "$resolved" in
 esac
 container="$(cat "$env_dir/container")"
 
-if ! state="$(docker inspect --format '{{.State.Running}} {{.State.ExitCode}} {{.State.OOMKilled}}' "$container" 2>/dev/null)"; then
-  jq -cn --arg container "$container" \
-    '{status: "dead", metadata: {runtime: "docker", container: $container, cause: "container-removed"}}'
+if ! state="$("$cli" inspect --format '{{.State.Running}} {{.State.ExitCode}} {{.State.OOMKilled}}' "$container" 2>/dev/null)"; then
+  jq -cn --arg cli "$cli" --arg container "$container" \
+    '{status: "dead", metadata: {runtime: $cli, container: $container, cause: "container-removed"}}'
   exit 0
 fi
 read -r running exit_code oom <<<"$state"
@@ -60,5 +75,5 @@ else
     cause="exit-code-$exit_code"
   fi
 fi
-jq -cn --arg status "$status" --arg container "$container" --arg cause "$cause" \
-  '{status: $status, metadata: {runtime: "docker", container: $container, cause: $cause}}'
+jq -cn --arg cli "$cli" --arg status "$status" --arg container "$container" --arg cause "$cause" \
+  '{status: $status, metadata: {runtime: $cli, container: $container, cause: $cause}}'
