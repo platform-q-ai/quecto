@@ -1,17 +1,37 @@
 //! Unit tests for `uds_busy_subagents.rs` — busy-path interception of
-//! sub-agent liveness commands (`get_subagents`, child-targeted `sync`).
+//! sub-agent roster commands (`get_subagents`, child-targeted `sync`, and
+//! `delete_all_subagents` (#1626)).
 //!
 //! These commands must be answered from the connection's reader task while the
 //! serial dispatch loop is occupied by a parent turn; queuing them behind the
 //! turn freezes the TUI's left-panel roster and child feed until the parent
 //! goes idle (the child-progress-freeze bug, fixed 2026-07-29).
 
-use super::uds_busy_subagents::intercept;
+use super::uds_busy_subagents::{BusySubagentCtx, intercept};
 use super::uds_ext_protocol::{
     ClientToolRegistry, new_client_tool_registry, register_client_writer,
 };
 
 const CLIENT_ID: u64 = 7;
+
+/// Run one line through the interceptor as client `CLIENT_ID`. Tests that do
+/// not observe the broadcast pass `None` and get a private channel.
+async fn run(
+    line: &str,
+    subagents: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
+    clients: &ClientToolRegistry,
+) -> bool {
+    let fallback = tokio::sync::broadcast::channel::<String>(8);
+    intercept(BusySubagentCtx {
+        line,
+        subagents,
+        broadcast_tx: broadcast_tx.unwrap_or(&fallback.0),
+        clients,
+        client_id: CLIENT_ID,
+    })
+    .await
+}
 
 fn registry_with_writer() -> (ClientToolRegistry, tokio::sync::mpsc::Receiver<String>) {
     let clients = new_client_tool_registry();
@@ -32,11 +52,11 @@ async fn recv_response(rx: &mut tokio::sync::mpsc::Receiver<String>) -> serde_js
 async fn get_subagents_is_served_from_the_reader_task_with_id_correlation() {
     let (clients, mut rx) = registry_with_writer();
 
-    let handled = intercept(
+    let handled = run(
         r#"{"type":"get_subagents","id":"gs-1"}"#,
         &None,
+        None,
         &clients,
-        CLIENT_ID,
     )
     .await;
 
@@ -59,7 +79,7 @@ async fn get_subagents_is_served_from_the_reader_task_with_id_correlation() {
 async fn get_subagents_without_id_is_still_served() {
     let (clients, mut rx) = registry_with_writer();
 
-    assert!(intercept(r#"{"type":"get_subagents"}"#, &None, &clients, CLIENT_ID).await);
+    assert!(run(r#"{"type":"get_subagents"}"#, &None, None, &clients).await);
     let response = recv_response(&mut rx).await;
     assert_eq!(response["command"], "get_subagents");
     assert!(response["id"].is_null());
@@ -71,11 +91,11 @@ async fn child_targeted_sync_is_answered_off_the_dispatch_loop() {
 
     // No registry: the detached forward still resolves to a correlated error
     // response rather than queuing behind the busy dispatch loop or hanging.
-    let handled = intercept(
+    let handled = run(
         r#"{"type":"sync","id":"cs-1","agent_id":"child-1","epoch":2,"sinceRev":3}"#,
         &None,
+        None,
         &clients,
-        CLIENT_ID,
     )
     .await;
 
@@ -98,11 +118,11 @@ async fn child_targeted_sync_reports_unknown_child_as_error() {
     let registry = Some(crate::infrastructure::tools::subagent_registry::new_registry());
 
     assert!(
-        intercept(
+        run(
             r#"{"type":"sync","id":"cs-2","agent_id":"ghost","epoch":0,"sinceRev":0}"#,
             &registry,
-            &clients,
-            CLIENT_ID,
+            None,
+            &clients
         )
         .await
     );
@@ -117,11 +137,11 @@ async fn parent_scoped_sync_falls_through_to_the_ledger_fast_path() {
     let (clients, mut rx) = registry_with_writer();
 
     // No agent_id: this is the parent's own sync, owned by uds_busy_sync.
-    let handled = intercept(
+    let handled = run(
         r#"{"type":"sync","id":"ps-1","epoch":0,"sinceRev":0}"#,
         &None,
+        None,
         &clients,
-        CLIENT_ID,
     )
     .await;
 
@@ -135,11 +155,11 @@ async fn malformed_child_sync_falls_through_for_dispatch_loop_error_reporting() 
 
     // agent_id present but epoch/sinceRev missing: leave it to the dispatch
     // loop so the client gets its usual parse/validation error.
-    let handled = intercept(
+    let handled = run(
         r#"{"type":"sync","agent_id":"child-1"}"#,
         &None,
+        None,
         &clients,
-        CLIENT_ID,
     )
     .await;
 
@@ -157,7 +177,7 @@ async fn unrelated_commands_and_junk_fall_through() {
         "not json at all",
     ] {
         assert!(
-            !intercept(line, &None, &clients, CLIENT_ID).await,
+            !run(line, &None, None, &clients).await,
             "must fall through: {line}"
         );
     }
@@ -182,4 +202,96 @@ async fn direct_feed_sync_is_served_inline_by_the_child_local_fast_path() {
     assert_eq!(response["command"], "sync");
     assert_eq!(response["id"], "feed-9");
     assert_eq!(response["success"], true);
+}
+
+// ─── delete_all_subagents on the busy path (#1626) ───────────────────────────
+
+fn registry_with_entries(
+    names: &[&str],
+) -> crate::infrastructure::tools::subagent_registry::SubagentRegistry {
+    use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+    let registry = new_registry();
+    for name in names {
+        registry.lock().unwrap().insert(
+            (*name).to_string(),
+            SubagentEntry::new(std::path::PathBuf::from(format!("/tmp/{name}.sock")), 0),
+        );
+    }
+    registry
+}
+
+#[tokio::test]
+async fn delete_all_subagents_is_served_from_the_reader_task_and_drains_the_registry() {
+    let (clients, mut rx) = registry_with_writer();
+    let registry = registry_with_entries(&["worker", "reviewer"]);
+    let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(8);
+
+    let handled = run(
+        r#"{"type":"delete_all_subagents","id":"del-1"}"#,
+        &Some(registry.clone()),
+        Some(&broadcast_tx),
+        &clients,
+    )
+    .await;
+
+    assert!(
+        handled,
+        "delete_all_subagents must not queue behind a running turn (#1626)"
+    );
+    assert!(
+        registry.lock().unwrap().is_empty(),
+        "the registry must be drained synchronously, before the turn ends"
+    );
+    let response = recv_response(&mut rx).await;
+    assert_eq!(response["command"], "delete_all_subagents");
+    assert_eq!(response["id"], "del-1");
+    assert_eq!(response["success"], true);
+    assert_eq!(response["data"]["removed"], 2);
+
+    // Every client receives the authoritative empty survivor set so no
+    // later roster refresh can resurrect the deleted agents.
+    let broadcast = broadcast_rx.try_recv().expect("state_changed broadcast");
+    let event: serde_json::Value = serde_json::from_str(&broadcast).unwrap();
+    assert_eq!(event["type"], "subagent_state_changed");
+    assert_eq!(event["subagents"].as_array().map(Vec::len), Some(0));
+
+    // A busy-path roster read issued after the delete sees the empty registry.
+    assert!(
+        run(
+            r#"{"type":"get_subagents","id":"gs-after"}"#,
+            &Some(registry),
+            Some(&broadcast_tx),
+            &clients,
+        )
+        .await
+    );
+    let after = recv_response(&mut rx).await;
+    assert_eq!(after["id"], "gs-after");
+    assert_eq!(after["data"]["subagents"].as_array().map(Vec::len), Some(0));
+}
+
+#[tokio::test]
+async fn delete_all_subagents_without_registry_is_a_correlated_error() {
+    let (clients, mut rx) = registry_with_writer();
+
+    assert!(
+        run(
+            r#"{"type":"delete_all_subagents","id":"del-2"}"#,
+            &None,
+            None,
+            &clients
+        )
+        .await
+    );
+    let response = recv_response(&mut rx).await;
+    assert_eq!(response["command"], "delete_all_subagents");
+    assert_eq!(response["id"], "del-2");
+    assert_eq!(response["success"], false);
+    assert!(
+        response["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("no sub-agent registry"),
+        "unexpected error: {response}"
+    );
 }
