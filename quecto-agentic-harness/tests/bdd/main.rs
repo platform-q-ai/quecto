@@ -1568,6 +1568,32 @@ fn main() {
 
 impl Drop for QuectoWorld {
     fn drop(&mut self) {
+        // Scenario-scoped cleanup for script-managed environment fixtures. The
+        // fixture create scripts daemonize real `quecto agent --persist`
+        // children, so dropping TempDir/socket state is not enough. Limit
+        // cleanup to this world's registries/retained argv; never sweep by
+        // process name or touch unrelated live agents.
+        if let Some(spawn_tool) = self.spawn_tool.as_ref() {
+            for record in spawn_tool.environment_registry().entries() {
+                if !record.retained_kill_argv.is_empty() {
+                    let mut cmd = std::process::Command::new(&record.retained_kill_argv[0]);
+                    cmd.args(&record.retained_kill_argv[1..]);
+                    cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", &record.environment_id);
+                    cmd.stdout(std::process::Stdio::null());
+                    cmd.stderr(std::process::Stdio::null());
+                    let _ = cmd.status();
+                }
+            }
+        }
+        if let Some(registry) = self.agent_cmd_registry.as_ref() {
+            let removed: Vec<_> = {
+                let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+                guard.drain().map(|(_, entry)| entry).collect()
+            };
+            for entry in &removed {
+                quecto::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry);
+            }
+        }
         if self.restore_inherited_runtime_config {
             // SAFETY: the setting scenario is @serial and cucumber drops each world before the next serial scenario starts, so no concurrent env readers exist while the process-wide var is cleared.
             unsafe { std::env::remove_var("QUECTO_RUNTIME_CONFIG_PATH") };

@@ -35,6 +35,8 @@ pub(crate) fn given_shared_script_spawn(world: &mut QuectoWorld, kill_fails_once
     let cfg_path = PathBuf::from(world.config_path.clone().unwrap());
     let cfg_dir = cfg_path.parent().unwrap().to_path_buf();
     let log = shared_log_path(world);
+    let pid_dir = cfg_dir.join("env-pids");
+    std::fs::create_dir_all(&pid_dir).unwrap();
 
     let create = base.join("env-create.sh");
     write_executable(
@@ -55,9 +57,12 @@ for arg in "$@"; do
   prev="$arg"
 done
 "$@" >/dev/null 2>&1 &
+child_pid="$!"
+printf '%s\n' "$child_pid" > '{pid_dir}/'$env_id'.pid'
 printf '{{"environment_id":"%s","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$env_id" "$PWD/workspace-$env_id" "$socket_path"
 "#,
-            log = log.display()
+            log = log.display(),
+            pid_dir = pid_dir.display()
         ),
     );
 
@@ -119,8 +124,21 @@ exit 1
 set -euo pipefail
 echo "{{\"kind\":\"kill\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}\"}}" >> '{log}'
 {fail_clause}
+pid_file='{pid_dir}/'"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}"'.pid'
+if [ -s "$pid_file" ]; then
+  pid="$(cat "$pid_file")"
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    for _ in $(seq 1 50); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.02
+    done
+  fi
+  rm -f "$pid_file"
+fi
 "#,
-            log = log.display()
+            log = log.display(),
+            pid_dir = pid_dir.display()
         ),
     );
 

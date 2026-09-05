@@ -69,14 +69,18 @@ fn given_liveness_script_spawn(world: &mut QuectoWorld, inspect_fails: bool) {
     given_shared_script_spawn(world, false);
     let base = base_path(world);
     let log = shared_log_path(world);
+    let pid_dir = PathBuf::from(world.config_path.clone().unwrap())
+        .parent()
+        .unwrap()
+        .join("env-pids");
 
     let create = base.join("env-create-live.sh");
     write_executable(
         &create,
-        pid_logging_script(&log, "create", "env-live-$RANDOM-$$", true),
+        pid_logging_script(&log, &pid_dir, "create", "env-live-$RANDOM-$$", true),
     );
     let exec = base.join("env-exec-live.sh");
-    write_executable(&exec, pid_logging_script(&log, "exec", "", false));
+    write_executable(&exec, pid_logging_script(&log, &pid_dir, "exec", "", false));
     configure_inspect_script(world, inspect_fails);
 
     let (cfg_path, mut v) = load_config(world);
@@ -88,7 +92,13 @@ fn given_liveness_script_spawn(world: &mut QuectoWorld, inspect_fails: bool) {
 /// Shared create/exec fixture body: strip script argv, find the child's
 /// `--socket` path, start the child, and log its pid so a later step can kill
 /// it behind Quecto's back.
-fn pid_logging_script(log: &Path, kind: &str, env_id_expr: &str, is_create: bool) -> String {
+fn pid_logging_script(
+    log: &Path,
+    pid_dir: &Path,
+    kind: &str,
+    env_id_expr: &str,
+    is_create: bool,
+) -> String {
     let (env_line, result_line) = if is_create {
         (
             format!(r#"env_id="{env_id_expr}""#),
@@ -117,10 +127,13 @@ for arg in "$@"; do
   prev="$arg"
 done
 "$@" >/dev/null 2>&1 &
-echo "{{\"kind\":\"child\",\"pid\":$!,\"socket\":\"$socket_path\"}}" >> '{log}'
+child_pid="$!"
+echo "{{\"kind\":\"child\",\"pid\":$child_pid,\"socket\":\"$socket_path\"}}" >> '{log}'
+if [ -n "$env_id" ]; then printf '%s\n' "$child_pid" > '{pid_dir}/'$env_id'.pid'; fi
 {result_line}
 "#,
-        log = log.display()
+        log = log.display(),
+        pid_dir = pid_dir.display()
     )
 }
 
