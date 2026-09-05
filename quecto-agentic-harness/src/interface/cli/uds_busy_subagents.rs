@@ -2,7 +2,7 @@
 //!
 //! The dispatch loop is serial: while a parent turn (or auto-continued
 //! workflow) is in flight, every queued command waits for it to finish. That
-//! starves the two commands the TUI needs to keep child progress live —
+//! starves the commands the TUI needs to keep child state live —
 //! `get_subagents` (left-panel roster) and child-targeted `sync` (main-panel
 //! feed) — so both panels freeze until the parent goes idle (or is aborted).
 //!
@@ -11,19 +11,40 @@
 //! snapshot already does exactly this), and a child-targeted `sync` is a
 //! round-trip on the CHILD's socket. Serve them from the connection's reader
 //! task, mirroring the #1197 busy-serve pattern for `sync`/`get_message`.
+//!
+//! `delete_all_subagents` is served here too (#1626). It only needs the
+//! registry mutex and the broadcast sender: the drain is synchronous and
+//! lock-safe. Queued behind a running turn it executed only once the parent
+//! went idle, while the busy-path `get_subagents` refreshes and child monitor
+//! broadcasts kept re-filling the TUI roster from the untouched registry.
 
 use super::protocol::AgentEvent;
 
 type SubagentRegistry = crate::infrastructure::tools::subagent_registry::SubagentRegistry;
 
-/// Intercept `get_subagents` and child-targeted `sync` on the reader task.
-/// Returns `true` when the command was fully handled here.
-pub(super) async fn intercept(
-    line: &str,
-    subagents: &Option<SubagentRegistry>,
-    clients: &super::uds_ext_protocol::ClientToolRegistry,
-    client_id: u64,
-) -> bool {
+/// Everything the reader task lends the interceptor for one command line.
+/// Mirrors `uds_busy_get_message::BusyCommandCtx`.
+pub(super) struct BusySubagentCtx<'a> {
+    pub line: &'a str,
+    pub subagents: &'a Option<SubagentRegistry>,
+    /// Shared event fan-out, so a busy-path delete can publish the empty
+    /// survivor set to every client (#1626).
+    pub broadcast_tx: &'a tokio::sync::broadcast::Sender<String>,
+    pub clients: &'a super::uds_ext_protocol::ClientToolRegistry,
+    pub client_id: u64,
+}
+
+/// Intercept `get_subagents`, `delete_all_subagents` and child-targeted
+/// `sync` on the reader task. Returns `true` when the command was fully
+/// handled here.
+pub(super) async fn intercept(ctx: BusySubagentCtx<'_>) -> bool {
+    let BusySubagentCtx {
+        line,
+        subagents,
+        broadcast_tx,
+        clients,
+        client_id,
+    } = ctx;
     let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
         return false;
     };
@@ -59,6 +80,25 @@ pub(super) async fn intercept(
             }
             let ev = AgentEvent::ok(id.as_deref(), "get_subagents", Some(data));
             write_event(clients, client_id, id.as_deref(), "get_subagents", &ev).await;
+            true
+        }
+        Some("delete_all_subagents") => {
+            // Drain + signal + broadcast the empty survivor set synchronously
+            // (#1626): the TUI cleared its roster optimistically at send time,
+            // so the response must not wait for the in-flight turn.
+            let ev = super::uds_delete_all_subagents::busy_response(
+                subagents.as_ref(),
+                Some(broadcast_tx),
+                id.as_deref(),
+            );
+            write_event(
+                clients,
+                client_id,
+                id.as_deref(),
+                "delete_all_subagents",
+                &ev,
+            )
+            .await;
             true
         }
         Some("sync") if value.get("agent_id").is_some() => {

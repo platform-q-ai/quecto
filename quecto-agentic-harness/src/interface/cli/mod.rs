@@ -89,11 +89,13 @@ pub async fn busy_reader_dispatch(line: &str) -> (bool, Option<serde_json::Value
     // The dispatch-loop channel: anything landing here would have queued
     // behind an in-flight parent/child turn.
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(8);
+    let (broadcast_tx, _broadcast_rx) = tokio::sync::broadcast::channel::<String>(8);
     uds_reader_dispatch::dispatch(uds_reader_dispatch::ReaderDispatchCtx {
         line: line.to_string(),
         snapshot: &snapshot,
         registry: &clients,
         subagent_registry: &None,
+        broadcast_tx: &broadcast_tx,
         client_id: 1,
         cmd_tx: &cmd_tx,
     })
@@ -110,26 +112,10 @@ pub async fn busy_reader_dispatch(line: &str) -> (bool, Option<serde_json::Value
     (true, response)
 }
 
-/// Test-support: run one raw command line through the reader-task busy
-/// interceptor for sub-agent liveness commands, with no sub-agent registry.
-/// Returns whether it was handled off the dispatch loop and, when handled,
-/// the correlated response written to the client's channel.
 #[cfg(any(test, feature = "test-support"))]
-pub async fn busy_reader_intercept(line: &str) -> (bool, Option<serde_json::Value>) {
-    let clients = uds_ext_protocol::new_client_tool_registry();
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(8);
-    uds_ext_protocol::register_client_writer(&clients, 1, tx);
-    let handled = uds_busy_subagents::intercept(line, &None, &clients, 1).await;
-    if !handled {
-        return (false, None);
-    }
-    let response = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
-        .await
-        .ok()
-        .flatten()
-        .and_then(|l| serde_json::from_str(&l).ok());
-    (true, response)
-}
+mod uds_busy_test_support;
+#[cfg(any(test, feature = "test-support"))]
+pub use uds_busy_test_support::{busy_reader_intercept, busy_reader_intercept_with_registry};
 
 #[cfg(test)]
 mod uds_execution_state_tests;

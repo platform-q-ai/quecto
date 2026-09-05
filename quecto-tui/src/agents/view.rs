@@ -191,9 +191,32 @@ pub(crate) struct ConnectionRoster {
     pub(crate) selected_environment: Option<String>,
     /// Per-subagent synced feed state keyed by agent id.
     pub(crate) feeds: BTreeMap<String, FeedState>,
+    /// `true` between sending `delete_all_subagents` and receiving its
+    /// response (#1626). While set, roster payloads are ignored: any snapshot
+    /// or broadcast in flight predates the delete and would resurrect the
+    /// rows the user just removed. Cleared by the response, which then
+    /// re-requests the roster so the panel reconciles with the kernel.
+    delete_pending: bool,
 }
 
 impl ConnectionRoster {
+    /// Start ignoring roster payloads until the kernel answers the
+    /// `delete_all_subagents` just sent (#1626).
+    pub(crate) fn begin_delete_all(&mut self) {
+        self.delete_pending = true;
+    }
+
+    /// Whether a `delete_all_subagents` response is still outstanding.
+    pub(crate) fn is_delete_pending(&self) -> bool {
+        self.delete_pending
+    }
+
+    /// Clear the guard; returns whether one was pending. Called when the
+    /// response arrives (any outcome) or the connection is lost.
+    pub(crate) fn take_delete_pending(&mut self) -> bool {
+        std::mem::take(&mut self.delete_pending)
+    }
+
     /// How many tracked child agents are currently in an active status.
     pub(crate) fn tracked_active_count(&self) -> usize {
         self.tracked
@@ -212,6 +235,7 @@ impl ConnectionRoster {
             tracked: BTreeMap::new(),
             expired_terminal_uuids: BTreeSet::new(),
             frame: 0,
+            delete_pending: false,
             sessions: BTreeMap::new(),
             session_order: Vec::new(),
             active_agent_id: None,

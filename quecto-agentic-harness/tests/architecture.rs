@@ -1282,7 +1282,10 @@ const TUI_WIRE_DTO_USAGE_SEED: usize = 97;
 /// #1586 phase 3 adds the explicit persist-session command at the existing TUI
 /// tab lifecycle protocol seam so every visible tab can snapshot before exit
 /// (155 → 158); this is required barrier fan-out, not DTO spread.
-const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 158;
+/// #1626 adds the roster reconcile re-request after a `delete_all_subagents`
+/// response at the existing controller roster seam (158 → 159); this is the
+/// scoped bugfix path, not DTO spread.
+const TUI_PHASE_6_WIRE_DTO_USAGE_TOTAL: usize = 159;
 
 /// Narrow, issue-linked allowlist for the INTERFACE RAW-JSON ratchet only.
 ///

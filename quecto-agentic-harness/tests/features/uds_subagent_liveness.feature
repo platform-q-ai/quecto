@@ -10,6 +10,9 @@ Feature: Sub-agent liveness while the parent is busy
   # 2. `get_subagents` and child-targeted `sync` must be answered from the
   #    connection's reader task, never queued behind the serial dispatch loop
   #    that a parent turn occupies end-to-end.
+  # 3. `delete_all_subagents` must be served the same way (#1626): queued
+  #    behind the turn, the TUI's optimistic roster clear was undone by the
+  #    busy-path roster refreshes until the parent went idle.
 
   @done
   Scenario: A completed inner turn emits a ledger advance hint mid-turn
@@ -42,6 +45,15 @@ Feature: Sub-agent liveness while the parent is busy
     When a client sends a sync addressed to child "worker-1"
     Then the command should be handled off the dispatch loop
     And the client should receive a correlated sync response
+
+  @done
+  Scenario: A busy parent answers delete_all_subagents from the reader task
+    Given the parent dispatch loop is occupied by a turn
+    And the parent registry holds subagents "worker-1" and "worker-2"
+    When a client sends delete_all_subagents with correlation id "del-live"
+    Then the command should be handled off the dispatch loop
+    And the delete response should carry correlation id "del-live" and report 2 removed
+    And the parent registry should be empty
 
   @done
   Scenario: A parent-scoped sync is left to the parent ledger fast path

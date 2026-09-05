@@ -164,6 +164,7 @@ async fn handle_client_routes_broadcast_targeted_lag_and_reader_commands() {
         client_tool_registry: registry,
         conversation_snapshot: snapshot,
         subagent_registry: None,
+        broadcast_tx: broadcast_tx.clone(),
         _guard: ClientGuard {
             live_clients: live.clone(),
             cmd_tx: guard_tx,
@@ -241,6 +242,7 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
         client_tool_registry: registry,
         conversation_snapshot: snapshot,
         subagent_registry: None,
+        broadcast_tx: tokio::sync::broadcast::channel::<String>(1).0,
         _guard: ClientGuard {
             live_clients: live.clone(),
             cmd_tx,

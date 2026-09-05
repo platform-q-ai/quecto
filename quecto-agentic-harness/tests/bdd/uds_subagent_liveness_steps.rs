@@ -103,6 +103,49 @@ fn send_get_subagents(world: &mut QuectoWorld, id: String) {
     run_busy_intercept(world, &format!(r#"{{"type":"get_subagents","id":"{id}"}}"#));
 }
 
+#[given(expr = "the parent registry holds subagents {string} and {string}")]
+fn registry_holds(world: &mut QuectoWorld, a: String, b: String) {
+    world.subagent_liveness_registry_names = vec![a, b];
+}
+
+#[when(expr = "a client sends delete_all_subagents with correlation id {string}")]
+fn send_delete_all(world: &mut QuectoWorld, id: String) {
+    let names: Vec<&str> = world
+        .subagent_liveness_registry_names
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let (handled, response, remaining) = rt.block_on(cli::busy_reader_intercept_with_registry(
+        &format!(r#"{{"type":"delete_all_subagents","id":"{id}"}}"#),
+        &names,
+    ));
+    world.subagent_liveness_intercept = Some((handled, response));
+    world.subagent_liveness_registry_remaining = Some(remaining);
+}
+
+#[then(expr = "the delete response should carry correlation id {string} and report {int} removed")]
+fn delete_response_correlated(world: &mut QuectoWorld, id: String, removed: i32) {
+    let (_, response) = world
+        .subagent_liveness_intercept
+        .as_ref()
+        .expect("intercept result");
+    let response = response.as_ref().expect("a response line");
+    assert_eq!(response["command"], "delete_all_subagents");
+    assert_eq!(response["id"], id.as_str());
+    assert_eq!(response["success"], true, "response: {response}");
+    assert_eq!(response["data"]["removed"], removed);
+}
+
+#[then("the parent registry should be empty")]
+fn registry_empty(world: &mut QuectoWorld) {
+    assert_eq!(
+        world.subagent_liveness_registry_remaining,
+        Some(0),
+        "delete_all_subagents must drain the registry synchronously, before the turn ends"
+    );
+}
+
 #[then("the command should be handled off the dispatch loop")]
 fn handled_off_loop(world: &mut QuectoWorld) {
     let (handled, _) = world

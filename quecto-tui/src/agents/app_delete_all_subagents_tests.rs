@@ -74,6 +74,81 @@ async fn handle_submit_delete_all_subagents_preserves_ui_when_command_send_fails
     );
 }
 
+#[tokio::test]
+async fn roster_payloads_are_ignored_until_the_delete_response_arrives() {
+    // #1626: a busy-path `get_subagents` refresh or a child-monitor
+    // `subagent_state_changed` broadcast that was in flight when the delete
+    // was sent must not resurrect the rows the user just removed.
+    let mut h = harness().await;
+    h.app_mut().handle_event(Event::SubagentStateChanged {
+        subagents: vec![subagent("worker")],
+    });
+    h.app_mut().handle_submit("/delete-all-subagents");
+    h.drain_commands().await;
+    assert_eq!(h.subagent_group_tracked(), 0);
+
+    h.app_mut().handle_event(Event::SubagentStateChanged {
+        subagents: vec![subagent("worker")],
+    });
+    h.app_mut().handle_event(Event::Response {
+        id: None,
+        command: "get_subagents".into(),
+        success: true,
+        data: Some(serde_json::json!({
+            "subagents": [{"agentId": "worker", "status": "running", "pid": 1}]
+        })),
+        error: None,
+    });
+    assert_eq!(
+        h.subagent_group_tracked(),
+        0,
+        "stale roster payloads must not resurrect deleted agents while the delete is pending"
+    );
+
+    h.app_mut().handle_event(Event::Response {
+        id: None,
+        command: "delete_all_subagents".into(),
+        success: true,
+        data: Some(serde_json::json!({"removed": 1})),
+        error: None,
+    });
+    let cmds = h.drain_commands().await;
+    assert!(
+        cmds.iter()
+            .any(|c| c.contains("\"type\":\"get_subagents\"")),
+        "the delete response must re-request the roster to reconcile: {cmds:?}"
+    );
+
+    // Guard cleared: the kernel's post-delete roster applies again.
+    h.app_mut().handle_event(Event::SubagentStateChanged {
+        subagents: vec![subagent("fresh")],
+    });
+    assert_eq!(h.subagent_group_tracked(), 1);
+}
+
+#[tokio::test]
+async fn failed_delete_response_also_clears_the_pending_guard() {
+    let mut h = harness().await;
+    h.app_mut().handle_submit("/delete-all-subagents");
+    h.drain_commands().await;
+
+    h.app_mut().handle_event(Event::Response {
+        id: None,
+        command: "delete_all_subagents".into(),
+        success: false,
+        data: None,
+        error: Some("no sub-agent registry available".into()),
+    });
+    assert!(
+        !h.app_mut().ac().roster.is_delete_pending(),
+        "a failed delete must not leave the roster permanently frozen"
+    );
+    h.app_mut().handle_event(Event::SubagentStateChanged {
+        subagents: vec![subagent("worker")],
+    });
+    assert_eq!(h.subagent_group_tracked(), 1);
+}
+
 fn feed_from_handle(handle: tokio::task::JoinHandle<()>) -> FeedState {
     let (cmd_tx, _cmd_rx) = mpsc::channel(1);
     FeedState {

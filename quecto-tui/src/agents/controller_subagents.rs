@@ -23,6 +23,7 @@ impl App {
         }
         self.ac_mut().roster.active_agent_id = None;
         self.ac_mut().roster.selected_environment = None;
+        self.ac_mut().roster.begin_delete_all();
         self.subagents.panel_nav = crate::components::list_navigator::ListNavigator::new();
         self.subagents.panel_nav_key = Some("master".to_string());
         self.notify("Deleting all subagents", NotifyLevel::Info);
@@ -155,11 +156,26 @@ impl App {
         self.update_subagent_bar(snapshot);
     }
 
+    /// Clear the delete-pending guard once the kernel has answered
+    /// `delete_all_subagents` (success or failure) and re-request the roster
+    /// so the panel reflects whatever the kernel actually holds (#1626).
+    pub(super) fn finish_delete_all_subagents(&mut self) {
+        if !self.ac_mut().roster.take_delete_pending() {
+            return;
+        }
+        self.send_command(crate::protocol::client::Command::GetSubagents { id: None });
+    }
+
     pub(super) fn update_subagent_bar_from_source(
         &mut self,
         source_agent_id: Option<&str>,
         subagents: Vec<crate::protocol::client::SubagentInfoEvent>,
     ) {
+        if self.ac().roster.is_delete_pending() {
+            // A payload racing the delete predates it (#1626); the response
+            // handler re-requests the roster once the kernel has answered.
+            return;
+        }
         let source_agent_id = source_agent_id.map(sanitize_agent_id);
         let mut candidates = std::collections::BTreeMap::new();
         for mut s in subagents {
