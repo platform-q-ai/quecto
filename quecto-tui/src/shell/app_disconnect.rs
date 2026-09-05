@@ -49,6 +49,9 @@ impl App {
     /// resolving off-loop (#1470 review).
     fn mark_agent_disconnected(&mut self) {
         self.ac_mut().agent_connected = false;
+        // A pending delete_all_subagents response died with the connection;
+        // the guard must not outlive it and freeze the roster (#1626).
+        self.ac_mut().roster.take_delete_pending();
         self.ac_mut().agent_state.reset();
         self.ac_mut().master_session.running = false;
         self.ac_mut().spinner = None;

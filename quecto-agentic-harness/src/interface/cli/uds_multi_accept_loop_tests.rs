@@ -290,3 +290,71 @@ async fn multi_client_loop_drops_oversized_command_but_dispatches_the_next_valid
         _other => panic!("expected a Command message, got something else"),
     }
 }
+
+/// #1626: `delete_all_subagents` sent to a BUSY harness over a live socket is
+/// answered by the reader task while the dispatch loop is blocked — here the
+/// dispatch channel is deliberately never drained, standing in for a parent
+/// turn that has not ended. Before the fix the command sat in `cmd_rx` and no
+/// response (nor the empty roster broadcast) reached the client until the
+/// turn finished.
+#[tokio::test]
+async fn busy_harness_answers_delete_all_subagents_without_the_dispatch_loop() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let socket_path = dir.path().join("busy-delete.sock");
+
+    let mut entry = SubagentEntry::new("/tmp/worker.sock".into(), 0);
+    entry.status = SubagentStatus::Running;
+    let registry = crate::infrastructure::tools::subagent_registry::new_registry();
+    registry.lock().unwrap().insert("worker".to_string(), entry);
+
+    let (args, _bcast, _cmd_tx, mut cmd_rx) =
+        make_args(&socket_path, /* busy */ true, Some(registry.clone()));
+    let handle = spawn_accept_loop(args);
+
+    let mut client = tokio::net::UnixStream::connect(&socket_path)
+        .await
+        .expect("connect to busy accept loop");
+    // Discard the connect-time snapshots; they predate the delete.
+    let _ = read_available(&mut client, std::time::Duration::from_millis(300)).await;
+
+    client
+        .write_all(b"{\"type\":\"delete_all_subagents\",\"id\":\"del-live\"}\n")
+        .await
+        .expect("send delete");
+    let received = read_available(&mut client, std::time::Duration::from_millis(500)).await;
+    handle.abort();
+
+    let response = received
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["command"] == "delete_all_subagents")
+        .unwrap_or_else(|| {
+            panic!("delete response must not wait for the dispatch loop: {received}")
+        });
+    assert_eq!(response["id"], "del-live");
+    assert_eq!(response["success"], true);
+    assert_eq!(response["data"]["removed"], 1);
+    assert!(
+        registry.lock().unwrap().is_empty(),
+        "registry drained while the dispatch loop is still blocked"
+    );
+
+    // The authoritative empty survivor set reaches the client on the same
+    // connection, so later roster refreshes cannot resurrect the rows.
+    let state_changed = received
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["type"] == "subagent_state_changed")
+        .unwrap_or_else(|| panic!("empty roster broadcast expected: {received}"));
+    assert_eq!(
+        state_changed["subagents"].as_array().map(Vec::len),
+        Some(0),
+        "{state_changed}"
+    );
+
+    // Nothing was queued behind the (blocked) dispatch loop.
+    assert!(
+        cmd_rx.try_recv().is_err(),
+        "delete_all_subagents must not be forwarded to the dispatch channel"
+    );
+}

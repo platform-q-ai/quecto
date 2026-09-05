@@ -339,11 +339,13 @@ impl App {
                 // Signal both so the distinction is never silently entangled.
                 self.notify("History cleared · workflow retained", NotifyLevel::Info);
             }
-            "get_subagents" if success => self.handle_get_subagents(data),
+            "get_subagents" if success => self.handle_get_subagents(id.as_deref(), data),
             "delete_all_subagents" if success => {
+                self.reconcile_after_delete_all();
                 self.notify("Deleted all subagents", NotifyLevel::Success)
             }
             "delete_all_subagents" => {
+                self.reconcile_after_delete_all();
                 self.notify_response_error("Could not delete subagents", error)
             }
             "agent_error" => self.handle_agent_error(error),
@@ -597,7 +599,9 @@ impl App {
         self.send_state_resync();
     }
 
-    fn handle_get_subagents(&mut self, data: Option<serde_json::Value>) {
+    fn handle_get_subagents(&mut self, id: Option<&str>, data: Option<serde_json::Value>) {
+        // The #1626 reconcile reply lifts the roster guard before it applies.
+        self.take_delete_all_reconcile(id);
         let Some(data) = data else { return };
         let roster = crate::protocol::presentation_payloads::subagent_roster(&data);
         // Cursor responses are sparse deltas: `unchanged:true` is a no-op and

@@ -415,6 +415,9 @@ pub struct QuectoWorld {
     pub subagent_liveness_lines: Option<Vec<serde_json::Value>>,
     /// Sub-agent liveness BDD: (handled, response) from the reader-task interceptor.
     pub subagent_liveness_intercept: Option<(bool, Option<serde_json::Value>)>,
+    /// Registry seed + post-intercept size for busy-path `delete_all_subagents` (#1626).
+    pub subagent_liveness_registry_names: Vec<String>,
+    pub subagent_liveness_registry_remaining: Option<usize>,
     /// Shared subagent registry for BDD (#421)
     pub agent_cmd_registry: Option<quecto::infrastructure::tools::agent_cmd::SubagentRegistry>,
     /// Mock UDS server temp dir for agent_cmd BDD (kept alive)

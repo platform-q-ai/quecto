@@ -549,6 +549,9 @@ pub(super) struct ClientHandlerArgs {
     /// child-targeted `sync` off the blocked dispatcher (spike).
     pub(super) subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    /// Broadcast sender for busy-path `delete_all_subagents`, which must
+    /// publish the empty survivor set without waiting for the dispatcher (#1626).
+    pub(super) broadcast_tx: tokio::sync::broadcast::Sender<String>,
     /// RAII guard — decrements `live_clients` and sends `Disconnected` on drop.
     pub(super) _guard: ClientGuard,
 }
@@ -565,6 +568,7 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
         client_tool_registry,
         conversation_snapshot,
         subagent_registry,
+        broadcast_tx,
         _guard,
     } = args;
     use tokio::io::BufReader;
@@ -676,6 +680,7 @@ pub(super) async fn handle_client(args: ClientHandlerArgs) {
             snapshot: &conversation_snapshot,
             registry: &client_tool_registry,
             subagent_registry: &subagent_registry,
+            broadcast_tx: &broadcast_tx,
             client_id,
             cmd_tx: &cmd_tx,
         })

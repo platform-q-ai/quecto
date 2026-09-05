@@ -8,6 +8,10 @@ use crate::shell::socket_path::usable_socket_path;
 /// bounded so a never-confirmed spawn (failed launch) can't linger forever (#866).
 const OPTIMISTIC_SUBAGENT_GRACE: Duration = Duration::from_secs(30);
 
+/// Correlation-id suffix of the roster refresh that follows a
+/// `delete_all_subagents` response (#1626).
+const DELETE_ALL_RECONCILE_ID: &str = "delete-all-reconcile";
+
 impl App {
     pub(super) fn delete_all_subagents(&mut self) {
         if !self.send_command(Command::DeleteAllSubagents {
@@ -23,6 +27,7 @@ impl App {
         }
         self.ac_mut().roster.active_agent_id = None;
         self.ac_mut().roster.selected_environment = None;
+        self.ac_mut().roster.begin_delete_all();
         self.subagents.panel_nav = crate::components::list_navigator::ListNavigator::new();
         self.subagents.panel_nav_key = Some("master".to_string());
         self.notify("Deleting all subagents", NotifyLevel::Info);
@@ -155,11 +160,47 @@ impl App {
         self.update_subagent_bar(snapshot);
     }
 
+    /// Ask the kernel for its current roster. The single seam for roster
+    /// refresh requests; `id` correlates the reply when the caller needs to
+    /// recognise it (#1626).
+    pub(super) fn request_roster_refresh(&mut self, id: Option<String>) {
+        self.send_command(Command::GetSubagents { id });
+    }
+
+    /// The kernel has answered `delete_all_subagents` (any outcome). Request
+    /// a correlated roster refresh; the guard stays up until THAT reply lands,
+    /// because a stale `subagent_state_changed` can still be written after the
+    /// delete response (the writer task multiplexes broadcast and targeted
+    /// channels) and would otherwise resurrect the rows for a frame (#1626).
+    pub(super) fn reconcile_after_delete_all(&mut self) {
+        if !self.ac().roster.is_delete_pending() {
+            return;
+        }
+        let id = self.ac().namespaced_id(DELETE_ALL_RECONCILE_ID);
+        self.request_roster_refresh(Some(id));
+    }
+
+    /// Whether a `get_subagents` reply is the reconcile requested by
+    /// [`Self::reconcile_after_delete_all`]. Recognising it lifts the guard
+    /// (the caller then applies the payload as authoritative).
+    pub(super) fn take_delete_all_reconcile(&mut self, id: Option<&str>) -> bool {
+        let expected = self.ac().namespaced_id(DELETE_ALL_RECONCILE_ID);
+        if id != Some(expected.as_str()) {
+            return false;
+        }
+        self.ac_mut().roster.take_delete_pending()
+    }
+
     pub(super) fn update_subagent_bar_from_source(
         &mut self,
         source_agent_id: Option<&str>,
         subagents: Vec<crate::protocol::client::SubagentInfoEvent>,
     ) {
+        if self.ac().roster.is_delete_pending() {
+            // A payload racing the delete predates it (#1626); the guard lifts
+            // when the correlated reconcile reply arrives.
+            return;
+        }
         let source_agent_id = source_agent_id.map(sanitize_agent_id);
         let mut candidates = std::collections::BTreeMap::new();
         for mut s in subagents {
