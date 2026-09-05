@@ -604,9 +604,9 @@ fn ordinary_exit_fanout_targets_all_sendable_tabs_without_focus_or_name_collapse
     assert_eq!(master_cmd["type"], "persist_session");
     assert_eq!(tab_cmd["type"], "persist_session");
     assert_eq!(tab2_cmd["type"], "persist_session");
-    assert_eq!(master_cmd["restoreReason"], "ordinary_tui_exit_stopped");
-    assert_eq!(tab_cmd["restoreReason"], "ordinary_tui_exit_stopped");
-    assert_eq!(tab2_cmd["restoreReason"], "ordinary_tui_exit_stopped");
+    assert!(master_cmd["restoreReason"].is_null());
+    assert!(tab_cmd["restoreReason"].is_null());
+    assert!(tab2_cmd["restoreReason"].is_null());
     assert_ne!(master_cmd["id"], tab_cmd["id"]);
     assert_ne!(tab_cmd["id"], tab2_cmd["id"]);
     assert!(master_cmd["id"].as_str().unwrap().starts_with("tab0:"));
@@ -648,11 +648,39 @@ fn ordinary_exit_fanout_continues_after_first_enqueue_failure() {
     ));
     let tab_cmd: serde_json::Value = serde_json::from_str(&tab_rx.try_recv().unwrap()).unwrap();
     assert_eq!(tab_cmd["type"], "persist_session");
-    assert_eq!(tab_cmd["restoreReason"], "ordinary_tui_exit_stopped");
+    assert!(tab_cmd["restoreReason"].is_null());
 
     let store = WorkspaceManifestStore::load(&manifest_path);
     assert!(
         store.get(&a.workspace_id).is_none(),
         "ordinary-exit persistence no longer writes workspace manifests"
     );
+}
+
+#[test]
+fn ordinary_exit_persistence_distinguishes_owned_killing_from_detach_and_external() {
+    for (owned, kill_owned) in [(true, true), (true, false), (false, true)] {
+        let data = tempfile::tempdir().unwrap();
+        let mut a = app();
+        a.set_ordinary_exit_kill_owned(kill_owned);
+        let (mut conn, mut rx) = crate::shell::connection::Connection::live_for_tests();
+        conn.set_tab_for_tests(TabId::MASTER);
+        let watch = owned.then(|| crate::shell::child_watch::ChildWatch::for_tests(Some(123)));
+        a.attach_connection_to_tab(TabId::MASTER, conn, watch);
+        a.enqueue_ordinary_exit_snapshot_persists_at(
+            &data.path().join("registry.json"),
+            &data.path().join("manifest.json"),
+        )
+        .unwrap();
+        let cmd: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+        assert_eq!(cmd["type"], "persist_session");
+        if owned && kill_owned {
+            assert_eq!(cmd["restoreReason"], "ordinary_tui_exit_stopped");
+        } else {
+            assert!(
+                cmd["restoreReason"].is_null(),
+                "detach/external exit must preserve live recovery"
+            );
+        }
+    }
 }

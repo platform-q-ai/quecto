@@ -189,3 +189,26 @@ backpressured transport. It requires an agent that implements ledger `sync`.
 A successful sync establishes capability even if a slim state response omits
 its optional advertisement. Transcript updates preserve a scrolled-up viewport;
 returning to the tail restores following.
+
+### Exit, detach, and resume
+
+Ordinary Ctrl-D, `/exit`, and `/quit` persist the conversation before terminating
+TUI-owned agents and their owned children. Resuming restores transcript history;
+it does **not** recreate killed children as operational agent-panel rows. Old spawn
+and tool messages remain history, not evidence that their processes are alive.
+
+Use `--detach-on-exit` to leave owned agents running (`--kill-on-exit` is the
+default). Externally attached agents are not killed merely because this TUI exits.
+Reconnecting to a running harness uses its live registry. Recovery in a new harness
+only restores children whose sockets verify the expected session identity; dead or
+unreachable children are not automatically restarted. Exit durability and cleanup
+errors are reported separately.
+
+On Linux, cleanup retains the owned leader until escalation and uses pidfds for
+observed descendants, including tools in separate process groups. Cleanup success
+is acknowledged only after these processes have exited (zombies count as exited,
+not executing survivors). This is not a sandbox containment guarantee: a process
+that double-forks into a separate session and loses all observable ancestry before
+the watcher samples it can escape discovery. Other Unix platforms receive owned
+process-group escalation but currently report cleanup as unverified, rather than
+claiming complete separate-group cleanup without a supported verifier.

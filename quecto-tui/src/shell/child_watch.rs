@@ -8,16 +8,9 @@
 //! human-readable exit description on a watch channel that the disconnect
 //! notification surfaces.
 //!
-//! Termination also goes THROUGH the watcher (never by raw stored PID): the
-//! watcher holds the un-reaped `Child`, so as long as a terminate request can
-//! reach it the PID/PGID is pinned (alive or zombie) and cannot have been
-//! recycled by an unrelated process. Once the watcher has reaped the child,
-//! terminate requests fall back to a liveness-probed group signal
-//! ([`crate::shell::process::terminate_group_if_alive`]): sub-agents
-//! share the agent's process group and can outlive it, so they must still be
-//! cleaned up on TUI exit — but only after `kill(-pgid, 0)` confirms the
-//! group has members, which pins the PGID against reuse (#1051 review:
-//! PID-reuse race; final review: sub-agent orphan leak).
+//! Exit diagnosis uses waitid(WNOWAIT): the leader stays unreaped until cleanup
+//! or detach drops the watcher. This pins the owned PGID even after leader exit.
+//! Linux descendants in separate groups are retained by exact pidfd handles.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -114,42 +107,38 @@ pub fn watch_child(mut child: tokio::process::Child, stderr_tail: StderrTail) ->
     let (exit_tx, exit_rx) = watch::channel(None);
     let (term_tx, mut term_rx) = mpsc::channel::<oneshot::Sender<()>>(1);
     let pid = child.id();
-    let pgid = pid.and_then(|raw| crate::shell::process::checked_pid(raw).ok());
+    #[cfg(target_os = "linux")]
+    let mut owned = crate::shell::process::OwnedProcesses::new(
+        pid.and_then(|pid| crate::shell::process::checked_pid(pid).ok())
+            .unwrap_or(-1),
+    );
     tokio::spawn(async move {
-        tokio::select! {
-            status = child.wait() => {
-                if let Ok(status) = status {
-                    let _ = exit_tx.send(Some(describe_exit(status)));
-                }
-                // The leader is reaped, but sub-agents spawned into its
-                // process group can outlive it (the #1047 mid-session abort
-                // case). Keep serving terminate requests with a
-                // liveness-probed group signal so TUI exit still cleans them
-                // up instead of leaking paid, long-lived processes.
-                while let Some(done) = term_rx.recv().await {
-                    if let Some(pgid) = pgid {
-                        crate::shell::process::terminate_group_if_alive(
-                            pgid,
-                            crate::shell::process::TERMINATE_GRACE_MS,
-                        )
-                        .await;
+        let mut tick = tokio::time::interval(Duration::from_millis(50));
+        let mut observed = false;
+        loop {
+            tokio::select! {
+                _ = tick.tick() => {
+                    #[cfg(target_os = "linux")]
+                    owned.refresh();
+                    if !observed && let Some(pid) = pid
+                        && let Ok(Some(status)) = crate::shell::process::observed_exit(pid)
+                    {
+                        observed = true;
+                        let _ = exit_tx.send(Some(describe_exit(status)));
                     }
-                    let _ = done.send(());
                 }
-            }
-            Some(done) = term_rx.recv() => {
-                // `Child::wait` is cancel-safe, so losing the race here leaves
-                // the child un-reaped: its PID/PGID is still pinned (alive or
-                // zombie) and safe to signal via `terminate_child`, which
-                // reaps it afterwards.
-                crate::shell::process::terminate_child(
-                    &mut child,
-                    crate::shell::process::TERMINATE_GRACE_MS,
-                )
-                .await;
-                let _ = done.send(());
+                request = term_rx.recv() => {
+                    let Some(done) = request else { break; };
+                    let cleaned = crate::shell::process::terminate_owned(
+                        &mut child, crate::shell::process::TERMINATE_GRACE_MS,
+                        #[cfg(target_os = "linux")] &mut owned,
+                    ).await;
+                    if cleaned { let _ = done.send(()); }
+                    break;
+                }
             }
         }
+        // Drop leaves live children alone (detach); Tokio reaps exited children.
     });
     ChildWatch {
         exit_rx,
@@ -227,12 +216,8 @@ impl ChildWatch {
         }
     }
 
-    /// Terminate the child's process group (SIGTERM → grace → SIGKILL) and
-    /// wait for it to be reaped. After the watcher has reaped the child this
-    /// falls back to a liveness-probed group signal: surviving group members
-    /// (sub-agents) are still cleaned up, while an empty — and therefore
-    /// possibly recycled — PGID is never signalled (#1051 review: PID-reuse
-    /// race; final review: sub-agent orphan leak).
+    /// Request owned cleanup and wait for the watcher. Use the bounded variant
+    /// when the caller must distinguish verified success from cleanup failure.
     pub async fn terminate(&self) {
         let _ = self.terminate_with_timeout(Duration::MAX).await;
     }
@@ -241,13 +226,13 @@ impl ChildWatch {
     /// Returns `false` when the request cannot be delivered or the watcher does
     /// not acknowledge within the caller's bounded cleanup window.
     pub async fn terminate_with_timeout(&self, timeout: Duration) -> bool {
-        let (done_tx, done_rx) = oneshot::channel();
-        if self.term_tx.send(done_tx).await.is_err() {
-            return false;
-        }
-        tokio::time::timeout(timeout, done_rx)
-            .await
-            .is_ok_and(|ack| ack.is_ok())
+        tokio::time::timeout(timeout, async {
+            let (done_tx, done_rx) = oneshot::channel();
+            self.term_tx.send(done_tx).await.map_err(|_| ())?;
+            done_rx.await.map_err(|_| ())
+        })
+        .await
+        .is_ok_and(|ack| ack.is_ok())
     }
 }
 

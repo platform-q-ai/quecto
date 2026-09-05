@@ -361,13 +361,7 @@ pub fn build_compact_subagent_roster(
                     .unwrap_or_else(|| entry.status.clone());
             let terminal = entry.persisted_liveness != SubagentLiveness::Live
                 || effective == SubagentStatus::Exited;
-            let ordinary_exit_restored = entry.persisted_liveness == SubagentLiveness::Detached
-                && entry.parent_id.is_some()
-                && entry.socket_path.as_os_str().is_empty()
-                && entry.pid == 0
-                && effective != SubagentStatus::Exited;
-            if terminal && !ordinary_exit_restored && (since.is_none() || entry.parent_id.is_none())
-            {
+            if terminal && (since.is_none() || entry.parent_id.is_none()) {
                 continue;
             }
             let display_name = entry.effective_display_name(id).to_string();

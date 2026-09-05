@@ -50,36 +50,29 @@ pub(crate) fn snapshot_subagent_roster_with_restore_reason(
     registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     restore_reason: SubagentRestoreReason,
 ) -> Vec<PersistedSubagentRosterEntry> {
+    // Killing exit preserves conversation history, not an operational child roster.
+    if restore_reason == SubagentRestoreReason::OrdinaryTuiExitStopped {
+        return Vec::new();
+    }
     let Some(registry) = registry else {
         return Vec::new();
     };
     let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     let mut roster: Vec<_> = entries
         .iter()
-        .map(|(key, entry)| {
-            let final_restore_reason = if restore_reason
-                == SubagentRestoreReason::OrdinaryTuiExitStopped
-                && (entry.persisted_liveness == SubagentLiveness::Dead
-                    || entry.status == SubagentStatus::Exited)
-            {
-                SubagentRestoreReason::ExplicitlyKilled
-            } else {
-                restore_reason
-            };
-            PersistedSubagentRosterEntry {
-                agent_uuid: entry.agent_uuid.as_str().to_string(),
-                display_name: entry.effective_display_name(key).to_string(),
-                session_key: entry.agent_uuid.as_str().to_string(),
-                socket_path: entry.socket_path.clone(),
-                pid: entry.pid,
-                liveness: entry.persisted_liveness,
-                restore_reason: final_restore_reason,
-                parent_id: entry.parent_id.clone(),
-                read_only: entry.read_only,
-                status: Some(entry.status.to_wire_str().to_string()),
-                delivered_message_ordinal: entry.delivered_message_ordinal,
-                pending_message_reports: entry.pending_message_reports.clone(),
-            }
+        .map(|(key, entry)| PersistedSubagentRosterEntry {
+            agent_uuid: entry.agent_uuid.as_str().to_string(),
+            display_name: entry.effective_display_name(key).to_string(),
+            session_key: entry.agent_uuid.as_str().to_string(),
+            socket_path: entry.socket_path.clone(),
+            pid: entry.pid,
+            liveness: entry.persisted_liveness,
+            restore_reason,
+            parent_id: entry.parent_id.clone(),
+            read_only: entry.read_only,
+            status: Some(entry.status.to_wire_str().to_string()),
+            delivered_message_ordinal: entry.delivered_message_ordinal,
+            pending_message_reports: entry.pending_message_reports.clone(),
         })
         .collect();
     roster.sort_by(|a, b| a.agent_uuid.cmp(&b.agent_uuid));
@@ -141,68 +134,30 @@ pub(crate) fn verify_persisted_live_subagent(entry: &PersistedSubagentRosterEntr
             == Some(entry.session_key.as_str())
 }
 
-enum RosterRestoreDecision {
-    Live,
-    OrdinaryTuiExitStopped,
-    Drop,
-}
-
-fn classify_persisted_subagent_restore(
-    persisted: &PersistedSubagentRosterEntry,
-) -> RosterRestoreDecision {
-    if persisted.agent_uuid.is_empty() || persisted.session_key.is_empty() {
-        return RosterRestoreDecision::Drop;
-    }
-    match persisted.restore_reason {
-        SubagentRestoreReason::OrdinaryTuiExitStopped => {
-            if persisted.liveness == SubagentLiveness::Dead
-                || persisted.status.as_deref() == Some("exited")
-                || persisted.status.as_deref() == Some("dead")
-            {
-                RosterRestoreDecision::Drop
-            } else {
-                RosterRestoreDecision::OrdinaryTuiExitStopped
-            }
-        }
-        SubagentRestoreReason::ExplicitlyKilled | SubagentRestoreReason::Unknown => {
-            RosterRestoreDecision::Drop
-        }
-        SubagentRestoreReason::LegacyUnspecified => {
-            if persisted.liveness != SubagentLiveness::Dead
-                && verify_persisted_live_subagent(persisted)
-            {
-                RosterRestoreDecision::Live
-            } else {
-                RosterRestoreDecision::Drop
-            }
-        }
-    }
-}
-
 fn entry_from_persisted_subagent(
     mut persisted: PersistedSubagentRosterEntry,
-    decision: RosterRestoreDecision,
 ) -> Option<(String, SubagentEntry)> {
-    let (socket_path, pid, liveness) = match decision {
-        RosterRestoreDecision::Live => (
-            persisted.socket_path.clone(),
-            persisted.pid,
-            SubagentLiveness::Live,
-        ),
-        RosterRestoreDecision::OrdinaryTuiExitStopped => {
-            (std::path::PathBuf::new(), 0, SubagentLiveness::Detached)
-        }
-        RosterRestoreDecision::Drop => return None,
-    };
+    // Legacy ordinary-exit markers are compatible with old no-kill/external-detach
+    // saves only after live socket identity verification. Never recreate stopped
+    // rows synthetically as Detached/Idle agents.
+    if !matches!(
+        persisted.restore_reason,
+        SubagentRestoreReason::LegacyUnspecified | SubagentRestoreReason::OrdinaryTuiExitStopped
+    ) || persisted.liveness == SubagentLiveness::Dead
+        || matches!(persisted.status.as_deref(), Some("exited" | "dead"))
+        || !verify_persisted_live_subagent(&persisted)
+    {
+        return None;
+    }
     let key = persisted.agent_uuid.clone();
     let mut entry = SubagentEntry::with_identity(
         crate::domain::ids::AgentUuid::from(persisted.agent_uuid),
         persisted.display_name,
-        socket_path,
-        pid,
+        persisted.socket_path,
+        persisted.pid,
     );
     entry.status = SubagentStatus::Idle;
-    entry.persisted_liveness = liveness;
+    entry.persisted_liveness = SubagentLiveness::Live;
     entry.parent_id = persisted.parent_id.take();
     entry.read_only = persisted.read_only;
     entry.delivered_message_ordinal = persisted.delivered_message_ordinal;
@@ -221,10 +176,7 @@ pub(crate) fn restore_persisted_subagent_roster(
     // concurrent get_subagents / spawn registration during resume.
     let restored_entries: Vec<_> = roster
         .into_iter()
-        .filter_map(|persisted| {
-            let decision = classify_persisted_subagent_restore(&persisted);
-            entry_from_persisted_subagent(persisted, decision)
-        })
+        .filter_map(entry_from_persisted_subagent)
         .collect();
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     entries.clear();
@@ -243,6 +195,9 @@ pub(super) async fn persist_current_session_with_restore_reason(
     ctx: &mut DispatchCtx<'_>,
     restore_reason: SubagentRestoreReason,
 ) -> Result<(), crate::domain::error::DomainError> {
+    // Explicit detach persistence can cancel a prior killing request; routine
+    // saves cannot. Keep this intent in memory, not obsolete historical rows.
+    ctx.session.killing_exit = restore_reason == SubagentRestoreReason::OrdinaryTuiExitStopped;
     persist_current_session_with_options(ctx, restore_reason, true).await
 }
 
@@ -276,6 +231,11 @@ async fn persist_current_session_with_options(
     let restore_reason = match restore_reason {
         SubagentRestoreReason::Unknown => SubagentRestoreReason::LegacyUnspecified,
         reason => reason,
+    };
+    let restore_reason = if ctx.session.killing_exit {
+        SubagentRestoreReason::OrdinaryTuiExitStopped
+    } else {
+        restore_reason
     };
     let roster =
         snapshot_subagent_roster_with_restore_reason(&ctx.subagent_registry, restore_reason);

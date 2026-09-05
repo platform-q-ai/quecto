@@ -235,7 +235,12 @@ impl super::App {
                 if let Err(err) = conn.transport.clone_sender().try_send_exit_durability(
                     &crate::protocol::client::Command::PersistSession {
                         id: Some(id.clone()),
-                        restore_reason: Some("ordinary_tui_exit_stopped".to_string()),
+                        restore_reason: (self.ordinary_exit_kill_owned
+                            && self
+                                .tabs
+                                .get(&tab)
+                                .is_some_and(|state| state.child_exit_watch.is_some()))
+                        .then(|| "ordinary_tui_exit_stopped".to_string()),
                     },
                 ) {
                     first_err.get_or_insert(err);

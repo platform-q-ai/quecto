@@ -59,3 +59,47 @@ Historical non-live rows are not sendable, not running, not counted as active wo
 - **Silently drop killed roster rows on resume.** Rejected because it loses user-visible roster context and contradicts the desired `/resume` UX in #1586.
 - **Restart killed subagents automatically.** Rejected for now. Restarting could consume resources or resume work unexpectedly. Historical rows may support explicit future restart, but ordinary `/resume` must not make killed rows live.
 - **Kill all discovered agents.** Rejected. Ordinary TUI exit is scoped to TUI-owned parent agents and their owned rosters only.
+
+## Lifecycle correction — #1608
+
+This correction supersedes the historical-roster restoration decision above and
+its workspace/tab-layout assumptions. Ordinary **killing** exit preserves session
+transcripts, not stopped children in the operational agent registry. Historical
+conversation messages (including spawn/tool results and child session histories)
+remain in session storage; neither transcript loading nor history browsing depends
+on recreating a dead `SubagentEntry`.
+
+The supported contracts are distinct:
+
+| Lifecycle | Operational roster policy |
+| --- | --- |
+| Ordinary exit of a TUI-owned agent with killing enabled (default) | Persist the transcript with an empty child roster before cleanup. Old `ordinary_tui_exit_stopped` records never synthesize Detached/Idle rows; like ordinary recovery records they require verified survival (old clients used this marker for detach too). |
+| `--detach-on-exit`, or exit from an externally attached agent | Persist the ordinary live-recovery snapshot without a killing marker; do not terminate unowned processes. |
+| Reconnect to a still-running harness | Use the harness's existing in-memory registry. A client disconnect/reconnect is not a session restore or a reason to clear live children. |
+| Recovery after a crash / session resume in a new harness | Restore only records with a reachable socket that proves the expected session identity. Dead, unreachable, explicitly killed and unknown-reason records do not restore. |
+
+Full compact roster replies and authoritative live broadcasts expose operational
+membership only. Cursor deltas may still carry terminal notifications to remove a
+previously live row; those are not historical full-roster membership. New/restarted
+agents enter through normal registration, without historical UI tombstones here.
+
+### Persistence audit
+
+- Removed the ordinary-exit synthetic entry classifier/reconstruction and the
+  compact historical-row exception.
+- Removed the final-save loader that copied an earlier historical exit-barrier
+  roster over the current registry snapshot. A session-local killing latch keeps
+  routine and final saves empty after the barrier; explicit detach persistence or
+  switching sessions resets that intent without altering the live registry.
+- Retained the session roster schema and identity-verification path: supported
+  detach and crash recovery still need them. Legacy reason values remain readable
+  for safe migration (unverified stopped records and explicitly killed records are rejected).
+- Workspace manifests are no longer written by ordinary-exit fan-out. Legacy
+  workspace resume and the tab-agent sidecar still have consumers for live attach;
+  removing those separately requires changing those supported contracts. They are
+  not a source of synthetic harness operational entries.
+
+Cleanup is an independent process-ownership concern. A saved empty roster does
+not prove process termination, and a visible historical tool result does not prove
+that a child is still alive. Persistence failures and cleanup timeouts remain
+reported rather than silently treated as successful exit durability/termination.

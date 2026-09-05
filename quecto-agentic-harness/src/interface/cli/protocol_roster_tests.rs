@@ -203,8 +203,8 @@ fn compact_roster_omits_dead_and_exited_subagents_retained_in_registry() {
             .iter()
             .map(|row| row.agent_id.as_str())
             .collect::<Vec<_>>(),
-        vec!["live", "ordinary-exit-restored"],
-        "compact roster must expose surviving subagents plus ordinary-exit restored rows"
+        vec!["live"],
+        "compact roster must expose only operational agents, like live broadcasts"
     );
 }
 

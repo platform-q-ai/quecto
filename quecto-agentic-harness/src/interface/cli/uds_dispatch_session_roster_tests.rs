@@ -92,22 +92,9 @@ fn ordinary_exit_snapshot_marks_dead_tombstones_non_restorable() {
         crate::domain::session::SubagentRestoreReason::OrdinaryTuiExitStopped,
     );
 
-    assert_eq!(
-        roster
-            .iter()
-            .find(|entry| entry.agent_uuid == "live")
-            .unwrap()
-            .restore_reason,
-        crate::domain::session::SubagentRestoreReason::OrdinaryTuiExitStopped
-    );
-    assert_eq!(
-        roster
-            .iter()
-            .find(|entry| entry.agent_uuid == "killed")
-            .unwrap()
-            .restore_reason,
-        crate::domain::session::SubagentRestoreReason::ExplicitlyKilled,
-        "ordinary-exit snapshot must not convert pre-killed tombstones into restorable rows"
+    assert!(
+        roster.is_empty(),
+        "killing exit persists no operational children"
     );
 
     let restored = new_registry();
@@ -402,29 +389,9 @@ fn restore_classifier_respects_explicit_restore_reasons() {
 
     let entries = registry.lock().unwrap();
     assert!(
-        entries.contains_key("restored"),
-        "ordinary-exit-stopped rows return"
+        entries.is_empty(),
+        "stopped, killed and dead rows do not return"
     );
-    assert!(
-        !entries.contains_key("killed"),
-        "explicitly killed rows do not return"
-    );
-    assert!(
-        !entries.contains_key("legacy-dead"),
-        "legacy dead rows do not return"
-    );
-    let restored = entries.get("restored").unwrap();
-    assert_eq!(restored.status.to_wire_str(), "idle");
-    assert_ne!(
-        restored.persisted_liveness,
-        SubagentLiveness::Live,
-        "restored rows are visible but not direct-socket command-targetable in PR2"
-    );
-    assert!(
-        restored.socket_path.as_os_str().is_empty(),
-        "stale socket is not retained for dispatch"
-    );
-    assert_eq!(restored.pid, 0, "stale pid is not retained");
 }
 
 #[test]
@@ -459,7 +426,7 @@ fn restored_ordinary_exit_rows_are_not_socket_or_kill_targetable() {
             result.is_error,
             "restored row must not be kill-targetable by {agent_ref}"
         );
-        assert!(registry.lock().unwrap().contains_key("restored"));
+        assert!(registry.lock().unwrap().is_empty());
     }
 }
 
@@ -482,7 +449,7 @@ fn restore_is_scoped_to_the_resumed_session_without_bleed() {
     restore_persisted_subagent_roster(&Some(registry_a.clone()), vec![a.clone()]);
     restore_persisted_subagent_roster(&Some(registry_b.clone()), vec![b.clone()]);
 
-    assert!(registry_a.lock().unwrap().contains_key("agent-a"));
+    assert!(registry_a.lock().unwrap().is_empty());
     assert!(!registry_a.lock().unwrap().contains_key("agent-b"));
     assert!(
         registry_b.lock().unwrap().is_empty(),
@@ -524,7 +491,7 @@ fn persisted_roster_entry_tolerates_unknown_reason_and_missing_required_legacy_f
 }
 
 #[test]
-fn ordinary_exit_resume_full_refresh_preserves_history_but_not_preexisting_dead_children() {
+fn ordinary_exit_resume_full_refresh_never_reintroduces_stopped_or_preexisting_dead_children() {
     use crate::domain::session::SubagentRestoreReason;
     use crate::interface::cli::protocol::build_compact_subagent_roster;
 
@@ -554,35 +521,27 @@ fn ordinary_exit_resume_full_refresh_preserves_history_but_not_preexisting_dead_
             &Some(registry),
             SubagentRestoreReason::OrdinaryTuiExitStopped,
         );
-        assert_eq!(
-            snapshot[0].restore_reason,
-            if already_dead {
-                SubagentRestoreReason::ExplicitlyKilled
-            } else {
-                SubagentRestoreReason::OrdinaryTuiExitStopped
-            }
-        );
+        assert!(snapshot.is_empty());
         let restored = new_registry();
         restore_persisted_subagent_roster(&Some(restored.clone()), snapshot);
-        if !already_dead {
-            let entries = restored.lock().unwrap();
-            let child = &entries["exit-child"];
-            assert_eq!(child.persisted_liveness, SubagentLiveness::Detached);
-            assert_eq!(child.status, SubagentStatus::Idle);
-            assert!(child.socket_path.as_os_str().is_empty());
-            assert_eq!(child.pid, 0);
-        }
         for _ in 0..3 {
             let roster = build_compact_subagent_roster(&Some(restored.clone()), None).unwrap();
-            assert_eq!(roster.subagents.len(), usize::from(!already_dead));
-            if !already_dead {
-                assert_eq!(
-                    roster.subagents[0].agent_uuid.as_deref(),
-                    Some("exit-child")
-                );
-                assert_eq!(roster.subagents[0].status, "dead");
-            }
+            assert!(
+                roster.subagents.is_empty(),
+                "killing exit must not restore operational rows"
+            );
+            assert!(
+                crate::interface::cli::protocol::build_live_subagent_info_list(&Some(
+                    restored.clone()
+                ))
+                .is_empty()
+            );
+            let next = snapshot_subagent_roster_with_restore_reason(
+                &Some(restored.clone()),
+                SubagentRestoreReason::OrdinaryTuiExitStopped,
+            );
+            restore_persisted_subagent_roster(&Some(restored.clone()), next);
         }
-        assert_eq!(restored.lock().unwrap().len(), usize::from(!already_dead));
+        assert!(restored.lock().unwrap().is_empty());
     }
 }
