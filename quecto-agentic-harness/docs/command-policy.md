@@ -68,7 +68,8 @@ nested shells:
 
 | Rule id | Blocks |
 | --- | --- |
-| `rm-root` | `rm` with a recursive flag and a root target (`/`, `/*`, `//`, `/.`). Absolute paths below root are allowed. |
+| `rm-root` | `rm` with a recursive flag and a root target (`/`, `/*`, `//`, `/.`). |
+| `rm-protected-dir` | recursive `rm` of the home directory in any spelling (`~`, `$HOME`, `${HOME}`, `/home/<user>`, `/Users/<user>`), the agent workspace root (including `.`, `./*` and `..` forms resolved against the workspace), any sibling home under `/home` or `/Users`, or any direct child of `/` (`/etc`, `/usr`, `/tmp`, `/System`, `/Library`, …). Deeper paths such as `/tmp/build` or `~/.cache/foo` are allowed. |
 | `rm-no-preserve-root` | any `rm --no-preserve-root` |
 | `mkfs` | `mkfs`, `mkfs.*`, `mke2fs`, `mkswap` |
 | `dd-device-source` | `dd if=/dev/zero`, `/dev/random`, `/dev/urandom` |
@@ -81,11 +82,22 @@ nested shells:
 | `fetch-to-shell` | `curl`/`wget`/`fetch`/`aria2c` output piped into a shell that reads stdin, or fed to a shell through a substitution |
 | `glob-command-name` | an unquoted `*`, `?` or `[` in the program word (`/sbin/reb*t`). Pathname expansion could resolve it to anything and the fallback scan cannot see through the wildcard, so it is rejected outright. The `[` and `[[` test builtins are exempt. |
 
+Protected locations are not compiled in. Home comes from the environment of
+the process running the check, which is the machine that will run the
+command, so `/home/swq` on Linux and `/Users/swq` on macOS are both found
+without a platform table. The workspace root is what the sandbox was built
+with. Top-level system directories are recognised by depth rather than by
+name, so `/System` and `/Library` on macOS are covered as well as `/etc`
+and `/usr`. Relative targets are resolved against the workspace, which is
+where the bash tool starts; a command that `cd`s elsewhere first is judged
+as if it had not.
+
 Arguments that mix a literal prefix with an expansion are judged on the
-prefix: `rm -rf /$x` and `dd of=/dev/sd$x` are blocked because bash keeps
-`/` and `/dev/sd` verbatim whatever `$x` holds, while `rm -rf $DIR/` and
-`rm -rf /tmp/$x` are allowed. Flags are read the same way, so `rm -rf$x /`
-still counts as recursive.
+prefix: `rm -rf /$x`, `rm -rf ~/$DIR`, `rm -rf /tmp/$x` and
+`dd of=/dev/sd$x` are blocked because bash keeps the prefix verbatim
+whatever the variable holds and an empty value names a protected place,
+while `rm -rf $DIR/` and `rm -rf /tmp/build/$x` are allowed. Flags are
+read the same way, so `rm -rf$x /` still counts as recursive.
 
 Total work per command is capped at 2048 simple commands across brace
 expansion and nested-script parsing. Input that exceeds the budget is
@@ -133,9 +145,10 @@ mistakes the filter for a boundary.
 - **Targets that arrive as data.** `echo / | xargs rm -rf` and
   `find / -delete` carry the root path on stdin or in a `find` predicate,
   not in `rm`'s argv.
-- **Dynamic arguments with no literal prefix.** `rm -rf "$EMPTY"/` expands
-  to `rm -rf /` at runtime. Only a literal root or device prefix (`/$x`) is
-  matched; only dynamic *command names* trigger the fallback scan.
+- **Dynamic arguments with no literal prefix.** `rm -rf "$EMPTY"/` and
+  `rm -rf $PWD` expand to a protected directory at runtime. Only a literal
+  prefix (`/$x`, `~/$x`) is matched; only dynamic *command names* trigger
+  the fallback scan.
 - **Interpreters.** `python -c "import shutil; shutil.rmtree('/')"` is a
   source snippet to the filter, and deliberately so.
 - **Indirection through the filesystem.** Writing a script and executing it
@@ -149,9 +162,12 @@ mistakes the filter for a boundary.
   it is preserved when the config is saved, but it is ignored and a warning
   is logged once per process. Restrict what an agent can run with tool
   policy and the container runtime instead.
-- **`rm -rf /some/absolute/path` is now allowed.** The old substring scan
+- **`rm -rf /some/deep/path` is now allowed.** The old substring scan
   blocked any recursive delete of an absolute path because the string
-  contained `rm -rf /`. Only root targets are blocked now.
+  contained `rm -rf /`. Root, home, the workspace root and top-level
+  directories are blocked by `rm-root` / `rm-protected-dir`; anything
+  deeper, such as `/tmp/build`, is allowed. `rm -rf ~` and `rm -rf $HOME`
+  were never blocked before and are blocked now.
 - **Prose, filenames, source snippets and heredocs no longer match.**
 - **Some rules are broader than before** because they match structure
   rather than one spelling: `rm -r /` without `-f`, `sudo reboot`,

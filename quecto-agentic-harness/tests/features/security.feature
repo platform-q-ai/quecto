@@ -111,9 +111,71 @@ Feature: Command Safety Policy
       """
     Then the validation should be ok
 
-  Scenario: Recursive delete of an absolute path below root is allowed
+  Scenario: Recursive delete of a deep absolute path is allowed
     When the agent tries to validate command "rm -rf /tmp/build"
     Then the validation should be ok
+
+  Scenario Outline: Recursive delete of the home directory is blocked in every spelling
+    When the agent tries to validate raw command <command>
+    Then the validation should be an error
+    And the error should mention "rm-protected-dir"
+
+    Examples:
+      | command             |
+      | rm -rf ~            |
+      | rm -rf ~/           |
+      | rm -rf ~/*          |
+      | rm -rf $HOME        |
+      | rm -rf "$HOME"/     |
+      | sudo rm -rf ~       |
+      | bash -c 'rm -rf ~'  |
+
+  Scenario: Recursive delete of the resolved home path is blocked
+    Given a sandboxed workspace at "/tmp/quecto-test"
+    When the agent tries to recursively delete the home directory by absolute path
+    Then the validation should be an error
+    And the error should mention "rm-protected-dir"
+
+  Scenario Outline: Recursive delete of a top-level system directory is blocked
+    When the agent tries to validate command "<command>"
+    Then the validation should be an error
+    And the error should mention "rm-protected-dir"
+
+    Examples:
+      | command          |
+      | rm -rf /etc      |
+      | rm -rf /usr/     |
+      | rm -rf /var/*    |
+      | rm -rf /home     |
+      | rm -rf /Users    |
+      | rm -rf /System   |
+      | rm -rf /Library  |
+
+  Scenario Outline: Recursive delete of the workspace root is blocked
+    Given a sandboxed workspace at "/tmp/quecto-test/proj"
+    When the agent tries to validate command "<command>"
+    Then the validation should be an error
+    And the error should mention "rm-protected-dir"
+
+    Examples:
+      | command                        |
+      | rm -rf /tmp/quecto-test/proj   |
+      | rm -rf .                       |
+      | rm -rf ./*                     |
+      | rm -rf ../proj                 |
+
+  Scenario Outline: Recursive delete below a protected directory is allowed
+    Given a sandboxed workspace at "/tmp/quecto-test/proj"
+    When the agent tries to validate command "<command>"
+    Then the validation should be ok
+
+    Examples:
+      | command                     |
+      | rm -rf ~/.cache/foo         |
+      | rm -rf /usr/local/lib/foo   |
+      | rm -rf ./target             |
+      | rm -rf build                |
+      | rm -rf /tmp/quecto-test/proj/target |
 
   Scenario: Recursive delete of the root wildcard is blocked
     When the agent tries to validate command "rm -rf /*"

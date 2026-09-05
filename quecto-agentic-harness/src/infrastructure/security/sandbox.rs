@@ -10,6 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use super::denylist;
+use super::protected_dirs::HostContext;
 
 /// Shared path-policy hook plus the dangerous-command denylist.
 #[derive(Debug, Clone)]
@@ -65,14 +66,17 @@ impl Sandbox {
     /// redirects) of each simple command, including commands reached through
     /// substitutions, wrappers such as `sudo`/`env`/`xargs`, and nested shells
     /// such as `bash -c` or `eval`. Quoted prose, filenames and heredoc bodies
-    /// are not executable and do not match.
+    /// are not executable and do not match. Recursive deletes of the home
+    /// directory, the workspace root and top-level system directories are
+    /// blocked using locations resolved on this host at check time.
     ///
     /// Syntax the parser cannot resolve — a `$var` in command position, an
     /// unbalanced quote — triggers an explicit fallback to the pre-#1620
     /// whole-string substring scan, so dynamic constructs are never quietly
     /// waved through.
     pub fn validate_command(&self, command: &str) -> Result<(), SandboxError> {
-        denylist::check(command).map_err(|v| SandboxError::DangerousPattern {
+        let host = HostContext::from_host(self.workspace.as_deref());
+        denylist::check_with(command, &host).map_err(|v| SandboxError::DangerousPattern {
             command: command.to_string(),
             rule: v.rule,
             site: v.site,

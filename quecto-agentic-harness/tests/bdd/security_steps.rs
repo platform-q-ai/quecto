@@ -36,6 +36,15 @@ fn when_validate_raw_command(world: &mut QuectoWorld, command: String) {
     world.validation_result = Some(sb.validate_command(&command).map_err(|e| e.to_string()));
 }
 
+#[when("the agent tries to recursively delete the home directory by absolute path")]
+fn when_rm_home_absolute(world: &mut QuectoWorld) {
+    let home = dirs::home_dir().expect("home directory must be resolvable for this scenario");
+    let command = format!("rm -rf {}", home.display());
+    let default_sb = Sandbox::new(None);
+    let sb = world.sandbox.as_ref().unwrap_or(&default_sb);
+    world.validation_result = Some(sb.validate_command(&command).map_err(|e| e.to_string()));
+}
+
 #[then("the validation should be an error")]
 fn then_validation_is_error(world: &mut QuectoWorld) {
     let result = world

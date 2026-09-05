@@ -15,6 +15,7 @@
 // already-enabled bash tool; the container runtime is the actual boundary.
 
 use super::legacy_scan::legacy_substring_scan;
+use super::protected_dirs::{HostContext, is_protected_target};
 use super::shell_parse::{
     self, FETCH_PROGRAMS, ParseBudget, Parsed, SimpleCommand, Word, basename_lower,
 };
@@ -29,8 +30,16 @@ pub(crate) struct Violation {
     pub site: String,
 }
 
-/// Evaluate `command` against the denylist.
+/// Evaluate `command` against the denylist with no host facts (home,
+/// workspace, cwd unknown), so the protected-directory rule only sees
+/// absolute targets.
+#[cfg(test)]
 pub(crate) fn check(command: &str) -> Result<(), Violation> {
+    check_with(command, &HostContext::default())
+}
+
+/// Evaluate `command` against the denylist.
+pub(crate) fn check_with(command: &str, host: &HostContext) -> Result<(), Violation> {
     let mut ctx = Resolution::default();
     let parsed = shell_parse::parse(command, &mut ctx.budget, 0);
     ctx.unresolved.extend(parsed.unresolved);
@@ -45,7 +54,7 @@ pub(crate) fn check(command: &str) -> Result<(), Violation> {
         });
     }
 
-    check_effective(&ctx.out)?;
+    check_effective(&ctx.out, host)?;
 
     if !ctx.unresolved.is_empty()
         && let Some(pattern) = legacy_substring_scan(command)
@@ -433,7 +442,7 @@ fn violation(rule: &str, cmd: &SimpleCommand) -> Violation {
     }
 }
 
-fn check_effective(cmds: &[Effective]) -> Result<(), Violation> {
+fn check_effective(cmds: &[Effective], host: &HostContext) -> Result<(), Violation> {
     let function_names: Vec<String> = cmds
         .iter()
         .filter(|e| e.cmd.function_def)
@@ -473,6 +482,14 @@ fn check_effective(cmds: &[Effective]) -> Result<(), Violation> {
                 }
                 if args.has_long("no-preserve-root") {
                     return Err(violation("rm-no-preserve-root", cmd));
+                }
+                if recursive
+                    && args
+                        .positionals
+                        .iter()
+                        .any(|w| is_protected_target(w.static_prefix(), host))
+                {
+                    return Err(violation("rm-protected-dir", cmd));
                 }
             }
             p if p.starts_with("mkfs") || p == "mke2fs" || p == "mkswap" => {
@@ -572,7 +589,7 @@ fn check_effective(cmds: &[Effective]) -> Result<(), Violation> {
                         .map(|r| r.target.text.clone())
                         .collect::<Vec<_>>();
                     for script in scripts {
-                        if let Err(inner) = check(&script) {
+                        if let Err(inner) = check_with(&script, host) {
                             return Err(Violation {
                                 rule: inner.rule,
                                 site: format!("{} (script on stdin)", cmd.site),

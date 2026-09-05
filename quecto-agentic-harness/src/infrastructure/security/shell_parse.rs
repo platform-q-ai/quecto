@@ -317,6 +317,17 @@ impl<'a> Parser<'a> {
         self.out.unresolved.push(what.to_string());
     }
 
+    /// A plain `$NAME` / `${NAME}` reference. `HOME` is the one variable whose
+    /// value the policy needs, so it becomes a literal `~` that the
+    /// protected-directory rule resolves; everything else is dynamic.
+    fn expand_variable(&mut self, name: &str) {
+        if name == "HOME" {
+            self.word.push('~', true);
+        } else {
+            self.word.mark_dynamic();
+        }
+    }
+
     /// `(` or standalone `{`: the group is one stage of the current pipeline;
     /// commands inside get their own pipeline but remember the outer one.
     fn open_group(&mut self) {
@@ -478,12 +489,17 @@ impl<'a> Parser<'a> {
                 } else {
                     self.chars[start..self.i - 1].iter().collect()
                 };
-                self.word.mark_dynamic();
-                // `${x:-$(reboot)}`: defaults and subscripts are expanded.
-                self.scan_expansions(&inner);
+                if inner.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                    self.expand_variable(&inner);
+                } else {
+                    self.word.mark_dynamic();
+                    // `${x:-$(reboot)}`: defaults and subscripts are expanded.
+                    self.scan_expansions(&inner);
+                }
             }
             Some(c) if c.is_ascii_alphanumeric() || c == '_' || "@*#?-$!".contains(c) => {
                 self.i += 2;
+                let start = self.i - 1;
                 if c.is_ascii_alphabetic() || c == '_' {
                     while self.i < self.chars.len()
                         && (self.chars[self.i].is_ascii_alphanumeric() || self.chars[self.i] == '_')
@@ -491,7 +507,8 @@ impl<'a> Parser<'a> {
                         self.i += 1;
                     }
                 }
-                self.word.mark_dynamic();
+                let name: String = self.chars[start..self.i].iter().collect();
+                self.expand_variable(&name);
             }
             _ => {
                 self.word.push('$', false);

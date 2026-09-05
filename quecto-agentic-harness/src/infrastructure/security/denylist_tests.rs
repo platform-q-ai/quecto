@@ -53,12 +53,10 @@ fn rm_of_absolute_non_root_paths_is_allowed() {
         "rm -rf /home/user/.cache/foo",
         "rm -rf ./target",
         "rm -rf target/",
-        "rm -rf /.git",
         "rm -f /etc/motd",
         "rm /",
         "rm -rf $DIR/",
         "rm -rf \"$HOME\"/tmp",
-        "rm -rf /tmp/$x",
     ] {
         allowed(c);
     }
@@ -612,7 +610,9 @@ fn literal_root_or_device_prefix_before_a_variable_is_dangerous() {
     assert_eq!(blocked("dd if=x of=/dev/sd$x"), "dd-block-device");
     assert_eq!(blocked("echo hi > /dev/sd$x"), "block-device-write");
     allowed("rm -rf $DIR/");
-    allowed("rm -rf /tmp/$x");
+    allowed("rm -rf /tmp/build/$x");
+    // `/tmp/` is a top-level directory, so an empty `$x` would wipe it.
+    assert_eq!(blocked("rm -rf /tmp/$x"), "rm-protected-dir");
     allowed("echo hi > /dev/$disk");
 }
 

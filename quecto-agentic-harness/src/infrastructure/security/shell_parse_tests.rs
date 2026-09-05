@@ -245,7 +245,7 @@ fn dynamic_argument_is_not_unresolved() {
 
 #[test]
 fn brace_and_special_parameters_are_dynamic() {
-    let parsed = p(r#"echo ${HOME} "$@" $1 $?"#);
+    let parsed = p(r#"echo ${USER} "$@" $1 $?"#);
     assert!(parsed.commands[0].words[1..].iter().all(|w| w.dynamic));
     assert!(parsed.unresolved.is_empty());
 }
@@ -510,4 +510,15 @@ fn function_keyword_marks_definition() {
     let cmds = p("function bomb { bomb | bomb & }").commands;
     assert!(cmds[0].function_def);
     assert_eq!(cmds[0].words[0].text, "bomb");
+}
+
+#[test]
+fn home_variable_becomes_literal_tilde() {
+    let cmds = p("rm -rf $HOME/x ${HOME} \"$HOME\"/y ${HOME:-/tmp}").commands;
+    let w = &cmds[0].words;
+    assert_eq!(w[2].text, "~/x");
+    assert!(!w[2].dynamic);
+    assert_eq!(w[3].text, "~");
+    assert_eq!(w[4].text, "~/y");
+    assert!(w[5].dynamic);
 }
