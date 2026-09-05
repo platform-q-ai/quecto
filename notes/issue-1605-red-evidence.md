@@ -92,3 +92,17 @@ review of the restored fix; a stable-worktree re-review was requested. Its
 coverage observations prompted explicit periodic per-tab namespace/cursor
 coverage. Existing App::run tests already cover lost/refused work independently
 of the manual-pump live matrix.
+
+## Stable review finding and correction
+
+Stable adversarial review found that a ledger hint overwrote `feed.epoch` while
+leaving the old applied revision, defeating the periodic cursor and lower-rev
+rollover. Added `issue_1605_epoch_hint_keeps_applied_cursor_for_refused_retry`:
+RED output `/tmp/1605-epoch-red.log`. Hints now leave the applied epoch/revision
+pair untouched, and requests send that pair so the producer detects an epoch
+mismatch and supplies a full resync. Epoch mismatch requests also run for a
+zero-revision target. Updated two existing initial-request assertions to expect
+the applied epoch (0) rather than the un-applied hinted epoch (1).
+
+After correction: package lib **2112 passed, same 2 baseline failures**;
+all 13 #1605 tests pass within that run. `/tmp/1605-epoch-suite.log`.

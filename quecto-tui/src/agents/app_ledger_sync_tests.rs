@@ -48,7 +48,7 @@ async fn ledger_hint_requests_sync_only_after_capability_is_known() {
     assert!(matches!(
         cmd,
         Command::Sync {
-            epoch: 1,
+            epoch: 0,
             since_rev: 0,
             ..
         }
@@ -240,7 +240,7 @@ async fn next_ledger_hint_retries_after_a_refused_sync() {
     assert!(matches!(
         cmd,
         Command::Sync {
-            epoch: 1,
+            epoch: 0,
             since_rev: 0,
             ..
         }
@@ -489,4 +489,38 @@ async fn issue_1605_periodic_refresh_uses_each_tabs_namespace_and_cursor() {
         );
     }
     assert_eq!(h.active_tab_index(), 0);
+}
+
+#[tokio::test]
+async fn issue_1605_epoch_hint_keeps_applied_cursor_for_refused_retry() {
+    let mut h = super::tui_harness::TuiHarness::new().await;
+    let (feed, mut rx) = full_channel_feed();
+    let app = h.app_mut();
+    app.ac_mut().roster.feeds.insert("a1".into(), feed);
+    app.ensure_session("a1");
+    app.route_sync_response("a1", &sync_delta(1, 10));
+    app.note_ledger_advanced("a1", 2, 1);
+    rx.try_recv().expect("drain refused immediate request");
+    app.refresh_subagent_transcripts();
+    assert!(
+        matches!(
+            rx.try_recv(),
+            Ok(Command::Sync {
+                epoch: 1,
+                since_rev: 10,
+                ..
+            })
+        ),
+        "must send the applied epoch so producer detects rollover and returns a full resync"
+    );
+    app.route_sync_response(
+        "a1",
+        &json!({"epoch":2,"rev":1,"messages":[
+        {"id":"new","role":"user","content":"new epoch"}],
+        "caughtUp":true,"resync":true,"nextRev":null}),
+    );
+    assert_eq!(app.ac().roster.feeds["a1"].epoch, 2);
+    assert_eq!(app.ac().roster.feeds["a1"].rev, 1);
+    assert!(matches!(app.ac().roster.sessions["a1"].chat.entries(),
+        [ChatEntry::User { text }] if text == "new epoch"));
 }

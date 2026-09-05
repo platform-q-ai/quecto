@@ -29,7 +29,7 @@ impl App {
 
     fn request_sync(feed: &mut FeedState, ns: &str, epoch: u64, target_rev: u64) {
         let since_rev = if feed.epoch == epoch { feed.rev } else { 0 };
-        if target_rev > since_rev {
+        if epoch != feed.epoch || target_rev > since_rev {
             // Only mark the sync as in-flight if the send was accepted; a
             // refused send with pending_rev set would strand the feed with a
             // phantom sync that never gets answered or retried.
@@ -38,8 +38,10 @@ impl App {
                 .try_send(Command::Sync {
                     agent_id: None,
                     id: Some(crate::shell::connection::feed_id(ns, "subagent-sync")),
-                    epoch,
-                    since_rev,
+                    // Ask from the applied epoch so rollover requests force
+                    // the producer's full resync rather than mixing ledgers.
+                    epoch: feed.epoch,
+                    since_rev: feed.rev,
                 })
                 .is_ok()
             {
@@ -56,7 +58,8 @@ impl App {
             } else {
                 feed.pending_rev = Some(rev);
             }
-            feed.epoch = epoch;
+            // A hint is a target, not applied state. Keep epoch/rev paired
+            // until a successful response; autonomous retries need that pair.
             feed.last_fresh_at = Some(std::time::Instant::now());
         }
     }
