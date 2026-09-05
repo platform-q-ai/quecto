@@ -192,6 +192,7 @@ fn docker_adapter_keeps_its_load_bearing_properties() {
         "--op",
         "kill.log",
         "\"$cli\" rm -f",
+        "--time 1",
         "QUECTO_CONTAINER_ENVIRONMENT_ID",
     ] {
         assert!(

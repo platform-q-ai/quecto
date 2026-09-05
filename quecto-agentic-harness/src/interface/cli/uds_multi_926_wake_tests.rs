@@ -2,6 +2,10 @@
 //! child completion notification. This exercises the `tokio::select!` wake half
 //! of the path — the act half (drain → parent turn) is covered in `uds.rs`.
 use super::*;
+
+fn idle_shutdown() -> super::super::uds_shutdown::ShutdownRequest {
+    super::super::uds_shutdown::ShutdownRequest::for_tests().0
+}
 use crate::infrastructure::tools::subagent_registry::{
     SequencedSubagentNotification, SubagentNotification, new_notification_channel,
 };
@@ -27,7 +31,7 @@ async fn test_926_idle_parent_wakes_on_single_completion() {
         .await
         .unwrap();
 
-    let msg = recv_next_message(&mut cmd_rx, &mut notification_rx).await;
+    let msg = recv_next_message(&mut cmd_rx, &mut notification_rx, &idle_shutdown()).await;
     match msg {
         Some(DispatchMsg::Notification(notif)) => {
             let (agent_id, sequence) = notif.dedupe_key();
@@ -35,6 +39,7 @@ async fn test_926_idle_parent_wakes_on_single_completion() {
             assert_eq!(sequence, 1);
         }
         Some(DispatchMsg::Client(_)) => panic!("woke on a client message, not the completion"),
+        Some(DispatchMsg::Shutdown) => panic!("no termination signal was sent"),
         None => panic!("idle parent must wake on the completion, channel closed instead"),
     }
 }
@@ -54,7 +59,7 @@ async fn test_926_dropped_rx_means_completion_cannot_wake_parent() {
     // bound it so the test proves "no wake" instead of hanging.
     let res = tokio::time::timeout(
         std::time::Duration::from_millis(50),
-        recv_next_message(&mut cmd_rx, &mut notification_rx),
+        recv_next_message(&mut cmd_rx, &mut notification_rx, &idle_shutdown()),
     )
     .await;
     assert!(

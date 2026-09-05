@@ -1,4 +1,8 @@
 use super::*;
+
+fn idle_shutdown() -> super::super::uds_shutdown::ShutdownRequest {
+    super::super::uds_shutdown::ShutdownRequest::for_tests().0
+}
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
@@ -59,7 +63,10 @@ async fn recv_next_message_prefers_client_message_when_ready() {
         .unwrap();
     let mut maybe_rx = Some(notif_rx);
 
-    match recv_next_message(&mut cmd_rx, &mut maybe_rx).await.unwrap() {
+    match recv_next_message(&mut cmd_rx, &mut maybe_rx, &idle_shutdown())
+        .await
+        .unwrap()
+    {
         DispatchMsg::Client(ClientMessage::Command(command)) => {
             assert_eq!(command.client_id, 9);
             assert!(command.line.contains("get_state"));
@@ -86,12 +93,15 @@ async fn recv_next_message_returns_notification_when_no_client_ready() {
         .unwrap();
     let mut maybe_rx = Some(notif_rx);
 
-    match recv_next_message(&mut cmd_rx, &mut maybe_rx).await.unwrap() {
+    match recv_next_message(&mut cmd_rx, &mut maybe_rx, &idle_shutdown())
+        .await
+        .unwrap()
+    {
         DispatchMsg::Notification(notification) => {
             assert_eq!(notification.sequence, 3);
             assert_eq!(notification.dedupe_key().0, "child");
         }
-        DispatchMsg::Client(_) => panic!("expected notification"),
+        DispatchMsg::Client(_) | DispatchMsg::Shutdown => panic!("expected notification"),
     }
 }
 
@@ -101,7 +111,7 @@ async fn recv_next_message_returns_none_when_command_channel_closed() {
     drop(cmd_tx);
     let mut no_notifications = None;
     assert!(
-        recv_next_message(&mut cmd_rx, &mut no_notifications)
+        recv_next_message(&mut cmd_rx, &mut no_notifications, &idle_shutdown())
             .await
             .is_none()
     );

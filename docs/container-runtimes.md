@@ -259,10 +259,18 @@ socket is never connected to.
 ### `kill`
 
 Invoked with `QUECTO_CONTAINER_ENVIRONMENT_ID` set to the runtime
-`environment_id`. Runs exactly once per successful stop — either from
-`kill_container` or when the final member exits. A non-zero exit leaves
+`environment_id`. Runs exactly once per successful stop — from
+`kill_container`, from `delete_all_subagents`, when the final member exits,
+or when the parent harness receives SIGTERM/SIGINT. A non-zero exit leaves
 the environment in a retryable `cleanup-failed` state with the script's
 stderr preserved as the last error.
+
+The signal case matters because an environment's processes live outside the
+parent's process group: the TUI's ordinary exit (Ctrl-D) terminates the
+harness by signal, and nothing but the harness running this script can reach
+the environment. The harness therefore tears down every subagent and
+environment on the signal before it exits, and the TUI's exit budget (two
+seconds) bounds how long the kill script may take.
 
 ### `inspect`
 
@@ -423,7 +431,10 @@ Design properties:
   destructive operation proves the environment id contains no path
   separators and resolves under the trusted `--state-dir` root, mirroring the
   host-local set. `kill.sh` serves `--op kill` / `--op cleanup` and logs each
-  operation to the state root.
+  operation to the state root. Under Podman it bounds the remove's grace to
+  one second (`--time 1`): Docker's `rm -f` kills immediately, Podman's would
+  otherwise wait the container's ten-second stop timeout, which does not fit
+  the parent's signal-driven exit budget.
 - **Strict JSON contract.** All stdout results are emitted with `jq`, exactly
   matching the `create`/`exec`/`inspect` wire contracts above.
 - **Host-side clone is transport-restricted.** The repo URL from the config's

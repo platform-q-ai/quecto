@@ -69,7 +69,13 @@ esac
 
 container="$(cat "$env_dir/container" 2>/dev/null || true)"
 if [ -n "$container" ]; then
-  "$cli" rm -f "$container" >/dev/null 2>&1 || true
+  # Docker's `rm -f` kills immediately; Podman's sends SIGTERM and waits the
+  # container's stop timeout (10s) before SIGKILL. The parent runs this from
+  # its own SIGTERM handling inside the TUI's two-second exit budget, so
+  # bound the grace: one second for the child to cascade, then SIGKILL.
+  grace=()
+  [ "$cli" = podman ] && grace=(--time 1)
+  "$cli" rm -f "${grace[@]}" "$container" >/dev/null 2>&1 || true
 fi
 rm -rf "$env_dir"
 printf '%s %s\n' "$op" "$id" >>"$state_dir/kill.log"

@@ -229,6 +229,14 @@ pub(super) async fn multi_client_loop(
         .unwrap_or_else(|| tokio::sync::broadcast::channel::<String>(BROADCAST_CHANNEL_CAPACITY).0);
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(256);
     let cancel_handle: CancelHandle = std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle));
+    // SIGTERM/SIGINT: tear down every subagent and container environment
+    // before this process goes away (a container is outside the parent's
+    // process group, so nothing else can reach it), then exit the loop.
+    let shutdown = super::uds_shutdown::ShutdownRequest::install(
+        subagent_registry.clone(),
+        Some(broadcast_tx.clone()),
+        cancel_handle.clone(),
+    );
     let turn_control: super::uds_cancel::TurnControlHandle = std::sync::Arc::default();
     let live_clients = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
 
@@ -295,7 +303,11 @@ pub(super) async fn multi_client_loop(
 
     run_dispatch_loop(
         &mut ctx,
-        DispatchLoopArgs { cmd_rx, persist },
+        DispatchLoopArgs {
+            cmd_rx,
+            persist,
+            shutdown,
+        },
         &live_clients,
     )
     .await;
@@ -327,6 +339,7 @@ pub(super) async fn multi_client_loop(
 struct DispatchLoopArgs {
     cmd_rx: tokio::sync::mpsc::Receiver<ClientMessage>,
     persist: bool,
+    shutdown: super::uds_shutdown::ShutdownRequest,
 }
 
 /// Process commands from all clients until no clients remain or a fatal error.
@@ -340,11 +353,19 @@ async fn run_dispatch_loop(
     let DispatchLoopArgs {
         mut cmd_rx,
         persist,
+        shutdown,
     } = args;
     loop {
-        let msg = recv_next_message(&mut cmd_rx, &mut ctx.notification_rx).await;
+        let msg = recv_next_message(&mut cmd_rx, &mut ctx.notification_rx, &shutdown).await;
         let Some(msg) = msg else { break };
         match msg {
+            DispatchMsg::Shutdown => {
+                // Subagents and environments are already gone (the watcher
+                // tore them down before notifying); persist an empty roster
+                // rather than reviving killed rows on the next resume.
+                ctx.session.killing_exit = true;
+                break;
+            }
             DispatchMsg::Client(client_msg) => {
                 if handle_client_msg(ctx, client_msg, persist, live_clients).await {
                     break;
@@ -409,20 +430,28 @@ async fn run_dispatch_loop(
 enum DispatchMsg {
     Client(ClientMessage),
     Notification(crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification),
+    /// A termination signal was handled and its teardown has completed.
+    Shutdown,
 }
 
 async fn recv_next_message(
     cmd_rx: &mut tokio::sync::mpsc::Receiver<ClientMessage>,
     notification_rx: &mut Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
+    shutdown: &super::uds_shutdown::ShutdownRequest,
 ) -> Option<DispatchMsg> {
     if let Some(rx) = notification_rx {
         tokio::select! {
             biased;
+            () = shutdown.requested() => Some(DispatchMsg::Shutdown),
             client_msg = cmd_rx.recv() => client_msg.map(DispatchMsg::Client),
             Some(notif) = rx.recv() => Some(DispatchMsg::Notification(notif)),
         }
     } else {
-        cmd_rx.recv().await.map(DispatchMsg::Client)
+        tokio::select! {
+            biased;
+            () = shutdown.requested() => Some(DispatchMsg::Shutdown),
+            client_msg = cmd_rx.recv() => client_msg.map(DispatchMsg::Client),
+        }
     }
 }
 
@@ -685,6 +714,9 @@ mod issue_994_tests;
 #[cfg(test)]
 #[path = "uds_paged_history_tests.rs"]
 mod paged_history_tests;
+#[cfg(test)]
+#[path = "uds_multi_shutdown_tests.rs"]
+mod shutdown_tests;
 #[cfg(test)]
 #[path = "uds_snapshot_tests.rs"]
 mod snapshot_tests;
