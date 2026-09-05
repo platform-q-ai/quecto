@@ -157,6 +157,14 @@ run_as=(--user "$(id -u):$(id -g)")
 if [ "$cli" = podman ]; then
   run_as+=(--userns=keep-id)
 fi
+# --init puts a minimal init (catatonit under Podman, tini under Docker) at
+# PID 1 with the child as its direct descendant. The child otherwise IS PID 1
+# and inherits two duties a normal binary does not perform: reaping orphaned
+# grandchildren (nested agents whose parent exited pile up as zombies) and
+# handling signals (PID 1 ignores SIGTERM without a handler, so `stop` hangs
+# until the SIGKILL escalation). The child is still the container's liveness:
+# the init exits when it does.
+run_as+=(--init)
 # SECURITY (PR #1401 review): provider API keys must NOT be passed with
 # `run -e KEY=value` — that bakes them into the container config,
 # readable for the container's whole lifetime via `inspect` and

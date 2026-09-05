@@ -141,6 +141,7 @@ fn docker_adapter_keeps_its_load_bearing_properties() {
         "\"$cli\" rm -f",
         "QUECTO_CONTAINER_CLI",
         "--userns=keep-id",
+        "--init",
         "trap",
         "jq -cn",
         "HOME=$HOME",
