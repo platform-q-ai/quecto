@@ -33,32 +33,6 @@ fn test_deserialize_empty_uses_defaults() {
 }
 
 #[test]
-fn test_agent_defaults_has_no_command_allowlist() {
-    let defaults = AgentDefaults::default();
-    assert_eq!(defaults.command_allowlist, None);
-}
-
-#[test]
-fn test_command_allowlist_deserializes_from_config() {
-    let json = r#"{
-            "agents": {
-                "defaults": {
-                    "command_allowlist": ["echo", "ls", "cat"]
-                }
-            }
-        }"#;
-    let config: Config = serde_json::from_str(json).unwrap();
-    assert_eq!(
-        config.agents.defaults.command_allowlist,
-        Some(vec![
-            "echo".to_string(),
-            "ls".to_string(),
-            "cat".to_string()
-        ])
-    );
-}
-
-#[test]
 fn test_deserialize_legacy_exec_fields_ignored() {
     // Old configs may still carry the removed nsjail/network keys; serde
     // ignores unknown fields, so they deserialize without error.
