@@ -15,8 +15,7 @@ pub use super::subagent_status::SubagentStatus;
 /// Entry for a spawned subagent in the shared registry.
 #[derive(Debug, Clone)]
 pub struct SubagentEntry {
-    /// Hidden durable identity for this spawn. Registry/storage/socket owners use
-    /// this value as the stable agent identity; display labels remain wire/UI names.
+    /// Durable registry/storage/socket identity; display labels remain wire/UI names.
     pub agent_uuid: AgentUuid,
     /// User-facing display label (`agent_id` on the compatibility wire).
     pub display_name: String,
@@ -26,9 +25,9 @@ pub struct SubagentEntry {
     pub pid: u32,
     /// Owned OS process topology used by infrastructure cleanup paths.
     pub process_owner: ProcessOwner,
-    /// Explicit internal lifecycle state. Parent-facing status is projected from
-    /// this richer state so lifecycle races can be tested without changing the
-    /// existing UDS status vocabulary.
+    /// Shared with the local reaper; retained clones lose authority on reap.
+    pub(crate) process_ownership: super::process_ownership::ProcessOwnership,
+    /// Internal lifecycle state; projected to the existing UDS status vocabulary.
     pub lifecycle: SubagentLifecycleState,
     /// Live status updated by the monitor task (#522).
     pub status: SubagentStatus,
@@ -138,6 +137,7 @@ impl SubagentEntry {
             socket_path,
             pid,
             process_owner: ProcessOwner::DirectPid,
+            process_ownership: super::process_ownership::ProcessOwnership::new(),
             lifecycle: SubagentLifecycleState::Launched,
             status: SubagentStatus::Starting,
             last_tool: None,

@@ -205,21 +205,14 @@ impl ExecTool {
             stderr_task,
         };
 
-        // Arm a process-group reaper: if this future is dropped (an abort cancels
-        // the in-flight tool call, #895 AC3) the guard SIGKILLs the whole group
-        // so no grandchild outlives the cancel. Disarmed once the child is fully
-        // awaited (normal completion or timeout already reaped it).
-        let mut group_guard = ProcessGroupGuard::new(child.id());
-        let result = run_child_with_timeout(
+        run_child_with_timeout(
             child,
             stream_tasks,
             timeout_dur,
             self.workspace.clone(),
             output_target,
         )
-        .await;
-        group_guard.disarm();
-        result
+        .await
     }
 }
 
@@ -259,7 +252,8 @@ impl Drop for ProcessGroupGuard {
             //
             // `kill(2)` is async-signal-safe and takes plain integers; we pass a
             // pid we own and a constant signal, so it cannot violate Rust memory
-            // safety. A stale/dead pid simply yields ESRCH, which we ignore.
+            // safety. The leader is retained unreaped while this guard is armed;
+            // ESRCH is not used as an identity check.
             // SAFETY: FFI call to `libc::kill` with owned-pid + constant signal.
             unsafe {
                 libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
@@ -350,6 +344,8 @@ struct StreamTasks {
     stderr_task: Option<tokio::task::JoinHandle<(String, bool)>>,
 }
 
+mod wait_owned;
+
 async fn run_child_with_timeout(
     mut child: tokio::process::Child,
     mut stream_tasks: StreamTasks,
@@ -357,17 +353,42 @@ async fn run_child_with_timeout(
     workspace: Arc<PathBuf>,
     output_target: Option<OutputTarget>,
 ) -> Result<ToolResult, DomainError> {
-    match tokio::time::timeout(timeout_dur, child.wait()).await {
-        Ok(Ok(status)) => {
+    // Declared after Child so cancellation signals before Child drops/reaps.
+    let mut group_guard = ProcessGroupGuard::new(child.id());
+    #[cfg(target_os = "linux")]
+    let completion = tokio::time::timeout(timeout_dur, wait_owned::exited(&mut child)).await;
+    #[cfg(not(target_os = "linux"))]
+    let completion = tokio::time::timeout(timeout_dur, child.wait()).await;
+    match completion {
+        Ok(Ok(observed)) => {
+            #[cfg(not(target_os = "linux"))]
+            group_guard.disarm();
             let output = collect_raw_output(&mut stream_tasks).await;
+            group_guard.disarm();
+            #[cfg(target_os = "linux")]
+            let status = {
+                let () = observed;
+                child
+                    .wait()
+                    .await
+                    .map_err(|e| DomainError::Tool(format!("bash failed: {e}")))?
+            };
+            #[cfg(not(target_os = "linux"))]
+            let status = observed;
             if let Some(target) = output_target {
                 Ok(make_exit_result(status, output_file_summary(&target, None)))
             } else {
                 Ok(make_exit_result(status, truncate_output(output).await))
             }
         }
-        Ok(Err(e)) => Err(DomainError::Tool(format!("bash failed: {}", e))),
+        Ok(Err(e)) => {
+            group_guard.disarm();
+            Err(DomainError::Tool(format!("bash failed: {}", e)))
+        }
         Err(_) => {
+            // handle_timeout signals while Child is still owned, then disarms
+            // before reaping/draining. The outer frame must not retain a PGID.
+            group_guard.disarm();
             Ok(handle_timeout(child, stream_tasks, timeout_dur, workspace, output_target).await)
         }
     }
@@ -678,6 +699,9 @@ impl Tool for ExecTool {
         Box::pin(async move { self.run_command(&args_str, None).await })
     }
 }
+
+#[cfg(test)]
+mod ownership_tests;
 
 #[cfg(test)]
 #[path = "../bash_tests.rs"]
