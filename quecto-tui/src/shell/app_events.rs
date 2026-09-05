@@ -348,7 +348,7 @@ impl App {
             self.mark_spawned_subagent_running(&result_text);
         }
         if is_subagent_tool(&tool_name) {
-            self.send_command(Command::GetSubagents { id: None });
+            self.request_roster_refresh(None);
         }
         if let Some(spinner) = &mut self.ac_mut().spinner {
             spinner.set_message("Working... (Esc to interrupt)");

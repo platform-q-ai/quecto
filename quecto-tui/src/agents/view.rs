@@ -191,11 +191,10 @@ pub(crate) struct ConnectionRoster {
     pub(crate) selected_environment: Option<String>,
     /// Per-subagent synced feed state keyed by agent id.
     pub(crate) feeds: BTreeMap<String, FeedState>,
-    /// `true` between sending `delete_all_subagents` and receiving its
-    /// response (#1626). While set, roster payloads are ignored: any snapshot
-    /// or broadcast in flight predates the delete and would resurrect the
-    /// rows the user just removed. Cleared by the response, which then
-    /// re-requests the roster so the panel reconciles with the kernel.
+    /// `true` from sending `delete_all_subagents` until the correlated roster
+    /// reconcile reply arrives (#1626). While set, roster payloads are
+    /// ignored: any snapshot or broadcast in flight predates the delete and
+    /// would resurrect the rows the user just removed.
     delete_pending: bool,
 }
 
@@ -212,7 +211,7 @@ impl ConnectionRoster {
     }
 
     /// Clear the guard; returns whether one was pending. Called when the
-    /// response arrives (any outcome) or the connection is lost.
+    /// correlated reconcile reply arrives or the connection is lost.
     pub(crate) fn take_delete_pending(&mut self) -> bool {
         std::mem::take(&mut self.delete_pending)
     }

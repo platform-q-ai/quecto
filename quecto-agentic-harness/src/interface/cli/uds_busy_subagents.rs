@@ -1,4 +1,4 @@
-//! Busy-path interception for sub-agent liveness commands (spike).
+//! Busy-path interception for sub-agent roster commands.
 //!
 //! The dispatch loop is serial: while a parent turn (or auto-continued
 //! workflow) is in flight, every queued command waits for it to finish. That
@@ -6,17 +6,19 @@
 //! `get_subagents` (left-panel roster) and child-targeted `sync` (main-panel
 //! feed) — so both panels freeze until the parent goes idle (or is aborted).
 //!
-//! Both are read-only and need nothing the dispatch loop exclusively owns:
-//! `get_subagents` reads the `Arc<Mutex<…>>` registry (the #874 connect-time
-//! snapshot already does exactly this), and a child-targeted `sync` is a
-//! round-trip on the CHILD's socket. Serve them from the connection's reader
-//! task, mirroring the #1197 busy-serve pattern for `sync`/`get_message`.
+//! Neither needs anything the dispatch loop exclusively owns: `get_subagents`
+//! reads the `Arc<Mutex<…>>` registry (the #874 connect-time snapshot already
+//! does exactly this), and a child-targeted `sync` is a round-trip on the
+//! CHILD's socket. Serve them from the connection's reader task, mirroring
+//! the #1197 busy-serve pattern for `sync`/`get_message`.
 //!
-//! `delete_all_subagents` is served here too (#1626). It only needs the
-//! registry mutex and the broadcast sender: the drain is synchronous and
-//! lock-safe. Queued behind a running turn it executed only once the parent
-//! went idle, while the busy-path `get_subagents` refreshes and child monitor
-//! broadcasts kept re-filling the TUI roster from the untouched registry.
+//! `delete_all_subagents` is the one MUTATING command served here (#1626). It
+//! only needs the registry mutex and the broadcast sender: the drain is
+//! synchronous and lock-safe. Queued behind a running turn it executed only
+//! once the parent went idle, while the busy-path `get_subagents` refreshes
+//! and child-monitor broadcasts kept re-filling the TUI roster from the
+//! untouched registry. Because this interceptor runs before the dispatch
+//! channel, multi-client connections never reach the dispatch-path arm.
 
 use super::protocol::AgentEvent;
 
@@ -88,7 +90,7 @@ pub(super) async fn intercept(ctx: BusySubagentCtx<'_>) -> bool {
             // so the response must not wait for the in-flight turn.
             let ev = super::uds_delete_all_subagents::busy_response(
                 subagents.as_ref(),
-                Some(broadcast_tx),
+                broadcast_tx,
                 id.as_deref(),
             );
             write_event(

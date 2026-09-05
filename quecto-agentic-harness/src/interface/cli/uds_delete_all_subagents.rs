@@ -5,7 +5,9 @@ type SubagentRegistry = crate::infrastructure::tools::subagent_registry::Subagen
 
 const COMMAND: &str = "delete_all_subagents";
 
-/// Dispatch-path response payload (serial loop; registry always present).
+/// Dispatch-path response payload. Multi-client connections are answered on
+/// the reader task ([`busy_response`]) before anything reaches the dispatch
+/// loop, so this path now serves the single-client loop and unit tests.
 pub(super) fn response_data(ctx: &DispatchCtx<'_>) -> serde_json::Value {
     response_payload(
         ctx.subagent_registry
@@ -20,13 +22,15 @@ pub(super) fn response_data(ctx: &DispatchCtx<'_>) -> serde_json::Value {
 /// registry has nothing to delete and answers with a correlated error.
 pub(super) fn busy_response(
     registry: Option<&SubagentRegistry>,
-    broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
+    broadcast_tx: &tokio::sync::broadcast::Sender<String>,
     id: Option<&str>,
 ) -> AgentEvent {
     match registry {
-        Some(registry) => {
-            AgentEvent::ok(id, COMMAND, Some(response_payload(registry, broadcast_tx)))
-        }
+        Some(registry) => AgentEvent::ok(
+            id,
+            COMMAND,
+            Some(response_payload(registry, Some(broadcast_tx))),
+        ),
         None => AgentEvent::err(id, COMMAND, "no sub-agent registry available"),
     }
 }

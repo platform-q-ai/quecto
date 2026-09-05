@@ -1,5 +1,6 @@
 //! Unit tests for `uds_busy_subagents.rs` — busy-path interception of
-//! sub-agent liveness commands (`get_subagents`, child-targeted `sync`).
+//! sub-agent roster commands (`get_subagents`, child-targeted `sync`, and
+//! `delete_all_subagents` (#1626)).
 //!
 //! These commands must be answered from the connection's reader task while the
 //! serial dispatch loop is occupied by a parent turn; queuing them behind the
@@ -208,9 +209,8 @@ async fn direct_feed_sync_is_served_inline_by_the_child_local_fast_path() {
 fn registry_with_entries(
     names: &[&str],
 ) -> crate::infrastructure::tools::subagent_registry::SubagentRegistry {
-    use crate::infrastructure::tools::subagent_registry::SubagentEntry;
-    let registry: crate::infrastructure::tools::subagent_registry::SubagentRegistry =
-        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+    let registry = new_registry();
     for name in names {
         registry.lock().unwrap().insert(
             (*name).to_string(),
