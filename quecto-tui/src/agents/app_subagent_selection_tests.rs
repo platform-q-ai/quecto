@@ -34,6 +34,7 @@ fn gc_removes_expired_exited_subagent() {
         &mut map,
         tokio::time::Instant::now(),
         Duration::from_secs(5),
+        &mut std::collections::BTreeSet::new(),
     );
     assert!(removed, "should have removed expired entry");
     assert!(map.is_empty());
@@ -50,6 +51,7 @@ fn gc_keeps_recent_exited_subagent() {
         &mut map,
         tokio::time::Instant::now(),
         Duration::from_secs(5),
+        &mut std::collections::BTreeSet::new(),
     );
     assert!(!removed, "should not remove recent exit");
     assert_eq!(map.len(), 1);
@@ -65,6 +67,7 @@ fn gc_keeps_running_subagent() {
         &mut map,
         tokio::time::Instant::now(),
         Duration::from_secs(5),
+        &mut std::collections::BTreeSet::new(),
     );
     assert!(!removed, "should not remove running subagent");
     assert_eq!(map.len(), 1);
@@ -87,6 +90,7 @@ fn gc_defers_removals_while_a_sibling_is_active() {
         &mut map,
         tokio::time::Instant::now(),
         Duration::from_secs(5),
+        &mut std::collections::BTreeSet::new(),
     );
     assert!(!removed, "must defer GC while a sibling is active");
     assert_eq!(
@@ -113,6 +117,7 @@ fn gc_reclaims_expired_once_batch_is_quiescent() {
         &mut map,
         tokio::time::Instant::now(),
         Duration::from_secs(5),
+        &mut std::collections::BTreeSet::new(),
     );
     assert!(
         removed,
@@ -467,5 +472,245 @@ fn dead_status_enters_terminal_gc_lifecycle_like_exited() {
     assert!(
         entry.exited_at.is_some(),
         "dead is a compact terminal status and must start the same GC clock as exited"
+    );
+}
+
+fn make_event_with_uuid(
+    id: &str,
+    status: &str,
+    uuid: &str,
+) -> crate::protocol::client::SubagentInfoEvent {
+    let mut event = make_tracked(id, status).1.info;
+    event.agent_uuid = Some(uuid.to_string());
+    event
+}
+
+#[test]
+fn expired_terminal_snapshot_rows_do_not_flicker_back_by_uuid() {
+    let mut map = std::collections::BTreeMap::new();
+    let mut expired = std::collections::BTreeSet::new();
+    let now = tokio::time::Instant::now();
+    let grace = Duration::from_secs(5);
+    let uuid = "uuid-dead";
+
+    let mut first = std::collections::BTreeMap::new();
+    first.insert(
+        uuid.to_string(),
+        make_event_with_uuid("dead-child", "dead", uuid),
+    );
+    crate::agents::roster::apply_roster_snapshot(
+        &mut map,
+        None,
+        first,
+        crate::agents::roster::RosterApplyTiming {
+            now,
+            exited_grace: grace,
+            optimistic_grace: Duration::from_secs(1),
+        },
+        &mut expired,
+    );
+    assert!(map.contains_key(uuid));
+
+    assert!(super::gc_exited_subagents(
+        &mut map,
+        now + Duration::from_secs(6),
+        grace,
+        &mut expired
+    ));
+    assert!(map.is_empty());
+
+    let mut refresh = std::collections::BTreeMap::new();
+    refresh.insert(
+        uuid.to_string(),
+        make_event_with_uuid("dead-child", "dead", uuid),
+    );
+    crate::agents::roster::apply_roster_snapshot(
+        &mut map,
+        None,
+        refresh,
+        crate::agents::roster::RosterApplyTiming {
+            now: now + Duration::from_secs(7),
+            exited_grace: grace,
+            optimistic_grace: Duration::from_secs(1),
+        },
+        &mut expired,
+    );
+    assert!(
+        map.is_empty(),
+        "historical terminal rows must stay suppressed after expiry"
+    );
+}
+
+#[test]
+fn suppressed_terminal_uuid_can_reactivate_with_nonterminal_status() {
+    let mut map = std::collections::BTreeMap::new();
+    let mut expired = std::collections::BTreeSet::new();
+    let now = tokio::time::Instant::now();
+    let grace = Duration::from_secs(5);
+    let uuid = "uuid-restarted";
+
+    let mut first = std::collections::BTreeMap::new();
+    first.insert(
+        uuid.to_string(),
+        make_event_with_uuid("child", "dead", uuid),
+    );
+    crate::agents::roster::apply_roster_snapshot(
+        &mut map,
+        None,
+        first,
+        crate::agents::roster::RosterApplyTiming {
+            now,
+            exited_grace: grace,
+            optimistic_grace: Duration::from_secs(1),
+        },
+        &mut expired,
+    );
+    assert!(super::gc_exited_subagents(
+        &mut map,
+        now + Duration::from_secs(6),
+        grace,
+        &mut expired
+    ));
+
+    let mut restart = std::collections::BTreeMap::new();
+    restart.insert(
+        uuid.to_string(),
+        make_event_with_uuid("child", "running", uuid),
+    );
+    crate::agents::roster::apply_roster_snapshot(
+        &mut map,
+        None,
+        restart,
+        crate::agents::roster::RosterApplyTiming {
+            now: now + Duration::from_secs(7),
+            exited_grace: grace,
+            optimistic_grace: Duration::from_secs(1),
+        },
+        &mut expired,
+    );
+    assert!(
+        map.contains_key(uuid),
+        "nonterminal reactivation is legitimate"
+    );
+}
+
+#[test]
+fn terminal_rows_expired_by_empty_snapshot_stay_suppressed_by_uuid() {
+    let mut map = std::collections::BTreeMap::new();
+    let mut expired = std::collections::BTreeSet::new();
+    let now = tokio::time::Instant::now();
+    let grace = Duration::from_secs(5);
+    let uuid = "uuid-omitted-dead";
+
+    let mut first = std::collections::BTreeMap::new();
+    first.insert(
+        uuid.to_string(),
+        make_event_with_uuid("dead-child", "dead", uuid),
+    );
+    crate::agents::roster::apply_roster_snapshot(
+        &mut map,
+        None,
+        first,
+        crate::agents::roster::RosterApplyTiming {
+            now,
+            exited_grace: grace,
+            optimistic_grace: Duration::from_secs(1),
+        },
+        &mut expired,
+    );
+
+    crate::agents::roster::apply_roster_snapshot(
+        &mut map,
+        None,
+        std::collections::BTreeMap::new(),
+        crate::agents::roster::RosterApplyTiming {
+            now: now + Duration::from_secs(6),
+            exited_grace: grace,
+            optimistic_grace: Duration::from_secs(1),
+        },
+        &mut expired,
+    );
+    assert!(map.is_empty());
+
+    let mut historical = std::collections::BTreeMap::new();
+    historical.insert(
+        uuid.to_string(),
+        make_event_with_uuid("dead-child", "dead", uuid),
+    );
+    crate::agents::roster::apply_roster_snapshot(
+        &mut map,
+        None,
+        historical,
+        crate::agents::roster::RosterApplyTiming {
+            now: now + Duration::from_secs(7),
+            exited_grace: grace,
+            optimistic_grace: Duration::from_secs(1),
+        },
+        &mut expired,
+    );
+    assert!(
+        map.is_empty(),
+        "omission-expired terminal rows must not reappear on a later full refresh"
+    );
+}
+
+#[test]
+fn terminal_descendant_expired_by_direct_source_omission_stays_suppressed() {
+    let mut map = std::collections::BTreeMap::new();
+    let mut expired = std::collections::BTreeSet::new();
+    let now = tokio::time::Instant::now();
+    let grace = Duration::from_secs(5);
+    let uuid = "uuid-direct-dead";
+
+    let mut parent = make_event_with_uuid("parent", "running", "uuid-parent");
+    parent.parent_id = None;
+    let mut child = make_event_with_uuid("dead-child", "dead", uuid);
+    child.parent_id = Some("parent".to_string());
+    let mut first = std::collections::BTreeMap::new();
+    first.insert("parent".to_string(), parent.clone());
+    first.insert(uuid.to_string(), child.clone());
+    crate::agents::roster::apply_roster_snapshot(
+        &mut map,
+        None,
+        first,
+        crate::agents::roster::RosterApplyTiming {
+            now,
+            exited_grace: grace,
+            optimistic_grace: Duration::from_secs(1),
+        },
+        &mut expired,
+    );
+
+    let mut direct = std::collections::BTreeMap::new();
+    direct.insert("parent".to_string(), parent);
+    crate::agents::roster::apply_roster_snapshot(
+        &mut map,
+        Some("parent"),
+        direct,
+        crate::agents::roster::RosterApplyTiming {
+            now: now + Duration::from_secs(6),
+            exited_grace: grace,
+            optimistic_grace: Duration::from_secs(1),
+        },
+        &mut expired,
+    );
+    assert!(!map.contains_key(uuid));
+
+    let mut historical = std::collections::BTreeMap::new();
+    historical.insert(uuid.to_string(), child);
+    crate::agents::roster::apply_roster_snapshot(
+        &mut map,
+        None,
+        historical,
+        crate::agents::roster::RosterApplyTiming {
+            now: now + Duration::from_secs(7),
+            exited_grace: grace,
+            optimistic_grace: Duration::from_secs(1),
+        },
+        &mut expired,
+    );
+    assert!(
+        !map.contains_key(uuid),
+        "direct-source omission should tombstone expired terminal descendants"
     );
 }

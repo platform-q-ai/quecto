@@ -12,7 +12,7 @@ use crate::components::footer::Footer;
 use crate::components::list_navigator::ListNavigator;
 use crate::components::workflow_bar;
 use crate::protocol::client::{Command, SubagentInfoEvent, SubagentWorkflow};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use tokio::sync::mpsc;
 
 impl RosterInfo for SubagentInfoEvent {
@@ -170,6 +170,10 @@ pub(crate) struct ConnectionRoster {
     /// Updated from tool events (spawn/agent_cmd) and server pushes.
     /// Entries track expiry timestamps for auto-removal (#540).
     pub(crate) tracked: BTreeMap<String, TrackedSubagent<SubagentInfoEvent>>,
+    /// Durable UUIDs for terminal rows already displayed for their grace period.
+    /// Suppresses repeated historical terminal snapshots while allowing a
+    /// nonterminal restart with the same UUID to reappear.
+    pub(crate) expired_terminal_uuids: BTreeSet<String>,
     /// Animation frame for the subagent spinner, advanced on each spinner tick.
     pub(crate) frame: usize,
     /// Per-sub-agent session views, keyed by agent id (#800). The master is
@@ -206,6 +210,7 @@ impl ConnectionRoster {
     pub(crate) fn new() -> Self {
         Self {
             tracked: BTreeMap::new(),
+            expired_terminal_uuids: BTreeSet::new(),
             frame: 0,
             sessions: BTreeMap::new(),
             session_order: Vec::new(),

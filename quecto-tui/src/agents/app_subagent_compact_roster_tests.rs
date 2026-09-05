@@ -449,3 +449,56 @@ async fn legacy_compact_duplicate_name_does_not_revive_retained_terminal_row_bef
     );
     assert!(h.app_mut().ac().roster.tracked.is_empty());
 }
+
+fn compact_row_with_uuid(id: &str, uuid: &str, status: &str) -> serde_json::Value {
+    serde_json::json!({
+        "agentId": id,
+        "agentUuid": uuid,
+        "status": status,
+    })
+}
+
+#[tokio::test]
+async fn compact_full_and_delta_refreshes_do_not_reinsert_expired_terminal_uuid() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    let uuid = "uuid-restored-dead";
+
+    h.event_line(&full_compact_get_subagents_response_line(vec![
+        compact_row_with_uuid("restored", uuid, "dead"),
+    ]));
+    assert!(h.app_mut().ac().roster.tracked.contains_key(uuid));
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    assert!(h.app_mut().gc_exited_subagents());
+
+    h.event_line(&full_compact_get_subagents_response_line(vec![
+        compact_row_with_uuid("restored", "uuid-new-live", "running"),
+        compact_row_with_uuid("restored", uuid, "dead"),
+    ]));
+    assert!(
+        h.app_mut()
+            .ac()
+            .roster
+            .tracked
+            .contains_key("uuid-new-live"),
+        "fresh UUID with same label is a legitimate new agent"
+    );
+
+    h.event_line(&delta_compact_get_subagents_response_line(vec![
+        compact_row_with_uuid("restored", uuid, "dead"),
+    ]));
+    h.event_line(&full_compact_get_subagents_response_line(vec![
+        compact_row_with_uuid("restored", "uuid-new-live", "running"),
+        compact_row_with_uuid("restored", uuid, "dead"),
+    ]));
+
+    let tracked = &h.app_mut().ac().roster.tracked;
+    assert!(
+        !tracked.contains_key(uuid),
+        "expired historical terminal UUID must stay suppressed across delta and full refreshes"
+    );
+    assert!(
+        tracked.contains_key("uuid-new-live"),
+        "fresh UUID with same label is a legitimate new agent"
+    );
+}
