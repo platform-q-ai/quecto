@@ -56,7 +56,7 @@ pub enum SubagentRestoreReason {
     /// Legacy rows omitted the field. Only verified live rows may restore.
     #[default]
     LegacyUnspecified,
-    /// Ordinary TUI exit intentionally stopped this previously live row.
+    /// Legacy exit record (old clients also used this for detach). Requires live verification.
     OrdinaryTuiExitStopped,
     /// The user explicitly killed this row before ordinary TUI exit.
     ExplicitlyKilled,
@@ -80,7 +80,8 @@ pub struct PendingMessageReport {
     pub ordinal: u64,
 }
 
-/// Durable, read-only summary of a sub-agent spawned by this session.
+/// Durable recovery metadata for a sub-agent spawned by this session.
+/// This is not transcript history: only verified surviving agents may restore.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PersistedSubagentRosterEntry {

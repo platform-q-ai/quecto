@@ -289,7 +289,11 @@ async fn single_client_loop(
                 .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run())),
             subagent_roster: uds_dispatch_session::snapshot_subagent_roster_with_restore_reason(
                 &subagent_registry,
-                crate::domain::session::SubagentRestoreReason::LegacyUnspecified,
+                if agent_session.killing_exit {
+                    crate::domain::session::SubagentRestoreReason::OrdinaryTuiExitStopped
+                } else {
+                    crate::domain::session::SubagentRestoreReason::LegacyUnspecified
+                },
             ),
         };
         let _ = session_store.save(&session).await;

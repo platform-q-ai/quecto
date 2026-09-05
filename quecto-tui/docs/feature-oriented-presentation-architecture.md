@@ -360,6 +360,7 @@ This issue is the characterization-readiness slice for the later code-moving iss
 | `shell/keys.rs` | `shell` input mapping primitive (relocated, #1257 Phase 1) |
 | `shell/mod.rs` | `shell` module root |
 | `shell/process.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
+| `shell/process_owned.rs` | `shell` Linux owned-process verification adapter (#1608) |
 | `shell/render.rs` | `shell` terminal/render runtime adapter (relocated, #1257 Phase 1) |
 | `shell/signals.rs` | `shell` runtime adapter (relocated, #1257 Phase 1) |
 | `shell/socket_path.rs` | `shell` shared socket-path validation policy for every connect (#1460) |

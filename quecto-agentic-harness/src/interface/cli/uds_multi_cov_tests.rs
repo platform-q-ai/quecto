@@ -250,7 +250,7 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
 }
 
 #[tokio::test]
-async fn final_roster_snapshot_preserves_completed_ordinary_exit_barrier_with_killed_tombstones() {
+async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_killed_tombstones() {
     use crate::domain::message::Message;
     use crate::domain::session::{
         PersistedSubagentRosterEntry, Session, SessionStore, SubagentLiveness,
@@ -302,13 +302,23 @@ async fn final_roster_snapshot_preserves_completed_ordinary_exit_barrier_with_ki
         .unwrap();
 
     let registry = Some(new_registry());
-    let roster = final_subagent_roster_snapshot(&store, "cli:test", &registry).await;
+    let roster = uds_dispatch_session::snapshot_subagent_roster(&registry);
 
-    assert_eq!(roster, previous_roster);
+    assert!(roster.is_empty());
+    assert_eq!(
+        store
+            .load("cli:test")
+            .await
+            .unwrap()
+            .unwrap()
+            .messages
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]
-async fn final_roster_snapshot_preserves_completed_ordinary_exit_barrier() {
+async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
     use crate::domain::message::Message;
     use crate::domain::session::{
         PersistedSubagentRosterEntry, Session, SessionStore, SubagentLiveness,
@@ -343,11 +353,17 @@ async fn final_roster_snapshot_preserves_completed_ordinary_exit_barrier() {
         .unwrap();
 
     let registry = Some(new_registry());
-    let roster = final_subagent_roster_snapshot(&store, "cli:test", &registry).await;
+    let roster = uds_dispatch_session::snapshot_subagent_roster(&registry);
 
-    assert_eq!(roster.len(), 1);
+    assert!(roster.is_empty());
     assert_eq!(
-        roster[0].restore_reason,
-        SubagentRestoreReason::OrdinaryTuiExitStopped
+        store
+            .load("cli:test")
+            .await
+            .unwrap()
+            .unwrap()
+            .messages
+            .len(),
+        1
     );
 }

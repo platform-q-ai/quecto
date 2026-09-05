@@ -13,6 +13,8 @@ pub struct AgentSession {
     model: String,
     session_key: String,
     streaming: bool,
+    /// Session-local killing barrier; routine/final saves must not undo it.
+    pub(crate) killing_exit: bool,
     generation: u64,
     /// Cumulative provider-reported usage for this in-memory UDS session.
     usage: SessionUsage,
@@ -202,6 +204,7 @@ impl AgentSession {
             model,
             session_key,
             streaming: false,
+            killing_exit: false,
             generation: 1,
             usage: SessionUsage::default(),
             context_tokens: 0,
@@ -229,6 +232,7 @@ impl AgentSession {
         if self.session_key != session_key {
             self.clear_usage();
             self.session_key = session_key;
+            self.killing_exit = false;
             self.bump_visible_generation();
         }
     }
