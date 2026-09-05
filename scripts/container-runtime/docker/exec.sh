@@ -4,7 +4,7 @@
 # Environment: QUECTO_CONTAINER_CONFIG, QUECTO_CONTAINER_ENVIRONMENT_ID
 #
 # Starts a joining child inside the environment's existing container via
-# `docker exec`, in the environment's checkout. The joiner's socket lives
+# `exec`, in the environment's checkout. The joiner's socket lives
 # in the same parent socket dir that create identity-mounted, so it is
 # reachable from the host without extra mounts.
 set -euo pipefail
@@ -16,7 +16,22 @@ die() {
 }
 
 command -v jq >/dev/null 2>&1 || die "jq is required to encode the exec result"
-command -v docker >/dev/null 2>&1 || die "docker is required"
+# Runtime CLI: rootless Podman by default. Membership of the `docker` group
+# is root-equivalent on the host (the daemon runs as root and has no policy
+# layer, so anything holding the socket can mount / and escalate), which is
+# exactly what an autonomous agent spawner must not hand out. Rootless
+# Podman runs the container as the invoking user with a user namespace, so
+# an escape lands as that user, not root. QUECTO_CONTAINER_CLI overrides;
+# Docker stays a fallback for hosts without Podman.
+cli="${QUECTO_CONTAINER_CLI:-}"
+if [ -z "$cli" ]; then
+  if command -v podman >/dev/null 2>&1; then
+    cli=podman
+  elif command -v docker >/dev/null 2>&1; then
+    cli=docker
+  fi
+fi
+[ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman (preferred) or docker is required"
 
 state_dir=""
 while [ "$#" -gt 0 ]; do
@@ -50,7 +65,7 @@ case "$resolved" in
 esac
 container="$(cat "$env_dir/container")"
 [ -n "$container" ] || die "environment $id has no recorded container"
-running="$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || echo false)"
+running="$("$cli" inspect --format '{{.State.Running}}' "$container" 2>/dev/null || echo false)"
 [ "$running" = "true" ] || die "container $container for environment $id is not running"
 
 socket_path=""
@@ -87,17 +102,19 @@ if [ -f "$secret_env_file" ] && grep -q '^export GH_TOKEN=' "$secret_env_file"; 
   add_git_cfg credential.https://github.com.helper "!gh auth git-credential"
 fi
 [ "$gcfg_i" -gt 0 ] && envs+=(-e "GIT_CONFIG_COUNT=$gcfg_i")
+# stdout is the strict JSON contract; `podman exec -d` prints the exec
+# session id (docker prints nothing), so both branches discard stdout.
 if [ -f "$secret_env_file" ]; then
-  docker exec -d -w "$workdir" "${envs[@]}" \
-    "$container" /bin/sh -c '. "$0" && exec "$@"' "$secret_env_file" "$@"
+  "$cli" exec -d -w "$workdir" "${envs[@]}" \
+    "$container" /bin/sh -c '. "$0" && exec "$@"' "$secret_env_file" "$@" >/dev/null
 else
-  docker exec -d -w "$workdir" "${envs[@]}" \
-    "$container" "$@"
+  "$cli" exec -d -w "$workdir" "${envs[@]}" \
+    "$container" "$@" >/dev/null
 fi
 
 jq -cn --arg container "$container" --arg socket "$socket_path" \
   '{container: $container, socket: $socket}' >>"$env_dir/children.jsonl"
 printf '%s\n' "$id" >>"$state_dir/execs.log"
 
-jq -cn --arg socket "$socket_path" --arg container "$container" \
-  '{metadata: {runtime: "docker", container: $container}, socket_path: $socket}'
+jq -cn --arg cli "$cli" --arg socket "$socket_path" --arg container "$container" \
+  '{metadata: {runtime: $cli, container: $container}, socket_path: $socket}'

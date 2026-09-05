@@ -14,7 +14,22 @@ die() {
   exit 1
 }
 
-command -v docker >/dev/null 2>&1 || die "docker is required"
+# Runtime CLI: rootless Podman by default. Membership of the `docker` group
+# is root-equivalent on the host (the daemon runs as root and has no policy
+# layer, so anything holding the socket can mount / and escalate), which is
+# exactly what an autonomous agent spawner must not hand out. Rootless
+# Podman runs the container as the invoking user with a user namespace, so
+# an escape lands as that user, not root. QUECTO_CONTAINER_CLI overrides;
+# Docker stays a fallback for hosts without Podman.
+cli="${QUECTO_CONTAINER_CLI:-}"
+if [ -z "$cli" ]; then
+  if command -v podman >/dev/null 2>&1; then
+    cli=podman
+  elif command -v docker >/dev/null 2>&1; then
+    cli=docker
+  fi
+fi
+[ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman (preferred) or docker is required"
 
 state_dir=""
 op="kill"
@@ -54,7 +69,7 @@ esac
 
 container="$(cat "$env_dir/container" 2>/dev/null || true)"
 if [ -n "$container" ]; then
-  docker rm -f "$container" >/dev/null 2>&1 || true
+  "$cli" rm -f "$container" >/dev/null 2>&1 || true
 fi
 rm -rf "$env_dir"
 printf '%s %s\n' "$op" "$id" >>"$state_dir/kill.log"

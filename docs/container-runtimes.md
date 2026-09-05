@@ -373,11 +373,11 @@ their ancestor session; when such a descendant reports a script-managed direct
 socket, ancestors omit `socketPath` and live commands return a clear
 non-connectable-socket error instead of exposing the container-local path.
 
-## The official Docker adapter
+## The official Docker/Podman adapter
 
 Alongside the host-local reference set (which remains the CI-exercised
-default), the repository ships an official Docker adapter implementing the
-same contract:
+default), the repository ships an official Docker/Podman adapter implementing
+the same contract (the directory keeps its historical `docker` name):
 
 - [`scripts/container-runtime/docker/create.sh`](../scripts/container-runtime/docker/create.sh)
 - [`scripts/container-runtime/docker/exec.sh`](../scripts/container-runtime/docker/exec.sh)
@@ -386,6 +386,16 @@ same contract:
 
 Design properties:
 
+- **Rootless Podman by default, Docker as fallback.** Every script resolves
+  its CLI to `podman` when present, else `docker`; `QUECTO_CONTAINER_CLI`
+  overrides. Rootless Podman is the intended runtime for an autonomous
+  spawner: membership of the `docker` group is root-equivalent on the host
+  (the daemon runs as root with no policy layer, so anything holding the
+  socket can bind-mount `/` and escalate), whereas rootless Podman runs the
+  container as the invoking user inside a user namespace. `create.sh` runs
+  the child as the host uid/gid and, under Podman, adds `--userns=keep-id`
+  so the identity-mounted paths keep their ownership inside the container.
+  The `metadata.runtime` field reports whichever CLI was used.
 - **One container per environment, child as PID 1.** `create.sh` starts the
   child as the container's main process, so Docker's view of the container is
   exactly the child's liveness; `exec.sh` joins later members with
@@ -451,8 +461,8 @@ A matching configuration:
 }
 ```
 
-CI has no Docker daemon, so the Docker adapter is not exercised by the CI
-BDD lanes; it is verified manually against a local Docker daemon, and its
+CI has no container runtime, so the Docker/Podman adapter is not exercised by
+the CI BDD lanes; it is verified manually against local rootless Podman, and its
 shape (existence, fail-fast mode, contract needles, cross-links) is pinned
 by `quecto-agentic-harness/tests/container_runtime_docs.rs`.
 

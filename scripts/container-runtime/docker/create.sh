@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Official Docker adapter for the Quecto container-runtime contract: `create`.
+# Official Docker/Podman adapter for the Quecto container-runtime contract: `create`.
 # Modeled on the host-local reference set at scripts/container-runtime/ (see
 # docs/container-runtimes.md for the contract). Verified manually against a
 # local Docker daemon; the CI-exercised default remains the host-local set.
@@ -31,7 +31,22 @@ die() {
 }
 
 command -v jq >/dev/null 2>&1 || die "jq is required to encode the create result"
-command -v docker >/dev/null 2>&1 || die "docker is required"
+# Runtime CLI: rootless Podman by default. Membership of the `docker` group
+# is root-equivalent on the host (the daemon runs as root and has no policy
+# layer, so anything holding the socket can mount / and escalate), which is
+# exactly what an autonomous agent spawner must not hand out. Rootless
+# Podman runs the container as the invoking user with a user namespace, so
+# an escape lands as that user, not root. QUECTO_CONTAINER_CLI overrides;
+# Docker stays a fallback for hosts without Podman.
+cli="${QUECTO_CONTAINER_CLI:-}"
+if [ -z "$cli" ]; then
+  if command -v podman >/dev/null 2>&1; then
+    cli=podman
+  elif command -v docker >/dev/null 2>&1; then
+    cli=docker
+  fi
+fi
+[ -n "$cli" ] && command -v "$cli" >/dev/null 2>&1 || die "podman (preferred) or docker is required"
 
 state_dir=""
 repo=""
@@ -96,7 +111,7 @@ container="quecto-$environment_id"
 # Rollback on any later failure: remove partial state AND any container we
 # managed to start — an unreported environment can never be cleaned up by
 # Quecto.
-trap 'docker rm -f "$container" >/dev/null 2>&1 || true; rm -rf "$env_dir"' ERR
+trap '"$cli" rm -f "$container" >/dev/null 2>&1 || true; rm -rf "$env_dir"' ERR
 workspace_path="$env_dir/workspace"
 mkdir "$workspace_path"
 printf '%s\n' "$QUECTO_CONTAINER_ENVIRONMENT_REF" >"$env_dir/ref"
@@ -133,9 +148,18 @@ fi
 # default). Overriding it inside the container detaches the child from the
 # identity-mounted $HOME/.quecto and breaks OAuth providers — do not set it.
 envs=(-e "HOME=$HOME")
+# Run as the host user so the identity-mounted paths keep their ownership.
+# Under rootless Podman, --userns=keep-id maps the host uid/gid to the same
+# ids inside the container (the default rootless mapping would send uid 1000
+# to a subuid and every mounted file would look foreign); Docker already maps
+# container uids 1:1 to the host.
+run_as=(--user "$(id -u):$(id -g)")
+if [ "$cli" = podman ]; then
+  run_as+=(--userns=keep-id)
+fi
 # SECURITY (PR #1401 review): provider API keys must NOT be passed with
-# `docker run -e KEY=value` — that bakes them into the container config,
-# readable for the container's whole lifetime via `docker inspect` and
+# `run -e KEY=value` — that bakes them into the container config,
+# readable for the container's whole lifetime via `inspect` and
 # persisted in /var/lib/docker/containers/<id>/config.v2.json. Instead they
 # are written to a 0600 file in the 0700 state dir, identity-mounted ro, and
 # sourced by a bootstrap shell that `exec`s the child — so the child still
@@ -190,15 +214,15 @@ fi
 if [ -n "$secret_env_file" ]; then
   # `sh -c` sources the 0600 file then exec-replaces itself, leaving the
   # child as the container's PID 1. Requires /bin/sh in the image.
-  docker run -d --name "$container" \
+  "$cli" run -d --name "$container" \
     --label "quecto.environment_id=$environment_id" \
-    "${mounts[@]}" "${envs[@]}" \
+    "${run_as[@]}" "${mounts[@]}" "${envs[@]}" \
     -w "$child_cwd" \
     "$image" /bin/sh -c '. "$0" && exec "$@"' "$secret_env_file" "$@" >/dev/null
 else
-  docker run -d --name "$container" \
+  "$cli" run -d --name "$container" \
     --label "quecto.environment_id=$environment_id" \
-    "${mounts[@]}" "${envs[@]}" \
+    "${run_as[@]}" "${mounts[@]}" "${envs[@]}" \
     -w "$child_cwd" \
     "$image" "$@" >/dev/null
 fi
@@ -218,6 +242,7 @@ jq -cn \
   --arg config "${QUECTO_CONTAINER_CONFIG:-}" \
   --arg image "$image" \
   --arg container "$container" \
+  --arg cli "$cli" \
   --arg source "$source" \
   --arg repository "$repo" \
-  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: "docker", image: $image, container: $container, config: $config, source: $source} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket}'
+  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: $cli, image: $image, container: $container, config: $config, source: $source} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket}'

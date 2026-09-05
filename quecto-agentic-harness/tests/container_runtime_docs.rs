@@ -138,7 +138,9 @@ fn docker_adapter_keeps_its_load_bearing_properties() {
     for needle in [
         "QUECTO_DOCKER_IMAGE",
         "--image",
-        "docker rm -f",
+        "\"$cli\" rm -f",
+        "QUECTO_CONTAINER_CLI",
+        "--userns=keep-id",
         "trap",
         "jq -cn",
         "HOME=$HOME",
@@ -188,7 +190,7 @@ fn docker_adapter_keeps_its_load_bearing_properties() {
     for needle in [
         "--op",
         "kill.log",
-        "docker rm -f",
+        "\"$cli\" rm -f",
         "QUECTO_CONTAINER_ENVIRONMENT_ID",
     ] {
         assert!(
