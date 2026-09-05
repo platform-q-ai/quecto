@@ -4,7 +4,7 @@
 
 /// SIGTERM-to-SIGKILL window. The harness tears down its subagents and
 /// container environments on SIGTERM (running each environment's kill
-/// script, which under Podman takes on the order of a second), so the
+/// script, which can take on the order of a second per environment), so the
 /// window must cover that work; it ends early once the tree has exited.
 pub const TERMINATE_GRACE_MS: u64 = 1500;
 const TERMINATE_POLL_TICK_MS: u64 = 10;
