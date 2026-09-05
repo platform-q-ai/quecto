@@ -1,7 +1,7 @@
-//! Observe Linux shell exit without reaping its group leader. The unreaped
+//! Observe Unix shell exit without reaping its group leader. The unreaped
 //! child pins the numeric group identity until output drainage is complete.
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 pub(super) async fn exited(child: &mut tokio::process::Child) -> std::io::Result<()> {
     let pid = child
         .id()

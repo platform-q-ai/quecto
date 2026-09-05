@@ -355,17 +355,19 @@ async fn run_child_with_timeout(
 ) -> Result<ToolResult, DomainError> {
     // Declared after Child so cancellation signals before Child drops/reaps.
     let mut group_guard = ProcessGroupGuard::new(child.id());
-    #[cfg(target_os = "linux")]
+    // On Unix, retain the unreaped leader (and thus PGID ownership) through
+    // pipe drainage: same-group survivors may still need cancellation cleanup.
+    #[cfg(unix)]
     let completion = tokio::time::timeout(timeout_dur, wait_owned::exited(&mut child)).await;
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(unix))]
     let completion = tokio::time::timeout(timeout_dur, child.wait()).await;
     match completion {
         Ok(Ok(observed)) => {
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(unix))]
             group_guard.disarm();
             let output = collect_raw_output(&mut stream_tasks).await;
             group_guard.disarm();
-            #[cfg(target_os = "linux")]
+            #[cfg(unix)]
             let status = {
                 let () = observed;
                 child
@@ -373,7 +375,7 @@ async fn run_child_with_timeout(
                     .await
                     .map_err(|e| DomainError::Tool(format!("bash failed: {e}")))?
             };
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(unix))]
             let status = observed;
             if let Some(target) = output_target {
                 Ok(make_exit_result(status, output_file_summary(&target, None)))
