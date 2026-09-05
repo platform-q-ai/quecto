@@ -1,8 +1,8 @@
-use super::shell_parse::{Word, parse};
+use super::shell_parse::{ParseBudget, Word, parse};
 
 fn p(cmd: &str) -> super::shell_parse::Parsed {
-    let mut c = 0;
-    parse(cmd, &mut c, 0)
+    let mut budget = ParseBudget::default();
+    parse(cmd, &mut budget, 0)
 }
 
 fn argv(cmd: &str) -> Vec<Vec<String>> {
@@ -153,16 +153,86 @@ fn bare_assignment_produces_no_command() {
 }
 
 #[test]
-fn dynamic_command_name_is_unresolved() {
+fn dynamic_command_name_is_a_dynamic_word() {
     let parsed = p("cmd='rm -rf /'; $cmd");
     assert_eq!(parsed.commands.len(), 1);
     assert!(parsed.commands[0].words[0].dynamic);
-    assert!(
-        parsed
-            .unresolved
-            .iter()
-            .any(|u| u.contains("dynamic command name"))
+    assert_eq!(parsed.commands[0].words[0].expansion_at, Some(0));
+    assert!(parsed.unresolved.is_empty());
+}
+
+#[test]
+fn static_prefix_stops_at_first_expansion() {
+    let parsed = p("rm -rf /$x/* $y/ /tmp/$z");
+    let w = &parsed.commands[0].words;
+    assert_eq!(w[2].static_prefix(), "/");
+    assert_eq!(w[3].static_prefix(), "");
+    assert_eq!(w[4].static_prefix(), "/tmp/");
+    assert_eq!(w[1].static_prefix(), "-rf");
+}
+
+#[test]
+fn groups_keep_the_enclosing_pipeline() {
+    let parsed = p("(curl x) | sh");
+    assert_eq!(parsed.commands[0].program().unwrap(), "curl");
+    assert_eq!(parsed.commands[1].program().unwrap(), "sh");
+    let outer = parsed.commands[1].pipeline;
+    assert_eq!(parsed.commands[0].enclosing, vec![outer]);
+    assert_eq!(parsed.commands[1].pipe_index, 1);
+    let parsed = p("curl x | { sh; }");
+    assert_eq!(
+        parsed.commands[1].enclosing,
+        vec![parsed.commands[0].pipeline]
     );
+}
+
+#[test]
+fn unquoted_heredoc_bodies_are_scanned_for_expansions() {
+    let parsed = p("cat <<EOF\n$(reboot)\nEOF");
+    let progs: Vec<_> = parsed
+        .commands
+        .iter()
+        .map(|c| c.program().unwrap())
+        .collect();
+    assert!(progs.contains(&"reboot".to_string()), "{progs:?}");
+    let parsed = p("cat <<'EOF'\n$(reboot)\nEOF");
+    let progs: Vec<_> = parsed
+        .commands
+        .iter()
+        .map(|c| c.program().unwrap())
+        .collect();
+    assert_eq!(progs, vec!["cat"]);
+}
+
+#[test]
+fn parameter_and_arithmetic_expansions_are_scanned() {
+    for c in [
+        "echo ${x:-$(reboot)}",
+        "echo $(( $(reboot) ))",
+        "echo ${x[`reboot`]}",
+    ] {
+        let progs: Vec<_> = p(c).commands.iter().map(|c| c.program().unwrap()).collect();
+        assert!(progs.contains(&"reboot".to_string()), "{c}: {progs:?}");
+    }
+}
+
+#[test]
+fn line_continuation_before_redirect_target() {
+    let parsed = p("echo hi > \\\n /dev/sda");
+    assert_eq!(parsed.commands[0].redirects[0].target.text, "/dev/sda");
+    assert_eq!(parsed.commands[0].words.len(), 2);
+}
+
+#[test]
+fn work_budget_bounds_brace_expansion() {
+    let mut budget = ParseBudget {
+        next_pipeline: 0,
+        remaining: 3,
+    };
+    let parsed = parse("echo {a,b,c,d}", &mut budget, 0);
+    assert!(parsed.commands.is_empty());
+    assert!(parsed.unresolved.iter().any(|u| u.contains("work budget")));
+    assert_eq!(budget.remaining, 0);
 }
 
 #[test]

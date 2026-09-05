@@ -15,7 +15,9 @@
 // already-enabled bash tool; the container runtime is the actual boundary.
 
 use super::legacy_scan::legacy_substring_scan;
-use super::shell_parse::{self, FETCH_PROGRAMS, Parsed, SimpleCommand, Word, basename_lower};
+use super::shell_parse::{
+    self, FETCH_PROGRAMS, ParseBudget, Parsed, SimpleCommand, Word, basename_lower,
+};
 
 /// A denylist hit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,9 +32,8 @@ pub(crate) struct Violation {
 /// Evaluate `command` against the denylist.
 pub(crate) fn check(command: &str) -> Result<(), Violation> {
     let mut ctx = Resolution::default();
-    let parsed = shell_parse::parse(command, &mut ctx.counter, 0);
+    let parsed = shell_parse::parse(command, &mut ctx.budget, 0);
     ctx.unresolved.extend(parsed.unresolved);
-    ctx.glob_commands.extend(parsed.glob_commands);
     for cmd in &parsed.commands {
         resolve(cmd, &mut ctx, 0);
     }
@@ -66,8 +67,8 @@ struct Resolution {
     out: Vec<Effective>,
     unresolved: Vec<String>,
     glob_commands: Vec<String>,
-    /// Shared pipeline-id counter for nested parses.
-    counter: usize,
+    /// Shared pipeline-id counter and work budget for nested parses.
+    budget: ParseBudget,
 }
 
 /// A simple command after wrapper stripping, ready for rule evaluation.
@@ -120,7 +121,16 @@ fn resolve(cmd: &SimpleCommand, ctx: &mut Resolution, depth: usize) {
             return;
         };
         if first.dynamic {
-            // Already reported by the parser as unresolved.
+            // `$cmd`, `sudo $cmd`, `if $cmd`: the program is not knowable
+            // statically, so the caller falls back to the substring scan.
+            ctx.unresolved
+                .push(format!("dynamic command name in `{}`", cmd.site));
+            return;
+        }
+        if first.glob && !matches!(first.text.as_str(), "[" | "[[") {
+            // `/sbin/reb*t`: pathname expansion could pick anything and the
+            // substring fallback cannot see through the wildcard.
+            ctx.glob_commands.push(cmd.site.clone());
             return;
         }
         let prog = basename_lower(&first.text);
@@ -132,12 +142,24 @@ fn resolve(cmd: &SimpleCommand, ctx: &mut Resolution, depth: usize) {
                 words = rest;
             }
             "sudo" | "doas" => {
-                words = skip_options(
-                    rest,
-                    &[
-                        "-u", "-g", "-p", "-C", "-D", "-h", "-r", "-t", "-T", "-U", "-a", "-c",
-                    ],
-                );
+                let with_arg = [
+                    "-u", "-g", "-p", "-C", "-D", "-h", "-r", "-t", "-T", "-U", "-a", "-c",
+                ];
+                // `sudo -s 'cmd'` / `sudo -i 'cmd'` run the remaining words
+                // through `$SHELL -c`, so they are a script, not an argv.
+                let shell_mode = option_words(rest, &with_arg).any(|t| {
+                    t == "--shell"
+                        || t == "--login"
+                        || (t.starts_with('-') && !t.starts_with("--") && t.contains(['s', 'i']))
+                });
+                let after = skip_options(rest, &with_arg);
+                if shell_mode {
+                    if !after.is_empty() {
+                        nested_script(&join_words(after), cmd, ctx, depth);
+                    }
+                    return;
+                }
+                words = after;
             }
             "env" => {
                 let mut i = 0;
@@ -226,22 +248,7 @@ fn resolve(cmd: &SimpleCommand, ctx: &mut Resolution, depth: usize) {
             }
             "watch" => {
                 let after = skip_options(rest, &["-n", "--interval"]);
-                let joined = after
-                    .iter()
-                    .map(|w| w.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                let dynamic = after.iter().any(|w| w.dynamic);
-                nested_script(
-                    &Word {
-                        dynamic,
-                        fetch_subst: after.iter().any(|w| w.fetch_subst),
-                        ..Word::literal(&joined)
-                    },
-                    cmd,
-                    ctx,
-                    depth,
-                );
+                nested_script(&join_words(after), cmd, ctx, depth);
                 return;
             }
             "su" => {
@@ -278,22 +285,7 @@ fn resolve(cmd: &SimpleCommand, ctx: &mut Resolution, depth: usize) {
                 return; // interactive su: nothing static to check
             }
             "eval" => {
-                let joined = rest
-                    .iter()
-                    .map(|w| w.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                let dynamic = rest.iter().any(|w| w.dynamic);
-                nested_script(
-                    &Word {
-                        dynamic,
-                        fetch_subst: rest.iter().any(|w| w.fetch_subst),
-                        ..Word::literal(&joined)
-                    },
-                    cmd,
-                    ctx,
-                    depth,
-                );
+                nested_script(&join_words(rest), cmd, ctx, depth);
                 return;
             }
             p if SHELLS.contains(&p) => {
@@ -320,6 +312,27 @@ fn resolve(cmd: &SimpleCommand, ctx: &mut Resolution, depth: usize) {
     }
 }
 
+/// Join words into one script word (for `eval a b c`, `sudo -s a b`).
+fn join_words(words: &[Word]) -> Word {
+    let joined = words
+        .iter()
+        .map(|w| w.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    Word {
+        dynamic: words.iter().any(|w| w.dynamic),
+        fetch_subst: words.iter().any(|w| w.fetch_subst),
+        ..Word::literal(&joined)
+    }
+}
+
+/// Iterate the leading option words of an argv (same stop rule as
+/// `skip_options`).
+fn option_words<'a>(words: &'a [Word], with_arg: &'a [&str]) -> impl Iterator<Item = &'a str> {
+    let end = words.len() - skip_options(words, with_arg).len();
+    words[..end].iter().map(|w| w.text.as_str())
+}
+
 /// Parse the argument of `bash -c` / `eval` as a nested command line.
 fn nested_script(script: &Word, parent: &SimpleCommand, ctx: &mut Resolution, depth: usize) {
     if script.dynamic {
@@ -327,9 +340,12 @@ fn nested_script(script: &Word, parent: &SimpleCommand, ctx: &mut Resolution, de
             .push(format!("dynamic script argument in `{}`", parent.site));
         return;
     }
-    let parsed: Parsed = shell_parse::parse(&script.text, &mut ctx.counter, depth + 1);
+    if ctx.budget.remaining == 0 {
+        ctx.unresolved.push("work budget exceeded".to_string());
+        return;
+    }
+    let parsed: Parsed = shell_parse::parse(&script.text, &mut ctx.budget, depth + 1);
     ctx.unresolved.extend(parsed.unresolved);
-    ctx.glob_commands.extend(parsed.glob_commands);
     for cmd in &parsed.commands {
         resolve(cmd, ctx, depth + 1);
     }
@@ -398,6 +414,8 @@ fn shell_invocation(rest: &[Word]) -> (Option<&Word>, bool) {
 fn looks_like_assignment(t: &str) -> bool {
     match t.find('=') {
         Some(eq) if eq > 0 => t[..eq]
+            .strip_suffix('+')
+            .unwrap_or(&t[..eq])
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_'),
         _ => false,
@@ -427,7 +445,7 @@ fn check_effective(cmds: &[Effective]) -> Result<(), Violation> {
 
         // Writes to raw block devices via redirection.
         for r in &cmd.redirects {
-            if r.writes_target() && !r.target.dynamic && is_block_device(&r.target.text) {
+            if r.writes_target() && is_block_device(r.target.static_prefix()) {
                 return Err(violation("block-device-write", cmd));
             }
         }
@@ -449,7 +467,7 @@ fn check_effective(cmds: &[Effective]) -> Result<(), Violation> {
                     && args
                         .positionals
                         .iter()
-                        .any(|w| !w.dynamic && is_root_target(&w.text))
+                        .any(|w| is_root_target(w.static_prefix()))
                 {
                     return Err(violation("rm-root", cmd));
                 }
@@ -467,8 +485,7 @@ fn check_effective(cmds: &[Effective]) -> Result<(), Violation> {
                     {
                         return Err(violation("dd-device-source", cmd));
                     }
-                    if let Some(dst) = w.text.strip_prefix("of=")
-                        && !w.dynamic
+                    if let Some(dst) = w.static_prefix().strip_prefix("of=")
                         && is_block_device(dst)
                     {
                         return Err(violation("dd-block-device", cmd));
@@ -503,7 +520,7 @@ fn check_effective(cmds: &[Effective]) -> Result<(), Violation> {
                         .positionals
                         .iter()
                         .skip(1)
-                        .any(|w| !w.dynamic && is_root_target(&w.text))
+                        .any(|w| is_root_target(w.static_prefix()))
                 {
                     return Err(violation("chmod-root", cmd));
                 }
@@ -525,24 +542,22 @@ fn check_effective(cmds: &[Effective]) -> Result<(), Violation> {
                     let root_target = args
                         .positionals
                         .iter()
-                        .any(|w| !w.dynamic && is_root_target(&w.text));
+                        .any(|w| is_root_target(w.static_prefix()));
                     if root_owner || root_target {
                         return Err(violation("chown-root", cmd));
                     }
                 }
             }
             p if SHELLS.contains(&p) => {
-                // `bash <(curl …)`, `sh -c "$(curl …)"`.
-                if e.words.iter().skip(1).any(|w| w.fetch_subst) {
+                // `bash <(curl …)`, `sh -c "$(curl …)"`, `bash < <(curl …)`,
+                // `bash <<< "$(curl …)"`.
+                if e.words.iter().skip(1).any(|w| w.fetch_subst)
+                    || cmd.redirects.iter().any(|r| r.target.fetch_subst)
+                {
                     return Err(violation("fetch-to-shell", cmd));
                 }
                 if e.shell_reads_stdin {
-                    let upstream = || {
-                        cmds[..idx].iter().filter(|prev| {
-                            prev.cmd.pipeline == cmd.pipeline
-                                && prev.cmd.pipe_index < cmd.pipe_index
-                        })
-                    };
+                    let upstream = || cmds[..idx].iter().filter(|prev| upstream_of(prev, cmd));
                     // `curl … | sh`: any earlier command in the same pipeline fetches.
                     if upstream().any(|prev| FETCH_PROGRAMS.contains(&prev.program().as_str())) {
                         return Err(violation("fetch-to-shell", cmd));
@@ -583,6 +598,18 @@ fn check_effective(cmds: &[Effective]) -> Result<(), Violation> {
     Ok(())
 }
 
+/// Is `prev` (which appears earlier in source order) an earlier stage of the
+/// pipeline feeding `cmd`? Direct stages share a pipeline id; commands inside
+/// a `(…)` / `{…}` group that is itself a stage record the outer pipeline in
+/// `enclosing`, in either direction (`(curl x) | sh`, `curl x | (sh)`).
+fn upstream_of(prev: &Effective, cmd: &SimpleCommand) -> bool {
+    let p = &prev.cmd;
+    (p.pipeline == cmd.pipeline && p.pipe_index < cmd.pipe_index)
+        || p.enclosing.contains(&cmd.pipeline)
+        || cmd.enclosing.contains(&p.pipeline)
+        || p.enclosing.iter().any(|e| cmd.enclosing.contains(e))
+}
+
 /// Parsed argument list: short flag letters, long flags, positionals.
 struct Args<'a> {
     shorts: String,
@@ -600,13 +627,16 @@ impl<'a> Args<'a> {
         let mut opts_done = false;
         for w in words {
             let t = w.text.as_str();
-            if opts_done || w.dynamic && t.is_empty() {
+            // Flags are read from the literal prefix so `-rf$x` still counts
+            // as recursive.
+            let t = if w.dynamic { w.static_prefix() } else { t };
+            if opts_done || t.is_empty() {
                 a.positionals.push(w);
             } else if t == "--" {
                 opts_done = true;
             } else if let Some(l) = t.strip_prefix("--") {
                 a.longs.push(l.split('=').next().unwrap_or(l).to_string());
-            } else if t.len() > 1 && t.starts_with('-') && !w.dynamic {
+            } else if t.len() > 1 && t.starts_with('-') {
                 a.shorts.push_str(&t[1..]);
             } else {
                 a.positionals.push(w);

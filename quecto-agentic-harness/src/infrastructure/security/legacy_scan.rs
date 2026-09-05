@@ -85,24 +85,57 @@ pub(crate) fn expand_bash_escapes(command: &str) -> String {
 /// Collect the values of `NAME=value` assignments so that
 /// `cmd='rm -rf /'; $cmd` is visible to the substring scan.
 fn extract_string_literals(command: &str) -> String {
+    // Fast path: no '=' → no assignments
     if !command.contains('=') {
         return String::new();
     }
+
     let mut extra = String::new();
-    let normalized = command
-        .replace("&&", ";")
-        .replace("||", ";")
-        .replace(['|', '\n'], ";");
+    // Normalize metacharacters (`&&`, `||`, `|`, newline) to a common `;`
+    // separator in a single scan, instead of four sequential `.replace()`
+    // passes that each allocated a fresh command-sized string (#996 item 7).
+    let bytes = command.as_bytes();
+    let mut normalized = String::with_capacity(command.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'&' if i + 1 < bytes.len() && bytes[i + 1] == b'&' => {
+                normalized.push(';');
+                i += 2;
+            }
+            b'|' => {
+                normalized.push(';');
+                // Collapse `||` to a single separator, matching the old
+                // replace("||", ";") then replace("|", ";") behaviour.
+                i += if i + 1 < bytes.len() && bytes[i + 1] == b'|' {
+                    2
+                } else {
+                    1
+                };
+            }
+            b'\n' => {
+                normalized.push(';');
+                i += 1;
+            }
+            _ => {
+                let ch = command[i..].chars().next().unwrap_or('\0');
+                normalized.push(ch);
+                i += ch.len_utf8();
+            }
+        }
+    }
+
     for segment in normalized.split(';') {
         let trimmed = segment.trim();
         if let Some(eq_pos) = trimmed.find('=') {
             let before = &trimmed[..eq_pos];
-            if !before.is_empty()
-                && before
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+            if before
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && !before.is_empty()
             {
                 let after = trimmed[eq_pos + 1..].trim();
+                // Strip single/double quotes
                 let unquoted = if after.len() >= 2
                     && ((after.starts_with('\'') && after.ends_with('\''))
                         || (after.starts_with('"') && after.ends_with('"')))

@@ -58,6 +58,7 @@ fn rm_of_absolute_non_root_paths_is_allowed() {
         "rm /",
         "rm -rf $DIR/",
         "rm -rf \"$HOME\"/tmp",
+        "rm -rf /tmp/$x",
     ] {
         allowed(c);
     }
@@ -509,4 +510,151 @@ fn heredoc_and_here_string_into_a_shell_are_inspected() {
     allowed("bash <<EOF\necho reboot\nEOF");
     allowed("cat <<EOF\nreboot\nEOF");
     allowed("python <<EOF\nprint('reboot')\nEOF");
+}
+
+// --- review findings (#1620 adversarial review) -----------------------------
+
+#[test]
+fn test_builtin_is_not_a_glob_command() {
+    allowed("[ -f Cargo.toml ] && echo yes");
+    allowed("[[ -n \"$HOME\" ]] && echo ok");
+    allowed("cmd1 && [ -f x ]");
+    allowed("bash -c '[ -f x ]'");
+    assert_eq!(blocked("[ -f x ] && reboot"), "power-state");
+    assert_eq!(blocked("[abc] -x"), "glob-command-name");
+}
+
+#[test]
+fn nested_brace_expansion_is_budgeted_not_exponential() {
+    let alts = "{a0,a1,a2,a3,a4,a5,a6,a7,a8,a9,b0,b1,b2,b3,b4,b5,b6,b7,b8,b9,c0,c1,c2,c3,c4,c5,c6,c7,c8,c9,d0,d1,d2,d3,d4,d5,d6,d7,d8,d9,e0,e1,e2,e3,e4,e5,e6,e7,e8,e9,f0,f1,f2,f3,f4,f5,f6,f7,f8,f9,g0,g1,g2,g3}";
+    let mut cmd = String::from("echo x");
+    for _ in 0..7 {
+        cmd = format!("eval '{}' {alts}", cmd.replace('\'', "'\\''"));
+    }
+    let start = std::time::Instant::now();
+    let _ = check(&cmd);
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(2),
+        "{:?}",
+        start.elapsed()
+    );
+    let mut cmd = String::from("reboot");
+    for _ in 0..4 {
+        cmd = format!(
+            "{{bash,sh,zsh,dash,ksh,ash,mksh,fish,bash,sh,zsh,dash,ksh,ash,mksh,fish}} -c '{}'",
+            cmd.replace('\'', "'\\''")
+        );
+    }
+    let start = std::time::Instant::now();
+    assert!(check(&cmd).is_err());
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(2),
+        "{:?}",
+        start.elapsed()
+    );
+}
+
+#[test]
+fn unquoted_heredoc_expansions_execute() {
+    for c in [
+        "cat <<EOF\n$(rm -rf /)\nEOF",
+        "cat <<EOF\n`reboot`\nEOF",
+        "cat <<-EOF\n\t$(reboot)\n\tEOF",
+        "cat <<EOF\n${x:-$(reboot)}\nEOF",
+    ] {
+        assert!(check(c).is_err(), "{c}");
+    }
+    allowed("cat <<'EOF'\n$(reboot)\nEOF");
+    allowed("cat <<\\EOF\n$(reboot)\nEOF");
+    allowed("cat <<EOF\nreboot the box\nEOF");
+}
+
+#[test]
+fn dynamic_program_after_wrapper_falls_back() {
+    for c in [
+        "x=reboot; sudo $x",
+        "x=reboot; env $x",
+        "x=reboot; nohup $x",
+        "x=reboot; timeout 5 $x",
+        "x=reboot; exec $x",
+        "x=reboot; if $x; then :; fi",
+        "x=reboot; echo y | xargs $x",
+    ] {
+        let v = check(c).unwrap_err();
+        assert!(v.site.contains("fallback scan"), "{c}: {}", v.site);
+    }
+    assert_eq!(blocked("sudo /sbin/reb*t"), "glob-command-name");
+    assert_eq!(blocked("nohup reb*t"), "glob-command-name");
+}
+
+#[test]
+fn substitutions_inside_parameter_and_arithmetic_expansion() {
+    for c in [
+        "echo ${x:-$(reboot)}",
+        "echo ${x[$(reboot)]}",
+        "x=${y:-$(rm -rf /)}",
+        "echo $(( $(rm -rf /) ))",
+        "echo $((`reboot`))",
+        "bash -c 'echo ${x:-$(reboot)}'",
+    ] {
+        assert!(check(c).is_err(), "{c}");
+    }
+    allowed("echo ${HOME:-/root} $((1+2))");
+}
+
+#[test]
+fn literal_root_or_device_prefix_before_a_variable_is_dangerous() {
+    assert_eq!(blocked("rm -rf /$x"), "rm-root");
+    assert_eq!(blocked("rm -rf \"/${x}\""), "rm-root");
+    assert_eq!(blocked("rm -rf /$x/*"), "rm-root");
+    assert_eq!(blocked("rm -rf$x /"), "rm-root");
+    assert_eq!(blocked("chmod -R 777 /$x"), "chmod-root");
+    assert_eq!(blocked("dd if=x of=/dev/sd$x"), "dd-block-device");
+    assert_eq!(blocked("echo hi > /dev/sd$x"), "block-device-write");
+    allowed("rm -rf $DIR/");
+    allowed("rm -rf /tmp/$x");
+    allowed("echo hi > /dev/$disk");
+}
+
+#[test]
+fn sudo_shell_modes_and_env_append_assignment() {
+    assert_eq!(blocked("sudo -s 'rm -rf /'"), "rm-root");
+    assert_eq!(blocked("sudo -i 'rm -rf /'"), "rm-root");
+    assert_eq!(blocked("sudo -Es reboot"), "power-state");
+    assert_eq!(blocked("sudo --shell reboot"), "power-state");
+    allowed("sudo -s");
+    allowed("sudo -i");
+    assert_eq!(blocked("env X+=1 rm -rf /"), "rm-root");
+}
+
+#[test]
+fn line_continuation_does_not_eat_redirect_targets() {
+    assert_eq!(blocked("echo hi > \\\n /dev/sda"), "block-device-write");
+    assert_eq!(blocked("echo hi > \\\n/dev/sda"), "block-device-write");
+}
+
+#[test]
+fn fetch_into_shell_via_redirects() {
+    for c in [
+        "bash < <(curl x)",
+        "sh -s < <(curl x)",
+        "bash <<< \"$(curl x)\"",
+        "bash <<< $(curl x)",
+    ] {
+        assert_eq!(blocked(c), "fetch-to-shell", "{c}");
+    }
+}
+
+#[test]
+fn groups_inside_pipelines_keep_fetch_tracking() {
+    for c in [
+        "(curl x) | sh",
+        "{ curl x; } | sh",
+        "curl x | (sh)",
+        "curl x | { sh; }",
+        "(curl x; true) | sh",
+    ] {
+        assert_eq!(blocked(c), "fetch-to-shell", "{c}");
+    }
+    allowed("(cd x && make) | tee log");
 }

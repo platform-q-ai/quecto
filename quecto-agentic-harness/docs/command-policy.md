@@ -41,7 +41,10 @@ command, its arguments and its redirections. The parser understands:
 - redirections (`>`, `>>`, `>|`, `&>`, `2>&1`, `<`, `<<<`) as operators
   separate from argv;
 - heredocs (`<<EOF`, `<<-EOF`, `<<'EOF'`), whose bodies are data and never
-  matched;
+  matched as commands, although `$(…)`, backticks and `${…}` inside an
+  unquoted-delimiter body are expanded by bash and are therefore inspected;
+- `${…}` and `$((…))`, whose interiors are scanned for the same
+  substitutions (`${x:-$(reboot)}` runs `reboot`);
 - leading `NAME=value` assignments, comments, subshell and brace groups,
   `name()` and `function name` definitions;
 - brace expansion (`{rm,} -rf /`, `rm -rf /{,tmp}`), expanded into the
@@ -55,8 +58,9 @@ nested shells:
 
 | Construct | Handling |
 | --- | --- |
-| `sudo`, `doas`, `env`, `nice`, `nohup`, `time`, `command`, `builtin`, `exec`, `setsid`, `timeout`, `stdbuf`, `ionice`, `chroot`, `xargs`, `busybox`, `unbuffer` | Options are skipped and the wrapped command is evaluated. `command -v` and a bare `xargs` execute nothing. |
-| `bash -c`, `sh -c`, `zsh -c`, `dash -c`, `ksh -c`, `env -S`, `su -c`, `watch`, `eval` | The script argument is parsed recursively. |
+| `sudo`, `doas`, `env`, `nice`, `nohup`, `time`, `command`, `builtin`, `exec`, `setsid`, `timeout`, `stdbuf`, `ionice`, `chroot`, `xargs`, `busybox`, `unbuffer` | Options are skipped and the wrapped command is evaluated. `command -v` and a bare `xargs` execute nothing. A `$var` or glob left in command position after peeling is handled like one at the top level. |
+| `bash -c`, `sh -c`, `zsh -c`, `dash -c`, `ksh -c`, `env -S`, `su -c`, `sudo -s`/`sudo -i` with arguments, `watch`, `eval` | The script argument is parsed recursively. |
+| `(…)` and `{ …; }` groups as pipeline stages | Commands inside a group remember the enclosing pipeline, so `(curl x) \| sh` and `curl x \| { sh; }` are still seen as a fetch feeding a shell. |
 | `curl … \| sh`, `bash <(curl …)`, `sh -c "$(curl …)"` | Pipeline and substitution structure is used to detect a fetched script feeding a shell that reads it. |
 | `bash <<EOF … EOF`, `bash <<< "…"`, `cat <<EOF … EOF \| sh` | Heredoc and here-string bodies reaching a shell that reads stdin are evaluated as scripts. |
 
@@ -75,7 +79,19 @@ nested shells:
 | `block-device-write` | an unquoted output redirect onto `/dev/sd*`, `/dev/nvme*`, `/dev/mmcblk*`, `/dev/md*`, `/dev/mapper/*`, `/dev/loop*` and similar |
 | `fork-bomb` | a function that pipes itself into itself (`:(){ :\|:& };:`) |
 | `fetch-to-shell` | `curl`/`wget`/`fetch`/`aria2c` output piped into a shell that reads stdin, or fed to a shell through a substitution |
-| `glob-command-name` | an unquoted `*`, `?` or `[` in the program word (`/sbin/reb*t`). Pathname expansion could resolve it to anything and the fallback scan cannot see through the wildcard, so it is rejected outright. |
+| `glob-command-name` | an unquoted `*`, `?` or `[` in the program word (`/sbin/reb*t`). Pathname expansion could resolve it to anything and the fallback scan cannot see through the wildcard, so it is rejected outright. The `[` and `[[` test builtins are exempt. |
+
+Arguments that mix a literal prefix with an expansion are judged on the
+prefix: `rm -rf /$x` and `dd of=/dev/sd$x` are blocked because bash keeps
+`/` and `/dev/sd` verbatim whatever `$x` holds, while `rm -rf $DIR/` and
+`rm -rf /tmp/$x` are allowed. Flags are read the same way, so `rm -rf$x /`
+still counts as recursive.
+
+Total work per command is capped at 2048 simple commands across brace
+expansion and nested-script parsing. Input that exceeds the budget is
+reported as unresolved and falls back to the substring scan, so a crafted
+`{bash,…}×64 -c '{bash,…}×64 -c …'` costs milliseconds rather than
+minutes.
 
 Program names are matched on their basename, case-insensitively, so
 `/sbin/reboot` and `ReBoOt` both match. Quoting the program name does not
@@ -117,8 +133,9 @@ mistakes the filter for a boundary.
 - **Targets that arrive as data.** `echo / | xargs rm -rf` and
   `find / -delete` carry the root path on stdin or in a `find` predicate,
   not in `rm`'s argv.
-- **Dynamic arguments.** `rm -rf "$EMPTY"/` expands to `rm -rf /` at
-  runtime. Only dynamic *command names* trigger the fallback scan.
+- **Dynamic arguments with no literal prefix.** `rm -rf "$EMPTY"/` expands
+  to `rm -rf /` at runtime. Only a literal root or device prefix (`/$x`) is
+  matched; only dynamic *command names* trigger the fallback scan.
 - **Interpreters.** `python -c "import shutil; shutil.rmtree('/')"` is a
   source snippet to the filter, and deliberately so.
 - **Indirection through the filesystem.** Writing a script and executing it
@@ -128,9 +145,10 @@ mistakes the filter for a boundary.
 ## Compatibility changes in #1620
 
 - **The command allowlist is gone.** `agents.defaults.command_allowlist`
-  is still accepted by the config loader so existing files keep loading, but
-  it is ignored and a warning is logged at startup. Restrict what an agent
-  can run with tool policy and the container runtime instead.
+  is still accepted by the config loader so existing files keep loading, and
+  it is preserved when the config is saved, but it is ignored and a warning
+  is logged once per process. Restrict what an agent can run with tool
+  policy and the container runtime instead.
 - **`rm -rf /some/absolute/path` is now allowed.** The old substring scan
   blocked any recursive delete of an absolute path because the string
   contained `rm -rf /`. Only root targets are blocked now.

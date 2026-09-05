@@ -95,8 +95,14 @@ pub struct AgentDefaults {
     pub effort: Option<String>,
     /// Deprecated compatibility key. The per-command allowlist was removed in
     /// #1620; command policy is denylist-only. Old configs may still contain
-    /// this key, but it is ignored (a warning is logged at startup).
-    #[serde(default, rename = "command_allowlist", skip_serializing)]
+    /// this key, but it is ignored (a warning is logged at startup). It is
+    /// preserved on save so a round-trip through the loader does not silently
+    /// delete an operator's setting.
+    #[serde(
+        default,
+        rename = "command_allowlist",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub _deprecated_command_allowlist: Option<Vec<String>>,
 }
 

@@ -18,6 +18,10 @@ pub(crate) struct Word {
     /// Per-character flag, parallel to `text`: `true` when the character was
     /// quoted or escaped and is therefore exempt from brace/glob expansion.
     pub literal: Vec<bool>,
+    /// Character index in `text` at which the first expansion occurred, so
+    /// `text[..expansion_at]` is the literal prefix bash will keep verbatim
+    /// (`/dev/sd$x` → `/dev/sd`). `None` for fully static words.
+    pub expansion_at: Option<usize>,
 }
 
 impl Word {
@@ -28,6 +32,32 @@ impl Word {
             fetch_subst: false,
             glob: false,
             literal: Vec::new(),
+            expansion_at: None,
+        }
+    }
+
+    /// Record that an expansion (parameter, command or process substitution)
+    /// occurs at the current end of `text`.
+    pub(crate) fn mark_dynamic(&mut self) {
+        self.dynamic = true;
+        if self.expansion_at.is_none() {
+            self.expansion_at = Some(self.text.chars().count());
+        }
+    }
+
+    /// The part of the word that is known statically: the whole text for a
+    /// static word, or the literal prefix before the first expansion.
+    pub(crate) fn static_prefix(&self) -> &str {
+        match self.expansion_at {
+            None => &self.text,
+            Some(n) => {
+                let end = self
+                    .text
+                    .char_indices()
+                    .nth(n)
+                    .map_or(self.text.len(), |(b, _)| b);
+                &self.text[..end]
+            }
         }
     }
 
@@ -39,6 +69,7 @@ impl Word {
             dynamic: false,
             fetch_subst: false,
             glob: false,
+            expansion_at: None,
         }
     }
 
@@ -159,6 +190,10 @@ pub(crate) struct SimpleCommand {
     pub pipe_index: usize,
     /// Set when this "command" is actually a function definition `name() {`.
     pub function_def: bool,
+    /// Pipeline ids of the subshell / brace groups enclosing this command,
+    /// outermost first. `(curl x) | sh` puts `curl` in its own pipeline but
+    /// records the outer one here so `sh` can see it upstream.
+    pub enclosing: Vec<usize>,
     /// Source text of this simple command, for error reporting.
     pub site: String,
 }
@@ -179,13 +214,31 @@ pub(crate) fn basename_lower(text: &str) -> String {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Parsed {
     pub commands: Vec<SimpleCommand>,
-    /// Some construct could not be resolved statically: a dynamic word in
-    /// command position, an unbalanced quote or bracket, or a `$'...'` with an
-    /// unterminated escape. The caller must not treat the structural result as
-    /// complete.
+    /// Some construct could not be resolved statically: an unbalanced quote
+    /// or bracket, nesting deeper than supported, or the work budget being
+    /// exhausted. The caller must not treat the structural result as complete.
     pub unresolved: Vec<String>,
-    /// Sites whose program word carries an unquoted glob (`/sbin/reb*t`).
-    /// Pathname expansion could turn these into anything, and the substring
-    /// fallback cannot see through the wildcard, so they are rejected outright.
-    pub glob_commands: Vec<String>,
+}
+
+/// Total simple commands one `validate_command` call may produce across
+/// brace expansion and nested-script parsing. Bounds the cost of adversarial
+/// input such as `{bash,…}×64 -c '{bash,…}×64 -c …'`.
+pub(crate) const WORK_BUDGET: usize = 2048;
+
+/// Shared counters threaded through every nested parse of one command.
+#[derive(Debug)]
+pub(crate) struct ParseBudget {
+    /// Next unused pipeline id.
+    pub next_pipeline: usize,
+    /// Simple commands that may still be emitted.
+    pub remaining: usize,
+}
+
+impl Default for ParseBudget {
+    fn default() -> Self {
+        Self {
+            next_pipeline: 0,
+            remaining: WORK_BUDGET,
+        }
+    }
 }

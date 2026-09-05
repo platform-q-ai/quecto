@@ -8,10 +8,15 @@
 // silently letting the command through.
 
 pub(crate) use super::ansi_c::expand_escape_sequence;
-pub(crate) use super::shell_ast::{Parsed, Redirect, SimpleCommand, Word, basename_lower};
+pub(crate) use super::shell_ast::{
+    ParseBudget, Parsed, Redirect, SimpleCommand, Word, basename_lower,
+};
 
 /// Programs whose output on a pipe or substitution is treated as a remote fetch.
 pub(crate) const FETCH_PROGRAMS: &[&str] = &["curl", "wget", "fetch", "aria2c"];
+
+#[path = "shell_parse_redirects.rs"]
+mod redirects;
 
 const MAX_RECURSION_DEPTH: usize = 8;
 
@@ -23,11 +28,11 @@ const MAX_BRACE_EXPANSIONS: usize = 64;
 
 /// Parse a shell command line into its simple commands.
 ///
-/// `next_pipeline` is a shared counter so that pipeline ids stay unique when
-/// nested scripts (e.g. the argument of `bash -c`) are parsed separately.
-pub(crate) fn parse(command: &str, next_pipeline: &mut usize, depth: usize) -> Parsed {
+/// `budget` is shared across every nested parse of one command (substitutions,
+/// `bash -c` scripts) so pipeline ids stay unique and total work stays bounded.
+pub(crate) fn parse(command: &str, budget: &mut ParseBudget, depth: usize) -> Parsed {
     let mut out = Parsed::default();
-    parse_into(command, &mut out, next_pipeline, depth);
+    parse_into(command, &mut out, budget, depth);
     out
 }
 
@@ -38,8 +43,11 @@ struct Parser<'a> {
     src: &'a str,
     i: usize,
     out: &'a mut Parsed,
-    next_pipeline: &'a mut usize,
+    budget: &'a mut ParseBudget,
     depth: usize,
+    /// Enclosing `(`/`{` groups: the pipeline id and stage index to restore
+    /// when the group closes.
+    group_stack: Vec<(usize, usize)>,
 
     // Current simple-command state.
     cur: SimpleCommand,
@@ -48,54 +56,64 @@ struct Parser<'a> {
     cmd_start: usize,
     /// A redirect operator was just read; the next word is its target.
     pending_redirect: Option<String>,
-    /// Heredoc delimiters awaiting their body (processed at next newline).
-    /// Each declaration also leaves a `HEREDOC_PENDING` marker redirect on its
+    /// Heredoc delimiters awaiting their body (processed at next newline):
+    /// `(delimiter, strip_leading_tabs, delimiter_was_quoted)`. Each
+    /// declaration also leaves a `HEREDOC_PENDING` marker redirect on its
     /// command so the body can be attached once it has been read.
-    pending_heredocs: Vec<(String, bool)>,
+    pending_heredocs: Vec<(String, bool, bool)>,
     pipeline: usize,
     pipe_index: usize,
     /// The next word may still be a `NAME=value` assignment.
     at_command_start: bool,
 }
 
-fn parse_into(command: &str, out: &mut Parsed, next_pipeline: &mut usize, depth: usize) {
+fn parse_into(command: &str, out: &mut Parsed, budget: &mut ParseBudget, depth: usize) {
     if depth > MAX_RECURSION_DEPTH {
         out.unresolved
             .push("nesting deeper than supported".to_string());
         return;
     }
-    let pipeline = *next_pipeline;
-    *next_pipeline += 1;
-    let chars: Vec<char> = command.chars().collect();
-    let mut byte_at = Vec::with_capacity(chars.len() + 1);
-    let mut acc = 0;
-    for c in &chars {
-        byte_at.push(acc);
-        acc += c.len_utf8();
-    }
-    byte_at.push(acc);
-    let mut p = Parser {
-        chars,
-        byte_at,
-        src: command,
-        i: 0,
-        out,
-        next_pipeline,
-        depth,
-        cur: SimpleCommand::default(),
-        word: Word::new(),
-        in_word: false,
-        cmd_start: 0,
-        pending_redirect: None,
-        pending_heredocs: Vec::new(),
-        pipeline,
-        pipe_index: 0,
-        at_command_start: true,
-    };
-    p.run();
+    Parser::new(command, out, budget, depth).run();
 }
 
-impl Parser<'_> {
+impl<'a> Parser<'a> {
+    fn new(
+        command: &'a str,
+        out: &'a mut Parsed,
+        budget: &'a mut ParseBudget,
+        depth: usize,
+    ) -> Self {
+        let chars: Vec<char> = command.chars().collect();
+        let mut byte_at = Vec::with_capacity(chars.len() + 1);
+        let mut acc = 0;
+        for c in &chars {
+            byte_at.push(acc);
+            acc += c.len_utf8();
+        }
+        byte_at.push(acc);
+        let pipeline = budget.next_pipeline;
+        budget.next_pipeline += 1;
+        Parser {
+            chars,
+            byte_at,
+            src: command,
+            i: 0,
+            out,
+            budget,
+            depth,
+            group_stack: Vec::new(),
+            cur: SimpleCommand::default(),
+            word: Word::new(),
+            in_word: false,
+            cmd_start: 0,
+            pending_redirect: None,
+            pending_heredocs: Vec::new(),
+            pipeline,
+            pipe_index: 0,
+            at_command_start: true,
+        }
+    }
+
     fn peek(&self, off: usize) -> Option<char> {
         self.chars.get(self.i + off).copied()
     }
@@ -178,17 +196,18 @@ impl Parser<'_> {
                     self.in_word = true;
                     self.double_quoted();
                 }
-                '\\' => {
-                    self.in_word = true;
-                    match self.peek(1) {
-                        Some('\n') => self.i += 2, // line continuation
-                        Some(n) => {
-                            self.word.push(n, true);
-                            self.i += 2;
-                        }
-                        None => self.i += 1,
+                '\\' => match self.peek(1) {
+                    Some('\n') => self.i += 2, // line continuation, not a word
+                    Some(n) => {
+                        self.in_word = true;
+                        self.word.push(n, true);
+                        self.i += 2;
                     }
-                }
+                    None => {
+                        self.in_word = true;
+                        self.i += 1;
+                    }
+                },
                 '$' => {
                     self.in_word = true;
                     self.dollar(false);
@@ -245,23 +264,31 @@ impl Parser<'_> {
                         continue;
                     }
                     self.end_word();
-                    self.end_command(true);
+                    self.open_group();
                     self.i += 1;
                 }
                 ')' => {
                     self.end_word();
-                    self.end_command(true);
+                    self.close_group();
                     self.i += 1;
                 }
                 '{' | '}' if !self.in_word => {
                     // Brace group boundary when standalone.
                     match self.peek(1) {
                         Some(n) if n.is_whitespace() || n == ';' || n == '&' || n == '|' => {
-                            self.end_command(true);
+                            if c == '{' {
+                                self.open_group();
+                            } else {
+                                self.close_group();
+                            }
                             self.i += 1;
                         }
                         None => {
-                            self.end_command(true);
+                            if c == '{' {
+                                self.open_group();
+                            } else {
+                                self.close_group();
+                            }
                             self.i += 1;
                         }
                         _ => {
@@ -290,12 +317,62 @@ impl Parser<'_> {
         self.out.unresolved.push(what.to_string());
     }
 
+    /// `(` or standalone `{`: the group is one stage of the current pipeline;
+    /// commands inside get their own pipeline but remember the outer one.
+    fn open_group(&mut self) {
+        self.end_command(false);
+        self.group_stack.push((self.pipeline, self.pipe_index));
+        self.pipeline = self.budget.next_pipeline;
+        self.budget.next_pipeline += 1;
+        self.pipe_index = 0;
+    }
+
+    /// `)` or standalone `}`: back to the enclosing pipeline, one stage on.
+    fn close_group(&mut self) {
+        self.end_command(false);
+        if let Some((pipeline, stage)) = self.group_stack.pop() {
+            self.pipeline = pipeline;
+            self.pipe_index = stage + 1;
+        }
+    }
+
+    /// Lex `text` the way bash treats an unquoted heredoc body or the inside
+    /// of `${…}` / `$((…))`: quotes are literal but `$(…)`, backticks and
+    /// nested `${…}` still expand. Nested commands found are appended to the
+    /// output; the current word inherits `dynamic` / `fetch_subst`.
+    fn scan_expansions(&mut self, text: &str) {
+        let (dynamic, fetch) = {
+            let mut sub = Parser::new(text, self.out, self.budget, self.depth + 1);
+            if sub.depth > MAX_RECURSION_DEPTH {
+                sub.unresolved("nesting deeper than supported");
+                (true, false)
+            } else {
+                sub.in_word = true;
+                sub.double_quoted_inner(false);
+                (sub.word.dynamic, sub.word.fetch_subst)
+            }
+        };
+        if dynamic {
+            self.word.mark_dynamic();
+        }
+        if fetch {
+            self.word.fetch_subst = true;
+        }
+    }
+
     /// Body of a `"..."` string; `self.i` is just past the opening quote.
     fn double_quoted(&mut self) {
-        let mut closed = false;
+        self.double_quoted_inner(true);
+    }
+
+    /// Double-quote lexing. With `terminate` false a `"` is an ordinary
+    /// character and the scan runs to the end of the input (heredoc bodies,
+    /// `${…}` interiors).
+    fn double_quoted_inner(&mut self, terminate: bool) {
+        let mut closed = !terminate;
         while self.i < self.chars.len() {
             match self.chars[self.i] {
-                '"' => {
+                '"' if terminate => {
                     closed = true;
                     self.i += 1;
                     break;
@@ -369,13 +446,15 @@ impl Parser<'_> {
             Some('(') => {
                 self.i += 2;
                 if self.peek(0) == Some('(') {
-                    // Arithmetic `$(( ... ))`: skip to matching `))`.
+                    // Arithmetic `$(( … ))`: operands may still contain
+                    // command substitutions.
                     self.i += 1;
-                    let _ = self.balanced_parens();
+                    let inner = self.balanced_parens();
                     if self.peek(0) == Some(')') {
                         self.i += 1;
                     }
-                    self.word.dynamic = true;
+                    self.word.mark_dynamic();
+                    self.scan_expansions(&inner);
                     return;
                 }
                 let inner = self.balanced_parens();
@@ -383,6 +462,7 @@ impl Parser<'_> {
             }
             Some('{') => {
                 self.i += 2;
+                let start = self.i;
                 let mut depth = 1;
                 while self.i < self.chars.len() && depth > 0 {
                     match self.chars[self.i] {
@@ -392,10 +472,15 @@ impl Parser<'_> {
                     }
                     self.i += 1;
                 }
-                if depth > 0 {
+                let inner: String = if depth > 0 {
                     self.unresolved("unterminated ${...}");
-                }
-                self.word.dynamic = true;
+                    self.chars[start..].iter().collect()
+                } else {
+                    self.chars[start..self.i - 1].iter().collect()
+                };
+                self.word.mark_dynamic();
+                // `${x:-$(reboot)}`: defaults and subscripts are expanded.
+                self.scan_expansions(&inner);
             }
             Some(c) if c.is_ascii_alphanumeric() || c == '_' || "@*#?-$!".contains(c) => {
                 self.i += 2;
@@ -406,7 +491,7 @@ impl Parser<'_> {
                         self.i += 1;
                     }
                 }
-                self.word.dynamic = true;
+                self.word.mark_dynamic();
             }
             _ => {
                 self.word.push('$', false);
@@ -460,161 +545,15 @@ impl Parser<'_> {
 
     /// Parse a command/process substitution body as nested commands.
     fn substitution(&mut self, inner: &str) {
-        self.word.dynamic = true;
+        self.word.mark_dynamic();
         let before = self.out.commands.len();
-        parse_into(inner, self.out, self.next_pipeline, self.depth + 1);
+        parse_into(inner, self.out, self.budget, self.depth + 1);
         if self.out.commands[before..].iter().any(|c| {
             c.program()
                 .map(|p| FETCH_PROGRAMS.contains(&p.as_str()))
                 .unwrap_or(false)
         }) {
             self.word.fetch_subst = true;
-        }
-    }
-
-    /// Handle `<` or `>` at `self.i` (not process substitution).
-    fn redirect_operator(&mut self) {
-        // A word made only of digits immediately before the operator is an fd.
-        if self.in_word
-            && !self.word.text.is_empty()
-            && self.word.text.chars().all(|c| c.is_ascii_digit())
-            && !self.word.dynamic
-        {
-            self.word = Word::new();
-            self.in_word = false;
-        } else {
-            self.end_word();
-        }
-        let c = self.chars[self.i];
-        let mut op = String::new();
-        op.push(c);
-        self.i += 1;
-        if c == '<' {
-            if self.peek(0) == Some('<') {
-                self.i += 1;
-                if self.peek(0) == Some('<') {
-                    self.i += 1;
-                    self.pending_redirect = Some("<<<".to_string());
-                    return;
-                }
-                let strip_tabs = if self.peek(0) == Some('-') {
-                    self.i += 1;
-                    true
-                } else {
-                    false
-                };
-                // Heredoc delimiter: next word, quotes removed.
-                while matches!(self.peek(0), Some(' ' | '\t')) {
-                    self.i += 1;
-                }
-                let mut delim = String::new();
-                while let Some(ch) = self.peek(0) {
-                    match ch {
-                        ' ' | '\t' | '\n' | ';' | '|' | '&' | '<' | '>' => break,
-                        '\'' | '"' => {
-                            self.i += 1;
-                            while let Some(q) = self.peek(0) {
-                                self.i += 1;
-                                if q == ch {
-                                    break;
-                                }
-                                delim.push(q);
-                            }
-                        }
-                        '\\' => {
-                            if let Some(n) = self.peek(1) {
-                                delim.push(n);
-                            }
-                            self.i += 2;
-                        }
-                        _ => {
-                            delim.push(ch);
-                            self.i += 1;
-                        }
-                    }
-                }
-                if delim.is_empty() {
-                    self.unresolved("heredoc without delimiter");
-                }
-                self.pending_heredocs.push((delim, strip_tabs));
-                self.cur.redirects.push(Redirect {
-                    op: "<<".to_string(),
-                    target: Word::literal(HEREDOC_PENDING),
-                });
-                return;
-            }
-            if self.peek(0) == Some('>') {
-                op.push('>');
-                self.i += 1;
-            } else if self.peek(0) == Some('&') {
-                op.push('&');
-                self.i += 1;
-            }
-        } else {
-            match self.peek(0) {
-                Some('>') => {
-                    op.push('>');
-                    self.i += 1;
-                }
-                Some('|') => {
-                    op.push('|');
-                    self.i += 1;
-                }
-                Some('&') => {
-                    op.push('&');
-                    self.i += 1;
-                }
-                _ => {}
-            }
-        }
-        self.pending_redirect = Some(op);
-    }
-
-    /// Skip heredoc bodies that begin at `self.i` (just after a newline).
-    fn consume_heredoc_bodies(&mut self) {
-        let pending = std::mem::take(&mut self.pending_heredocs);
-        for (delim, strip_tabs) in pending {
-            let mut body = String::new();
-            let mut found = false;
-            while self.i < self.chars.len() {
-                let line_start = self.i;
-                while self.i < self.chars.len() && self.chars[self.i] != '\n' {
-                    self.i += 1;
-                }
-                let line: String = self.chars[line_start..self.i].iter().collect();
-                if self.i < self.chars.len() {
-                    self.i += 1; // newline
-                }
-                let cmp = if strip_tabs {
-                    line.trim_start_matches('\t')
-                } else {
-                    line.as_str()
-                };
-                if cmp == delim {
-                    found = true;
-                    break;
-                }
-                body.push_str(cmp);
-                body.push('\n');
-            }
-            self.attach_heredoc_body(body);
-            if !found {
-                // Unterminated heredoc swallows the rest of the input as data.
-                break;
-            }
-        }
-    }
-
-    /// Replace the earliest pending heredoc marker with its body.
-    fn attach_heredoc_body(&mut self, body: String) {
-        let marker = self
-            .out
-            .commands
-            .iter_mut()
-            .flat_map(|c| c.redirects.iter_mut())
-            .find(|r| r.op == "<<" && r.target.text == HEREDOC_PENDING);
-        if let Some(r) = marker {
-            r.target = Word::literal(&body);
         }
     }
 
@@ -660,77 +599,24 @@ impl Parser<'_> {
                 cmd.function_def = true;
                 cmd.words = vec![cmd.words[1].clone()];
             }
-            if let Some(first) = cmd.words.first()
-                && !cmd.function_def
-            {
-                if first.dynamic {
-                    self.out
-                        .unresolved
-                        .push(format!("dynamic command name in `{}`", cmd.site));
-                } else if first.glob {
-                    self.out.glob_commands.push(cmd.site.clone());
-                }
-            }
-            for variant in self.brace_expand_command(cmd) {
-                self.out.commands.push(variant);
+            cmd.enclosing = self.group_stack.iter().map(|(p, _)| *p).collect();
+            let variants = self.brace_expand_command(cmd);
+            if variants.len() > self.budget.remaining {
+                self.out.unresolved.push("work budget exceeded".to_string());
+                self.budget.remaining = 0;
+            } else {
+                self.budget.remaining -= variants.len();
+                self.out.commands.extend(variants);
             }
             self.pipe_index += 1;
         }
         if new_pipeline {
-            self.pipeline = *self.next_pipeline;
-            *self.next_pipeline += 1;
+            self.pipeline = self.budget.next_pipeline;
+            self.budget.next_pipeline += 1;
             self.pipe_index = 0;
         }
         self.cmd_start = self.i;
         self.at_command_start = true;
-    }
-
-    /// Expand unquoted `{a,b}` groups in argv and redirect targets into the
-    /// cartesian product of simple commands bash would run. Oversized
-    /// products are reported as unresolved rather than truncated.
-    fn brace_expand_command(&mut self, cmd: SimpleCommand) -> Vec<SimpleCommand> {
-        let mut variants = vec![cmd];
-        let n_words = variants[0].words.len();
-        let n_redirects = variants[0].redirects.len();
-        for slot in 0..n_words + n_redirects {
-            let word_of = |c: &SimpleCommand| -> Word {
-                if slot < n_words {
-                    c.words[slot].clone()
-                } else {
-                    c.redirects[slot - n_words].target.clone()
-                }
-            };
-            let Some(alts) = word_of(&variants[0]).brace_alternatives(MAX_BRACE_EXPANSIONS) else {
-                continue;
-            };
-            let mut next = Vec::with_capacity(variants.len() * alts.len());
-            for v in &variants {
-                for alt in &alts {
-                    let mut nv = v.clone();
-                    let target = if slot < n_words {
-                        &mut nv.words[slot]
-                    } else {
-                        &mut nv.redirects[slot - n_words].target
-                    };
-                    let keep = Word {
-                        text: alt.clone(),
-                        literal: vec![true; alt.chars().count()],
-                        ..target.clone()
-                    };
-                    *target = keep;
-                    next.push(nv);
-                }
-            }
-            if next.len() > MAX_BRACE_EXPANSIONS {
-                self.out.unresolved.push(format!(
-                    "brace expansion too large in `{}`",
-                    variants[0].site
-                ));
-                return variants;
-            }
-            variants = next;
-        }
-        variants
     }
 }
 

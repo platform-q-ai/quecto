@@ -34,16 +34,19 @@ impl Sandbox {
         config: &crate::infrastructure::config::Config,
         workspace: PathBuf,
     ) -> Self {
+        static WARNED: std::sync::Once = std::sync::Once::new();
         if config
             .agents
             .defaults
             ._deprecated_command_allowlist
             .is_some()
         {
-            tracing::warn!(
-                "agents.defaults.command_allowlist is deprecated and ignored (#1620); \
+            WARNED.call_once(|| {
+                tracing::warn!(
+                    "agents.defaults.command_allowlist is deprecated and ignored (#1620); \
                  command policy is denylist-only. Use the container runtime for isolation."
-            );
+                )
+            });
         }
         Self::new(Some(workspace))
     }
