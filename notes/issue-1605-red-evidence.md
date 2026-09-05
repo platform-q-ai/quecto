@@ -106,3 +106,15 @@ the applied epoch (0) rather than the un-applied hinted epoch (1).
 
 After correction: package lib **2112 passed, same 2 baseline failures**;
 all 13 #1605 tests pass within that run. `/tmp/1605-epoch-suite.log`.
+
+## Authoritative CI first run
+
+Run `33961396569` on `39f55203`: workspace tests, coverage, static quality,
+dependency policy, review threads, mock LLM E2E and non-real BDD passed. TUI BDD
+failed because its sibling initial-request assertion still expected hinted
+epoch 1. Updated it to applied epoch 0, matching the two corrected unit tests;
+no assertion removed. Focused BDD: 1 scenario/5 steps passed. This CI failure
+was introduced by the intentional epoch contract correction, not a baseline
+failure. Logs `/tmp/1605-ci-bdd-failure.log`, `/tmp/1605-bdd-retry.log`.
+Stable local re-review reported no remaining verified blockers and 13/13
+issue tests passed after the epoch correction.
