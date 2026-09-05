@@ -152,7 +152,7 @@ fn sync_enqueued(world: &mut TuiWorld) {
     assert!(matches!(
         cmd,
         Command::Sync {
-            epoch: 1,
+            epoch: 0,
             since_rev: 0,
             ..
         }

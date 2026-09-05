@@ -171,3 +171,21 @@ alias for `/help`.
   canonical `/tmp`, `$TMPDIR`, `$XDG_RUNTIME_DIR`, or `$HOME` roots.
 - On exit, `quecto-tui` terminates the spawned agent process group so child
   agents are cleaned up too.
+
+### Subagent transcript freshness
+
+Direct child-socket feeds display live token events. Open subagent feeds also
+request committed-ledger catch-up every **2 seconds**, including while idle and
+on background tabs. Socketless (root-routed inspection) feeds use this cadence
+for automatic transcript refresh; it is **not token streaming**. Only opened
+feeds are polled, within the existing per-tab warm-feed cap.
+
+Catch-up uses the last applied cursor rather than assuming an earlier request
+will be answered. A refused enqueue, lost final hint/response, or refused page
+continuation can therefore recover on a subsequent tick once the transport can
+accept and answer work—without refocusing or waiting for another hint. This is
+not a two-second delivery guarantee under a slow, disconnected or persistently
+backpressured transport. It requires an agent that implements ledger `sync`.
+A successful sync establishes capability even if a slim state response omits
+its optional advertisement. Transcript updates preserve a scrolled-up viewport;
+returning to the tail restores following.
