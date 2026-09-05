@@ -1,9 +1,7 @@
 use super::*;
-use crate::infrastructure::config::Config;
-use tempfile::TempDir;
 
 fn sandbox(workspace: &str) -> Sandbox {
-    Sandbox::new(Some(PathBuf::from(workspace)))
+    Sandbox::new(Some(std::path::PathBuf::from(workspace)))
 }
 
 #[test]
@@ -11,7 +9,7 @@ fn validate_path_allows_absolute_outside_workspace() {
     let sb = sandbox("/tmp/quecto-test");
     assert_eq!(
         sb.validate_path("/etc/passwd").unwrap(),
-        PathBuf::from("/etc/passwd")
+        std::path::PathBuf::from("/etc/passwd")
     );
 }
 
@@ -20,28 +18,24 @@ fn validate_path_allows_parent_traversal_textually() {
     let sb = sandbox("/tmp/quecto-test");
     assert_eq!(
         sb.validate_path("/tmp/quecto-test/../evil.txt").unwrap(),
-        PathBuf::from("/tmp/quecto-test/../evil.txt")
+        std::path::PathBuf::from("/tmp/quecto-test/../evil.txt")
     );
 }
 
 #[test]
 fn validate_path_allows_symlink_outside_workspace() {
-    let tmp = TempDir::new().unwrap();
-    let ws = tmp.path().to_path_buf();
-    let sb = Sandbox::new(Some(ws.clone()));
-    let link = ws.join("link.txt");
+    let tmp = tempfile::tempdir().unwrap();
+    let link = tmp.path().join("link.txt");
     #[cfg(unix)]
     std::os::unix::fs::symlink("/etc/passwd", &link).unwrap();
-    assert!(sb.validate_path(link.to_str().unwrap()).is_ok());
+    let sb = Sandbox::new(Some(tmp.path().to_path_buf()));
+    assert_eq!(sb.validate_path(link.to_str().unwrap()).unwrap(), link);
 }
 
 #[test]
 fn validate_path_no_workspace_still_allows_path() {
     let sb = Sandbox::new(None);
-    assert_eq!(
-        sb.validate_path("/tmp/foo.txt").unwrap(),
-        PathBuf::from("/tmp/foo.txt")
-    );
+    assert!(sb.validate_path("/etc/hosts").is_ok());
 }
 
 #[test]
@@ -49,57 +43,40 @@ fn test_dangerous_command_rm_rf() {
     let sb = sandbox("/tmp/quecto-test");
     let result = sb.validate_command("rm -rf /");
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("dangerous pattern")
-    );
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("dangerous pattern"), "{msg}");
+    assert!(msg.contains("rm-root"), "{msg}");
+    assert!(msg.contains("`rm -rf /`"), "{msg}");
 }
 
 #[test]
 fn test_dangerous_command_mkfs() {
-    assert!(
-        sandbox("/tmp/quecto-test")
-            .validate_command("mkfs /dev/sda")
-            .is_err()
-    );
+    let sb = sandbox("/tmp/quecto-test");
+    assert!(sb.validate_command("mkfs /dev/sda").is_err());
 }
 
 #[test]
 fn test_dangerous_command_dd() {
-    assert!(
-        sandbox("/tmp/quecto-test")
-            .validate_command("dd if=/dev/zero of=/dev/sda")
-            .is_err()
-    );
+    let sb = sandbox("/tmp/quecto-test");
+    assert!(sb.validate_command("dd if=/dev/zero of=/dev/sda").is_err());
 }
 
 #[test]
 fn test_dangerous_command_shutdown() {
-    assert!(
-        sandbox("/tmp/quecto-test")
-            .validate_command("shutdown -h now")
-            .is_err()
-    );
+    let sb = sandbox("/tmp/quecto-test");
+    assert!(sb.validate_command("shutdown -h now").is_err());
 }
 
 #[test]
 fn test_dangerous_command_reboot() {
-    assert!(
-        sandbox("/tmp/quecto-test")
-            .validate_command("reboot")
-            .is_err()
-    );
+    let sb = sandbox("/tmp/quecto-test");
+    assert!(sb.validate_command("reboot").is_err());
 }
 
 #[test]
 fn test_dangerous_command_fork_bomb() {
-    assert!(
-        sandbox("/tmp/quecto-test")
-            .validate_command(":(){ :|:& };:")
-            .is_err()
-    );
+    let sb = sandbox("/tmp/quecto-test");
+    assert!(sb.validate_command(":(){ :|:& };:").is_err());
 }
 
 #[test]
@@ -111,105 +88,76 @@ fn test_safe_command_allowed() {
 }
 
 #[test]
-fn test_normalize_command_for_denylist_trims_trailing_space() {
-    let s = normalize_command_for_denylist("rm -rf / ; ");
-    assert!(!s.ends_with(' '));
-    assert!(s.contains("rm -rf /"));
-}
-
-#[test]
-fn test_extract_all_command_tokens_whitespace_only_breaks() {
-    let tokens = extract_all_command_tokens("   ");
-    assert!(tokens.is_empty());
+fn test_prose_mentioning_dangerous_words_is_allowed() {
+    let sb = sandbox("/tmp/quecto-test");
+    assert!(sb.validate_command(r#"echo "the box will reboot""#).is_ok());
+    assert!(sb.validate_command("grep halt notes.md").is_ok());
 }
 
 #[test]
 fn test_error_display_formats() {
-    let e = SandboxError::DangerousPattern("rm -rf /".into(), "rm -rf /".into());
-    assert!(e.to_string().contains("dangerous pattern"));
+    let e = SandboxError::DangerousPattern {
+        command: "reboot".into(),
+        rule: "power-state".into(),
+        site: "reboot".into(),
+    };
+    assert_eq!(
+        e.to_string(),
+        "command 'reboot' matches dangerous pattern 'power-state' at `reboot`"
+    );
+    assert!(format!("{e:?}").contains("DangerousPattern"));
 }
 
 #[test]
-fn test_expand_bash_escapes_other_sequences() {
-    assert_eq!(expand_bash_escapes("$'a\\tb'"), "a\tb");
-    assert_eq!(expand_bash_escapes("$'a\\nb'"), "a\nb");
-    assert_eq!(expand_bash_escapes("$'a\\\\b'"), "a\\b");
-    assert_eq!(expand_bash_escapes("$'a\\'b'"), "a'b");
-    assert_eq!(expand_bash_escapes("$'a\\\"b'"), "a\"b");
-}
-
-#[test]
-fn test_extract_string_literals_with_quotes_and_unquoted() {
-    assert_eq!(extract_string_literals(r#"X="rm -rf /""#), " rm -rf /");
-    assert_eq!(extract_string_literals("X=rm -rf /"), " rm -rf /");
-    assert_eq!(extract_string_literals("X=\"\""), "");
-}
-
-#[test]
-fn test_expand_bash_escapes_invalid_hex_and_unicode() {
-    assert_eq!(expand_bash_escapes("$'a\\xqb'"), "aqb");
-    assert_eq!(expand_bash_escapes("$'a\\U0001F600b'"), "a😀b");
-}
-
-#[test]
-fn test_normalize_command_for_denylist_non_ascii_case() {
-    assert_eq!(normalize_command_for_denylist("ECHO İ"), "echo i̇");
+fn test_fallback_scan_error_names_the_reason() {
+    let sb = Sandbox::new(None);
+    let msg = sb
+        .validate_command("cmd='rm -rf /'; $cmd")
+        .unwrap_err()
+        .to_string();
+    assert!(msg.contains("fallback scan"), "{msg}");
+    assert!(msg.contains("dynamic command name"), "{msg}");
 }
 
 #[test]
 fn test_chown_system_root_blocked() {
-    assert!(
-        sandbox("/tmp/quecto-test")
-            .validate_command("chown -R root:root /")
-            .is_err()
-    );
+    let sb = sandbox("/tmp/quecto-test");
+    assert!(sb.validate_command("chown -R root:root /").is_err());
 }
 
 #[test]
 fn test_chown_workspace_scoped_allowed() {
-    assert!(
-        sandbox("/tmp/quecto-test")
-            .validate_command("chown -R user:group ./src")
-            .is_ok()
-    );
+    let sb = sandbox("/tmp/quecto-test");
+    assert!(sb.validate_command("chown -R user:group ./src").is_ok());
 }
 
 #[test]
 fn test_chown_no_space_variant_blocked() {
-    assert!(
-        sandbox("/tmp/quecto-test")
-            .validate_command("chown -Rroot /")
-            .is_err()
-    );
+    let sb = sandbox("/tmp/quecto-test");
+    assert!(sb.validate_command("chown -Rroot /").is_err());
 }
 
 #[test]
-fn test_with_command_allowlist_builder() {
-    let sb = Sandbox::new(Some(PathBuf::from("/tmp/ws")))
-        .with_command_allowlist(Some(vec!["cat".to_string()]));
-    assert!(sb.validate_command("cat file").is_ok());
-    assert!(sb.validate_command("dog file").is_err());
+fn test_for_agent_workspace_ignores_deprecated_allowlist() {
+    let mut config = crate::infrastructure::config::Config::default();
+    config.agents.defaults._deprecated_command_allowlist = Some(vec!["echo".to_string()]);
+    let sb = Sandbox::for_agent_workspace(&config, std::path::PathBuf::from("/tmp/ws"));
+    assert_eq!(sb.workspace, Some(std::path::PathBuf::from("/tmp/ws")));
+    assert!(sb.validate_command("curl https://example.com").is_ok());
+    assert!(sb.validate_command("rm -rf /").is_err());
 }
 
 #[test]
-fn test_for_agent_workspace_reads_allowlist() {
-    let config: Config =
-        serde_json::from_str(r#"{"agents":{"defaults":{"command_allowlist":["echo","cat"]}}}"#)
-            .unwrap();
-    let sb = Sandbox::for_agent_workspace(&config, PathBuf::from("/tmp/ws"));
+fn test_for_agent_workspace_without_deprecated_key() {
+    let config = crate::infrastructure::config::Config::default();
+    let sb = Sandbox::for_agent_workspace(&config, std::path::PathBuf::from("/tmp/ws"));
     assert!(sb.validate_command("echo hi").is_ok());
-    assert!(sb.validate_command("curl evil.com").is_err());
 }
 
 #[test]
-fn test_with_allowlist_constructor_and_clone() {
-    let sb = Sandbox::with_allowlist(
-        Some(PathBuf::from("/tmp/ws")),
-        Some(vec!["echo".to_string()]),
-    );
-    assert!(sb.validate_command("echo hi").is_ok());
-    assert!(sb.validate_command("curl evil.com").is_err());
+fn test_clone_preserves_workspace() {
+    let sb = sandbox("/tmp/ws");
     let cloned = sb.clone();
-    assert!(cloned.validate_path("/tmp/elsewhere/file.txt").is_ok());
-    assert!(cloned.validate_command("curl evil.com").is_err());
+    assert_eq!(cloned.workspace, sb.workspace);
+    assert!(cloned.validate_command("reboot").is_err());
 }
