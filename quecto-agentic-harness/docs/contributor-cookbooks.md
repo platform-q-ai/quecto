@@ -43,7 +43,10 @@ Do not run live provider lanes unless the task explicitly requires them.
   for registration and guard composition.
 - `src/interface/cli/agent/agent_tool_registry.rs` when CLI/agent construction
   needs to expose the tool.
-- `src/infrastructure/security/sandbox.rs` for path or command safety rules.
+- `src/infrastructure/security/sandbox.rs` for the path hook and the
+  `validate_command` entry point; `denylist.rs` for the dangerous-command
+  rules and `shell_parse.rs` for the execution-aware parser they run on
+  (see `docs/command-policy.md`).
 
 **Tests to add/update:**
 
@@ -68,7 +71,7 @@ Do not run live provider lanes unless the task explicitly requires them.
 - Do not let infrastructure tools import application/interface modules.
 - Keep filesystem access flowing through `Sandbox::validate_path` as the shared path hook.
 - Keep `bash`-like behaviour explicit: command execution is not a filesystem
-  sandbox.
+  sandbox, and the command denylist is not OS isolation (`docs/command-policy.md`).
 
 ## Add or change a UDS command
 

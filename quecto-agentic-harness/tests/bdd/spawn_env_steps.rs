@@ -727,7 +727,7 @@ fn when_start_gated_spawn(world: &mut QuectoWorld, agent_id: String) {
             r#"#!/usr/bin/env bash
 set -euo pipefail
 env_id="env-gated-$$"
-echo "{{\"kind\":\"create\",\"script\":\"${{QUECTO_CONTAINER_CONFIG:-}}\",\"env_ref\":\"${{QUECTO_CONTAINER_ENVIRONMENT_REF:-}}\",\"env_id\":\"$env_id\"}}" >> '{log}'
+echo "{{\"kind\":\"create\",\"script\":\"${{QUECTO_CONTAINER_CONFIG:-}}\",\"env_ref\":\"${{QUECTO_CONTAINER_ENVIRONMENT_REF:-}}\",\"env_id\":\"$env_id\",\"at\":\"$(date +%s.%N)\"}}" >> '{log}'
 socket_path=""
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "--" ]; then shift; break; fi
@@ -752,6 +752,7 @@ printf '{{"environment_id":"%s","workspace_path":"%s","metadata":{{}},"socket_pa
     world.gate_path = Some(gate);
 
     let tool = world.spawn_tool.take().expect("spawn tool");
+    world.gated_env_registry = Some(tool.environment_registry().clone());
     let args = serde_json::json!({
         "agent_id": agent_id,
         "task": "GATED_EMPTY_MARKER",
@@ -778,7 +779,9 @@ printf '{{"environment_id":"%s","workspace_path":"%s","metadata":{{}},"socket_pa
     expr = "the container listing should eventually include {string} with status {string} and {int} members"
 )]
 fn then_listing_eventually(world: &mut QuectoWorld, env_ref: String, status: String, n: i32) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    let started = std::time::Instant::now();
+    let deadline = started + std::time::Duration::from_secs(8);
+    let mut polls: Vec<String> = Vec::new();
     loop {
         let result = run_container_command(
             world,
@@ -801,11 +804,73 @@ fn then_listing_eventually(world: &mut QuectoWorld, env_ref: String, status: Str
                 }
             }
         }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "environment {env_ref} never reached status {status}: {:?}",
-            result.content
-        );
+        let spawn_side: Vec<String> = world
+            .gated_env_registry
+            .as_ref()
+            .map(|r| {
+                r.entries()
+                    .iter()
+                    .map(|e| format!("{}={}", e.environment_ref, e.status_label()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        polls.push(format!(
+            "{:.2}s:listing={} spawn-registry={spawn_side:?}",
+            started.elapsed().as_secs_f64(),
+            result.content.replace('\n', " ")
+        ));
+        if std::time::Instant::now() >= deadline {
+            // Surface the in-flight spawn's own outcome: a listing that never
+            // shows the environment usually means the spawn itself failed.
+            let spawn_outcome = match world.gated_spawn.take() {
+                Some(handle) if handle.is_finished() => match handle.join() {
+                    Ok((tool, r)) => {
+                        let registry_view: Vec<String> = tool
+                            .environment_registry()
+                            .entries()
+                            .iter()
+                            .map(|e| format!("{}={}", e.environment_ref, e.status_label()))
+                            .collect();
+                        format!(
+                            "gated spawn finished: is_error={} content={}; spawn tool registry={registry_view:?}",
+                            r.is_error, r.content
+                        )
+                    }
+                    Err(_) => "gated spawn thread panicked".to_string(),
+                },
+                Some(handle) => {
+                    world.gated_spawn = Some(handle);
+                    "gated spawn still running".to_string()
+                }
+                None => "no gated spawn in flight".to_string(),
+            };
+            let log = shared_log_path(world);
+            let log_tail = std::fs::read_to_string(&log).unwrap_or_default();
+            // First and last few polls are enough to see whether the
+            // environment was ever visible and when it disappeared.
+            let shown: Vec<&String> = if polls.len() > 6 {
+                polls
+                    .iter()
+                    .take(3)
+                    .chain(
+                        polls
+                            .iter()
+                            .rev()
+                            .take(3)
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                            .rev(),
+                    )
+                    .collect()
+            } else {
+                polls.iter().collect()
+            };
+            panic!(
+                "environment {env_ref} never reached status {status}: {:?}; {spawn_outcome}; runtime log: {log_tail}; {} polls, showing {shown:?}",
+                result.content,
+                polls.len()
+            );
+        }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
