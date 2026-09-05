@@ -153,6 +153,7 @@ Some crates also have BDD test targets and package-specific quality scripts. Bef
 - Subagent spawning and control commands: [quecto-agentic-harness/docs/subagents.md](quecto-agentic-harness/docs/subagents.md)
 - Sessions, context management, spill, and recall: [quecto-agentic-harness/docs/sessions.md](quecto-agentic-harness/docs/sessions.md)
 - Tool policy and command governance: [quecto-agentic-harness/docs/tool-policy.md](quecto-agentic-harness/docs/tool-policy.md)
+- Dangerous-command denylist (not OS isolation): [quecto-agentic-harness/docs/command-policy.md](quecto-agentic-harness/docs/command-policy.md)
 - Extending Quecto with tools, clients, and model providers: [quecto-agentic-harness/docs/extending-quecto.md](quecto-agentic-harness/docs/extending-quecto.md)
 - Extensions and external tools: [quecto-agentic-harness/docs/extensions.md](quecto-agentic-harness/docs/extensions.md)
 - Model providers and runtime configuration: [quecto-agentic-harness/docs/runtime-models-providers.md](quecto-agentic-harness/docs/runtime-models-providers.md)

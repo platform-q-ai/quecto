@@ -93,11 +93,11 @@ pub struct AgentDefaults {
     /// Defaults to `None`; provider applies `low` for 4.6 models when unset.
     #[serde(default)]
     pub effort: Option<String>,
-    /// Optional command allowlist. When set, only commands whose first token
-    /// is permitted by command policy. When `None`, command policy falls
-    /// back to the dangerous-command denylist only.
-    #[serde(default)]
-    pub command_allowlist: Option<Vec<String>>,
+    /// Deprecated compatibility key. The per-command allowlist was removed in
+    /// #1620; command policy is denylist-only. Old configs may still contain
+    /// this key, but it is ignored (a warning is logged at startup).
+    #[serde(default, rename = "command_allowlist", skip_serializing)]
+    pub _deprecated_command_allowlist: Option<Vec<String>>,
 }
 
 impl Default for AgentDefaults {
@@ -116,7 +116,7 @@ impl Default for AgentDefaults {
             pin_recent_turns: default_pin_recent_turns(),
             context_collapse_after_messages: default_context_collapse_after_messages(),
             effort: None,
-            command_allowlist: None,
+            _deprecated_command_allowlist: None,
         }
     }
 }

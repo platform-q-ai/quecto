@@ -27,6 +27,15 @@ fn when_validate_command(world: &mut QuectoWorld, command: String) {
     world.validation_result = Some(sb.validate_command(&command).map_err(|e| e.to_string()));
 }
 
+/// Unquoted form for commands that themselves contain double quotes or pipes,
+/// which the `{string}` cucumber expression and Gherkin tables cannot carry.
+#[when(regex = r"^the agent tries to validate raw command (.+)$")]
+fn when_validate_raw_command(world: &mut QuectoWorld, command: String) {
+    let default_sb = Sandbox::new(None);
+    let sb = world.sandbox.as_ref().unwrap_or(&default_sb);
+    world.validation_result = Some(sb.validate_command(&command).map_err(|e| e.to_string()));
+}
+
 #[then("the validation should be an error")]
 fn then_validation_is_error(world: &mut QuectoWorld) {
     let result = world

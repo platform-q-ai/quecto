@@ -7,7 +7,7 @@ fn test_deserialize_deprecated_restrict_to_workspace_ignored() {
     )
     .unwrap();
     assert_eq!(
-        config.agents.defaults.command_allowlist,
+        config.agents.defaults._deprecated_command_allowlist,
         Some(vec!["echo".to_string()])
     );
 }
