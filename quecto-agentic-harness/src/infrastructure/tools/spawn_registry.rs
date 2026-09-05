@@ -81,10 +81,9 @@ pub fn shutdown_all_with_count(registry: &SubagentRegistry) -> usize {
             tracing::info!(agent = %name, "aborted monitor task");
         }
         if entry.pid != 0 {
-            crate::infrastructure::tools::process_tree::terminate_owned_process_tree(
-                entry.pid,
-                entry.process_owner,
-            );
+            entry
+                .process_ownership
+                .signal(entry.pid, entry.process_owner);
             tracing::info!(agent = %name, pid = entry.pid, "sent termination to subagent process tree");
         }
     }

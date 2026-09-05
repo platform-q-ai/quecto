@@ -15,9 +15,10 @@ pub(super) fn spawn_reaper_task(
     registry_key: String,
     exit_tx: ExitSignalTx,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    ownership: super::process_ownership::ProcessOwnership,
 ) {
     tokio::spawn(async move {
-        let status = child.wait().await;
+        let status = ownership.wait(&mut child).await;
         // send_replace: store the real exit status even when no awaiter holds
         // a receiver yet, so late awaits report it instead of a fallback.
         exit_tx.send_replace(Some(exit_signal_from_status(status)));

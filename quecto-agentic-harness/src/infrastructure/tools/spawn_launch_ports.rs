@@ -344,6 +344,9 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 environment_ref: prepared.environment_ref.clone(),
                 process_owner: prepared.process_owner,
             });
+            // Retain the lease before publication; shutdown can drain the
+            // registry before the reaper task starts.
+            let ownership = entry.process_ownership.clone();
             register_and_broadcast(
                 &self.tool.registry,
                 self.tool.broadcast_tx.as_ref(),
@@ -414,6 +417,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     identity.registry_key.clone(),
                     exit_tx,
                     self.tool.broadcast_tx.clone(),
+                    ownership,
                 );
             }
             Ok(RegisteredLaunch {

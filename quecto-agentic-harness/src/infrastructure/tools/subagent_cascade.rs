@@ -120,7 +120,9 @@ pub fn terminate_removed_entry(entry: &SubagentEntry) {
         entry.proxy_bridge_socket.as_deref(),
     );
     if entry.pid != 0 {
-        super::process_tree::terminate_owned_process_tree(entry.pid, entry.process_owner);
+        entry
+            .process_ownership
+            .signal(entry.pid, entry.process_owner);
     }
 }
 

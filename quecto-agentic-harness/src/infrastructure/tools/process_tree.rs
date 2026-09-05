@@ -12,7 +12,24 @@ pub enum ProcessOwner {
     LocalProcessGroup,
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(super) static SIGNAL_LOG: std::cell::RefCell<Option<Vec<u32>>> = const { std::cell::RefCell::new(None) };
+}
+
 pub(crate) fn terminate_owned_process_tree(pid: u32, owner: ProcessOwner) {
+    #[cfg(test)]
+    if SIGNAL_LOG.with(|log| {
+        let mut log = log.borrow_mut();
+        if let Some(log) = log.as_mut() {
+            log.push(pid);
+            true
+        } else {
+            false
+        }
+    }) {
+        return;
+    }
     match owner {
         ProcessOwner::DirectPid => sigterm_pid(pid),
         ProcessOwner::LocalProcessGroup => terminate_local_process_group(pid),
