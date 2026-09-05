@@ -150,7 +150,7 @@ impl App {
             ..
         } = &ev
         {
-            if command == "sync" {
+            if command == "sync" && *success {
                 self.route_sync_response(agent_id, data);
                 return;
             }

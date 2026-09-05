@@ -1,6 +1,6 @@
 //! #1605 investigation: real direct sockets, not root-routed inspection feeds.
-//! These are characterization probes until the reported larger-roster freeze
-//! is reproduced; passing them is not evidence that the production bug is fixed.
+//! Capability-advertising matrix is a control; slim-state cases reproduce a
+//! direct committed-refresh failure. Neither establishes a roster-size cause.
 
 use super::app_event_loop::StreamRenderCoalescer;
 use super::tui_harness::{self, TuiHarness};
@@ -71,6 +71,33 @@ impl Child {
         )
     }
 
+    async fn start_turn(&mut self, slim_state: bool) {
+        self.command("get_state").await;
+        self.command("sync").await;
+        // Current harness slim_state_projection does not emit `sync`, even
+        // though its session snapshot supports the initial Sync below.
+        let state = if slim_state {
+            json!({"state":"thinking","model":"test-model","effort":null,
+                "effortLevels":[],"progress":{"state":"active","reason":"agent is running"},
+                "sessionKey":"test-session","generation":1})
+        } else {
+            json!({"capabilities":{"sync":1}})
+        };
+        self.send(
+            json!({"type":"response","command":"get_state","success":true,
+            "data":state}),
+        )
+        .await;
+        let history = (0..40)
+            .map(|i| {
+                json!({"id":format!("history-{i}"),
+            "role":"user","content":format!("history line {i}")})
+            })
+            .collect::<Vec<_>>();
+        self.send(delta(1, json!(history))).await;
+        self.send(json!({"type":"turn_start"})).await;
+    }
+
     async fn send(&self, event: Value) {
         self.events.send(event).await.unwrap();
     }
@@ -78,7 +105,12 @@ impl Child {
     async fn command(&mut self, kind: &str) -> Value {
         let command = tokio::time::timeout(Duration::from_secs(5), self.commands.recv())
             .await
-            .expect("child command deadline")
+            .unwrap_or_else(|_| {
+                panic!(
+                    "{}: expected {kind} on direct socket before deadline",
+                    self.id
+                )
+            })
             .expect("child socket alive");
         assert_eq!(command["type"], kind);
         command
@@ -103,7 +135,7 @@ fn delta(rev: u64, messages: Value) -> Value {
             "resync":false,"nextRev":null}})
 }
 
-async fn scenario(roster_size: usize, live_count: usize, nested: bool) {
+async fn scenario(roster_size: usize, live_count: usize, nested: bool, slim_state: bool) {
     let mut h = TuiHarness::new().await;
     h.app_mut().suppress_paint = true;
     let mut children = Vec::new();
@@ -135,22 +167,7 @@ async fn scenario(roster_size: usize, live_count: usize, nested: bool) {
     let mut paint = StreamRenderCoalescer::default();
     for child in &mut children[..live_count] {
         assert!(!h.app_mut().ac().roster.feeds[&child.id].inspection_only);
-        child.command("get_state").await;
-        child.command("sync").await;
-        child
-            .send(
-                json!({"type":"response","command":"get_state","success":true,
-            "data":{"capabilities":{"sync":1}}}),
-            )
-            .await;
-        let history = (0..40)
-            .map(|i| {
-                json!({"id":format!("history-{i}"),
-            "role":"user","content":format!("history line {i}")})
-            })
-            .collect::<Vec<_>>();
-        child.send(delta(1, json!(history))).await;
-        child.send(json!({"type":"turn_start"})).await;
+        child.start_turn(slim_state).await;
     }
     pump(&mut h, live_count * 3, &mut paint).await;
 
@@ -252,8 +269,95 @@ async fn issue_1605_direct_roster_workload_matrix() {
         live_counts.dedup();
         for live in live_counts {
             for nested in [false, true] {
-                scenario(size, live, nested).await;
+                scenario(size, live, nested, false).await;
             }
         }
     }
+}
+
+// Unlike the capability-advertising control, this peer uses the state shape
+// currently emitted by the harness. No queue refusal or inspection routing is
+// injected: the initial Sync succeeds, then the final ledger hint must refresh.
+#[tokio::test]
+async fn issue_1605_direct_slim_state_final_refresh_large_mixed_roster() {
+    scenario(8, 4, true, true).await;
+}
+
+#[tokio::test]
+async fn issue_1605_direct_slim_state_final_refresh_single_control() {
+    scenario(1, 1, false, true).await;
+}
+
+#[tokio::test]
+async fn issue_1605_direct_slim_state_committed_checkpoint_visible_without_refocus() {
+    let mut h = TuiHarness::new().await;
+    h.app_mut().suppress_paint = true;
+    let (mut child, socket) = Child::new(0);
+    let mut roster = vec![tui_harness::subagent_with_socket(
+        &child.id,
+        "running",
+        None,
+        Some(socket),
+    )];
+    roster.extend((1..8).map(|i| tui_harness::subagent(&format!("terminal-{i}"), "dead", None)));
+    h.event(tui_harness::subagents_changed(roster));
+    h.select(Some(&child.id));
+    child.command("get_state").await;
+    child.command("sync").await;
+    child
+        .send(
+            json!({"type":"response","command":"get_state","success":true,
+        "data":{"state":"thinking","generation":1,"model":"test-model"}}),
+        )
+        .await;
+    child.send(delta(1, json!([]))).await;
+    let mut paint = StreamRenderCoalescer::default();
+    pump(&mut h, 2, &mut paint).await;
+    // Committed tool/user checkpoint with no accompanying token or later hint.
+    child
+        .send(json!({"type":"ledger_advanced","epoch":1,"rev":2}))
+        .await;
+    pump(&mut h, 1, &mut paint).await;
+    let refresh = tokio::time::timeout(Duration::from_millis(100), child.commands.recv()).await;
+    let automatic = if let Ok(Some(command)) = refresh {
+        assert_eq!(command["type"], "sync");
+        child
+            .send(delta(
+                2,
+                json!([{"id":"checkpoint","role":"user",
+            "content":"committed-checkpoint"}]),
+            ))
+            .await;
+        pump(&mut h, 1, &mut paint).await;
+        h.full_frame().contains("committed-checkpoint")
+    } else {
+        false
+    };
+    // Exercise the reported recovery mechanism as a control, without treating
+    // successful refocus catch-up as satisfying automatic refresh.
+    h.app_mut()
+        .ac_mut()
+        .roster
+        .feeds
+        .get_mut(&child.id)
+        .unwrap()
+        .last_fresh_at = Some(std::time::Instant::now() - Duration::from_secs(2));
+    h.select(None).select(Some(&child.id));
+    child.command("sync").await;
+    child
+        .send(delta(
+            2,
+            json!([{"id":"checkpoint","role":"user",
+        "content":"committed-checkpoint"}]),
+        ))
+        .await;
+    pump(&mut h, 1, &mut paint).await;
+    assert!(
+        h.full_frame().contains("committed-checkpoint"),
+        "refocus control must recover"
+    );
+    assert!(
+        automatic,
+        "direct checkpoint stayed stale until refocus: roster=8 live=1;         initial sync succeeded, ledger hint received, but no automatic sync followed"
+    );
 }

@@ -4,7 +4,29 @@ use super::*;
 #[path = "app_ledger_sync_tests.rs"]
 mod app_ledger_sync_tests;
 
+/// Reconcile even if the last hint/request/response was lost. This is a
+/// committed-transcript cadence, not a replacement for direct token streaming.
+pub(super) const SUBAGENT_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+
 impl App {
+    /// Bounded by the per-tab warm feed cap. Always use the applied cursor,
+    /// including after a refused pagination continuation, and do not treat a
+    /// pending request as proof that a response will arrive. Polling also gives
+    /// socketless inspection feeds an independent, automatic refresh cadence.
+    pub(super) fn refresh_subagent_transcripts(&mut self) {
+        for connection in self.tabs.values_mut() {
+            let ns = connection.id_namespace();
+            for feed in connection.roster.feeds.values_mut() {
+                let _ = feed.cmd_tx.try_send(Command::Sync {
+                    agent_id: None,
+                    id: Some(crate::shell::connection::feed_id(&ns, "subagent-sync")),
+                    epoch: feed.epoch,
+                    since_rev: feed.rev,
+                });
+            }
+        }
+    }
+
     fn request_sync(feed: &mut FeedState, ns: &str, epoch: u64, target_rev: u64) {
         let since_rev = if feed.epoch == epoch { feed.rev } else { 0 };
         if target_rev > since_rev {
@@ -50,15 +72,26 @@ impl App {
             if feed.epoch != 0 && delta.epoch != feed.epoch && !delta.resync {
                 return;
             }
-            let prev_rev = feed.rev;
-            let prev_epoch = feed.epoch;
-            let entries = feed.transcript.apply_sync_delta(&delta);
-            feed.epoch = delta.epoch;
-            feed.rev = if delta.caught_up {
+            let applied_rev = if delta.caught_up {
                 delta.rev
             } else {
                 delta.next_rev.unwrap_or(feed.rev)
             };
+            // Periodic catch-up may overlap a slower earlier response. It must
+            // not roll back the same epoch's transcript/cursor or clear a newer
+            // live tail. Older history paging has a separate response path.
+            if feed.epoch == delta.epoch && applied_rev < feed.rev {
+                return;
+            }
+            // A valid delta proves support even when a slim get_state omits
+            // the optional advertisement (#1605). Otherwise direct feeds sync
+            // once, then silently ignore every subsequent ledger hint.
+            feed.supports_sync = true;
+            let prev_rev = feed.rev;
+            let prev_epoch = feed.epoch;
+            let entries = feed.transcript.apply_sync_delta(&delta);
+            feed.epoch = delta.epoch;
+            feed.rev = applied_rev;
             feed.last_fresh_at = Some(std::time::Instant::now());
             if delta.caught_up {
                 feed.pending_rev = None;
@@ -113,7 +146,7 @@ impl App {
     pub(super) fn note_sync_capability(&mut self, agent_id: &str, data: &serde_json::Value) {
         let ns = self.ac().id_namespace();
         if let Some(feed) = self.ac_mut().roster.feeds.get_mut(agent_id) {
-            feed.supports_sync = crate::protocol::agent_ledger_payloads::supports_sync(data);
+            feed.supports_sync |= crate::protocol::agent_ledger_payloads::supports_sync(data);
             if feed.supports_sync {
                 if let Some(target_rev) = feed.pending_rev {
                     Self::request_sync(feed, &ns, feed.epoch, target_rev);

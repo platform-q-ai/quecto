@@ -1,4 +1,8 @@
-# Issue #1605 — investigation checkpoint (not a fix)
+# Issue #1605 — initial investigation checkpoint (historical)
+
+**Continued investigation subsequently reproduced a direct slim-state refresh
+defect and implemented a tested correction. See `issue-1605-red-evidence.md`.
+Statements below describe the earlier checkpoint, not the final branch.**
 
 ## Scope and workflow
 
