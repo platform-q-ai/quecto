@@ -258,6 +258,14 @@ impl App {
         // Timeout for incomplete escape sequences (matches Quecto TUI's 10ms).
         let escape_timeout = Duration::from_millis(10);
 
+        // Independent of animation and new hints: even an idle inspection
+        // feed or a lost final sync response needs a future wakeup (#1605).
+        let mut subagent_refresh = tokio::time::interval_at(
+            tokio::time::Instant::now() + app_ledger_sync::SUBAGENT_REFRESH_INTERVAL,
+            app_ledger_sync::SUBAGENT_REFRESH_INTERVAL,
+        );
+        subagent_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         // Main event loop.
         loop {
             if self.should_exit {
@@ -266,6 +274,9 @@ impl App {
             let next_idle_service_tick = self.next_idle_service_deadline();
 
             tokio::select! {
+                _ = subagent_refresh.tick(), if self.tabs.values().any(|tab| !tab.roster.feeds.is_empty()) => {
+                    self.refresh_subagent_transcripts();
+                }
                 // Stdin input.
                 Some(bytes) = stdin_rx.recv() => {
                     if !self

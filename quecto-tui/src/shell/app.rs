@@ -590,6 +590,9 @@ mod app_cov_tests;
 #[path = "../agents/app_delete_all_subagents_tests.rs"]
 mod app_delete_all_subagents_tests;
 #[cfg(test)]
+#[path = "../agents/app_direct_roster_live_tests.rs"]
+mod app_direct_roster_live_tests;
+#[cfg(test)]
 #[path = "app_disconnect_tests.rs"]
 mod app_disconnect_tests;
 #[cfg(test)]
