@@ -693,3 +693,35 @@ fn incomplete_backfill_returns_bounded_progress_without_advancing_cursor() {
     assert_eq!(parsed["data"]["reportIncomplete"], true);
     assert_eq!(registry.lock().unwrap()["w1"].pending_message_ordinal, None);
 }
+
+#[test]
+fn agent_schema_hides_internal_message_lookup_but_parser_preserves_it() {
+    let definition = empty_tool().definition();
+    let schema: serde_json::Value = serde_json::from_str(&definition.parameters_schema).unwrap();
+    let properties = &schema["properties"];
+    let commands = properties["command"]["enum"].as_array().unwrap();
+    assert!(commands.iter().any(|command| command == "get_messages"));
+    assert!(!commands.iter().any(|command| command == "get_message"));
+    for internal_field in ["messageId", "offset", "limit", "toolCallId"] {
+        assert!(properties.get(internal_field).is_none());
+    }
+    assert!(
+        properties["agent_id"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("UUID")
+    );
+    let (_, command, _) =
+        crate::infrastructure::tools::agent_cmd_parse::build_command(&serde_json::json!({
+            "agent_id": "11111111-1111-4111-8111-111111111111",
+            "command": "get_message", "messageId": "message-1", "offset": 4,
+            "limit": 128, "toolCallId": "call-1"
+        }))
+        .unwrap();
+    let command: serde_json::Value = serde_json::from_str(&command).unwrap();
+    assert_eq!(command["type"], "get_message");
+    assert_eq!(command["messageId"], "message-1");
+    assert_eq!(command["offset"], 4);
+    assert_eq!(command["limit"], 128);
+    assert_eq!(command["toolCallId"], "call-1");
+}

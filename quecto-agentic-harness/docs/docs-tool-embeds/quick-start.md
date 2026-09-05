@@ -14,6 +14,8 @@ Once delegated, do not repeat the same investigation in the parent. Verify criti
 
 `spawn` returns when the child **socket is ready**, not when work is done.
 
+Save the UUID returned by `spawn` for every child-targeted `agent_cmd.agent_id`; spawn labels are UI-only.
+
 Required sequence:
 
 1. Spawn and brief the child with goal, boundaries, and expected concise report.
@@ -24,6 +26,8 @@ Required sequence:
 
 Do **not** poll `get_subagents`, `get_subagents_all`, or `get_state` in a wait loop. Do not sleep/bash-wait for child completion.
 
+First bare `get_messages` (omit/null `count` and `before`) returns the latest substantive assistant message, not the entire transcript. Subsequent bare calls return unread deltas across roles; when nothing new is available, `data` is `{ "unchanged": true }`. The report cursor advances only when the result is successfully delivered to the parent model, not merely fetched. Explicit non-null `count` and/or `before` requests are cursor-neutral history pages; `before` pages backward. Reports are bounded; a busy snapshot can lag the active turn.
+
 ## Delegation defaults
 
 - Give each child one clear goal, ownership boundary, and expected deliverable.
@@ -31,7 +35,7 @@ Do **not** poll `get_subagents`, `get_subagents_all`, or `get_state` in a wait l
 - Long sessions are auto-managed: older detail may collapse into recall stubs; use `recall("list")` if you need to recover it.
 - Ask for concise conclusions, evidence, uncertainty, and relevant `file:line` citations.
 - Spawn reviewers, researchers, and other non-editing children with `read_only: true`.
-- `read_only: true` hides write/edit tools but is not a hard sandbox because `bash` remains.
+- `read_only: true` hides write/edit tools but is not a hard sandbox because `bash` can still mutate the workspace.
 - Prefer minimal, purpose-aligned changes; follow repo conventions; verify appropriately; never bypass hooks with `--no-verify`.
 
 ## Workflow selection
@@ -70,7 +74,6 @@ Reuse a live child only when it already owns relevant context:
 
 - idle child: `prompt`
 - active child: `steer` or `follow_up`
-- exited child: same `agent_id` label starts a fresh session, not a resume
 
 Inventory distinction:
 
