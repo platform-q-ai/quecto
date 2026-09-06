@@ -3,6 +3,31 @@ use super::tui_harness::{TuiHarness, subagent, subagents_changed};
 use crate::protocol::client::Event;
 use crate::shell::keys::Key;
 
+#[tokio::test(start_paused = true)]
+async fn idle_subagent_main_pane_title_does_not_repeat_idle() {
+    let mut h = harness().await;
+    h.app_mut()
+        .update_subagent_bar(vec![info("worker", "running")]);
+    tokio::time::advance(std::time::Duration::from_secs(12)).await;
+    h.app_mut()
+        .update_subagent_bar(vec![info("worker", "idle")]);
+    h.app_mut().select_agent(Some("worker"));
+
+    let pane = h.main_pane();
+    let title_line = pane
+        .lines()
+        .find(|line| line.contains("worker") && line.contains("idle"))
+        .unwrap_or_else(|| panic!("selected idle sub-agent title not found:\n{pane}"));
+    assert!(
+        title_line.contains("worker · idle (ran 0:12"),
+        "idle status should be followed by elapsed run duration, not a second idle: {title_line:?}"
+    );
+    assert!(
+        !title_line.contains("idle idle"),
+        "idle status must not render twice in main pane title: {title_line:?}"
+    );
+}
+
 /// The idle Coordinator row must not display a wall-clock uptime that advances only
 /// when incidental input causes a repaint. It should show the frozen duration of
 /// the last active run, matching idle sub-agent timer semantics.

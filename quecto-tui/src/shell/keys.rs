@@ -311,6 +311,10 @@ fn parse_kitty_key(params: &[u8]) -> Key {
         // Alt+digit is the tab-focus primary; kitty Ctrl+digit is its alias
         // (#1466 decision 5) — both parse to the same key.
         48..=57 if ctrl || alt => Key::Alt((keycode as u8) as char),
+        // Shift+Space still produces a literal space; terminals using enhanced
+        // keyboard protocols report the Shift bit even though the inserted
+        // character is unchanged.
+        32 if shift && !ctrl && !alt => Key::Char(' '),
         // Plain printable ASCII (keycode 32..=126) with no modifier.
         32..=126 if !ctrl && !alt && !shift => Key::Char(char::from(keycode as u8)),
         _ => Key::Unknown(params.to_vec()),
@@ -360,6 +364,8 @@ fn parse_modify_other_keys(params: &[u8]) -> Option<Key> {
         97..=122 if alt => Some(Key::Alt((codepoint as u8) as char)),
         // Ctrl+digit aliases the Alt+digit tab-focus primary (#1466 dec. 5).
         48..=57 if ctrl || alt => Some(Key::Alt((codepoint as u8) as char)),
+        // Shift+Space still inserts a literal space; only Ctrl/Alt make it a chord.
+        32 if shift && !ctrl && !alt => Some(Key::Char(' ')),
         32..=126 if !ctrl && !alt && !shift => Some(Key::Char(char::from(codepoint as u8))),
         _ => None,
     }

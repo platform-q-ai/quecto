@@ -178,16 +178,13 @@ impl ConnectionState {
         self.name
             .as_deref()
             .filter(|name| !name.is_empty())
-            .unwrap_or("Master")
+            .unwrap_or("Coordinator")
     }
 
     /// The label to render for this tab's pinned coordinator panel row. N=1 uses
     /// the Coordinator fallback; named tabs paint the tab name.
     pub(crate) fn master_panel_label(&self) -> &str {
-        self.name
-            .as_deref()
-            .filter(|name| !name.is_empty())
-            .unwrap_or("Coordinator")
+        self.display_name()
     }
 }
 
