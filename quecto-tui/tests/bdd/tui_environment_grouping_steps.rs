@@ -414,10 +414,10 @@ fn then_container_info_pane(world: &mut TuiWorld, a: String, b: String) {
     }
 }
 
-#[when("I select the master row through panel navigation")]
-fn when_select_master_row(world: &mut TuiWorld) {
-    // The master row is row 1. Navigation wraps and the cursor remembers its
-    // last position, so use the digit-jump (1 = master) instead of walking.
+#[when("I select the coordinator row through panel navigation")]
+fn when_select_coordinator_row(world: &mut TuiWorld) {
+    // The coordinator row is row 1. Navigation wraps and the cursor remembers its
+    // last position, so use the digit-jump (1 = coordinator) instead of walking.
     drive(world, |h| {
         h.press(Key::Tab);
         h.press(Key::Char('1'));

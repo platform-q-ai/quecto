@@ -175,13 +175,13 @@ impl ConnectionState {
             .unwrap_or("Master")
     }
 
-    /// The label to render for this tab's pinned master panel row. N=1 keeps
-    /// the legacy row text byte-identical; named tabs paint the tab name.
+    /// The label to render for this tab's pinned coordinator panel row. N=1 uses
+    /// the Coordinator fallback; named tabs paint the tab name.
     pub(crate) fn master_panel_label(&self) -> &str {
         self.name
             .as_deref()
             .filter(|name| !name.is_empty())
-            .unwrap_or("Master Agent")
+            .unwrap_or("Coordinator")
     }
 }
 

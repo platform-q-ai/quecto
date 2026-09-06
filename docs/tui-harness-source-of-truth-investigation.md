@@ -124,12 +124,12 @@ Update `quecto-tui/src/components/footer.rs`:
 
 Update `App::handle_get_state(...)`:
 
-- Apply parsed workspace fields to the master session footer.
-- Update any retained master session workspace state from the harness, not from TUI cwd.
+- Apply parsed workspace fields to the coordinator session footer.
+- Update any retained coordinator session workspace state from the harness, not from TUI cwd.
 
 Subagent note:
 
-- Current subagent `SessionView::new(git_branch)` receives the master `workspace.git_branch`. If child agents can run in different workspaces, their own `get_state` / subagent state should eventually carry workspace too. If they cannot, cloning the master harness workspace is acceptable but should be explicit.
+- Current subagent `SessionView::new(git_branch)` receives the coordinator `workspace.git_branch`. If child agents can run in different workspaces, their own `get_state` / subagent state should eventually carry workspace too. If they cannot, cloning the coordinator harness workspace is acceptable but should be explicit.
 
 ### 5. Remove or downgrade TUI git polling
 
@@ -237,5 +237,5 @@ The rule of thumb: if the value describes agent/session/runtime state, harness i
 
 - Should `cwd` mean the process cwd, resolved agent workspace root, or sandbox workspace? For user-facing and tool-relative semantics it should be the same root used by file tools.
 - Should branch update arrive as part of periodic `get_state`, a pushed `WorkspaceStateChanged` event, or an update to the busy state snapshot? A pushed event is cleaner for TUI rendering, but a `get_state` field is the minimum contract.
-- Can subagents have distinct workspaces? If yes, workspace metadata belongs per session/subagent, not only on the connected master.
+- Can subagents have distinct workspaces? If yes, workspace metadata belongs per session/subagent, not only on the connected coordinator.
 - How much path information is safe to expose in remote/hosted harness modes? If absolute host paths are sensitive, include a display path plus a stable workspace id/root label.

@@ -44,7 +44,7 @@ Restructure both review stages in `workflow-config.json` (mirrored in
    - *Wave 2*: one adversarial verifier per deduped finding, prompted to
      REFUTE; verdicts CONFIRMED / PLAUSIBLE / REFUTED must quote the
      proving/disproving line. Skipped when Wave 1 finds nothing.
-   - *Wave 3*: the master posts exactly one submitted (non-PENDING) review with
+   - *Wave 3*: the parent agent posts exactly one submitted (non-PENDING) review with
      all surviving findings inline. The per-reviewer posting mechanics — and
      their pending-review failure mode — are deleted. Multi-finder convergence
      on one line is a severity signal.
