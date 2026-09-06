@@ -16,6 +16,8 @@ fn built_in_default_templates_include_generic_workflows() {
             "feature",
             "refactor",
             "adversarial-review",
+            "prd",
+            "plan",
         ]),
     );
 }
@@ -80,14 +82,14 @@ fn template_ids(templates: &[WorkflowTemplate]) -> HashSet<&str> {
         .collect()
 }
 
-// Current approved set: feature round 3, bugfix round 2, others round 1. Historical
+// Current set: user-directed feature review/fix, bugfix round 2, others round 1. Historical
 // fixtures stay immutable; compare full typed objects using crate-local files.
 fn current_approved_candidates() -> Vec<WorkflowTemplate> {
     [
         include_str!("../../../../tests/fixtures/workflow-approved-round-1/investigate.json"),
         include_str!("../../../../tests/fixtures/workflow-approved-round-1/chore.json"),
         include_str!("../../../../tests/fixtures/workflow-approved-round-2/bugfix.json"),
-        include_str!("../../../../tests/fixtures/workflow-approved-round-3/feature.json"),
+        include_str!("../../../../tests/fixtures/workflow-user-feature-review-fix-v2/feature.json"),
         include_str!("../../../../tests/fixtures/workflow-approved-round-1/refactor.json"),
     ]
     .into_iter()
@@ -110,7 +112,7 @@ fn approved_candidates_match_complete_source_templates() {
     let source = default_templates();
     let candidates = current_approved_candidates();
     assert_eq!(candidates.len(), 5);
-    assert_eq!(source.len(), candidates.len() + 1);
+    assert_eq!(source.len(), candidates.len() + 3);
     for candidate in candidates {
         let actual = source.iter().find(|t| t.id == candidate.id).unwrap();
         assert_eq!(
@@ -221,7 +223,9 @@ fn approved_candidates_validate_structure_and_reject_invalid_keys() {
 // These are template-contract checks, not measurements of review quality.
 #[test]
 fn adversarial_review_matches_packaged_contract_and_order() {
-    let json = include_str!("../../../../tests/fixtures/adversarial-review.json");
+    let json = include_str!(
+        "../../../../tests/fixtures/workflow-user-feature-review-fix-v2/adversarial-review.json"
+    );
     let mut value: serde_json::Value = serde_json::from_str(json).unwrap();
     let expected: WorkflowTemplate = serde_json::from_value(value.clone()).unwrap();
     value.as_object_mut().unwrap().remove("guards");
@@ -243,4 +247,76 @@ fn adversarial_review_matches_packaged_contract_and_order() {
         engine.check(step).unwrap();
     }
     assert!(engine.all_step_statuses().iter().all(|step| step.done));
+}
+
+#[test]
+fn prd_and_plan_match_packaged_contract_and_order() {
+    for (json, keys) in [
+        (
+            include_str!("../../../../tests/fixtures/prd.json"),
+            ["scope", "behavior", "acceptance", "review", "handoff"],
+        ),
+        (
+            include_str!("../../../../tests/fixtures/plan.json"),
+            ["ground", "increments", "risks", "checks", "handoff"],
+        ),
+    ] {
+        let mut value: serde_json::Value = serde_json::from_str(json).unwrap();
+        let expected: WorkflowTemplate = serde_json::from_value(value.clone()).unwrap();
+        value.as_object_mut().unwrap().remove("guards");
+        assert_eq!(serde_json::to_value(&expected).unwrap(), value);
+        assert!(expected.guards.is_empty());
+        assert_eq!(
+            expected
+                .steps
+                .iter()
+                .map(|s| s.key.as_str())
+                .collect::<Vec<_>>(),
+            keys
+        );
+        let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+        assert!(engine.list_templates().iter().any(|t| t.id == expected.id));
+        engine.select_template(&expected.id, None).unwrap();
+        assert_eq!(engine.active_template(), Some(&expected));
+        for step in 1..=5 {
+            if step < 5 {
+                assert!(engine.check(step + 1).is_err());
+            }
+            engine.check(step).unwrap();
+        }
+        assert!(engine.all_step_statuses().iter().all(|step| step.done));
+    }
+}
+
+#[test]
+fn feature_red_green_review_and_fix_are_distinct_ordered_steps() {
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    engine.select_template("feature", None).unwrap();
+    let feature = engine.active_template().unwrap();
+    assert_eq!(
+        feature
+            .steps
+            .iter()
+            .map(|s| (s.key.as_str(), s.phase.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("intake", "setup"),
+            ("test_design", "red"),
+            ("confirm_red", "red"),
+            ("implement", "green"),
+            ("refine", "refactor"),
+            ("adversarial_review", "review"),
+            ("fix_review_findings", "green"),
+            ("validate", "verify"),
+            ("handoff", "handoff"),
+        ]
+    );
+    assert_eq!(feature.steps[1].label, "Write verification");
+    assert_eq!(feature.steps[2].label, "Confirm RED");
+    for step in 1..=9 {
+        if step < 9 {
+            assert!(engine.check(step + 1).is_err());
+        }
+        engine.check(step).unwrap();
+    }
 }

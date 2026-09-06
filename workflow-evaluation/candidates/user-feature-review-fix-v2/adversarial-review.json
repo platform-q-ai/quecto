@@ -1,0 +1,39 @@
+{
+  "id": "adversarial-review",
+  "label": "Adversarial review",
+  "description": "Read-only, evidence-based challenge of supplied changes, with independently validated findings and a bounded report.",
+  "when_to_use": "Use to review code or non-code changes skeptically without implementing fixes.",
+  "steps": [
+    {
+      "key": "scope",
+      "label": "Define review boundaries",
+      "phase": "setup",
+      "guidance": "Review supplied changes without editing them. Pin the exact target revision or artifact snapshot, baseline, acceptance criteria, invariants, and a proportional review budget. Accept supplied diffs with explicit provenance and missing-context limitations; ask for essential inputs rather than inventing them. Record workspace state relative to the baseline; it need not be clean. Do not change production or exploit live systems."
+    },
+    {
+      "key": "inspect",
+      "label": "Inspect changes and context",
+      "phase": "analysis",
+      "guidance": "Inspect available before-and-after content and surrounding contracts, including non-code artifacts. Trace affected consumers and dependencies; distinguish introduced problems from pre-existing conditions. Record precise locators and limitations of incomplete snapshots. No particular version-control system is required."
+    },
+    {
+      "key": "challenge",
+      "label": "Discover candidate failures",
+      "phase": "analysis",
+      "guidance": "Scale narrow finder angles to the change: removed invariants, cross-file effects, security, performance, and whether tests can falsify the claimed behavior. Use parallel independent contexts when available, not as a prerequisite. Discover candidate mechanisms separately from verification. Each candidate needs concrete inputs or state leading to a wrong outcome, a violated criterion or invariant, and a precise locator. Do not invent findings or impose a quota."
+    },
+    {
+      "key": "validate",
+      "label": "Attempt to refute candidates",
+      "phase": "verify",
+      "guidance": "Attempt to REFUTE each candidate independently of discovery: retrace its mechanism, seek intended behavior, mitigating controls, and counterevidence. Use safe bounded reproductions or source comparisons; record expected versus observed results. Avoid destructive actions, secrets, and external side effects; use scratch artifacts only when safe and authorized. Classify CONFIRMED when the triggering scenario is established, PLAUSIBLE when the mechanism is supported but the trigger is uncertain, or REFUTED with explicit counterevidence. Verifier errors or empty output leave the candidate unresolved, not confirmed or dismissed. Deduplicate findings with the same mechanism."
+    },
+    {
+      "key": "report",
+      "label": "Deliver bounded review report",
+      "phase": "handoff",
+      "guidance": "Deliver one consolidated review before completing: pinned scope, severity justified by impact and likelihood, precise locators, triggering inputs/state and wrong outcome, evidence, classification, counterevidence, and focused remediation without applying it. Include unresolved candidates, blockers, checks, and provenance limitations. If no findings survive, say so without claiming absence of bugs. Publish externally only if explicitly authorized and verify delivery if publishing. Preserve the workspace relative to its recorded baseline; inspect actual worker state and clean up only owned reviewer workers and scratch artifacts. Report preservation evidence and limitations; stop at the agreed budget."
+    }
+  ],
+  "guards": []
+}
