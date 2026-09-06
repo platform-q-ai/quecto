@@ -681,15 +681,21 @@ impl SseHandler for CodexSseHandler {
                 Some("response.reasoning_summary_text.delta")
                 | Some("response.reasoning.summary_text.delta") => {
                     if let Some(delta) = event["delta"].as_str() {
-                        if let Err(err) = codex_sse_state::append_reasoning_with_limit(
+                        let position = codex_sse_state::reasoning_summary_position(&event);
+                        let emitted = match codex_sse_state::append_reasoning_delta(
                             &mut self.acc.reasoning,
                             delta,
+                            position,
+                            &mut self.acc.reasoning_summary_position,
                         ) {
-                            self.saw_terminal = true;
-                            let _ = tx.send(StreamEvent::Error(err.to_string())).await;
-                            return SseLineOutcome::Done;
-                        }
-                        let _ = tx.send(StreamEvent::ThinkingDelta(delta.to_string())).await;
+                            Ok(emitted) => emitted,
+                            Err(err) => {
+                                self.saw_terminal = true;
+                                let _ = tx.send(StreamEvent::Error(err.to_string())).await;
+                                return SseLineOutcome::Done;
+                            }
+                        };
+                        let _ = tx.send(StreamEvent::ThinkingDelta(emitted)).await;
                     }
                 }
                 _ => {}
