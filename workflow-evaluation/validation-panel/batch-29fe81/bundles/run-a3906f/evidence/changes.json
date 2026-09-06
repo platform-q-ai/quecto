@@ -1,9 +1,0 @@
-{
-  "changed": [
-    "rollup.py",
-    "tests/test_by_category.py"
-  ],
-  "changed_existing_tests": [],
-  "notice": "Flags are not hidden requirements or automatic gate failures.",
-  "path_review_flags_only": []
-}

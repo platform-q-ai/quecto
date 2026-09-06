@@ -1,8 +1,0 @@
-{
-  "source_equals_before_plus_single_F1_substitution": true,
-  "all_historical_round1_fixture_hashes_unchanged": true,
-  "all_six_fixtures_in_cargo_package_listing": true,
-  "frozen_evaluator_unchanged": true,
-  "canonical_round2_equals_crate_fixture": true,
-  "candidate_sha256": "28a9cc688ab6e6b2dedc51b6913abb06d29f8ac0dcbfb0b167d176bb5200f2d3"
-}

@@ -1,5 +1,0 @@
-- **Summary:** Fixed half-open interval merging: touching intervals stay separate; overlaps still merge. Unsorted inputs and caller-list preservation remain supported.
-- **Checks:** Original implementation failed two regression tests; fixed implementation passed all six tests.
-- **Changed files:** `intervals.py`, `tests/test_merge.py`.
-- **Blockers:** None.
-- **Next action:** Ready for review.

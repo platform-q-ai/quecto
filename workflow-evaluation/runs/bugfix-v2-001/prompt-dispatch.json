@@ -1,9 +1,0 @@
-{
-  "command": "prompt",
-  "success": true,
-  "uuid": "680c5618-3edf-4d7d-818e-0a4cab7198a0",
-  "exact_task_file": "task.txt",
-  "prompt_sha256": "b917441b4a1a3948a101be2da1ec0a04db4007c1ecdeaa2abe3e292b41bd5bc6",
-  "recorded_after_dispatch_utc": "2026-09-06T11:17:08.156935+00:00",
-  "note": "One idle get_state inspection after verified provisioning; no coaching, setup, steer, or follow-up."
-}

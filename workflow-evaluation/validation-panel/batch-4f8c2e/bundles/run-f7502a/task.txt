@@ -1,1 +1,0 @@
-In /workspace/task, fix intervals.merge: touching half-open intervals must remain separate. Overlapping intervals must still merge, inputs may be unsorted, and the caller's list must not be changed. Inputs are valid integer (start, end) pairs with start < end. Preserve the public API and add appropriate regression coverage.

@@ -1,5 +1,0 @@
-- **Summary:** Added `by_category(rows)` with ordered category sums and all requested edge cases. Left `total(rows)` unchanged.
-- **Checks:** All 6 unittest tests pass. An isolated original-module check confirmed tests detect the missing API.
-- **Changed files:** `rollup.py`, `tests/test_by_category.py`.
-- **Blockers:** None.
-- **Next action:** Ready for review.

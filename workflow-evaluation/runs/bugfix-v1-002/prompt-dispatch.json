@@ -1,9 +1,0 @@
-{
-  "command": "prompt",
-  "success": true,
-  "uuid": "dfe80538-a897-4d00-9944-a105b4a762ee",
-  "exact_task_file": "task.txt",
-  "prompt_sha256": "f8b3e7c04f8cd3b949cd615f67572f1ccfde38fe75c5e55ebfb04d83aa147869",
-  "recorded_after_dispatch_utc": "2026-09-06T12:03:48.479144+00:00",
-  "note": "Exact unchanged catalog task after verified provisioning and one idle inspection. No coaching."
-}

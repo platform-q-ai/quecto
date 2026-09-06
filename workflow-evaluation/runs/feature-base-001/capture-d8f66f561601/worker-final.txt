@@ -1,5 +1,0 @@
-- **Summary:** Added keyword-only `limit=None` to `search.find`, preserving matching, order, duplicates, and inputs. Zero returns `[]`; negative integers raise `ValueError`.
-- **Checks:** `python3 -m unittest discover -s tests` — all 7 tests passed. Git diff check unavailable: directory is not a Git repository.
-- **Changed files:** `search.py`, `tests/test_limits.py`.
-- **Blockers:** None.
-- **Next action:** Ready for review.

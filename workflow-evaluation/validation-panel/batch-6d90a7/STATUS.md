@@ -1,1 +1,0 @@
-FINAL LOCKED: investigate v1/v2 97.5/PASS, chore v1/v2 97.5/PASS, bugfix v1/v2 87.5/PASS. Investigate/Chore three-run candidate streaks MET; Bugfix NOT MET (trailing count0). No adjudication trigger/blocking scoring issues. See SUMMARY.md, summary.json, candidate-streaks.json. No proposals authorized.

@@ -1,5 +1,0 @@
-- **Summary:** Repaired both stale links; preserved visible text and all other prose.
-- **Checks:** Both target files exist; exact-content comparison passed.
-- **Changed file:** `docs/start.md` only.
-- **Blockers:** None.
-- **Next action:** None; task complete.

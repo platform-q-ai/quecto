@@ -1,9 +1,0 @@
-{
-  "command": "prompt",
-  "success": true,
-  "uuid": "76fbd059-1137-4ffe-8039-c30692eafcb7",
-  "exact_task_file": "task.txt",
-  "prompt_sha256": "885d0d5b7d72925b6c7ec61f420b7cf35db2030daeb17b46df2860f4352eec37",
-  "recorded_after_dispatch_utc": "2026-09-06T11:39:55.912899+00:00",
-  "note": "Exact product-only variant prompt after verified provisioning and one idle inspection; no coaching."
-}

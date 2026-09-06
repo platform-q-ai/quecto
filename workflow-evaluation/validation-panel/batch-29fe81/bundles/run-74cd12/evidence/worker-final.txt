@@ -1,5 +1,0 @@
-- **Summary:** Added `--json` output with only an integer `lines` key and trailing newline. Preserved default output and help behavior.
-- **Checks:** `python3 -B -m unittest discover -s tests -v` passed both tests, covering both modes and edge cases.
-- **Changed files:** `linecount.py`, `tests/test_smoke.py`.
-- **Blockers:** None.
-- **Next action:** Ready for review.

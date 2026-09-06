@@ -1,1 +1,0 @@
-FINAL LOCKED: bugfix-base003 100/PASS unanimously, all20 criteria5. No adjudication/blocker. Actual pre-change RED then fix/GREEN established; late bookkeeping not penalized absent substantive order violation. One qualifying round2 run only. No Bugfix proposal authority. Feature round3 votes separately in progress.

@@ -1,9 +1,0 @@
---- before/docs/start.md
-+++ after/docs/start.md
-@@ -1,4 +1,4 @@
- # Start
--Use [installation](install.md) first.
--For help, see [troubleshooting](help.md).
-+Use [installation](guide/install.md) first.
-+For help, see [troubleshooting](support/troubleshooting.md).
- Offline use is supported.

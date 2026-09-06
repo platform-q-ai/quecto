@@ -1,1 +1,0 @@
-FINAL LOCKED: F3 selected (3YES/0NO/0ABSTAIN); wins overlaps 2–1 vs F1, 3–0 vs F2. No goal conflicts; minority preference preserved. Exact replacement in selected-proposal.json, votes in vote-aggregate.json, full report SUMMARY.md. Parent implementation required; no source/candidate/rubric or score changes.

@@ -1,1 +1,0 @@
-In /workspace/task, repair the two stale local links in docs/start.md to point to the existing install and troubleshooting pages. Preserve the visible link text and all other prose. Do not move pages or edit other existing files.

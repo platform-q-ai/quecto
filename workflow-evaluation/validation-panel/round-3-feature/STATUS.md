@@ -1,1 +1,0 @@
-FINAL LOCKED: Feature round3 F1 intake replacement selected3YES; overlap2–1 vsF3,3–0 vsF2. No goal conflict/circular dependency; test_design unchanged. Exact text selected-proposal.json, full report SUMMARY.md. No source/candidate/rubric/score edits. Parent implementation required.

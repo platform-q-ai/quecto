@@ -1,9 +1,0 @@
-{
-  "command": "prompt",
-  "success": true,
-  "uuid": "fb94d174-855b-4240-9dde-a505e5f9f684",
-  "exact_task_file": "task.txt",
-  "prompt_sha256": "79f9a8544f5eaab90fe8ef85111be7d95b692d09b27f2f2c6a2a40de7d76f777",
-  "recorded_after_dispatch_utc": "2026-09-06T10:51:12.740312+00:00",
-  "note": "One idle get_state inspection after verified fixture provisioning. No setup/steer/follow-up prompt."
-}
