@@ -18,6 +18,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     And child "proxy-impl-slice3" should be reachable
     And child "proxy-impl-slice3" should receive "PROXY_IMPL_MARKER"
     And the proxy bridge should have been used at least 1 time
+    And scenario teardown should leave no fixture processes running
 
   @done @container-liveness
   Scenario: Proxy launch retries while the child is not yet accepting commands
@@ -26,6 +27,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     When I spawn script-managed subagent "proxy-retry-1396" into a new proxy-only environment with task "PROXY_RETRY_MARKER"
     Then the spawn result should not be an error
     And child "proxy-retry-1396" should receive "PROXY_RETRY_MARKER"
+    And scenario teardown should leave no fixture processes running
 
   @done @container-liveness
   Scenario: Proxy-only environment supports prompt and message delivery
@@ -35,6 +37,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     Then the agent command result should not be an error
     And child "proxy-prompt-slice3" should receive "PROXY_PROMPT_MARKER"
     And the proxy bridge should have been used at least 1 time
+    And scenario teardown should leave no fixture processes running
 
   @done @container-liveness
   Scenario: Proxy mode never falls back to a decoy direct socket
@@ -45,6 +48,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     And child "proxy-decoy-slice3" should receive "PROXY_DECOY_MARKER"
     And the decoy direct socket should have been listening yet received no connections
     And the proxy bridge should have been used at least 1 time
+    And scenario teardown should leave no fixture processes running
 
   @done @container-liveness
   Scenario: A create result carrying both direct and proxy endpoints is rejected with rollback
@@ -54,6 +58,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     Then the spawn result should fail because the create result must carry exactly one endpoint
     And the script-managed runtime should have cleaned up an environment exactly 1 time
     And the subagent registry should not contain "proxy-both-slice3"
+    And scenario teardown should leave no fixture processes running
 
   @done @container-liveness
   Scenario: Proxy-only child death is pushed via EOF with one inspect
@@ -64,6 +69,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     And the script-managed runtime should have inspected an environment exactly 1 time
     And the script-managed runtime should have killed an environment exactly 1 time
     And the container listing should include "C1" with status "stopped" and 0 members
+    And scenario teardown should leave no fixture processes running
 
   @done @container-liveness
   Scenario: Child death is pushed via EOF with exactly one inspect and one terminal transition
@@ -74,6 +80,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     And the script-managed runtime should have inspected an environment exactly 1 time
     And the script-managed runtime should have killed an environment exactly 1 time
     And the container listing should include "C1" with status "stopped" and 0 members
+    And scenario teardown should leave no fixture processes running
 
   @done @container-liveness
   Scenario: Child death surfaces the passive note, snapshot, and live event
@@ -83,6 +90,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     Then a passive exit note for "surface-slice3" should be delivered
     And the live event stream should report subagent "surface-slice3" as exited
     And the subagent snapshot should report "surface-slice3" as exited
+    And scenario teardown should leave no fixture processes running
 
   @done @container-liveness
   Scenario: Environment registry removal after launch does not break monitoring
@@ -91,6 +99,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     And the environment registry entry "C1" has been removed out from under the monitor
     When the script-managed child "race-slice3" is killed behind Quecto's back
     Then the subagent snapshot should report "race-slice3" as exited
+    And scenario teardown should leave no fixture processes running
 
   @done @container-liveness
   Scenario: Inspect result survives zero members and is visible via get_containers
@@ -100,6 +109,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     Then the subagent snapshot should report "inspectok-slice3" as exited
     And the container listing entry "C1" should carry inspect metadata "cause" with value "oom-killed"
     And the container listing should include "C1" with status "stopped" and 0 members
+    And scenario teardown should leave no fixture processes running
 
   @done @container-liveness
   Scenario: Inspect failure is persisted truthfully with retained context
@@ -109,6 +119,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     Then the subagent snapshot should report "inspectfail-slice3" as exited
     And the script-managed runtime should have inspected an environment exactly 1 time
     And the container listing entry "C1" should record an inspect error
+    And scenario teardown should leave no fixture processes running
 
   @done @container-liveness
   Scenario: A member EOF-exit does not kill a shared environment
@@ -121,6 +132,7 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     And the script-managed runtime should have killed an environment exactly 0 times
     And the container listing should include "C1" with status "running" and 1 member
     And child "share-impl-slice3" should be reachable
+    And scenario teardown should leave no fixture processes running
 
   @done @container-liveness
   Scenario: The final member EOF-exit triggers exactly one cleanup claim
@@ -133,3 +145,4 @@ Feature: Script-managed direct/proxy liveness and lifecycle parity
     And the script-managed runtime should have killed an environment exactly 1 time
     And the script-managed runtime should have inspected an environment exactly 2 times
     And the container listing should include "C1" with status "stopped" and 0 members
+    And scenario teardown should leave no fixture processes running

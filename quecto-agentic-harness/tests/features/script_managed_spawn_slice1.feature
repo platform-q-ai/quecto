@@ -138,3 +138,8 @@ Feature: Script-managed subagent spawning
       | phase |
       | readiness |
       | initial prompt |
+
+  @done @fixture-cleanup
+  Scenario: Scenario teardown terminates a script-managed child
+    Given script-managed child "cleanup-slice1" is running with task "CLEANUP_MARKER"
+    Then scenario teardown should leave no fixture processes running

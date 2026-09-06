@@ -20,6 +20,7 @@ Feature: Shared script-managed environments
     And subagents "impl-join-slice2" and "observer-join-slice2" should share environment reference "C1"
     And subagents "impl-join-slice2" and "observer-join-slice2" should share the same workspace
     And subagents "impl-join-slice2" and "observer-join-slice2" should both be listed as members of "C1"
+    And scenario teardown should leave no fixture processes running
 
   @done @container-env
   Scenario: Observer joins a live environment by name
@@ -31,6 +32,7 @@ Feature: Shared script-managed environments
     And the script-managed runtime should have joined an existing environment exactly 1 time
     And the script-managed runtime should have created exactly 1 environment
     And child "observer-name-slice2" should receive "OBSERVER_NAME_MARKER"
+    And scenario teardown should leave no fixture processes running
 
   @done @container-env
   Scenario: Existing join uses the environment's retained script set after the default changes
@@ -40,6 +42,7 @@ Feature: Shared script-managed environments
     When I spawn read-only subagent "observer-retained-slice2" into existing environment ref "C1" with task "OBSERVER_RETAINED_MARKER"
     Then the spawn result should not be an error
     And the join should have used the retained "default" script set
+    And scenario teardown should leave no fixture processes running
 
   @done @container-env
   Scenario: Unknown environment ref fails without attempting a join
@@ -49,6 +52,7 @@ Feature: Shared script-managed environments
     Then the spawn result should fail because environment "C9" is unknown
     And the script-managed runtime should have joined an existing environment exactly 0 times
     And the spawn result should not include an environment reference
+    And scenario teardown should leave no fixture processes running
 
   @done @container-env
   Scenario: Ambiguous environment name fails without attempting a join
@@ -58,6 +62,7 @@ Feature: Shared script-managed environments
     When I spawn read-only subagent "observer-dup-slice2" into existing environment name "dup-env" with task "OBSERVER_DUP_MARKER"
     Then the spawn result should fail because environment name "dup-env" is ambiguous
     And the script-managed runtime should have joined an existing environment exactly 0 times
+    And scenario teardown should leave no fixture processes running
 
   @done @container-env
   Scenario: Stopped environment ref fails without attempting a join
@@ -67,6 +72,7 @@ Feature: Shared script-managed environments
     When I spawn read-only subagent "observer-stopped-slice2" into existing environment ref "C1" with task "OBSERVER_STOPPED_MARKER"
     Then the spawn result should fail because environment "C1" is stopped
     And the script-managed runtime should have joined an existing environment exactly 0 times
+    And scenario teardown should leave no fixture processes running
 
   @done @container-env
   Scenario: get_containers lists a running environment from the authoritative registry
@@ -75,6 +81,7 @@ Feature: Shared script-managed environments
     When I run container command "get_containers"
     Then the container command result should not be an error
     And the container listing should include "C1" with status "running" and 1 member
+    And scenario teardown should leave no fixture processes running
 
   @done @container-env
   Scenario: get_containers keeps listing a stopped environment
@@ -84,6 +91,7 @@ Feature: Shared script-managed environments
     When I run container command "get_containers"
     Then the container command result should not be an error
     And the container listing should include "C1" with status "stopped" and 0 members
+    And scenario teardown should leave no fixture processes running
 
   @done @container-env
   Scenario: kill_container terminates all members and calls the retained kill exactly once
@@ -96,6 +104,7 @@ Feature: Shared script-managed environments
     And child "impl-kill-slice2" should not be reachable
     And child "observer-kill-slice2" should not be reachable
     And the container listing should include "C1" with status "stopped" and 0 members
+    And scenario teardown should leave no fixture processes running
 
   @done @container-env
   Scenario: Kill failure persists a retryable cleanup-failed state
@@ -104,6 +113,7 @@ Feature: Shared script-managed environments
     When I kill container "C1"
     Then the container command result should be an error mentioning "cleanup"
     And the container listing should include "C1" with status "cleanup-failed" and a last error
+    And scenario teardown should leave no fixture processes running
 
   @done @container-env
   Scenario: A failed environment cleanup can be retried to completion
@@ -114,6 +124,7 @@ Feature: Shared script-managed environments
     Then the container command result should not be an error
     And the container listing should include "C1" with status "stopped" and 0 members
     And the script-managed runtime should have killed an environment exactly 2 times
+    And scenario teardown should leave no fixture processes running
 
   @done @container-env
   Scenario: Environment refs are never reused after stop
@@ -123,6 +134,7 @@ Feature: Shared script-managed environments
     When I spawn script-managed subagent "impl-second-slice2" into a new shared environment with task "SECOND_ENV_MARKER"
     Then the spawn result should not be an error
     And the spawn result should include environment reference "C2"
+    And scenario teardown should leave no fixture processes running
 
   @done @container-env
   Scenario: Killing a non-final member leaves the environment running
@@ -132,6 +144,7 @@ Feature: Shared script-managed environments
     When I kill subagent "observer-final-slice2"
     Then the script-managed runtime should have killed an environment exactly 0 times
     And the container listing should include "C1" with status "running" and 1 member
+    And scenario teardown should leave no fixture processes running
 
   @done @container-env
   Scenario: Killing the final member triggers exactly one environment cleanup
@@ -142,11 +155,13 @@ Feature: Shared script-managed environments
     When I kill subagent "impl-final2-slice2"
     Then the script-managed runtime should have killed an environment exactly 1 time
     And the container listing should include "C1" with status "stopped" and 0 members
+    And scenario teardown should leave no fixture processes running
 
   # @serial: the listing must be observed inside the spawn's 10s readiness
   # window. Cucumber interleaves scenarios cooperatively, so a co-scheduled
   # step that blocks the executor (e.g. a spawn waiting out its readiness
   # timeout) would otherwise push this scenario's next step past the window.
+
   @done @container-env @serial
   Scenario: A created environment lists as empty until its first member registers
     Given shared script-managed subagent spawning is available
@@ -155,3 +170,4 @@ Feature: Shared script-managed environments
     When I release the gated environment child
     And the gated spawn for "env-empty-slice2" completes successfully
     Then the container listing should include "C1" with status "running" and 1 member
+    And scenario teardown should leave no fixture processes running

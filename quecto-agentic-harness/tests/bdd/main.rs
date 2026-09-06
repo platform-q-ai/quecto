@@ -1594,6 +1594,21 @@ impl Drop for QuectoWorld {
                 quecto::infrastructure::tools::subagent_cascade::terminate_removed_entry(entry);
             }
         }
+        // Also cover rollback and removed registry records: fixture ownership
+        // outlives runtime registry membership.
+        if let Some(config) = self.config_path.as_ref() {
+            let directory = Path::new(config).parent().unwrap();
+            let helper = directory.join("fixture-processes.py");
+            if helper.exists() {
+                let status = std::process::Command::new("python3")
+                    .arg(helper)
+                    .arg("clean")
+                    .arg(directory.join("env-pids"))
+                    .status()
+                    .expect("run fixture process cleanup");
+                assert!(status.success(), "fixture process cleanup failed");
+            }
+        }
         if self.restore_inherited_runtime_config {
             // SAFETY: the setting scenario is @serial and cucumber drops each world before the next serial scenario starts, so no concurrent env readers exist while the process-wide var is cleared.
             unsafe { std::env::remove_var("QUECTO_RUNTIME_CONFIG_PATH") };
