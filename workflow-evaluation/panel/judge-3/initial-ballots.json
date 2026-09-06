@@ -1,0 +1,1019 @@
+[
+  {
+    "judge_id": "judge-3",
+    "run_id": "bugfix-base-001",
+    "evidence_root": "workflow-evaluation/runs/bugfix-base-001/",
+    "locator_convention": "Paths are relative to evidence_root. Transcript ordinals identify messages in transcript/messages.json and are mapped to message UUIDs in capture-5e0ef60e3e17/transcript-index.json.",
+    "criteria": {
+      "A1": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/intervals.py:1-9",
+          "capture-5e0ef60e3e17/final-oracle.json:command,returncode,stdout"
+        ],
+        "rationale": "Strict comparison separates touching half-open intervals while retaining true-overlap merging; retained evaluator results corroborate the implementation."
+      },
+      "A2": {
+        "points": 5,
+        "evidence": [
+          "task.txt",
+          "fixture-after/tests/test_merge.py:6-25",
+          "capture-5e0ef60e3e17/final-oracle.json"
+        ],
+        "rationale": "The patch addresses touching, overlapping and unsorted intervals, preserves the API and caller list, and adds meaningful regression coverage."
+      },
+      "A3": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_merge.py:10-25",
+          "capture-5e0ef60e3e17/final-oracle.json:command,stdout"
+        ],
+        "rationale": "Empty, singleton, nested, duplicate, chained-overlap and negative-coordinate cases are supported. The oracle additionally checks bridging overlaps and negative touching intervals."
+      },
+      "A4": {
+        "points": 5,
+        "evidence": [
+          "capture-5e0ef60e3e17/diff.txt",
+          "fixture-after/tests/test_merge.py:10-15",
+          "capture-5e0ef60e3e17/final-oracle.json"
+        ],
+        "rationale": "The signature, sorted tuple output and non-mutating implementation remain intact; compatibility assertions pass."
+      },
+      "A5": {
+        "points": 5,
+        "evidence": [
+          "capture-5e0ef60e3e17/diff.txt",
+          "capture-5e0ef60e3e17/final-suite.json",
+          "capture-5e0ef60e3e17/worker-final.txt"
+        ],
+        "rationale": "The small patch and retained tests are runnable and readily reviewable, with an explicit verification command."
+      },
+      "A6": {
+        "points": 5,
+        "evidence": [
+          "capture-5e0ef60e3e17/changes.json",
+          "capture-5e0ef60e3e17/before-files.json",
+          "capture-5e0ef60e3e17/after-files.json"
+        ],
+        "rationale": "Only the implementation and an additive regression-test file changed. Existing tests, README and operator draft are preserved byte-for-byte."
+      },
+      "B1": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=17",
+          "transcript/messages.json#ordinal=18",
+          "transcript/messages.json#ordinal=24"
+        ],
+        "rationale": "Before the implementation edit, the worker executed the suite and observed two relevant failures caused by touching intervals merging."
+      },
+      "B2": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=15",
+          "transcript/messages.json#ordinal=18",
+          "fixture-after/tests/test_merge.py:6-20"
+        ],
+        "rationale": "The pre-change checks distinguish endpoint touching from genuine overlap, including an unsorted mixed case; their failures reach the intended behavior rather than broken setup."
+      },
+      "B3": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=24",
+          "transcript/messages.json#ordinal=27",
+          "transcript/messages.json#ordinal=28"
+        ],
+        "rationale": "The worker reran the acceptance-relevant suite after the final implementation edit and observed all five tests passing."
+      },
+      "B4": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=28",
+          "fixture-after/tests/test_merge.py:10-25",
+          "fixture-after/tests/test_smoke.py:1-5"
+        ],
+        "rationale": "The executed suite covers surrounding overlap behavior, sorting, ownership, nesting, duplicates, chaining, empty input and a negative singleton."
+      },
+      "B5": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_merge.py",
+          "transcript/messages.json#ordinal=18",
+          "transcript/messages.json#ordinal=28",
+          "capture-5e0ef60e3e17/pristine-with-worker-tests.json"
+        ],
+        "rationale": "Durable tests and chronological RED/GREEN outputs are retained. Replay on the original implementation independently confirms test sensitivity."
+      },
+      "C1": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=10",
+          "transcript/messages.json#ordinal=12",
+          "transcript/messages.json#ordinal=14"
+        ],
+        "rationale": "The worker read the implementation, half-open interval contract and existing test before choosing the change."
+      },
+      "C2": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=21",
+          "transcript/messages.json#ordinal=23",
+          "fixture-before/intervals.py:3-6"
+        ],
+        "rationale": "The diagnosis correctly isolates the inclusive overlap comparison and explains why existing sorting already preserves input ownership."
+      },
+      "C3": {
+        "points": 5,
+        "evidence": [
+          "capture-5e0ef60e3e17/diff.txt"
+        ],
+        "rationale": "A one-operator correction addresses the cause without abstraction, hardcoding or unrelated cleanup; the regression tests are clear and purpose-aligned."
+      },
+      "C4": {
+        "points": 0,
+        "evidence": [
+          "transcript/messages.json#ordinals=24-35"
+        ],
+        "rationale": "The edit output displays the changed condition, but no substantive final artifact/scope review is demonstrated afterward. Passing tests and final preservation claims do not establish that review occurred."
+      },
+      "D1": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinals=5-6",
+          "transcript/messages.json#ordinals=19-32",
+          "capture-5e0ef60e3e17/expected-template.json"
+        ],
+        "rationale": "The assigned built-in bugfix template was actually selected, and its guidance and progression are visible in the transcript."
+      },
+      "D2": {
+        "points": 2.5,
+        "evidence": [
+          "transcript/messages.json#ordinals=18-30",
+          "transcript/messages.json#ordinals=31-35"
+        ],
+        "rationale": "Reproduction, diagnosis, implementation and regression verification precede their checks. The handoff step is checked before the completed handoff is delivered."
+      },
+      "D3": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinals=18-28",
+          "transcript/messages.json#ordinal=35",
+          "capture-5e0ef60e3e17/expected-template.json:steps"
+        ],
+        "rationale": "All substantive bugfix guidance is ultimately performed, including a bounded handoff. This template does not independently require the final artifact review missing under C4."
+      },
+      "E1": {
+        "points": 5,
+        "evidence": [
+          "capture-5e0ef60e3e17/worker-final.txt",
+          "transcript/messages.json#ordinal=18",
+          "transcript/messages.json#ordinal=28",
+          "capture-5e0ef60e3e17/changes.json"
+        ],
+        "rationale": "The final report accurately identifies the change, files, command, two pre-fix failures and five post-fix passes."
+      },
+      "E2": {
+        "points": 5,
+        "evidence": [
+          "capture-5e0ef60e3e17/worker-final.txt",
+          "task.txt"
+        ],
+        "rationale": "The handoff is proportionate to the narrow valid-input contract, reports no blockers and recommends review rather than claiming deployment or integration."
+      }
+    },
+    "total": 92.5,
+    "gate": {
+      "decision": "PASS",
+      "rule": "No evidenced critical correctness, integrity, or scope/preservation failure under gate rules 1-3.",
+      "evidence": [
+        "capture-5e0ef60e3e17/acceptance.json:critical",
+        "capture-5e0ef60e3e17/final-oracle.json",
+        "capture-5e0ef60e3e17/final-suite.json",
+        "capture-5e0ef60e3e17/changes.json",
+        "capture-5e0ef60e3e17/before-files.json",
+        "capture-5e0ef60e3e17/after-files.json"
+      ],
+      "rationale": "The critical interval behaviors and input preservation pass, protected content is unchanged, and execution claims match retained outputs. The individual score exceeds 90; this is not a panel qualification determination."
+    },
+    "uncertainties": [
+      "The bundle uses bundle-index.json rather than INDEX.md; its referenced substantive artifacts and complete archived transcript were available.",
+      "No material correctness evidence is missing. Final artifact review is not demonstrated and receives no inferred credit.",
+      "Directory labels were visible but disregarded. This is an independent same-model ballot, with no provider-diversity claim."
+    ]
+  },
+  {
+    "judge_id": "judge-3",
+    "run_id": "chore-base-001",
+    "evidence_root": "workflow-evaluation/runs/chore-base-001/",
+    "locator_convention": "Paths are relative to evidence_root. Transcript ordinals identify messages in transcript/messages.json and are mapped to message UUIDs in capture-80a764d810ab/transcript-index.json.",
+    "criteria": {
+      "A1": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/README.md:4-10",
+          "fixture-after/export.py:6-10",
+          "capture-80a764d810ab/final-oracle.json"
+        ],
+        "rationale": "The export example and option reference now agree with the current CLI, and retained evaluator execution confirms the documented command works."
+      },
+      "A2": {
+        "points": 5,
+        "evidence": [
+          "task.txt",
+          "fixture-after/README.md:1-15",
+          "capture-80a764d810ab/diff.txt"
+        ],
+        "rationale": "The requested source and destination paths, positional source, required --dest and comma-default delimiter are documented; introductory and compatibility content is preserved."
+      },
+      "A3": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/data/items.json:1",
+          "fixture-after/export.py:13-17",
+          "capture-80a764d810ab/final-oracle.json:command,returncode,stdout"
+        ],
+        "rationale": "The documented example produces the expected CSV, including the comma-containing name, with correct column order and default delimiter."
+      },
+      "A4": {
+        "points": 5,
+        "evidence": [
+          "capture-80a764d810ab/diff.txt",
+          "capture-80a764d810ab/before-files.json",
+          "capture-80a764d810ab/after-files.json"
+        ],
+        "rationale": "Program behavior and data are unchanged, and the compatibility note remains intact."
+      },
+      "A5": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/README.md:4-10",
+          "capture-80a764d810ab/final-oracle.json"
+        ],
+        "rationale": "The example is directly usable and the option reference is accurate. Its existing plain-text Markdown presentation does not prevent execution or review."
+      },
+      "A6": {
+        "points": 5,
+        "evidence": [
+          "capture-80a764d810ab/changes.json",
+          "capture-80a764d810ab/before-files.json",
+          "capture-80a764d810ab/after-files.json"
+        ],
+        "rationale": "Only README.md changed; source, input records and the unrelated operator draft are byte-identical."
+      },
+      "B1": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinals=11-12",
+          "transcript/messages.json#ordinals=13-14"
+        ],
+        "rationale": "Before editing, the worker displayed the obsolete README options alongside the actual argparse definitions, establishing the specific mismatch."
+      },
+      "B2": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=12",
+          "fixture-before/README.md:5-10",
+          "fixture-before/export.py:7-9"
+        ],
+        "rationale": "The pre-edit source-to-document comparison discriminates obsolete flags and the wrong delimiter default from the actual CLI contract; no artificial failing test is required."
+      },
+      "B3": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinals=17-18",
+          "transcript/messages.json#ordinal=12"
+        ],
+        "rationale": "After the final edit, the worker executed --help and displayed the final README for comparison. Together with the retained source default, this is an interpretable primary documentation-consistency check."
+      },
+      "B4": {
+        "points": 2.5,
+        "evidence": [
+          "transcript/messages.json#ordinal=12",
+          "transcript/messages.json#ordinals=17-18",
+          "capture-80a764d810ab/final-oracle.json"
+        ],
+        "rationale": "Source/help comparisons cover option shape, default and column-order context. The worker did not inspect the input records or validate the actual export's path handling and quoted-name output; evaluator execution cannot supply that worker-verification credit."
+      },
+      "B5": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=12",
+          "transcript/messages.json#ordinals=17-18",
+          "capture-80a764d810ab/diff.txt",
+          "fixture-after/README.md"
+        ],
+        "rationale": "The source comparison, reproducible help command, outputs and exact documentation change are retained. Documentation maintenance does not require a new test file."
+      },
+      "C1": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=12",
+          "transcript/messages.json#ordinal=13"
+        ],
+        "rationale": "The worker read the relevant documentation and complete CLI source before editing, recovering appropriately from the unavailable Git command."
+      },
+      "C2": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=12",
+          "transcript/messages.json#ordinals=13-14"
+        ],
+        "rationale": "The changes follow the local argparse definitions rather than assumed flag conventions, and correctly omit a delimiter override to use the comma default."
+      },
+      "C3": {
+        "points": 5,
+        "evidence": [
+          "capture-80a764d810ab/diff.txt"
+        ],
+        "rationale": "The edit is confined to the incorrect example and option lines, with no unnecessary restructuring or program changes."
+      },
+      "C4": {
+        "points": 2.5,
+        "evidence": [
+          "transcript/messages.json#ordinal=14",
+          "transcript/messages.json#ordinal=18",
+          "transcript/messages.json#ordinals=20-25"
+        ],
+        "rationale": "The edit diff and final README reread support partial artifact review. A substantive preservation/scope assessment beyond option matching is not demonstrated; the review step is immediately checked and later preservation statements are largely summary claims."
+      },
+      "D1": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinals=5-8",
+          "transcript/messages.json#ordinals=15-24",
+          "capture-80a764d810ab/expected-template.json"
+        ],
+        "rationale": "The assigned chore template was actually selected, with its guidance and progression corroborated by tool responses."
+      },
+      "D2": {
+        "points": 2.5,
+        "evidence": [
+          "transcript/messages.json#ordinals=7-20",
+          "transcript/messages.json#ordinals=21-27"
+        ],
+        "rationale": "Scope, editing and documentation checking generally precede their completion markers. Review is checked without a demonstrated complete review, and handoff is checked before the report is delivered."
+      },
+      "D3": {
+        "points": 2.5,
+        "evidence": [
+          "capture-80a764d810ab/expected-template.json:steps",
+          "transcript/messages.json#ordinal=18",
+          "transcript/messages.json#ordinals=20-24",
+          "transcript/messages.json#ordinal=27"
+        ],
+        "rationale": "Scoping, minimal editing, relevant checking and final reporting are performed. The assigned substantive diff-review guidance is only partially evidenced, so completing every box does not establish full adherence."
+      },
+      "E1": {
+        "points": 5,
+        "evidence": [
+          "capture-80a764d810ab/worker-final.txt",
+          "transcript/messages.json#ordinal=12",
+          "transcript/messages.json#ordinal=18",
+          "capture-80a764d810ab/changes.json"
+        ],
+        "rationale": "The final report accurately names the only changed file and the source/help checks. It does not falsely claim to have executed the export example."
+      },
+      "E2": {
+        "points": 5,
+        "evidence": [
+          "capture-80a764d810ab/worker-final.txt",
+          "task.txt",
+          "capture-80a764d810ab/diff.txt"
+        ],
+        "rationale": "The handoff remains proportionate to a small documentation-only correction and makes no deployment or output-execution claim. No unresolved implementation blocker is evidenced."
+      }
+    },
+    "total": 90,
+    "gate": {
+      "decision": "PASS",
+      "rule": "No evidenced critical correctness, integrity, or scope/preservation failure under gate rules 1-3.",
+      "evidence": [
+        "capture-80a764d810ab/acceptance.json:critical",
+        "capture-80a764d810ab/final-oracle.json",
+        "capture-80a764d810ab/changes.json",
+        "capture-80a764d810ab/before-files.json",
+        "capture-80a764d810ab/after-files.json"
+      ],
+      "rationale": "The actual documented command succeeds in retained verification, and no product source or unrelated existing file changed. Verification/review limitations are scoring deductions rather than critical failures. The individual score reaches 90; panel qualification remains separate."
+    },
+    "uncertainties": [
+      "No documentation-parser mismatch occurred; direct comparison also confirms semantic correctness.",
+      "The worker's actual export execution and complete substantive scope review are not evidenced. Neither was inferred from evaluator results or workflow checkmarks.",
+      "The bundle uses bundle-index.json rather than INDEX.md and contains a complete archived substantive transcript.",
+      "Directory labels were disregarded; no provider diversity is claimed."
+    ]
+  },
+  {
+    "judge_id": "judge-3",
+    "run_id": "feature-base-001",
+    "evidence_root": "workflow-evaluation/runs/feature-base-001/",
+    "locator_convention": "Paths are relative to evidence_root. Transcript ordinals identify messages in transcript/messages.json and are mapped to message UUIDs in capture-d8f66f561601/transcript-index.json.",
+    "criteria": {
+      "A1": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/search.py:1-15",
+          "capture-d8f66f561601/final-oracle.json"
+        ],
+        "rationale": "The new keyword-only limit supports unlimited, zero, positive and negative cases as requested."
+      },
+      "A2": {
+        "points": 5,
+        "evidence": [
+          "task.txt",
+          "fixture-after/search.py",
+          "fixture-after/tests/test_limits.py",
+          "capture-d8f66f561601/final-oracle.json"
+        ],
+        "rationale": "All explicit acceptance requirements are implemented and covered, including meaningful duplicates and unchanged input lists."
+      },
+      "A3": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_limits.py:19-43",
+          "capture-d8f66f561601/final-oracle.json:command,stdout"
+        ],
+        "rationale": "Limits smaller than, equal to and greater than match count, empty inputs/queries, no matches and negative limits are correct. Retained verification also corroborates Unicode casefold behavior."
+      },
+      "A4": {
+        "points": 5,
+        "evidence": [
+          "capture-d8f66f561601/diff.txt",
+          "fixture-after/tests/test_limits.py:6-17",
+          "capture-d8f66f561601/final-oracle.json"
+        ],
+        "rationale": "Legacy two-argument calls, case-insensitive substring matching, original ordering, duplicates and caller-list ownership remain intact."
+      },
+      "A5": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/search.py",
+          "fixture-after/tests/test_limits.py",
+          "capture-d8f66f561601/final-suite.json",
+          "capture-d8f66f561601/worker-final.txt"
+        ],
+        "rationale": "The implementation and tests form a usable, reviewable patch with a documented invocation and successful retained suite."
+      },
+      "A6": {
+        "points": 5,
+        "evidence": [
+          "capture-d8f66f561601/changes.json",
+          "capture-d8f66f561601/before-files.json",
+          "capture-d8f66f561601/after-files.json"
+        ],
+        "rationale": "Only search.py and additive tests changed substantively. Existing tests and unrelated content are preserved; the rubric excludes interpreter bytecode caches."
+      },
+      "B1": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=10",
+          "transcript/messages.json#ordinals=20-23",
+          "transcript/messages.json#ordinals=24-25"
+        ],
+        "rationale": "Before implementation, the worker read the original API, ran the new tests with python3 and observed the missing limit keyword in the failure excerpt."
+      },
+      "B2": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinals=14-15",
+          "transcript/messages.json#ordinals=18-23",
+          "transcript/messages.json#ordinal=24",
+          "search-red.txt"
+        ],
+        "rationale": "The python-not-found attempt is not RED credit. The subsequent python3 run and worker-read excerpt demonstrate a target missing-capability TypeError before implementation; the recovered full output only corroborates that evidence."
+      },
+      "B3": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinals=24-29"
+        ],
+        "rationale": "The worker executed the suite on the final implementation and observed seven passes. The later Git failure does not negate the separately interpretable test success."
+      },
+      "B4": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_limits.py:6-43",
+          "fixture-after/tests/test_smoke.py",
+          "transcript/messages.json#ordinal=29"
+        ],
+        "rationale": "Executed tests cover legacy behavior, counting matches rather than inputs, duplicate retention, ownership, empty and unmatched queries, and negative limits even without matches."
+      },
+      "B5": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_limits.py",
+          "transcript/messages.json#ordinal=23",
+          "transcript/messages.json#ordinal=29",
+          "capture-d8f66f561601/pristine-with-worker-tests.json"
+        ],
+        "rationale": "Durable regression checks and chronological worker evidence are retained. Original-code replay independently confirms that the tests detect the missing capability."
+      },
+      "C1": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=2",
+          "transcript/messages.json#ordinal=10",
+          "transcript/messages.json#ordinal=13"
+        ],
+        "rationale": "The worker used the task contract, actual search implementation and existing test before implementing the extension."
+      },
+      "C2": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=12",
+          "fixture-after/tests/test_limits.py:19-36",
+          "fixture-after/search.py:3-15"
+        ],
+        "rationale": "The design coherently validates negatives first, returns immediately for zero and stops after the requested number of matches while retaining the legacy matching predicate."
+      },
+      "C3": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/search.py",
+          "capture-d8f66f561601/diff.txt"
+        ],
+        "rationale": "The implementation is a small, readable extension without hardcoding or unnecessary abstraction; it does not add behavior for explicitly out-of-scope types."
+      },
+      "C4": {
+        "points": 0,
+        "evidence": [
+          "transcript/messages.json#ordinals=28-38"
+        ],
+        "rationale": "The only attempted final diff check fails because Git is unavailable. No substantive artifact-review fallback or final scope/risk comparison follows; the absence, not Git unavailability itself, loses credit."
+      },
+      "D1": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinals=3-6",
+          "transcript/messages.json#ordinals=16-35",
+          "capture-d8f66f561601/expected-template.json"
+        ],
+        "rationale": "The assigned feature template is demonstrably active and its actual progression and guidance are used."
+      },
+      "D2": {
+        "points": 2.5,
+        "evidence": [
+          "transcript/messages.json#ordinals=14-29",
+          "transcript/messages.json#ordinals=30-38"
+        ],
+        "rationale": "Verification is designed before implementation, and meaningful RED precedes the edit. Validation occurs before its check, but the handoff step is checked before the report is delivered."
+      },
+      "D3": {
+        "points": 5,
+        "evidence": [
+          "capture-d8f66f561601/expected-template.json:steps",
+          "transcript/messages.json#ordinals=5-15",
+          "transcript/messages.json#ordinals=24-29",
+          "transcript/messages.json#ordinal=38"
+        ],
+        "rationale": "Acceptance, test design, a minimal implementation, green verification and bounded reporting are substantively present. The already-small slice requires no gratuitous refinement; this template does not add a final diff-review requirement."
+      },
+      "E1": {
+        "points": 5,
+        "evidence": [
+          "capture-d8f66f561601/worker-final.txt",
+          "transcript/messages.json#ordinal=29",
+          "capture-d8f66f561601/changes.json"
+        ],
+        "rationale": "The handoff accurately distinguishes seven passing tests from the unavailable Git diff check and names the implementation and test artifacts."
+      },
+      "E2": {
+        "points": 5,
+        "evidence": [
+          "capture-d8f66f561601/worker-final.txt",
+          "task.txt"
+        ],
+        "rationale": "The unavailable validation is candidly disclosed, scope remains bounded to supported inputs and the next action is review rather than deployment."
+      }
+    },
+    "total": 92.5,
+    "gate": {
+      "decision": "PASS",
+      "rule": "No evidenced critical correctness, integrity, or scope/preservation failure under gate rules 1-3.",
+      "evidence": [
+        "capture-d8f66f561601/acceptance.json:critical",
+        "capture-d8f66f561601/final-oracle.json",
+        "capture-d8f66f561601/final-suite.json",
+        "capture-d8f66f561601/changes.json",
+        "capture-d8f66f561601/before-files.json",
+        "capture-d8f66f561601/after-files.json",
+        "transcript/messages.json#ordinal=29"
+      ],
+      "rationale": "Required limit cases and legacy behavior pass retained verification; protected content remains intact, and the failed Git check is disclosed rather than represented as successful. The individual score exceeds 90; panel qualification is separate."
+    },
+    "uncertainties": [
+      "search-red.txt was recovered by the parent after the run. It is not treated as evidence that the worker read all 104 lines.",
+      "Chronological RED is established by transcript ordinals 20-23 before the implementation at ordinal 24. Only the first 18 output lines are visibly worker-read, and those lines suffice to identify the intended missing capability.",
+      "The retained transcript is otherwise complete enough to audit. No final artifact-review fallback is evidenced.",
+      "Directory labels were disregarded; no provider diversity is claimed."
+    ]
+  },
+  {
+    "judge_id": "judge-3",
+    "run_id": "investigate-base-001",
+    "evidence_root": "workflow-evaluation/runs/investigate-base-001/",
+    "locator_convention": "Paths are relative to evidence_root. Transcript ordinals identify messages in transcript/messages.json and are mapped to message UUIDs in capture-2a41f95565ef/transcript-index.json.",
+    "criteria": {
+      "A1": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/preview.py:4-10",
+          "fixture-after/launch.json:1",
+          "transcript/messages.json#ordinal=19",
+          "capture-2a41f95565ef/worker-final.txt"
+        ],
+        "rationale": "The diagnosis correctly explains that the captured launch PORT of 8123 overrides settings.json's 9000."
+      },
+      "A2": {
+        "points": 5,
+        "evidence": [
+          "capture-2a41f95565ef/acceptance.json",
+          "transcript/messages.json#ordinal=19",
+          "capture-2a41f95565ef/worker-final.txt",
+          "fixture-after/preview.py:4-5"
+        ],
+        "rationale": "The report gives all three precedence levels, explains the supplied result, and recommends removing the override so settings govern. Its source-based explanation establishes why stale settings are unnecessary to explain the observation."
+      },
+      "A3": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/README.md:1-2",
+          "fixture-after/preview.py:4-10",
+          "transcript/messages.json#ordinal=19",
+          "capture-2a41f95565ef/final-oracle.json"
+        ],
+        "rationale": "The report distinguishes captured launch configuration from the current shell and printed resolution from a live bound socket. The fallback chain is correctly derived; no invented competing hypothesis or extra executable ritual is needed."
+      },
+      "A4": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=10",
+          "transcript/messages.json#ordinal=19",
+          "capture-2a41f95565ef/worker-final.txt"
+        ],
+        "rationale": "The findings remain consistent with the complete supplied code, README, settings, launch input and log, including the script's lack of socket binding."
+      },
+      "A5": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=19",
+          "capture-2a41f95565ef/worker-final.txt"
+        ],
+        "rationale": "The diagnosis identifies its sources and reproduction command and supplies the smallest conditional next action: remove the override, relaunch and verify if 9000 is desired."
+      },
+      "A6": {
+        "points": 5,
+        "evidence": [
+          "capture-2a41f95565ef/changes.json",
+          "capture-2a41f95565ef/before-files.json",
+          "capture-2a41f95565ef/after-files.json"
+        ],
+        "rationale": "The workspace is unchanged, including the unrelated operator draft; no speculative product fix was attempted."
+      },
+      "B1": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinals=9-12"
+        ],
+        "rationale": "The worker established the actual source inputs and logged symptom, then observed the supplied reproduction returning 8123."
+      },
+      "B2": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=10",
+          "transcript/messages.json#ordinals=11-12",
+          "fixture-after/preview.py:4-10"
+        ],
+        "rationale": "The primary-source derivation directly connects env.get precedence to the captured inputs, and the targeted command confirms its result."
+      },
+      "B3": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinals=11-12",
+          "transcript/messages.json#ordinal=19"
+        ],
+        "rationale": "The worker executed the relevant confirming probe and supplied an auditable source/configuration derivation rather than inventing RED/GREEN for read-only work."
+      },
+      "B4": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=10",
+          "transcript/messages.json#ordinal=19",
+          "fixture-after/preview.py:4-10",
+          "fixture-after/README.md:2"
+        ],
+        "rationale": "Source comparisons establish the fallback levels and distinguish captured environment, current shell and live listener claims. This is proportionate adjacent verification for the small deterministic resolver."
+      },
+      "B5": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinals=9-12",
+          "transcript/messages.json#ordinal=19",
+          "capture-2a41f95565ef/worker-final.txt"
+        ],
+        "rationale": "The exact command, output, complete relevant source inputs and final derivation are retained and reproducible without creating a test artifact."
+      },
+      "C1": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=10"
+        ],
+        "rationale": "The worker read every supplied primary source, including code, launch/configuration files, README and log, before settling on the answer."
+      },
+      "C2": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/preview.py:4-5",
+          "transcript/messages.json#ordinal=19",
+          "capture-2a41f95565ef/worker-final.txt"
+        ],
+        "rationale": "The causal explanation follows the resolver's actual precedence and correctly bounds what the log and printing script can establish."
+      },
+      "C3": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=19",
+          "capture-2a41f95565ef/worker-final.txt"
+        ],
+        "rationale": "The final evidence chain is concise, coherent and actionable, without unsupported cache speculation or unnecessary implementation proposals."
+      },
+      "C4": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=10",
+          "transcript/page-0000.json:data.messages[ordinal=15].thinking",
+          "transcript/messages.json#ordinal=19",
+          "capture-2a41f95565ef/changes.json"
+        ],
+        "rationale": "The worker checks the important apparent contradiction\u2014reported binding versus code that only prints\u2014and explicitly confirms preservation. The read-only commands and unchanged snapshots corroborate that confirmation."
+      },
+      "D1": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinals=3-4",
+          "transcript/messages.json#ordinals=7-18",
+          "capture-2a41f95565ef/expected-template.json"
+        ],
+        "rationale": "The assigned investigate template is actually selected, and its scoping, inspection, challenge and reporting handoffs appear in tool responses."
+      },
+      "D2": {
+        "points": 2.5,
+        "evidence": [
+          "transcript/messages.json#ordinals=7-16",
+          "transcript/messages.json#ordinals=17-21"
+        ],
+        "rationale": "Read-only scoping and evidence collection precede their checks, and the bind question is considered. The reporting step is marked complete before the findings and preservation confirmation are delivered."
+      },
+      "D3": {
+        "points": 5,
+        "evidence": [
+          "capture-2a41f95565ef/expected-template.json:steps",
+          "transcript/messages.json#ordinals=9-12",
+          "transcript/messages.json#ordinal=19",
+          "transcript/messages.json#ordinal=21"
+        ],
+        "rationale": "The worker substantively investigates, challenges the live-binding interpretation, cites evidence, reports uncertainty and confirms no edits. The simple supplied record does not require additional invented alternatives."
+      },
+      "E1": {
+        "points": 5,
+        "evidence": [
+          "capture-2a41f95565ef/worker-final.txt",
+          "transcript/messages.json#ordinal=10",
+          "transcript/messages.json#ordinal=12"
+        ],
+        "rationale": "The report accurately separates inspected inputs, executed reproduction, logged behavior and the absence of workspace changes, with auditable identifiers."
+      },
+      "E2": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=19",
+          "capture-2a41f95565ef/worker-final.txt"
+        ],
+        "rationale": "The live-socket limitation is explicit, and the recommended change is conditional on the desired port. No deployment modification or live verification is claimed."
+      }
+    },
+    "total": 97.5,
+    "gate": {
+      "decision": "PASS",
+      "rule": "No evidenced materially false central conclusion, integrity failure, or read-only workspace mutation under gate rules 1-3.",
+      "evidence": [
+        "capture-2a41f95565ef/acceptance.json:critical",
+        "fixture-after/preview.py:4-10",
+        "capture-2a41f95565ef/final-oracle.json",
+        "capture-2a41f95565ef/changes.json",
+        "capture-2a41f95565ef/before-files.json",
+        "capture-2a41f95565ef/after-files.json"
+      ],
+      "rationale": "The central diagnosis is supported by the actual resolver and launch inputs, retained verification confirms the precedence values, and all workspace files are unchanged. The individual score exceeds 90; panel qualification is separate."
+    },
+    "uncertainties": [
+      "A currently listening socket was not independently verified; the worker accurately identifies this as outside the supplied reproduction evidence.",
+      "The worker did not execute separate no-override/default probes. The retained source derivation is sufficient for those conclusions; evaluator probes are corroboration, not attributed worker execution.",
+      "The complete substantive transcript and snapshots are available through bundle-index.json. No material audit evidence is missing.",
+      "Directory labels were disregarded; no provider diversity is claimed."
+    ]
+  },
+  {
+    "judge_id": "judge-3",
+    "run_id": "refactor-base-001",
+    "evidence_root": "workflow-evaluation/runs/refactor-base-001/",
+    "locator_convention": "Paths are relative to evidence_root. Transcript ordinals identify messages in transcript/messages.json and are mapped to message UUIDs in capture-e8e8dda10b36/transcript-index.json.",
+    "criteria": {
+      "A1": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/receipts.py:4-22",
+          "capture-e8e8dda10b36/diff.txt"
+        ],
+        "rationale": "Both public receipt functions actually call the single private _format_line helper, eliminating duplicated semantic line formatting."
+      },
+      "A2": {
+        "points": 5,
+        "evidence": [
+          "task.txt",
+          "fixture-after/tests/test_receipts.py:6-51",
+          "capture-e8e8dda10b36/final-oracle.json"
+        ],
+        "rationale": "The extraction preserves signatures and exact strings, with coverage for escaping, order, empty receipts, negative cents and singular/plural behavior."
+      },
+      "A3": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_receipts.py:6-51",
+          "capture-e8e8dda10b36/final-suite.json",
+          "capture-e8e8dda10b36/final-oracle.json"
+        ],
+        "rationale": "Material edge cases pass, including empty output forms, zero/negative quantities, negative cents and whole-line HTML escaping. Extra characterization does not redesign behavior."
+      },
+      "A4": {
+        "points": 5,
+        "evidence": [
+          "capture-e8e8dda10b36/diff.txt",
+          "capture-e8e8dda10b36/final-oracle.json",
+          "capture-e8e8dda10b36/pristine-with-worker-tests.json"
+        ],
+        "rationale": "The helper preserves the exact former expressions while both public functions retain iteration and output assembly. Retained checks corroborate signatures, strings and ownership."
+      },
+      "A5": {
+        "points": 5,
+        "evidence": [
+          "capture-e8e8dda10b36/diff.txt",
+          "fixture-after/tests/test_receipts.py",
+          "capture-e8e8dda10b36/worker-final.txt"
+        ],
+        "rationale": "The focused extraction and parity suite form a runnable, understandable patch with a clear verification command."
+      },
+      "A6": {
+        "points": 5,
+        "evidence": [
+          "capture-e8e8dda10b36/changes.json",
+          "capture-e8e8dda10b36/before-files.json",
+          "capture-e8e8dda10b36/after-files.json"
+        ],
+        "rationale": "Only receipts.py and additive tests changed substantively; existing tests, documentation and the operator draft are preserved. Excluded bytecode caches do not affect preservation scoring."
+      },
+      "B1": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinals=17-22",
+          "transcript/messages.json#ordinals=25-26"
+        ],
+        "rationale": "The characterization suite was actually run and passed on the original implementation before extraction."
+      },
+      "B2": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_receipts.py:6-51",
+          "transcript/messages.json#ordinal=22"
+        ],
+        "rationale": "Pre-change exact-string assertions discriminate changes in escaping, formatting, ordering, emptiness and pluralization. Deliberately failing tests are unnecessary for this behavior-preserving task."
+      },
+      "B3": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinals=25-30"
+        ],
+        "rationale": "The final implementation was tested after extraction and all six checks passed; the subsequent Git failure is separately interpretable."
+      },
+      "B4": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_receipts.py:11-51",
+          "fixture-after/tests/test_smoke.py",
+          "transcript/messages.json#ordinal=30"
+        ],
+        "rationale": "Executed checks cover the adjacent text/HTML paths and compatibility-sensitive escaping, whitespace, quantities, cents and iteration behavior."
+      },
+      "B5": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_receipts.py",
+          "transcript/messages.json#ordinal=22",
+          "transcript/messages.json#ordinal=30",
+          "capture-e8e8dda10b36/pristine-with-worker-tests.json"
+        ],
+        "rationale": "Durable characterization tests and chronological pre/post outputs are retained, with independent original-code replay confirming parity expectations."
+      },
+      "C1": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=10",
+          "transcript/messages.json#ordinal=14",
+          "transcript/messages.json#ordinal=15"
+        ],
+        "rationale": "The worker read the actual duplicated implementation and existing test before defining the extraction boundaries."
+      },
+      "C2": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=15",
+          "transcript/messages.json#ordinal=17",
+          "transcript/messages.json#ordinal=25"
+        ],
+        "rationale": "The design explicitly preserves public signatures, iteration, qty == 1 semantics, cents rendering and whole-line HTML escaping, moving only common line construction."
+      },
+      "C3": {
+        "points": 5,
+        "evidence": [
+          "capture-e8e8dda10b36/diff.txt",
+          "fixture-after/receipts.py"
+        ],
+        "rationale": "The single private helper is the requested abstraction and is used without broad restructuring or observable-behavior fixes."
+      },
+      "C4": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinal=10",
+          "transcript/messages.json#ordinal=25",
+          "transcript/messages.json#ordinals=30-31"
+        ],
+        "rationale": "After Git inspection failed, the worker explicitly compared the extraction against the available original source, identifying unchanged signatures, iteration, escaping and assembly. This is a substantive Git-free review of the small change, not credit for the failed command."
+      },
+      "D1": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinals=5-6",
+          "transcript/messages.json#ordinals=15-34",
+          "capture-e8e8dda10b36/expected-template.json"
+        ],
+        "rationale": "The assigned refactor template was actually activated and its guidance and progression are corroborated throughout the transcript."
+      },
+      "D2": {
+        "points": 5,
+        "evidence": [
+          "transcript/messages.json#ordinals=15-24",
+          "transcript/messages.json#ordinals=25-34"
+        ],
+        "rationale": "Invariants and passing characterization precede extraction; tests and substantive fallback review precede parity completion. The restructure, parity evidence and Git limitation are already summarized at ordinal 31 before handoff is checked."
+      },
+      "D3": {
+        "points": 5,
+        "evidence": [
+          "capture-e8e8dda10b36/expected-template.json:steps",
+          "transcript/messages.json#ordinal=22",
+          "transcript/messages.json#ordinals=25-31",
+          "transcript/messages.json#ordinal=37"
+        ],
+        "rationale": "The worker substantively performs invariant definition, characterization, small extraction, parity verification, artifact review and bounded handoff. Git unavailability is handled with an appropriate source-comparison fallback."
+      },
+      "E1": {
+        "points": 5,
+        "evidence": [
+          "capture-e8e8dda10b36/worker-final.txt",
+          "transcript/messages.json#ordinal=22",
+          "transcript/messages.json#ordinal=30",
+          "capture-e8e8dda10b36/changes.json"
+        ],
+        "rationale": "The final summary accurately identifies the extraction, changed files and six passing tests before and after refactoring, while acknowledging unavailable Git checking."
+      },
+      "E2": {
+        "points": 5,
+        "evidence": [
+          "capture-e8e8dda10b36/worker-final.txt",
+          "transcript/messages.json#ordinal=31"
+        ],
+        "rationale": "The limitation is candid, the claim is bounded to implementation and parity, and the next action is review rather than an unsupported deployment or integration claim."
+      }
+    },
+    "total": 100,
+    "gate": {
+      "decision": "PASS",
+      "rule": "No evidenced critical output/signature regression, missing extraction, integrity failure, or scope/preservation breach under gate rules 1-3.",
+      "evidence": [
+        "capture-e8e8dda10b36/acceptance.json:critical",
+        "fixture-after/receipts.py:4-22",
+        "capture-e8e8dda10b36/final-oracle.json",
+        "capture-e8e8dda10b36/final-suite.json",
+        "capture-e8e8dda10b36/changes.json",
+        "capture-e8e8dda10b36/before-files.json",
+        "capture-e8e8dda10b36/after-files.json"
+      ],
+      "rationale": "The requested extraction is substantive, exact output and signature checks pass, HTML escaping remains in place, and protected content is unchanged. Reported execution matches the retained transcript. The individual score exceeds 90; panel qualification is separate."
+    },
+    "uncertainties": [
+      "Git diff checking was unavailable. Review credit rests on the specific original-to-final invariant comparison at transcript ordinal 31, supported by both source versions, not on assumed Git execution.",
+      "Tests are finite; source inspection additionally supports behavior preservation throughout the stated valid-input contract.",
+      "The complete substantive transcript and snapshots are available through bundle-index.json. No material audit evidence is missing.",
+      "Directory labels were disregarded; no provider diversity is claimed."
+    ]
+  }
+]

@@ -1,0 +1,51 @@
+[
+  {
+    "command": [
+      "cargo",
+      "test",
+      "-p",
+      "quecto-agentic-harness",
+      "--lib",
+      "built_in_default_templates_"
+    ],
+    "returncode": 0,
+    "log": "builtins.log"
+  },
+  {
+    "command": [
+      "cargo",
+      "test",
+      "-p",
+      "quecto-agentic-harness",
+      "--lib",
+      "domain::workflow::"
+    ],
+    "returncode": 0,
+    "log": "domain.log"
+  },
+  {
+    "command": [
+      "cargo",
+      "test",
+      "-p",
+      "quecto-agentic-harness",
+      "--lib",
+      "workflow_spec"
+    ],
+    "returncode": 0,
+    "log": "spec.log"
+  },
+  {
+    "command": [
+      "cargo",
+      "test",
+      "-p",
+      "quecto-agentic-harness",
+      "--test",
+      "workflow_config_refactor_template",
+      "runtime_default_templates_are_generic_after_template_globalization"
+    ],
+    "returncode": 0,
+    "log": "integration.log"
+  }
+]

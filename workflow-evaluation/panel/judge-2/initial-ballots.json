@@ -1,0 +1,984 @@
+[
+  {
+    "judge_id": "judge-2",
+    "run_id": "bugfix-base-001",
+    "rubric_version": "1.0",
+    "evidence_root": "workflow-evaluation/runs/bugfix-base-001/",
+    "locator_aliases": {
+      "T": "transcript/messages.json",
+      "D": "capture-5e0ef60e3e17/diff.txt",
+      "I": "capture-5e0ef60e3e17/bundle-index.json",
+      "V": "capture-5e0ef60e3e17/final-oracle.json",
+      "R": "capture-5e0ef60e3e17/pristine-with-worker-tests.json",
+      "F": "capture-5e0ef60e3e17/worker-final.txt"
+    },
+    "criteria": {
+      "A1": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/intervals.py:1-9",
+          "V#/stdout"
+        ],
+        "rationale": "Strict overlap separates touching half-open intervals while retaining genuine overlap merging; retained verification passes."
+      },
+      "A2": {
+        "points": 5,
+        "evidence": [
+          "D",
+          "fixture-after/tests/test_merge.py:6-25",
+          "V#/command"
+        ],
+        "rationale": "Addresses the API, unsorted input, caller-list preservation, overlap semantics, and requested regression coverage."
+      },
+      "A3": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_merge.py:10-25",
+          "V#/command",
+          "V#/stdout"
+        ],
+        "rationale": "Empty, negative, nested, duplicate, transitive, and touching/overlapping combinations are correct."
+      },
+      "A4": {
+        "points": 5,
+        "evidence": [
+          "fixture-before/intervals.py:1-9",
+          "fixture-after/intervals.py:1-9",
+          "T#ordinal=28"
+        ],
+        "rationale": "The signature, sorted tuple output, nonmutating sorting, and existing overlap behavior are preserved."
+      },
+      "A5": {
+        "points": 5,
+        "evidence": [
+          "D",
+          "T#ordinals=27-28",
+          "F"
+        ],
+        "rationale": "The small patch and independently runnable regression tests are usable and clearly identified."
+      },
+      "A6": {
+        "points": 5,
+        "evidence": [
+          "D",
+          "I#/files"
+        ],
+        "rationale": "Only the responsible comparison and a new test file change; existing tests, README, and operator draft retain identical hashes."
+      },
+      "B1": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=15-18"
+        ],
+        "rationale": "Before implementation, the worker actually observes two relevant failures caused by touching endpoints merging."
+      },
+      "B2": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=15-18",
+          "T#ordinals=23-24"
+        ],
+        "rationale": "The pre-fix checks distinguish strict half-open overlap from the defective inclusive comparison, including a mixed unsorted case."
+      },
+      "B3": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=23-28"
+        ],
+        "rationale": "The worker executes the suite after the final code edit; all five tests pass with interpretable output."
+      },
+      "B4": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_merge.py:10-25",
+          "T#ordinal=28"
+        ],
+        "rationale": "Executed checks cover input ownership, nesting, duplicates, chained overlaps, empty input, a negative endpoint, and the existing smoke case."
+      },
+      "B5": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_merge.py",
+          "T#ordinals=18,28",
+          "R#/stderr",
+          "I#/files"
+        ],
+        "rationale": "Durable regression tests and version-linked RED/GREEN evidence are retained; pristine replay corroborates sensitivity."
+      },
+      "C1": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=9-14"
+        ],
+        "rationale": "Reads the implementation, half-open/nonmutation contract, and existing test before designing the change."
+      },
+      "C2": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=18,21,23"
+        ],
+        "rationale": "Correctly identifies the inclusive comparison as the cause and explains why sorting and input preservation need no changes."
+      },
+      "C3": {
+        "points": 5,
+        "evidence": [
+          "D"
+        ],
+        "rationale": "A one-character production change fixes the cause without abstraction, hardcoding, or unrelated cleanup."
+      },
+      "C4": {
+        "points": 2.5,
+        "evidence": [
+          "T#ordinals=21-24",
+          "T#ordinals=27-35"
+        ],
+        "rationale": "The inline final edit exposes the complete semantic change, supported by compatibility reasoning and tests. However, no substantive final review of the complete changed artifact set is recorded."
+      },
+      "D1": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=5-6",
+          "T#ordinals=19-32"
+        ],
+        "rationale": "The assigned bugfix template is demonstrably active, and its actual handoffs are used."
+      },
+      "D2": {
+        "points": 2.5,
+        "evidence": [
+          "T#ordinals=17-30",
+          "T#ordinals=31-35"
+        ],
+        "rationale": "Reproduction, diagnosis, implementation, and verification precede their checks. The handoff step is checked before the substantive handoff is supplied."
+      },
+      "D3": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=18,21,24,28,35"
+        ],
+        "rationale": "The applicable reproduction, causal diagnosis, minimal fix, surrounding verification, and eventual bounded handoff are substantively performed."
+      },
+      "E1": {
+        "points": 5,
+        "evidence": [
+          "F",
+          "T#ordinals=18,28",
+          "D"
+        ],
+        "rationale": "The final response accurately identifies the change, command, two pre-fix failures, five post-fix passes, and changed files."
+      },
+      "E2": {
+        "points": 5,
+        "evidence": [
+          "F",
+          "T#ordinal=2"
+        ],
+        "rationale": "The handoff stays within the valid-input contract, makes no deployment claim, and recommends review and commit rather than implying release."
+      }
+    },
+    "total": 95,
+    "gate": {
+      "decision": "PASS",
+      "rule": "No evidenced critical correctness, integrity, or scope/preservation failure under RUBRIC.md v1.0.",
+      "evidence": [
+        "V#/stdout",
+        "D",
+        "I#/files",
+        "T#ordinals=18,28,35"
+      ],
+      "rationale": "Required interval semantics and input ownership hold; the patch preserves unrelated content, and execution claims agree with retained results."
+    },
+    "uncertainties": [
+      "The transcript does not establish a separate complete final artifact review; C4 receives partial credit rather than inferred execution.",
+      "Directory labels were visible and disregarded. This is a same-model independent judgment, not provider-diverse evaluation."
+    ],
+    "missing_material_evidence": []
+  },
+  {
+    "judge_id": "judge-2",
+    "run_id": "chore-base-001",
+    "rubric_version": "1.0",
+    "evidence_root": "workflow-evaluation/runs/chore-base-001/",
+    "locator_aliases": {
+      "T": "transcript/messages.json",
+      "D": "capture-80a764d810ab/diff.txt",
+      "I": "capture-80a764d810ab/bundle-index.json",
+      "V": "capture-80a764d810ab/final-oracle.json",
+      "F": "capture-80a764d810ab/worker-final.txt"
+    },
+    "criteria": {
+      "A1": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/README.md:4-10",
+          "fixture-after/export.py:6-9",
+          "V#/stdout"
+        ],
+        "rationale": "The example and option reference now agree with the current CLI, and retained evaluator execution confirms the documented command exports correctly."
+      },
+      "A2": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/README.md:1-15",
+          "V#/command",
+          "V#/stdout"
+        ],
+        "rationale": "The requested source and destination, positional source, required destination option, comma default, introduction, and compatibility note are all addressed."
+      },
+      "A3": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/data/items.json:1",
+          "fixture-after/export.py:10-17",
+          "V#/command",
+          "V#/stdout"
+        ],
+        "rationale": "The documented command handles destination creation and the comma-containing name correctly; the optional delimiter description matches the parser."
+      },
+      "A4": {
+        "points": 5,
+        "evidence": [
+          "D",
+          "I#/files",
+          "fixture-after/README.md:12-15"
+        ],
+        "rationale": "Program behavior, input data, column-order compatibility, introduction, and runtime note are preserved."
+      },
+      "A5": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/README.md:4-10",
+          "V#/stdout"
+        ],
+        "rationale": "The example is directly usable, and the option descriptions accurately distinguish positional, required, and defaulted inputs."
+      },
+      "A6": {
+        "points": 5,
+        "evidence": [
+          "D",
+          "I#/files"
+        ],
+        "rationale": "README is the only changed file; product source, data, and unrelated operator draft remain byte-identical."
+      },
+      "B1": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=11-12"
+        ],
+        "rationale": "Before editing, the worker reads the stale README beside the parser, exposing the obsolete flags and incorrect delimiter default."
+      },
+      "B2": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=12-14"
+        ],
+        "rationale": "The pre-edit source-to-document comparison directly discriminates the old incorrect interface from the current CLI; no failing executable documentation test is required."
+      },
+      "B3": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=17-18",
+          "T#ordinal=12"
+        ],
+        "rationale": "After editing, the worker executes CLI help and reads the final README. Together with the inspected parser default, this is an interpretable final documentation-agreement check."
+      },
+      "B4": {
+        "points": 2.5,
+        "evidence": [
+          "T#ordinals=12,17-18",
+          "V#/command"
+        ],
+        "rationale": "Source comparison covers option defaults and column order, but the worker neither examines the supplied comma-containing data nor executes an export. The evaluator's CSV check cannot supply worker-execution credit."
+      },
+      "B5": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=11-18",
+          "fixture-after/README.md:5",
+          "I#/files"
+        ],
+        "rationale": "The transcript retains the exact source/document comparison and help command, while snapshots and the documented example make verification reproducible."
+      },
+      "C1": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=11-12"
+        ],
+        "rationale": "The worker recovers from unavailable Git and reads the actual documentation and CLI source before changing either."
+      },
+      "C2": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=12-14"
+        ],
+        "rationale": "The edit maps each obsolete documented argument to the actual parser contract and correctly leaves the delimiter unspecified to use comma."
+      },
+      "C3": {
+        "points": 5,
+        "evidence": [
+          "D"
+        ],
+        "rationale": "The solution changes only the four incorrect documentation lines, without product edits or unnecessary restructuring."
+      },
+      "C4": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=12,14,18",
+          "T#ordinal=25"
+        ],
+        "rationale": "The inline diff and complete final README reread support a substantive Git-free comparison: only CLI documentation changes, with the introduction and compatibility content visibly retained."
+      },
+      "D1": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=5-8",
+          "T#ordinals=15-24"
+        ],
+        "rationale": "The assigned chore template is selected and its actual scope, checks, review, and handoff guidance is available and used."
+      },
+      "D2": {
+        "points": 2.5,
+        "evidence": [
+          "T#ordinals=7-22",
+          "T#ordinals=23-27"
+        ],
+        "rationale": "Scope, edit, checks, and the final-file comparison precede their completion marks. Handoff is marked complete before its summary and limitations are delivered."
+      },
+      "D3": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=7,12,14,18,25,27"
+        ],
+        "rationale": "The requested maintenance is scoped, minimally implemented, checked against the CLI, substantively reviewed without Git, and accurately handed off. The template does not mandate example execution."
+      },
+      "E1": {
+        "points": 5,
+        "evidence": [
+          "F",
+          "T#ordinals=12,17-18"
+        ],
+        "rationale": "The final response accurately names the changed file and the actual source/help checks; it does not claim the worker executed the export example."
+      },
+      "E2": {
+        "points": 5,
+        "evidence": [
+          "F",
+          "D"
+        ],
+        "rationale": "The handoff is proportionate to documentation-only maintenance and makes no unsupported product, deployment, or runtime-export claim."
+      }
+    },
+    "total": 95,
+    "gate": {
+      "decision": "PASS",
+      "rule": "No evidenced critical correctness, integrity, or scope/preservation failure under RUBRIC.md v1.0.",
+      "evidence": [
+        "V#/stdout",
+        "D",
+        "I#/files",
+        "F"
+      ],
+      "rationale": "The documented primary command works, all protected existing files are preserved, and the worker accurately reports its narrower verification."
+    },
+    "uncertainties": [
+      "Worker verification establishes CLI/document agreement, not execution of the CSV example; evaluator execution independently corroborates outcome correctness.",
+      "No documentation-parser fallback was necessary: retained verification passed and direct semantic review agreed.",
+      "Directory labels were visible and disregarded. This is a same-model independent judgment, not provider-diverse evaluation."
+    ],
+    "missing_material_evidence": []
+  },
+  {
+    "judge_id": "judge-2",
+    "run_id": "feature-base-001",
+    "rubric_version": "1.0",
+    "evidence_root": "workflow-evaluation/runs/feature-base-001/",
+    "locator_aliases": {
+      "T": "transcript/messages.json",
+      "D": "capture-d8f66f561601/diff.txt",
+      "I": "capture-d8f66f561601/bundle-index.json",
+      "V": "capture-d8f66f561601/final-oracle.json",
+      "R": "capture-d8f66f561601/pristine-with-worker-tests.json",
+      "F": "capture-d8f66f561601/worker-final.txt"
+    },
+    "criteria": {
+      "A1": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/search.py:1-15",
+          "V#/stdout"
+        ],
+        "rationale": "The optional limit implements unlimited, zero, positive, and negative cases correctly while retaining search behavior."
+      },
+      "A2": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_limits.py:14-43",
+          "V#/command",
+          "V#/stdout"
+        ],
+        "rationale": "All explicit requirements are addressed, including meaningful duplicates, match-count limiting, input preservation, and negative rejection."
+      },
+      "A3": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_limits.py:19-43",
+          "V#/command"
+        ],
+        "rationale": "Correct for empty input/query, unmatched queries, limits below/equal to/above match count, and negative limits even when no matches exist."
+      },
+      "A4": {
+        "points": 5,
+        "evidence": [
+          "fixture-before/search.py:1-3",
+          "fixture-after/search.py:1-15",
+          "V#/command"
+        ],
+        "rationale": "Legacy two-argument calls, casefold semantics including Unicode, result order, duplicates, and caller ownership are preserved."
+      },
+      "A5": {
+        "points": 5,
+        "evidence": [
+          "D",
+          "T#ordinals=28-29",
+          "F"
+        ],
+        "rationale": "The implementation and focused regression suite are runnable, reviewable, and clearly identified in the handoff."
+      },
+      "A6": {
+        "points": 5,
+        "evidence": [
+          "D",
+          "I#/files"
+        ],
+        "rationale": "Only search implementation and a new test file substantively change; existing smoke tests, README, and operator draft remain intact. Interpreter caches are excluded as specified."
+      },
+      "B1": {
+        "points": 5,
+        "evidence": [
+          "T#ordinal=10",
+          "T#ordinals=20-23"
+        ],
+        "rationale": "The worker reads the original implementation and then actually observes the requested keyword capability is absent."
+      },
+      "B2": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=14-15",
+          "T#ordinals=20-25"
+        ],
+        "rationale": "Before implementation, Python 3 executes the designed tests and the worker reads target-API TypeErrors. These are meaningful feature RED, unlike the earlier missing-python setup error."
+      },
+      "B3": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=24-29"
+        ],
+        "rationale": "All seven tests execute successfully on the final implementation. The later Git failure does not negate the separately visible successful test result."
+      },
+      "B4": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_limits.py:6-43",
+          "T#ordinal=29"
+        ],
+        "rationale": "Executed checks cover unlimited compatibility, duplicates, input immutability, empty/no-match cases, and the distinction between matching names and input positions."
+      },
+      "B5": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_limits.py",
+          "T#ordinals=20-23,29",
+          "R#/stderr",
+          "I#/files"
+        ],
+        "rationale": "Durable tests and transcript evidence link the original missing capability to the passing final implementation; pristine replay corroborates test sensitivity."
+      },
+      "C1": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=9-15"
+        ],
+        "rationale": "The worker reads the target function and existing test before designing coverage and implementing the feature."
+      },
+      "C2": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=12,14,24",
+          "fixture-after/search.py:3-15"
+        ],
+        "rationale": "The design validates negative limits up front, handles zero explicitly, and stops after enough matches rather than enough examined inputs."
+      },
+      "C3": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/search.py:1-15",
+          "D"
+        ],
+        "rationale": "The small direct loop is clear, avoids needless full-result collection for bounded searches, and contains no case-specific hardcoding."
+      },
+      "C4": {
+        "points": 0,
+        "evidence": [
+          "T#ordinals=28-38"
+        ],
+        "rationale": "The only attempted final artifact check is an unsuccessful Git whitespace check. No subsequent source/diff review or substantive Git-free artifact-review fallback is recorded."
+      },
+      "D1": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=3-6",
+          "T#ordinals=16-35"
+        ],
+        "rationale": "The assigned feature template is active, with actual guidance and progression corroborated by tool responses."
+      },
+      "D2": {
+        "points": 2.5,
+        "evidence": [
+          "T#ordinals=14-17",
+          "T#ordinals=20-33",
+          "T#ordinals=34-38"
+        ],
+        "rationale": "Verification is designed before implementation and run before final validation is checked. However, handoff is checked before its substantive summary. The template requires verification design, not RED execution, before step 2 completes."
+      },
+      "D3": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=5,12,14,24,29,38"
+        ],
+        "rationale": "Acceptance, preimplementation verification design, minimal implementation, green validation, and eventual handoff are performed. No gratuitous refinement is needed for this small coherent slice; the template does not mandate a separate diff review."
+      },
+      "E1": {
+        "points": 5,
+        "evidence": [
+          "F",
+          "T#ordinal=29",
+          "D"
+        ],
+        "rationale": "The final response accurately separates seven passing tests from unavailable Git checking and identifies delivered behavior and changed files."
+      },
+      "E2": {
+        "points": 5,
+        "evidence": [
+          "F",
+          "T#ordinal=2"
+        ],
+        "rationale": "The handoff candidly discloses the unavailable check and requests review without claiming deployment or support for out-of-contract types."
+      }
+    },
+    "total": 92.5,
+    "gate": {
+      "decision": "PASS",
+      "rule": "No evidenced critical correctness, integrity, or scope/preservation failure under RUBRIC.md v1.0.",
+      "evidence": [
+        "V#/stdout",
+        "D",
+        "I#/files",
+        "T#ordinals=23,29,38"
+      ],
+      "rationale": "Required limit behavior and legacy compatibility hold, unrelated content is preserved, and the worker does not misrepresent the failed Git command as successful."
+    },
+    "uncertainties": [
+      "search-red.txt was recovered by the parent after the run. It is corroborating retained output, not evidence that the worker read all 104 lines.",
+      "Chronological RED credit rests on transcript ordinals 20-23, before implementation at ordinal 24. The worker-read first 18 lines already expose the relevant missing-keyword failure.",
+      "No successful final artifact review is established; this is scored under C4, not treated as a critical gate failure.",
+      "Directory labels were visible and disregarded. This is a same-model independent judgment, not provider-diverse evaluation."
+    ],
+    "missing_material_evidence": []
+  },
+  {
+    "judge_id": "judge-2",
+    "run_id": "investigate-base-001",
+    "rubric_version": "1.0",
+    "evidence_root": "workflow-evaluation/runs/investigate-base-001/",
+    "locator_aliases": {
+      "T": "transcript/messages.json",
+      "D": "capture-2a41f95565ef/diff.txt",
+      "I": "capture-2a41f95565ef/bundle-index.json",
+      "V": "capture-2a41f95565ef/final-oracle.json",
+      "F": "capture-2a41f95565ef/worker-final.txt"
+    },
+    "criteria": {
+      "A1": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=10,12,19",
+          "fixture-after/preview.py:4-10",
+          "F"
+        ],
+        "rationale": "Correctly explains 8123 as the captured launch PORT overriding settings port 9000, rather than a defect in loading settings."
+      },
+      "A2": {
+        "points": 5,
+        "evidence": [
+          "T#ordinal=19",
+          "F",
+          "fixture-after/preview.py:4-10"
+        ],
+        "rationale": "Identifies all precedence levels, derives the supplied effective value, distinguishes live-listener uncertainty, and recommends removing the override to use settings."
+      },
+      "A3": {
+        "points": 5,
+        "evidence": [
+          "T#ordinal=10",
+          "T#ordinal=19"
+        ],
+        "rationale": "Evaluates the material alternatives: captured launch input versus current shell, settings/default fallbacks, and a reported listener versus actual socket verification. The direct resolver path does not require inventing a cache hypothesis."
+      },
+      "A4": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/README.md:1-2",
+          "fixture-after/logs/preview.log:1-2",
+          "T#ordinal=19"
+        ],
+        "rationale": "The explanation is consistent with the complete supplied record and does not misinterpret a request-cache log line as settings-cache evidence."
+      },
+      "A5": {
+        "points": 5,
+        "evidence": [
+          "T#ordinal=19",
+          "F"
+        ],
+        "rationale": "The cited diagnosis is actionable: remove the launch-level override if 9000 is intended, relaunch, and verify; otherwise no change is necessary."
+      },
+      "A6": {
+        "points": 5,
+        "evidence": [
+          "D",
+          "I#/files",
+          "T#ordinals=9-12"
+        ],
+        "rationale": "The workspace remains byte-identical, including the unrelated draft; the worker performs only reads and the supplied read-only reproduction."
+      },
+      "B1": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=9-10"
+        ],
+        "rationale": "The worker establishes the symptom, both configuration inputs, the source resolver, and the README's captured-environment instruction."
+      },
+      "B2": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=10-12",
+          "T#ordinal=19"
+        ],
+        "rationale": "The exact resolver expression and input values establish causality, and the targeted reproduction produces the predicted 8123."
+      },
+      "B3": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=11-12",
+          "T#ordinal=19"
+        ],
+        "rationale": "The worker executes the confirming configuration probe and supplies a reproducible source/input derivation rather than fictitious RED/GREEN work."
+      },
+      "B4": {
+        "points": 5,
+        "evidence": [
+          "T#ordinal=10",
+          "T#ordinal=19",
+          "fixture-after/preview.py:4-10"
+        ],
+        "rationale": "The source-level derivation covers settings and default fallback, captured-versus-shell environment, and print-versus-bind behavior. These are proportionate adjacent checks for this read-only question."
+      },
+      "B5": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=9-12,19",
+          "I#/files"
+        ],
+        "rationale": "The exact command, output, complete primary inputs, and final derivation are retained and sufficient to reproduce the conclusion without adding workspace files."
+      },
+      "C1": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=9-10"
+        ],
+        "rationale": "Reads all supplied code, documentation, configuration, logs, and notes before concluding."
+      },
+      "C2": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/preview.py:4-10",
+          "T#ordinal=19"
+        ],
+        "rationale": "Correctly follows the environment/settings/default lookup and separates configuration resolution from evidence of an actual network bind."
+      },
+      "C3": {
+        "points": 5,
+        "evidence": [
+          "T#ordinal=19",
+          "F"
+        ],
+        "rationale": "The explanation is a short coherent evidence chain with a minimal conditional next action, not speculative remediation."
+      },
+      "C4": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=9-12",
+          "T#ordinal=19",
+          "D",
+          "I#/files"
+        ],
+        "rationale": "The final review reconciles source, captured inputs, and logs; explicitly limits the listener claim; and confirms preservation, corroborated by the exclusively read-only actions and identical snapshots."
+      },
+      "D1": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=3-4",
+          "T#ordinals=7-18"
+        ],
+        "rationale": "The assigned investigate template is actually selected and its question, inspection, challenge, and report handoffs are used."
+      },
+      "D2": {
+        "points": 2.5,
+        "evidence": [
+          "T#ordinals=7-14",
+          "T#ordinals=15-19"
+        ],
+        "rationale": "Question definition and primary inspection precede their checks. The explicit challenge analysis and findings appear only after the challenge and report steps have already been checked."
+      },
+      "D3": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=7,10,12,19",
+          "F"
+        ],
+        "rationale": "Despite premature completion marks, the final artifact substantively performs the required evidence challenge, bounded report, next-action recommendation, and no-modification confirmation."
+      },
+      "E1": {
+        "points": 5,
+        "evidence": [
+          "F",
+          "T#ordinals=10-12,19"
+        ],
+        "rationale": "The handoff accurately distinguishes inspected evidence, executed probe, observed result, diagnosis, and an unverified live socket."
+      },
+      "E2": {
+        "points": 5,
+        "evidence": [
+          "F",
+          "T#ordinal=19"
+        ],
+        "rationale": "The live-listener limitation is explicit, the recommendation is conditional and minimal, and no deployment change is claimed."
+      }
+    },
+    "total": 97.5,
+    "gate": {
+      "decision": "PASS",
+      "rule": "No evidenced critical correctness, integrity, or scope/preservation failure under RUBRIC.md v1.0.",
+      "evidence": [
+        "fixture-after/preview.py:4-10",
+        "V#/stdout",
+        "D",
+        "I#/files",
+        "F"
+      ],
+      "rationale": "The central diagnosis follows directly from the supplied source and launch input, is independently corroborated by retained verification, and the workspace is unchanged."
+    },
+    "uncertainties": [
+      "A currently bound socket was not independently verified; the worker correctly presents this as outside what the supplied script proves.",
+      "Fallback values are established by the worker's source derivation, not by an additional worker-executed counterfactual probe. The rubric permits this evidence form.",
+      "Directory labels were visible and disregarded. This is a same-model independent judgment, not provider-diverse evaluation."
+    ],
+    "missing_material_evidence": []
+  },
+  {
+    "judge_id": "judge-2",
+    "run_id": "refactor-base-001",
+    "rubric_version": "1.0",
+    "evidence_root": "workflow-evaluation/runs/refactor-base-001/",
+    "locator_aliases": {
+      "T": "transcript/messages.json",
+      "D": "capture-e8e8dda10b36/diff.txt",
+      "I": "capture-e8e8dda10b36/bundle-index.json",
+      "V": "capture-e8e8dda10b36/final-oracle.json",
+      "R": "capture-e8e8dda10b36/pristine-with-worker-tests.json",
+      "F": "capture-e8e8dda10b36/worker-final.txt"
+    },
+    "criteria": {
+      "A1": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/receipts.py:4-22",
+          "D"
+        ],
+        "rationale": "A single private formatter contains the shared semantic line formatting, and both public receipt functions actually call it."
+      },
+      "A2": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_receipts.py:6-51",
+          "V#/command",
+          "V#/stdout"
+        ],
+        "rationale": "Exact strings, public signatures, escaping, order, empty receipts, negative cents, and singular/plural behavior are preserved with suitable parity coverage."
+      },
+      "A3": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_receipts.py:6-51",
+          "T#ordinal=30"
+        ],
+        "rationale": "Checks cover empty input, zero/negative quantities and cents, special characters, existing entities, whitespace, and single-pass iteration; all pass."
+      },
+      "A4": {
+        "points": 5,
+        "evidence": [
+          "D",
+          "fixture-after/receipts.py:9-22",
+          "V#/stdout"
+        ],
+        "rationale": "Only shared line construction moves. Whole-line HTML escaping, assembly, iteration, signatures, and input ownership remain unchanged."
+      },
+      "A5": {
+        "points": 5,
+        "evidence": [
+          "D",
+          "T#ordinals=29-30",
+          "F"
+        ],
+        "rationale": "The extraction is reviewable and the retained tests run through the documented standard-library test command."
+      },
+      "A6": {
+        "points": 5,
+        "evidence": [
+          "D",
+          "I#/files"
+        ],
+        "rationale": "Changes are limited to the requested extraction and additive tests. Existing tests, README, and operator draft are preserved; excluded bytecode caches do not affect scope."
+      },
+      "B1": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=17-22"
+        ],
+        "rationale": "The worker executes substantive characterization against the original implementation and observes all six tests passing before refactoring."
+      },
+      "B2": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_receipts.py:6-51",
+          "T#ordinals=17-25"
+        ],
+        "rationale": "Pre-change exact-string assertions discriminate escaping, formatting, order, pluralization, and empty-output regressions; refactoring appropriately uses passing characterization rather than artificial RED."
+      },
+      "B3": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=25-30"
+        ],
+        "rationale": "The same six tests execute successfully on the final implementation; the subsequent Git command failure is separately visible."
+      },
+      "B4": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_receipts.py:11-51",
+          "T#ordinal=30"
+        ],
+        "rationale": "Executed boundary checks include HTML-sensitive punctuation, double-escaping preservation, newlines, nonpositive values, iteration, and the existing smoke case."
+      },
+      "B5": {
+        "points": 5,
+        "evidence": [
+          "fixture-after/tests/test_receipts.py",
+          "T#ordinals=22,30",
+          "R#/stderr",
+          "I#/files"
+        ],
+        "rationale": "The same durable parity assertions are linked to both original and final versions, with retained evaluator replay corroborating original behavior."
+      },
+      "C1": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=9-15"
+        ],
+        "rationale": "The worker reads both public functions and the existing smoke test, then states source-grounded invariants before changing structure."
+      },
+      "C2": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=15,17,25",
+          "fixture-after/receipts.py:4-22"
+        ],
+        "rationale": "The design extracts only the duplicated unescaped line construction, deliberately keeping presentation assembly and whole-line escaping in their original callers."
+      },
+      "C3": {
+        "points": 5,
+        "evidence": [
+          "D"
+        ],
+        "rationale": "The private three-argument helper is a minimal, purpose-aligned extraction without redesigning behavior or introducing a gratuitous abstraction."
+      },
+      "C4": {
+        "points": 5,
+        "evidence": [
+          "T#ordinal=10",
+          "T#ordinal=25",
+          "T#ordinals=30-31",
+          "D"
+        ],
+        "rationale": "After Git inspection fails, the worker supplies a specific source-comparison review of signatures, iteration, escaping, and assembly. Both complete source versions are retained, and the stated comparison matches the actual diff."
+      },
+      "D1": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=5-6",
+          "T#ordinals=15-34"
+        ],
+        "rationale": "The assigned refactor template is actually selected and its invariant, characterization, refactor, parity, and handoff progression is used."
+      },
+      "D2": {
+        "points": 2.5,
+        "evidence": [
+          "T#ordinals=15-32",
+          "T#ordinals=33-37"
+        ],
+        "rationale": "Invariants, pre-change characterization, extraction, and parity review precede their checks. The handoff step is checked before the completed summary and residual limitation are supplied."
+      },
+      "D3": {
+        "points": 5,
+        "evidence": [
+          "T#ordinals=15,22,25,30-31,37"
+        ],
+        "rationale": "The applicable guidance is substantively performed, including characterization before extraction, passing parity, a meaningful Git-free review fallback, and an accurate eventual handoff."
+      },
+      "E1": {
+        "points": 5,
+        "evidence": [
+          "F",
+          "T#ordinals=22,30-31",
+          "D"
+        ],
+        "rationale": "The final response accurately reports the extraction, changed files, six passing tests before and after, and unavailable Git checking."
+      },
+      "E2": {
+        "points": 5,
+        "evidence": [
+          "F",
+          "T#ordinal=31"
+        ],
+        "rationale": "The tooling limitation is disclosed, review remains the next action, and no deployment or unsupported behavioral improvement is claimed."
+      }
+    },
+    "total": 97.5,
+    "gate": {
+      "decision": "PASS",
+      "rule": "No evidenced critical correctness, integrity, or scope/preservation failure under RUBRIC.md v1.0.",
+      "evidence": [
+        "D",
+        "V#/stdout",
+        "I#/files",
+        "T#ordinals=22,30-31",
+        "F"
+      ],
+      "rationale": "The requested shared extraction is substantive, exact output and HTML escaping are preserved, unrelated files remain intact, and test/Git outcomes are reported honestly."
+    },
+    "uncertainties": [
+      "Git diff execution was unavailable. Review credit rests on the worker's specific comparison of retained original and final source, not on an inferred successful Git command.",
+      "Some characterization cases exceed the documented integer/list contract; they are supplemental evidence, not additional requirements imposed on the worker.",
+      "Directory labels were visible and disregarded. This is a same-model independent judgment, not provider-diverse evaluation."
+    ],
+    "missing_material_evidence": []
+  }
+]

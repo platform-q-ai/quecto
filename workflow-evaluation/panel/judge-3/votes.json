@@ -1,0 +1,116 @@
+{
+  "judge_id": "judge-3",
+  "phase": "voting",
+  "votes": [
+    {
+      "proposal_id": "P1",
+      "vote": "YES",
+      "rationale": "Adds the missing substantive final review, accepts comparison without Git, and explicitly distinguishes unavailable checks from passing checks. Compatible with the existing reproduction-first sequence.",
+      "goal_conflicts": [],
+      "caution": "Acceptable alternative to P7, not an additional paragraph to concatenate with it."
+    },
+    {
+      "proposal_id": "P2",
+      "vote": "YES",
+      "rationale": "Makes refinement evidence-backed, permits a justified no-op, and requires affected checks after edits. Explicit reporting of unavailable checks supports honest closure.",
+      "goal_conflicts": [],
+      "caution": "Less explicit than P5 and P8 about artifact-comparison methods when ordinary diff tooling is unavailable; still portable and acceptable."
+    },
+    {
+      "proposal_id": "P3",
+      "vote": "YES",
+      "rationale": "Corrects report-before-completion ordering while grounding preservation claims in actions and available evidence. Does not impose executable tests or workspace changes on investigation.",
+      "goal_conflicts": [],
+      "caution": "A subsequent automatic final-response request should not be interpreted as requiring a second investigation or new evidence."
+    },
+    {
+      "proposal_id": "P4",
+      "vote": "YES",
+      "rationale": "Makes the substantive handoff precede closure and separates actual validation from unavailable or skipped checks. Changed artifacts and remaining risks improve auditability without prescribing tooling.",
+      "goal_conflicts": [],
+      "caution": "Keep the report proportionate; the listed content need not become a lengthy mandatory section structure."
+    },
+    {
+      "proposal_id": "P5",
+      "vote": "YES",
+      "rationale": "Provides concrete artifact-review guidance, a tooling-neutral comparison fallback, preservation checks, and justified no-op refinement. Explicitly retains green verification and reruns after further edits.",
+      "goal_conflicts": [],
+      "caution": "Reuse relevant evidence when the artifact is unchanged rather than duplicating later validation."
+    },
+    {
+      "proposal_id": "P6",
+      "vote": "YES",
+      "rationale": "Extends maintenance verification from interface spelling to intended use and material failure modes. Safe execution is conditional, and source comparison remains an explicit legitimate alternative, consistent with task-appropriate evidence-first practice.",
+      "goal_conflicts": [],
+      "caution": "Isolation is not authorization to exceed the task contract. Where execution would violate preservation constraints or safety requirements, use the source-comparison fallback and disclose what remains unverified."
+    },
+    {
+      "proposal_id": "P7",
+      "vote": "YES",
+      "rationale": "Requires checks on the final artifact, substantive compatibility and preservation review, and disclosure of unreviewed areas. Its broader check terminology and explicit version-control independence support portability.",
+      "goal_conflicts": [],
+      "caution": "Checks must still discriminate the target regression; broader terminology should not weaken the existing meaningful reproduction requirement."
+    },
+    {
+      "proposal_id": "P8",
+      "vote": "YES",
+      "rationale": "Ties refinement to acceptance criteria and invariants, explicitly supports before-and-after review without Git, permits no-op refinement, and requires recorded results before completion.",
+      "goal_conflicts": [],
+      "caution": "P5 more explicitly preserves the original green-verification condition throughout refinement; P8 remains acceptable because it requires affected verification after changes."
+    },
+    {
+      "proposal_id": "P9",
+      "vote": "YES",
+      "rationale": "Aligns closure with the delivered handoff, distinguishes completed work from recommendations, and explicitly permits referencing an existing summary instead of repeating it.",
+      "goal_conflicts": [],
+      "caution": "This improves handoff ordering but does not replace the separate obligation to perform substantive maintenance checks and artifact review."
+    }
+  ],
+  "rankings": [
+    {
+      "workflow": "bugfix",
+      "step": "regression",
+      "most_to_least_preferred": [
+        "P7",
+        "P1"
+      ],
+      "preferred": "P7",
+      "rationale": "P7 explicitly targets the final artifact, uses task-neutral checks, and disclaims a version-control requirement. P1 is a close acceptable alternative with particularly useful unavailable-versus-passing language. Select one unchanged, not a concatenation."
+    },
+    {
+      "workflow": "feature",
+      "step": "refine",
+      "most_to_least_preferred": [
+        "P5",
+        "P8",
+        "P2"
+      ],
+      "preferred": "P5",
+      "rationale": "P5 combines concrete changed-artifact review, preservation, a Git-free fallback, justified no-op refinement, and explicit green-verification continuity. P8 adds especially clear acceptance-criteria and result-recording language; P2 is sound but less explicit about comparison fallback. Select one unchanged."
+    }
+  ],
+  "conflicts": {
+    "blocking_goal_conflicts": [],
+    "overlapping_alternatives": [
+      {
+        "proposal_ids": [
+          "P1",
+          "P7"
+        ],
+        "resolution": "Mutually exclusive replacements of the same guidance; apply only the selected eligible alternative."
+      },
+      {
+        "proposal_ids": [
+          "P2",
+          "P5",
+          "P8"
+        ],
+        "resolution": "Mutually exclusive replacements of the same guidance; apply only the selected eligible alternative."
+      }
+    ],
+    "combinability": "P3, P4, P6 and P9 address distinct steps and can combine with the selected alternatives. Preserve existing task constraints and avoid duplicate review or reporting ceremonies.",
+    "authorship_disclosure": "P7, P8 and P9 correspond to my submitted proposals. I evaluated all alternatives against the same portability, preservation, evidence and honesty constraints; authorship is disclosed as a potential preference concern, not a blocking conflict.",
+    "neutrality": "No other ballots or votes were read. No language, framework, platform, hosting-provider or mandatory-tool dependency is introduced by the proposed guidance.",
+    "tdd_alignment": "These edits supplement rather than replace existing reproduction and verification-design stages. None requires artificial RED/GREEN for documentation or read-only work."
+  }
+}

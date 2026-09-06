@@ -1,0 +1,109 @@
+{
+  "judge_id": "judge-1",
+  "phase": "voting",
+  "votes": [
+    {
+      "proposal_id": "P1",
+      "vote": "YES",
+      "rationale": "Directly addresses the evidenced missing final review, supplies a Git-free comparison path, and distinguishes unavailable checks from passing checks before completion.",
+      "goal_conflicts": []
+    },
+    {
+      "proposal_id": "P2",
+      "vote": "YES",
+      "rationale": "Makes refinement evidence-backed, explicitly permits a justified no-op, and requires verification after edits. Acceptable, although less explicit about tool-independent artifact comparison than P5 or P8.",
+      "goal_conflicts": []
+    },
+    {
+      "proposal_id": "P3",
+      "vote": "YES",
+      "rationale": "Corrects observed premature reporting closure while grounding preservation claims in available evidence. It remains appropriate for read-only investigation without imposing executable tests.",
+      "goal_conflicts": []
+    },
+    {
+      "proposal_id": "P4",
+      "vote": "YES",
+      "rationale": "Makes the actual bugfix handoff precede its completion mark and requires honest distinctions among performed, unavailable, and skipped validation. Combines cleanly with a regression-step review edit.",
+      "goal_conflicts": []
+    },
+    {
+      "proposal_id": "P5",
+      "vote": "YES",
+      "rationale": "Provides concrete artifact-review and Git-free fallback guidance, protects compatibility and data, and permits justified no-op refinement. P8 is slightly preferable because it explicitly ties review to acceptance criteria and records verification results.",
+      "goal_conflicts": []
+    },
+    {
+      "proposal_id": "P6",
+      "vote": "YES",
+      "rationale": "A useful prospective strengthening of documentation/configuration verification: it encourages checking intended use while preserving safe source-based alternatives. My initial ballot found the observed source/help comparison sufficient; this vote does not reinterpret that score as a failure.",
+      "goal_conflicts": [],
+      "caution": "Example execution must remain conditional on practicality, safety, and task authorization. An isolated check must not override a prohibition on creating or changing files."
+    },
+    {
+      "proposal_id": "P7",
+      "vote": "YES",
+      "rationale": "Concise, tool-neutral guidance addresses the same missing review as P1, explicitly targets the final artifact, and asks for unreviewed areas. P1 is slightly preferable for its explicit distinction between unavailable and passing checks.",
+      "goal_conflicts": []
+    },
+    {
+      "proposal_id": "P8",
+      "vote": "YES",
+      "rationale": "Best-balanced refinement alternative: covers acceptance criteria, invariants, scope and preservation; provides artifact-comparison methods; permits a reasoned no-op; and requires recorded review and verification before closure.",
+      "goal_conflicts": []
+    },
+    {
+      "proposal_id": "P9",
+      "vote": "YES",
+      "rationale": "Directly addresses premature chore handoff completion and explicitly avoids redundant reporting by allowing reference to an existing summary. Separates completed actions from recommendations.",
+      "goal_conflicts": []
+    }
+  ],
+  "rankings": [
+    {
+      "group": "bugfix/regression",
+      "order": [
+        "P1",
+        "P7"
+      ],
+      "preferred": "P1",
+      "rationale": "Both are acceptable standalone replacements. P1 more explicitly guards against treating unavailable validation as successful and permits comparison against the original source and contract."
+    },
+    {
+      "group": "feature/refine",
+      "order": [
+        "P8",
+        "P5",
+        "P2"
+      ],
+      "preferred": "P8",
+      "rationale": "P8 combines acceptance-based review, concrete tool-independent comparison, justified no-op refinement, and evidence-before-completion most completely. P5 provides the comparison fallback but is less explicit about recording verification results; P2 lacks an explicit comparison method."
+    }
+  ],
+  "conflicts": {
+    "unresolved_goal_conflicts": [],
+    "overlapping_alternatives": [
+      {
+        "proposals": [
+          "P1",
+          "P7"
+        ],
+        "resolution": "Select one replacement for bugfix/regression; do not concatenate."
+      },
+      {
+        "proposals": [
+          "P2",
+          "P5",
+          "P8"
+        ],
+        "resolution": "Select one replacement for feature/refine; do not concatenate."
+      }
+    ],
+    "portability_and_honesty": "All proposed guidance is language-, framework-, platform-, and hosting-neutral. Diff use is optional where mentioned. The edits support substantive review, preservation, and accurate completion rather than relying on checkmarks. They do not displace applicable pre-implementation failing checks or impose artificial RED/GREEN on read-only and documentation work.",
+    "authorship_disclosure": "P1, P2, and P3 originated in my proposal round. This is disclosed rather than treated as independent corroboration; rankings favor P8 over my own feature alternative.",
+    "implementation_cautions": [
+      "Reuse existing evidence when the artifact has not changed; do not turn review or handoff into repeated narration or unnecessary test execution.",
+      "Treat these edits as prospective workflow improvements. Preserve the frozen rubric and locked initial ballots unchanged.",
+      "No vote establishes an empirical improvement; revised guidance still requires the planned fresh-run evaluation."
+    ]
+  }
+}

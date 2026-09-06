@@ -1,0 +1,10 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.20s
+     Running unittests src/lib.rs (target/debug/deps/quecto-7a5dc9826975877e)
+
+running 3 tests
+test domain::workflow::engine::templates::tests::built_in_default_templates_have_complete_generic_content ... ok
+test domain::workflow::engine::templates::tests::built_in_default_templates_include_generic_workflows ... ok
+test domain::workflow::engine::templates::tests::built_in_default_templates_are_valid_and_usable_by_engine ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 4040 filtered out; finished in 0.00s
+

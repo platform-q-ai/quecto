@@ -1,0 +1,9 @@
+{
+  "pages": 3,
+  "messages": 42,
+  "warnings": [],
+  "limitations": [
+    "Committed history, not live token events or every workflow broadcast.",
+    "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing."
+  ]
+}
