@@ -128,7 +128,7 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                     "intake",
                     "Confirm acceptance criteria",
                     "setup",
-                    "Restate the desired behavior, constraints, and how completion will be verified.",
+                    "Before implementation, restate the desired behavior and constraints, and identify a focused pre-change check with its expected result that distinguishes the requested behavior from current behavior. If executable verification is unsuitable or unsafe, identify a discriminating source, data, or artifact comparison instead. Record this plan and complete intake, then obtain the pre-change evidence in Design verification before implementing.",
                 ),
                 (
                     "test_design",

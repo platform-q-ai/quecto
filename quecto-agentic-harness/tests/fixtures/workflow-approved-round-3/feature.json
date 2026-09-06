@@ -1,0 +1,45 @@
+{
+  "id": "feature",
+  "label": "Feature",
+  "description": "Implement a planned behavior change with explicit acceptance criteria and verification.",
+  "when_to_use": "Use when adding or changing user-visible behavior from an agreed request or plan.",
+  "steps": [
+    {
+      "key": "intake",
+      "label": "Confirm acceptance criteria",
+      "phase": "setup",
+      "guidance": "Before implementation, restate the desired behavior and constraints, and identify a focused pre-change check with its expected result that distinguishes the requested behavior from current behavior. If executable verification is unsuitable or unsafe, identify a discriminating source, data, or artifact comparison instead. Record this plan and complete intake, then obtain the pre-change evidence in Design verification before implementing."
+    },
+    {
+      "key": "test_design",
+      "label": "Design verification",
+      "phase": "red",
+      "guidance": "Before implementation, choose and run a focused check that fails because the requested behavior is absent or wrong, not because setup is broken. Record the expected behavior and observed result before completing this step. Where executable RED is unsuitable, record a discriminating source, data, or artifact comparison instead. If implementation already occurred, disclose the missed ordering; later checks are not pre-change evidence."
+    },
+    {
+      "key": "implement",
+      "label": "Implement the slice",
+      "phase": "green",
+      "guidance": "Build the smallest coherent slice that satisfies the agreed criteria."
+    },
+    {
+      "key": "refine",
+      "label": "Refine safely",
+      "phase": "refactor",
+      "guidance": "Review the implemented slice against the acceptance criteria and existing invariants, including scope, compatibility, and preservation. Use an available diff or a before-and-after content comparison. If refinement is warranted, keep it small and rerun the affected verification after changes. If no refinement is warranted, state why; do not change working code merely to satisfy this step. Record the review and verification results before completing it."
+    },
+    {
+      "key": "validate",
+      "label": "Validate",
+      "phase": "verify",
+      "guidance": "Run targeted and relevant broader checks; compare results to acceptance criteria."
+    },
+    {
+      "key": "handoff",
+      "label": "Handoff",
+      "phase": "handoff",
+      "guidance": "Summarize behavior delivered, validation, and follow-up work."
+    }
+  ],
+  "guards": []
+}
