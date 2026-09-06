@@ -134,7 +134,7 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                     "test_design",
                     "Design verification",
                     "red",
-                    "Before implementation, choose and run a focused check that fails because the requested behavior is absent or wrong, not because setup is broken. Record the expected behavior and observed result before completing this step. Where executable RED is unsuitable, record a discriminating source, data, or artifact comparison instead. If implementation already occurred, disclose the missed ordering; later checks are not pre-change evidence.",
+                    "Decide which tests, examples, or checks will prove the behavior before implementation.",
                 ),
                 (
                     "implement",

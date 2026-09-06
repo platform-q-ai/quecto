@@ -73,14 +73,14 @@ fn template_ids(templates: &[WorkflowTemplate]) -> HashSet<&str> {
         .collect()
 }
 
-// Crate-local immutable copies of the approved round-1 candidates. Compare full
-// typed objects, not selected guidance words; no external workspace files needed.
-fn approved_candidates() -> Vec<WorkflowTemplate> {
+// Current approved set: feature round 2, all other templates round 1. Historical
+// fixtures stay immutable; compare full typed objects using crate-local files.
+fn current_approved_candidates() -> Vec<WorkflowTemplate> {
     [
         include_str!("../../../../tests/fixtures/workflow-approved-round-1/investigate.json"),
         include_str!("../../../../tests/fixtures/workflow-approved-round-1/chore.json"),
         include_str!("../../../../tests/fixtures/workflow-approved-round-1/bugfix.json"),
-        include_str!("../../../../tests/fixtures/workflow-approved-round-1/feature.json"),
+        include_str!("../../../../tests/fixtures/workflow-approved-round-2/feature.json"),
         include_str!("../../../../tests/fixtures/workflow-approved-round-1/refactor.json"),
     ]
     .into_iter()
@@ -101,7 +101,7 @@ fn approved_candidates() -> Vec<WorkflowTemplate> {
 #[test]
 fn approved_candidates_match_complete_source_templates() {
     let source = default_templates();
-    let candidates = approved_candidates();
+    let candidates = current_approved_candidates();
     assert_eq!(template_ids(&source), template_ids(&candidates));
     for candidate in candidates {
         let actual = source.iter().find(|t| t.id == candidate.id).unwrap();
@@ -117,7 +117,7 @@ fn approved_candidates_match_complete_source_templates() {
 fn approved_candidates_roundtrip_and_bind_without_content_loss() {
     use crate::domain::workflow::{MAX_WORKFLOW_SPEC_BYTES, WorkflowMode, WorkflowSpec};
 
-    let candidates = approved_candidates();
+    let candidates = current_approved_candidates();
     WorkflowEngine::new(
         WorkflowConfig {
             templates: candidates.clone(),
@@ -166,7 +166,7 @@ fn approved_candidates_roundtrip_and_bind_without_content_loss() {
 fn approved_candidates_validate_structure_and_reject_invalid_keys() {
     use crate::domain::workflow::WorkflowGuardRule;
 
-    for candidate in approved_candidates() {
+    for candidate in current_approved_candidates() {
         assert!(!candidate.steps.is_empty());
         let keys: HashSet<_> = candidate.steps.iter().map(|s| &s.key).collect();
         assert_eq!(keys.len(), candidate.steps.len());
