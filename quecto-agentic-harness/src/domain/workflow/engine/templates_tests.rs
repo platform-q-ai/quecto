@@ -9,7 +9,14 @@ fn built_in_default_templates_include_generic_workflows() {
 
     assert_eq!(
         ids,
-        HashSet::from(["investigate", "chore", "bugfix", "feature", "refactor",]),
+        HashSet::from([
+            "investigate",
+            "chore",
+            "bugfix",
+            "feature",
+            "refactor",
+            "adversarial-review",
+        ]),
     );
 }
 
@@ -102,7 +109,8 @@ fn current_approved_candidates() -> Vec<WorkflowTemplate> {
 fn approved_candidates_match_complete_source_templates() {
     let source = default_templates();
     let candidates = current_approved_candidates();
-    assert_eq!(template_ids(&source), template_ids(&candidates));
+    assert_eq!(candidates.len(), 5);
+    assert_eq!(source.len(), candidates.len() + 1);
     for candidate in candidates {
         let actual = source.iter().find(|t| t.id == candidate.id).unwrap();
         assert_eq!(
@@ -117,7 +125,7 @@ fn approved_candidates_match_complete_source_templates() {
 fn approved_candidates_roundtrip_and_bind_without_content_loss() {
     use crate::domain::workflow::{MAX_WORKFLOW_SPEC_BYTES, WorkflowMode, WorkflowSpec};
 
-    let candidates = current_approved_candidates();
+    let candidates = default_templates();
     WorkflowEngine::new(
         WorkflowConfig {
             templates: candidates.clone(),
@@ -166,7 +174,7 @@ fn approved_candidates_roundtrip_and_bind_without_content_loss() {
 fn approved_candidates_validate_structure_and_reject_invalid_keys() {
     use crate::domain::workflow::WorkflowGuardRule;
 
-    for candidate in current_approved_candidates() {
+    for candidate in default_templates() {
         assert!(!candidate.steps.is_empty());
         let keys: HashSet<_> = candidate.steps.iter().map(|s| &s.key).collect();
         assert_eq!(keys.len(), candidate.steps.len());
@@ -208,4 +216,31 @@ fn approved_candidates_validate_structure_and_reject_invalid_keys() {
         });
         assert!(invalid(bad_guard));
     }
+}
+
+// These are template-contract checks, not measurements of review quality.
+#[test]
+fn adversarial_review_matches_packaged_contract_and_order() {
+    let json = include_str!("../../../../tests/fixtures/adversarial-review.json");
+    let mut value: serde_json::Value = serde_json::from_str(json).unwrap();
+    let expected: WorkflowTemplate = serde_json::from_value(value.clone()).unwrap();
+    value.as_object_mut().unwrap().remove("guards");
+    assert_eq!(serde_json::to_value(&expected).unwrap(), value);
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    engine.select_template("adversarial-review", None).unwrap();
+    assert_eq!(engine.active_template(), Some(&expected));
+    assert!(expected.guards.is_empty());
+    assert_eq!(
+        expected
+            .steps
+            .iter()
+            .map(|s| s.key.as_str())
+            .collect::<Vec<_>>(),
+        ["scope", "inspect", "challenge", "validate", "report"]
+    );
+    assert!(engine.check(5).is_err());
+    for step in 1..=5 {
+        engine.check(step).unwrap();
+    }
+    assert!(engine.all_step_statuses().iter().all(|step| step.done));
 }

@@ -1,0 +1,39 @@
+{
+  "id": "adversarial-review",
+  "label": "Adversarial review",
+  "description": "Read-only, evidence-based challenge of supplied changes, with independently validated findings and a bounded report.",
+  "when_to_use": "Use to review code or non-code changes skeptically without implementing fixes.",
+  "steps": [
+    {
+      "key": "scope",
+      "label": "Define review boundaries",
+      "phase": "setup",
+      "guidance": "Review supplied changes read-only by default. State scope, intended behavior or claims, invariants, threat assumptions, and a bounded review budget. Identify the baseline and missing context; ask for essential inputs rather than inventing them. Do not change production or the supplied artifacts, or exploit live systems."
+    },
+    {
+      "key": "inspect",
+      "label": "Inspect changes and context",
+      "phase": "analysis",
+      "guidance": "Compare the supplied changes with available before-and-after content; no version-control system is required. Trace affected consumers, dependencies, and surrounding contracts, including documentation, configuration, data, or other non-code artifacts. Record exact locators and separate introduced problems from pre-existing conditions."
+    },
+    {
+      "key": "challenge",
+      "label": "Test plausible failure hypotheses",
+      "phase": "verify",
+      "guidance": "Form concrete failure hypotheses from the changes and invariants; prioritize plausible impact over speculative edge cases. Actively try to falsify them with safe, bounded checks: isolated reproductions, examples, source comparisons, or reproducible derivations. Use disposable scratch artifacts only when safe and authorized; avoid destructive actions, secrets, external side effects, and live exploitation. Record expected versus observed results. If execution is unsafe or unavailable, use static evidence and disclose what remains untested."
+    },
+    {
+      "key": "validate",
+      "label": "Independently validate candidates",
+      "phase": "review",
+      "guidance": "For each candidate, independently retrace the evidence and reproduction rather than trusting an initial claim or automated output. Seek counterevidence, intended behavior, mitigating controls, and alternative explanations. Confirm reachability and impact under stated assumptions; reject disproved claims and deduplicate related symptoms. Distinguish verified findings from unresolved hypotheses and missing evidence. No finding quota: do not invent bugs, and accept that no findings may survive."
+    },
+    {
+      "key": "report",
+      "label": "Deliver bounded review report",
+      "phase": "handoff",
+      "guidance": "Deliver the report before marking this step complete; a completion check is not the report. Prioritize actionable findings by severity justified by impact and likelihood. For each, give exact artifact locators (path and line, section, cell, or equivalent), the violated invariant, evidence and reproduction or derivation, assumptions, and a focused remediation recommendation without applying it. Separate uncertainty and unverified concerns from findings. State reviewed scope, checks and results, counterevidence, limitations, and workspace preservation based on actions and evidence. If no findings survived, say so without claiming absence of bugs; do not require further review beyond the agreed budget."
+    }
+  ],
+  "guards": []
+}
