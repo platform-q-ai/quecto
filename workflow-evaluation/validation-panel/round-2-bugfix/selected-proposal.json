@@ -1,0 +1,16 @@
+{
+  "alternative_id": "F3",
+  "template_id": "bugfix",
+  "step_key": "reproduce",
+  "field": "guidance",
+  "old": "Capture the wrong behavior with a failing test, fixture, command, or clear manual reproduction.",
+  "new": "Before changing the implementation, observe and record the wrong behavior with a failing test, command, fixture check, or clear manual reproduction that distinguishes the defect from setup failure. For documentation, configuration, or non-executable work, a specific source-to-artifact comparison or reproducible derivation may establish the mismatch instead. If reproduction is unavailable, record the limitation before proceeding. If implementation has already changed, disclose that chronology; retrospective checks can establish regression sensitivity but not pre-change observation. Do not undo others' work or introduce a defect to manufacture a failure.",
+  "votes": {
+    "YES": 3,
+    "NO": 0,
+    "ABSTAIN": 0
+  },
+  "unresolved_goal_conflicts": [],
+  "status": "RECOMMENDED_PARENT_IMPLEMENTATION_REQUIRED",
+  "exact_text_not_merged": true
+}

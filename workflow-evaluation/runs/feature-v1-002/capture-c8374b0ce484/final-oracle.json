@@ -1,0 +1,26 @@
+{
+  "command": [
+    "podman",
+    "exec",
+    "--workdir",
+    "/tmp/workflow-eval.wNfHDm7z/final-oracle",
+    "-e",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "-e",
+    "PYTHONHASHSEED=0",
+    "-e",
+    "TZ=UTC",
+    "quecto-env-aQrJMgB0zk",
+    "env",
+    "-u",
+    "PYTHONPATH",
+    "python3",
+    "-B",
+    "-c",
+    "import copy\nfrom rollup import by_category, total\nrows = [{\"category\":\"food\",\"amount\":3},{\"category\":\"travel\",\"amount\":4},\n        {\"category\":\"food\",\"amount\":-3},{\"amount\":2},{\"category\":\"\",\"amount\":5},\n        {\"category\":\"uncategorized\",\"amount\":-1}]\nbefore = copy.deepcopy(rows)\nresult = by_category(rows)\nassert list(result.items()) == [(\"food\",0),(\"travel\",4),(\"uncategorized\",1),(\"\",5)]\nassert by_category([]) == {} and total(rows) == 10\nassert rows == before\nprint(\"category aggregation, order, zero totals, defaults and ownership pass\")\n"
+  ],
+  "returncode": 0,
+  "stderr": "",
+  "stdout": "category aggregation, order, zero totals, defaults and ownership pass\n",
+  "timed_out": false
+}

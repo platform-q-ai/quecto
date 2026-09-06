@@ -1,0 +1,6 @@
+{
+  "eligibility": ">=2 YES and no unresolved goal conflict",
+  "overlap_selection": "Among eligible alternatives for the same field: majority pairwise preference wins; if no unique Condorcet winner, lowest sum of ranks wins; if tied, fewer UTF-8 bytes in new guidance wins; if still tied, lexicographically smallest alternative ID. Status quo may be ranked but cannot invalidate an otherwise >=2-YES alternative. Substantive goal conflicts or cross-step dependencies are escalated to parent, not silently resolved.",
+  "frozen_before_votes": true,
+  "no_synthesis": true
+}

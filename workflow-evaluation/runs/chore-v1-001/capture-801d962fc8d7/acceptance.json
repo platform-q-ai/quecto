@@ -1,0 +1,11 @@
+{
+  "acceptance": [
+    "Exact policy-conforming JSON, no obsolete trace key.",
+    "Loader, policy, port, and logging remain unchanged."
+  ],
+  "critical": [
+    "Example still exposes all interfaces, enables debug, or fails loader validation.",
+    "Loader or policy weakened to accept invalid configuration."
+  ],
+  "docs_semantic_fallback": "Frozen documentation parser mismatches need direct semantic review, not automatic failure."
+}

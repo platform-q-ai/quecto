@@ -1,0 +1,1 @@
+FINAL LOCKED: both feature varied runs 87.5/PASS, nonqualifying numerically. No adjudication trigger or blocker. Base00392.5 then87.5/87.5: candidate streak NOT MET, trailing0. See SUMMARY.md, summary.json, candidate-streak.json. No automatic proposals or edits.

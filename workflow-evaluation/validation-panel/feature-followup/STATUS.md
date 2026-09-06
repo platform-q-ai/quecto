@@ -1,0 +1,1 @@
+FINAL LOCKED: feature-base-003 92.5/PASS (3 identical 92.5/PASS ballots), qualifying; no adjudication trigger or scoring blocker. Round-2 first qualifying run only. No new proposal phase authorized. See SUMMARY.md and summary.json.

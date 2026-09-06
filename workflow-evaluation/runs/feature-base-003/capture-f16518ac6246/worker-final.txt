@@ -1,0 +1,5 @@
+- **Summary:** Added keyword-only `limit=None` to `search.find`. Preserves matching, order, and duplicates; zero returns `[]`; negative integers raise `ValueError`. Inputs remain unchanged.
+- **Checks:** `python3 -m unittest discover -s tests -v` — all 7 tests passed.
+- **Changed files:** `search.py`, `tests/test_search.py`.
+- **Blockers:** None.
+- **Next action:** Ready for review.

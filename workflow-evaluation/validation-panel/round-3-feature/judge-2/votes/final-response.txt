@@ -1,0 +1,47 @@
+{
+  "judge_id": "judge-2",
+  "phase": "feature-round-3-votes",
+  "votes": [
+    {
+      "alternative_id": "F1",
+      "vote": "YES",
+      "rationale": "Acceptable as the exact intake replacement: it makes planning prospective, requires a discriminating check and expected result, explicitly accommodates unsuitable or unsafe executable verification, and directs execution into Design verification before implementation. Intake can finish without completing the later step, and no duplicate execution is required. This addresses the observed implementation-before-progression sequence in run-74cd12/transcript/messages.json ordinals 11-25 and run-a3906f/transcript/messages.json ordinals 13-27, without claiming that wording caused it. Its cost is greater repetition of the existing verification guidance, and it is less explicit than the other alternatives about identifying local baseline evidence.",
+      "goal_conflicts": []
+    },
+    {
+      "alternative_id": "F2",
+      "vote": "YES",
+      "rationale": "Acceptable as the exact intake replacement: it connects a recorded source/artifact observation to a focused check and expected result, then explicitly hands off to Design verification rather than implementation. The baseline-recording requirement is satisfiable before exposing the later step and need not entail another command. It transfers to non-executable work through comparisons and the unchanged test_design alternatives. It is less preferred because mandatory source/artifact recording adds intake overhead and can overlap with the subsequent comparison, while the retained runs already show source inspection before implementation (run-74cd12/transcript/messages.json ordinals 6-12; run-a3906f/transcript/messages.json ordinals 6-14).",
+      "goal_conflicts": []
+    },
+    {
+      "alternative_id": "F3",
+      "vote": "YES",
+      "rationale": "Acceptable as the exact intake replacement and preferred: it concisely combines prospective engagement, local baseline identification, a discriminating verification plan, explicit preservation, and a non-circular handoff to Design verification. It leaves execution and expected-versus-observed recording in the existing step rather than duplicating them. Source or observed-output evidence and a check or comparison support generic transfer without mandating a tool or artificial failure. The emphasis on what must remain unchanged is useful alongside the compatibility reviews retained in run-74cd12/transcript/messages.json ordinals 31-35 and run-a3906f/transcript/messages.json ordinals 33-39.",
+      "goal_conflicts": []
+    }
+  ],
+  "rankings": [
+    {
+      "group_id": "overlap-intake",
+      "order": [
+        "F3",
+        "F1",
+        "F2",
+        "STATUS_QUO"
+      ],
+      "rationale": "F3 provides the clearest minimal combination of baseline identification, preservation and prospective handoff. F1 is next because its explicit expected result and safe comparison alternative are valuable, although it repeats more of test_design and does not explicitly request a baseline observation. F2 is acceptable but adds mandatory source/artifact recording and more procedural emphasis where ordinary source inspection was already present. STATUS_QUO is last because it does not make the intake-to-verification-before-implementation sequence explicit. These are preferences among exact mutually exclusive replacements, not authorization to combine their wording."
+    }
+  ],
+  "binding_selection_confound": "Both retained run-context.json files state that the workflow was bound at spawn, but the first recorded workflow status call occurs at transcript/messages.json ordinal 21, after implementation and an attempted final response. Both archive-summary.json files also state that not every live workflow broadcast is retained. Initial binding, explicit selection, guidance visibility and reminder timing therefore remain confounded. None of these replacements can be assumed effective when intake is not encountered before editing, and the retained runs do not establish a causal effect of intake wording.",
+  "cross_panel_anchor_variability": "The scoring ballots remain locked; no criterion or total was reconsidered, and no other ballots or votes were read. Cross-panel B1/B2 anchor variability is therefore unknown and remains unresolved rather than being normalized through this vote. The relevant distinctions remain intact: source inspection is not an observed executable baseline, a missing-capability import error can be meaningful feature evidence, and retrospective reconstruction or evaluator replay cannot establish chronological pre-change execution.",
+  "residual_risks": [
+    "All three alternatives depend on early intake exposure; text alone cannot repair late engagement caused by activation or reminder mechanics.",
+    "All three rely on the unchanged test_design guidance for meaningful target-sensitive failure where applicable, appropriate non-executable comparisons, and truthful disclosure when implementation has already occurred.",
+    "A worker may still backfill intake or treat a generic plan or source observation as sufficient verification; neither planning nor retrospective reconstruction supplies chronological pre-change execution.",
+    "F3 leaves the explicit expected-result requirement to test_design; F1 leaves explicit baseline identification less prominent; F2 adds a recording requirement that could become redundant on small tasks.",
+    "The check/comparison alternatives must not be interpreted as requiring unsafe reproduction, forced executable failure, or edits to unrelated work.",
+    "F1, F2 and F3 replace the same field and are mutually exclusive. Apply only the exact alternative selected under the supplied eligibility and overlap rule; no merged wording is endorsed.",
+    "Any improvement remains a falsifiable salience hypothesis requiring fresh evidence, not a demonstrated result or a reason to alter locked scores."
+  ]
+}

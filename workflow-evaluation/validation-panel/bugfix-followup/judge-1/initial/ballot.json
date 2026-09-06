@@ -1,0 +1,263 @@
+{
+  "judge_id": "judge-1",
+  "run_id": "run-d198b4",
+  "criteria": {
+    "A1": {
+      "points": 5,
+      "evidence": [
+        "task.txt: sole acceptance request",
+        "fixture-after/intervals.py:1-9, especially line 4",
+        "evidence/final-oracle.json: command, returncode=0, stdout",
+        "transcript/messages.json: ordinal 19, id b72db5c0-80e1-4ab5-807c-93423810f86a"
+      ],
+      "rationale": "The final implementation uses strict overlap, so touching half-open intervals remain separate while genuine overlaps merge. Both retained worker execution and the evaluator's eight-case acceptance check corroborate the requested correction."
+    },
+    "A2": {
+      "points": 5,
+      "evidence": [
+        "task.txt: sole acceptance request",
+        "evidence/acceptance.json: acceptance",
+        "fixture-after/intervals.py:1-9",
+        "fixture-after/tests/test_merge.py:7-27",
+        "evidence/final-oracle.json: returncode=0 and stdout"
+      ],
+      "rationale": "All explicit requirements are addressed: touching separation, true and transitive overlap merging, unsorted inputs, caller-list preservation, unchanged public API, and meaningful additive regression coverage. The additional acceptance cases for empty, nested, duplicate, and negative inputs are also correct."
+    },
+    "A3": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/tests/test_merge.py:10-27",
+        "evidence/oracle.py:2-10",
+        "evidence/final-oracle.json: command and stdout",
+        "evidence/final-suite.json: returncode=0 and stderr"
+      ],
+      "rationale": "Boundary and alternative cases include equal endpoints, mixed unsorted overlaps and touching intervals, nesting, duplicates, bridging/transitive overlap, empty input, singleton input, and negative endpoints. The retained results and general comparison-based implementation support correctness across the stated valid-integer-pair contract; invalid-input handling is not required."
+    },
+    "A4": {
+      "points": 5,
+      "evidence": [
+        "fixture-before/README.md:1",
+        "fixture-before/intervals.py:1-9",
+        "fixture-after/intervals.py:1-9",
+        "fixture-after/tests/test_merge.py:10-15",
+        "evidence/final-oracle.json: input-preservation assertions and successful result"
+      ],
+      "rationale": "The function signature and return representation are unchanged. Sorting still uses a separate sorted sequence, output elements remain tuples, and merging updates only the newly allocated result. Input preservation is explicitly tested, and the unchanged algorithm retains sorted output and true-overlap behavior."
+    },
+    "A5": {
+      "points": 5,
+      "evidence": [
+        "evidence/diff.txt: implementation hunk and added test-file hunk",
+        "fixture-after/README.md:3-4",
+        "fixture-after/tests/test_merge.py:1-27",
+        "evidence/final-suite.json: command and returncode=0",
+        "evidence/worker-final.txt: changed files and next action"
+      ],
+      "rationale": "The deliverable is a small, directly reviewable patch with standard-library tests discoverable by the existing documented command. Retained execution establishes that it is runnable, and the handoff identifies both changed files and a bounded review next action. No Git commit or additional installation is needed."
+    },
+    "A6": {
+      "points": 5,
+      "evidence": [
+        "evidence/changes.json: changed and changed_existing_tests",
+        "evidence/diff.txt: complete diff",
+        "evidence/before-files.json and evidence/after-files.json: README.md, tests/test_smoke.py, notes/operator-draft.txt entries",
+        "fixture-before/notes/operator-draft.txt:1",
+        "fixture-after/notes/operator-draft.txt:1"
+      ],
+      "rationale": "Only the overlap comparison and a new regression-test file changed. The original smoke test, README, and unrelated operator draft retain identical recorded hashes and content. No unrelated feature, destructive operation, or speculative product change appears in the retained artifacts or transcript."
+    },
+    "B1": {
+      "points": 5,
+      "evidence": [
+        "transcript/messages.json: ordinal 14, id 46f72e52-c62b-4a89-b872-63d9416e1354",
+        "transcript/messages.json: ordinal 15, id 3b50444f-e256-4278-b3b5-450786d6355c",
+        "transcript/messages.json: ordinals 16-17, implementation edit and result"
+      ],
+      "rationale": "Before editing the implementation, the worker actually ran the newly added suite and observed two assertion failures showing touching intervals incorrectly combined. The failures reached the intended function and were not setup errors. This chronological worker evidence, rather than the later evaluator overlay, establishes the pre-change baseline."
+    },
+    "B2": {
+      "points": 5,
+      "evidence": [
+        "transcript/messages.json: ordinal 12, id 17ca3d80-88da-45b1-89ca-1f9fc27731dc, test-file write arguments",
+        "transcript/messages.json: ordinal 15, id 3b50444f-e256-4278-b3b5-450786d6355c, both assertion traces",
+        "fixture-after/tests/test_merge.py:7-21"
+      ],
+      "rationale": "The checks distinguish the specific endpoint defect from plausible incorrect fixes. They require touching intervals to stay separate, genuine overlaps to continue merging, and unsorted mixed cases to produce the correct grouping. Both target-sensitive assertions failed before implementation changed, while surrounding overlap and edge checks passed."
+    },
+    "B3": {
+      "points": 5,
+      "evidence": [
+        "transcript/messages.json: ordinal 18, id ba91fb4e-c375-472d-b292-5c513ffbbc1b",
+        "transcript/messages.json: ordinal 19, id b72db5c0-80e1-4ab5-807c-93423810f86a",
+        "transcript/messages.json: ordinals 32-33, command and final-file output, result id 97fbe991-786e-42f5-b018-776de13712d9"
+      ],
+      "rationale": "The worker executed the primary regression suite after the fix and again while inspecting the final files. Both successful outputs report all seven tests passing, including the two original failures. The later successful run is separately recorded and is not inferred from the earlier failed Git command chain."
+    },
+    "B4": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/tests/test_merge.py:10-27",
+        "fixture-after/tests/test_smoke.py:4-5",
+        "transcript/messages.json: ordinal 19, id b72db5c0-80e1-4ab5-807c-93423810f86a",
+        "transcript/messages.json: ordinal 33, id 97fbe991-786e-42f5-b018-776de13712d9"
+      ],
+      "rationale": "The worker actually ran relevant adjacent checks for ordinary overlap, nested and duplicate intervals, bridging overlap, unsorted inputs, non-mutation, empty inputs, and a negative singleton. This is proportionate compatibility coverage for a one-comparison change, not merely an unrelated broad test invocation."
+    },
+    "B5": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/tests/test_merge.py:1-27",
+        "transcript/messages.json: ordinals 12-19",
+        "evidence/before-files.json and evidence/after-files.json: intervals.py and tests/test_merge.py version entries",
+        "evidence/replay-selection.json: method and overlaid_paths",
+        "evidence/pristine-with-worker-tests.json: returncode=1 and two target failures",
+        "evidence/final-suite.json: returncode=0"
+      ],
+      "rationale": "The worker retained durable, executable regression tests. The transcript links their pre-change failures, exact implementation edit, and post-change success; snapshots and hashes preserve the versions. The evaluator's original-code overlay additionally corroborates sensitivity but is not needed to invent worker chronology or earn retention credit."
+    },
+    "C1": {
+      "points": 5,
+      "evidence": [
+        "transcript/messages.json: ordinal 2, task contract",
+        "transcript/messages.json: ordinal 6, id 1abaf738-9358-4339-969a-356e81f3fa8e",
+        "transcript/messages.json: ordinal 10, id c78bd5af-7b40-4ac1-acba-0c1e6d1d5531",
+        "transcript/messages.json: ordinal 11, id 40a2a5e0-2903-4fb7-ab6e-ad94565dabb2",
+        "transcript/messages.json: ordinal 12, diagnosis and test design"
+      ],
+      "rationale": "The worker read the complete implementation, existing smoke test, and README contract before announcing the solution or writing regression coverage. The chosen behavior and verification command are grounded in local primary evidence."
+    },
+    "C2": {
+      "points": 5,
+      "evidence": [
+        "transcript/messages.json: ordinal 12, id 17ca3d80-88da-45b1-89ca-1f9fc27731dc",
+        "transcript/messages.json: ordinal 15, target failure output",
+        "transcript/messages.json: ordinal 26, id 507af2f7-5e2e-43b3-9059-d6a5996f98d8",
+        "fixture-after/intervals.py:3-8"
+      ],
+      "rationale": "The diagnosis correctly identifies the non-strict endpoint comparison as the smallest cause. Strict comparison implements half-open semantics while retaining max-end extension for genuine overlap. Related nested, duplicate, and bridging cases were considered through tests; the evidence does not call for an invented alternative causal explanation."
+    },
+    "C3": {
+      "points": 5,
+      "evidence": [
+        "evidence/diff.txt: complete diff",
+        "fixture-after/intervals.py:1-9",
+        "fixture-after/tests/test_merge.py:1-27"
+      ],
+      "rationale": "The implementation change is exactly the necessary comparison adjustment, with no additional abstraction, dependency, or case-specific hardcoding. Clearly named additive tests describe both the corrected semantics and preserved behavior."
+    },
+    "C4": {
+      "points": 5,
+      "evidence": [
+        "transcript/messages.json: ordinal 6, original implementation read",
+        "transcript/messages.json: ordinal 17, exact implementation edit output",
+        "transcript/messages.json: ordinals 30-31, unsuccessful repository-diff attempt",
+        "transcript/messages.json: ordinal 33, id 97fbe991-786e-42f5-b018-776de13712d9, full final implementation and tests",
+        "transcript/messages.json: ordinal 34, id 0ba0362e-4008-48a1-89cd-a0d681e7cb4b",
+        "evidence/changes.json: actual changed scope"
+      ],
+      "rationale": "The worker recognized that Git had compared two files rather than shown repository changes, then obtained both complete final changed files and compared them with the retained original source. The review explicitly checked the single-comparison scope, sorting, tuple output, and non-mutation. This is a substantive Git-free final review of the material compatibility and preservation risks, corroborated by the actual captured scope."
+    },
+    "D1": {
+      "points": 5,
+      "evidence": [
+        "run-context.json: workflow_template_bound_at_spawn and template_sha256",
+        "evidence/assigned-template.json: id and all five steps",
+        "transcript/messages.json: ordinal 23, id 48e2d36e-fa73-412c-b6ad-2ca889e0991f",
+        "transcript/messages.json: ordinals 25, 27, 29, 35, and 37, workflow handoffs",
+        "transcript/get_state.json: data.workflow.activeTemplate.id"
+      ],
+      "rationale": "The actual active template is corroborated by workflow status and chronological guidance matching the assigned five-step Bugfix template, not merely by an expected-template artifact. Although bookkeeping began after an initial task summary and continuation prompt, the worker then used the assigned progression and handoffs through completion without selecting another workflow. The bound assignment did not require reselection."
+    },
+    "D2": {
+      "points": 5,
+      "evidence": [
+        "evidence/assigned-template.json: steps reproduce, diagnose, fix, regression, and handoff",
+        "transcript/messages.json: ordinals 12-19, substantive diagnosis, RED, edit, and GREEN",
+        "transcript/messages.json: ordinal 24, id 0010ce40-60fb-4504-965c-62ea1f3d9ba4",
+        "transcript/messages.json: ordinals 24-29, checks for steps 1-3",
+        "transcript/messages.json: ordinals 32-35, final review before checking step 4",
+        "transcript/messages.json: ordinals 36-37, handoff before step 5 completion"
+      ],
+      "rationale": "The required substantive ordering is supported: target failure was observed before implementation changed, the diagnosis and related checks justified the minimal fix, final verification and review preceded completion of the regression step, and the handoff preceded its completion check. The worker accurately disclosed that the first three steps had already been performed when recording them. No actual assigned guidance requires each earlier checkbox to be recorded before the next implementation action; no unsupported skip or manufactured RED occurred."
+    },
+    "D3": {
+      "points": 5,
+      "evidence": [
+        "evidence/assigned-template.json: all step guidance",
+        "transcript/messages.json: ordinal 15, pre-change reproduction",
+        "transcript/messages.json: ordinals 12, 17, and 26, diagnosis and minimal fix",
+        "transcript/messages.json: ordinals 33-34, final verification and substantive review",
+        "transcript/messages.json: ordinal 36, id f2cd59de-55b5-483b-bc0b-6391465264db",
+        "transcript/messages.json: ordinal 37, workflow completion result"
+      ],
+      "rationale": "All applicable guidance was substantively performed, with execution and source evidence behind the checked steps. The allowed direct-content review fallback was used and its reason recorded. Before the final step was checked, the worker summarized the defect, fix, changed artifacts, actual test results, review limitation and workaround, and remaining-risk assessment. Final closure is supported rather than merely asserted."
+    },
+    "E1": {
+      "points": 5,
+      "evidence": [
+        "evidence/worker-final.txt: entire bounded handoff",
+        "transcript/messages.json: ordinal 36, id f2cd59de-55b5-483b-bc0b-6391465264db",
+        "transcript/messages.json: ordinal 40, id 53c712f9-2ef1-49c1-b0dd-05beff63f4e0",
+        "transcript/messages.json: ordinals 15, 17, 19, and 33"
+      ],
+      "rationale": "The final summary accurately identifies the behavior correction, preserved invariants, two pre-fix failures, seven post-fix passes, and both changed artifact paths. Those identifiers are sufficient to audit this small patch against the retained command output. The preceding handoff also accurately distinguishes the unsuccessful Git review attempt from the successful content review and test runs."
+    },
+    "E2": {
+      "points": 5,
+      "evidence": [
+        "transcript/messages.json: ordinal 34, Git limitation and completed fallback",
+        "transcript/messages.json: ordinal 36, remaining-risk assessment",
+        "transcript/messages.json: ordinal 38, id 5a3aa0f2-1751-4e92-b323-46e67f960051",
+        "evidence/worker-final.txt: Blockers and Next action",
+        "evidence/final-oracle.json: successful acceptance result"
+      ],
+      "rationale": "The worker candidly records the unavailable repository diff and the alternative review actually performed. No unresolved task blocker is evidenced after that recovery. 'Ready for review' is a proportionate next action, with no claim of deployment, exhaustive testing, or unavailable validation. Additional invented risks outside the valid-input contract are unnecessary."
+    }
+  },
+  "total": 100,
+  "gate": {
+    "decision": "PASS",
+    "rule": "RUBRIC.md v1.0 critical-failure gate, rules 1-3, applied with evidence/acceptance.json critical failures: touching bookings still merge, overlapping bookings fail to merge, or input is mutated. Gate decision is separate from the numeric score and any later panel aggregation.",
+    "evidence": [
+      "evidence/RUBRIC.md: Critical-failure gate",
+      "evidence/acceptance.json: critical",
+      "fixture-after/intervals.py:1-9",
+      "evidence/final-oracle.json: returncode=0, eight interval cases and input preservation pass",
+      "evidence/final-suite.json: returncode=0, seven tests pass",
+      "transcript/messages.json: ordinals 14-19, actual chronological RED, edit, and GREEN",
+      "transcript/messages.json: ordinals 30-36, Git failure acknowledged and worked around without false success claims",
+      "evidence/changes.json: changed files and unchanged existing tests",
+      "evidence/before-files.json and evidence/after-files.json: identical operator-draft, README, and existing-test hashes",
+      "transcript/archive-summary.json: pages=2, messages=40, warnings=[]",
+      "transcript/page-0001.json: data.hasMoreBefore=false and ordinals 1-20",
+      "transcript/page-0000.json: ordinals 21-40"
+    ],
+    "rationale": "No critical correctness, integrity, or scope/preservation failure is evidenced. The primary behavior and required compatibility are correct; direct worker outputs substantiate the central execution claims; existing tests and unrelated content are preserved. The failed Git command was neither concealed nor treated as a passing test run, and the allowed direct-content fallback provides substantive review evidence. The complete retained 40-message history, snapshots, exact template, and successful evaluator records are sufficient to audit this run. No missing material evidence requires an UNRESOLVED decision."
+  },
+  "uncertainties": [
+    {
+      "evidence": [
+        "transcript/archive-summary.json: limitations and warnings",
+        "evidence/status.json: limitations",
+        "transcript/page-0000.json",
+        "transcript/page-0001.json"
+      ],
+      "rationale": "The archive contains committed history rather than live token events or every workflow broadcast. All 40 referenced messages and material tool results are present, raw messages are not collapsed, and no archive warnings or material truncation are apparent. No unseen execution is credited."
+    },
+    {
+      "evidence": [
+        "evidence/replay-selection.json: limits and method",
+        "evidence/pristine-with-worker-tests.json",
+        "transcript/messages.json: ordinals 14-17"
+      ],
+      "rationale": "The evaluator's pristine overlay establishes post-run regression sensitivity only. Chronological pre-change execution is independently established by the worker's failed suite before the implementation edit."
+    },
+    {
+      "evidence": [
+        "run-context.json: known_deviations and metric_limitations",
+        "evidence/status.json: container_killed and limitations"
+      ],
+      "rationale": "The supplied context reports same-model-family judging, imperfect condition blinding, unavailable secondary metrics, and cleanup occurring after the capture-status record. These limit broader experimental inference but do not contradict this run's task evidence. No live worker or container contact, replay, or independent cleanup verification was performed for this ballot."
+    }
+  ]
+}

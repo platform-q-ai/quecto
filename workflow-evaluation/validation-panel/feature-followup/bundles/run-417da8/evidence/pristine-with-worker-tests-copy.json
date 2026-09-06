@@ -1,0 +1,12 @@
+{
+  "command": [
+    "podman",
+    "cp",
+    "/tmp/workflow-test-overlay-aia0hyhx/fixture",
+    "quecto-env-KyicmUnE8b:/tmp/workflow-eval.bf2vzVmA/pristine-with-worker-tests"
+  ],
+  "returncode": 0,
+  "stderr": "",
+  "stdout": "",
+  "timed_out": false
+}

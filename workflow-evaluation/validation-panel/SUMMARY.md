@@ -66,3 +66,11 @@ Three fresh, high-effort, read-only `openai-oauth/gpt-6-astra` sessions; spawn/a
 - **Refactor-v2-001 final locked: 92.5/100, unanimous PASS, qualifying.** Individual totals 90/92.5/92.5; no adjudication trigger. Full report at `refactor-followup/SUMMARY.md`, sealed ballots/raw sessions and final JSON alongside. Pre-change characterization and progression concerns retained. Consolidated locked-run index: `consolidated-summary.json`.
 
 No frozen rubric, source, or template edits. No worker/container contact. Administrative changes restricted to this panel directory.
+
+## Latest completed panels
+
+- Six varied-run final results and streaks: `batch-6d90a7/SUMMARY.md`. Investigate and Chore meet three qualifying runs; Bugfix varied runs both 87.5/PASS, so streak not met.
+- Feature round-2 base003: `feature-followup/SUMMARY.md`, 92.5/PASS (one qualifying run), missing chronological RED explicitly disclosed; no causal improvement claim.
+- Full coordinator-scored run index: `consolidated-summary.json`. No new proposal phase authorized.
+
+- Feature round-2 varied pair FINAL LOCKED: `batch-29fe81/SUMMARY.md`, both **87.5/PASS**, numerically nonqualifying; base003→v1→v2 streak not met, trailing count0. Cross-panel B1/B2 variability preserved. No automatic proposals authorized.

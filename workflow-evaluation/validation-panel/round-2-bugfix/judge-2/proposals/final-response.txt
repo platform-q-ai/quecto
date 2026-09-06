@@ -1,0 +1,59 @@
+{
+  "judge_id": "judge-2",
+  "phase": "bugfix-round-2-proposals",
+  "proposals": [
+    {
+      "local_id": "P1",
+      "step_key": "reproduce",
+      "field": "guidance",
+      "old": "Capture the wrong behavior with a failing test, fixture, command, or clear manual reproduction.",
+      "new": "Before applying a fix, capture the wrong behavior with a failing test, fixture, command, or clear manual reproduction. Observe and record a result attributable to the reported defect, not an unrelated setup failure. For non-executable artifacts, record the specific mismatch against the authoritative source before editing. If the fix is already applied, disclose the missed baseline; label any later original-behavior check as retrospective rather than pre-change evidence, and do not undo others' work to manufacture a baseline.",
+      "evidence": [
+        {
+          "locator": "run-b3a751/transcript/messages.json ordinals 11-18",
+          "observation": "The worker wrote the implementation and regression tests before executing checks; the first attempted command failed because the python alias was unavailable, and the subsequent python3 suite passed."
+        },
+        {
+          "locator": "run-b3a751/transcript/messages.json ordinals 19-24",
+          "observation": "Only after an initial handoff and workflow reminder did the worker execute regression tests against an in-memory reconstruction of the original implementation."
+        },
+        {
+          "locator": "run-ec6204/transcript/messages.json ordinals 11-22",
+          "observation": "The worker edited settings.py, added tests, observed GREEN, and handed off before a reminder led to a retrospective original-expression substitution and observed failures."
+        },
+        {
+          "locator": "round-2-bugfix/assigned-template-reference.json steps[key=reproduce].guidance",
+          "observation": "The existing instruction already requires failure capture, but does not explicitly state pre-fix timing or distinguish retrospective sensitivity checks from a pre-change baseline."
+        }
+      ],
+      "mechanism": "Make the intended temporal relationship explicit at the reproduction step and give an honest recovery rule when that opportunity has been missed. The demonstrated problem is failure to execute reproduction before editing, not absence of a reproduction requirement. Retrospective checks remain useful evidence of regression sensitivity, but their timing must remain visible. This replacement can influence behavior only when the worker actually encounters and follows the guidance.",
+      "risks_costs": [
+        "Adds three sentences to a previously short instruction, increasing reading cost and potentially reducing salience.",
+        "A worker may pursue an expensive reproduction unnecessarily; manual and authoritative-source alternatives keep the requirement proportionate without mandating a particular runtime or test framework.",
+        "The missed-baseline recovery clause could be treated as permission to implement first; its opening pre-fix instruction remains the preferred order, and recovery explicitly discloses the omission.",
+        "The evidence does not show that a setup error was mistaken for defect RED; that distinction is preventive clarification, not a claimed observed integrity failure.",
+        "This wording cannot ensure that bound startup guidance is seen before the worker begins editing."
+      ],
+      "transfer_example": "For a broken documentation link, compare the current destination with the existing page inventory before editing, retain that mismatch, and then use the unchanged regression-step guidance to verify the repaired destination. This establishes meaningful pre-change evidence without inventing an executable failing test.",
+      "goal_conflicts": [
+        {
+          "constraint": "Portable, evidence-first verification without fake RED or destructive baseline reconstruction.",
+          "assessment": "No identified conflict: the replacement accepts executable, manual, and source-comparison evidence, requires no particular tool or host, and prohibits undoing others' work to manufacture chronology."
+        },
+        {
+          "constraint": "Minimal template correction rather than task coaching, harness changes, or excessive ritual.",
+          "assessment": "One guidance field changes; no task identifiers, expected outputs, mandatory workflow selection, new steps, or tooling requirements enter the replacement."
+        }
+      ],
+      "overlaps_or_dependencies": [
+        "No second proposal is submitted.",
+        "Depends on the existing regression guidance to rerun the reproduction and adjacent checks on the final artifact; it does not duplicate or replace that guidance.",
+        "Does not address startup activation or initial guidance delivery, which are outside this guidance-only proposal."
+      ],
+      "falsifiable_prediction": "In fresh Bugfix tasks where the reproduction guidance is demonstrably encountered before editing, the replacement predicts more retained defect-relevant observations before the first fix than the reference wording. Where workers still edit first, it predicts explicit disclosure of the missed baseline and retrospective labeling of later original-behavior checks. Continued edit-first behavior without that disclosure despite demonstrated exposure would count against the proposed mechanism."
+    }
+  ],
+  "no_change_reason": null,
+  "binding_selection_confound": "Both retained runs were bound to Bugfix at spawn, but first engaged its progression after an initial handoff and an explicit incomplete-workflow reminder: run-b3a751/run-context.json:7-10 and transcript/messages.json ordinals 19-22; run-ec6204/run-context.json:7-10 and transcript/messages.json ordinals 17-20. Binding is not proof that initial guidance was salient or followed, and committed history does not include every live broadcast. These records cannot isolate wording effects from binding versus explicit selection, initial guidance visibility, or reminder effects; the proposal neither attributes the failures solely to guidance nor claims to fix activation.",
+  "cross_panel_anchor_variability": "The supplied proposal instruction reports that earlier independent panels differed in their B1/B2 anchor interpretation. That limitation remains unresolved here. The locked ballots are not rescored, and this proposal targets the directly observed execution order and accurate evidence labeling rather than a point allocation or qualification threshold."
+}

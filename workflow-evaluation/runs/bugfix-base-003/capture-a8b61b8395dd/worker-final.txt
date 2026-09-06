@@ -1,0 +1,5 @@
+- **Summary:** Touching half-open intervals stay separate; overlaps still merge. Unsorted inputs are supported without mutating the caller’s list. Public API unchanged.
+- **Checks:** Two regression tests failed before the fix; all 7 tests pass afterward.
+- **Changed files:** `intervals.py`, `tests/test_merge.py`.
+- **Blockers:** None.
+- **Next action:** Ready for review.

@@ -12,17 +12,17 @@ See ../goal.md (repository root goal.md) for the session objective.
 
 | Workflow | Latest locked score | Gate | Current candidate streak |
 | --- | ---: | --- | --- |
-| investigate | 97.5 revised base | PASS | 1 revised; v1/v2 archived, scoring underway |
-| chore | 95 revised base | PASS | 1 revised; v1/v2 archived, scoring underway |
-| bugfix | 92.5 revised base | PASS | 1 revised; v1/v2 archived, scoring underway |
-| feature | 87.5 revised base | PASS gate, below target | 0; round-2 F1 approved; base-003 running |
-| refactor | 100 baseline; 92.5 v1; 92.5 v2 | PASS | COMPLETE: 3 consecutive |
+| investigate | 97.5 / 97.5 / 97.5 | PASS | COMPLETE: 3 consecutive round-1 |
+| chore | 95 / 97.5 / 97.5 | PASS | COMPLETE: 3 consecutive round-1 |
+| bugfix | 92.5 / 87.5 / 87.5 | PASS gate, variants below target | 0; round-2 proposal/vote underway |
+| feature | 92.5 round-2 base | PASS | 1; round-2 v1/v2 authorized |
+| refactor | 100 / 92.5 / 92.5 | PASS | COMPLETE: 3 consecutive unchanged |
 
 Aggregation: sum of per-criterion medians. All three judges voted PASS for each run; no frozen adjudication trigger fired. Evidence: panel/baseline-summary.json and panel/judge-*/initial-ballots.json.
 
 ## In progress
 
-Round-1 proposals/votes locked: P3/P4/P6/P7/P8/P9 accepted; source and packaging-safe equality tests committed. Revised base panel results are in validation-panel/consolidated-summary.json. Investigate/chore/bugfix qualify; six fixed v1/v2 fresh-container runs archived/cleaned and independently scoring. Feature fell to 87.5 because worker chronological RED/prospective verification was absent; F1 was unanimously approved and round-2 base-003 is running, with no task coaching or rubric change. Refactor unchanged and complete with three consecutive qualifying tasks. All completed worker containers cleaned after capture/hash verification. Any future revision resets that workflow's streak.
+Investigate, chore, and refactor meet the consistency target. Six-run varied results are locked in validation-panel/batch-6d90a7/. Bugfix variants both failed the numeric threshold (87.5) despite correct final artifacts because pre-change reproduction was absent; round-2 proposal/vote cycle authorized. Feature round-2 base scored 92.5/PASS (feature-followup/summary.json), with chronology omissions and cross-panel anchor differences explicitly disclosed. Feature source update authorized; new round-2 v1/v2 trials use -002 run directories. All completed worker containers cleaned after evidence verification. Any template revision resets its streak.
 
 Binding versus explicit baseline selection differs and is a possible execution-order confound; scores do not establish a causal template improvement.
 

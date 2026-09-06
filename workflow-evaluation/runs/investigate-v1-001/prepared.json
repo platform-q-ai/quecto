@@ -1,0 +1,10 @@
+{
+  "task": "investigate-v1",
+  "candidate_input_sha256": "693d790a04369da13abad54205d4758681db9ee45758db35efeff99b7cd57eb2",
+  "canonical_spec_sha256": "e2ef3cea39ed449881e7afdf69e965f8f5914d5e897f80c0327b051a2f85f2ab",
+  "prompt_sha256": "2d7c9ab7cd6dfdf90cf9130aff4d6c25dceecadb48bc5b84eb7cbd0e40bda484",
+  "assigned_template_sha256": "693d790a04369da13abad54205d4758681db9ee45758db35efeff99b7cd57eb2",
+  "workflow_spec_file_sha256": "ab8724076b45c581ed8711b2e45acc0c0e283142573bf6cf7a57d5280113cf01",
+  "startup": "Task omitted; source shows no startup nudge drain absent prompt/steer/follow-up/descendant event.",
+  "approval": "Parent must authorize voted candidate; helper does not infer voting approval."
+}

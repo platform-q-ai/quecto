@@ -1,0 +1,49 @@
+{
+  "status": "ARCHIVED_VERIFIED_CLEANED_READY_FOR_PANEL",
+  "run_dir": "workflow-evaluation/runs/bugfix-base-003",
+  "capture": "workflow-evaluation/runs/bugfix-base-003/capture-a8b61b8395dd",
+  "uuid": "f78677d7-af25-47d8-8be2-e12622a4409d",
+  "container_ref": "C15",
+  "workspace": "/home/swq/.quecto/container-environments/env-x0ipyOzG1R/workspace",
+  "checks_exit_codes": {
+    "final-oracle": 0,
+    "final-suite": 0,
+    "pristine-with-worker-tests": 1
+  },
+  "archive_verification": {
+    "capture": "capture-a8b61b8395dd",
+    "files_reopened_and_verified": 39,
+    "hash_mismatches": [],
+    "bare_report_matches_archive": true,
+    "supplemental_review": "Full transcript inspected; no supplemental redirected outputs or archived-message truncation. Pre-change failure command/output and original test write retained in chronology evidence and full archive.",
+    "archive_summary": {
+      "pages": 2,
+      "messages": 40,
+      "warnings": [],
+      "limitations": [
+        "Committed history, not live token events or every workflow broadcast.",
+        "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing."
+      ]
+    }
+  },
+  "cleanup": {
+    "kill_result": {
+      "agents": [
+        "f78677d7-af25-47d8-8be2-e12622a4409d"
+      ],
+      "killed": "C15"
+    },
+    "container_exists_returncode": 1,
+    "container_absent": true,
+    "after_archive_hash_verification": true,
+    "recorded_utc": "2026-09-06T11:50:31.827079+00:00"
+  },
+  "chronology_evidence": "workflow-evaluation/runs/bugfix-base-003/chronology-evidence.json",
+  "chronology_notice": "Worker test command/result ordinals 14-15 record two assertion failures before implementation edit 16-17; seven passed at 18-19 and 32-33.",
+  "candidate_sha256": "cb93cc54770b49595f707dec30eefcef4e8e3d95cd7bb426b3f9f354f60f2859",
+  "canonical_spec_sha256": "a393485bd488666d1b56078a3751acdedaa07a42bf93b32cb8b0c8a6f2261e49",
+  "candidate_and_frozen_hashes_unchanged": true,
+  "score_assigned": false,
+  "varied_bugfix_runs_launched": false,
+  "source_rubric_edits": false
+}

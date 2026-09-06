@@ -1,0 +1,162 @@
+{
+  "phase": "initial",
+  "locks": [
+    {
+      "judge_id": "judge-1",
+      "message_id": "6ee5eede-5622-438d-8760-9ffdaec275a3",
+      "ordinal": 19,
+      "raw_messages_sha256": "c67fb7f773096b5784079ab61ae2ab87bd565f2076e2045fc82e99a0e504840d",
+      "ballot_sha256": "0f3d1834b8f822e214c7783f2c3c272cede625fda6c1e8cb4e9922e7381eae3b"
+    },
+    {
+      "judge_id": "judge-2",
+      "message_id": "f30b5df0-0aad-4374-b8e1-cd995a07f79f",
+      "ordinal": 20,
+      "raw_messages_sha256": "77a403cf476085c794a89f8b58e2dac7e9b960b5531aa8da294f3e99d34ce657",
+      "ballot_sha256": "5e84c580b61799fa61beb19ea85467e4cd8477d6fa770f6dc48e2f1d7ede911e"
+    },
+    {
+      "judge_id": "judge-3",
+      "message_id": "874d2b6c-cc34-4b8e-9937-2486bff3b271",
+      "ordinal": 22,
+      "raw_messages_sha256": "2f1a5bca3a0061e86aafb51593d3768a004b2018fb91065ba9dc4075bb5bcd0d",
+      "ballot_sha256": "613980e5fe1aac89277d6784e46d49dfccd1b92487db018d3f1c7732822da9a4"
+    }
+  ],
+  "results": {
+    "run-417da8": {
+      "original_run": "feature-base-003",
+      "individual_totals": {
+        "judge-1": 92.5,
+        "judge-2": 92.5,
+        "judge-3": 92.5
+      },
+      "total_range": [
+        92.5,
+        92.5
+      ],
+      "total_spread": 0.0,
+      "criterion_medians": {
+        "A1": 5,
+        "A2": 5,
+        "A3": 5,
+        "A4": 5,
+        "A5": 5,
+        "A6": 5,
+        "B1": 5,
+        "B2": 2.5,
+        "B3": 5,
+        "B4": 5,
+        "B5": 5,
+        "C1": 5,
+        "C2": 5,
+        "C3": 5,
+        "C4": 5,
+        "D1": 5,
+        "D2": 2.5,
+        "D3": 2.5,
+        "E1": 5,
+        "E2": 5
+      },
+      "criterion_ranges": {
+        "A1": [
+          5,
+          5
+        ],
+        "A2": [
+          5,
+          5
+        ],
+        "A3": [
+          5,
+          5
+        ],
+        "A4": [
+          5,
+          5
+        ],
+        "A5": [
+          5,
+          5
+        ],
+        "A6": [
+          5,
+          5
+        ],
+        "B1": [
+          5,
+          5
+        ],
+        "B2": [
+          2.5,
+          2.5
+        ],
+        "B3": [
+          5,
+          5
+        ],
+        "B4": [
+          5,
+          5
+        ],
+        "B5": [
+          5,
+          5
+        ],
+        "C1": [
+          5,
+          5
+        ],
+        "C2": [
+          5,
+          5
+        ],
+        "C3": [
+          5,
+          5
+        ],
+        "C4": [
+          5,
+          5
+        ],
+        "D1": [
+          5,
+          5
+        ],
+        "D2": [
+          2.5,
+          2.5
+        ],
+        "D3": [
+          2.5,
+          2.5
+        ],
+        "E1": [
+          5,
+          5
+        ],
+        "E2": [
+          5,
+          5
+        ]
+      },
+      "panel_score": 92.5,
+      "gate_votes": {
+        "judge-1": "PASS",
+        "judge-2": "PASS",
+        "judge-3": "PASS"
+      },
+      "aggregate_gate": "PASS",
+      "adjudication_triggered": false,
+      "numeric_and_gate_qualifies": true,
+      "evidence_completeness": "Pending coordinator final evidence/locator review",
+      "minority_criterion_judgments": {}
+    }
+  },
+  "any_adjudication_triggered": false,
+  "limitations": [
+    "Independent same-model sessions, not provider diversity.",
+    "Imperfect condition blinding from preserved raw evidence.",
+    "Batch ballots, if present, independently assess different runs within each judge session; no cross-judge ballot access."
+  ]
+}

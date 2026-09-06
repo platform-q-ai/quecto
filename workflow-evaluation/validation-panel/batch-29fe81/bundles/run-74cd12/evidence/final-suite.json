@@ -1,0 +1,30 @@
+{
+  "command": [
+    "podman",
+    "exec",
+    "--workdir",
+    "/tmp/workflow-eval.3PK60TKG/final-suite",
+    "-e",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "-e",
+    "PYTHONHASHSEED=0",
+    "-e",
+    "TZ=UTC",
+    "quecto-env-Vx1UyxptBj",
+    "env",
+    "-u",
+    "PYTHONPATH",
+    "python3",
+    "-B",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests",
+    "-v"
+  ],
+  "returncode": 0,
+  "stderr": "test_counts_in_both_modes (test_smoke.Smoke.test_counts_in_both_modes) ... ok\ntest_help_in_both_modes (test_smoke.Smoke.test_help_in_both_modes) ... ok\n\n----------------------------------------------------------------------\nRan 2 tests in 0.205s\n\nOK\n",
+  "stdout": "",
+  "timed_out": false
+}

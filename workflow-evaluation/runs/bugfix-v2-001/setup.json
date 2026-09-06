@@ -1,0 +1,24 @@
+{
+  "catalog_sha256": "d2046b717d0edbf3122466164d5b991c403491e0fa586993859efa8ebd0293cf",
+  "files": {
+    "README.md": {
+      "sha256": "e8ff9678980c281c67e7ca1ff3859b2b0fa9ed4f4e3e9931fbe71719c55c9402",
+      "type": "file"
+    },
+    "notes/operator-draft.txt": {
+      "sha256": "d46939cae5e3e620ee9350a64ceeaf46d126933427d77883c3beaa50270d69ee",
+      "type": "file"
+    },
+    "settings.py": {
+      "sha256": "39af25a09010fcbd3787ed9fe9214888569a73e6a075f12447c4654c7bcbdee1",
+      "type": "file"
+    },
+    "tests/test_smoke.py": {
+      "sha256": "d0248da24f1522f41db21d83ffb91963ccdf89ea39082361215c94da20a42c57",
+      "type": "file"
+    }
+  },
+  "prompt": "In /workspace/task, fix settings.resolve so an explicitly supplied false, zero, or empty string overrides the default rather than being discarded. Only None or a missing key should use the default. Return a new dictionary, leave both inputs untouched, and continue ignoring unknown override keys. Preserve the API and add regression coverage.",
+  "root": "/home/swq/Documents/github/quecto/workflow-evaluation/runs/bugfix-v2-001/fixture-before",
+  "task": "bugfix-v2"
+}

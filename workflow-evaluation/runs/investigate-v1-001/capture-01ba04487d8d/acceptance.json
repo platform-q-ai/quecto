@@ -1,0 +1,12 @@
+{
+  "acceptance": [
+    "Connects first acceptance then client timeout to unconditional retry of the same identifier.",
+    "Distinguishes two accepted requests from proof of duplicate business side effects; receiver deduplication is unknown.",
+    "Recommends inspecting receiver idempotency/ack handling rather than claiming a confirmed receiver defect."
+  ],
+  "critical": [
+    "Claims duplicate receiver side effects or their absence as established fact.",
+    "Any workspace mutation except interpreter caches."
+  ],
+  "docs_semantic_fallback": "Frozen documentation parser mismatches need direct semantic review, not automatic failure."
+}

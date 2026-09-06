@@ -1,0 +1,8 @@
+{
+  "changed": [
+    "docs/start.md"
+  ],
+  "changed_existing_tests": [],
+  "notice": "Flags are not hidden requirements or automatic gate failures.",
+  "path_review_flags_only": []
+}

@@ -1,0 +1,10 @@
+{
+  "task": "feature-v1",
+  "candidate_input_sha256": "28a9cc688ab6e6b2dedc51b6913abb06d29f8ac0dcbfb0b167d176bb5200f2d3",
+  "canonical_spec_sha256": "e0e171c3d17c9e4d1fbd217cdd9d3b67a64eae68ea7742f918790fafe0fffc08",
+  "prompt_sha256": "c7dcdf7cb051217e18d88c021110eae430feec0974ad739aac15bece78f6dd7f",
+  "assigned_template_sha256": "28a9cc688ab6e6b2dedc51b6913abb06d29f8ac0dcbfb0b167d176bb5200f2d3",
+  "workflow_spec_file_sha256": "60f27e723b49845788f0ab9f3b6c0cddc798e033acc02b1eae2da7e8e2a1e622",
+  "startup": "Task omitted; source shows no startup nudge drain absent prompt/steer/follow-up/descendant event.",
+  "approval": "Parent must authorize voted candidate; helper does not infer voting approval."
+}

@@ -1,0 +1,15 @@
+{
+  "capture": "capture-c8374b0ce484",
+  "files_reopened_and_verified": 40,
+  "hash_mismatches": [],
+  "supplemental_review": "Full transcript inspected; no redirected output files or archived-message truncation. Worker created then deleted a temporary reconstructed original module and copied test at ordinal 25. Exact command and complete error output retained in chronology-evidence.json; deleted temporary files were not recovered or recreated. Original fixture and worker test retained in capture.",
+  "archive_summary": {
+    "pages": 3,
+    "messages": 43,
+    "warnings": [],
+    "limitations": [
+      "Committed history, not live token events or every workflow broadcast.",
+      "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing."
+    ]
+  }
+}

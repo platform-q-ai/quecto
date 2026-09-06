@@ -1,0 +1,26 @@
+{
+  "command": [
+    "podman",
+    "exec",
+    "--workdir",
+    "/tmp/workflow-eval.juanTyUa/final-oracle",
+    "-e",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "-e",
+    "PYTHONHASHSEED=0",
+    "-e",
+    "TZ=UTC",
+    "quecto-env-QDJhVneEKQ",
+    "env",
+    "-u",
+    "PYTHONPATH",
+    "python3",
+    "-B",
+    "-c",
+    "import json\nfrom pathlib import Path\nfrom report import total\nrows = json.loads(Path(\"rows.json\").read_text())\nassert total(rows) == 5\nassert sum(r[\"units\"] for r in rows if r[\"status\"].lower() == \"paid\") == 9\nprint(\"exact paid=5; case-insensitive counterfactual=9; current behavior conforms to SPEC\")\n"
+  ],
+  "returncode": 0,
+  "stderr": "",
+  "stdout": "exact paid=5; case-insensitive counterfactual=9; current behavior conforms to SPEC\n",
+  "timed_out": false
+}

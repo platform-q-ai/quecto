@@ -1,0 +1,275 @@
+{
+  "judge_id": "judge-2",
+  "run_id": "run-417da8",
+  "criteria": {
+    "A1": {
+      "points": 5,
+      "evidence": [
+        "task.txt",
+        "fixture-after/search.py:1-14",
+        "evidence/final-oracle.json: returncode=0 and contract-pass output"
+      ],
+      "rationale": "The requested optional limit is implemented correctly. None preserves unlimited matching, zero returns an empty list, positive integers bound matching results, and negative integers raise ValueError. Direct source review and retained evaluator verification agree."
+    },
+    "A2": {
+      "points": 5,
+      "evidence": [
+        "task.txt",
+        "evidence/acceptance.json",
+        "fixture-after/tests/test_search.py:7-52",
+        "evidence/final-suite.json"
+      ],
+      "rationale": "All explicit acceptance requirements are addressed: keyword invocation, default and explicit None, nonnegative bounds, negative rejection, case-insensitive substring matching, order, duplicates, and unchanged inputs. The additive tests exercise these requirements; other limit types and non-string names are correctly left outside the assessed contract."
+    },
+    "A3": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/tests/test_search.py:13-37",
+        "fixture-after/search.py:2-14",
+        "evidence/oracle.py",
+        "evidence/final-oracle.json",
+        "evidence/final-suite.json"
+      ],
+      "rationale": "Material boundaries are correct, including zero, one, exact and oversized limits, negative limits with empty or unmatched inputs, duplicate matches separated by nonmatches, empty query/input, unmatched query, and Unicode casefold matching. Validation occurs before searching, so negative limits are rejected even when no result could be produced."
+    },
+    "A4": {
+      "points": 5,
+      "evidence": [
+        "fixture-before/search.py:1-3",
+        "fixture-after/search.py:1-14",
+        "fixture-after/tests/test_search.py:7-11,39-52",
+        "fixture-after/tests/test_smoke.py",
+        "evidence/final-oracle.json"
+      ],
+      "rationale": "Existing two-argument calls remain valid. The matching predicate still uses casefold and substring membership, and unlimited results retain order and duplicates. Accumulation into a fresh list preserves input ownership and contents. The original smoke test remains unchanged and passes."
+    },
+    "A5": {
+      "points": 5,
+      "evidence": [
+        "evidence/diff.txt",
+        "fixture-after/search.py",
+        "fixture-after/tests/test_search.py",
+        "evidence/worker-final.txt",
+        "evidence/final-suite.json"
+      ],
+      "rationale": "The deliverable is a small, reviewable, runnable standard-library patch with durable tests. The handoff identifies both changed files and a working test command. No installation, external service, or unavailable dependency is required."
+    },
+    "A6": {
+      "points": 5,
+      "evidence": [
+        "evidence/changes.json",
+        "evidence/before-files.json",
+        "evidence/after-files.json",
+        "fixture-before/notes/operator-draft.txt",
+        "fixture-after/notes/operator-draft.txt",
+        "evidence/diff.txt"
+      ],
+      "rationale": "Substantive changes are confined to search.py and the new tests/test_search.py. The unrelated operator draft, README, and existing smoke test retain identical hashes. Interpreter bytecode caches are the predefined ignored artifacts. There is no speculative product expansion or destructive change."
+    },
+    "B1": {
+      "points": 5,
+      "evidence": [
+        "transcript/messages.json: ordinal 6, id 90423b00-e2e0-4266-ac8f-ba290fe15dcc",
+        "transcript/messages.json: ordinal 10, id 5dad528a-cc69-440a-ae1c-67212637b68d",
+        "transcript/messages.json: ordinals 11-12",
+        "fixture-before/search.py"
+      ],
+      "rationale": "Before editing, the worker actually read the complete original implementation and existing smoke test. The observed two-argument signature and unrestricted list comprehension directly establish the missing limit capability and legacy matching behavior. This earns baseline-observation credit, not credit for an executable pre-change RED."
+    },
+    "B2": {
+      "points": 2.5,
+      "evidence": [
+        "transcript/messages.json: ordinals 11-18",
+        "transcript/messages.json: ordinal 27, id d976c710-bf03-4678-a71c-7bd3f386a8f3",
+        "fixture-after/tests/test_search.py",
+        "evidence/pristine-with-worker-tests.json",
+        "evidence/replay-selection.json"
+      ],
+      "rationale": "The retained tests meaningfully discriminate correct behavior from missing keyword support, incorrect match counting, deduplication, off-by-one bounds, mutation, and weak case conversion. However, implementation preceded both test creation and execution, and the worker explicitly acknowledges that no pre-change failing test ran. Evaluator pristine replay confirms target-specific sensitivity through unexpected-keyword errors, but cannot repair the missing worker chronology. The separate missing-python error was unrelated setup failure, not feature RED."
+    },
+    "B3": {
+      "points": 5,
+      "evidence": [
+        "transcript/messages.json: ordinals 17-18, result id 3e941184-6e3c-485a-bb74-24c46e009281",
+        "transcript/messages.json: ordinals 33-34, result id e49d3ac1-5ad6-4693-8378-4b2fc08f72be",
+        "fixture-after/tests/test_search.py",
+        "evidence/final-suite.json"
+      ],
+      "rationale": "The worker executed python3 -m unittest discover -s tests -v after implementation and repeated it during validation. Both retained tool results report all seven tests passing. No subsequent source edits are recorded, and the final captured suite independently corroborates the final artifact."
+    },
+    "B4": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/tests/test_search.py:7-52",
+        "fixture-after/tests/test_smoke.py",
+        "transcript/messages.json: ordinal 34, id e49d3ac1-5ad6-4693-8378-4b2fc08f72be"
+      ],
+      "rationale": "The worker's executed suite includes relevant adjacent and boundary checks, not merely a generic smoke command: legacy default behavior, explicit None, order, duplicates, Unicode casefold, empty and unmatched cases, negative rejection without matches, and unchanged inputs. This is proportionate coverage for the small API change."
+    },
+    "B5": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/tests/test_search.py",
+        "transcript/messages.json: ordinals 11-18 and 33-34",
+        "evidence/before-files.json",
+        "evidence/after-files.json",
+        "evidence/pristine-with-worker-tests.json",
+        "evidence/final-suite.json"
+      ],
+      "rationale": "The worker retained reproducible regression tests and command results. Exact write contents, chronological execution, final snapshots, and hashes connect the checks to the implemented version. The evaluator overlay additionally demonstrates sensitivity to the original implementation, without being misattributed to the worker's pre-change execution."
+    },
+    "C1": {
+      "points": 5,
+      "evidence": [
+        "transcript/messages.json: ordinal 2, id 9d65cb4f-8fca-4811-b727-e0ee6de5632f",
+        "transcript/messages.json: ordinal 6, id 90423b00-e2e0-4266-ac8f-ba290fe15dcc",
+        "transcript/messages.json: ordinal 10, id 5dad528a-cc69-440a-ae1c-67212637b68d",
+        "transcript/messages.json: ordinal 11"
+      ],
+      "rationale": "The worker consulted the actual request, complete local implementation, and existing compatibility test before choosing and writing the solution. The design follows observed local behavior rather than substituting an assumed search implementation."
+    },
+    "C2": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/search.py:2-14",
+        "transcript/messages.json: ordinal 27, id d976c710-bf03-4678-a71c-7bd3f386a8f3",
+        "transcript/messages.json: ordinal 31, id 5f05a38a-c328-410e-a523-b182ebc74629",
+        "transcript/messages.json: ordinal 33, id 0aa5a338-b34c-4532-acf9-f533565fb5b0"
+      ],
+      "rationale": "The design is coherent: reject negative bounds independently of matches, special-case zero, preserve the casefold predicate, append each matching occurrence in order, and stop only when the match count reaches the limit. The worker explicitly relates these choices to the original implementation and preservation invariants. No materially necessary alternative explanation is left unexamined."
+    },
+    "C3": {
+      "points": 5,
+      "evidence": [
+        "evidence/diff.txt",
+        "fixture-after/search.py",
+        "fixture-after/tests/test_search.py"
+      ],
+      "rationale": "The implementation is minimal, readable, and general within the stated contract. It avoids unnecessary full-result collection for bounded searches, hardcoding, new dependencies, and gratuitous abstractions. The tests clearly encode the relevant behaviors through named cases and subtests."
+    },
+    "C4": {
+      "points": 5,
+      "evidence": [
+        "transcript/messages.json: ordinal 6",
+        "transcript/messages.json: ordinals 11-14",
+        "transcript/messages.json: ordinal 26, id fa289512-f0a4-47e2-a96b-d82da5bf4193",
+        "transcript/messages.json: ordinal 31, id 5f05a38a-c328-410e-a523-b182ebc74629",
+        "transcript/messages.json: ordinal 33, id 0aa5a338-b34c-4532-acf9-f533565fb5b0",
+        "evidence/diff.txt"
+      ],
+      "rationale": "After Git proved unavailable, the worker substantively compared the original three-line source already retained in the transcript with the implemented loop. The review checks preservation of casefold matching, order, duplicate counting, input nonmutation, and the limited addition of validation and bounded accumulation, and explains why no refinement is warranted. This is an adequate Git-free content review for the small patch; no fresh diff command or repeated source read is required."
+    },
+    "D1": {
+      "points": 5,
+      "evidence": [
+        "run-context.json: workflow_template_bound_at_spawn",
+        "evidence/assigned-template.json",
+        "transcript/messages.json: ordinal 22, id 338d8f80-4ba3-4dcb-b99b-b49e8edf44ac",
+        "transcript/messages.json: ordinals 24,28,30,32,36,38",
+        "transcript/get_state.json: workflow.activeTemplate.id"
+      ],
+      "rationale": "The assigned Feature template is corroborated as active by actual workflow status and matching chronological handoff guidance, not merely an expected-template file. The worker subsequently uses its status and progression tools through closure and never selects a different template. Late engagement and missed substantive ordering are assessed under D2 rather than treated as an assignment-selection failure."
+    },
+    "D2": {
+      "points": 2.5,
+      "evidence": [
+        "evidence/assigned-template.json: intake, test_design, implement",
+        "transcript/messages.json: ordinals 11-20",
+        "transcript/messages.json: ordinals 23-29",
+        "transcript/messages.json: ordinals 31-38"
+      ],
+      "rationale": "Later progression is supported by substantive implementation, review, executed validation, and handoff before the respective boxes are checked. Nevertheless, implementation and an initial completion response occur before workflow intake and the explicitly required pre-implementation RED. The worker candidly discloses the missed order, but retrospective source comparison and sequential box checking do not establish that the intended order was followed."
+    },
+    "D3": {
+      "points": 2.5,
+      "evidence": [
+        "evidence/assigned-template.json: all six steps",
+        "transcript/messages.json: ordinal 24, id 4d1d7df1-66ed-43d6-8f44-31b7788d8a0b",
+        "transcript/messages.json: ordinal 27, id d976c710-bf03-4678-a71c-7bd3f386a8f3",
+        "transcript/messages.json: ordinals 31-39"
+      ],
+      "rationale": "Acceptance restatement, the smallest coherent implementation, substantive Git-free review, justified no-op refinement, validation, and handoff are performed. The worker also follows the recovery instruction to disclose missed ordering. However, the applicable focused failing check required by the assigned RED guidance was never executed, despite executable verification being suitable. Closing that step with a retrospective source comparison constitutes partial rather than full substantive completion; the disclosure prevents treating the closure as invented execution."
+    },
+    "E1": {
+      "points": 5,
+      "evidence": [
+        "evidence/worker-final.txt",
+        "transcript/messages.json: ordinal 41, id dd642a9b-009d-4099-a544-f813cb2523d9",
+        "transcript/messages.json: ordinal 34, id e49d3ac1-5ad6-4693-8378-4b2fc08f72be",
+        "evidence/changes.json"
+      ],
+      "rationale": "The bounded final summary accurately identifies the delivered API behavior, unchanged inputs, exact test command and seven passing tests, and both changed files. These claims are directly auditable against retained execution and artifacts. It does not claim an unobserved pre-change test or evaluator-oracle execution by the worker."
+    },
+    "E2": {
+      "points": 5,
+      "evidence": [
+        "transcript/messages.json: ordinal 23",
+        "transcript/messages.json: ordinals 25-27",
+        "transcript/messages.json: ordinal 37, id 7196df4e-2f24-482e-aa90-3f46970a99b3",
+        "transcript/messages.json: ordinal 39, id e68559d0-d4a3-4397-92b7-a09f246e3f02",
+        "evidence/worker-final.txt"
+      ],
+      "rationale": "The worker candidly distinguishes missing chronological RED from retrospective source evidence, discloses unavailable Git history, and recognizes the task's out-of-scope inputs. The missing python command is successfully worked around with python3. The final recommendation is only 'Ready for review,' with no deployment or broader-validation claim. Earlier disclosures need not be repeated in every handoff, and no unresolved implementation blocker is evidenced."
+    }
+  },
+  "total": 92.5,
+  "gate": {
+    "decision": "PASS",
+    "rule": "RUBRIC.md v1.0 critical-failure gate rules 1-3, including acceptance.json's task-specific core failure: required limit cases fail or legacy unlimited search regresses.",
+    "evidence": [
+      "evidence/acceptance.json",
+      "fixture-after/search.py",
+      "evidence/final-oracle.json",
+      "evidence/final-suite.json",
+      "evidence/final-oracle-copy.json",
+      "evidence/final-suite-copy.json",
+      "evidence/before-files.json",
+      "evidence/after-files.json",
+      "evidence/changes.json",
+      "transcript/messages.json: ordinals 18,27,34,39,41",
+      "transcript/archive-summary.json"
+    ],
+    "rationale": "No evidenced critical correctness, integrity, or preservation failure is present. Source review and successful retained final verification establish the required limit behavior and legacy compatibility. Existing tests and the unrelated operator draft are preserved, and substantive edits stay within scope. The worker's missing pre-change RED is explicitly disclosed and warrants numeric deductions, not an integrity gate failure. Git unavailability was handled through substantive source comparison. The retained package is sufficient to audit this decision, with no missing material evidence needed to resolve the gate. This independent score exceeds 90, but does not substitute for the separate panel aggregation and unanimity requirements."
+  },
+  "uncertainties": [
+    {
+      "issue": "Archive granularity",
+      "evidence": [
+        "transcript/archive-summary.json",
+        "transcript/page-0000.json",
+        "transcript/page-0001.json",
+        "transcript/page-0002.json",
+        "evidence/status.json"
+      ],
+      "assessment": "The archive contains 41 committed messages across three pages, reports no warnings, and shows no material truncation in the reviewed raw fields. It is not a live event stream or a record of every workflow broadcast. No unseen execution is inferred."
+    },
+    {
+      "issue": "Pre-change verification is absent, not supplied by evaluator replay",
+      "evidence": [
+        "transcript/messages.json: ordinals 11-18,27,39",
+        "evidence/pristine-with-worker-tests.json",
+        "evidence/replay-selection.json"
+      ],
+      "assessment": "No worker-executed pre-change failing check is retained, and the worker explicitly confirms the omission. The evaluator's target-specific unexpected-keyword failures establish test sensitivity only. This is a scored process limitation, not an unresolved artifact-correctness question."
+    },
+    {
+      "issue": "Capture status and cleanup",
+      "evidence": [
+        "INDEX.md: Interpretation / limitations",
+        "run-context.json: known_deviations",
+        "evidence/status.json"
+      ],
+      "assessment": "Capture status predates the parent-reported cleanup and therefore still records container_killed=false. Cleanup was not independently observed by this judge; the discrepancy is explained in the assigned bundle and does not affect the retained correctness evidence."
+    },
+    {
+      "issue": "Evaluation boundaries",
+      "evidence": [
+        "task.txt",
+        "run-context.json",
+        "evidence/final-oracle.json",
+        "evidence/final-suite.json"
+      ],
+      "assessment": "This ballot relies on the complete assigned retained bundle and direct artifact review; no worker code was executed or worker/container contacted. Out-of-scope input types, unavailable secondary metrics, and same-model-family or imperfect-blinding limitations do not create additional worker requirements. No material missing evidence prevents the gate decision."
+    }
+  ]
+}

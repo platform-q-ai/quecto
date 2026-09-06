@@ -1,0 +1,147 @@
+{
+  "phase": "bugfix-round-2-voting",
+  "alternatives": [
+    {
+      "step_key": "reproduce",
+      "field": "guidance",
+      "old": "Capture the wrong behavior with a failing test, fixture, command, or clear manual reproduction.",
+      "new": "Before implementing the fix, capture the wrong behavior with a failing test, fixture, command, or clear manual reproduction, and record the observed result. Establish that the failure reflects the target defect, not unrelated setup. For documentation, configuration, or non-executable work, a concrete source-to-artifact mismatch or reproducible derivation is sufficient; do not manufacture a failing test. If the fix already exists or pre-change verification is unavailable, disclose that limitation and label any later reconstruction as retrospective; do not undo others' work or manufacture a pre-change sequence.",
+      "supporting_rationales": [
+        {
+          "evidence": [
+            "run-b3a751/transcript/messages.json ordinals 6, 11-12: original source read, followed by implementation before an executed reproduction.",
+            "run-b3a751/transcript/messages.json ordinals 18-24: passing final tests and initial handoff precede the workflow reminder and reconstructed-original failure run.",
+            "run-ec6204/transcript/messages.json ordinals 6, 11-12: original truthiness expression read, followed by the fix before an executed reproduction.",
+            "run-ec6204/transcript/messages.json ordinals 16-22: passing tests and initial handoff precede the workflow reminder and retrospective monkeypatch reproduction.",
+            "assigned-template-reference.json steps[key=reproduce].guidance: existing text already requires failure capture but does not explicitly state its temporal relationship to implementation."
+          ],
+          "mechanism": "Make the intended pre-fix chronology explicit while preserving the existing choice of reproduction methods. Requiring an observed, defect-relevant result distinguishes execution from an intention to test. The late-entry clause preserves the useful sensitivity evidence supplied by retrospective checks without presenting it as pre-change observation or encouraging rollback solely to recreate a workflow sequence. This addresses an execution-order ambiguity, not an absence of reproduction guidance, and cannot ensure that guidance is consulted.",
+          "risks_costs": [
+            "Adds several sentences to a short first-step instruction; extra text may reduce rather than improve salience.",
+            "Obtaining a meaningful pre-change observation can add work, especially when execution is unsafe or unavailable; the source-comparison and derivation alternatives avoid mandatory tooling or artificial failures.",
+            "The late-entry exception could become a routine excuse for implementation-first behavior; its explicit limitation and retrospective labeling must not be treated as equivalent to a pre-change observation.",
+            "If workers encounter the guidance only after their initial handoff, this replacement may improve chronology disclosure without changing implementation order."
+          ],
+          "transfer_example": "For a broken command-line path parser, execute and record a representative failing invocation before changing parsing logic, then use the existing regression step to check the repaired behavior. For an incorrect configuration example, establish the concrete disagreement with its authoritative schema before editing instead of manufacturing an executable failure.",
+          "goal_conflicts": [
+            "None identified: the replacement is language-, framework-, platform-, hosting-, and tool-neutral; permits evidence-first non-executable alternatives; and explicitly avoids fake RED and undoing others' work.",
+            "No new demand to reselect a bound workflow, change the task prompt or harness, or alter the existing final verification requirements."
+          ],
+          "overlaps_or_dependencies": [
+            "No second replacement proposed: the existing regression guidance already requires final-artifact verification and substantive review.",
+            "Depends on the reproduce guidance being encountered early enough to influence work; changing activation or reminder delivery is outside this proposal."
+          ],
+          "falsifiable_prediction": "In fresh Bugfix runs where the replacement is demonstrably available before the first implementation edit, workers will more often retain a defect-relevant pre-change observation before that edit. Where first engagement occurs after implementation, subsequent reconstructions will be explicitly identified as retrospective rather than treated as pre-change verification. Continued implementation-first behavior despite early engagement, or continued unlabeled retrospective reconstruction after late engagement, would count against these predicted effects."
+        }
+      ],
+      "alternative_id": "F1"
+    },
+    {
+      "step_key": "reproduce",
+      "field": "guidance",
+      "old": "Capture the wrong behavior with a failing test, fixture, command, or clear manual reproduction.",
+      "new": "Before applying a fix, capture the wrong behavior with a failing test, fixture, command, or clear manual reproduction. Observe and record a result attributable to the reported defect, not an unrelated setup failure. For non-executable artifacts, record the specific mismatch against the authoritative source before editing. If the fix is already applied, disclose the missed baseline; label any later original-behavior check as retrospective rather than pre-change evidence, and do not undo others' work to manufacture a baseline.",
+      "supporting_rationales": [
+        {
+          "evidence": [
+            {
+              "locator": "run-b3a751/transcript/messages.json ordinals 11-18",
+              "observation": "The worker wrote the implementation and regression tests before executing checks; the first attempted command failed because the python alias was unavailable, and the subsequent python3 suite passed."
+            },
+            {
+              "locator": "run-b3a751/transcript/messages.json ordinals 19-24",
+              "observation": "Only after an initial handoff and workflow reminder did the worker execute regression tests against an in-memory reconstruction of the original implementation."
+            },
+            {
+              "locator": "run-ec6204/transcript/messages.json ordinals 11-22",
+              "observation": "The worker edited settings.py, added tests, observed GREEN, and handed off before a reminder led to a retrospective original-expression substitution and observed failures."
+            },
+            {
+              "locator": "round-2-bugfix/assigned-template-reference.json steps[key=reproduce].guidance",
+              "observation": "The existing instruction already requires failure capture, but does not explicitly state pre-fix timing or distinguish retrospective sensitivity checks from a pre-change baseline."
+            }
+          ],
+          "mechanism": "Make the intended temporal relationship explicit at the reproduction step and give an honest recovery rule when that opportunity has been missed. The demonstrated problem is failure to execute reproduction before editing, not absence of a reproduction requirement. Retrospective checks remain useful evidence of regression sensitivity, but their timing must remain visible. This replacement can influence behavior only when the worker actually encounters and follows the guidance.",
+          "risks_costs": [
+            "Adds three sentences to a previously short instruction, increasing reading cost and potentially reducing salience.",
+            "A worker may pursue an expensive reproduction unnecessarily; manual and authoritative-source alternatives keep the requirement proportionate without mandating a particular runtime or test framework.",
+            "The missed-baseline recovery clause could be treated as permission to implement first; its opening pre-fix instruction remains the preferred order, and recovery explicitly discloses the omission.",
+            "The evidence does not show that a setup error was mistaken for defect RED; that distinction is preventive clarification, not a claimed observed integrity failure.",
+            "This wording cannot ensure that bound startup guidance is seen before the worker begins editing."
+          ],
+          "transfer_example": "For a broken documentation link, compare the current destination with the existing page inventory before editing, retain that mismatch, and then use the unchanged regression-step guidance to verify the repaired destination. This establishes meaningful pre-change evidence without inventing an executable failing test.",
+          "goal_conflicts": [
+            {
+              "constraint": "Portable, evidence-first verification without fake RED or destructive baseline reconstruction.",
+              "assessment": "No identified conflict: the replacement accepts executable, manual, and source-comparison evidence, requires no particular tool or host, and prohibits undoing others' work to manufacture chronology."
+            },
+            {
+              "constraint": "Minimal template correction rather than task coaching, harness changes, or excessive ritual.",
+              "assessment": "One guidance field changes; no task identifiers, expected outputs, mandatory workflow selection, new steps, or tooling requirements enter the replacement."
+            }
+          ],
+          "overlaps_or_dependencies": [
+            "No second proposal is submitted.",
+            "Depends on the existing regression guidance to rerun the reproduction and adjacent checks on the final artifact; it does not duplicate or replace that guidance.",
+            "Does not address startup activation or initial guidance delivery, which are outside this guidance-only proposal."
+          ],
+          "falsifiable_prediction": "In fresh Bugfix tasks where the reproduction guidance is demonstrably encountered before editing, the replacement predicts more retained defect-relevant observations before the first fix than the reference wording. Where workers still edit first, it predicts explicit disclosure of the missed baseline and retrospective labeling of later original-behavior checks. Continued edit-first behavior without that disclosure despite demonstrated exposure would count against the proposed mechanism."
+        }
+      ],
+      "alternative_id": "F2"
+    },
+    {
+      "step_key": "reproduce",
+      "field": "guidance",
+      "old": "Capture the wrong behavior with a failing test, fixture, command, or clear manual reproduction.",
+      "new": "Before changing the implementation, observe and record the wrong behavior with a failing test, command, fixture check, or clear manual reproduction that distinguishes the defect from setup failure. For documentation, configuration, or non-executable work, a specific source-to-artifact comparison or reproducible derivation may establish the mismatch instead. If reproduction is unavailable, record the limitation before proceeding. If implementation has already changed, disclose that chronology; retrospective checks can establish regression sensitivity but not pre-change observation. Do not undo others' work or introduce a defect to manufacture a failure.",
+      "supporting_rationales": [
+        {
+          "evidence": [
+            "run-b3a751/transcript/messages.json: ordinals 11-12 implement the fix; 18-19 show passing tests and initial handoff; 20-24 show the reminder and subsequent reconstructed-original reproduction.",
+            "run-ec6204/transcript/messages.json: ordinals 11-12 implement the fix; 16-17 show passing tests and initial handoff; 18-22 show the reminder and subsequent monkeypatched-original reproduction.",
+            "round-2-bugfix/assigned-template-reference.json: steps[key=reproduce].guidance already requests failure capture but does not explicitly distinguish pre-change observation from retrospective sensitivity checks."
+          ],
+          "mechanism": "Make the temporal prerequisite and the meaning of the evidence explicit at the reproduction step. Both workers eventually demonstrated genuine regression sensitivity, so the missing behavior was not an inability to construct a meaningful check; it was observing the defect before implementation. The replacement preserves legitimate retrospective checks while requiring accurate chronology and safe handling of unavailable reproduction. Existing final-artifact verification guidance remains unchanged.",
+          "risks_costs": [
+            "Longer guidance may reduce salience; the first sentence therefore carries the principal behavioral requirement.",
+            "Recording an unavailable reproduction can become a shortcut unless the stated limitation is concrete and supported by the task environment.",
+            "The documentation and derivation alternatives must establish a specific mismatch, not substitute an unsupported assertion for an executable reproduction when one is practical.",
+            "This change may have no effect when the worker does not encounter or attend to the active step before editing; it is not an activation remedy.",
+            "The chronology distinction must not be interpreted as requiring a rollback or discrediting useful retrospective regression checks."
+          ],
+          "transfer_example": "For a command-line parser that incorrectly rejects a documented option, run the existing command with that option and retain the target-specific rejection before changing parsing code. For a documentation-only variant, compare the documented option with the authoritative interface before editing, without inventing an executable RED or changing product code.",
+          "goal_conflicts": [
+            "No identified conflict: the replacement is language-, framework-, platform-, hosting-, and tool-neutral, permits evidence-first non-executable alternatives, and expressly avoids manufactured failures and undoing others' work.",
+            "It changes one guidance field only; it does not mandate workflow reselection, change the harness or task prompt, or alter scoring criteria."
+          ],
+          "overlaps_or_dependencies": [
+            "Overlaps with the existing reproduction requirement by clarifying timing and evidence interpretation rather than adding another workflow step.",
+            "Depends on the reproduction guidance being encountered before implementation for its preventive effect.",
+            "No second replacement is proposed: the retained evidence supports preserving the existing final-verification and handoff guidance rather than adding redundant reminders there."
+          ],
+          "falsifiable_prediction": "On fresh, materially different Bugfix tasks where the reproduction guidance is demonstrably encountered before the first implementation edit, this replacement should increase the frequency of recorded target-specific pre-change failures or supported task-type mismatch derivations relative to the unchanged guidance. For runs that edit first, retrospective checks should be explicitly identified as retrospective without destructive rollback. No improvement in these observable behaviors would count against the proposed mechanism; later workflow activation alone would not confirm it."
+        }
+      ],
+      "alternative_id": "F3"
+    }
+  ],
+  "overlap_groups": [
+    {
+      "group_id": "overlap-reproduce",
+      "alternatives": [
+        "F1",
+        "F2",
+        "F3"
+      ],
+      "rule": "Mutually exclusive exact replacements of the same field; choose one, do not merge."
+    }
+  ],
+  "constraints": [
+    "Exact submitted wording; no synthesized or merged alternative.",
+    ">=2 YES and no unresolved goal conflict required.",
+    "Rank alternatives within each overlap group, including status quo; rank only among eligible alternatives when choosing winner.",
+    "No candidate/source/rubric changes in this phase.",
+    "Bound-at-spawn versus selection/activation is a confound; text improvements remain unvalidated hypotheses."
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "type": "response",
+  "id": "061a8258-228d-4bf9-8e6d-0c335612a292",
+  "command": "get_session_stats",
+  "success": true,
+  "data": {
+    "assistantMessages": 20,
+    "cacheHitRatio": 0.6100344463408004,
+    "contextTokens": 55889,
+    "costMicroUsd": 2383412,
+    "maxContextTokens": 250000,
+    "sessionKey": "cli:57fa574f-e126-4aa6-be47-9b9c0bd1cd9b",
+    "tokens": {
+      "cacheRead": 273792,
+      "cacheWrite": 0,
+      "input": 175022,
+      "output": 7188,
+      "total": 182210
+    },
+    "toolCalls": 22,
+    "toolResults": 22,
+    "totalMessages": 44,
+    "userMessages": 1
+  }
+}

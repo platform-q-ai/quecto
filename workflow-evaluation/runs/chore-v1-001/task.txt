@@ -1,0 +1,1 @@
+In /workspace/task, align config/example.json with the supplied local-development policy: bind only to 127.0.0.1, disable debug, and retain port 8080 and the existing logging settings. Remove the obsolete trace field, which the loader rejects. Do not change the loader or policy; this is example-configuration maintenance.

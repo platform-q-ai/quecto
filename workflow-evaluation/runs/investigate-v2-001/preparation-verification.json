@@ -1,0 +1,27 @@
+{
+  "run_dir": "workflow-evaluation/runs/investigate-v2-001",
+  "task": "investigate-v2",
+  "status": "PREPARED_ONLY_NOT_LAUNCHED",
+  "checks": {
+    "candidate_bytes_exact": true,
+    "candidate_hash_matches_base": true,
+    "assigned_template_exact": true,
+    "spec_exact": true,
+    "canonical_spec_matches_base": true,
+    "assigned_template_hash": true,
+    "spec_file_hash": true,
+    "prompt_exact_catalog": true,
+    "prompt_hash": true,
+    "fixture_hashes": true,
+    "taskless_spawn": true,
+    "model_effort": true,
+    "sandbox": true,
+    "workflow_flags": true,
+    "disabled_tools": true,
+    "not_provisioned": true,
+    "frozen_manifest_unchanged": true
+  },
+  "candidate_sha256": "693d790a04369da13abad54205d4758681db9ee45758db35efeff99b7cd57eb2",
+  "canonical_spec_sha256": "e2ef3cea39ed449881e7afdf69e965f8f5914d5e897f80c0327b051a2f85f2ab",
+  "prompt_sha256": "cd2bdad5e73c20a86a2c5536573c80741dbfeb151deb648d96ae9af479407ac7"
+}

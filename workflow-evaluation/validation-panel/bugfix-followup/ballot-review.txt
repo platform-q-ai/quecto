@@ -1,0 +1,57 @@
+bugfix-base-003 {'judge-1': 100, 'judge-2': 100, 'judge-3': 100} 100 PASS adjudication False
+Audit: 1 runs; 0 locator issues for review; 0 hash mismatches
+{
+  "B1": {
+    "points": 5,
+    "evidence": [
+      "transcript/messages.json: ordinal 14, id 46f72e52-c62b-4a89-b872-63d9416e1354",
+      "transcript/messages.json: ordinal 15, id 3b50444f-e256-4278-b3b5-450786d6355c",
+      "transcript/messages.json: ordinals 16-17, implementation edit and result"
+    ],
+    "rationale": "Before editing the implementation, the worker actually ran the newly added suite and observed two assertion failures showing touching intervals incorrectly combined. The failures reached the intended function and were not setup errors. This chronological worker evidence, rather than the later evaluator overlay, establishes the pre-change baseline."
+  },
+  "B2": {
+    "points": 5,
+    "evidence": [
+      "transcript/messages.json: ordinal 12, id 17ca3d80-88da-45b1-89ca-1f9fc27731dc, test-file write arguments",
+      "transcript/messages.json: ordinal 15, id 3b50444f-e256-4278-b3b5-450786d6355c, both assertion traces",
+      "fixture-after/tests/test_merge.py:7-21"
+    ],
+    "rationale": "The checks distinguish the specific endpoint defect from plausible incorrect fixes. They require touching intervals to stay separate, genuine overlaps to continue merging, and unsorted mixed cases to produce the correct grouping. Both target-sensitive assertions failed before implementation changed, while surrounding overlap and edge checks passed."
+  },
+  "D1": {
+    "points": 5,
+    "evidence": [
+      "run-context.json: workflow_template_bound_at_spawn and template_sha256",
+      "evidence/assigned-template.json: id and all five steps",
+      "transcript/messages.json: ordinal 23, id 48e2d36e-fa73-412c-b6ad-2ca889e0991f",
+      "transcript/messages.json: ordinals 25, 27, 29, 35, and 37, workflow handoffs",
+      "transcript/get_state.json: data.workflow.activeTemplate.id"
+    ],
+    "rationale": "The actual active template is corroborated by workflow status and chronological guidance matching the assigned five-step Bugfix template, not merely by an expected-template artifact. Although bookkeeping began after an initial task summary and continuation prompt, the worker then used the assigned progression and handoffs through completion without selecting another workflow. The bound assignment did not require reselection."
+  },
+  "D2": {
+    "points": 5,
+    "evidence": [
+      "evidence/assigned-template.json: steps reproduce, diagnose, fix, regression, and handoff",
+      "transcript/messages.json: ordinals 12-19, substantive diagnosis, RED, edit, and GREEN",
+      "transcript/messages.json: ordinal 24, id 0010ce40-60fb-4504-965c-62ea1f3d9ba4",
+      "transcript/messages.json: ordinals 24-29, checks for steps 1-3",
+      "transcript/messages.json: ordinals 32-35, final review before checking step 4",
+      "transcript/messages.json: ordinals 36-37, handoff before step 5 completion"
+    ],
+    "rationale": "The required substantive ordering is supported: target failure was observed before implementation changed, the diagnosis and related checks justified the minimal fix, final verification and review preceded completion of the regression step, and the handoff preceded its completion check. The worker accurately disclosed that the first three steps had already been performed when recording them. No actual assigned guidance requires each earlier checkbox to be recorded before the next implementation action; no unsupported skip or manufactured RED occurred."
+  },
+  "D3": {
+    "points": 5,
+    "evidence": [
+      "evidence/assigned-template.json: all step guidance",
+      "transcript/messages.json: ordinal 15, pre-change reproduction",
+      "transcript/messages.json: ordinals 12, 17, and 26, diagnosis and minimal fix",
+      "transcript/messages.json: ordinals 33-34, final verification and substantive review",
+      "transcript/messages.json: ordinal 36, id f2cd59de-55b5-483b-bc0b-6391465264db",
+      "transcript/messages.json: ordinal 37, workflow completion result"
+    ],
+    "rationale": "All applicable guidance was substantively performed, with execution and source evidence behind the checked steps. The allowed direct-content review fallback was used and its reason recorded. Before the final step was checked, the worker summarized the defect, fix, changed artifacts, actual test results, review limitation and workaround, and remaining-risk assessment. Final closure is supported rather than merely asserted."
+  }
+}

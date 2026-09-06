@@ -1,0 +1,27 @@
+{
+  "README.md": {
+    "bytes": 206,
+    "sha256": "93947cdc8935ef8781aa54f33170515d11449c69520c6bc806854fab918822f4",
+    "type": "file"
+  },
+  "notes/operator-draft.txt": {
+    "bytes": 50,
+    "sha256": "d46939cae5e3e620ee9350a64ceeaf46d126933427d77883c3beaa50270d69ee",
+    "type": "file"
+  },
+  "rollup.py": {
+    "bytes": 342,
+    "sha256": "719cdc70b8670f13e320f6d42bb31690d7dd670a3c1ffc38c432f1fc02d4e853",
+    "type": "file"
+  },
+  "tests/test_by_category.py": {
+    "bytes": 2070,
+    "sha256": "848714d3771be7bf4daeccb1d1998ec07b6430fb4948514bbd58e0d1843afee6",
+    "type": "file"
+  },
+  "tests/test_smoke.py": {
+    "bytes": 164,
+    "sha256": "e565e0d20366a24987c9e8a05b66169b8f734725f9b0b3ab105906997f80eaa1",
+    "type": "file"
+  }
+}

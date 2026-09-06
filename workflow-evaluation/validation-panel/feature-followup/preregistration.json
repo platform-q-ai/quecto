@@ -1,0 +1,55 @@
+{
+  "status": "PREREGISTERED_BEFORE_LAUNCH",
+  "anonymous_run_id": "run-417da8",
+  "judges": [
+    {
+      "judge_id": "judge-1",
+      "model": "openai-oauth/gpt-6-astra",
+      "effort": "high",
+      "read_only": true,
+      "workflow": false,
+      "disable_tools": [
+        "spawn",
+        "agent_cmd",
+        "web_fetch",
+        "web_search"
+      ],
+      "prompt_sha256": "0b911a628c76d68f7bf2174c03e57435c81b4fe67467be737ec73aebc00e9485"
+    },
+    {
+      "judge_id": "judge-2",
+      "model": "openai-oauth/gpt-6-astra",
+      "effort": "high",
+      "read_only": true,
+      "workflow": false,
+      "disable_tools": [
+        "spawn",
+        "agent_cmd",
+        "web_fetch",
+        "web_search"
+      ],
+      "prompt_sha256": "7927debddc9b4d7073352cad76cfe39d4ed3931a1805deb574313a14525e1fd9"
+    },
+    {
+      "judge_id": "judge-3",
+      "model": "openai-oauth/gpt-6-astra",
+      "effort": "high",
+      "read_only": true,
+      "workflow": false,
+      "disable_tools": [
+        "spawn",
+        "agent_cmd",
+        "web_fetch",
+        "web_search"
+      ],
+      "prompt_sha256": "50ac6e6a1e00820e8392e24e43b718132aaa618eaf2af6cae4a3a211ac44e13c"
+    }
+  ],
+  "sealing": "Three fresh sessions; no previous scores, proposals, target, or other ballots.",
+  "aggregation": "sum per-criterion medians; adjudication once if totals spread >10 or gates disagree",
+  "proposal_phase_authorized": false,
+  "limitations": [
+    "Independent same-model sessions, not provider diversity.",
+    "Imperfect condition blinding from unchanged raw evidence."
+  ]
+}

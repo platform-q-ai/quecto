@@ -1,0 +1,193 @@
+{
+  "capture_status": "CAPTURED_FOR_REVIEW",
+  "files": [
+    {
+      "bytes": 153,
+      "path": "fixture-before/README.md",
+      "sha256": "ce22c71afcbd05f7e0c2d9b14f8797e74bc6c05f3272206c41afb96bbf9535af"
+    },
+    {
+      "bytes": 114,
+      "path": "fixture-before/docs/start.md",
+      "sha256": "857cf9698b926450f3cb7b3356de7742c059e68675f1a098ce41f85b5b60d3b3"
+    },
+    {
+      "bytes": 36,
+      "path": "fixture-before/docs/guide/install.md",
+      "sha256": "1290d9893dba21ba8155bf5eb1bb0abbcb7e2052dfec156c7f7bb9cc2c7afb62"
+    },
+    {
+      "bytes": 39,
+      "path": "fixture-before/docs/support/troubleshooting.md",
+      "sha256": "96ba1a8c66399cbc936c772ee5d85b00a89327994e9238dc2bb33d1904675cbe"
+    },
+    {
+      "bytes": 50,
+      "path": "fixture-before/notes/operator-draft.txt",
+      "sha256": "d46939cae5e3e620ee9350a64ceeaf46d126933427d77883c3beaa50270d69ee"
+    },
+    {
+      "bytes": 153,
+      "path": "fixture-after/README.md",
+      "sha256": "ce22c71afcbd05f7e0c2d9b14f8797e74bc6c05f3272206c41afb96bbf9535af"
+    },
+    {
+      "bytes": 139,
+      "path": "fixture-after/docs/start.md",
+      "sha256": "9b111c645c9b65c59631a88ee0f80d9b01b446f9a9e5b4bada863caae550b613"
+    },
+    {
+      "bytes": 36,
+      "path": "fixture-after/docs/guide/install.md",
+      "sha256": "1290d9893dba21ba8155bf5eb1bb0abbcb7e2052dfec156c7f7bb9cc2c7afb62"
+    },
+    {
+      "bytes": 39,
+      "path": "fixture-after/docs/support/troubleshooting.md",
+      "sha256": "96ba1a8c66399cbc936c772ee5d85b00a89327994e9238dc2bb33d1904675cbe"
+    },
+    {
+      "bytes": 50,
+      "path": "fixture-after/notes/operator-draft.txt",
+      "sha256": "d46939cae5e3e620ee9350a64ceeaf46d126933427d77883c3beaa50270d69ee"
+    },
+    {
+      "bytes": 590,
+      "path": "transcript/get_state.json",
+      "sha256": "9b8ba4a83f0dea8eb578f6fe699f7560296f16e8b3730e2092fa3122126bcd04"
+    },
+    {
+      "bytes": 589,
+      "path": "transcript/get_session_stats.json",
+      "sha256": "7d24f59d12dda3c8f562da8e95e012251f164e6f447677c3787a0508c0846e77"
+    },
+    {
+      "bytes": 19945,
+      "path": "transcript/page-0000.json",
+      "sha256": "2db5671cd0bba897acd97cf41ad6b0b5157c92629345390a1ffd358966f194f4"
+    },
+    {
+      "bytes": 4587,
+      "path": "transcript/page-0001.json",
+      "sha256": "c6d1bf100d02d0ebfcbef2257c8e9d4700fffa3c45667715805fbb748fedc3b6"
+    },
+    {
+      "bytes": 22544,
+      "path": "transcript/messages.json",
+      "sha256": "89f66fbc79a62369cfd33eb3db0e62ac43a5fd0a502024968de68c5e0d2f21b8"
+    },
+    {
+      "bytes": 248,
+      "path": "transcript/archive-summary.json",
+      "sha256": "f735624784919eb56f962983ae29f4618b1f6c07c7dc6ffa5d8a570e8120b8ad"
+    },
+    {
+      "bytes": 1135,
+      "path": "capture-da50175e0a70/status.json",
+      "sha256": "b38e5f5c0ca7cb6ab527881fe2acb6fc09a8eefe931bafd34d2d54150a16727d"
+    },
+    {
+      "bytes": 526,
+      "path": "capture-da50175e0a70/archive.json",
+      "sha256": "273b9677248f3241b77d2d7880350f0571ffe351f3f18754b6c9f64d9d6cb2f8"
+    },
+    {
+      "bytes": 281,
+      "path": "capture-da50175e0a70/copy-fixture.json",
+      "sha256": "31dbbfe7a862dd726ae0e2573d3cc325b300592dc0977c485220ef0d8dbde276"
+    },
+    {
+      "bytes": 758,
+      "path": "capture-da50175e0a70/before-files.json",
+      "sha256": "6bdd28f41eb27cbd274ae74495d6f64756eb47a19296e554498b3f31e0d4408f"
+    },
+    {
+      "bytes": 758,
+      "path": "capture-da50175e0a70/after-files.json",
+      "sha256": "b39f6d824ae66c98837d2d89fe35db07dea7d79dbcab14c5fc76c4d14db33db0"
+    },
+    {
+      "bytes": 184,
+      "path": "capture-da50175e0a70/changes.json",
+      "sha256": "9df3a784df1de21a743ddb7ffc62f7afeadf228f7db96e07ab2b2f3b4efc5d77"
+    },
+    {
+      "bytes": 290,
+      "path": "capture-da50175e0a70/diff.txt",
+      "sha256": "60161b8aea7d52f262a9025d92592b280f9637fdd71d71148b3fb986a8730b57"
+    },
+    {
+      "bytes": 428,
+      "path": "capture-da50175e0a70/acceptance.json",
+      "sha256": "0a33efef0b4fa58c3e32d41eeb63c6ab8991dda59be39c766aa8d2643f1e965e"
+    },
+    {
+      "bytes": 682,
+      "path": "capture-da50175e0a70/oracle.py",
+      "sha256": "3bc80ba03d5b464ddc64cac9304c56c508b503284614181a8e6ce5250f8ea906"
+    },
+    {
+      "bytes": 15148,
+      "path": "capture-da50175e0a70/RUBRIC.md",
+      "sha256": "e28b264ad670da1fa63dfa53700d1705956886265ee54e51d3825f0c54f16b1b"
+    },
+    {
+      "bytes": 1954,
+      "path": "capture-da50175e0a70/assigned-template.json",
+      "sha256": "e1ffac8d37aa4497be98498da7d2894aecce69174288d4f914c6709080f161cd"
+    },
+    {
+      "bytes": 4556,
+      "path": "capture-da50175e0a70/transcript-index.json",
+      "sha256": "1ade8781b6567f5aa5e68aa71cf5cc94b5b6a71416db235d9ab600d315acefd7"
+    },
+    {
+      "bytes": 262,
+      "path": "capture-da50175e0a70/worker-final.txt",
+      "sha256": "e22169ad66e847530d35ba335d204064750714acb6ea871de2dc90a050a0ee94"
+    },
+    {
+      "bytes": 238,
+      "path": "capture-da50175e0a70/allocate-stage.json",
+      "sha256": "cd2236bb5648534985b273ebe4e72d89c46b3399c72c5f032d19c1cd6e44c3ef"
+    },
+    {
+      "bytes": 282,
+      "path": "capture-da50175e0a70/final-oracle-copy.json",
+      "sha256": "ceff3c1b4df3f751fd5c803e0072aeed2c5a7ea8b153b11463e7a87701517853"
+    },
+    {
+      "bytes": 1169,
+      "path": "capture-da50175e0a70/final-oracle.json",
+      "sha256": "16ba1fed7a335dcfc960ca7462fe7624b5c5eaf2baae143debacce2cfc3bceec"
+    },
+    {
+      "bytes": 344,
+      "path": "capture-da50175e0a70/replay-selection.json",
+      "sha256": "b07bd9800f518efe013a974cf0d2cef0d00364d4d222d6331c74f6b25b27c486"
+    },
+    {
+      "bytes": 230,
+      "path": "task.txt",
+      "sha256": "bf142acba8a6b4ddd307c0869e1c1d0be414e5593b9508232597a46519c4438a"
+    },
+    {
+      "bytes": 1122,
+      "path": "provision.json",
+      "sha256": "7038b44924514e09f02ca4b3e40b171bedfc7621e916ccae2d95903b731d5609"
+    },
+    {
+      "bytes": 1183,
+      "path": "setup.json",
+      "sha256": "adebf797b31f3d63e1fc4b87e0c7920b801a9a7bd4b57454154964cb9c647798"
+    }
+  ],
+  "judge_warning": "Compare actual artifact-review evidence, not Git availability. Do not infer behavior from workflow checkmarks.",
+  "read_first": [
+    "status.json",
+    "RUBRIC.md",
+    "acceptance.json",
+    "changes.json",
+    "diff.txt"
+  ]
+}

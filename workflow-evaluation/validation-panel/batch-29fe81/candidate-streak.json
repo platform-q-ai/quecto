@@ -1,0 +1,32 @@
+{
+  "status": "FINAL_LOCKED",
+  "workflow": "feature",
+  "candidate_sha256": "28a9cc688ab6e6b2dedc51b6913abb06d29f8ac0dcbfb0b167d176bb5200f2d3",
+  "ordered_runs": [
+    {
+      "run": "feature-base-003",
+      "panel_score": 92.5,
+      "gate": "PASS",
+      "qualifying": true
+    },
+    {
+      "run": "feature-v1-002",
+      "panel_score": 87.5,
+      "gate": "PASS",
+      "qualifying": false
+    },
+    {
+      "run": "feature-v2-002",
+      "panel_score": 87.5,
+      "gate": "PASS",
+      "qualifying": false
+    }
+  ],
+  "three_consecutive_qualifying_runs": false,
+  "trailing_qualifying_count": 0,
+  "limitations": [
+    "Cross-panel B1/B2 anchor variability retained; no rescore.",
+    "Scores do not prove guidance causality; binding/activation salience confound.",
+    "Independent same-model sessions, no provider diversity; imperfect condition blinding."
+  ]
+}

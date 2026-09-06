@@ -1,0 +1,35 @@
+{
+  "type": "response",
+  "command": "get_state",
+  "success": true,
+  "data": {
+    "effort": "low",
+    "effortLevels": [
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "generation": 3,
+    "model": "openai-oauth/gpt-6-astra",
+    "progress": {
+      "reason": "no tool activity in the last 120 seconds",
+      "state": "quiet"
+    },
+    "sessionKey": "cli:363d3309-3128-4dcd-91c3-f5b0b3099c7e",
+    "state": "idle",
+    "workflow": {
+      "activeTemplate": {
+        "id": "chore"
+      },
+      "currentStep": {
+        "done": false,
+        "index": 1,
+        "key": "scope",
+        "label": "Scope the chore",
+        "phase": "setup"
+      }
+    }
+  }
+}

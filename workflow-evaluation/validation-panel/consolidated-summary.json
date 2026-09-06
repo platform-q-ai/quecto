@@ -1,5 +1,5 @@
 {
-  "status": "ALL_SIX_RUNS_FINAL_LOCKED",
+  "status": "ALL_SIXTEEN_COORDINATOR_SCORED_RUNS_LOCKED",
   "locked_results": {
     "refactor-v1-001": {
       "panel_score": 92.5,
@@ -70,6 +70,124 @@
       "final_status": "NONQUALIFYING_SCORE_BELOW_90",
       "summary": "batch-4f8c2e/summary.json",
       "anonymous_id": "run-63ab9e"
+    },
+    "feature-base-003": {
+      "panel_score": 92.5,
+      "gate": "PASS",
+      "individual_totals": {
+        "judge-1": 92.5,
+        "judge-2": 92.5,
+        "judge-3": 92.5
+      },
+      "final_status": "QUALIFYING",
+      "summary": "feature-followup/summary.json"
+    },
+    "investigate-v1-001": {
+      "panel_score": 97.5,
+      "gate": "PASS",
+      "individual_totals": {
+        "judge-1": 97.5,
+        "judge-2": 95,
+        "judge-3": 97.5
+      },
+      "final_status": "QUALIFYING",
+      "summary": "batch-6d90a7/summary.json",
+      "anonymous_id": "run-5db209"
+    },
+    "investigate-v2-001": {
+      "panel_score": 97.5,
+      "gate": "PASS",
+      "individual_totals": {
+        "judge-1": 97.5,
+        "judge-2": 95,
+        "judge-3": 97.5
+      },
+      "final_status": "QUALIFYING",
+      "summary": "batch-6d90a7/summary.json",
+      "anonymous_id": "run-26a8fc"
+    },
+    "chore-v1-001": {
+      "panel_score": 97.5,
+      "gate": "PASS",
+      "individual_totals": {
+        "judge-1": 97.5,
+        "judge-2": 95,
+        "judge-3": 97.5
+      },
+      "final_status": "QUALIFYING",
+      "summary": "batch-6d90a7/summary.json",
+      "anonymous_id": "run-e107bd"
+    },
+    "chore-v2-001": {
+      "panel_score": 97.5,
+      "gate": "PASS",
+      "individual_totals": {
+        "judge-1": 97.5,
+        "judge-2": 95,
+        "judge-3": 97.5
+      },
+      "final_status": "QUALIFYING",
+      "summary": "batch-6d90a7/summary.json",
+      "anonymous_id": "run-904c3e"
+    },
+    "bugfix-v1-001": {
+      "panel_score": 87.5,
+      "gate": "PASS",
+      "individual_totals": {
+        "judge-1": 90,
+        "judge-2": 85,
+        "judge-3": 87.5
+      },
+      "final_status": "NONQUALIFYING_SCORE_BELOW_90",
+      "summary": "batch-6d90a7/summary.json",
+      "anonymous_id": "run-b3a751"
+    },
+    "bugfix-v2-001": {
+      "panel_score": 87.5,
+      "gate": "PASS",
+      "individual_totals": {
+        "judge-1": 90,
+        "judge-2": 85,
+        "judge-3": 87.5
+      },
+      "final_status": "NONQUALIFYING_SCORE_BELOW_90",
+      "summary": "batch-6d90a7/summary.json",
+      "anonymous_id": "run-ec6204"
+    },
+    "feature-v1-002": {
+      "panel_score": 87.5,
+      "gate": "PASS",
+      "individual_totals": {
+        "judge-1": 87.5,
+        "judge-2": 87.5,
+        "judge-3": 90
+      },
+      "final_status": "NONQUALIFYING_SCORE_BELOW_90",
+      "summary": "batch-29fe81/summary.json",
+      "anonymous_id": "run-a3906f"
+    },
+    "feature-v2-002": {
+      "panel_score": 87.5,
+      "gate": "PASS",
+      "individual_totals": {
+        "judge-1": 85,
+        "judge-2": 87.5,
+        "judge-3": 90
+      },
+      "final_status": "NONQUALIFYING_SCORE_BELOW_90",
+      "summary": "batch-29fe81/summary.json",
+      "anonymous_id": "run-74cd12"
+    },
+    "bugfix-base-003": {
+      "panel_score": 100,
+      "gate": "PASS",
+      "individual_totals": {
+        "judge-1": 100,
+        "judge-2": 100,
+        "judge-3": 100
+      },
+      "final_status": "QUALIFYING",
+      "summary": "bugfix-followup/summary.json"
     }
   },
   "limitations": [
@@ -79,6 +197,9 @@
     "These run scores alone do not assert a workflow streak or population-level success rate.",
     "Bugfix meaningful reconstructed-original failures occur after implementation; feature has no worker RED. Evaluator pristine replay cannot supply pre-change chronology.",
     "Feature remains numerically nonqualifying at 87.5 despite unanimous gate PASS.",
-    "Judge 1/2 batch archive collapse stubs fully recovered with raw supplemental get_message responses."
-  ]
+    "Judge 1/2 batch archive collapse stubs fully recovered with raw supplemental get_message responses.",
+    "Bugfix varied runs v1/v2 score 87.5/PASS each, breaking the qualifying streak despite correct final artifacts. No additional proposal cycle authorized."
+  ],
+  "candidate_streaks": "batch-6d90a7/candidate-streaks.json",
+  "feature_round2_streak": "batch-29fe81/candidate-streak.json"
 }

@@ -1,0 +1,12 @@
+{
+  "command": [
+    "podman",
+    "cp",
+    "quecto-env-x0ipyOzG1R:/workspace/task",
+    "/home/swq/Documents/github/quecto/workflow-evaluation/runs/bugfix-base-003/capture-a8b61b8395dd/copy-in-progress"
+  ],
+  "returncode": 0,
+  "stderr": "",
+  "stdout": "",
+  "timed_out": false
+}

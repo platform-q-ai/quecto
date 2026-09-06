@@ -1,0 +1,48 @@
+{
+  "status": "ARCHIVED_VERIFIED_CLEANED_READY_FOR_PANEL",
+  "run_dir": "workflow-evaluation/runs/feature-base-003",
+  "capture": "workflow-evaluation/runs/feature-base-003/capture-f16518ac6246",
+  "uuid": "207c6f90-7f1e-4f8b-b9aa-d22ff0cc5f87",
+  "container_ref": "C12",
+  "workspace": "/home/swq/.quecto/container-environments/env-KyicmUnE8b/workspace",
+  "checks_exit_codes": {
+    "final-oracle": 0,
+    "final-suite": 0,
+    "pristine-with-worker-tests": 1
+  },
+  "archive_verification": {
+    "capture": "capture-f16518ac6246",
+    "files_reopened_and_verified": 43,
+    "hash_mismatches": [],
+    "bare_report_matches_archive": true,
+    "supplemental_review": "Full transcript inspected. No supplemental redirected outputs or message truncation identified.",
+    "archive_summary": {
+      "pages": 3,
+      "messages": 41,
+      "warnings": [],
+      "limitations": [
+        "Committed history, not live token events or every workflow broadcast.",
+        "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing."
+      ]
+    }
+  },
+  "cleanup": {
+    "kill_result": {
+      "agents": [
+        "207c6f90-7f1e-4f8b-b9aa-d22ff0cc5f87"
+      ],
+      "killed": "C12"
+    },
+    "container_exists_returncode": 1,
+    "container_absent": true,
+    "after_archive_hash_verification": true,
+    "recorded_utc": "2026-09-06T11:27:18.436100+00:00"
+  },
+  "chronology_evidence": "workflow-evaluation/runs/feature-base-003/chronology-evidence.json",
+  "chronology_notice": "Implementation write precedes first test execution; worker explicitly discloses missed pre-change RED. Post-run pristine replay is not chronological RED.",
+  "candidate_sha256": "28a9cc688ab6e6b2dedc51b6913abb06d29f8ac0dcbfb0b167d176bb5200f2d3",
+  "canonical_spec_sha256": "e0e171c3d17c9e4d1fbd217cdd9d3b67a64eae68ea7742f918790fafe0fffc08",
+  "candidate_and_frozen_hashes_unchanged": true,
+  "score_assigned": false,
+  "feature_variants_launched": false
+}

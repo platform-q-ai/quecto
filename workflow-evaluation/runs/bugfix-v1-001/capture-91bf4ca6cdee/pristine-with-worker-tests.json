@@ -1,0 +1,30 @@
+{
+  "command": [
+    "podman",
+    "exec",
+    "--workdir",
+    "/tmp/workflow-eval.L0A6ECFQ/pristine-with-worker-tests",
+    "-e",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "-e",
+    "PYTHONHASHSEED=0",
+    "-e",
+    "TZ=UTC",
+    "quecto-env-vlVou6TN24",
+    "env",
+    "-u",
+    "PYTHONPATH",
+    "python3",
+    "-B",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests",
+    "-v"
+  ],
+  "returncode": 1,
+  "stderr": "test_boundaries (test_receipts.TotalCentsTests.test_boundaries) ... ok\ntest_empty (test_receipts.TotalCentsTests.test_empty) ... ok\ntest_float_rounding_regressions (test_receipts.TotalCentsTests.test_float_rounding_regressions) ... \n  test_float_rounding_regressions (test_receipts.TotalCentsTests.test_float_rounding_regressions) (amount='0.29') ... FAIL\n  test_float_rounding_regressions (test_receipts.TotalCentsTests.test_float_rounding_regressions) (amount='0.57') ... FAIL\n  test_float_rounding_regressions (test_receipts.TotalCentsTests.test_float_rounding_regressions) (amount='1.15') ... FAIL\ntest_float_rounding_regressions (test_receipts.TotalCentsTests.test_float_rounding_regressions) ... FAIL\ntest_mixed_fractional_lengths (test_receipts.TotalCentsTests.test_mixed_fractional_lengths) ... ok\ntest_total_can_exceed_single_amount_limit (test_receipts.TotalCentsTests.test_total_can_exceed_single_amount_limit) ... ok\ntest_integer (test_smoke.Smoke.test_integer) ... ok\n\n======================================================================\nFAIL: test_float_rounding_regressions (test_receipts.TotalCentsTests.test_float_rounding_regressions) (amount='0.29')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/workflow-eval.L0A6ECFQ/pristine-with-worker-tests/tests/test_receipts.py\", line 10, in test_float_rounding_regressions\n    self.assertEqual(total_cents([amount]), expected)\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 28 != 29\n\n======================================================================\nFAIL: test_float_rounding_regressions (test_receipts.TotalCentsTests.test_float_rounding_regressions) (amount='0.57')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/workflow-eval.L0A6ECFQ/pristine-with-worker-tests/tests/test_receipts.py\", line 10, in test_float_rounding_regressions\n    self.assertEqual(total_cents([amount]), expected)\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 56 != 57\n\n======================================================================\nFAIL: test_float_rounding_regressions (test_receipts.TotalCentsTests.test_float_rounding_regressions) (amount='1.15')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/workflow-eval.L0A6ECFQ/pristine-with-worker-tests/tests/test_receipts.py\", line 10, in test_float_rounding_regressions\n    self.assertEqual(total_cents([amount]), expected)\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 114 != 115\n\n======================================================================\nFAIL: test_float_rounding_regressions (test_receipts.TotalCentsTests.test_float_rounding_regressions)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/workflow-eval.L0A6ECFQ/pristine-with-worker-tests/tests/test_receipts.py\", line 11, in test_float_rounding_regressions\n    self.assertEqual(total_cents([\"0.29\"] * 100), 2900)\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 2800 != 2900\n\n----------------------------------------------------------------------\nRan 6 tests in 0.001s\n\nFAILED (failures=4)\n",
+  "stdout": "",
+  "timed_out": false
+}

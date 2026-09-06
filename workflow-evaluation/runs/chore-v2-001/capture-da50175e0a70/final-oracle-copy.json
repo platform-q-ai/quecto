@@ -1,0 +1,12 @@
+{
+  "command": [
+    "podman",
+    "cp",
+    "/home/swq/Documents/github/quecto/workflow-evaluation/runs/chore-v2-001/fixture-after",
+    "quecto-env-9IuJbnBbH2:/tmp/workflow-eval.G8bullGo/final-oracle"
+  ],
+  "returncode": 0,
+  "stderr": "",
+  "stdout": "",
+  "timed_out": false
+}

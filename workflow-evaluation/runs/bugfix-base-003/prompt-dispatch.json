@@ -1,0 +1,9 @@
+{
+  "command": "prompt",
+  "success": true,
+  "uuid": "f78677d7-af25-47d8-8be2-e12622a4409d",
+  "exact_task_file": "task.txt",
+  "prompt_sha256": "163ffbbcefde081f0d77b587c04420728c8f1b6603ce28922717f3b0adf09f40",
+  "recorded_after_dispatch_utc": "2026-09-06T11:48:01.779065+00:00",
+  "note": "Exact base task after verified fixture and one idle inspection. No coaching."
+}

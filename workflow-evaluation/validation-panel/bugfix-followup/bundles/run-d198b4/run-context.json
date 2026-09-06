@@ -1,0 +1,22 @@
+{
+  "anonymous_run_id": "run-d198b4",
+  "worker_model": "openai-oauth/gpt-6-astra",
+  "worker_effort": "low",
+  "image_id": "b1f87e8917502e1963979a0ed43fd7866427c961c26aac0d1576a17774b63662",
+  "python_version": "Python 3.13.5",
+  "fixture_verified_before_prompt": true,
+  "workflow_template_bound_at_spawn": true,
+  "workflow_guards": false,
+  "template_sha256": "cb93cc54770b49595f707dec30eefcef4e8e3d95cd7bb426b3f9f354f60f2859",
+  "token_ceiling": null,
+  "metric_limitations": [
+    "No enforced total-token ceiling. Shared agent-home/network exposure remains.",
+    "Bound taskless startup is source-supported; inspect one pre-prompt state/history for unexpected activity."
+  ],
+  "known_deviations": [
+    "Same model family in independent sessions; no provider diversity.",
+    "Imperfect condition blinding: substantive raw evidence can contain original paths/condition labels; these are preserved, not altered.",
+    "Parent reports archived transcript/final hashes verified and worker container cleaned after capture; capture status predates cleanup.",
+    "Post-run pristine replay cannot establish chronological worker pre-change execution; use the retained transcript."
+  ]
+}

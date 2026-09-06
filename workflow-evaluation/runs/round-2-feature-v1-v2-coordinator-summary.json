@@ -1,0 +1,97 @@
+{
+  "status": "BOTH_ARCHIVED_VERIFIED_CLEANED_READY_FOR_PANEL",
+  "runs": [
+    {
+      "run_dir": "workflow-evaluation/runs/feature-v1-002",
+      "capture": "workflow-evaluation/runs/feature-v1-002/capture-c8374b0ce484",
+      "uuid": "6c1aba67-42c7-4026-b9ff-5c5d8e7b9e52",
+      "container_ref": "C13",
+      "workspace": "/home/swq/.quecto/container-environments/env-aQrJMgB0zk/workspace",
+      "checks_exit_codes": {
+        "final-oracle": 0,
+        "final-suite": 0,
+        "pristine-with-worker-tests": 1
+      },
+      "archive_verification": {
+        "capture": "capture-c8374b0ce484",
+        "files_reopened_and_verified": 40,
+        "hash_mismatches": [],
+        "supplemental_review": "Full transcript inspected; no redirected output files or archived-message truncation. Worker created then deleted a temporary reconstructed original module and copied test at ordinal 25. Exact command and complete error output retained in chronology-evidence.json; deleted temporary files were not recovered or recreated. Original fixture and worker test retained in capture.",
+        "archive_summary": {
+          "pages": 3,
+          "messages": 43,
+          "warnings": [],
+          "limitations": [
+            "Committed history, not live token events or every workflow broadcast.",
+            "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing."
+          ]
+        }
+      },
+      "cleanup": {
+        "kill_result": {
+          "agents": [
+            "6c1aba67-42c7-4026-b9ff-5c5d8e7b9e52"
+          ],
+          "killed": "C13"
+        },
+        "container_exists_returncode": 1,
+        "container_absent": true,
+        "after_archive_hash_verification": true,
+        "recorded_utc": "2026-09-06T11:43:55.120697+00:00"
+      },
+      "chronology_evidence": "workflow-evaluation/runs/feature-v1-002/chronology-evidence.json",
+      "candidate_sha256": "28a9cc688ab6e6b2dedc51b6913abb06d29f8ac0dcbfb0b167d176bb5200f2d3",
+      "canonical_spec_sha256": "e0e171c3d17c9e4d1fbd217cdd9d3b67a64eae68ea7742f918790fafe0fffc08",
+      "candidate_hash_unchanged": true
+    },
+    {
+      "run_dir": "workflow-evaluation/runs/feature-v2-002",
+      "capture": "workflow-evaluation/runs/feature-v2-002/capture-ef2c781b4b53",
+      "uuid": "76fbd059-1137-4ffe-8039-c30692eafcb7",
+      "container_ref": "C14",
+      "workspace": "/home/swq/.quecto/container-environments/env-Vx1UyxptBj/workspace",
+      "checks_exit_codes": {
+        "final-oracle": 0,
+        "final-suite": 0,
+        "pristine-with-worker-tests": 1
+      },
+      "archive_verification": {
+        "capture": "capture-ef2c781b4b53",
+        "files_reopened_and_verified": 38,
+        "hash_mismatches": [],
+        "supplemental_review": "Full paginated transcript inspected. No supplemental redirected outputs or archived-message truncation identified. Bare report was a partial unread selection; full archive includes later bounded handoff.",
+        "archive_summary": {
+          "pages": 2,
+          "messages": 39,
+          "warnings": [],
+          "limitations": [
+            "Committed history, not live token events or every workflow broadcast.",
+            "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing."
+          ]
+        }
+      },
+      "cleanup": {
+        "kill_result": {
+          "agents": [
+            "76fbd059-1137-4ffe-8039-c30692eafcb7"
+          ],
+          "killed": "C14"
+        },
+        "container_exists_returncode": 1,
+        "container_absent": true,
+        "after_archive_hash_verification": true,
+        "recorded_utc": "2026-09-06T11:42:24.498717+00:00"
+      },
+      "chronology_evidence": "workflow-evaluation/runs/feature-v2-002/chronology-evidence.json",
+      "candidate_sha256": "28a9cc688ab6e6b2dedc51b6913abb06d29f8ac0dcbfb0b167d176bb5200f2d3",
+      "canonical_spec_sha256": "e0e171c3d17c9e4d1fbd217cdd9d3b67a64eae68ea7742f918790fafe0fffc08",
+      "candidate_hash_unchanged": true
+    }
+  ],
+  "frozen_manifest_unchanged": true,
+  "scores_assigned": false,
+  "source_candidate_rubric_modified_by_coordinator": false,
+  "bugfix_launched": false,
+  "old_round1_feature_preparations_used": false,
+  "chronology_notice": "Both implementations preceded tests/execution; both workers disclose missed pre-change ordering. v1 retrospective reconstruction and coordinator pristine replays are not chronological RED."
+}

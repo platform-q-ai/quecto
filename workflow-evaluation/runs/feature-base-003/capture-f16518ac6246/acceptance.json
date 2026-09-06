@@ -1,0 +1,10 @@
+{
+  "acceptance": [
+    "New optional limit handles None/zero/positive/negative as specified.",
+    "Case-insensitive substring, order, duplicates, empty query/input, unmatched query, and input ownership preserved."
+  ],
+  "critical": [
+    "Required limit cases fail or legacy unlimited search regresses."
+  ],
+  "docs_semantic_fallback": "Frozen documentation parser mismatches need direct semantic review, not automatic failure."
+}

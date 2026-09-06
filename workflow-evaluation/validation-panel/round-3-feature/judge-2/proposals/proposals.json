@@ -1,0 +1,40 @@
+{
+  "judge_id": "judge-2",
+  "phase": "feature-round-3-proposals",
+  "proposals": [
+    {
+      "local_id": "P1",
+      "step_key": "intake",
+      "field": "guidance",
+      "old": "Restate the desired behavior, constraints, and how completion will be verified.",
+      "new": "Before implementation, restate the desired behavior and constraints, and identify a focused pre-change check with its expected result that distinguishes the requested behavior from current behavior. If executable verification is unsuitable or unsafe, identify a discriminating source, data, or artifact comparison instead. Record this plan and complete intake, then obtain the pre-change evidence in Design verification before implementing.",
+      "evidence": [
+        "batch-29fe81/bundles/run-74cd12/transcript/messages.json ordinals 11-18: implementation and tests preceded the first recorded workflow interaction.",
+        "batch-29fe81/bundles/run-74cd12/transcript/messages.json ordinals 20-25: intake was addressed after an attempted final response; the subsequently exposed verification guidance prompted disclosure of missed RED ordering.",
+        "batch-29fe81/bundles/run-a3906f/transcript/messages.json ordinals 13-18, 20-27: implementation preceded workflow engagement, and a meaningful missing-API check was performed only retrospectively.",
+        "round-3-feature/assigned-template-reference.json: steps[key=intake].guidance and steps[key=test_design].guidance"
+      ],
+      "mechanism": "Make the first step explicitly prospective: select a target-sensitive check and expected result before implementing, then advance to the existing verification step to execute it. This exposes the ordering requirement earlier without requiring completion of a hidden later step to finish intake or duplicating the actual verification run.",
+      "risks_costs": [
+        "The replacement cannot help if the worker does not read intake before implementation; both retained runs are consistent with that limitation.",
+        "It adds a short planning requirement and partly repeats the next step's ordering instruction, although execution and result recording remain in that next step.",
+        "A worker could record a superficial plan without obtaining discriminating evidence; the text does not enforce execution.",
+        "The comparison alternative could be overused for executable features; the existing test_design guidance still requires a meaningful failing check where applicable."
+      ],
+      "transfer_example": "For a configuration-only change enabling a documented retry policy, intake would identify the current configuration-to-schema mismatch and expected corrected relationship; Design verification would record that comparison before editing, without inventing an executable RED test or contacting a live service.",
+      "goal_conflicts": [
+        "No identified conflict: the replacement preserves constraints, permits safe non-executable evidence, and imposes no language, host, tool, guard, or destructive reproduction.",
+        "The replacement requests an intake plan, not completion of Design verification before intake can advance, avoiding a circular progression dependency."
+      ],
+      "overlaps_or_dependencies": [
+        "Overlaps intentionally with the existing test_design ordering requirement only to make that requirement visible at intake.",
+        "Depends on the worker encountering intake before implementation; no activation, reminder, harness, or enforcement change is proposed.",
+        "No second replacement is proposed because the existing test_design guidance already specifies execution, target-sensitive failure, result recording, and honest treatment of retrospective evidence."
+      ],
+      "falsifiable_prediction": "In fresh runs where retained evidence establishes that intake guidance was encountered before the first implementation edit, workers will more often record a discriminating check and expected result, advance to Design verification, and obtain pre-change evidence before implementing. Continued implementation-first behavior despite documented early exposure would count against the proposed mechanism; runs without early exposure cannot establish whether this wording improves prospective engagement."
+    }
+  ],
+  "no_change_reason": null,
+  "binding_selection_confound": "Both retained run-context.json files report workflow_template_bound_at_spawn=true, while the first recorded workflow status calls occur at transcript/messages.json ordinal 21, after implementation and an attempted final response. The archives do not retain every live workflow broadcast, so initial exposure cannot be established from those calls alone. Binding, explicit selection, first-step salience, and reminder timing are confounded; these runs do not establish that intake wording caused the failure or that text alone will prevent recurrence.",
+  "cross_panel_anchor_variability": "Scoring remains locked and was not reconsidered. No other judges' ballots or proposals were read, so cross-panel variability is unknown and no consensus is asserted. This proposal preserves the distinctions between source inspection and executed baseline evidence, meaningful missing-capability failures and setup errors, and chronological pre-change verification and retrospective reconstruction."
+}

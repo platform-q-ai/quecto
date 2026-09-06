@@ -1,0 +1,26 @@
+{
+  "command": [
+    "podman",
+    "exec",
+    "--workdir",
+    "/tmp/workflow-eval.L0A6ECFQ/final-oracle",
+    "-e",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "-e",
+    "PYTHONHASHSEED=0",
+    "-e",
+    "TZ=UTC",
+    "quecto-env-vlVou6TN24",
+    "env",
+    "-u",
+    "PYTHONPATH",
+    "python3",
+    "-B",
+    "-c",
+    "from receipts import total_cents\nfor values, expected in [([],0),([\"0.29\"],29),([\"0.57\",\"0.29\"],86),\n                          ([\"1.2\",\"3\",\"0.01\"],421),([\"1000000.00\"],100000000),\n                          ([\"0.01\"] * 1000,1000),([\"0\",\"0.00\"],0)]:\n    before = list(values)\n    actual = total_cents(values)\n    assert type(actual) is int and actual == expected, (values, actual, expected)\n    assert values == before\nprint(\"7 exact-currency cases pass\")\n"
+  ],
+  "returncode": 0,
+  "stderr": "",
+  "stdout": "7 exact-currency cases pass\n",
+  "timed_out": false
+}

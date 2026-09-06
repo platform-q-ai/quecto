@@ -1,0 +1,5 @@
+- **Summary:** Set host to `127.0.0.1`, disabled debug, and removed `trace`. Preserved port `8080` and existing logging settings.
+- **Checks:** Python 3 JSON assertions passed; loader validation passed; configuration matches `POLICY.md`.
+- **Changed file:** `/workspace/task/config/example.json` only. Loader and policy unchanged.
+- **Blockers:** None.
+- **Next action:** None required; task complete.

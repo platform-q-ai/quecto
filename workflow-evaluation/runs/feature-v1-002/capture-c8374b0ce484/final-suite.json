@@ -1,0 +1,30 @@
+{
+  "command": [
+    "podman",
+    "exec",
+    "--workdir",
+    "/tmp/workflow-eval.wNfHDm7z/final-suite",
+    "-e",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "-e",
+    "PYTHONHASHSEED=0",
+    "-e",
+    "TZ=UTC",
+    "quecto-env-aQrJMgB0zk",
+    "env",
+    "-u",
+    "PYTHONPATH",
+    "python3",
+    "-B",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests",
+    "-v"
+  ],
+  "returncode": 0,
+  "stderr": "test_does_not_mutate_rows_and_returns_independent_results (test_by_category.ByCategoryTests.test_does_not_mutate_rows_and_returns_independent_results) ... ok\ntest_empty_input_returns_fresh_dict (test_by_category.ByCategoryTests.test_empty_input_returns_fresh_dict) ... ok\ntest_missing_and_empty_categories (test_by_category.ByCategoryTests.test_missing_and_empty_categories) ... ok\ntest_sums_in_first_appearance_order (test_by_category.ByCategoryTests.test_sums_in_first_appearance_order) ... ok\ntest_zero_totals_and_negative_amounts (test_by_category.ByCategoryTests.test_zero_totals_and_negative_amounts) ... ok\ntest_total (test_smoke.Smoke.test_total) ... ok\n\n----------------------------------------------------------------------\nRan 6 tests in 0.000s\n\nOK\n",
+  "stdout": "",
+  "timed_out": false
+}

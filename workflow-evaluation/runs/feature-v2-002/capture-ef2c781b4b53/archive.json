@@ -1,0 +1,15 @@
+{
+  "command": [
+    "/usr/bin/python3",
+    "-B",
+    "/home/swq/Documents/github/quecto/workflow-evaluation/archive_session.py",
+    "--socket",
+    "/run/user/1000/quecto-agent-76fbd059-1137-4ffe-8039-c30692eafcb7.sock",
+    "--output",
+    "/home/swq/Documents/github/quecto/workflow-evaluation/runs/feature-v2-002/transcript"
+  ],
+  "returncode": 0,
+  "stderr": "",
+  "stdout": "Archived 2 pages / 39 messages to /home/swq/Documents/github/quecto/workflow-evaluation/runs/feature-v2-002/transcript\n",
+  "timed_out": false
+}

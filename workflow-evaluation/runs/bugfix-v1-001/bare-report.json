@@ -1,0 +1,23 @@
+{
+  "command": "get_messages",
+  "data": {
+    "hasMoreMessages": false,
+    "messageContentTruncated": false,
+    "messages": [
+      {
+        "collapsed": false,
+        "content": "- **Summary:** Fixed exact currency totaling using integer parsing; preserved API and empty-list support.\n- **Checks:** Reproduced failures in the original implementation. All 6 tests pass after the fix.\n- **Changed files:** `receipts.py`, `tests/test_receipts.py`.\n- **Blockers:** None.\n- **Next action:** Ready for review. Validation of unsupported inputs remains out of scope.",
+        "id": "e12b97ee-f6a6-4b9e-b966-cb89f428cfe8",
+        "isError": false,
+        "ordinal": 41,
+        "role": "assistant",
+        "toolCallId": null,
+        "toolName": null
+      }
+    ],
+    "truncated": false
+  },
+  "id": "1a3b623e-1b77-4d56-822b-a0acffedd473",
+  "success": true,
+  "type": "response"
+}

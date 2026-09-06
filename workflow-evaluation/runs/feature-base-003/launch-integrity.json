@@ -1,0 +1,10 @@
+{
+  "approved_manifest_hash": true,
+  "bound_spec_exact": true,
+  "canonical_spec_hash": true,
+  "same_base_prompt": true,
+  "prompt_hash": true,
+  "same_base_fixture": true,
+  "frozen_manifest": true,
+  "taskless": true
+}

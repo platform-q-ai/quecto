@@ -1,0 +1,58 @@
+{
+  "agent_id": "chore-v2-001",
+  "container": {
+    "mode": "new",
+    "container_config": "sandbox"
+  },
+  "model": "openai-oauth/gpt-6-astra",
+  "effort": "low",
+  "workflow": false,
+  "workflow_guards": false,
+  "workflow_spec": {
+    "template": {
+      "id": "chore",
+      "label": "Chore",
+      "description": "Small maintenance workflow for docs, configuration, tooling, or other low-risk repository upkeep.",
+      "when_to_use": "Use for maintenance that should not intentionally change product behavior.",
+      "steps": [
+        {
+          "key": "scope",
+          "label": "Scope the chore",
+          "phase": "setup",
+          "guidance": "Restate the requested maintenance, define done, and identify the files expected to change."
+        },
+        {
+          "key": "change",
+          "label": "Make the minimal change",
+          "phase": "green",
+          "guidance": "Apply the smallest repo-local edit that satisfies the scope. Avoid unrelated cleanup."
+        },
+        {
+          "key": "check",
+          "label": "Run relevant checks",
+          "phase": "verify",
+          "guidance": "Run checks that address the changed artifact's intended use and material failure modes. For documentation or configuration, compare against the authoritative source and, where practical and safe, exercise the documented example or configuration and inspect its result. Use an isolated or non-destructive check when execution would create or alter artifacts; otherwise state what source comparison establishes and what remains unverified. Record results before marking this step complete."
+        },
+        {
+          "key": "review",
+          "label": "Review the diff",
+          "phase": "review",
+          "guidance": "Inspect the final diff for accidental behavior changes, secrets, generated noise, and scope creep."
+        },
+        {
+          "key": "handoff",
+          "label": "Handoff",
+          "phase": "handoff",
+          "guidance": "Before marking this step complete, provide the handoff: summarize what changed, identify the checks actually performed and their results, and disclose remaining risks or skipped validation. Distinguish completed work from recommended next actions. If this summary has already been provided, reference it rather than repeat it."
+        }
+      ],
+      "guards": []
+    }
+  },
+  "disable_tools": [
+    "spawn",
+    "agent_cmd",
+    "web_fetch",
+    "web_search"
+  ]
+}

@@ -1,0 +1,1 @@
+In /workspace/task, fix settings.resolve so an explicitly supplied false, zero, or empty string overrides the default rather than being discarded. Only None or a missing key should use the default. Return a new dictionary, leave both inputs untouched, and continue ignoring unknown override keys. Preserve the API and add regression coverage.

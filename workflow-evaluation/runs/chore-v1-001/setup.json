@@ -1,0 +1,28 @@
+{
+  "catalog_sha256": "76150e2686341b9b3d869a118b18753785780833dc30bccd76f099bc0aceab5c",
+  "files": {
+    "POLICY.md": {
+      "sha256": "30104c507415dd1ed428ab11cd43fd7ca1327ec6cebc6a776d166b8c910d92d2",
+      "type": "file"
+    },
+    "README.md": {
+      "sha256": "643a9a6045fa4277753afd7bff8714544f0840f228161801a5bf7c111ebb7c7e",
+      "type": "file"
+    },
+    "config/example.json": {
+      "sha256": "87501fddeff5ddeba09d7cdcc21de68cafab0ec4096f571ef77bf90d468cdcc0",
+      "type": "file"
+    },
+    "loader.py": {
+      "sha256": "e22c95f20203ddae0968c8d3240a5693b6ca0e958d3da5e356198df62b0bc66f",
+      "type": "file"
+    },
+    "notes/operator-draft.txt": {
+      "sha256": "d46939cae5e3e620ee9350a64ceeaf46d126933427d77883c3beaa50270d69ee",
+      "type": "file"
+    }
+  },
+  "prompt": "In /workspace/task, align config/example.json with the supplied local-development policy: bind only to 127.0.0.1, disable debug, and retain port 8080 and the existing logging settings. Remove the obsolete trace field, which the loader rejects. Do not change the loader or policy; this is example-configuration maintenance.",
+  "root": "/home/swq/Documents/github/quecto/workflow-evaluation/runs/chore-v1-001/fixture-before",
+  "task": "chore-v1"
+}

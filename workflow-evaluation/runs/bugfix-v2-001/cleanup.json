@@ -1,0 +1,12 @@
+{
+  "kill_result": {
+    "agents": [
+      "680c5618-3edf-4d7d-818e-0a4cab7198a0"
+    ],
+    "killed": "C11"
+  },
+  "container_exists_returncode": 1,
+  "container_absent": true,
+  "after_archive_hash_verification": true,
+  "recorded_utc": "2026-09-06T11:20:44.406711+00:00"
+}

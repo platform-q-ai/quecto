@@ -1,0 +1,120 @@
+{
+  "scope": "Preservation/hash and structural locator audit, not coordinator worker-code inspection or score revision.",
+  "runs": [
+    {
+      "anonymous_run_id": "run-a3906f",
+      "original_run": "feature-v1-002",
+      "bundle_hash_mismatches": [],
+      "original_entries_verified": 40,
+      "worker_message_count": 43,
+      "worker_archive_summary": {
+        "pages": 3,
+        "messages": 43,
+        "warnings": [],
+        "limitations": [
+          "Committed history, not live token events or every workflow broadcast.",
+          "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing."
+        ]
+      },
+      "locator_checks": [
+        {
+          "judge_id": "judge-1",
+          "locator_count": 43,
+          "original_ballot_sha256": "a80e5be0e93ba072b07ea187e60896701c67773daff56e154f1a94196e99db32"
+        },
+        {
+          "judge_id": "judge-2",
+          "locator_count": 44,
+          "original_ballot_sha256": "d58b7a30ec68126b4cf61d940a17f594dcd1ab700a731f9b838d0c72340ebaef"
+        },
+        {
+          "judge_id": "judge-3",
+          "locator_count": 45,
+          "original_ballot_sha256": "d36bf1db0193ee877ff8b795cefe42cf5682fe3b513294ff6e3ebba74e2cd634"
+        }
+      ],
+      "locator_issues_for_review": []
+    },
+    {
+      "anonymous_run_id": "run-74cd12",
+      "original_run": "feature-v2-002",
+      "bundle_hash_mismatches": [],
+      "original_entries_verified": 38,
+      "worker_message_count": 39,
+      "worker_archive_summary": {
+        "pages": 2,
+        "messages": 39,
+        "warnings": [],
+        "limitations": [
+          "Committed history, not live token events or every workflow broadcast.",
+          "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing."
+        ]
+      },
+      "locator_checks": [
+        {
+          "judge_id": "judge-1",
+          "locator_count": 43,
+          "original_ballot_sha256": "a80e5be0e93ba072b07ea187e60896701c67773daff56e154f1a94196e99db32"
+        },
+        {
+          "judge_id": "judge-2",
+          "locator_count": 44,
+          "original_ballot_sha256": "d58b7a30ec68126b4cf61d940a17f594dcd1ab700a731f9b838d0c72340ebaef"
+        },
+        {
+          "judge_id": "judge-3",
+          "locator_count": 45,
+          "original_ballot_sha256": "d36bf1db0193ee877ff8b795cefe42cf5682fe3b513294ff6e3ebba74e2cd634"
+        }
+      ],
+      "locator_issues_for_review": []
+    }
+  ],
+  "judges": [
+    {
+      "judge_id": "judge-1",
+      "archive_summary": {
+        "pages": 3,
+        "messages": 41,
+        "warnings": [],
+        "limitations": [
+          "Committed history, not live token events or every workflow broadcast.",
+          "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing."
+        ]
+      },
+      "ballot_lock_hash_valid": true,
+      "raw_lock_hash_valid": true,
+      "truncated_or_collapsed_messages": []
+    },
+    {
+      "judge_id": "judge-2",
+      "archive_summary": {
+        "pages": 2,
+        "messages": 37,
+        "warnings": [],
+        "limitations": [
+          "Committed history, not live token events or every workflow broadcast.",
+          "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing."
+        ]
+      },
+      "ballot_lock_hash_valid": true,
+      "raw_lock_hash_valid": true,
+      "truncated_or_collapsed_messages": []
+    },
+    {
+      "judge_id": "judge-3",
+      "archive_summary": {
+        "pages": 3,
+        "messages": 44,
+        "warnings": [],
+        "limitations": [
+          "Committed history, not live token events or every workflow broadcast.",
+          "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing."
+        ]
+      },
+      "ballot_lock_hash_valid": true,
+      "raw_lock_hash_valid": true,
+      "truncated_or_collapsed_messages": []
+    }
+  ]
+}

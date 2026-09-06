@@ -1,0 +1,28 @@
+{
+  "catalog_sha256": "9c2a89cd6560617cbb2f9a3ed56980322ab315be009ca008cf7a1a1acfbfbf47",
+  "files": {
+    "README.md": {
+      "sha256": "ce22c71afcbd05f7e0c2d9b14f8797e74bc6c05f3272206c41afb96bbf9535af",
+      "type": "file"
+    },
+    "docs/guide/install.md": {
+      "sha256": "1290d9893dba21ba8155bf5eb1bb0abbcb7e2052dfec156c7f7bb9cc2c7afb62",
+      "type": "file"
+    },
+    "docs/start.md": {
+      "sha256": "857cf9698b926450f3cb7b3356de7742c059e68675f1a098ce41f85b5b60d3b3",
+      "type": "file"
+    },
+    "docs/support/troubleshooting.md": {
+      "sha256": "96ba1a8c66399cbc936c772ee5d85b00a89327994e9238dc2bb33d1904675cbe",
+      "type": "file"
+    },
+    "notes/operator-draft.txt": {
+      "sha256": "d46939cae5e3e620ee9350a64ceeaf46d126933427d77883c3beaa50270d69ee",
+      "type": "file"
+    }
+  },
+  "prompt": "In /workspace/task, repair the two stale local links in docs/start.md to point to the existing install and troubleshooting pages. Preserve the visible link text and all other prose. Do not move pages or edit other existing files.",
+  "root": "/home/swq/Documents/github/quecto/workflow-evaluation/runs/chore-v2-001/fixture-before",
+  "task": "chore-v2"
+}

@@ -1,0 +1,28 @@
+{
+  "catalog_sha256": "11578352b49ce603babb45b1e35a4536dc59907189ad4d4c8b7191bb1010b312",
+  "files": {
+    "README.md": {
+      "sha256": "5c175b0f971046eacfc7f9b6a314a3e9c01277935eb36d2ef24bb80da07fd47a",
+      "type": "file"
+    },
+    "SPEC.md": {
+      "sha256": "2cd3d1284311cec090b73e7cb2e15629818cc48701f0999151c871c82f7294b5",
+      "type": "file"
+    },
+    "notes/operator-draft.txt": {
+      "sha256": "d46939cae5e3e620ee9350a64ceeaf46d126933427d77883c3beaa50270d69ee",
+      "type": "file"
+    },
+    "report.py": {
+      "sha256": "2460bd00c0cdd3050b7cb84c80e3315461ad50162e03aeffed8c9a70b0cfc1bb",
+      "type": "file"
+    },
+    "rows.json": {
+      "sha256": "e92c782f9966da9a13582e5f725cb1fbcd2a0bd8ff0a1998f2d91daaf4851a30",
+      "type": "file"
+    }
+  },
+  "prompt": "In /workspace/task, explain why the report totals 5 units instead of the operator's expected 9. Identify the relevant filtering semantics and whether the supplied specification supports that expectation. Do not change or create workspace files; return your diagnosis in your final response.",
+  "root": "/home/swq/Documents/github/quecto/workflow-evaluation/runs/investigate-v2-001/fixture-before",
+  "task": "investigate-v2"
+}

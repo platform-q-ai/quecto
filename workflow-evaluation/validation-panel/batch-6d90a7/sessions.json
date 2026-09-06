@@ -1,6 +1,6 @@
 {
   "batch_id": "batch-6d90a7",
-  "phase": "initial-independent-scoring",
+  "phase": "FINAL_LOCKED_NO_ADJUDICATION",
   "sessions": [
     {
       "judge_id": "judge-1",
@@ -15,7 +15,11 @@
       "agent_id": "278387e1-ca4b-44e0-bc92-a001115d3e9c"
     }
   ],
-  "bare_reports_received": [],
-  "ballots_locked": false,
+  "bare_reports_received": [
+    "judge-1",
+    "judge-2",
+    "judge-3"
+  ],
+  "ballots_locked": true,
   "proposal_phase_authorized": false
 }

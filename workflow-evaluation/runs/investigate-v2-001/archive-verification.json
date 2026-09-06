@@ -1,0 +1,16 @@
+{
+  "capture": "capture-8ed6fe90a0ad",
+  "files_reopened_and_verified": 36,
+  "hash_mismatches": [],
+  "bare_report_content_matches_archive": true,
+  "supplemental_review": "Inspected archived execution calls and output markers; no supplemental redirected file paths or message truncation identified.",
+  "archive_summary": {
+    "pages": 2,
+    "messages": 29,
+    "warnings": [],
+    "limitations": [
+      "Committed history, not live token events or every workflow broadcast.",
+      "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing."
+    ]
+  }
+}

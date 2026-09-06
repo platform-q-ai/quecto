@@ -1,0 +1,188 @@
+{
+  "status": "VOTES_LOCKED_PARENT_IMPLEMENTATION_REQUIRED",
+  "alternatives": {
+    "F1": {
+      "counts": {
+        "YES": 3,
+        "NO": 0,
+        "ABSTAIN": 0
+      },
+      "votes": {
+        "judge-1": {
+          "alternative_id": "F1",
+          "vote": "YES",
+          "rationale": "Acceptable as an exact standalone intake replacement and my preferred alternative: it requires a discriminating pre-change plan and expected result, explicitly accommodates unsuitable or unsafe executable verification, and clearly separates completing intake from obtaining evidence in Design verification. This directly addresses the prospective handoff missing in the retained chronology without requiring a duplicate verification run or completing a later step before exposing it. Both runs implemented before the recorded intake-to-verification handoff (run-74cd12/transcript/messages.json: ordinals 11-25; run-a3906f/transcript/messages.json: ordinals 13-27). The unchanged test_design guidance continues to require meaningful failure where applicable and truthful disclosure of late entry.",
+          "goal_conflicts": []
+        },
+        "judge-2": {
+          "alternative_id": "F1",
+          "vote": "YES",
+          "rationale": "Acceptable as the exact intake replacement: it makes planning prospective, requires a discriminating check and expected result, explicitly accommodates unsuitable or unsafe executable verification, and directs execution into Design verification before implementation. Intake can finish without completing the later step, and no duplicate execution is required. This addresses the observed implementation-before-progression sequence in run-74cd12/transcript/messages.json ordinals 11-25 and run-a3906f/transcript/messages.json ordinals 13-27, without claiming that wording caused it. Its cost is greater repetition of the existing verification guidance, and it is less explicit than the other alternatives about identifying local baseline evidence.",
+          "goal_conflicts": []
+        },
+        "judge-3": {
+          "alternative_id": "F1",
+          "vote": "YES",
+          "rationale": "Acceptable as an exact standalone intake replacement: it makes the verification plan prospective, requires an expected result that distinguishes requested from current behavior, and explicitly accommodates unsafe or unsuitable executable verification. Intake finishes before Design verification obtains the evidence, avoiding both circular progression and a duplicated execution requirement. This addresses the observed sequencing problem without claiming to solve initial engagement: in run-74cd12, implementation and tests preceded the first recorded workflow interaction (transcript/messages.json ordinals 11-25); in run-a3906f, the missing-API check was explicitly retrospective (ordinals 25-27). The unchanged test_design step retains truthful late-entry reporting and substantive target-sensitive verification.",
+          "goal_conflicts": []
+        }
+      },
+      "reported_goal_conflicts": [],
+      "eligible": true
+    },
+    "F2": {
+      "counts": {
+        "YES": 3,
+        "NO": 0,
+        "ABSTAIN": 0
+      },
+      "votes": {
+        "judge-1": {
+          "alternative_id": "F2",
+          "vote": "YES",
+          "rationale": "Acceptable as an exact standalone replacement: recording relevant source or artifact evidence anchors the plan in local facts, and the explicit instruction not to implement directly from intake makes the intended handoff salient. Existing observations can satisfy intake without rerunning a check, so this is not a circular dependency. However, both workers already inspected the original source before implementing (run-74cd12/transcript/messages.json: ordinals 6, 10-12; run-a3906f/transcript/messages.json: ordinals 6, 10-14), so the additional recording requirement has uncertain incremental value and slightly greater duplication risk. Non-executable alternatives and truthful retrospective reporting depend on the unchanged test_design guidance.",
+          "goal_conflicts": []
+        },
+        "judge-2": {
+          "alternative_id": "F2",
+          "vote": "YES",
+          "rationale": "Acceptable as the exact intake replacement: it connects a recorded source/artifact observation to a focused check and expected result, then explicitly hands off to Design verification rather than implementation. The baseline-recording requirement is satisfiable before exposing the later step and need not entail another command. It transfers to non-executable work through comparisons and the unchanged test_design alternatives. It is less preferred because mandatory source/artifact recording adds intake overhead and can overlap with the subsequent comparison, while the retained runs already show source inspection before implementation (run-74cd12/transcript/messages.json ordinals 6-12; run-a3906f/transcript/messages.json ordinals 6-14).",
+          "goal_conflicts": []
+        },
+        "judge-3": {
+          "alternative_id": "F2",
+          "vote": "YES",
+          "rationale": "Acceptable as an exact standalone replacement: it requires evidence-backed planning with an expected result and clearly directs the worker through Design verification rather than straight from intake into implementation. Previously obtained source evidence can satisfy intake, so it need not require another command or completion of the later step. Both retained workers had already inspected relevant source before editing (run-a3906f/transcript/messages.json ordinals 5-14; run-74cd12/transcript/messages.json ordinals 5-12), making the missing handoff a plausible intervention point. Its source-or-artifact formulation is less flexible than explicitly allowing observed output, and its additional baseline-recording requirement creates more overlap with verification, but these are proportionate costs rather than unresolved goal conflicts.",
+          "goal_conflicts": []
+        }
+      },
+      "reported_goal_conflicts": [],
+      "eligible": true
+    },
+    "F3": {
+      "counts": {
+        "YES": 3,
+        "NO": 0,
+        "ABSTAIN": 0
+      },
+      "votes": {
+        "judge-1": {
+          "alternative_id": "F3",
+          "vote": "YES",
+          "rationale": "Acceptable as an exact standalone replacement: it economically connects baseline identification, a discriminating check, preservation requirements, and progression to Design verification before implementation. Explicitly identifying what must remain unchanged is useful across task types, and allowing source or observed output avoids mandating a particular verification tool. Its concise handoff addresses the implementation-first chronology in both retained runs, while the unchanged verification step supplies expected-versus-observed recording and non-executable alternatives (both bundles' evidence/assigned-template.json:14-17). Compared with F1, the intake text is less explicit about the expected result and unsafe executable checks, but those limitations are not unresolved conflicts when read with the existing template.",
+          "goal_conflicts": []
+        },
+        "judge-2": {
+          "alternative_id": "F3",
+          "vote": "YES",
+          "rationale": "Acceptable as the exact intake replacement and preferred: it concisely combines prospective engagement, local baseline identification, a discriminating verification plan, explicit preservation, and a non-circular handoff to Design verification. It leaves execution and expected-versus-observed recording in the existing step rather than duplicating them. Source or observed-output evidence and a check or comparison support generic transfer without mandating a tool or artificial failure. The emphasis on what must remain unchanged is useful alongside the compatibility reviews retained in run-74cd12/transcript/messages.json ordinals 31-35 and run-a3906f/transcript/messages.json ordinals 33-39.",
+          "goal_conflicts": []
+        },
+        "judge-3": {
+          "alternative_id": "F3",
+          "vote": "YES",
+          "rationale": "Acceptable as an exact standalone replacement: it concisely connects a locally grounded baseline and discriminating check to the next workflow step while explicitly identifying what must remain unchanged. It permits source or observed-output evidence and comparisons, imposes no particular execution ritual, and does not require Design verification to be completed before intake. Preservation is directly relevant to these tasks, including unchanged total and default CLI output (run-a3906f/task.txt:1; run-74cd12/task.txt:1). Its principal limitation relative to F1 is that intake does not explicitly request the check's expected result or state when executable verification is unsuitable; those details remain in the unchanged test_design guidance.",
+          "goal_conflicts": []
+        }
+      },
+      "reported_goal_conflicts": [],
+      "eligible": true
+    }
+  },
+  "overlap_selection": [
+    {
+      "group_id": "overlap-intake",
+      "eligible": [
+        "F1",
+        "F2",
+        "F3"
+      ],
+      "orders": {
+        "judge-1": [
+          "F1",
+          "F3",
+          "F2",
+          "STATUS_QUO"
+        ],
+        "judge-2": [
+          "F3",
+          "F1",
+          "F2",
+          "STATUS_QUO"
+        ],
+        "judge-3": [
+          "F1",
+          "F3",
+          "F2",
+          "STATUS_QUO"
+        ]
+      },
+      "pairwise_preferences": {
+        "F1": {
+          "F2": 3,
+          "F3": 2
+        },
+        "F2": {
+          "F1": 0,
+          "F3": 0
+        },
+        "F3": {
+          "F1": 1,
+          "F2": 3
+        }
+      },
+      "rank_sums": {
+        "F1": 4,
+        "F2": 9,
+        "F3": 5
+      },
+      "selected_id": "F1",
+      "method": "Unique majority pairwise winner among eligible alternatives"
+    }
+  ],
+  "selected_exact_proposals": [
+    {
+      "step_key": "intake",
+      "field": "guidance",
+      "old": "Restate the desired behavior, constraints, and how completion will be verified.",
+      "new": "Before implementation, restate the desired behavior and constraints, and identify a focused pre-change check with its expected result that distinguishes the requested behavior from current behavior. If executable verification is unsuitable or unsafe, identify a discriminating source, data, or artifact comparison instead. Record this plan and complete intake, then obtain the pre-change evidence in Design verification before implementing.",
+      "supporting_rationales": [
+        {
+          "evidence": [
+            "batch-29fe81/bundles/run-74cd12/transcript/messages.json ordinals 11-18: implementation and tests preceded the first recorded workflow interaction.",
+            "batch-29fe81/bundles/run-74cd12/transcript/messages.json ordinals 20-25: intake was addressed after an attempted final response; the subsequently exposed verification guidance prompted disclosure of missed RED ordering.",
+            "batch-29fe81/bundles/run-a3906f/transcript/messages.json ordinals 13-18, 20-27: implementation preceded workflow engagement, and a meaningful missing-API check was performed only retrospectively.",
+            "round-3-feature/assigned-template-reference.json: steps[key=intake].guidance and steps[key=test_design].guidance"
+          ],
+          "mechanism": "Make the first step explicitly prospective: select a target-sensitive check and expected result before implementing, then advance to the existing verification step to execute it. This exposes the ordering requirement earlier without requiring completion of a hidden later step to finish intake or duplicating the actual verification run.",
+          "risks_costs": [
+            "The replacement cannot help if the worker does not read intake before implementation; both retained runs are consistent with that limitation.",
+            "It adds a short planning requirement and partly repeats the next step's ordering instruction, although execution and result recording remain in that next step.",
+            "A worker could record a superficial plan without obtaining discriminating evidence; the text does not enforce execution.",
+            "The comparison alternative could be overused for executable features; the existing test_design guidance still requires a meaningful failing check where applicable."
+          ],
+          "transfer_example": "For a configuration-only change enabling a documented retry policy, intake would identify the current configuration-to-schema mismatch and expected corrected relationship; Design verification would record that comparison before editing, without inventing an executable RED test or contacting a live service.",
+          "goal_conflicts": [
+            "No identified conflict: the replacement preserves constraints, permits safe non-executable evidence, and imposes no language, host, tool, guard, or destructive reproduction.",
+            "The replacement requests an intake plan, not completion of Design verification before intake can advance, avoiding a circular progression dependency."
+          ],
+          "overlaps_or_dependencies": [
+            "Overlaps intentionally with the existing test_design ordering requirement only to make that requirement visible at intake.",
+            "Depends on the worker encountering intake before implementation; no activation, reminder, harness, or enforcement change is proposed.",
+            "No second replacement is proposed because the existing test_design guidance already specifies execution, target-sensitive failure, result recording, and honest treatment of retrospective evidence."
+          ],
+          "falsifiable_prediction": "In fresh runs where retained evidence establishes that intake guidance was encountered before the first implementation edit, workers will more often record a discriminating check and expected result, advance to Design verification, and obtain pre-change evidence before implementing. Continued implementation-first behavior despite documented early exposure would count against the proposed mechanism; runs without early exposure cannot establish whether this wording improves prospective engagement."
+        }
+      ],
+      "alternative_id": "F1"
+    }
+  ],
+  "new_goal_conflicts": [],
+  "source_candidate_rubric_changed": false,
+  "scores_changed": false,
+  "limitations": [
+    "Guidance revision remains an unvalidated hypothesis.",
+    "Binding-versus-selection and activation/reminder salience confound causal interpretation.",
+    "Same-model independent votes; no provider diversity."
+  ]
+}

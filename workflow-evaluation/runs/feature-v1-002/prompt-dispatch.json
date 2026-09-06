@@ -1,0 +1,9 @@
+{
+  "command": "prompt",
+  "success": true,
+  "uuid": "6c1aba67-42c7-4026-b9ff-5c5d8e7b9e52",
+  "exact_task_file": "task.txt",
+  "prompt_sha256": "c7dcdf7cb051217e18d88c021110eae430feec0974ad739aac15bece78f6dd7f",
+  "recorded_after_dispatch_utc": "2026-09-06T11:39:55.912727+00:00",
+  "note": "Exact product-only variant prompt after verified provisioning and one idle inspection; no coaching."
+}

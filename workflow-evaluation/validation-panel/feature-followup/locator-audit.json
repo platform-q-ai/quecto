@@ -1,0 +1,86 @@
+{
+  "scope": "Preservation/hash and structural locator audit, not coordinator worker-code inspection or score revision.",
+  "runs": [
+    {
+      "anonymous_run_id": "run-417da8",
+      "original_run": "feature-base-003",
+      "bundle_hash_mismatches": [],
+      "original_entries_verified": 43,
+      "worker_message_count": 41,
+      "worker_archive_summary": {
+        "pages": 3,
+        "messages": 41,
+        "warnings": [],
+        "limitations": [
+          "Committed history, not live token events or every workflow broadcast.",
+          "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing."
+        ]
+      },
+      "locator_checks": [
+        {
+          "judge_id": "judge-1",
+          "locator_count": 96,
+          "original_ballot_sha256": "0f3d1834b8f822e214c7783f2c3c272cede625fda6c1e8cb4e9922e7381eae3b"
+        },
+        {
+          "judge_id": "judge-2",
+          "locator_count": 100,
+          "original_ballot_sha256": "5e84c580b61799fa61beb19ea85467e4cd8477d6fa770f6dc48e2f1d7ede911e"
+        },
+        {
+          "judge_id": "judge-3",
+          "locator_count": 100,
+          "original_ballot_sha256": "613980e5fe1aac89277d6784e46d49dfccd1b92487db018d3f1c7732822da9a4"
+        }
+      ],
+      "locator_issues_for_review": []
+    }
+  ],
+  "judges": [
+    {
+      "judge_id": "judge-1",
+      "archive_summary": {
+        "pages": 1,
+        "messages": 19,
+        "warnings": [],
+        "limitations": [
+          "Committed history, not live token events or every workflow broadcast.",
+          "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing."
+        ]
+      },
+      "ballot_lock_hash_valid": true,
+      "raw_lock_hash_valid": true,
+      "truncated_or_collapsed_messages": []
+    },
+    {
+      "judge_id": "judge-2",
+      "archive_summary": {
+        "pages": 1,
+        "messages": 20,
+        "warnings": [],
+        "limitations": [
+          "Committed history, not live token events or every workflow broadcast.",
+          "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing."
+        ]
+      },
+      "ballot_lock_hash_valid": true,
+      "raw_lock_hash_valid": true,
+      "truncated_or_collapsed_messages": []
+    },
+    {
+      "judge_id": "judge-3",
+      "archive_summary": {
+        "pages": 2,
+        "messages": 22,
+        "warnings": [],
+        "limitations": [
+          "Committed history, not live token events or every workflow broadcast.",
+          "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing."
+        ]
+      },
+      "ballot_lock_hash_valid": true,
+      "raw_lock_hash_valid": true,
+      "truncated_or_collapsed_messages": []
+    }
+  ]
+}

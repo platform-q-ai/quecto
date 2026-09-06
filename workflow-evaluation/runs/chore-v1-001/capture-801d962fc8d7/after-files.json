@@ -1,0 +1,27 @@
+{
+  "POLICY.md": {
+    "bytes": 142,
+    "sha256": "30104c507415dd1ed428ab11cd43fd7ca1327ec6cebc6a776d166b8c910d92d2",
+    "type": "file"
+  },
+  "README.md": {
+    "bytes": 145,
+    "sha256": "643a9a6045fa4277753afd7bff8714544f0840f228161801a5bf7c111ebb7c7e",
+    "type": "file"
+  },
+  "config/example.json": {
+    "bytes": 90,
+    "sha256": "14ac09491a4605bfaddaae4f9669e1fe3944f89df1fdfb08b5557a3b909f3ded",
+    "type": "file"
+  },
+  "loader.py": {
+    "bytes": 194,
+    "sha256": "e22c95f20203ddae0968c8d3240a5693b6ca0e958d3da5e356198df62b0bc66f",
+    "type": "file"
+  },
+  "notes/operator-draft.txt": {
+    "bytes": 50,
+    "sha256": "d46939cae5e3e620ee9350a64ceeaf46d126933427d77883c3beaa50270d69ee",
+    "type": "file"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "original_messages_sha256": "be7bc004d02cfc852bd1ceafa7c50880256ee0f6b2c03ebc80c87b08ab4266c1",
+  "recovered_messages_sha256": "55df0e0cb38d5cf73987ac9fb49329a59e241396b3ab11dc0e7ce5153b3e639a",
+  "recovered_message_count": 0,
+  "recovered": [],
+  "all_collapsed_or_truncated_recovered": true,
+  "original_archive_untouched": true
+}
