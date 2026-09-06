@@ -93,7 +93,7 @@
 
 ### App-level (must remain identical outcomes)
 - Ctrl+C: clear editor if non-empty else abort if running else noop
-- Escape (master idle): clear non-empty editor; empty → rewind idle escape path
+- Escape (parent agent idle): clear non-empty editor; empty → rewind idle escape path
 - After every editor key: autocomplete.update(text); files autocomplete from current_line+cursor_col unless slash active
 - take_submit → handle_submit
 - Slash autocomplete Enter: set_text(value), add_to_history(trim), dismiss, handle_submit, set_text("")
