@@ -41,12 +41,12 @@
 ### Sessions (`SessionsFlow`)
 - Default: `resume_selector = None`, `context_stats_requested = false`
 - After successful `list_sessions`, resume selector opens with same `SelectList` contents (via existing `parse_resume_sessions`)
-- `context_stats_requested` flips true when get_state carries `maxContextTokens`; cleared on set_model parent-agent path as today
+- `context_stats_requested` flips true when get_state carries `maxContextTokens`; cleared on set_model coordinator path as today
 
 ### Workflow (`WorkflowFlow` + automation)
 - Default: both automation flags false
 - `set_workflow_automation` success updates flags from `automation.autoContinue` / `automation.completionNudge` (or top-level keys when automation object absent — current `sync_workflow_automation` parity)
-- `mirror_automation_to_bar` copies live flags onto parent-agent workflow bar after any bar rebuild
+- `mirror_automation_to_bar` copies live flags onto Coordinator workflow bar after any bar rebuild
 - Compact main-pane line shows `auto:on`/`auto:off` and `nudge:on`/`nudge:off` matching live flags (#897)
 - `parse_workflow_event` field fallbacks (camelCase/snake_case, activeIssue shapes) unchanged if snapshot parsing moves to protocol
 
@@ -54,8 +54,8 @@
 - `ModelRegistry`: empty entries, `open_pending=false` by default
 - Bare `/model` / open selector: ListModels once while pending; open after list (or on empty/error fallback)
 - `parse_model_entries` still delegates to `protocol::model_payloads::parse_model_list` + `is_current=false`
-- Parent-agent `set_model`: send command, optimistic footer+current_model, clear context_stats_requested; child focus: route to child, no optimistic local model
-- Effort: empty vocabulary → bare `/effort` warns; invalid level local reject with joined valid list; empty vocabulary allows passthrough; set_effort never updates footer until success `data.effort`; parent-agent success toasts + sets current_effort only when no child focused; late parent-agent success still updates parent-agent footer effort
+- Coordinator `set_model`: send command, optimistic footer+current_model, clear context_stats_requested; child focus: route to child, no optimistic local model
+- Effort: empty vocabulary → bare `/effort` warns; invalid level local reject with joined valid list; empty vocabulary allows passthrough; set_effort never updates footer until success `data.effort`; coordinator success toasts + sets current_effort only when no child focused; late coordinator success still updates coordinator footer effort
 - `send_state_resync` issues GetState id `resync`
 
 ### Workspace

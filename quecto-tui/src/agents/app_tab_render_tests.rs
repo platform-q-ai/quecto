@@ -17,17 +17,17 @@ async fn named_active_tab_labels_master_surfaces() {
             .render_subagent_panel(30, 24, tokio::time::Instant::now())
             .join("\n"),
     );
-    let master_row = panel
+    let coordinator_row = panel
         .lines()
-        .find(|line| line.contains("Investigate auth") || line.contains("Parent Agent"))
-        .unwrap_or_else(|| panic!("master row not found in panel:\n{panel}"));
+        .find(|line| line.contains("Investigate auth") || line.contains("Coordinator"))
+        .unwrap_or_else(|| panic!("coordinator row not found in panel:\n{panel}"));
     assert!(
-        master_row.contains("Investigate auth"),
-        "a named active tab must label the pinned master row with the tab name: {master_row:?}"
+        coordinator_row.contains("Investigate auth"),
+        "a named active tab must label the pinned coordinator row with the tab name: {coordinator_row:?}"
     );
     assert!(
-        !master_row.contains("Parent Agent"),
-        "the legacy master-row label is only for unnamed N=1 tabs: {master_row:?}"
+        !coordinator_row.contains("Coordinator"),
+        "the fallback coordinator-row label is only for unnamed N=1 tabs: {coordinator_row:?}"
     );
 
     let top = strip_ansi(&top_region(&mut h));

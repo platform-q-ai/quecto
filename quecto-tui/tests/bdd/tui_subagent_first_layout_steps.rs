@@ -91,12 +91,12 @@ fn given_tracking(world: &mut TuiWorld, id: String) {
 
 // ── Then ──────────────────────────────────────────────────────────────────────
 
-#[then("the left panel shows the master row")]
-fn then_master_row(world: &mut TuiWorld) {
+#[then("the left panel shows the coordinator row")]
+fn then_coordinator_row(world: &mut TuiWorld) {
     let frame = drive(world, |h| h.full_frame());
     assert!(
-        frame.contains("Master"),
-        "the always-on panel must show the master row, got:\n{frame}"
+        frame.contains("Coordinator"),
+        "the always-on panel must show the coordinator row, got:\n{frame}"
     );
 }
 
