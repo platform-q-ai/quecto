@@ -1,0 +1,15 @@
+{
+  "status": "prompted",
+  "model": "openai-oauth/gpt-6-astra",
+  "effort": "low",
+  "container_config": "sandbox",
+  "fixtures_verified_before_prompt": true,
+  "runs": [
+    {"run":"investigate-base-001","agent":"e5bdd8b0-c640-47c0-af2c-fd747977a41a","container_ref":"C1"},
+    {"run":"chore-base-001","agent":"49ce7f99-ee48-4407-a4c4-ffce3b6f3389","container_ref":"C2"},
+    {"run":"bugfix-base-001","agent":"797b3550-3922-40f2-8b42-1991a9b750bc","container_ref":"C3"},
+    {"run":"feature-base-001","agent":"51560af0-6436-4202-9782-f758b9b9abf3","container_ref":"C4"},
+    {"run":"refactor-base-001","agent":"e5fb33a8-6a0a-487a-a9a1-a57be8efe982","container_ref":"C5"}
+  ],
+  "notes": "Exact task prompts in each run task.txt. Workflow initially dormant to allow trusted fixture provisioning; baseline prompt requests selection. No scores yet."
+}

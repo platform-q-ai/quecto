@@ -1,0 +1,71 @@
+{
+  "status": "PANEL_LAUNCHED_BY_PARENT_NOT_SCORED",
+  "source": "Parent reports in this conversation; coordinator performed static evidence checks only",
+  "panel": {
+    "sessions": [
+      "panel-1",
+      "panel-2",
+      "panel-3"
+    ],
+    "launched_by": "parent",
+    "effort": "high",
+    "read_only": true,
+    "runs_per_session": 5,
+    "independence": "Separate judge sessions; no interjudge ballot access",
+    "evidence": "Original runs/*-base-001 archives, capture outputs, frozen rubric, baseline-evidence-audit.md and feature supplement",
+    "blinding": "Imperfect baseline blinding explicitly disclosed; no anonymized bundle copies created",
+    "deviation": "Each independent judge scores all five runs within one session rather than one isolated session per judge/run. Possible within-session cross-run influence is disclosed. Frozen scoring criteria and aggregation remain unchanged.",
+    "final_ballot_archival_owner": "parent",
+    "scores": null,
+    "votes": null
+  },
+  "verification": {
+    "capture_invoked_by": "parent",
+    "all_five_final_oracle_exit_codes": 0,
+    "coordinator_static_check": "Reopened all five capture bundle-index entries and independently verified every listed SHA-256; no container/worker contact or worker-code execution",
+    "interpretation": "Passing evaluator oracles and hashes are evidence, not panel scores, gate decisions or qualifying results"
+  },
+  "cleanup": {
+    "performed_by": "parent",
+    "basis": "Parent reports all C1-C5 killed successfully after capture and reopened hash verification",
+    "independent_runtime_recheck": false,
+    "exact_cleanup_timestamps": null,
+    "runs": [
+      {
+        "run": "investigate-base-001",
+        "container_ref": "C1",
+        "cleanup": "successful, parent-reported"
+      },
+      {
+        "run": "chore-base-001",
+        "container_ref": "C2",
+        "cleanup": "successful, parent-reported"
+      },
+      {
+        "run": "bugfix-base-001",
+        "container_ref": "C3",
+        "cleanup": "successful, parent-reported"
+      },
+      {
+        "run": "feature-base-001",
+        "container_ref": "C4",
+        "cleanup": "successful, parent-reported"
+      },
+      {
+        "run": "refactor-base-001",
+        "container_ref": "C5",
+        "cleanup": "successful, parent-reported"
+      }
+    ]
+  },
+  "feature_supplement": {
+    "path": "runs/feature-base-001/search-red.txt",
+    "original_container_path": "/tmp/search-red.txt",
+    "provenance": "Parent recovered post-run from the still-live feature container before cleanup. Not recovered transcript content and not evaluator replay output.",
+    "chronology": "Assess original execution order using transcript ordinals; later recovery alone does not establish when file bytes were produced.",
+    "audit_update": "baseline-evidence-audit.md predates attached verification and this supplement; its pending-verification and missing-full-RED statements describe that earlier audit point, not current absence. Original audit preserved unchanged.",
+    "sha256": "8b17cbe5eb3415768a6c5079e129d3ab38065891d642bf0cebbc4a753830ea9a",
+    "bytes": 6539
+  },
+  "frozen_rubric_sha256": "e28b264ad670da1fa63dfa53700d1705956886265ee54e51d3825f0c54f16b1b"
+}

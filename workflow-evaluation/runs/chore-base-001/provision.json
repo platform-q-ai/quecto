@@ -1,0 +1,17 @@
+{
+  "container": "quecto-env-yOF0fkyDQP",
+  "socket": "/run/user/1000/quecto-agent-49ce7f99-ee48-4407-a4c4-ffce3b6f3389.sock",
+  "workspace": "/home/swq/.quecto/container-environments/env-yOF0fkyDQP/workspace",
+  "runtime": "podman",
+  "task": "chore-base",
+  "model": "openai-oauth/gpt-6-astra",
+  "effort": "low",
+  "image_id": "b1f87e8917502e1963979a0ed43fd7866427c961c26aac0d1576a17774b63662",
+  "python_version": "Python 3.13.5",
+  "metric_limitations": [
+    "No enforced token ceiling; report available session usage only.",
+    "No hard filesystem/network isolation from mounted agent home."
+  ],
+  "fixture_verified_before_prompt": true,
+  "fixture_sha256": "11c0f1c5b91b57ca3a1a4f66226410e4ff82afec492a7607a92218a0d53a64fc"
+}

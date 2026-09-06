@@ -1,0 +1,12 @@
+{
+  "command": [
+    "podman",
+    "cp",
+    "/home/swq/Documents/github/quecto/workflow-evaluation/runs/bugfix-base-001/fixture-after",
+    "quecto-env-boTV3Wx2gA:/tmp/workflow-eval.lTh66aVp/final-suite"
+  ],
+  "returncode": 0,
+  "stderr": "",
+  "stdout": "",
+  "timed_out": false
+}

@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Derived resolved WorkflowTemplate shape (not directory-file schema)",
+  "$comment": "Evaluator aid derived from workflow.rs. Engine additionally enforces unique keys/IDs and guard references. String whitespace semantics may differ by validator. Unknown fields intentionally allowed.",
+  "type": "object",
+  "required": [
+    "id",
+    "label",
+    "description",
+    "steps"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "label": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "when_to_use": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "phase"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "label": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "string"
+          },
+          "guidance": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        }
+      }
+    },
+    "guards": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "object",
+        "required": [
+          "commands",
+          "before_step_key",
+          "message"
+        ],
+        "properties": {
+          "commands": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "before_step_key": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

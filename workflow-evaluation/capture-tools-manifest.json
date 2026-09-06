@@ -1,0 +1,12 @@
+{
+  "scope": "Post-run infrastructure additions; frozen task/rubric unchanged",
+  "tested": "2 mock-only unit tests pass; no live worker/container interactions",
+  "files_sha256": {
+    "capture_and_verify.py": "0aa036b15676078a6632e09a491733d81763088d25b3279cee64e430d42b07bc",
+    "test_capture_and_verify.py": "06c34c4d92a286f2f74488516e196299055bc6701b78d48eb75f319c370225c5",
+    "JUDGES.md": "d060ef241d035802ed544081ca3aee616f7028d69846c96a3cfddc6723885f1e",
+    "judge-prompts/judge-1.txt": "d60c43d34d3ebb3566fbcf385ffd365e6766e5663d0b8aafebde5a4d72eacd85",
+    "judge-prompts/judge-2.txt": "c13eea3e008020ba8ea07d46a702918dfd9cba74a3a1ec4d2a9b5950d0488b97",
+    "judge-prompts/judge-3.txt": "2d2291fe9332bbaf02cb385d209c6d29d32bc75a7f616bcfc106abe000827e1d"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "commands": [
+    "allocate-stage.json",
+    "final-oracle-copy.json",
+    "final-oracle.json",
+    "final-suite-copy.json",
+    "final-suite.json",
+    "pristine-with-worker-tests-copy.json",
+    "pristine-with-worker-tests.json"
+  ],
+  "container_killed": false,
+  "errors": [],
+  "limitations": [
+    "Committed history, not live token events or every workflow broadcast.",
+    "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing.",
+    "Expected built-in snapshot only; panel must corroborate actual assignment/guidance from transcript.",
+    "Disposable same-container stages retained for parent cleanup. No container kill; timeout may leave subprocesses. Working directory differs from original task path."
+  ],
+  "notice": "Not a score or gate verdict. Nonzero assertion/test results are evidence; interpret cause and task contract.",
+  "remote_stage": "/tmp/workflow-eval.J5FQsV9U",
+  "reused": [
+    "transcript (left unchanged)",
+    "fixture-after (left unchanged; first capture authoritative)"
+  ],
+  "run_dir": "/home/swq/Documents/github/quecto/workflow-evaluation/runs/feature-base-001",
+  "status": "CAPTURED_FOR_REVIEW",
+  "worker_code_executed_on_host": false
+}

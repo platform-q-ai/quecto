@@ -1,0 +1,13 @@
+{
+  "status": "NOT_PROPOSED",
+  "candidate_id": null,
+  "parent_sha256": null,
+  "template_path": null,
+  "template_sha256": null,
+  "proposal_ids": [],
+  "proposals": [],
+  "votes": [],
+  "goal_conflicts": [],
+  "hypothesis": null,
+  "frozen_before_run": null
+}

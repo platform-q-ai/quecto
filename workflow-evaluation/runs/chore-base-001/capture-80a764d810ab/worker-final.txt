@@ -1,0 +1,5 @@
+- **Summary:** Updated export documentation to match the current CLI, preserving the introduction and compatibility note.
+- **Checks:** Compared README against `export.py` and ran `python3 export.py --help`; documentation matches.
+- **Changed files:** `/workspace/task/README.md` only.
+- **Blockers:** None.
+- **Next action:** None; chore workflow complete.

@@ -1,0 +1,39 @@
+{
+  "id": "bugfix",
+  "label": "Bugfix",
+  "description": "Reproduce a wrong behavior, fix the smallest cause, and prove the regression is covered.",
+  "when_to_use": "Use when existing observable behavior is incorrect and should be corrected.",
+  "steps": [
+    {
+      "key": "reproduce",
+      "label": "Reproduce the failure",
+      "phase": "red",
+      "guidance": "Capture the wrong behavior with a failing test, fixture, command, or clear manual reproduction."
+    },
+    {
+      "key": "diagnose",
+      "label": "Diagnose root cause",
+      "phase": "analysis",
+      "guidance": "Trace the failure to the smallest responsible code path and check for related cases."
+    },
+    {
+      "key": "fix",
+      "label": "Implement the fix",
+      "phase": "green",
+      "guidance": "Make the minimal code change that addresses the root cause while preserving intended behavior."
+    },
+    {
+      "key": "regression",
+      "label": "Prove regression coverage",
+      "phase": "verify",
+      "guidance": "Run the reproduction and relevant surrounding tests to show the fix holds."
+    },
+    {
+      "key": "handoff",
+      "label": "Handoff",
+      "phase": "handoff",
+      "guidance": "Summarize the defect, fix, validation, and remaining risk."
+    }
+  ],
+  "guards": []
+}

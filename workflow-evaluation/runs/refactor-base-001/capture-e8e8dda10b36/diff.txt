@@ -1,0 +1,83 @@
+--- before/receipts.py
++++ after/receipts.py
+@@ -1,16 +1,22 @@
+ import html
++
++
++def _format_line(name, qty, cents):
++    unit = "item" if qty == 1 else "items"
++    return f"{name}: {qty} {unit} @ {cents}c"
++
++
+ def text_receipt(items):
+     lines = []
+     for name, qty, cents in items:
+-        unit = "item" if qty == 1 else "items"
+-        line = f"{name}: {qty} {unit} @ {cents}c"
++        line = _format_line(name, qty, cents)
+         lines.append(line)
+     return "\n".join(lines)
++
+ 
+ def html_receipt(items):
+     lines = []
+     for name, qty, cents in items:
+-        unit = "item" if qty == 1 else "items"
+-        line = f"{name}: {qty} {unit} @ {cents}c"
++        line = _format_line(name, qty, cents)
+         lines.append("<li>" + html.escape(line) + "</li>")
+     return "<ul>" + "".join(lines) + "</ul>"
+--- before/tests/test_receipts.py
++++ after/tests/test_receipts.py
+@@ -0,0 +1,51 @@
++import unittest
++
++from receipts import html_receipt, text_receipt
++
++
++class ReceiptParityTests(unittest.TestCase):
++    def test_empty(self):
++        self.assertEqual(text_receipt([]), "")
++        self.assertEqual(html_receipt([]), "<ul></ul>")
++
++    def test_order_quantities_and_cents(self):
++        items = [("tea", 1, 20), ("cake", 2, -15), ("empty", 0, 0),
++                 ("return", -1, -100)]
++        self.assertEqual(
++            text_receipt(items),
++            "tea: 1 item @ 20c\ncake: 2 items @ -15c\n"
++            "empty: 0 items @ 0c\nreturn: -1 items @ -100c",
++        )
++        self.assertEqual(
++            html_receipt(items),
++            "<ul><li>tea: 1 item @ 20c</li><li>cake: 2 items @ -15c</li>"
++            "<li>empty: 0 items @ 0c</li><li>return: -1 items @ -100c</li></ul>",
++        )
++
++    def test_escaping_and_whitespace(self):
++        items = [(' <tea & "cake\'>\n&amp;', 1, -2)]
++        self.assertEqual(text_receipt(items), ' <tea & "cake\'>\n&amp;: 1 item @ -2c')
++        self.assertEqual(
++            html_receipt(items),
++            "<ul><li> &lt;tea &amp; &quot;cake&#x27;&gt;\n"
++            "&amp;amp;: 1 item @ -2c</li></ul>",
++        )
++
++    def test_singular_uses_equality_not_type(self):
++        items = [("float", 1.0, 5), ("bool", True, 6), ("string", "1", 7)]
++        self.assertEqual(
++            text_receipt(items),
++            "float: 1.0 item @ 5c\nbool: True item @ 6c\nstring: 1 items @ 7c",
++        )
++        self.assertEqual(
++            html_receipt(items),
++            "<ul><li>float: 1.0 item @ 5c</li><li>bool: True item @ 6c</li>"
++            "<li>string: 1 items @ 7c</li></ul>",
++        )
++
++    def test_single_pass_iterables(self):
++        self.assertEqual(text_receipt(iter([("tea", 1, 20)])), "tea: 1 item @ 20c")
++        self.assertEqual(
++            html_receipt(iter([("tea", 1, 20)])),
++            "<ul><li>tea: 1 item @ 20c</li></ul>",
++        )

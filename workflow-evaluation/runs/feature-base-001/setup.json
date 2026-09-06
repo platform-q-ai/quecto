@@ -1,0 +1,24 @@
+{
+  "catalog_sha256": "47fa81509e58b067184a8253b38cee94910ca4e4dbb53ad308574adbc26ae184",
+  "files": {
+    "README.md": {
+      "sha256": "702e70bcf3d870b2826f3da05b0216b7888646b8e0fbf3be917f967f55c28b80",
+      "type": "file"
+    },
+    "notes/operator-draft.txt": {
+      "sha256": "d46939cae5e3e620ee9350a64ceeaf46d126933427d77883c3beaa50270d69ee",
+      "type": "file"
+    },
+    "search.py": {
+      "sha256": "14a051a5876f9ff9a5faeba9806012181489471fc91e87e450bcf999d064b365",
+      "type": "file"
+    },
+    "tests/test_smoke.py": {
+      "sha256": "effc6bd32132defca8ae109a5631aa9046f42ad602cbfe51cfcde20cde5479c7",
+      "type": "file"
+    }
+  },
+  "prompt": "In /workspace/task, add an optional keyword argument limit=None to search.find. With None, preserve current case-insensitive substring matching and input order. A nonnegative integer returns at most that many matching names, with zero returning an empty list; duplicates remain meaningful. Reject negative integers with ValueError. Other limit types and non-string names are out of scope. Keep inputs untouched and cover the new behavior.",
+  "root": "/home/swq/Documents/github/quecto/workflow-evaluation/runs/feature-base-001/fixture-before",
+  "task": "feature-base"
+}

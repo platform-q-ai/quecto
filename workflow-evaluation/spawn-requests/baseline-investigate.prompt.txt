@@ -1,0 +1,3 @@
+Select the built-in investigate workflow for this task.
+
+In /workspace/task, explain why the preview service binds port 8123 even though settings.json says 9000. Identify the effective configuration precedence, distinguish facts from uncertainty, and recommend the smallest appropriate next action. This is a diagnosis only: do not change or create workspace files. Return your findings in your final response.

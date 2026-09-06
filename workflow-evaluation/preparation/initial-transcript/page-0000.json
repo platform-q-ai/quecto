@@ -1,0 +1,34 @@
+{
+  "type": "response",
+  "id": "b01d7ff3-06ef-4c45-b9e3-61d36ed34a84",
+  "command": "get_messages",
+  "success": true,
+  "data": {
+    "before": "55782347-69f3-42e0-a8c3-bf4d1641cb8e",
+    "hasMoreBefore": true,
+    "messages": [
+      {
+        "collapsed": false,
+        "content": "/home/swq/.quecto/container-environments/env-sqJBfPEYjQ/workspace\n1000\nPython 3.13.5\n/workspace does not exist",
+        "id": "55782347-69f3-42e0-a8c3-bf4d1641cb8e",
+        "isError": false,
+        "ordinal": 4,
+        "role": "tool",
+        "toolCallId": "call_AqLiiFR6hIbxbGGIe7FJOMls",
+        "toolCalls": [],
+        "toolName": "bash"
+      },
+      {
+        "collapsed": false,
+        "content": "```text\n/home/swq/.quecto/container-environments/env-sqJBfPEYjQ/workspace\n1000\nPython 3.13.5\n/workspace does not exist\n```",
+        "id": "d256d9a7-e390-48b6-b2d9-d5d4aa7cb8a7",
+        "isError": false,
+        "ordinal": 5,
+        "role": "assistant",
+        "toolCallId": null,
+        "toolCalls": [],
+        "toolName": null
+      }
+    ]
+  }
+}

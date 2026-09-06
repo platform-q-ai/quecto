@@ -1,0 +1,5 @@
+- **Summary:** Fixed `merge` so touching half-open intervals stay separate while overlapping intervals merge. API and input-list preservation are unchanged.
+- **Checks:** Ran `python3 -B -m unittest discover -s tests -v`. Two regression tests failed before the fix; all 5 tests passed afterward.
+- **Changed files:** `intervals.py`, `tests/test_merge.py`.
+- **Blockers:** None.
+- **Next action:** Review and commit the changes.

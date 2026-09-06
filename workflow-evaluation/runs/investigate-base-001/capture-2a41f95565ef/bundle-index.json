@@ -1,0 +1,193 @@
+{
+  "capture_status": "CAPTURED_FOR_REVIEW",
+  "files": [
+    {
+      "bytes": 223,
+      "path": "fixture-before/README.md",
+      "sha256": "4c25476a4c9d23b1b5eb48866784c122aee5dccbef1986b3c9afbfce403967d9"
+    },
+    {
+      "bytes": 15,
+      "path": "fixture-before/settings.json",
+      "sha256": "f9acc1fe59a4885552d40865a31e796c8f707a9ec5ae4bcb380e258f17229c14"
+    },
+    {
+      "bytes": 17,
+      "path": "fixture-before/launch.json",
+      "sha256": "d93a1d07586754b78fdb0113db87a9fb1e2e37b87e9a5dadde6a7acd448109aa"
+    },
+    {
+      "bytes": 305,
+      "path": "fixture-before/preview.py",
+      "sha256": "916f47770ce0a2afaf89c14b472a2b919599ad9dbb20acf4ec8df52d8fc4d07d"
+    },
+    {
+      "bytes": 49,
+      "path": "fixture-before/logs/preview.log",
+      "sha256": "91b9113482ae2a0c375bf97227ff1062c805ac0d4b390be5c601fa51daa04caa"
+    },
+    {
+      "bytes": 50,
+      "path": "fixture-before/notes/operator-draft.txt",
+      "sha256": "d46939cae5e3e620ee9350a64ceeaf46d126933427d77883c3beaa50270d69ee"
+    },
+    {
+      "bytes": 223,
+      "path": "fixture-after/README.md",
+      "sha256": "4c25476a4c9d23b1b5eb48866784c122aee5dccbef1986b3c9afbfce403967d9"
+    },
+    {
+      "bytes": 17,
+      "path": "fixture-after/launch.json",
+      "sha256": "d93a1d07586754b78fdb0113db87a9fb1e2e37b87e9a5dadde6a7acd448109aa"
+    },
+    {
+      "bytes": 305,
+      "path": "fixture-after/preview.py",
+      "sha256": "916f47770ce0a2afaf89c14b472a2b919599ad9dbb20acf4ec8df52d8fc4d07d"
+    },
+    {
+      "bytes": 15,
+      "path": "fixture-after/settings.json",
+      "sha256": "f9acc1fe59a4885552d40865a31e796c8f707a9ec5ae4bcb380e258f17229c14"
+    },
+    {
+      "bytes": 49,
+      "path": "fixture-after/logs/preview.log",
+      "sha256": "91b9113482ae2a0c375bf97227ff1062c805ac0d4b390be5c601fa51daa04caa"
+    },
+    {
+      "bytes": 50,
+      "path": "fixture-after/notes/operator-draft.txt",
+      "sha256": "d46939cae5e3e620ee9350a64ceeaf46d126933427d77883c3beaa50270d69ee"
+    },
+    {
+      "bytes": 596,
+      "path": "transcript/get_state.json",
+      "sha256": "4463dc947b3c05954589220d73be7981048be587d2d5b96cea1f9f82894d948c"
+    },
+    {
+      "bytes": 586,
+      "path": "transcript/get_session_stats.json",
+      "sha256": "6876f8b8a9d8d6806829e767ce2e11177e4084d989c1420aa1b86d47fd43b9ba"
+    },
+    {
+      "bytes": 12392,
+      "path": "transcript/page-0000.json",
+      "sha256": "e046389dc96c4ee1bbafaab0f238b0945c923a84a25d78d083f9e6ef0736c392"
+    },
+    {
+      "bytes": 625,
+      "path": "transcript/page-0001.json",
+      "sha256": "4af7b8e93d29517098de8e1adc7fe9565f2611edde8e86dbe1ce28124b7a92f5"
+    },
+    {
+      "bytes": 11429,
+      "path": "transcript/messages.json",
+      "sha256": "27d4cc76bd4b333aba4691ea3b21f965e3f3b7878f4dfca43251a3652b0abe85"
+    },
+    {
+      "bytes": 248,
+      "path": "transcript/archive-summary.json",
+      "sha256": "f0d4a17ba7c5aaee54ddc6cb3ed4124c4e100186bfc9c04071f6bef221571336"
+    },
+    {
+      "bytes": 1309,
+      "path": "capture-2a41f95565ef/status.json",
+      "sha256": "0c997cc3da672ee5aaf99e22fce93eb9932c7635efcf7211289a042c5c551192"
+    },
+    {
+      "bytes": 874,
+      "path": "capture-2a41f95565ef/before-files.json",
+      "sha256": "8e9a4fdf114f61d600369cd4d2a318b57c322a186f2965a476b8918b5594fbf6"
+    },
+    {
+      "bytes": 874,
+      "path": "capture-2a41f95565ef/after-files.json",
+      "sha256": "8e9a4fdf114f61d600369cd4d2a318b57c322a186f2965a476b8918b5594fbf6"
+    },
+    {
+      "bytes": 161,
+      "path": "capture-2a41f95565ef/changes.json",
+      "sha256": "de71eb5c7d9c5e739468a8428cf7dd5113893469cdbd04f7de7c4d26be824d2e"
+    },
+    {
+      "bytes": 0,
+      "path": "capture-2a41f95565ef/diff.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 729,
+      "path": "capture-2a41f95565ef/acceptance.json",
+      "sha256": "9b1dcb0fc631825ea6685370f81d5595d4ec2880218554f5c6c05e083d12492a"
+    },
+    {
+      "bytes": 247,
+      "path": "capture-2a41f95565ef/oracle.py",
+      "sha256": "b47c7c1b4f6408dbc1e1494849e1b7a00ad8973f45a722ad5f00891bd3c1a6e8"
+    },
+    {
+      "bytes": 15148,
+      "path": "capture-2a41f95565ef/RUBRIC.md",
+      "sha256": "e28b264ad670da1fa63dfa53700d1705956886265ee54e51d3825f0c54f16b1b"
+    },
+    {
+      "bytes": 1202,
+      "path": "capture-2a41f95565ef/expected-template.json",
+      "sha256": "52582422d6af34cf210c07e5ca324ad5a9fba45cd58e6d2a5adb02297d9c10a7"
+    },
+    {
+      "bytes": 3299,
+      "path": "capture-2a41f95565ef/transcript-index.json",
+      "sha256": "b988e34740acda31a2fd8e1744e14e384c0d87d000d0212b486690f66c8fd78b"
+    },
+    {
+      "bytes": 674,
+      "path": "capture-2a41f95565ef/worker-final.txt",
+      "sha256": "650441492c1e51140c8bd1c291b6f66f67b8e477a2d465215b284e1e899770bb"
+    },
+    {
+      "bytes": 238,
+      "path": "capture-2a41f95565ef/allocate-stage.json",
+      "sha256": "2e8d4f4a2b938c4ce4931959e6e60ab579f3cd235fbc68c0a6945340491762ae"
+    },
+    {
+      "bytes": 290,
+      "path": "capture-2a41f95565ef/final-oracle-copy.json",
+      "sha256": "00eb9d23a1e59df27109e560da613ef2dd1b3eb29ba80e85d8d34e15c59ba9aa"
+    },
+    {
+      "bytes": 720,
+      "path": "capture-2a41f95565ef/final-oracle.json",
+      "sha256": "e0165a8001cecf40158347ff2de5246ada5c6bb57cef2c021aab61e9d76c9ed7"
+    },
+    {
+      "bytes": 344,
+      "path": "capture-2a41f95565ef/replay-selection.json",
+      "sha256": "b07bd9800f518efe013a974cf0d2cef0d00364d4d222d6331c74f6b25b27c486"
+    },
+    {
+      "bytes": 411,
+      "path": "task.txt",
+      "sha256": "260bb6df17ade76ff4b133b486d02ff4f17c29b1e2488581932a10b833e567bb"
+    },
+    {
+      "bytes": 742,
+      "path": "provision.json",
+      "sha256": "17a18e28e66737dd1d87804f0c713fb798befe95ecf7cbfc2f28031a286d4fe6"
+    },
+    {
+      "bytes": 1430,
+      "path": "setup.json",
+      "sha256": "fc6b1adb7096aa472e86e8868590e2588cf8b5e011afe5028c81f043007289da"
+    }
+  ],
+  "judge_warning": "Compare actual artifact-review evidence, not Git availability. Do not infer behavior from workflow checkmarks.",
+  "read_first": [
+    "status.json",
+    "RUBRIC.md",
+    "acceptance.json",
+    "changes.json",
+    "diff.txt"
+  ]
+}

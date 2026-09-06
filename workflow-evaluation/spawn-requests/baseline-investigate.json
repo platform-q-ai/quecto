@@ -1,0 +1,17 @@
+{
+  "agent_id": "baseline-investigate",
+  "container": {
+    "mode": "new",
+    "container_config": "sandbox"
+  },
+  "model": "openai-oauth/gpt-6-astra",
+  "effort": "low",
+  "workflow": false,
+  "workflow_guards": false,
+  "disable_tools": [
+    "spawn",
+    "agent_cmd",
+    "web_fetch",
+    "web_search"
+  ]
+}

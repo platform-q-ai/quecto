@@ -1,0 +1,30 @@
+{
+  "files": {
+    "README.md": {
+      "sha256": "4c25476a4c9d23b1b5eb48866784c122aee5dccbef1986b3c9afbfce403967d9",
+      "type": "file"
+    },
+    "launch.json": {
+      "sha256": "d93a1d07586754b78fdb0113db87a9fb1e2e37b87e9a5dadde6a7acd448109aa",
+      "type": "file"
+    },
+    "logs/preview.log": {
+      "sha256": "91b9113482ae2a0c375bf97227ff1062c805ac0d4b390be5c601fa51daa04caa",
+      "type": "file"
+    },
+    "notes/operator-draft.txt": {
+      "sha256": "d46939cae5e3e620ee9350a64ceeaf46d126933427d77883c3beaa50270d69ee",
+      "type": "file"
+    },
+    "preview.py": {
+      "sha256": "916f47770ce0a2afaf89c14b472a2b919599ad9dbb20acf4ec8df52d8fc4d07d",
+      "type": "file"
+    },
+    "settings.json": {
+      "sha256": "f9acc1fe59a4885552d40865a31e796c8f707a9ec5ae4bcb380e258f17229c14",
+      "type": "file"
+    }
+  },
+  "root": "/home/swq/Documents/github/quecto/workflow-evaluation/preparation/fixture-after",
+  "task": null
+}

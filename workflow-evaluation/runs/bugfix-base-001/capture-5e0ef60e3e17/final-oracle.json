@@ -1,0 +1,26 @@
+{
+  "command": [
+    "podman",
+    "exec",
+    "--workdir",
+    "/tmp/workflow-eval.lTh66aVp/final-oracle",
+    "-e",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "-e",
+    "PYTHONHASHSEED=0",
+    "-e",
+    "TZ=UTC",
+    "quecto-env-boTV3Wx2gA",
+    "env",
+    "-u",
+    "PYTHONPATH",
+    "python3",
+    "-B",
+    "-c",
+    "from intervals import merge\ncases = [([], []), ([(1,2),(2,3)], [(1,2),(2,3)]),\n         ([(5,7),(1,4),(3,6)], [(1,7)]), ([(1,8),(2,3)], [(1,8)]),\n         ([(1,3),(1,3)], [(1,3)]), ([(-4,-2),(-2,0)], [(-4,-2),(-2,0)]),\n         ([(8,9)], [(8,9)]), ([(1,4),(4,6),(3,5)], [(1,6)])]\nfor value, expected in cases:\n    before = list(value)\n    assert merge(value) == expected, (value, expected)\n    assert value == before, \"mutated input\"\nprint(\"8 interval cases and input preservation pass\")\n"
+  ],
+  "returncode": 0,
+  "stderr": "",
+  "stdout": "8 interval cases and input preservation pass\n",
+  "timed_out": false
+}

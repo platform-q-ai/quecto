@@ -1,0 +1,25 @@
+{
+  "status": "NOT_VOTED",
+  "proposal_id": null,
+  "author_judge_id": null,
+  "evidence": [],
+  "edits": [
+    {
+      "json_pointer": null,
+      "old": null,
+      "new": null
+    }
+  ],
+  "mechanism": null,
+  "transfer_example": null,
+  "risks": [],
+  "votes": [
+    {
+      "judge_id": null,
+      "vote": null,
+      "rationale": null,
+      "goal_conflict": null
+    }
+  ],
+  "decision": null
+}

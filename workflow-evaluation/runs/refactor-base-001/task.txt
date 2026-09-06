@@ -1,0 +1,3 @@
+Select the built-in refactor workflow for this task.
+
+In /workspace/task, remove the duplicated receipt-line formatting from receipts.text_receipt and receipts.html_receipt by extracting one shared private formatter that both use. Preserve public signatures and exact returned strings, including HTML escaping, item order, empty receipts, negative cents, and singular/plural behavior. Do not fix or redesign observable behavior. Add suitable parity coverage.

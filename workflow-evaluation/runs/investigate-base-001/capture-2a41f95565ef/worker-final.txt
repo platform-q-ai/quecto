@@ -1,0 +1,5 @@
+- **Summary:** Port precedence is launch `PORT` → settings `port` → default `8000`. `launch.json` specifies `"PORT": "8123"`, overriding `settings.json`’s `9000`.
+- **Checks run and results:** Inspected code, configuration, README, and logs. `python3 -B preview.py` returned `8123`; the log reports listening on `8123`.
+- **Artifacts or changed files:** None.
+- **Blockers / uncertainty:** No blocker to configuration diagnosis. The script only prints the resolved port; a currently bound socket was not independently verified.
+- **Recommended next action:** If 9000 is desired, remove the launch-level `PORT` override, then relaunch and verify. No changes were made.

@@ -1,0 +1,25 @@
+import unittest
+
+from intervals import merge
+
+
+class MergeTests(unittest.TestCase):
+    def test_touching_intervals_remain_separate(self):
+        self.assertEqual(merge([(1, 3), (3, 5)]), [(1, 3), (3, 5)])
+
+    def test_unsorted_overlaps_merge_without_merging_touching_intervals(self):
+        intervals = [(6, 8), (3, 6), (1, 4), (8, 10)]
+        original = intervals.copy()
+
+        self.assertEqual(merge(intervals), [(1, 6), (6, 8), (8, 10)])
+        self.assertEqual(intervals, original)
+
+    def test_nested_duplicate_and_chained_overlaps(self):
+        self.assertEqual(
+            merge([(5, 9), (2, 3), (1, 6), (1, 6), (8, 12)]),
+            [(1, 12)],
+        )
+
+    def test_empty_and_single_interval(self):
+        self.assertEqual(merge([]), [])
+        self.assertEqual(merge([(-3, 0)]), [(-3, 0)])

@@ -1,0 +1,19 @@
+--- before/README.md
++++ after/README.md
+@@ -2,12 +2,12 @@
+ Export item records as a CSV file for spreadsheet users.
+ 
+ ## Example
+-python3 export.py --input data/items.json --output build/items.csv
++python3 export.py data/items.json --dest build/items.csv
+ 
+ ## Options
+---input: JSON source file
+---output: CSV destination file
+---separator: column separator (default semicolon)
++source: JSON source file (required positional argument)
++--dest: CSV destination file (required)
++--delimiter: column delimiter (default comma)
+ 
+ ## Compatibility
+ Consumers rely on the id,name column order.

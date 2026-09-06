@@ -1,0 +1,62 @@
+{
+  "status": "NOT_RUN",
+  "run_id": null,
+  "workflow": null,
+  "task_id": null,
+  "task_catalog_sha256": null,
+  "rubric_sha256": null,
+  "prompt_sha256": null,
+  "source_commit": null,
+  "agent_binary_sha256": null,
+  "resolved_template_sha256": null,
+  "candidate_id": null,
+  "condition": null,
+  "worker": {
+    "uuid": null,
+    "model": "openai-oauth/gpt-6-astra",
+    "provider": "openai-oauth",
+    "effort": "low",
+    "seed": null,
+    "context_limit": null,
+    "tool_catalog_sha256": null,
+    "config_redacted_sha256": null
+  },
+  "environment": {
+    "image_digest": null,
+    "container_ref": null,
+    "fixture_provisioning": null,
+    "python_version": null,
+    "cwd": "/workspace/task",
+    "prelaunch_fixture_sha256": null
+  },
+  "limits": {
+    "wall_seconds_soft": 1200,
+    "total_reported_tokens": null,
+    "token_ceiling_enforced": false,
+    "accounting_definition": "Available session stats only; absent counts/costs null with reason"
+  },
+  "evidence": {
+    "events": null,
+    "before": null,
+    "after": null,
+    "verification": null,
+    "workflow_events": null,
+    "worker_final": null,
+    "session_stats": null
+  },
+  "outcome": {
+    "raw_panel_score": null,
+    "gate": null,
+    "qualifying": null,
+    "invalid_reason": null,
+    "consecutive_qualifying_count": null
+  },
+  "cleanup": {
+    "evidence_reopened_outside_container": false,
+    "removed_at": null
+  },
+  "deviations": [
+    "Named sandbox, not repo-cloning default; workflow false suppresses idle selector nudge while retaining workflow tool.",
+    "No enforced total-token budget or hard auth/network isolation."
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "status": "PREPARATION_ONLY_COMPLETE",
+  "worker_runs": 0,
+  "preparation_agents": 1,
+  "agent_uuid": "b5013fa6-9a13-4f1c-8da7-67c04bc7af79",
+  "environment_ref": "C1",
+  "container": "quecto-env-sqJBfPEYjQ",
+  "runtime": "podman",
+  "container_config": "sandbox",
+  "effective_model": "openai-oauth/gpt-6-astra",
+  "effort": "low",
+  "python_version": "3.13.5",
+  "image_id": "b1f87e8917502e1963979a0ed43fd7866427c961c26aac0d1576a17774b63662",
+  "config_default_container": "quecto (repository clone)",
+  "chosen_container": "sandbox (same runtime/image, no repository)",
+  "fixture_copy_hash_match": true,
+  "post_probe_unchanged": true,
+  "archive_pages": 5,
+  "archive_reopened_before_cleanup": true,
+  "credential_values_read_or_printed": false,
+  "limitations": [
+    "Runtime identity-mounts agent home and credentials; not a hard security boundary.",
+    "Preparation agent had a harmless initial diagnostic task, then parent provisioned before copy-probe prompt. Baselines will spawn idle with no task."
+  ],
+  "cleanup": {
+    "kill_container_ref": "C1",
+    "reported_killed": true,
+    "runtime_container_absent": true,
+    "utc": "2026-09-06T10:18:44.919331+00:00"
+  }
+}

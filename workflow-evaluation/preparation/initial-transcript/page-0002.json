@@ -1,0 +1,23 @@
+{
+  "type": "response",
+  "id": "398246dc-1de7-473d-818c-941497127f58",
+  "command": "get_messages",
+  "success": true,
+  "data": {
+    "before": null,
+    "hasMoreBefore": false,
+    "messages": [
+      {
+        "collapsed": false,
+        "content": "[Session memory is available via recall()]\nUse recall(\"list\") for the full session-memory index, then recall(\"<id>\") to retrieve content.",
+        "id": "76cd14b8-a0db-482c-a499-3c591670e5d2",
+        "isError": false,
+        "ordinal": 1,
+        "role": "system",
+        "toolCallId": null,
+        "toolCalls": [],
+        "toolName": null
+      }
+    ]
+  }
+}

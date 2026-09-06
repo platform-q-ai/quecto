@@ -1,0 +1,9 @@
+**Summary:** Extracted shared private `_format_line` for both receipt functions, preserving public signatures and exact output behavior.
+
+**Checks:** `python3 -m unittest discover -s tests -v` — all 6 tests passed before and after refactoring.
+
+**Changed files:** `receipts.py`, `tests/test_receipts.py`.
+
+**Blockers:** None. Git diff checking was unavailable because the directory is not a Git repository.
+
+**Next action:** Review the changes; no further implementation needed.

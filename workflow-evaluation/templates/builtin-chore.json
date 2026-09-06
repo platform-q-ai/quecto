@@ -1,0 +1,39 @@
+{
+  "id": "chore",
+  "label": "Chore",
+  "description": "Small maintenance workflow for docs, configuration, tooling, or other low-risk repository upkeep.",
+  "when_to_use": "Use for maintenance that should not intentionally change product behavior.",
+  "steps": [
+    {
+      "key": "scope",
+      "label": "Scope the chore",
+      "phase": "setup",
+      "guidance": "Restate the requested maintenance, define done, and identify the files expected to change."
+    },
+    {
+      "key": "change",
+      "label": "Make the minimal change",
+      "phase": "green",
+      "guidance": "Apply the smallest repo-local edit that satisfies the scope. Avoid unrelated cleanup."
+    },
+    {
+      "key": "check",
+      "label": "Run relevant checks",
+      "phase": "verify",
+      "guidance": "Run formatting, linting, tests, or documentation checks appropriate to the changed files."
+    },
+    {
+      "key": "review",
+      "label": "Review the diff",
+      "phase": "review",
+      "guidance": "Inspect the final diff for accidental behavior changes, secrets, generated noise, and scope creep."
+    },
+    {
+      "key": "handoff",
+      "label": "Handoff",
+      "phase": "handoff",
+      "guidance": "Summarize what changed, checks run, and any follow-up risks or skipped validation."
+    }
+  ],
+  "guards": []
+}

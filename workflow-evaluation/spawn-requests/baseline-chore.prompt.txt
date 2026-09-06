@@ -1,0 +1,3 @@
+Select the built-in chore workflow for this task.
+
+In /workspace/task, update README.md so its export example and option reference agree with the current export.py CLI. The example should export data/items.json to build/items.csv with the default comma delimiter. Keep the introductory description and compatibility note. This is documentation maintenance; do not change program behavior or other existing files.
