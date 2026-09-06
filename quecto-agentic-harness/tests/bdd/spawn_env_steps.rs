@@ -35,6 +35,11 @@ pub(crate) fn given_shared_script_spawn(world: &mut QuectoWorld, kill_fails_once
     let cfg_path = PathBuf::from(world.config_path.clone().unwrap());
     let cfg_dir = cfg_path.parent().unwrap().to_path_buf();
     let log = shared_log_path(world);
+    std::fs::write(
+        cfg_dir.join("fixture-processes.py"),
+        include_str!("fixture_processes.py"),
+    )
+    .unwrap();
     let pid_dir = cfg_dir.join("env-pids");
     std::fs::create_dir_all(&pid_dir).unwrap();
 
@@ -58,7 +63,7 @@ for arg in "$@"; do
 done
 "$@" >/dev/null 2>&1 &
 child_pid="$!"
-printf '%s\n' "$child_pid" > '{pid_dir}/'$env_id'.pid'
+python3 '{pid_dir}/../fixture-processes.py' track '{pid_dir}' "$env_id" "$child_pid"
 printf '{{"environment_id":"%s","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$env_id" "$PWD/workspace-$env_id" "$socket_path"
 "#,
             log = log.display(),
@@ -84,9 +89,11 @@ for arg in "$@"; do
   prev="$arg"
 done
 "$@" >/dev/null 2>&1 &
+python3 '{pid_dir}/../fixture-processes.py' track '{pid_dir}' "${{QUECTO_CONTAINER_ENVIRONMENT_ID}}" "$!"
 printf '{{"socket_path":"%s","metadata":{{}}}}' "$socket_path"
 "#,
-            log = log.display()
+            log = log.display(),
+            pid_dir = pid_dir.display()
         ),
     );
 
@@ -124,18 +131,7 @@ exit 1
 set -euo pipefail
 echo "{{\"kind\":\"kill\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}\"}}" >> '{log}'
 {fail_clause}
-pid_file='{pid_dir}/'"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}"'.pid'
-if [ -s "$pid_file" ]; then
-  pid="$(cat "$pid_file")"
-  if kill -0 "$pid" 2>/dev/null; then
-    kill "$pid" 2>/dev/null || true
-    for _ in $(seq 1 50); do
-      kill -0 "$pid" 2>/dev/null || break
-      sleep 0.02
-    done
-  fi
-  rm -f "$pid_file"
-fi
+python3 '{pid_dir}/../fixture-processes.py' clean '{pid_dir}' "${{QUECTO_CONTAINER_ENVIRONMENT_ID}}"
 "#,
             log = log.display(),
             pid_dir = pid_dir.display()
@@ -756,11 +752,13 @@ for arg in "$@"; do
   if [ "$prev" = "--socket" ]; then socket_path="$arg"; break; fi
   prev="$arg"
 done
-( while [ ! -e '{gate}' ]; do sleep 0.05; done; "$@" ) >/dev/null 2>&1 &
+( while [ ! -e '{gate}' ]; do sleep 0.05; done; exec "$@" ) >/dev/null 2>&1 &
+python3 '{pid_dir}/../fixture-processes.py' track '{pid_dir}' "$env_id" "$!"
 printf '{{"environment_id":"%s","workspace_path":"%s","metadata":{{}},"socket_path":"%s"}}' "$env_id" "$PWD/workspace-$env_id" "$socket_path"
 "#,
             log = log.display(),
             gate = gate.display(),
+            pid_dir = cfg_path.parent().unwrap().join("env-pids").display(),
         ),
     );
     let mut v: serde_json::Value =
@@ -919,4 +917,57 @@ fn when_gated_spawn_completes(world: &mut QuectoWorld, agent_id: String) {
             .insert(agent_id, env_ref.trim_end_matches(')').to_string());
     }
     world.spawn_result = Some(result);
+}
+
+#[then("scenario teardown should leave no fixture processes running")]
+fn then_fixture_processes_exit(world: &mut QuectoWorld) {
+    let cfg = PathBuf::from(world.config_path.as_ref().expect("fixture config"));
+    let marker = cfg.parent().unwrap().to_string_lossy().into_owned();
+    let processes: Vec<_> = std::fs::read_dir("/proc")
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let pid = entry.file_name().to_string_lossy().parse::<u32>().ok()?;
+            let command = std::fs::read(entry.path().join("cmdline")).ok()?;
+            if pid == std::process::id() || !String::from_utf8_lossy(&command).contains(&marker) {
+                return None;
+            }
+            Some((
+                pid,
+                std::fs::read_to_string(entry.path().join("stat")).ok()?,
+            ))
+        })
+        .collect();
+    drop(std::mem::take(world));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let survivors = loop {
+        let survivors: Vec<_> = processes
+            .iter()
+            .filter(|(pid, before)| {
+                let Ok(after) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+                    return false;
+                };
+                let fields = |s: &str| {
+                    s.rsplit_once(") ")
+                        .unwrap()
+                        .1
+                        .split_whitespace()
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                };
+                let before = fields(before);
+                let after = fields(&after);
+                before[19] == after[19] && after[0] != "Z"
+            })
+            .map(|(pid, _)| *pid)
+            .collect::<Vec<_>>();
+        if survivors.is_empty() || std::time::Instant::now() >= deadline {
+            break survivors;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert!(
+        survivors.is_empty(),
+        "fixture processes survived scenario teardown: {survivors:?}"
+    );
 }

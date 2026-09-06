@@ -129,7 +129,7 @@ done
 "$@" >/dev/null 2>&1 &
 child_pid="$!"
 echo "{{\"kind\":\"child\",\"pid\":$child_pid,\"socket\":\"$socket_path\"}}" >> '{log}'
-if [ -n "$env_id" ]; then printf '%s\n' "$child_pid" > '{pid_dir}/'$env_id'.pid'; fi
+python3 '{pid_dir}/../fixture-processes.py' track '{pid_dir}' "$env_id" "$child_pid"
 {result_line}
 "#,
         log = log.display(),
@@ -253,9 +253,12 @@ while True:
         f.write(json.dumps({"kind": "decoy-connection", "path": path}) + "\n")
     c.close()
 PY
+python3 '__PID_DIR__/../fixture-processes.py' track '__PID_DIR__' "$env_id" "$!"
 fi
 "${new_args[@]}" >/dev/null 2>&1 &
-echo "{\"kind\":\"child\",\"pid\":$!,\"socket\":\"$private_sock\"}" >> '__LOG__'
+child_pid=$!
+python3 '__PID_DIR__/../fixture-processes.py' track '__PID_DIR__' "$env_id" "$child_pid"
+echo "{\"kind\":\"child\",\"pid\":$child_pid,\"socket\":\"$private_sock\"}" >> '__LOG__'
 printf '{"environment_id":"%s","workspace_path":"%s","metadata":{},"socket_proxy":{"argv":["__PROXY__","%s"]}}' "$env_id" "$PWD/workspace-$env_id" "$private_sock"
 "#
     .replace("__LOG__", &log.display().to_string())
@@ -264,6 +267,7 @@ printf '{"environment_id":"%s","workspace_path":"%s","metadata":{},"socket_proxy
         "__SLOW_ACCEPT_MARKER__",
         &slow_accept_marker.display().to_string(),
     )
+    .replace("__PID_DIR__", &cfg_dir(world).join("env-pids").display().to_string())
     .replace("__PROXY__", &proxy.display().to_string());
     write_executable(&create, create_script);
 
