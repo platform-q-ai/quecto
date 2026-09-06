@@ -632,6 +632,9 @@ mod app_issue1567_tests;
 #[path = "../agents/app_live_inflight_1259_tests.rs"]
 mod app_live_inflight_1259_tests;
 #[cfg(test)]
+#[path = "../agents/app_master_timer_tests.rs"]
+mod app_master_timer_tests;
+#[cfg(test)]
 #[path = "app_methods_tests.rs"]
 mod app_methods_tests;
 #[cfg(test)]

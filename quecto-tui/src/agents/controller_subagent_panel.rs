@@ -644,10 +644,7 @@ impl App {
 
     fn panel_row_timer(&self, id: Option<&str>, now: tokio::time::Instant) -> String {
         match id {
-            None => fmt_mss(
-                now.saturating_duration_since(self.ac().started_at)
-                    .as_secs(),
-            ),
+            None => self.master_elapsed(now),
             Some(id) => {
                 let t = self.ac().roster.tracked.get(id);
                 t.map(|t| fmt_mss(t.elapsed_secs(now))).unwrap_or_default()
@@ -655,15 +652,18 @@ impl App {
         }
     }
 
-    /// The per-row elapsed label for the panel (#820): the Master row shows the
-    /// session uptime; a sub-agent row shows its running/idle/frozen timer.
+    fn master_elapsed(&self, now: tokio::time::Instant) -> String {
+        let conn = self.ac();
+        let end = conn.stopped_at.unwrap_or(now);
+        fmt_mss(end.saturating_duration_since(conn.started_at).as_secs())
+    }
+
+    /// The per-row elapsed label for the panel (#820): the Master row shows its
+    /// active/frozen run duration; a sub-agent row shows its running/idle/frozen
+    /// timer.
     pub(super) fn panel_row_elapsed(&self, id: Option<&str>, now: tokio::time::Instant) -> String {
         let Some(id) = id else {
-            // Master row → session uptime.
-            return fmt_mss(
-                now.saturating_duration_since(self.ac().started_at)
-                    .as_secs(),
-            );
+            return self.master_elapsed(now);
         };
         let Some(t) = self.ac().roster.tracked.get(id) else {
             return String::new();

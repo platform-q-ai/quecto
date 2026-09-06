@@ -278,6 +278,7 @@ impl App {
         // Abort the state machine — does NOT set running false; the matched
         // AgentEnd arrives and guards against stale events corrupting state (#502).
         self.ac_mut().agent_state.abort();
+        self.ac_mut().stopped_at = Some(tokio::time::Instant::now());
         self.ac_mut().master_session.footer.set_streaming(false);
 
         // Stop spinner / working indicator; `agent_state` stays aborting (#828).
