@@ -26,7 +26,7 @@
       "key": "review",
       "label": "Resolve gaps and check scope",
       "phase": "review",
-      "guidance": "Check scenarios and acceptance against the requested problem, users, outcomes, and non-goals. Identify contradictions, assumptions, and open questions; distinguish blocking decisions from optional refinements. Do not silently resolve uncertainty or imply agreement that has not been given."
+      "guidance": "Check scenarios and acceptance against the requested problem, users, outcomes, and non-goals. Identify contradictions, assumptions, and open questions; distinguish blocking decisions from optional refinements. Do not silently resolve uncertainty or imply agreement that has not been given. For a substantial draft, recommend independent read-only subagents when available and worthwhile to challenge missing behavior, ambiguity, accessibility, and edge cases, with no invented requirements or design. Assign bounded distinct questions; do not duplicate the whole task. Request evidence and counterexamples, not agreement; the primary reconciles conflicts and owns the conclusion. Delegation is not mandatory for trivial tasks; otherwise use sequential self-review and disclose that it is not independent. Archive reports in the session or an authorized artifact before inspecting worker state to clean up only owned agents; preserve unrelated resources and workspace state."
     },
     {
       "key": "handoff",

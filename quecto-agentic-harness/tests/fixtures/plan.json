@@ -14,7 +14,7 @@
       "key": "increments",
       "label": "Sequence verifiable increments",
       "phase": "analysis",
-      "guidance": "Describe small dependency-ordered increments grounded in the repository, each linked to requirements, prerequisites, a bounded change, and an observable completion check. Plan TDD red/green/refactor where applicable: observe a meaningful failing check, make the smallest passing change, then refactor with checks still passing. For work unsuitable for TDD, specify a suitable validation alternative. Plan these actions; do not execute implementation."
+      "guidance": "Describe small dependency-ordered increments grounded in the repository, each linked to requirements, prerequisites, a bounded change, and an observable completion check. Plan TDD red/green/refactor where applicable: observe a meaningful failing check, make the smallest passing change, then refactor with checks still passing. For work unsuitable for TDD, specify a suitable validation alternative. Plan these actions; do not execute implementation. Keep one coherent owner for each applicable TDD RED -> GREEN -> refactor cycle; never assign simultaneous independent test-writing and implementation that would destroy pre-change chronology."
     },
     {
       "key": "risks",
@@ -26,7 +26,7 @@
       "key": "checks",
       "label": "Plan checks and delivery safety",
       "phase": "verify",
-      "guidance": "Specify focused checks per increment and broader acceptance checks tied to the agreed outcomes. Include rollout and rollback or recovery steps proportional to the change; state when they are not applicable. Distinguish planned checks from evidence already obtained, and disclose unavailable checks or context."
+      "guidance": "Specify focused checks per increment and broader acceptance checks tied to the agreed outcomes. Include rollout and rollback or recovery steps proportional to the change; state when they are not applicable. Distinguish planned checks from evidence already obtained, and disclose unavailable checks or context. For a substantial plan, recommend independent read-only subagents when available and worthwhile to review feasibility, dependencies, verification, and rollback. Assign bounded distinct questions; do not duplicate the whole task. Request evidence and counterexamples, not agreement; the primary reconciles conflicts and owns the conclusion. Delegation is not mandatory for trivial tasks; otherwise use sequential self-review and disclose that it is not independent. Archive reports in the session or an authorized artifact before inspecting worker state to clean up only owned agents; preserve unrelated resources and workspace state."
     },
     {
       "key": "handoff",

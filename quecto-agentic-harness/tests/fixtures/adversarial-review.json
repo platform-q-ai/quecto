@@ -8,31 +8,31 @@
       "key": "scope",
       "label": "Define review boundaries",
       "phase": "setup",
-      "guidance": "Review supplied changes read-only by default. State scope, intended behavior or claims, invariants, threat assumptions, and a bounded review budget. Identify the baseline and missing context; ask for essential inputs rather than inventing them. Do not change production or the supplied artifacts, or exploit live systems."
+      "guidance": "Review supplied changes without editing them. Pin the exact target revision or artifact snapshot, baseline, acceptance criteria, invariants, and a proportional review budget. Accept supplied diffs with explicit provenance and missing-context limitations; ask for essential inputs rather than inventing them. Record workspace state relative to the baseline; it need not be clean. Do not change production or exploit live systems."
     },
     {
       "key": "inspect",
       "label": "Inspect changes and context",
       "phase": "analysis",
-      "guidance": "Compare the supplied changes with available before-and-after content; no version-control system is required. Trace affected consumers, dependencies, and surrounding contracts, including documentation, configuration, data, or other non-code artifacts. Record exact locators and separate introduced problems from pre-existing conditions."
+      "guidance": "Inspect available before-and-after content and surrounding contracts, including non-code artifacts. Trace affected consumers and dependencies; distinguish introduced problems from pre-existing conditions. Record precise locators and limitations of incomplete snapshots. No particular version-control system is required."
     },
     {
       "key": "challenge",
-      "label": "Test plausible failure hypotheses",
-      "phase": "verify",
-      "guidance": "Form concrete failure hypotheses from the changes and invariants; prioritize plausible impact over speculative edge cases. Actively try to falsify them with safe, bounded checks: isolated reproductions, examples, source comparisons, or reproducible derivations. Use disposable scratch artifacts only when safe and authorized; avoid destructive actions, secrets, external side effects, and live exploitation. Record expected versus observed results. If execution is unsafe or unavailable, use static evidence and disclose what remains untested."
+      "label": "Discover candidate failures",
+      "phase": "analysis",
+      "guidance": "Scale narrow finder angles to the change: removed invariants, cross-file effects, security, performance, and whether tests can falsify the claimed behavior. Use parallel independent contexts when available, not as a prerequisite. Discover candidate mechanisms separately from verification. Each candidate needs concrete inputs or state leading to a wrong outcome, a violated criterion or invariant, and a precise locator. Do not invent findings or impose a quota. Recommend read-only subagents when available and worthwhile for independent finder and verifier contexts. Assign bounded distinct questions; do not duplicate the whole task. Request evidence and counterexamples, not agreement; the primary reconciles conflicts and owns the conclusion. Delegation is not mandatory for trivial tasks; otherwise use sequential self-review and disclose that it is not independent. Archive reports in the session or an authorized artifact before inspecting worker state to clean up only owned agents; preserve unrelated resources and workspace state."
     },
     {
       "key": "validate",
-      "label": "Independently validate candidates",
-      "phase": "review",
-      "guidance": "For each candidate, independently retrace the evidence and reproduction rather than trusting an initial claim or automated output. Seek counterevidence, intended behavior, mitigating controls, and alternative explanations. Confirm reachability and impact under stated assumptions; reject disproved claims and deduplicate related symptoms. Distinguish verified findings from unresolved hypotheses and missing evidence. No finding quota: do not invent bugs, and accept that no findings may survive."
+      "label": "Attempt to refute candidates",
+      "phase": "verify",
+      "guidance": "Attempt to REFUTE each candidate independently of discovery: retrace its mechanism, seek intended behavior, mitigating controls, and counterevidence. Use safe bounded reproductions or source comparisons; record expected versus observed results. Avoid destructive actions, secrets, and external side effects; use scratch artifacts only when safe and authorized. Classify CONFIRMED when the triggering scenario is established, PLAUSIBLE when the mechanism is supported but the trigger is uncertain, or REFUTED with explicit counterevidence. Verifier errors or empty output leave the candidate unresolved, not confirmed or dismissed. Deduplicate findings with the same mechanism."
     },
     {
       "key": "report",
       "label": "Deliver bounded review report",
       "phase": "handoff",
-      "guidance": "Deliver the report before marking this step complete; a completion check is not the report. Prioritize actionable findings by severity justified by impact and likelihood. For each, give exact artifact locators (path and line, section, cell, or equivalent), the violated invariant, evidence and reproduction or derivation, assumptions, and a focused remediation recommendation without applying it. Separate uncertainty and unverified concerns from findings. State reviewed scope, checks and results, counterevidence, limitations, and workspace preservation based on actions and evidence. If no findings survived, say so without claiming absence of bugs; do not require further review beyond the agreed budget."
+      "guidance": "Deliver one consolidated review before completing: pinned scope, severity justified by impact and likelihood, precise locators, triggering inputs/state and wrong outcome, evidence, classification, counterevidence, and focused remediation without applying it. Include unresolved candidates, blockers, checks, and provenance limitations. If no findings survive, say so without claiming absence of bugs. Publish externally only if explicitly authorized and verify delivery if publishing. Preserve the workspace relative to its recorded baseline; inspect actual worker state and clean up only owned reviewer workers and scratch artifacts. Report preservation evidence and limitations; stop at the agreed budget."
     }
   ],
   "guards": []

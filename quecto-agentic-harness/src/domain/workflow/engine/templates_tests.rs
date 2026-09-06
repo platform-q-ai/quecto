@@ -86,13 +86,11 @@ fn template_ids(templates: &[WorkflowTemplate]) -> HashSet<&str> {
 // belong to prior versions; these source contracts are not empirical qualification.
 fn current_approved_candidates() -> Vec<WorkflowTemplate> {
     [
-        include_str!(
-            "../../../../tests/fixtures/workflow-conditional-delegation-v1/investigate.json"
-        ),
-        include_str!("../../../../tests/fixtures/workflow-conditional-delegation-v1/chore.json"),
-        include_str!("../../../../tests/fixtures/workflow-conditional-delegation-v1/bugfix.json"),
-        include_str!("../../../../tests/fixtures/workflow-conditional-delegation-v1/feature.json"),
-        include_str!("../../../../tests/fixtures/workflow-conditional-delegation-v1/refactor.json"),
+        include_str!("../../../../tests/fixtures/investigate.json"),
+        include_str!("../../../../tests/fixtures/chore.json"),
+        include_str!("../../../../tests/fixtures/bugfix.json"),
+        include_str!("../../../../tests/fixtures/feature.json"),
+        include_str!("../../../../tests/fixtures/refactor.json"),
     ]
     .into_iter()
     .map(|json| {
@@ -225,9 +223,7 @@ fn approved_candidates_validate_structure_and_reject_invalid_keys() {
 // These are template-contract checks, not measurements of review quality.
 #[test]
 fn adversarial_review_matches_packaged_contract_and_order() {
-    let json = include_str!(
-        "../../../../tests/fixtures/workflow-conditional-delegation-v1/adversarial-review.json"
-    );
+    let json = include_str!("../../../../tests/fixtures/adversarial-review.json");
     let mut value: serde_json::Value = serde_json::from_str(json).unwrap();
     let expected: WorkflowTemplate = serde_json::from_value(value.clone()).unwrap();
     value.as_object_mut().unwrap().remove("guards");
@@ -255,11 +251,11 @@ fn adversarial_review_matches_packaged_contract_and_order() {
 fn prd_and_plan_match_packaged_contract_and_order() {
     for (json, keys) in [
         (
-            include_str!("../../../../tests/fixtures/workflow-conditional-delegation-v1/prd.json"),
+            include_str!("../../../../tests/fixtures/prd.json"),
             ["scope", "behavior", "acceptance", "review", "handoff"],
         ),
         (
-            include_str!("../../../../tests/fixtures/workflow-conditional-delegation-v1/plan.json"),
+            include_str!("../../../../tests/fixtures/plan.json"),
             ["ground", "increments", "risks", "checks", "handoff"],
         ),
     ] {
