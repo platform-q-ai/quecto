@@ -73,13 +73,13 @@ fn template_ids(templates: &[WorkflowTemplate]) -> HashSet<&str> {
         .collect()
 }
 
-// Current approved set: feature round 2, all other templates round 1. Historical
+// Current approved set: bugfix/feature round 2, others round 1. Historical
 // fixtures stay immutable; compare full typed objects using crate-local files.
 fn current_approved_candidates() -> Vec<WorkflowTemplate> {
     [
         include_str!("../../../../tests/fixtures/workflow-approved-round-1/investigate.json"),
         include_str!("../../../../tests/fixtures/workflow-approved-round-1/chore.json"),
-        include_str!("../../../../tests/fixtures/workflow-approved-round-1/bugfix.json"),
+        include_str!("../../../../tests/fixtures/workflow-approved-round-2/bugfix.json"),
         include_str!("../../../../tests/fixtures/workflow-approved-round-2/feature.json"),
         include_str!("../../../../tests/fixtures/workflow-approved-round-1/refactor.json"),
     ]

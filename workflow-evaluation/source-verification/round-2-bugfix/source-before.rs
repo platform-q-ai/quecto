@@ -90,7 +90,7 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                     "reproduce",
                     "Reproduce the failure",
                     "red",
-                    "Before changing the implementation, observe and record the wrong behavior with a failing test, command, fixture check, or clear manual reproduction that distinguishes the defect from setup failure. For documentation, configuration, or non-executable work, a specific source-to-artifact comparison or reproducible derivation may establish the mismatch instead. If reproduction is unavailable, record the limitation before proceeding. If implementation has already changed, disclose that chronology; retrospective checks can establish regression sensitivity but not pre-change observation. Do not undo others' work or introduce a defect to manufacture a failure.",
+                    "Capture the wrong behavior with a failing test, fixture, command, or clear manual reproduction.",
                 ),
                 (
                     "diagnose",
