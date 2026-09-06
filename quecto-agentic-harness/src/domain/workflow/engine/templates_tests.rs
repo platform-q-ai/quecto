@@ -9,7 +9,16 @@ fn built_in_default_templates_include_generic_workflows() {
 
     assert_eq!(
         ids,
-        HashSet::from(["investigate", "chore", "bugfix", "feature", "refactor",]),
+        HashSet::from([
+            "investigate",
+            "chore",
+            "bugfix",
+            "feature",
+            "refactor",
+            "adversarial-review",
+            "prd",
+            "plan",
+        ]),
     );
 }
 
@@ -71,4 +80,361 @@ fn template_ids(templates: &[WorkflowTemplate]) -> HashSet<&str> {
         .iter()
         .map(|template| template.id.as_str())
         .collect()
+}
+
+// Current user-directed conditional delegation v1. Historical fixtures and scores
+// belong to prior versions; these source contracts are not empirical qualification.
+fn current_approved_candidates() -> Vec<WorkflowTemplate> {
+    [
+        include_str!("../../../../tests/fixtures/investigate.json"),
+        include_str!("../../../../tests/fixtures/chore.json"),
+        include_str!("../../../../tests/fixtures/bugfix.json"),
+        include_str!("../../../../tests/fixtures/feature.json"),
+        include_str!("../../../../tests/fixtures/refactor.json"),
+    ]
+    .into_iter()
+    .map(|json| {
+        let mut original: serde_json::Value = serde_json::from_str(json).unwrap();
+        let template: WorkflowTemplate = serde_json::from_value(original.clone()).unwrap();
+        // Empty guards are omitted by Serde. All other fields in these full
+        // candidates must survive; unknown/misspelled fields cannot disappear.
+        if original.get("guards") == Some(&serde_json::json!([])) {
+            original.as_object_mut().unwrap().remove("guards");
+        }
+        assert_eq!(serde_json::to_value(&template).unwrap(), original);
+        template
+    })
+    .collect()
+}
+
+#[test]
+fn approved_candidates_match_complete_source_templates() {
+    let source = default_templates();
+    let candidates = current_approved_candidates();
+    assert_eq!(candidates.len(), 5);
+    assert_eq!(source.len(), candidates.len() + 3);
+    for candidate in candidates {
+        let actual = source.iter().find(|t| t.id == candidate.id).unwrap();
+        assert_eq!(
+            actual, &candidate,
+            "source differs from approved {}",
+            candidate.id
+        );
+    }
+}
+
+#[test]
+fn approved_candidates_roundtrip_and_bind_without_content_loss() {
+    use crate::domain::workflow::{MAX_WORKFLOW_SPEC_BYTES, WorkflowMode, WorkflowSpec};
+
+    let candidates = default_templates();
+    WorkflowEngine::new(
+        WorkflowConfig {
+            templates: candidates.clone(),
+            ..WorkflowConfig::default()
+        },
+        false,
+    )
+    .unwrap();
+    for candidate in candidates {
+        let spec = WorkflowSpec {
+            template: candidate.clone(),
+        };
+        let bytes = serde_json::to_vec(&spec).unwrap();
+        assert!(bytes.len() <= MAX_WORKFLOW_SPEC_BYTES);
+        let decoded: WorkflowSpec = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(decoded, spec);
+        let mut engine = WorkflowEngine::new(
+            WorkflowConfig {
+                templates: vec![decoded.template],
+                ..WorkflowConfig::default()
+            },
+            false,
+        )
+        .unwrap();
+        engine.select_template(&candidate.id, None).unwrap();
+        engine.set_bound(true);
+        assert!(engine.is_bound());
+        assert_eq!(engine.mode(), WorkflowMode::Active);
+        assert_eq!(engine.list_templates().len(), 1);
+        assert_eq!(engine.active_template(), Some(&candidate));
+        assert!(
+            engine
+                .select_template("not-the-assigned-template", None)
+                .is_err()
+        );
+        engine.check(1).unwrap();
+        engine.reset();
+        assert!(engine.is_bound());
+        assert_eq!(engine.mode(), WorkflowMode::Active);
+        assert_eq!(engine.active_template(), Some(&candidate));
+        assert!(engine.all_step_statuses().iter().all(|step| !step.done));
+    }
+}
+
+#[test]
+fn approved_candidates_validate_structure_and_reject_invalid_keys() {
+    use crate::domain::workflow::WorkflowGuardRule;
+
+    for candidate in default_templates() {
+        assert!(!candidate.steps.is_empty());
+        let keys: HashSet<_> = candidate.steps.iter().map(|s| &s.key).collect();
+        assert_eq!(keys.len(), candidate.steps.len());
+        for step in &candidate.steps {
+            assert!(!step.key.trim().is_empty());
+            assert!(!step.label.trim().is_empty());
+            // Phases may repeat and are not an enum.
+            assert!(!step.phase.trim().is_empty());
+            assert!(
+                step.guidance
+                    .as_deref()
+                    .is_some_and(|s| !s.trim().is_empty())
+            );
+        }
+        let invalid = |template| {
+            WorkflowEngine::new(
+                WorkflowConfig {
+                    templates: vec![template],
+                    ..WorkflowConfig::default()
+                },
+                false,
+            )
+            .is_err()
+        };
+        let mut duplicate = candidate.clone();
+        duplicate.steps.push(duplicate.steps[0].clone());
+        assert!(invalid(duplicate));
+        let mut blank = candidate.clone();
+        blank.steps[0].key = " ".into();
+        assert!(invalid(blank));
+        let mut empty = candidate.clone();
+        empty.steps.clear();
+        assert!(invalid(empty));
+        let mut bad_guard = candidate;
+        bad_guard.guards.push(WorkflowGuardRule {
+            commands: vec!["example publish".into()],
+            before_step_key: "nonexistent-step".into(),
+            message: "check prerequisites".into(),
+        });
+        assert!(invalid(bad_guard));
+    }
+}
+
+// These are template-contract checks, not measurements of review quality.
+#[test]
+fn adversarial_review_matches_packaged_contract_and_order() {
+    let json = include_str!("../../../../tests/fixtures/adversarial-review.json");
+    let mut value: serde_json::Value = serde_json::from_str(json).unwrap();
+    let expected: WorkflowTemplate = serde_json::from_value(value.clone()).unwrap();
+    value.as_object_mut().unwrap().remove("guards");
+    assert_eq!(serde_json::to_value(&expected).unwrap(), value);
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    engine.select_template("adversarial-review", None).unwrap();
+    assert_eq!(engine.active_template(), Some(&expected));
+    assert!(expected.guards.is_empty());
+    assert_eq!(
+        expected
+            .steps
+            .iter()
+            .map(|s| s.key.as_str())
+            .collect::<Vec<_>>(),
+        ["scope", "inspect", "challenge", "validate", "report"]
+    );
+    assert!(engine.check(5).is_err());
+    for step in 1..=5 {
+        engine.check(step).unwrap();
+    }
+    assert!(engine.all_step_statuses().iter().all(|step| step.done));
+}
+
+#[test]
+fn prd_and_plan_match_packaged_contract_and_order() {
+    for (json, keys) in [
+        (
+            include_str!("../../../../tests/fixtures/prd.json"),
+            ["scope", "behavior", "acceptance", "review", "handoff"],
+        ),
+        (
+            include_str!("../../../../tests/fixtures/plan.json"),
+            ["ground", "increments", "risks", "checks", "handoff"],
+        ),
+    ] {
+        let mut value: serde_json::Value = serde_json::from_str(json).unwrap();
+        let expected: WorkflowTemplate = serde_json::from_value(value.clone()).unwrap();
+        value.as_object_mut().unwrap().remove("guards");
+        assert_eq!(serde_json::to_value(&expected).unwrap(), value);
+        assert!(expected.guards.is_empty());
+        assert_eq!(
+            expected
+                .steps
+                .iter()
+                .map(|s| s.key.as_str())
+                .collect::<Vec<_>>(),
+            keys
+        );
+        let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+        assert!(engine.list_templates().iter().any(|t| t.id == expected.id));
+        engine.select_template(&expected.id, None).unwrap();
+        assert_eq!(engine.active_template(), Some(&expected));
+        for step in 1..=5 {
+            if step < 5 {
+                assert!(engine.check(step + 1).is_err());
+            }
+            engine.check(step).unwrap();
+        }
+        assert!(engine.all_step_statuses().iter().all(|step| step.done));
+    }
+}
+
+#[test]
+fn feature_red_green_review_and_fix_are_distinct_ordered_steps() {
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    engine.select_template("feature", None).unwrap();
+    let feature = engine.active_template().unwrap();
+    assert_eq!(
+        feature
+            .steps
+            .iter()
+            .map(|s| (s.key.as_str(), s.phase.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("intake", "setup"),
+            ("test_design", "red"),
+            ("confirm_red", "red"),
+            ("implement", "green"),
+            ("refine", "refactor"),
+            ("adversarial_review", "review"),
+            ("fix_review_findings", "green"),
+            ("validate", "verify"),
+            ("handoff", "handoff"),
+        ]
+    );
+    assert_eq!(feature.steps[1].label, "Write verification");
+    assert_eq!(feature.steps[2].label, "Confirm RED");
+    for step in 1..=9 {
+        if step < 9 {
+            assert!(engine.check(step + 1).is_err());
+        }
+        engine.check(step).unwrap();
+    }
+}
+
+// Source contracts only: these do not establish empirical delegation quality.
+#[test]
+fn conditional_delegation_is_bounded_and_workflow_specific() {
+    let templates = default_templates();
+    for (id, key, questions) in [
+        (
+            "prd",
+            "review",
+            vec![
+                "substantial draft",
+                "missing behavior",
+                "ambiguity",
+                "accessibility",
+                "edge cases",
+                "no invented requirements or design",
+            ],
+        ),
+        (
+            "plan",
+            "checks",
+            vec![
+                "substantial plan",
+                "feasibility",
+                "dependencies",
+                "verification",
+                "rollback",
+            ],
+        ),
+        (
+            "investigate",
+            "inspect",
+            vec![
+                "parallel",
+                "competing hypotheses",
+                "independent and warranted",
+            ],
+        ),
+        (
+            "bugfix",
+            "diagnose",
+            vec![
+                "high-risk",
+                "root-cause",
+                "reproduction",
+                "regression verification",
+            ],
+        ),
+        (
+            "refactor",
+            "parity",
+            vec!["high-risk", "compatibility", "parity", "affected consumers"],
+        ),
+        (
+            "feature",
+            "adversarial_review",
+            vec!["independent finder and verifier contexts"],
+        ),
+        (
+            "adversarial-review",
+            "challenge",
+            vec!["independent finder and verifier contexts"],
+        ),
+    ] {
+        let template = templates.iter().find(|t| t.id == id).unwrap();
+        let guidance = template
+            .steps
+            .iter()
+            .find(|s| s.key == key)
+            .unwrap()
+            .guidance
+            .as_deref()
+            .unwrap();
+        for clause in questions.into_iter().chain([
+            "subagents when available and worthwhile",
+            "read-only",
+            "bounded distinct questions",
+            "not duplicate the whole task",
+            "evidence and counterexamples, not agreement",
+            "primary reconciles conflicts and owns the conclusion",
+            "sequential self-review",
+            "disclose that it is not independent",
+            "not mandatory for trivial tasks",
+            "Archive reports",
+            "clean up only owned agents",
+        ]) {
+            assert!(guidance.contains(clause), "{id}:{key} missing {clause}");
+        }
+    }
+}
+
+#[test]
+fn delegation_preserves_coherent_tdd_ownership() {
+    for (id, key) in [
+        ("feature", "test_design"),
+        ("plan", "increments"),
+        ("bugfix", "reproduce"),
+        ("refactor", "characterize"),
+    ] {
+        let templates = default_templates();
+        let guidance = templates
+            .iter()
+            .find(|t| t.id == id)
+            .unwrap()
+            .steps
+            .iter()
+            .find(|s| s.key == key)
+            .unwrap()
+            .guidance
+            .as_deref()
+            .unwrap();
+        assert!(guidance.contains("one coherent owner"), "{id}");
+        assert!(guidance.contains("RED -> GREEN -> refactor"), "{id}");
+        assert!(
+            guidance
+                .contains("never assign simultaneous independent test-writing and implementation"),
+            "{id}"
+        );
+    }
 }
