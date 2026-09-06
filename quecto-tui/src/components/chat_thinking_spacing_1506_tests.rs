@@ -38,6 +38,37 @@ fn consecutive_thinking_trace_blocks_are_compact() {
 }
 
 #[test]
+fn streaming_thinking_summary_deltas_with_newlines_render_on_separate_lines() {
+    let mut chat = Chat::new();
+    chat.append_thinking("Inspecting loop light activation logic");
+    chat.append_thinking("\n\nPlanning incremental loop light enhancements");
+    chat.append_thinking("\n\nProposing implementing loop IN/OUT lights");
+
+    let plain = plain_render(&mut chat, 80);
+
+    assert!(
+        plain.contains(
+            "│ Inspecting loop light activation logic\n│ Planning incremental loop light enhancements\n│ Proposing implementing loop IN/OUT lights"
+        ),
+        "thinking summary updates should not concatenate on one display line:\n{plain}"
+    );
+}
+
+#[test]
+fn raw_uppercase_thinking_deltas_still_concatenate() {
+    let mut chat = Chat::new();
+    chat.append_thinking("Reviewing Open");
+    chat.append_thinking("AI streaming parser");
+
+    let plain = plain_render(&mut chat, 80);
+
+    assert!(
+        plain.contains("│ Reviewing OpenAI streaming parser"),
+        "raw thinking deltas should concatenate exactly:\n{plain}"
+    );
+}
+
+#[test]
 fn wrapped_thinking_trace_blocks_are_compact() {
     let mut chat = Chat::new();
     chat.add_entry(ChatEntry::Assistant {

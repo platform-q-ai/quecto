@@ -1,0 +1,206 @@
+use super::app_subagents_tests::{harness, info};
+use super::tui_harness::{TuiHarness, subagent, subagents_changed};
+use crate::protocol::client::Event;
+use crate::shell::keys::Key;
+
+#[tokio::test(start_paused = true)]
+async fn idle_subagent_main_pane_title_does_not_repeat_idle() {
+    let mut h = harness().await;
+    h.app_mut()
+        .update_subagent_bar(vec![info("worker", "running")]);
+    tokio::time::advance(std::time::Duration::from_secs(12)).await;
+    h.app_mut()
+        .update_subagent_bar(vec![info("worker", "idle")]);
+    h.app_mut().select_agent(Some("worker"));
+
+    let pane = h.main_pane();
+    let title_line = pane
+        .lines()
+        .find(|line| line.contains("worker") && line.contains("idle"))
+        .unwrap_or_else(|| panic!("selected idle sub-agent title not found:\n{pane}"));
+    assert!(
+        title_line.contains("worker · idle (ran 0:12"),
+        "idle status should be followed by elapsed run duration, not a second idle: {title_line:?}"
+    );
+    assert!(
+        !title_line.contains("idle idle"),
+        "idle status must not render twice in main pane title: {title_line:?}"
+    );
+}
+
+/// The idle Coordinator row must not display a wall-clock uptime that advances only
+/// when incidental input causes a repaint. It should show the frozen duration of
+/// the last active run, matching idle sub-agent timer semantics.
+#[tokio::test(start_paused = true)]
+async fn idle_coordinator_panel_timer_is_frozen_across_advancing_now() {
+    let mut h = TuiHarness::new().await;
+    let now1 = tokio::time::Instant::now();
+    let now2 = now1 + std::time::Duration::from_secs(60);
+
+    let v1 = h.app_mut().panel_row_elapsed(None, now1);
+    let v2 = h.app_mut().panel_row_elapsed(None, now2);
+
+    assert_eq!(
+        v1, v2,
+        "idle coordinator timer must be frozen, not advance on incidental renders: \
+         {v1:?} vs {v2:?}"
+    );
+    assert_eq!(v1, "0:00", "a never-run idle coordinator should show 0:00");
+}
+
+/// While the Coordinator is actively running, its timer must still advance so the
+/// TUI can repaint it on the existing active-turn animation tick.
+#[tokio::test]
+async fn running_coordinator_panel_timer_still_advances_with_now() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    let now1 = tokio::time::Instant::now();
+    let now2 = now1 + std::time::Duration::from_secs(60);
+
+    let v1 = h.app_mut().panel_row_elapsed(None, now1);
+    let v2 = h.app_mut().panel_row_elapsed(None, now2);
+
+    assert_ne!(
+        v1, v2,
+        "a running coordinator timer must keep tracking now: {v1:?} vs {v2:?}"
+    );
+}
+
+/// A sub-agent elapsed timer is run-time, not lifetime: statuses before the
+/// worker is actually running (for example `starting`) must not accumulate time.
+#[tokio::test(start_paused = true)]
+async fn starting_subagent_panel_timer_is_frozen_until_running() {
+    let mut h = harness().await;
+    h.app_mut()
+        .update_subagent_bar(vec![info("worker", "starting")]);
+
+    tokio::time::advance(std::time::Duration::from_secs(30)).await;
+    let before_running = h
+        .app_mut()
+        .panel_row_elapsed(Some("worker"), tokio::time::Instant::now());
+
+    assert_eq!(
+        before_running, "0:00",
+        "starting time must not count as agent run time"
+    );
+
+    h.app_mut()
+        .update_subagent_bar(vec![info("worker", "running")]);
+    tokio::time::advance(std::time::Duration::from_secs(45)).await;
+    let after_running = h
+        .app_mut()
+        .panel_row_elapsed(Some("worker"), tokio::time::Instant::now());
+
+    assert_eq!(
+        after_running, "0:45",
+        "timer should start from the transition into running, not from first observation"
+    );
+}
+
+/// A sub-agent elapsed timer should pause while idle and resume from the
+/// previous elapsed duration when it starts running again.
+#[tokio::test(start_paused = true)]
+async fn subagent_panel_timer_accumulates_running_time_across_idle_gap() {
+    let mut h = harness().await;
+    h.app_mut()
+        .update_subagent_bar(vec![info("worker", "running")]);
+    tokio::time::advance(std::time::Duration::from_secs(30)).await;
+
+    h.app_mut()
+        .update_subagent_bar(vec![info("worker", "idle")]);
+    tokio::time::advance(std::time::Duration::from_secs(20)).await;
+    let while_idle = h
+        .app_mut()
+        .panel_row_elapsed(Some("worker"), tokio::time::Instant::now());
+    assert_eq!(
+        while_idle, "idle (ran 0:30)",
+        "idle gap must not advance elapsed time"
+    );
+
+    h.app_mut()
+        .update_subagent_bar(vec![info("worker", "running")]);
+    tokio::time::advance(std::time::Duration::from_secs(5)).await;
+    let after_resume = h
+        .app_mut()
+        .panel_row_elapsed(Some("worker"), tokio::time::Instant::now());
+
+    assert_eq!(
+        after_resume, "0:35",
+        "timer should resume from prior running time instead of resetting"
+    );
+}
+
+/// Optimistic spawn rows begin as `starting`; the successful spawn result must
+/// also start their elapsed timer when it flips them to `running`.
+#[tokio::test(start_paused = true)]
+async fn spawn_result_starts_optimistic_subagent_timer() {
+    let mut h = TuiHarness::new().await;
+    h.app_mut().handle_event(Event::ToolExecutionStart {
+        tool_call_id: "spawn-1".into(),
+        tool_name: "spawn".into(),
+        args: serde_json::json!({"agent_id": "worker"}),
+    });
+
+    tokio::time::advance(std::time::Duration::from_secs(20)).await;
+    assert_eq!(
+        h.app_mut()
+            .panel_row_elapsed(Some("worker"), tokio::time::Instant::now()),
+        "0:00",
+        "time spent waiting for spawn result must not count as run time"
+    );
+
+    h.app_mut().handle_event(Event::ToolExecutionEnd {
+        tool_call_id: "spawn-1".into(),
+        tool_name: "spawn".into(),
+        result: serde_json::json!({
+            "content": [{"type": "text", "text": "Subagent 'worker' is running"}]
+        }),
+        is_error: false,
+    });
+    tokio::time::advance(std::time::Duration::from_secs(5)).await;
+
+    assert_eq!(
+        h.app_mut()
+            .panel_row_elapsed(Some("worker"), tokio::time::Instant::now()),
+        "0:05",
+        "timer should run from the successful spawn result"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn esc_cancel_running_subagent_freezes_parent_roster_timer_and_working_bar() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![
+        subagent("worker", "running", Some(("active", 1, 3))),
+        subagent("other", "idle", Some(("active", 2, 3))),
+    ]));
+    h.app_mut().select_agent(Some("worker"));
+    tokio::time::advance(std::time::Duration::from_secs(10)).await;
+
+    h.app_mut().handle_key(Key::Escape);
+
+    assert!(
+        !h.app_mut().active_subagent_running(),
+        "Esc abort should immediately make the selected sub-agent non-running"
+    );
+    assert_eq!(
+        h.app_mut()
+            .panel_row_elapsed(Some("worker"), tokio::time::Instant::now()),
+        "idle (ran 0:10)",
+        "parent roster row should freeze when Esc interrupts the sub-agent"
+    );
+    assert_eq!(
+        h.app_mut().ac().roster.tracked_active_count(),
+        0,
+        "Esc should clear the parent roster's active status so the working bar stops"
+    );
+
+    tokio::time::advance(std::time::Duration::from_secs(20)).await;
+    assert_eq!(
+        h.app_mut()
+            .panel_row_elapsed(Some("worker"), tokio::time::Instant::now()),
+        "idle (ran 0:10)",
+        "interrupted sub-agent timer must stay frozen while no running update arrives"
+    );
+}

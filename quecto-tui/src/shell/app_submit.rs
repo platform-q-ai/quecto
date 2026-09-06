@@ -269,6 +269,11 @@ impl App {
                     // status can't keep it "running" and re-abort on a 2nd Esc (#834).
                     session.observed_run_state = true;
                 }
+                if let Some(entry) = self.ac_mut().roster.tracked.get_mut(&id) {
+                    let mut info = entry.info.clone();
+                    info.status = "idle".to_string();
+                    entry.update_info_at(info, tokio::time::Instant::now());
+                }
             }
             return;
         }
@@ -278,6 +283,7 @@ impl App {
         // Abort the state machine — does NOT set running false; the matched
         // AgentEnd arrives and guards against stale events corrupting state (#502).
         self.ac_mut().agent_state.abort();
+        self.ac_mut().stopped_at = Some(tokio::time::Instant::now());
         self.ac_mut().master_session.footer.set_streaming(false);
 
         // Stop spinner / working indicator; `agent_state` stays aborting (#828).

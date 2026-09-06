@@ -738,11 +738,11 @@ impl App {
                 text: format!("Error: {}", msg),
             });
         self.ac_mut().agent_state.reset();
+        self.ac_mut().stopped_at = Some(tokio::time::Instant::now());
         self.ac_mut().master_session.running = false;
         self.ac_mut().master_session.footer.set_streaming(false);
         self.ac_mut().spinner = None;
     }
-
     fn notify_response_error(&mut self, prefix: &str, error: Option<String>) {
         let msg = error.unwrap_or_else(|| "unknown error".into());
         self.notify(&format!("{prefix}: {msg}"), NotifyLevel::Error);

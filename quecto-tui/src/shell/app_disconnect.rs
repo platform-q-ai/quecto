@@ -53,6 +53,7 @@ impl App {
         // the guard must not outlive it and freeze the roster (#1626).
         self.ac_mut().roster.take_delete_pending();
         self.ac_mut().agent_state.reset();
+        self.ac_mut().stopped_at = Some(tokio::time::Instant::now());
         self.ac_mut().master_session.running = false;
         self.ac_mut().spinner = None;
         self.ac_mut().master_session.chat.finalize_assistant();

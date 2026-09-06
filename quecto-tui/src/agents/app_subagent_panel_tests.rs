@@ -58,7 +58,7 @@ async fn panel_always_visible_even_without_subagents() {
     h.event(Event::AgentStart);
     assert!(
         h.app_mut().subagent_panel_visible(),
-        "the left panel must be always visible (Master row), not gated on sub-agents"
+        "the left panel must be always visible (Coordinator row), not gated on sub-agents"
     );
 }
 
@@ -71,8 +71,8 @@ async fn panel_appears_on_subagent_spawn() {
     );
     let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
     assert!(
-        frame.contains("Master Agent"),
-        "panel pins Master Agent at top:\n{frame}"
+        frame.contains("Coordinator"),
+        "panel pins Coordinator at top:\n{frame}"
     );
     assert!(frame.contains("worker"), "panel lists sub-agents:\n{frame}");
 }
@@ -495,7 +495,7 @@ async fn active_resets_to_master_when_viewed_agent_leaves_the_list() {
     h.app_mut().select_agent(Some("other"));
     assert_eq!(h.app_mut().active_agent_id(), Some("other"));
     h.event(subagents_changed(vec![]));
-    // Sub-agent-first (#820): the panel stays on (Master row) even with none.
+    // Sub-agent-first (#820): the panel stays on (Coordinator row) even with none.
     assert!(h.app_mut().subagent_panel_visible());
     assert_eq!(
         h.app_mut().active_agent_id(),

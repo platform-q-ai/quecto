@@ -313,7 +313,7 @@ pub fn mask_clocks(frame: &str) -> String {
     while i < cs.len() {
         // Only mask digit runs anchored like clock cells — after the
         // "idle " / "ran " labels or right-aligned behind 2+ spaces (the
-        // panel's Master uptime, #820). An unconditional digit-run+`:dd`
+        // panel's Coordinator elapsed timer, #820). An unconditional digit-run+`:dd`
         // mask would also normalize real content differences shaped like
         // `N:dd`, silently narrowing the parity assertions (#1470 r3).
         let after_clock_label = out.ends_with("idle ") || out.ends_with("ran ");
@@ -336,7 +336,7 @@ pub fn mask_clocks(frame: &str) -> String {
             // to run to end-of-line (trailing spaces only), so indented
             // content like "  1:23 elapsed" is never masked (#1470 r4).
             // '│' (the panel cell divider) ends a segment like a newline:
-            // the panel's right-aligned Master/sub-agent uptime clocks sit
+            // the panel's right-aligned Coordinator/sub-agent elapsed clocks sit
             // mid-line before the divider (#1470 r5).
             let to_segment_end = cs[end..]
                 .iter()

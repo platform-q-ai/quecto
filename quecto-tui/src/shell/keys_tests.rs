@@ -122,6 +122,20 @@ fn parse_printable_ascii() {
 }
 
 #[test]
+fn kitty_shift_space_inserts_space() {
+    let (key, n) = parse_key(b"\x1b[32;2u").unwrap();
+    assert_eq!(key, Key::Char(' '));
+    assert_eq!(n, 7);
+}
+
+#[test]
+fn modify_other_keys_shift_space_inserts_space() {
+    let (key, n) = parse_key(b"\x1b[27;2;32~").unwrap();
+    assert_eq!(key, Key::Char(' '));
+    assert_eq!(n, 10);
+}
+
+#[test]
 fn parse_printable_utf8() {
     let input = "é".as_bytes();
     let (key, n) = parse_key(input).unwrap();

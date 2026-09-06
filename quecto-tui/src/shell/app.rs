@@ -569,6 +569,9 @@ fn sanitize_agent_id(id: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "../agents/app_agent_timer_tests.rs"]
+mod app_agent_timer_tests;
+#[cfg(test)]
 #[path = "../agents/app_agents_characterization_tests.rs"]
 mod app_agents_characterization_tests;
 #[cfg(test)]

@@ -352,12 +352,17 @@ impl App {
             }
         };
         let elapsed = self.panel_row_elapsed(conn.roster.active_agent_id.as_deref(), now);
+        let elapsed_suffix = if status == "idle" {
+            elapsed.strip_prefix("idle ").unwrap_or(&elapsed)
+        } else {
+            &elapsed
+        };
         let mut title = format!(
             "{} {} {} {}",
             theme::bold(&sanitize_panel_label(&name)),
             theme::dim("·"),
             status_colored_name(&status, &sanitize_panel_label(&status)),
-            theme::dim(&elapsed),
+            theme::dim(elapsed_suffix),
         );
         if let Some(n) = state.issue_number {
             let auto = if state.workflow_auto_continue {
