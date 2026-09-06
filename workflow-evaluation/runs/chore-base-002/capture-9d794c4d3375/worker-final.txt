@@ -1,0 +1,5 @@
+- **Summary:** Corrected the export example and option reference to match `export.py`, using the default comma delimiter. Preserved the introduction and compatibility note.
+- **Checks:** Ran the example successfully in an isolated temporary directory; confirmed the `id,name` CSV header. Reviewed the README against the CLI.
+- **Changed files:** `README.md` only.
+- **Blockers:** None. Git diff was unavailable; reviewed content directly.
+- **Next action:** None required.

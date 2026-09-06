@@ -1,0 +1,58 @@
+{
+  "agent_id": "refactor-v2-001",
+  "container": {
+    "mode": "new",
+    "container_config": "sandbox"
+  },
+  "model": "openai-oauth/gpt-6-astra",
+  "effort": "low",
+  "workflow": false,
+  "workflow_guards": false,
+  "workflow_spec": {
+    "template": {
+      "id": "refactor",
+      "label": "Refactor",
+      "description": "Behavior-preserving restructure backed by characterization and parity checks.",
+      "when_to_use": "Use when changing structure, names, or organization without intended behavior change.",
+      "steps": [
+        {
+          "key": "scope",
+          "label": "Define invariants",
+          "phase": "setup",
+          "guidance": "State what must remain unchanged and what structure is allowed to change."
+        },
+        {
+          "key": "characterize",
+          "label": "Characterize current behavior",
+          "phase": "verify",
+          "guidance": "Run or add checks that would fail if behavior changed accidentally."
+        },
+        {
+          "key": "refactor",
+          "label": "Refactor incrementally",
+          "phase": "refactor",
+          "guidance": "Make small structural changes, keeping characterization checks passing."
+        },
+        {
+          "key": "parity",
+          "label": "Prove parity",
+          "phase": "verify",
+          "guidance": "Run relevant tests and inspect the diff for unintended behavior changes."
+        },
+        {
+          "key": "handoff",
+          "label": "Handoff",
+          "phase": "handoff",
+          "guidance": "Summarize the restructure, parity evidence, and any residual risk."
+        }
+      ],
+      "guards": []
+    }
+  },
+  "disable_tools": [
+    "spawn",
+    "agent_cmd",
+    "web_fetch",
+    "web_search"
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "README.md": {
+    "bytes": 224,
+    "sha256": "702e70bcf3d870b2826f3da05b0216b7888646b8e0fbf3be917f967f55c28b80",
+    "type": "file"
+  },
+  "__pycache__/search.cpython-313.pyc": {
+    "bytes": 697,
+    "sha256": "5ac784638a905a958b4013ca2c8d0ca351f88532d528207462f9b14334bc44ba",
+    "type": "file"
+  },
+  "notes/operator-draft.txt": {
+    "bytes": 50,
+    "sha256": "d46939cae5e3e620ee9350a64ceeaf46d126933427d77883c3beaa50270d69ee",
+    "type": "file"
+  },
+  "search.py": {
+    "bytes": 413,
+    "sha256": "4eb9995f7d30c26da3e7d8612fc203e9c898bd178c670966593fa2438371985d",
+    "type": "file"
+  },
+  "tests/__pycache__/test_search.cpython-313.pyc": {
+    "bytes": 3749,
+    "sha256": "c6f49a488fa5dd4b3c90d7095d829a69f8d7ce71408f3d5be47ec4024367b878",
+    "type": "file"
+  },
+  "tests/__pycache__/test_smoke.cpython-313.pyc": {
+    "bytes": 726,
+    "sha256": "6636cbbf1d7e31b14122d8edc6503759cc3127e13c53e84a81190dcd0ee0afb6",
+    "type": "file"
+  },
+  "tests/test_search.py": {
+    "bytes": 2043,
+    "sha256": "1bdad0124562485059a2763c075acc849aa32dcf2c12334a24840ba3bea8aeb3",
+    "type": "file"
+  },
+  "tests/test_smoke.py": {
+    "bytes": 185,
+    "sha256": "effc6bd32132defca8ae109a5631aa9046f42ad602cbfe51cfcde20cde5479c7",
+    "type": "file"
+  }
+}

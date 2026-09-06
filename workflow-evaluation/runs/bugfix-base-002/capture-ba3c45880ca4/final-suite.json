@@ -1,0 +1,30 @@
+{
+  "command": [
+    "podman",
+    "exec",
+    "--workdir",
+    "/tmp/workflow-eval.OvZRPacQ/final-suite",
+    "-e",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "-e",
+    "PYTHONHASHSEED=0",
+    "-e",
+    "TZ=UTC",
+    "quecto-env-Fklx49zqdo",
+    "env",
+    "-u",
+    "PYTHONPATH",
+    "python3",
+    "-B",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests",
+    "-v"
+  ],
+  "returncode": 0,
+  "stderr": "test_empty_and_single_interval (test_merge.MergeTests.test_empty_and_single_interval) ... ok\ntest_nested_and_duplicate_intervals_merge (test_merge.MergeTests.test_nested_and_duplicate_intervals_merge) ... ok\ntest_overlap_bridge_merges_touching_intervals (test_merge.MergeTests.test_overlap_bridge_merges_touching_intervals) ... ok\ntest_touching_half_open_intervals_remain_separate (test_merge.MergeTests.test_touching_half_open_intervals_remain_separate) ... ok\ntest_unsorted_overlaps_merge_without_changing_input (test_merge.MergeTests.test_unsorted_overlaps_merge_without_changing_input) ... ok\ntest_overlap (test_smoke.Smoke.test_overlap) ... ok\n\n----------------------------------------------------------------------\nRan 6 tests in 0.000s\n\nOK\n",
+  "stdout": "",
+  "timed_out": false
+}

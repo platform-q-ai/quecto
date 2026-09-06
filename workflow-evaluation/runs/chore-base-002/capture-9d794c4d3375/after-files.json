@@ -1,0 +1,22 @@
+{
+  "README.md": {
+    "bytes": 410,
+    "sha256": "8c87ad5103a0cf6b2fbf8e9870e628b11a8c1da660b389d5f17da89caf19388a",
+    "type": "file"
+  },
+  "data/items.json": {
+    "bytes": 52,
+    "sha256": "0e4170b56b681a8b123d1d30e678928a8df4725b76c778e7264172c22ef9f95f",
+    "type": "file"
+  },
+  "export.py": {
+    "bytes": 631,
+    "sha256": "3dc1dae2d4b3441c12f81120fa57c08c9cf20e1051bd3d8468a6a3bdbe0c0d83",
+    "type": "file"
+  },
+  "notes/operator-draft.txt": {
+    "bytes": 50,
+    "sha256": "d46939cae5e3e620ee9350a64ceeaf46d126933427d77883c3beaa50270d69ee",
+    "type": "file"
+  }
+}

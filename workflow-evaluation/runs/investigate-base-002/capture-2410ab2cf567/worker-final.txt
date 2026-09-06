@@ -1,0 +1,9 @@
+**Summary:** The effective precedence is `launch.json` → `PORT`, then `settings.json` → `port`, then default `8000`. Thus `"PORT": "8123"` overrides `9000`.
+
+**Checks and results:** Inspected code, configuration, README, and logs. `python3 -B preview.py` printed `8123`; the log records `listening port=8123`.
+
+**Uncertainty/blockers:** No diagnosis blockers. The script only prints the resolved port; it does not confirm a current live socket. Why the launch override exists remains unknown.
+
+**Artifacts/changed files:** None; workspace preserved.
+
+**Recommended next action:** If 9000 is intended, locate and remove the actual launcher’s `PORT` override, then relaunch. `launch.json` is documented as a capture, so editing it alone may not change the service.

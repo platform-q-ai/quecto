@@ -1,0 +1,29 @@
+{
+  "type": "response",
+  "id": "225f3ac1-7820-4486-8b13-9b0d44979d1e",
+  "command": "get_state",
+  "success": true,
+  "data": {
+    "effort": "low",
+    "effortLevels": [
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "generation": 102,
+    "model": "openai-oauth/gpt-6-astra",
+    "progress": {
+      "reason": "no tool activity in the last 120 seconds",
+      "state": "quiet"
+    },
+    "sessionKey": "cli:676620c0-7d71-42bc-ae9d-24c3d66a9181",
+    "state": "idle",
+    "workflow": {
+      "activeTemplate": {
+        "id": "bugfix"
+      }
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "command": [
+    "podman",
+    "exec",
+    "--workdir",
+    "/tmp/workflow-eval.cfsaZtu5/final-suite",
+    "-e",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "-e",
+    "PYTHONHASHSEED=0",
+    "-e",
+    "TZ=UTC",
+    "quecto-env-4vx2od84Q3",
+    "env",
+    "-u",
+    "PYTHONPATH",
+    "python3",
+    "-B",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests",
+    "-v"
+  ],
+  "returncode": 0,
+  "stderr": "test_category_order_and_repeated_names (test_classification.ClassificationParity.test_category_order_and_repeated_names) ... ok\ntest_empty (test_classification.ClassificationParity.test_empty) ... ok\ntest_filename_rules (test_classification.ClassificationParity.test_filename_rules) ... ok\ntest_count (test_smoke.Smoke.test_count) ... ok\n\n----------------------------------------------------------------------\nRan 4 tests in 0.000s\n\nOK\n",
+  "stdout": "",
+  "timed_out": false
+}

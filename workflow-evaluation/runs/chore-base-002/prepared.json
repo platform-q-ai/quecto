@@ -1,0 +1,10 @@
+{
+  "task": "chore-base",
+  "candidate_input_sha256": "e1ffac8d37aa4497be98498da7d2894aecce69174288d4f914c6709080f161cd",
+  "canonical_spec_sha256": "c2537a621ad624ced19cc397d741bf70bdef7a270ab7bc5f80f8a15988ebe216",
+  "prompt_sha256": "d5b48990ce374e0cc0e91f8745bc86245ec0b3aed2b490c73034e0ed16aadc0d",
+  "assigned_template_sha256": "e1ffac8d37aa4497be98498da7d2894aecce69174288d4f914c6709080f161cd",
+  "workflow_spec_file_sha256": "758fde75a48830c77bd5ccca4add5f508f8c023ed43cfe8f8da6ccb6027c3b73",
+  "startup": "Task omitted; source shows no startup nudge drain absent prompt/steer/follow-up/descendant event.",
+  "approval": "Parent must authorize voted candidate; helper does not infer voting approval."
+}

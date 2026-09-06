@@ -1,0 +1,10 @@
+{
+  "candidate_immutable": true,
+  "assigned_hash": true,
+  "spec_file_hash": true,
+  "canonical_spec_hash": true,
+  "prepared_spawn_bound_exact": true,
+  "taskless_spawn": true,
+  "prompt_hash": true,
+  "fixture_verified": true
+}

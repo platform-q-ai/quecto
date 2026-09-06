@@ -1,0 +1,21 @@
+{
+  "container": "quecto-env-4vx2od84Q3",
+  "socket": "/run/user/1000/quecto-agent-95c0229a-5aee-4b87-ac6f-82a02f004137.sock",
+  "workspace": "/home/swq/.quecto/container-environments/env-4vx2od84Q3/workspace",
+  "runtime": "podman",
+  "task": "refactor-v1",
+  "model": "openai-oauth/gpt-6-astra",
+  "effort": "low",
+  "image_id": "b1f87e8917502e1963979a0ed43fd7866427c961c26aac0d1576a17774b63662",
+  "python_version": "Python 3.13.5",
+  "fixture_verified_before_prompt": true,
+  "fixture_sha256": "08ec77965422e5a33e4fc97f2d838c4c699b5142135e748de27ef9df3405a04a",
+  "candidate_input_sha256": "723667465ae91f8f65af3a086733a318c35f78b7ad27d55b18fa8966371f48b1",
+  "canonical_spec_sha256": "714e32a2b0b7b4db930172e10c9b115af4a00d05681d3e8a3c29e464beee3b06",
+  "assigned_template_sha256": "723667465ae91f8f65af3a086733a318c35f78b7ad27d55b18fa8966371f48b1",
+  "prompt_has_selection_preamble": false,
+  "metric_limitations": [
+    "No enforced total-token ceiling. Shared agent-home/network exposure remains.",
+    "Bound taskless startup is source-supported; inspect one pre-prompt state/history for unexpected activity."
+  ]
+}

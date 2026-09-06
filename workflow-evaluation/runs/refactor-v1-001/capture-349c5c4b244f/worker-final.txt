@@ -1,0 +1,5 @@
+- **Summary:** Extracted filename rules into internal `classification.classify_name`, privately imported by `inventory.py`. Preserved behavior and supported types.
+- **Checks:** `python3 -m unittest discover -s tests -v` — all 4 tests passed, covering classification and ordering parity.
+- **Changed files:** `classification.py`, `inventory.py`, `tests/test_classification.py`.
+- **Blockers:** None. Git diff unavailable because the workspace is not a Git repository; files inspected directly.
+- **Next action:** Ready for review.

@@ -1,0 +1,26 @@
+{
+  "command": [
+    "podman",
+    "exec",
+    "--workdir",
+    "/tmp/workflow-eval.cfsaZtu5/final-oracle",
+    "-e",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "-e",
+    "PYTHONHASHSEED=0",
+    "-e",
+    "TZ=UTC",
+    "quecto-env-4vx2od84Q3",
+    "env",
+    "-u",
+    "PYTHONPATH",
+    "python3",
+    "-B",
+    "-c",
+    "import inspect\nfrom inventory import summarize\nassert str(inspect.signature(summarize)) == \"(names)\"\ncases = [([],[]), ([\"x.JSON\",\"a.txt\",\"b.csv\",\"c.md\",\"z\"],[(\"other\",2),(\"text\",2),(\"data\",1)]),\n         ([\"a.tar.json\",\".txt\",\"file.\",\"MD\"],[(\"data\",1),(\"text\",1),(\"other\",2)])]\nfor names, expected in cases:\n    before = list(names)\n    assert list(summarize(names).items()) == expected\n    assert names == before\nfrom classification import classify_name\nassert classify_name(\"a.txt\") == \"text\" and classify_name(\"a.TXT\") == \"other\"\nprint(\"module extraction API and behavior parity pass; panel checks dependency and rule ownership\")\n"
+  ],
+  "returncode": 0,
+  "stderr": "",
+  "stdout": "module extraction API and behavior parity pass; panel checks dependency and rule ownership\n",
+  "timed_out": false
+}

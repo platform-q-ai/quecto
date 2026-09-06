@@ -1,0 +1,9 @@
+**Summary:** Simplified `access.decide` with guard clauses, preserving its signature, precedence, decisions, and reason strings.
+
+**Checks:** Both unittest tests passed. Direct comparison against the original passed for all 16 boolean combinations.
+
+**Changed files:** `access.py`, `tests/test_parity.py`.
+
+**Blockers:** None.
+
+**Next action:** Ready for review; no further changes needed.
