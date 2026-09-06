@@ -1,0 +1,33 @@
+{
+  "id": "investigate",
+  "label": "Investigate",
+  "description": "Read-only diagnosis that gathers evidence, identifies root cause or trade-offs, and reports a cited conclusion.",
+  "when_to_use": "Use when the task is to understand, triage, or explain something without changing files.",
+  "steps": [
+    {
+      "key": "scope",
+      "label": "Define the question",
+      "phase": "setup",
+      "guidance": "Restate the question, constraints, and what evidence would answer it. Do not edit files."
+    },
+    {
+      "key": "inspect",
+      "label": "Inspect evidence",
+      "phase": "analysis",
+      "guidance": "Read relevant code, docs, logs, or configuration. Prefer primary sources and record file paths or commands used. Recommend read-only subagents when available and worthwhile to explore parallel competing hypotheses when independent and warranted. Assign bounded distinct questions; do not duplicate the whole task. Request evidence and counterexamples, not agreement; the primary reconciles conflicts and owns the conclusion. Delegation is not mandatory for trivial tasks; otherwise use sequential self-review and disclose that it is not independent. Archive reports in the session or an authorized artifact before inspecting worker state to clean up only owned agents; preserve unrelated resources and workspace state."
+    },
+    {
+      "key": "verify",
+      "label": "Challenge the conclusion",
+      "phase": "review",
+      "guidance": "Look for contradictory evidence and alternative explanations before settling on an answer."
+    },
+    {
+      "key": "report",
+      "label": "Report findings",
+      "phase": "handoff",
+      "guidance": "Deliver a bounded report stating the conclusion, auditable evidence, remaining uncertainty, and suggested next steps. Confirm workspace preservation from the actions taken and available evidence. Mark this step complete only after that report has been delivered; a completion check is not a substitute for the report."
+    }
+  ],
+  "guards": []
+}

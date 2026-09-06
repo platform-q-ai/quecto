@@ -1,0 +1,41 @@
+{
+  "template": {
+    "id": "plan",
+    "label": "Plan",
+    "description": "Turn agreed requirements and repository evidence into a verifiable execution plan without implementing it.",
+    "when_to_use": "Use when requirements are agreed and the next deliverable is an execution plan, not product changes.",
+    "steps": [
+      {
+        "key": "ground",
+        "label": "Ground requirements and context",
+        "phase": "setup",
+        "guidance": "Identify agreed requirements, acceptance criteria, constraints, and actual repository context. Inspect relevant code, tests, documentation, and existing conventions before proposing work. If agreement or essential context is missing, identify the blocker and seek clarification rather than invent requirements or claim approval. Writing requested plan documents is permitted; do not edit product code or implement the plan during this workflow."
+      },
+      {
+        "key": "increments",
+        "label": "Sequence verifiable increments",
+        "phase": "analysis",
+        "guidance": "Describe small dependency-ordered increments grounded in the repository, each linked to requirements, prerequisites, a bounded change, and an observable completion check. Plan TDD red/green/refactor where applicable: observe a meaningful failing check, make the smallest passing change, then refactor with checks still passing. For work unsuitable for TDD, specify a suitable validation alternative. Plan these actions; do not execute implementation. Keep one coherent owner for each applicable TDD RED -> GREEN -> refactor cycle; never assign simultaneous independent test-writing and implementation that would destroy pre-change chronology."
+      },
+      {
+        "key": "risks",
+        "label": "Expose risks and decisions",
+        "phase": "review",
+        "guidance": "Identify material risks, assumptions, dependencies, and decision points before dependent increments. State what evidence or clarification resolves each blocking uncertainty. Do not silently change requirements; surface any proposed scope change for agreement and leave affected work blocked."
+      },
+      {
+        "key": "checks",
+        "label": "Plan checks and delivery safety",
+        "phase": "verify",
+        "guidance": "Specify focused checks per increment and broader acceptance checks tied to the agreed outcomes. Include rollout and rollback or recovery steps proportional to the change; state when they are not applicable. Distinguish planned checks from evidence already obtained, and disclose unavailable checks or context. For a substantial plan, recommend independent read-only subagents when available and worthwhile to review feasibility, dependencies, verification, and rollback. Assign bounded distinct questions; do not duplicate the whole task. Request evidence and counterexamples, not agreement; the primary reconciles conflicts and owns the conclusion. Delegation is not mandatory for trivial tasks; otherwise use sequential self-review and disclose that it is not independent. Archive reports in the session or an authorized artifact before inspecting worker state to clean up only owned agents; preserve unrelated resources and workspace state."
+      },
+      {
+        "key": "handoff",
+        "label": "Deliver the execution plan",
+        "phase": "handoff",
+        "guidance": "Before completing, deliver the bounded plan in the requested document or response: ordered increments, dependencies, checks, risks, decision points, and explicit unresolved blockers. Confirm coverage of agreed requirements without expanding scope. State what is ready, what remains blocked, and the next execution handoff. Stop without implementation or product-code edits; a plan is not evidence that its checks passed."
+      }
+    ],
+    "guards": []
+  }
+}

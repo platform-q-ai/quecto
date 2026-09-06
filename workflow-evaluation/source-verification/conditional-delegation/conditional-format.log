@@ -1,0 +1,51 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running unittests src/lib.rs (target/debug/deps/quecto-7a5dc9826975877e)
+
+running 44 tests
+test infrastructure::security::sandbox::tests::test_error_display_formats ... ok
+test application::context_pruning::tests::test_collapse_stub_format ... ok
+test infrastructure::persistence::audit_log::tests::now_utc_iso8601_format ... ok
+test infrastructure::time::tests::test_utc_fallback_format ... ok
+test infrastructure::tools::filesystem::edit::tests::test_crlf_and_bom_paths_preserve_observable_format ... ok
+test infrastructure::tools::find::tests::test_format_find_directory_trailing_slash ... ok
+test infrastructure::tools::agent_cmd::tests::test_parse_invalid_agent_id_format ... ok
+test infrastructure::tools::find::tests::test_format_find_relativises_path ... ok
+test infrastructure::tools::find::tests::test_format_find_empty ... ok
+test infrastructure::tools::find::tests::test_format_find_limit_hint ... ok
+test infrastructure::tools::find::tests::test_format_find_byte_cap ... ok
+test infrastructure::tools::find::tests::test_format_find_whitespace_only ... ok
+test infrastructure::tools::agent_cmd::tests::test_execute_invalid_agent_id_format_returns_error ... ok
+test infrastructure::time::tests::test_format_local_datetime_contains_current_year ... ok
+test infrastructure::time::tests::test_format_local_datetime_structure ... ok
+test infrastructure::tools::subagent_registry::tests::test_validate_format_empty ... ok
+test infrastructure::tools::grep::cov_tests::format_match_block_stops_at_byte_cap ... ok
+test infrastructure::tools::subagent_registry::tests::test_validate_format_special_chars ... ok
+test infrastructure::tools::subagent_registry::more_tests::validate_agent_id_format_covers_valid_length_and_character_errors ... ok
+test infrastructure::tools::grep::cov_tests::with_rg_binary_sets_definition_and_format_match_block_paths_and_truncation ... ok
+test infrastructure::tools::subagent_registry::tests::test_validate_format_too_long ... ok
+test infrastructure::tools::truncate::tests::format_size_bytes ... ok
+test infrastructure::tools::spawn::tests::test_parse_rejects_invalid_agent_id_format ... ok
+test interface::repl::progress::tests::test_format_context_usage_zero_max ... ok
+test infrastructure::tools::subagent_registry::tests::test_exited_message_format ... ok
+test infrastructure::tools::subagent_registry::tests::test_validate_format_valid ... ok
+test infrastructure::tools::registry::tests::test_debug_format ... ok
+test infrastructure::tools::truncate::tests::format_size_kilobytes ... ok
+test infrastructure::tools::subagent_registry::tests::test_completed_message_format ... ok
+test infrastructure::tools::subagent_registry::tests::test_errored_message_format ... ok
+test infrastructure::providers::sse_common::tests::format_send_error_appends_source_chain ... ok
+test interface::repl::progress::tests::test_format_tool_status_sanitizes ... ok
+test interface::repl::progress::tests::test_format_compact_tokens_thousands ... ok
+test interface::repl::progress::tests::test_format_tool_status_with_args ... ok
+test interface::repl::progress::tests::test_format_context_usage ... ok
+test infrastructure::tools::truncate::tests::format_size_megabytes ... ok
+test interface::repl::progress::tests::test_format_compact_tokens_small ... ok
+test interface::repl::progress::tests::test_format_status_detail ... ok
+test interface::repl::progress::tests::test_format_tool_status_empty_args ... ok
+test infrastructure::tools::grep::tests::test_format_grep_output_empty ... ok
+test infrastructure::tools::grep::tests::test_format_grep_output_basic ... ok
+test infrastructure::tools::grep::tests::test_format_grep_output_match_limit ... ok
+test infrastructure::tools::grep::tests::test_grep_context_uses_file_minus_format ... ok
+test infrastructure::tools::grep::tests::test_grep_match_limit_notice_format ... ok
+
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 4004 filtered out; finished in 0.01s
+

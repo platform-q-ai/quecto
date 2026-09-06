@@ -82,15 +82,17 @@ fn template_ids(templates: &[WorkflowTemplate]) -> HashSet<&str> {
         .collect()
 }
 
-// Current set: user-directed feature review/fix, bugfix round 2, others round 1. Historical
-// fixtures stay immutable; compare full typed objects using crate-local files.
+// Current user-directed conditional delegation v1. Historical fixtures and scores
+// belong to prior versions; these source contracts are not empirical qualification.
 fn current_approved_candidates() -> Vec<WorkflowTemplate> {
     [
-        include_str!("../../../../tests/fixtures/workflow-approved-round-1/investigate.json"),
-        include_str!("../../../../tests/fixtures/workflow-approved-round-1/chore.json"),
-        include_str!("../../../../tests/fixtures/workflow-approved-round-2/bugfix.json"),
-        include_str!("../../../../tests/fixtures/workflow-user-feature-review-fix-v2/feature.json"),
-        include_str!("../../../../tests/fixtures/workflow-approved-round-1/refactor.json"),
+        include_str!(
+            "../../../../tests/fixtures/workflow-conditional-delegation-v1/investigate.json"
+        ),
+        include_str!("../../../../tests/fixtures/workflow-conditional-delegation-v1/chore.json"),
+        include_str!("../../../../tests/fixtures/workflow-conditional-delegation-v1/bugfix.json"),
+        include_str!("../../../../tests/fixtures/workflow-conditional-delegation-v1/feature.json"),
+        include_str!("../../../../tests/fixtures/workflow-conditional-delegation-v1/refactor.json"),
     ]
     .into_iter()
     .map(|json| {
@@ -224,7 +226,7 @@ fn approved_candidates_validate_structure_and_reject_invalid_keys() {
 #[test]
 fn adversarial_review_matches_packaged_contract_and_order() {
     let json = include_str!(
-        "../../../../tests/fixtures/workflow-user-feature-review-fix-v2/adversarial-review.json"
+        "../../../../tests/fixtures/workflow-conditional-delegation-v1/adversarial-review.json"
     );
     let mut value: serde_json::Value = serde_json::from_str(json).unwrap();
     let expected: WorkflowTemplate = serde_json::from_value(value.clone()).unwrap();
@@ -253,11 +255,11 @@ fn adversarial_review_matches_packaged_contract_and_order() {
 fn prd_and_plan_match_packaged_contract_and_order() {
     for (json, keys) in [
         (
-            include_str!("../../../../tests/fixtures/prd.json"),
+            include_str!("../../../../tests/fixtures/workflow-conditional-delegation-v1/prd.json"),
             ["scope", "behavior", "acceptance", "review", "handoff"],
         ),
         (
-            include_str!("../../../../tests/fixtures/plan.json"),
+            include_str!("../../../../tests/fixtures/workflow-conditional-delegation-v1/plan.json"),
             ["ground", "increments", "risks", "checks", "handoff"],
         ),
     ] {
@@ -318,5 +320,125 @@ fn feature_red_green_review_and_fix_are_distinct_ordered_steps() {
             assert!(engine.check(step + 1).is_err());
         }
         engine.check(step).unwrap();
+    }
+}
+
+// Source contracts only: these do not establish empirical delegation quality.
+#[test]
+fn conditional_delegation_is_bounded_and_workflow_specific() {
+    let templates = default_templates();
+    for (id, key, questions) in [
+        (
+            "prd",
+            "review",
+            vec![
+                "substantial draft",
+                "missing behavior",
+                "ambiguity",
+                "accessibility",
+                "edge cases",
+                "no invented requirements or design",
+            ],
+        ),
+        (
+            "plan",
+            "checks",
+            vec![
+                "substantial plan",
+                "feasibility",
+                "dependencies",
+                "verification",
+                "rollback",
+            ],
+        ),
+        (
+            "investigate",
+            "inspect",
+            vec![
+                "parallel",
+                "competing hypotheses",
+                "independent and warranted",
+            ],
+        ),
+        (
+            "bugfix",
+            "diagnose",
+            vec![
+                "high-risk",
+                "root-cause",
+                "reproduction",
+                "regression verification",
+            ],
+        ),
+        (
+            "refactor",
+            "parity",
+            vec!["high-risk", "compatibility", "parity", "affected consumers"],
+        ),
+        (
+            "feature",
+            "adversarial_review",
+            vec!["independent finder and verifier contexts"],
+        ),
+        (
+            "adversarial-review",
+            "challenge",
+            vec!["independent finder and verifier contexts"],
+        ),
+    ] {
+        let template = templates.iter().find(|t| t.id == id).unwrap();
+        let guidance = template
+            .steps
+            .iter()
+            .find(|s| s.key == key)
+            .unwrap()
+            .guidance
+            .as_deref()
+            .unwrap();
+        for clause in questions.into_iter().chain([
+            "subagents when available and worthwhile",
+            "read-only",
+            "bounded distinct questions",
+            "not duplicate the whole task",
+            "evidence and counterexamples, not agreement",
+            "primary reconciles conflicts and owns the conclusion",
+            "sequential self-review",
+            "disclose that it is not independent",
+            "not mandatory for trivial tasks",
+            "Archive reports",
+            "clean up only owned agents",
+        ]) {
+            assert!(guidance.contains(clause), "{id}:{key} missing {clause}");
+        }
+    }
+}
+
+#[test]
+fn delegation_preserves_coherent_tdd_ownership() {
+    for (id, key) in [
+        ("feature", "test_design"),
+        ("plan", "increments"),
+        ("bugfix", "reproduce"),
+        ("refactor", "characterize"),
+    ] {
+        let templates = default_templates();
+        let guidance = templates
+            .iter()
+            .find(|t| t.id == id)
+            .unwrap()
+            .steps
+            .iter()
+            .find(|s| s.key == key)
+            .unwrap()
+            .guidance
+            .as_deref()
+            .unwrap();
+        assert!(guidance.contains("one coherent owner"), "{id}");
+        assert!(guidance.contains("RED -> GREEN -> refactor"), "{id}");
+        assert!(
+            guidance
+                .contains("never assign simultaneous independent test-writing and implementation"),
+            "{id}"
+        );
     }
 }

@@ -38,7 +38,7 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                     "review",
                     "Resolve gaps and check scope",
                     "review",
-                    "Check scenarios and acceptance against the requested problem, users, outcomes, and non-goals. Identify contradictions, assumptions, and open questions; distinguish blocking decisions from optional refinements. Do not silently resolve uncertainty or imply agreement that has not been given.",
+                    "Check scenarios and acceptance against the requested problem, users, outcomes, and non-goals. Identify contradictions, assumptions, and open questions; distinguish blocking decisions from optional refinements. Do not silently resolve uncertainty or imply agreement that has not been given. For a substantial draft, recommend independent read-only subagents when available and worthwhile to challenge missing behavior, ambiguity, accessibility, and edge cases, with no invented requirements or design. Assign bounded distinct questions; do not duplicate the whole task. Request evidence and counterexamples, not agreement; the primary reconciles conflicts and owns the conclusion. Delegation is not mandatory for trivial tasks; otherwise use sequential self-review and disclose that it is not independent. Archive reports in the session or an authorized artifact before inspecting worker state to clean up only owned agents; preserve unrelated resources and workspace state.",
                 ),
                 (
                     "handoff",
@@ -64,7 +64,7 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                     "increments",
                     "Sequence verifiable increments",
                     "analysis",
-                    "Describe small dependency-ordered increments grounded in the repository, each linked to requirements, prerequisites, a bounded change, and an observable completion check. Plan TDD red/green/refactor where applicable: observe a meaningful failing check, make the smallest passing change, then refactor with checks still passing. For work unsuitable for TDD, specify a suitable validation alternative. Plan these actions; do not execute implementation.",
+                    "Describe small dependency-ordered increments grounded in the repository, each linked to requirements, prerequisites, a bounded change, and an observable completion check. Plan TDD red/green/refactor where applicable: observe a meaningful failing check, make the smallest passing change, then refactor with checks still passing. For work unsuitable for TDD, specify a suitable validation alternative. Plan these actions; do not execute implementation. Keep one coherent owner for each applicable TDD RED -> GREEN -> refactor cycle; never assign simultaneous independent test-writing and implementation that would destroy pre-change chronology.",
                 ),
                 (
                     "risks",
@@ -76,7 +76,7 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                     "checks",
                     "Plan checks and delivery safety",
                     "verify",
-                    "Specify focused checks per increment and broader acceptance checks tied to the agreed outcomes. Include rollout and rollback or recovery steps proportional to the change; state when they are not applicable. Distinguish planned checks from evidence already obtained, and disclose unavailable checks or context.",
+                    "Specify focused checks per increment and broader acceptance checks tied to the agreed outcomes. Include rollout and rollback or recovery steps proportional to the change; state when they are not applicable. Distinguish planned checks from evidence already obtained, and disclose unavailable checks or context. For a substantial plan, recommend independent read-only subagents when available and worthwhile to review feasibility, dependencies, verification, and rollback. Assign bounded distinct questions; do not duplicate the whole task. Request evidence and counterexamples, not agreement; the primary reconciles conflicts and owns the conclusion. Delegation is not mandatory for trivial tasks; otherwise use sequential self-review and disclose that it is not independent. Archive reports in the session or an authorized artifact before inspecting worker state to clean up only owned agents; preserve unrelated resources and workspace state.",
                 ),
                 (
                     "handoff",
@@ -102,7 +102,7 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                     "inspect",
                     "Inspect evidence",
                     "analysis",
-                    "Read relevant code, docs, logs, or configuration. Prefer primary sources and record file paths or commands used.",
+                    "Read relevant code, docs, logs, or configuration. Prefer primary sources and record file paths or commands used. Recommend read-only subagents when available and worthwhile to explore parallel competing hypotheses when independent and warranted. Assign bounded distinct questions; do not duplicate the whole task. Request evidence and counterexamples, not agreement; the primary reconciles conflicts and owns the conclusion. Delegation is not mandatory for trivial tasks; otherwise use sequential self-review and disclose that it is not independent. Archive reports in the session or an authorized artifact before inspecting worker state to clean up only owned agents; preserve unrelated resources and workspace state.",
                 ),
                 (
                     "verify",
@@ -166,13 +166,13 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                     "reproduce",
                     "Reproduce the failure",
                     "red",
-                    "Before changing the implementation, observe and record the wrong behavior with a failing test, command, fixture check, or clear manual reproduction that distinguishes the defect from setup failure. For documentation, configuration, or non-executable work, a specific source-to-artifact comparison or reproducible derivation may establish the mismatch instead. If reproduction is unavailable, record the limitation before proceeding. If implementation has already changed, disclose that chronology; retrospective checks can establish regression sensitivity but not pre-change observation. Do not undo others' work or introduce a defect to manufacture a failure.",
+                    "Before changing the implementation, observe and record the wrong behavior with a failing test, command, fixture check, or clear manual reproduction that distinguishes the defect from setup failure. For documentation, configuration, or non-executable work, a specific source-to-artifact comparison or reproducible derivation may establish the mismatch instead. If reproduction is unavailable, record the limitation before proceeding. If implementation has already changed, disclose that chronology; retrospective checks can establish regression sensitivity but not pre-change observation. Do not undo others' work or introduce a defect to manufacture a failure. Keep one coherent owner for each applicable TDD RED -> GREEN -> refactor cycle; never assign simultaneous independent test-writing and implementation that would destroy pre-change chronology.",
                 ),
                 (
                     "diagnose",
                     "Diagnose root cause",
                     "analysis",
-                    "Trace the failure to the smallest responsible code path and check for related cases.",
+                    "Trace the failure to the smallest responsible code path and check for related cases. For a high-risk fix, recommend independent read-only subagents when available and worthwhile to challenge root-cause and reproduction evidence before implementation, then request regression verification of the final artifact at Prove regression coverage. Assign bounded distinct questions; do not duplicate the whole task. Request evidence and counterexamples, not agreement; the primary reconciles conflicts and owns the conclusion. Delegation is not mandatory for trivial tasks; otherwise use sequential self-review and disclose that it is not independent. Archive reports in the session or an authorized artifact before inspecting worker state to clean up only owned agents; preserve unrelated resources and workspace state.",
                 ),
                 (
                     "fix",
@@ -210,7 +210,7 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                     "test_design",
                     "Write verification",
                     "red",
-                    "Write targeted tests or checks for the intended behavior and agreed acceptance criteria before implementation. Make the expected result explicit and distinguish the missing behavior from existing regressions. For non-executable work, prepare a discriminating source, data, or artifact comparison. This step prepares verification; execute and record pre-change evidence separately in Confirm RED.",
+                    "Write targeted tests or checks for the intended behavior and agreed acceptance criteria before implementation. Make the expected result explicit and distinguish the missing behavior from existing regressions. For non-executable work, prepare a discriminating source, data, or artifact comparison. This step prepares verification; execute and record pre-change evidence separately in Confirm RED. Keep one coherent owner for each applicable TDD RED -> GREEN -> refactor cycle; never assign simultaneous independent test-writing and implementation that would destroy pre-change chronology.",
                 ),
                 (
                     "confirm_red",
@@ -234,7 +234,7 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                     "adversarial_review",
                     "Adversarial review",
                     "review",
-                    "Pin the complete change revision or artifact snapshot, baseline workspace state, acceptance criteria, and invariants. Accept supplied diffs with provenance limitations. Review without editing, within a proportional budget. Scale narrow finder angles across removed invariants, cross-file effects, security, performance, and test falsifiability; prefer parallel independent contexts when available. Each candidate needs concrete inputs/state leading to a wrong outcome and a precise locator. Separately attempt to REFUTE candidates with safe checks and counterevidence. Classify CONFIRMED when the triggering scenario is established, PLAUSIBLE when the mechanism is supported but the trigger is uncertain, or REFUTED with explicit counterevidence. Verifier errors or empty output leave candidates unresolved. Deduplicate the same mechanism; no finding quota. Deliver one consolidated review with evidence, severity, classifications, and limitations. Publish externally only if explicitly authorized and verify delivery. Preserve workspace state relative to the baseline, not an assumed clean workspace; inspect actual state and clean up only owned reviewer workers and scratch artifacts.",
+                    "Pin the complete change revision or artifact snapshot, baseline workspace state, acceptance criteria, and invariants. Accept supplied diffs with provenance limitations. Review without editing, within a proportional budget. Scale narrow finder angles across removed invariants, cross-file effects, security, performance, and test falsifiability; prefer parallel independent contexts when available. Each candidate needs concrete inputs/state leading to a wrong outcome and a precise locator. Separately attempt to REFUTE candidates with safe checks and counterevidence. Classify CONFIRMED when the triggering scenario is established, PLAUSIBLE when the mechanism is supported but the trigger is uncertain, or REFUTED with explicit counterevidence. Verifier errors or empty output leave candidates unresolved. Deduplicate the same mechanism; no finding quota. Deliver one consolidated review with evidence, severity, classifications, and limitations. Publish externally only if explicitly authorized and verify delivery. Preserve workspace state relative to the baseline, not an assumed clean workspace; inspect actual state and clean up only owned reviewer workers and scratch artifacts. Recommend read-only subagents when available and worthwhile for independent finder and verifier contexts. Assign bounded distinct questions; do not duplicate the whole task. Request evidence and counterexamples, not agreement; the primary reconciles conflicts and owns the conclusion. Delegation is not mandatory for trivial tasks; otherwise use sequential self-review and disclose that it is not independent. Archive reports in the session or an authorized artifact before inspecting worker state to clean up only owned agents; preserve unrelated resources and workspace state.",
                 ),
                 (
                     "fix_review_findings",
@@ -272,7 +272,7 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                     "characterize",
                     "Characterize current behavior",
                     "verify",
-                    "Run or add checks that would fail if behavior changed accidentally.",
+                    "Run or add checks that would fail if behavior changed accidentally. Keep one coherent owner for each applicable TDD RED -> GREEN -> refactor cycle; never assign simultaneous independent test-writing and implementation that would destroy pre-change chronology.",
                 ),
                 (
                     "refactor",
@@ -284,7 +284,7 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                     "parity",
                     "Prove parity",
                     "verify",
-                    "Run relevant tests and inspect the diff for unintended behavior changes.",
+                    "Run relevant tests and inspect the diff for unintended behavior changes. For a high-risk restructure, recommend independent read-only subagents when available and worthwhile to review compatibility and parity of affected consumers. Assign bounded distinct questions; do not duplicate the whole task. Request evidence and counterexamples, not agreement; the primary reconciles conflicts and owns the conclusion. Delegation is not mandatory for trivial tasks; otherwise use sequential self-review and disclose that it is not independent. Archive reports in the session or an authorized artifact before inspecting worker state to clean up only owned agents; preserve unrelated resources and workspace state.",
                 ),
                 (
                     "handoff",
@@ -316,7 +316,7 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                     "challenge",
                     "Discover candidate failures",
                     "analysis",
-                    "Scale narrow finder angles to the change: removed invariants, cross-file effects, security, performance, and whether tests can falsify the claimed behavior. Use parallel independent contexts when available, not as a prerequisite. Discover candidate mechanisms separately from verification. Each candidate needs concrete inputs or state leading to a wrong outcome, a violated criterion or invariant, and a precise locator. Do not invent findings or impose a quota.",
+                    "Scale narrow finder angles to the change: removed invariants, cross-file effects, security, performance, and whether tests can falsify the claimed behavior. Use parallel independent contexts when available, not as a prerequisite. Discover candidate mechanisms separately from verification. Each candidate needs concrete inputs or state leading to a wrong outcome, a violated criterion or invariant, and a precise locator. Do not invent findings or impose a quota. Recommend read-only subagents when available and worthwhile for independent finder and verifier contexts. Assign bounded distinct questions; do not duplicate the whole task. Request evidence and counterexamples, not agreement; the primary reconciles conflicts and owns the conclusion. Delegation is not mandatory for trivial tasks; otherwise use sequential self-review and disclose that it is not independent. Archive reports in the session or an authorized artifact before inspecting worker state to clean up only owned agents; preserve unrelated resources and workspace state.",
                 ),
                 (
                     "validate",

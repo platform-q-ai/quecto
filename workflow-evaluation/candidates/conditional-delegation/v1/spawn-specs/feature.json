@@ -1,0 +1,65 @@
+{
+  "template": {
+    "id": "feature",
+    "label": "Feature",
+    "description": "Implement a planned behavior change with explicit acceptance criteria and verification.",
+    "when_to_use": "Use when adding or changing user-visible behavior from an agreed request or plan.",
+    "steps": [
+      {
+        "key": "intake",
+        "label": "Confirm acceptance criteria",
+        "phase": "setup",
+        "guidance": "Before implementation, restate the desired behavior and constraints, and identify a focused pre-change check with its expected result that distinguishes the requested behavior from current behavior. If executable verification is unsuitable or unsafe, identify a discriminating source, data, or artifact comparison instead. Record this plan and complete intake, then write verification and obtain the pre-change evidence in Confirm RED before implementing."
+      },
+      {
+        "key": "test_design",
+        "label": "Write verification",
+        "phase": "red",
+        "guidance": "Write targeted tests or checks for the intended behavior and agreed acceptance criteria before implementation. Make the expected result explicit and distinguish the missing behavior from existing regressions. For non-executable work, prepare a discriminating source, data, or artifact comparison. This step prepares verification; execute and record pre-change evidence separately in Confirm RED. Keep one coherent owner for each applicable TDD RED -> GREEN -> refactor cycle; never assign simultaneous independent test-writing and implementation that would destroy pre-change chronology."
+      },
+      {
+        "key": "confirm_red",
+        "label": "Confirm RED",
+        "phase": "red",
+        "guidance": "Before implementation, execute the new targeted checks and confirm they fail because the intended behavior is absent or wrong, not because setup is broken. Fix setup first; existing regression checks should remain green. If a new check already passes, reassess what behavior is missing rather than manufacture a failure. Where executable RED is unsuitable or unsafe, perform and record the prepared discriminating source, data, or artifact comparison and its expected-versus-observed result. Record the checks and evidence before completing this step. If implementation already occurred or pre-change verification is unavailable, disclose the missed chronology or limitation; later checks are not pre-change evidence."
+      },
+      {
+        "key": "implement",
+        "label": "Implement the slice",
+        "phase": "green",
+        "guidance": "Build the smallest coherent slice that satisfies the agreed criteria. Before completing implementation and entering refactor, rerun the new targeted checks and relevant existing regression checks, and record passing results. Fix failures before proceeding; do not treat implementation alone as GREEN. For non-executable work, perform a proportional source, data, or artifact comparison against the agreed expected result and record evidence that the intended change is satisfied and relevant existing behavior is preserved. Disclose unavailable validation rather than claim it passed."
+      },
+      {
+        "key": "refine",
+        "label": "Refine safely",
+        "phase": "refactor",
+        "guidance": "Review the implemented slice against the acceptance criteria and existing invariants, including scope, compatibility, and preservation. Use an available diff or a before-and-after content comparison. If refinement is warranted, keep it small and rerun the affected verification after changes. If no refinement is warranted, state why; do not change working code merely to satisfy this step. Record the review and verification results before completing it."
+      },
+      {
+        "key": "adversarial_review",
+        "label": "Adversarial review",
+        "phase": "review",
+        "guidance": "Pin the complete change revision or artifact snapshot, baseline workspace state, acceptance criteria, and invariants. Accept supplied diffs with provenance limitations. Review without editing, within a proportional budget. Scale narrow finder angles across removed invariants, cross-file effects, security, performance, and test falsifiability; prefer parallel independent contexts when available. Each candidate needs concrete inputs/state leading to a wrong outcome and a precise locator. Separately attempt to REFUTE candidates with safe checks and counterevidence. Classify CONFIRMED when the triggering scenario is established, PLAUSIBLE when the mechanism is supported but the trigger is uncertain, or REFUTED with explicit counterevidence. Verifier errors or empty output leave candidates unresolved. Deduplicate the same mechanism; no finding quota. Deliver one consolidated review with evidence, severity, classifications, and limitations. Publish externally only if explicitly authorized and verify delivery. Preserve workspace state relative to the baseline, not an assumed clean workspace; inspect actual state and clean up only owned reviewer workers and scratch artifacts. Recommend read-only subagents when available and worthwhile for independent finder and verifier contexts. Assign bounded distinct questions; do not duplicate the whole task. Request evidence and counterexamples, not agreement; the primary reconciles conflicts and owns the conclusion. Delegation is not mandatory for trivial tasks; otherwise use sequential self-review and disclose that it is not independent. Archive reports in the session or an authorized artifact before inspecting worker state to clean up only owned agents; preserve unrelated resources and workspace state."
+      },
+      {
+        "key": "fix_review_findings",
+        "label": "Fix review findings",
+        "phase": "green",
+        "guidance": "Fix confirmed, substantiated issues minimally; investigate PLAUSIBLE candidates before deciding whether a fix is warranted, never blindly fix them or invent findings. Where applicable, record meaningful regression RED before each fix, then rerun targeted and relevant regression checks and record GREEN; use proportional expected-versus-observed comparisons for non-executable work. Pin the updated snapshot and re-review fixes and affected scope using separate discovery and refutation, updating the consolidated review. Repeat within the review budget until no unresolved blocking findings remain, or explicitly report blockers without silently waiving them or claiming readiness. Errors or empty verification remain unresolved. If no substantiated issues require fixes, record no changes needed and disclose remaining uncertainty. Preserve unrelated baseline workspace changes and clean up only owned reviewer resources based on actual state. External publication requires explicit authorization and verified delivery."
+      },
+      {
+        "key": "validate",
+        "label": "Validate",
+        "phase": "verify",
+        "guidance": "Run targeted and relevant broader checks; compare results to acceptance criteria."
+      },
+      {
+        "key": "handoff",
+        "label": "Handoff",
+        "phase": "handoff",
+        "guidance": "Summarize behavior delivered, validation, and follow-up work."
+      }
+    ],
+    "guards": []
+  }
+}

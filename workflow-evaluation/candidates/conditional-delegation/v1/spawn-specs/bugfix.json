@@ -1,0 +1,41 @@
+{
+  "template": {
+    "id": "bugfix",
+    "label": "Bugfix",
+    "description": "Reproduce a wrong behavior, fix the smallest cause, and prove the regression is covered.",
+    "when_to_use": "Use when existing observable behavior is incorrect and should be corrected.",
+    "steps": [
+      {
+        "key": "reproduce",
+        "label": "Reproduce the failure",
+        "phase": "red",
+        "guidance": "Before changing the implementation, observe and record the wrong behavior with a failing test, command, fixture check, or clear manual reproduction that distinguishes the defect from setup failure. For documentation, configuration, or non-executable work, a specific source-to-artifact comparison or reproducible derivation may establish the mismatch instead. If reproduction is unavailable, record the limitation before proceeding. If implementation has already changed, disclose that chronology; retrospective checks can establish regression sensitivity but not pre-change observation. Do not undo others' work or introduce a defect to manufacture a failure. Keep one coherent owner for each applicable TDD RED -> GREEN -> refactor cycle; never assign simultaneous independent test-writing and implementation that would destroy pre-change chronology."
+      },
+      {
+        "key": "diagnose",
+        "label": "Diagnose root cause",
+        "phase": "analysis",
+        "guidance": "Trace the failure to the smallest responsible code path and check for related cases. For a high-risk fix, recommend independent read-only subagents when available and worthwhile to challenge root-cause and reproduction evidence before implementation, then request regression verification of the final artifact at Prove regression coverage. Assign bounded distinct questions; do not duplicate the whole task. Request evidence and counterexamples, not agreement; the primary reconciles conflicts and owns the conclusion. Delegation is not mandatory for trivial tasks; otherwise use sequential self-review and disclose that it is not independent. Archive reports in the session or an authorized artifact before inspecting worker state to clean up only owned agents; preserve unrelated resources and workspace state."
+      },
+      {
+        "key": "fix",
+        "label": "Implement the fix",
+        "phase": "green",
+        "guidance": "Make the minimal code change that addresses the root cause while preserving intended behavior."
+      },
+      {
+        "key": "regression",
+        "label": "Prove regression coverage",
+        "phase": "verify",
+        "guidance": "Run the reproduction and relevant surrounding checks on the final artifact. Then inspect the final changes for unintended behavior, compatibility or preservation problems, and unrelated edits. Use an available diff or compare the relevant before-and-after content; version-control tooling is not required. Record the results and any unreviewed areas before completing this step."
+      },
+      {
+        "key": "handoff",
+        "label": "Handoff",
+        "phase": "handoff",
+        "guidance": "Before marking this step complete, provide the handoff: summarize the defect, fix, checks actually run and their results, changed artifacts, and remaining risk or next action. Distinguish successful checks from unavailable or skipped validation."
+      }
+    ],
+    "guards": []
+  }
+}

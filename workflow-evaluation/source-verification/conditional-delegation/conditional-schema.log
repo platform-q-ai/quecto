@@ -1,0 +1,14 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running unittests src/lib.rs (target/debug/deps/quecto-7a5dc9826975877e)
+
+running 7 tests
+test infrastructure::tools::find::tests::test_find_schema_includes_path_segment_example ... ok
+test infrastructure::tools::agent_cmd::tests::test_agent_cmd_schema_declares_before_and_since_cursors ... ok
+test infrastructure::providers::openai::cov_tests::build_request_body_invalid_tool_schema_defaults_to_null_parameters ... ok
+test interface::cli::protocol::shape_tests::register_tools_default_schema ... ok
+test interface::cli::protocol::shape_tests::register_tools_with_schema_parses ... ok
+test infrastructure::providers::anthropic::tests::mod_cov_tests::tool_defs_invalid_schema_becomes_null ... ok
+test infrastructure::tools::agent_cmd::report_tests::agent_schema_hides_internal_message_lookup_but_parser_preserves_it ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 4041 filtered out; finished in 0.00s
+
