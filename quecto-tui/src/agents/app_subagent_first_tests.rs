@@ -2,7 +2,7 @@
 //! (#820), driven through the headless render harness.
 //!
 //! These pin the acceptance criteria from the issue:
-//!   * the left panel is ALWAYS visible once connected — the Master row shows
+//!   * the left panel is ALWAYS visible once connected — the Coordinator row shows
 //!     even with no sub-agents (not gated on `!subagent_local.is_empty()`);
 //!   * panel rows carry NO status dot/glyph; the NAME TEXT is coloured by status
 //!     (running = green, idle = orange/yellow, errored = red);
@@ -74,7 +74,7 @@ fn top_region(h: &mut TuiHarness) -> String {
     h.main_pane()
 }
 
-// ── Always-on panel (Master row present even with no sub-agents) ─────────────
+// ── Always-on panel (Coordinator row present even with no sub-agents) ─────────────
 
 /// The retained session's workflow bar for `id` (panics when absent).
 fn session_bar<'a>(

@@ -350,7 +350,7 @@ async fn environment_details_survive_sparse_snapshot_refresh() {
 }
 
 /// Review #1392: with an environment row committed, a routine roster update
-/// must not snap the panel cursor back to the Master row (`active_agent_id`
+/// must not snap the panel cursor back to the Coordinator row (`active_agent_id`
 /// is `None` while an environment is selected, which used to match Master).
 #[tokio::test]
 async fn environment_selection_survives_subsequent_state_change() {

@@ -35,7 +35,7 @@ async fn sourced_master_event_renders_like_direct_handling() {
         got.contains("seam-parity-token"),
         "a SourcedEvent::Tab(MASTER) event must reach the master session's chat (#1462)"
     );
-    // Masked to `#:##` clocks: the Master row embeds a wall-clock uptime
+    // Masked to `#:##` clocks: the Coordinator row embeds an elapsed timer
     // timer, and a second boundary can pass between the two captures on a
     // loaded CI runner (#1462 flake fix).
     assert_eq!(

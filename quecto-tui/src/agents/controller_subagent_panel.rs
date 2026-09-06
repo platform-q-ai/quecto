@@ -371,7 +371,7 @@ impl App {
             .map(Self::panel_row_key);
     }
 
-    /// Move the panel highlight up (toward the master) WITHOUT switching the
+    /// Move the panel highlight up (toward the coordinator) WITHOUT switching the
     /// active session — commit happens only on Enter/Tab (#802).
     pub(super) fn panel_highlight_previous(&mut self) {
         let rows = self.panel_rows();
@@ -423,7 +423,7 @@ impl App {
     }
 
     /// Jump the panel highlight to a 1-based row number (digits 1–9). Row 1 is
-    /// the master; row N+1 is the Nth listed sub-agent. No-op past the end.
+    /// the coordinator; row N+1 is the Nth listed sub-agent. No-op past the end.
     pub(super) fn panel_highlight_row(&mut self, one_based: usize) {
         let len = self.panel_rows().len();
         if one_based >= 1 && one_based <= len {
@@ -434,7 +434,7 @@ impl App {
     }
 
     /// Commit the highlighted panel row: switch the active session to that agent
-    /// (the master when row 1 is highlighted) and open its connection (#802).
+    /// (the coordinator when row 1 is highlighted) and open its connection (#802).
     pub(super) fn commit_panel_selection(&mut self) {
         let rows = self.panel_rows();
         let Some(row) = rows.get(self.subagents.panel_nav.selected()) else {
@@ -478,7 +478,7 @@ impl App {
             // While the user is navigating the panel, cursor identity owns the
             // highlight. A committed environment still owns main-pane chrome,
             // but it must not snap the focused panel away from the user's row.
-            // This also lets committing Master overwrite a stale env key even
+            // This also lets committing Coordinator overwrite a stale env key even
             // when the active session was already Master.
             if let Some(key) = self.subagents.panel_nav_key.as_deref() {
                 if let Some(idx) = rows.iter().position(|r| Self::panel_row_key(r) == key) {
@@ -492,7 +492,7 @@ impl App {
         }
         // A committed environment selection owns the cursor: with an
         // environment selected `active_agent_id` is `None`, which would
-        // otherwise match the Master row and silently snap the cursor away
+        // otherwise match the Coordinator row and silently snap the cursor away
         // from the environment whose chrome is showing (review #1392).
         if let Some(env_key) = self.ac().roster.selected_environment.as_deref() {
             if let Some(idx) = rows
@@ -516,9 +516,9 @@ impl App {
 
     // ── Panel rendering ────────────────────────────────────────────────
 
-    /// Flattened panel rows: the master pinned at the top, then the sub-agent
+    /// Flattened panel rows: the coordinator pinned at the top, then the sub-agent
     /// tree depth-ordered by `parent_id` (grandchildren under their parent).
-    /// Master's live status: `running` while processing, else `idle` (#820).
+    /// Coordinator live status: `running` while processing, else `idle` (#820).
     pub(super) fn master_status_for(conn: &connection_state::ConnectionState) -> &'static str {
         if conn.agent_state.is_running() {
             "running"
@@ -606,7 +606,7 @@ impl App {
         };
         let stalk_vis = visible_width(&row.prefix);
         // Environment rows have no per-agent timer; `id: None` must not fall
-        // back to the master uptime (#1369 slice 4).
+        // back to the coordinator elapsed timer (#1369 slice 4).
         let timer = if row.is_environment() {
             String::new()
         } else {
@@ -644,10 +644,7 @@ impl App {
 
     fn panel_row_timer(&self, id: Option<&str>, now: tokio::time::Instant) -> String {
         match id {
-            None => fmt_mss(
-                now.saturating_duration_since(self.ac().started_at)
-                    .as_secs(),
-            ),
+            None => self.master_elapsed(now),
             Some(id) => {
                 let t = self.ac().roster.tracked.get(id);
                 t.map(|t| fmt_mss(t.elapsed_secs(now))).unwrap_or_default()
@@ -655,15 +652,18 @@ impl App {
         }
     }
 
-    /// The per-row elapsed label for the panel (#820): the Master row shows the
-    /// session uptime; a sub-agent row shows its running/idle/frozen timer.
+    fn master_elapsed(&self, now: tokio::time::Instant) -> String {
+        let conn = self.ac();
+        let end = conn.stopped_at.unwrap_or(now);
+        fmt_mss(end.saturating_duration_since(conn.started_at).as_secs())
+    }
+
+    /// The per-row elapsed label for the panel (#820): the Coordinator row shows its
+    /// active/frozen run duration; a sub-agent row shows its running/idle/frozen
+    /// timer.
     pub(super) fn panel_row_elapsed(&self, id: Option<&str>, now: tokio::time::Instant) -> String {
         let Some(id) = id else {
-            // Master row → session uptime.
-            return fmt_mss(
-                now.saturating_duration_since(self.ac().started_at)
-                    .as_secs(),
-            );
+            return self.master_elapsed(now);
         };
         let Some(t) = self.ac().roster.tracked.get(id) else {
             return String::new();

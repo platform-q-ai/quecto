@@ -70,9 +70,13 @@ pub(crate) struct ConnectionState {
     /// One "commands are not being sent" notice per disconnect episode
     /// (#1470 r4): reset when a disconnect begins, set on first refusal.
     pub(crate) disconnect_refusal_notified: bool,
-    /// When this tab's session started — drives the Master row's uptime
-    /// timer (#820).
+    /// When the Coordinator last started actively processing — drives the Coordinator row
+    /// run-duration timer (#820/#838).
     pub(crate) started_at: tokio::time::Instant,
+    /// When the Coordinator last stopped processing. `None` while actively running;
+    /// `Some(started_at)` before the first run so idle frames show `0:00`
+    /// instead of a wall-clock session uptime.
+    pub(crate) stopped_at: Option<tokio::time::Instant>,
     /// In-flight #1060 fetch-on-miss recoveries keyed by minted request id.
     pub(crate) pending_message_recovery: HashMap<String, PendingMessageRecovery>,
     /// Recovery batches (client-local id → turn chat range) guarding late
@@ -114,6 +118,7 @@ impl ConnectionState {
         transport: crate::shell::connection::Connection,
         master_session: SessionView,
     ) -> Self {
+        let started_at = tokio::time::Instant::now();
         Self {
             transport,
             name: None,
@@ -135,7 +140,8 @@ impl ConnectionState {
             surfaced_oversized_drops: 0,
             disconnect_diag_pending: false,
             disconnect_refusal_notified: false,
-            started_at: tokio::time::Instant::now(),
+            started_at,
+            stopped_at: Some(started_at),
             pending_message_recovery: HashMap::new(),
             message_recovery_batches: HashMap::new(),
             pending_stub_recall: HashMap::new(),

@@ -411,7 +411,9 @@ impl super::App {
         state.agent_connected = true;
         state.agent_ever_connected = true;
         state.pending_attach = false;
-        state.started_at = tokio::time::Instant::now();
+        let now = tokio::time::Instant::now();
+        state.started_at = now;
+        state.stopped_at = Some(now);
         // Do not steal focus if the user already navigated away (F9).
         // AC6: if restore deferred a session key while offline, apply it once.
         let _ = self.with_routing_tab(tab, |app| {
