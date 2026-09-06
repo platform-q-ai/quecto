@@ -181,7 +181,7 @@ impl ConnectionState {
         self.name
             .as_deref()
             .filter(|name| !name.is_empty())
-            .unwrap_or("Master Agent")
+            .unwrap_or("Parent Agent")
     }
 }
 

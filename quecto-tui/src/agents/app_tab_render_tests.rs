@@ -19,14 +19,14 @@ async fn named_active_tab_labels_master_surfaces() {
     );
     let master_row = panel
         .lines()
-        .find(|line| line.contains("Investigate auth") || line.contains("Master Agent"))
+        .find(|line| line.contains("Investigate auth") || line.contains("Parent Agent"))
         .unwrap_or_else(|| panic!("master row not found in panel:\n{panel}"));
     assert!(
         master_row.contains("Investigate auth"),
         "a named active tab must label the pinned master row with the tab name: {master_row:?}"
     );
     assert!(
-        !master_row.contains("Master Agent"),
+        !master_row.contains("Parent Agent"),
         "the legacy master-row label is only for unnamed N=1 tabs: {master_row:?}"
     );
 

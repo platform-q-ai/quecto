@@ -71,8 +71,8 @@ async fn panel_appears_on_subagent_spawn() {
     );
     let frame = strip_ansi(&h.app_mut().compose_frame().join("\n"));
     assert!(
-        frame.contains("Master Agent"),
-        "panel pins Master Agent at top:\n{frame}"
+        frame.contains("Parent Agent"),
+        "panel pins Parent Agent at top:\n{frame}"
     );
     assert!(frame.contains("worker"), "panel lists sub-agents:\n{frame}");
 }
