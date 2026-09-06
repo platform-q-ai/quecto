@@ -419,7 +419,7 @@ impl App {
         let (panel_width, _divider_width, width) = self.frame_split();
 
         // Sample the wall clock ONCE per frame and thread it through every
-        // elapsed-timer render path (panel rows, Master uptime, main-pane
+        // elapsed-timer render path (panel rows, Coordinator elapsed timer, main-pane
         // title). compose_frame is contractually render-idempotent, so the
         // clock must not be re-sampled deeper in the call tree (#820 review).
         let now = tokio::time::Instant::now();

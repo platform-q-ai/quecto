@@ -269,6 +269,11 @@ impl App {
                     // status can't keep it "running" and re-abort on a 2nd Esc (#834).
                     session.observed_run_state = true;
                 }
+                if let Some(entry) = self.ac_mut().roster.tracked.get_mut(&id) {
+                    let mut info = entry.info.clone();
+                    info.status = "idle".to_string();
+                    entry.update_info_at(info, tokio::time::Instant::now());
+                }
             }
             return;
         }

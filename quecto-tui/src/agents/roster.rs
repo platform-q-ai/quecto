@@ -43,7 +43,7 @@ pub(crate) fn subagent_status_is_active(status: &str) -> bool {
 /// Whether a subagent status counts as elapsed agent run time. `starting` keeps
 /// the row active for visibility/animation, but time belongs to the agent only
 /// once the agent reports `running`.
-fn subagent_status_runs_timer(status: &str) -> bool {
+pub(crate) fn subagent_status_runs_timer(status: &str) -> bool {
     status == "running"
 }
 
@@ -107,10 +107,11 @@ impl<I: RosterInfo> TrackedSubagent<I> {
     pub(crate) fn update_info_at(&mut self, mut new_info: I, now: tokio::time::Instant) {
         new_info.merge_sticky_fields(&self.info);
         if subagent_status_runs_timer(new_info.status()) {
-            // Resumed/started work — reset the baseline if the timer was
-            // frozen, then let it run from this transition.
-            if self.stopped_at.is_some() {
-                self.started_at = now;
+            // Resumed/started work — preserve prior elapsed run time while
+            // excluding any frozen idle/startup gap from the live timer.
+            if let Some(stopped_at) = self.stopped_at {
+                let elapsed = stopped_at.saturating_duration_since(self.started_at);
+                self.started_at = now - elapsed;
             }
             self.stopped_at = None;
         } else if self.stopped_at.is_none() {

@@ -14,7 +14,7 @@ Feature: Sub-agent-first default layout (#820)
 
   Scenario: The panel is always visible with only the master
     Given a sub-agent-first TUI with no sub-agents
-    Then the left panel shows the master row
+    Then the left panel shows the coordinator row
 
   Scenario: A selected agent's workflow keeps compact title context without a status box
     Given a sub-agent-first TUI tracking sub-agent "a1" with its own workflow

@@ -46,7 +46,7 @@ Feature: Environment visibility and grouping in the sub-agent panel (#1369 slice
     When I select the environment row "C2" through panel navigation
     Then the main pane carries a container-info header and lists the members "impl" and "rev"
     And the main pane does not render the parent conversation
-    When I select the master row through panel navigation
+    When I select the coordinator row through panel navigation
     Then the main pane renders the parent conversation again
 
   @done

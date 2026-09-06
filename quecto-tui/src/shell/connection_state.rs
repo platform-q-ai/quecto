@@ -70,10 +70,10 @@ pub(crate) struct ConnectionState {
     /// One "commands are not being sent" notice per disconnect episode
     /// (#1470 r4): reset when a disconnect begins, set on first refusal.
     pub(crate) disconnect_refusal_notified: bool,
-    /// When the Master last started actively processing — drives the Master row
+    /// When the Coordinator last started actively processing — drives the Coordinator row
     /// run-duration timer (#820/#838).
     pub(crate) started_at: tokio::time::Instant,
-    /// When the Master last stopped processing. `None` while actively running;
+    /// When the Coordinator last stopped processing. `None` while actively running;
     /// `Some(started_at)` before the first run so idle frames show `0:00`
     /// instead of a wall-clock session uptime.
     pub(crate) stopped_at: Option<tokio::time::Instant>,
@@ -181,13 +181,13 @@ impl ConnectionState {
             .unwrap_or("Master")
     }
 
-    /// The label to render for this tab's pinned master panel row. N=1 keeps
-    /// the legacy row text byte-identical; named tabs paint the tab name.
+    /// The label to render for this tab's pinned coordinator panel row. N=1 uses
+    /// the Coordinator fallback; named tabs paint the tab name.
     pub(crate) fn master_panel_label(&self) -> &str {
         self.name
             .as_deref()
             .filter(|name| !name.is_empty())
-            .unwrap_or("Master Agent")
+            .unwrap_or("Coordinator")
     }
 }
 

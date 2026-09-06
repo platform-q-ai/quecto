@@ -5,7 +5,7 @@
 use super::*;
 
 impl App {
-    /// Flattened panel rows: the master pinned at the top, then the sub-agent
+    /// Flattened panel rows: the coordinator pinned at the top, then the sub-agent
     /// tree depth-ordered by `parent_id` (grandchildren under their parent).
     pub(super) fn panel_rows(&self) -> Vec<PanelRow> {
         let conn = self.ac();
@@ -83,7 +83,7 @@ impl App {
     }
 
     /// Depth-first `(node, tree_prefix)` listing of the sub-agent tree. Root
-    /// sub-agents (no in-map parent) sit under the master; `tree_prefix` is the
+    /// sub-agents (no in-map parent) sit under the coordinator; `tree_prefix` is the
     /// connector stalk (`├ `/`└ ` with `│ `/`  ` ancestor continuation) so the
     /// panel draws tree lines back up to each parent. Order follows sorted ids.
     ///
@@ -97,7 +97,7 @@ impl App {
     ) -> Vec<(PanelNode, String)> {
         use std::collections::{BTreeMap, BTreeSet};
         let grouped: BTreeSet<&str> = groups.values().flatten().map(String::as_str).collect();
-        // Parent key: `None` = under the master; `Some(key)` = under the node
+        // Parent key: `None` = under the coordinator; `Some(key)` = under the node
         // with that key (an agent id, or an environment node key for grouped
         // members). Environment node keys can never collide with sanitized
         // agent ids because of the `\0` byte.

@@ -383,11 +383,13 @@ impl App {
             .map(|u| crate::components::ansi::sanitize_control(&u));
         if let Some(uuid_key) = uuid {
             if let Some(mut entry) = self.ac_mut().roster.tracked.remove(&sanitized) {
-                entry.info.status = "running".to_string();
-                entry.info.agent_uuid = Some(uuid_key.clone());
-                if entry.info.display_name.is_none() {
-                    entry.info.display_name = Some(sanitized.clone());
+                let mut info = entry.info.clone();
+                info.status = "running".to_string();
+                info.agent_uuid = Some(uuid_key.clone());
+                if info.display_name.is_none() {
+                    info.display_name = Some(sanitized.clone());
                 }
+                entry.update_info_at(info, tokio::time::Instant::now());
                 self.ac_mut().roster.tracked.insert(uuid_key.clone(), entry);
                 // Rekey sessions/feeds/session_order/active with tracked (#1378).
                 self.rekey_agent_collections(&sanitized, &uuid_key);
@@ -395,19 +397,23 @@ impl App {
             }
             // Already keyed by UUID (or no optimistic row) — just flip status.
             if let Some(entry) = self.ac_mut().roster.tracked.get_mut(&uuid_key) {
-                entry.info.status = "running".to_string();
-                entry.info.agent_uuid = Some(uuid_key);
-                if entry.info.display_name.is_none() {
-                    entry.info.display_name = Some(sanitized);
+                let mut info = entry.info.clone();
+                info.status = "running".to_string();
+                info.agent_uuid = Some(uuid_key);
+                if info.display_name.is_none() {
+                    info.display_name = Some(sanitized);
                 }
+                entry.update_info_at(info, tokio::time::Instant::now());
             }
             return;
         }
         if let Some(entry) = self.ac_mut().roster.tracked.get_mut(&sanitized) {
-            entry.info.status = "running".to_string();
-            if entry.info.display_name.is_none() {
-                entry.info.display_name = Some(sanitized);
+            let mut info = entry.info.clone();
+            info.status = "running".to_string();
+            if info.display_name.is_none() {
+                info.display_name = Some(sanitized);
             }
+            entry.update_info_at(info, tokio::time::Instant::now());
         }
     }
 
