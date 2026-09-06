@@ -138,6 +138,25 @@ fn merge_tool_history_boundary(prefix: &mut [ChatEntry], existing: &mut Vec<Chat
     existing.remove(0);
 }
 
+fn append_thinking_delta(thinking: &mut Vec<String>, text: &str) {
+    let mut segments = text.split("\n\n");
+    let Some(first) = segments.next() else {
+        return;
+    };
+    if !first.is_empty() {
+        if let Some(last) = thinking.last_mut() {
+            last.push_str(first);
+        } else {
+            thinking.push(first.to_string());
+        }
+    }
+    for segment in segments {
+        if !segment.is_empty() {
+            thinking.push(segment.to_string());
+        }
+    }
+}
+
 impl Chat {
     pub fn new() -> Self {
         Self {
@@ -217,20 +236,18 @@ impl Chat {
         }) = self.entries.last_mut()
         {
             if *streaming {
-                if let Some(last) = thinking.last_mut() {
-                    last.push_str(text);
-                } else {
-                    thinking.push(text.to_string());
-                }
+                append_thinking_delta(thinking, text);
                 if let Some(cache) = self.render_cache.last_mut() {
                     *cache = None;
                 }
                 return;
             }
         }
+        let mut thinking = Vec::new();
+        append_thinking_delta(&mut thinking, text);
         self.entries.push(ChatEntry::Assistant {
             text: String::new(),
-            thinking: vec![text.to_string()],
+            thinking,
             streaming: true,
         });
         self.render_cache.push(None);

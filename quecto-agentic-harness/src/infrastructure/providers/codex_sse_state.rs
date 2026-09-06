@@ -12,6 +12,7 @@ pub(super) struct SseAccumulator {
     pub(super) usage: Option<UsageInfo>,
     pub(super) stop_reason: Option<StopReason>,
     pub(super) reasoning: String,
+    pub(super) reasoning_summary_position: Option<(Option<u64>, u64)>,
 }
 
 fn collect_reasoning_summary(item: &Value) -> String {
@@ -43,6 +44,36 @@ fn reasoning_ends_with_summary(reasoning: &str, summary: &str) -> bool {
     let normalized_summary = normalized_reasoning_suffix(summary);
     !normalized_summary.is_empty()
         && normalized_reasoning_suffix(reasoning).ends_with(normalized_summary)
+}
+
+pub(super) fn reasoning_summary_position(event: &Value) -> Option<(Option<u64>, u64)> {
+    let summary_index = event.get("summary_index").and_then(Value::as_u64)?;
+    let output_index = event.get("output_index").and_then(Value::as_u64);
+    Some((output_index, summary_index))
+}
+
+pub(super) fn append_reasoning_delta(
+    reasoning: &mut String,
+    text: &str,
+    position: Option<(Option<u64>, u64)>,
+    previous_position: &mut Option<(Option<u64>, u64)>,
+) -> Result<String, crate::domain::error::DomainError> {
+    let mut emitted = String::new();
+    if let (Some(previous), Some(current)) = (*previous_position, position)
+        && current.0 == previous.0
+        && current.1 > previous.1
+        && !reasoning.ends_with(char::is_whitespace)
+        && !text.starts_with(char::is_whitespace)
+    {
+        append_reasoning_with_limit(reasoning, "\n\n")?;
+        emitted.push_str("\n\n");
+    }
+    append_reasoning_with_limit(reasoning, text)?;
+    emitted.push_str(text);
+    if let Some(current) = position {
+        *previous_position = Some(current);
+    }
+    Ok(emitted)
 }
 
 #[cfg(test)]
@@ -121,7 +152,13 @@ impl SseAccumulator {
             Some("response.reasoning_summary_text.delta")
             | Some("response.reasoning.summary_text.delta") => {
                 if let Some(delta) = event["delta"].as_str() {
-                    append_reasoning_with_limit(&mut self.reasoning, delta)?;
+                    let position = reasoning_summary_position(event);
+                    append_reasoning_delta(
+                        &mut self.reasoning,
+                        delta,
+                        position,
+                        &mut self.reasoning_summary_position,
+                    )?;
                 }
             }
             Some("response.output_item.done") => {

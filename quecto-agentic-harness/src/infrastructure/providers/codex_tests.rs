@@ -710,3 +710,6 @@ mod issue_1338_tests;
 
 #[path = "codex_issue1567_tests.rs"]
 mod issue1567_tests;
+
+#[path = "codex_1632_tests.rs"]
+mod issue_1632_tests;
