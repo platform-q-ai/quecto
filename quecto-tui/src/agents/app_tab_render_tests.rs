@@ -7,6 +7,26 @@ fn top_region(h: &mut TuiHarness) -> String {
 }
 
 #[tokio::test]
+async fn unnamed_active_tab_labels_main_pane_as_coordinator() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+
+    let top = strip_ansi(&top_region(&mut h));
+    let title_line = top
+        .lines()
+        .find(|line| line.contains(" · ") && (line.contains("idle") || line.contains("running")))
+        .unwrap_or_else(|| panic!("coordinator main-pane title not found:\n{top}"));
+    assert!(
+        title_line.contains("Coordinator"),
+        "unnamed master/coordinator selection must render as Coordinator: {title_line:?}"
+    );
+    assert!(
+        !title_line.contains("Master"),
+        "unnamed coordinator main-pane title must not render legacy Master label: {title_line:?}"
+    );
+}
+
+#[tokio::test]
 async fn named_active_tab_labels_master_surfaces() {
     let mut h = TuiHarness::new().await;
     h.app_mut().ac_mut().name = Some("Investigate auth".into());
