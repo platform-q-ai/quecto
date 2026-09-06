@@ -24,7 +24,7 @@ impl Write for BddClipboardWriter {
     }
 }
 
-const NAVIGATION_LABEL: &str = "Master";
+const NAVIGATION_LABEL: &str = "Coordinator";
 const CONVERSATION_TEXT: &str = "Conversation body copy target";
 const DIVIDER: char = '│';
 

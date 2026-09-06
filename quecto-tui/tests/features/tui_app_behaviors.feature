@@ -253,7 +253,7 @@ Feature: TUI app event routing and command behaviours
   Scenario: Compact main-pane workflow progress is framed above and below
     Given a fresh TUI app harness at width 120
     When workflow state reports issue 1309 with step 2 "Restore separators" in phase "red" out of 3
-    Then the main pane workflow title shows "Master"
+    Then the main pane workflow title shows "Coordinator"
     And the main pane compact workflow progress "Restore separators" is framed above and below
     And the main pane omits workflow detail "Ctrl+Shift+A"
     And the main pane omits workflow detail "nudge:"
