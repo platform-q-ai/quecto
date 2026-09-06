@@ -1,0 +1,11 @@
+{
+  "acceptance": [
+    "Both links resolve relative to docs/start.md to the correct existing pages.",
+    "Visible text, remaining prose, and other files unchanged."
+  ],
+  "critical": [
+    "Either requested link remains broken or points to the wrong page.",
+    "Deletes or moves existing pages."
+  ],
+  "docs_semantic_fallback": "Frozen documentation parser mismatches need direct semantic review, not automatic failure."
+}

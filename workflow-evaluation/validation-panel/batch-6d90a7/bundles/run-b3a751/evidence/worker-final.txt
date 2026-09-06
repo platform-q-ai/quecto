@@ -1,0 +1,5 @@
+- **Summary:** Fixed exact currency totaling using integer parsing; preserved API and empty-list support.
+- **Checks:** Reproduced failures in the original implementation. All 6 tests pass after the fix.
+- **Changed files:** `receipts.py`, `tests/test_receipts.py`.
+- **Blockers:** None.
+- **Next action:** Ready for review. Validation of unsupported inputs remains out of scope.

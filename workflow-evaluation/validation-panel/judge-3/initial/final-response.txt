@@ -1,0 +1,263 @@
+{
+  "judge_id": "judge-3",
+  "run_id": "run-7e2a91",
+  "criteria": {
+    "A1": {
+      "points": 5,
+      "evidence": [
+        "task.txt",
+        "fixture-after/classification.py",
+        "fixture-after/inventory.py",
+        "evidence/final-oracle.json"
+      ],
+      "rationale": "The requested extraction is present and connected: classification.classify_name owns the filename rules, inventory imports it under a private alias, and summarize delegates classification while retaining aggregation. The retained evaluator oracle passed."
+    },
+    "A2": {
+      "points": 5,
+      "evidence": [
+        "task.txt",
+        "evidence/acceptance.json",
+        "evidence/diff.txt",
+        "fixture-after/tests/test_classification.py",
+        "evidence/final-oracle.json"
+      ],
+      "rationale": "All explicit acceptance requirements are addressed: the new internal helper is used, rule ownership is not duplicated in product code, summarize retains its signature and results, supported types are unchanged, and additive parity coverage is supplied. The helper's documentation and private import alias satisfy the stated internal-status requirement without inventing an underscore-naming requirement."
+    },
+    "A3": {
+      "points": 5,
+      "evidence": [
+        "fixture-before/inventory.py",
+        "fixture-after/classification.py",
+        "fixture-after/tests/test_classification.py",
+        "evidence/final-suite.json",
+        "evidence/final-oracle.json"
+      ],
+      "rationale": "The unchanged suffix expression and category membership preserve case sensitivity, final-suffix selection, unknown extensions, dotfiles, trailing dots, extensionless names, and empty strings. Passing retained checks cover these distinctions, empty inputs, repeated names, iterators, generators, and alternative category orders."
+    },
+    "A4": {
+      "points": 5,
+      "evidence": [
+        "evidence/diff.txt",
+        "evidence/oracle.py",
+        "evidence/final-oracle.json",
+        "fixture-after/tests/test_classification.py"
+      ],
+      "rationale": "The signature, one-pass aggregation, counts, first-seen dictionary order, and input ownership are preserved. The evaluator explicitly checked signature and list nonmutation, while source comparison establishes that aggregation and filename operations remain equivalent. There is no material compatibility regression within the task contract."
+    },
+    "A5": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/README.md",
+        "fixture-after/classification.py",
+        "fixture-after/inventory.py",
+        "fixture-after/tests/test_classification.py",
+        "evidence/final-suite.json",
+        "evidence/worker-final.txt"
+      ],
+      "rationale": "The deliverable is a small, reviewable, standard-library-only patch with retained tests and a working test command. The final handoff identifies all three substantive changed files. Neither a Git repository nor an installation step is necessary to use or review it."
+    },
+    "A6": {
+      "points": 5,
+      "evidence": [
+        "evidence/changes.json",
+        "evidence/before-files.json",
+        "evidence/after-files.json",
+        "evidence/diff.txt"
+      ],
+      "rationale": "Substantive changes are confined to the requested extraction and additive parity tests. README.md, the existing smoke test, and notes/operator-draft.txt retain identical before/after hashes. No supported types or unrelated behavior were added. Interpreter bytecode caches are excluded as directed by the rubric."
+    },
+    "B1": {
+      "points": 2.5,
+      "evidence": [
+        "transcript/chronological.txt: ordinal 6, message f93d5212-ccab-4c67-ac3d-cc97efca6819",
+        "transcript/chronological.txt: ordinal 10, message fca14443-54ed-4329-a11a-e017c8c26a28",
+        "transcript/chronological.txt: ordinals 11-20"
+      ],
+      "rationale": "The worker observed the complete original implementation and existing smoke assertion before editing, providing a concrete source-level baseline. However, no pre-change execution or explicit pre-change characterization of the contractual edge behaviors is retained; the first test attempts follow both product edits and the new tests. This is partial baseline evidence, not an observed passing characterization run."
+    },
+    "B2": {
+      "points": 2.5,
+      "evidence": [
+        "transcript/chronological.txt: ordinal 10, message fca14443-54ed-4329-a11a-e017c8c26a28",
+        "transcript/chronological.txt: ordinals 11-16",
+        "fixture-after/tests/test_classification.py",
+        "evidence/replay-selection.json",
+        "evidence/pristine-with-worker-tests.json"
+      ],
+      "rationale": "The retained verification design meaningfully distinguishes case normalization, incorrect suffix selection, expanded types, wrong counts, and reordered categories. But the comprehensive assertions were added after extraction, and the only pre-change assertion inspected was the narrow existing smoke test. Consequently, the refactor-specific requirement for pre-change characterization of relevant invariants is only partially satisfied. The evaluator's tests-only overlay import error does not establish characterization or a worker RED."
+    },
+    "B3": {
+      "points": 5,
+      "evidence": [
+        "transcript/chronological.txt: ordinal 20, message 8108149c-4687-45b4-9017-1cff3fc60ea6",
+        "transcript/chronological.txt: ordinals 31-32, tool call call_fgQynx8OEPFIxglshWvfY7SB",
+        "evidence/final-suite.json"
+      ],
+      "rationale": "The worker actually executed the final suite and obtained four passing tests, then repeated the suite successfully during parity review with no subsequent artifact changes. The earlier compound command's nonzero status came from Git after unittest had passed; the later command independently supplies an unambiguous successful final check."
+    },
+    "B4": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/tests/test_classification.py",
+        "fixture-after/tests/test_smoke.py",
+        "transcript/chronological.txt: ordinal 32, message a1b63dbc-4673-42e7-b9fa-64f24e28b98d"
+      ],
+      "rationale": "Worker-executed checks cover the relevant adjacent and boundary risks: all supported suffixes, uppercase and mixed-case alternatives, compound suffixes, unknown types, dotfiles, trailing dots, empty input, repeated names, iterator inputs, and insertion order. The original smoke test also ran. This is proportionate verification for the small extraction."
+    },
+    "B5": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/tests/test_classification.py",
+        "evidence/after-files.json",
+        "transcript/messages.json: ordinals 15-20 and 31-32",
+        "evidence/final-suite-copy.json",
+        "evidence/final-suite.json",
+        "evidence/replay-selection.json"
+      ],
+      "rationale": "Durable parity tests, exact write contents, versioned snapshots and hashes, and interpretable worker command outputs are retained. These make the final checks reproducible and auditable. The evaluator's inability to load the new helper in its pristine tests-only overlay does not diminish the worker's retained regression evidence."
+    },
+    "C1": {
+      "points": 5,
+      "evidence": [
+        "transcript/chronological.txt: ordinal 2, message f62a2b9b-1164-4ae7-bc12-93d80dcd1553",
+        "transcript/chronological.txt: ordinals 5-10",
+        "transcript/chronological.txt: ordinal 11, message 9b15ef23-5507-4270-967f-bb8a7190e2d5"
+      ],
+      "rationale": "Before choosing and writing the solution, the worker had the task contract, read the entire relevant product function, and inspected the existing test. The extraction follows those local facts rather than assuming a different filename policy."
+    },
+    "C2": {
+      "points": 5,
+      "evidence": [
+        "evidence/diff.txt",
+        "transcript/chronological.txt: ordinal 11, message 9b15ef23-5507-4270-967f-bb8a7190e2d5",
+        "transcript/chronological.txt: ordinal 25, message 225c2c72-5550-4517-acd2-e1b417ddda52",
+        "transcript/chronological.txt: ordinal 35, message c2497cd5-a966-49de-8ddb-15ab5497a9af"
+      ],
+      "rationale": "The design coherently separates classification from aggregation while preserving the exact suffix operation, category sets, and aggregation loop. The worker identifies the relevant invariants and explains why only rule location changes. No material competing design or causal hypothesis needed separate investigation for this explicitly directed extraction."
+    },
+    "C3": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/classification.py",
+        "fixture-after/inventory.py",
+        "fixture-after/tests/test_classification.py",
+        "evidence/diff.txt"
+      ],
+      "rationale": "The solution is minimal and maintainable: one short helper, one private import alias, and one delegation point. It retains the original general rules rather than hardcoding fixture answers, adds no dependencies or gratuitous abstractions, and uses clear table-driven parity tests."
+    },
+    "C4": {
+      "points": 5,
+      "evidence": [
+        "transcript/chronological.txt: ordinal 6, message f93d5212-ccab-4c67-ac3d-cc97efca6819",
+        "transcript/chronological.txt: ordinals 31-32, tool call call_fgQynx8OEPFIxglshWvfY7SB",
+        "transcript/chronological.txt: ordinal 35, message c2497cd5-a966-49de-8ddb-15ab5497a9af"
+      ],
+      "rationale": "The worker reread both final product files after testing and compared the extraction with the original source already retained in the conversation. The ensuing review specifically addresses unchanged suffix rules, signature, counts, insertion order, and limited structural scope. For this small patch, that is a substantive Git-free artifact review of the relevant compatibility risks, not merely a claim based on checked boxes."
+    },
+    "D1": {
+      "points": 5,
+      "evidence": [
+        "run-context.json: workflow_template_bound_at_spawn",
+        "evidence/assigned-template.json",
+        "transcript/chronological.txt: ordinal 24, message 91d8e15f-d87b-4171-8f3e-cbf65c34b5c2",
+        "transcript/chronological.txt: ordinals 25-36",
+        "transcript/get_state.json"
+      ],
+      "rationale": "The actual Refactor assignment is corroborated by live workflow status and matching step guidance, not inferred solely from the template file. The worker ultimately uses its progression and handoffs through completion without selecting another template. The late engagement and retrospective sequencing are assessed under D2 rather than treated as an assignment failure."
+    },
+    "D2": {
+      "points": 2.5,
+      "evidence": [
+        "evidence/assigned-template.json: steps scope, characterize, refactor, parity, handoff",
+        "transcript/chronological.txt: ordinals 11-22",
+        "transcript/chronological.txt: ordinals 25-36"
+      ],
+      "rationale": "The intended characterization-before-refactoring order was not followed: product extraction preceded the new characterization tests, and the worker initially handed off while workflow progress remained 0/5. After the reminder, checks were advanced in order, and the final parity rerun, direct review, and handoff preceded their corresponding completion marks. This is partial evidence-aligned progression, with a material early ordering violation."
+    },
+    "D3": {
+      "points": 2.5,
+      "evidence": [
+        "evidence/assigned-template.json: characterize and refactor guidance",
+        "transcript/chronological.txt: ordinals 11-20",
+        "transcript/chronological.txt: ordinals 25-35",
+        "fixture-after/tests/test_classification.py"
+      ],
+      "rationale": "Most applicable guidance was substantively performed: invariants were stated, meaningful checks were added and run, the structural change was small, final code was reviewed through a justified Git-free fallback, and the handoff described evidence and residual issues. However, the requirement to refactor while keeping established characterization checks passing is not evidenced; those checks were created only after extraction, and closure did not acknowledge that limitation. No failing-test ritual or absent template requirement is imposed."
+    },
+    "E1": {
+      "points": 5,
+      "evidence": [
+        "evidence/worker-final.txt",
+        "transcript/chronological.txt: ordinal 39, message 44eb80d3-94e2-4c05-b3fe-62efbd2a9c66",
+        "transcript/chronological.txt: ordinal 32, message a1b63dbc-4673-42e7-b9fa-64f24e28b98d",
+        "evidence/changes.json"
+      ],
+      "rationale": "The final summary accurately identifies the extraction, exact changed paths, executed unittest command, four passing tests, Git limitation, and direct inspection fallback. Those statements are auditable against retained tool results and artifacts. It does not claim a pre-change test run, evaluator execution by the worker, or deployment."
+    },
+    "E2": {
+      "points": 5,
+      "evidence": [
+        "evidence/worker-final.txt",
+        "transcript/chronological.txt: ordinal 20, message 8108149c-4687-45b4-9017-1cff3fc60ea6",
+        "transcript/chronological.txt: ordinals 31-35"
+      ],
+      "rationale": "The worker candidly reports that Git diff was unavailable and identifies the direct-review workaround. The missing python alias was resolved by a successful python3 run, so it is not an outstanding blocker. The bounded next action is review, not deployment or an unsupported claim of universal validation; no remaining correctness blocker is evidenced."
+    }
+  },
+  "total": 90,
+  "gate": {
+    "decision": "PASS",
+    "rule": "RUBRIC.md v1.0 critical-failure gate, rules 1-3; acceptance.json critical condition: observable summarize output changes or absent/disconnected extraction.",
+    "evidence": [
+      "evidence/acceptance.json",
+      "evidence/diff.txt",
+      "fixture-after/classification.py",
+      "fixture-after/inventory.py",
+      "evidence/final-oracle-copy.json",
+      "evidence/final-oracle.json",
+      "evidence/final-suite-copy.json",
+      "evidence/final-suite.json",
+      "evidence/before-files.json",
+      "evidence/after-files.json",
+      "transcript/messages.json: ordinals 18-20 and 31-39",
+      "transcript/archive-summary.json",
+      "evidence/replay-selection.json",
+      "evidence/pristine-with-worker-tests.json"
+    ],
+    "rationale": "No critical failure is evidenced. Direct artifact review confirms a connected extraction with equivalent rules and unchanged aggregation, and retained final oracle and suite runs pass. The operator draft and original tests remain byte-identical; there are no destructive or evaluator-owned edits. Reported passing worker tests are supported by tool outputs, and the failed Git operation is disclosed rather than concealed. The chronological characterization and workflow deficiencies warrant numeric deductions but do not establish critical correctness, integrity, or preservation failures. The pristine overlay import failure is a documented replay construction limitation, not evidence that the final artifact is broken. The retained package is sufficient to audit this gate."
+  },
+  "uncertainties": [
+    {
+      "evidence": [
+        "transcript/archive-summary.json",
+        "transcript/page-0000.json",
+        "transcript/page-0001.json",
+        "evidence/status.json"
+      ],
+      "description": "The archive contains committed history rather than every live event or workflow broadcast. Both raw pages were reviewed; they cover all 39 indexed messages without archive warnings or visible material truncation. Unrecorded pre-change execution is not inferred."
+    },
+    {
+      "evidence": [
+        "evidence/replay-selection.json",
+        "evidence/pristine-with-worker-tests.json",
+        "INDEX.md"
+      ],
+      "description": "The evaluator's pristine overlay included the new tests but omitted classification.py, so its ModuleNotFoundError cannot establish behavioral parity or test sensitivity against the original implementation. No successful pristine parity replay is retained. Final correctness is nevertheless supported by source equivalence, final checks, and preserved artifacts."
+    },
+    {
+      "evidence": [
+        "transcript/chronological.txt: ordinals 5-20",
+        "transcript/chronological.txt: ordinals 25-30"
+      ],
+      "description": "There is no retained worker execution of characterization checks before extraction. This is a material limitation for B1, B2, and the actual template's characterization/refactoring guidance, not proof of a final behavior defect."
+    },
+    {
+      "evidence": [
+        "run-context.json",
+        "INDEX.md",
+        "evidence/status.json"
+      ],
+      "description": "Capture status predates the parent-reported container cleanup. Same-model-family judging, imperfect condition blinding, and unavailable secondary metrics limit broader experimental conclusions but do not prevent scoring this run's retained evidence."
+    }
+  ]
+}

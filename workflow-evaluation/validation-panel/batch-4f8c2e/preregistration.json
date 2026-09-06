@@ -1,0 +1,60 @@
+{
+  "status": "PREREGISTERED_BEFORE_LAUNCH",
+  "batch_id": "batch-4f8c2e",
+  "run_order": [
+    "run-c8d041",
+    "run-f7502a",
+    "run-63ab9e",
+    "run-1e96b3"
+  ],
+  "judges": [
+    {
+      "judge_id": "judge-1",
+      "model": "openai-oauth/gpt-6-astra",
+      "effort": "high",
+      "read_only": true,
+      "workflow": false,
+      "disable_tools": [
+        "spawn",
+        "agent_cmd",
+        "web_fetch",
+        "web_search"
+      ],
+      "prompt_sha256": "8b68e2761dc685cba672407d97b1545b8042c01b71d5ccf5a9511a9e2eed3afc"
+    },
+    {
+      "judge_id": "judge-2",
+      "model": "openai-oauth/gpt-6-astra",
+      "effort": "high",
+      "read_only": true,
+      "workflow": false,
+      "disable_tools": [
+        "spawn",
+        "agent_cmd",
+        "web_fetch",
+        "web_search"
+      ],
+      "prompt_sha256": "2245a25de230c0d863f5fd5526918a4f7767245780f3ed6262ff97edf9da1d0e"
+    },
+    {
+      "judge_id": "judge-3",
+      "model": "openai-oauth/gpt-6-astra",
+      "effort": "high",
+      "read_only": true,
+      "workflow": false,
+      "disable_tools": [
+        "spawn",
+        "agent_cmd",
+        "web_fetch",
+        "web_search"
+      ],
+      "prompt_sha256": "ac01ad5af8937f7915a8f882472ead270ed7cdcf244aa731c53b2a45f84ac105"
+    }
+  ],
+  "sealing": "All initial batch ballots locked before any cross-ballot disclosure. No proposals.",
+  "aggregation": "Per-run sum of per-criterion medians; one adjudication round if any gate disagreement or per-run total spread >10.",
+  "limitations": [
+    "Independent same-model sessions, not provider diversity.",
+    "Imperfect condition blinding retained as in preceding panels."
+  ]
+}

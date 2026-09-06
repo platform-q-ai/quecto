@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "36e8a3b8-729f-442b-94e1-81eba59a01b1",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "bundle-index.json\nevidence/\nfixture-after/\nfixture-before/\nINDEX.md\nrun-context.json\nsource-map.json\ntask.txt\ntranscript/",
+    "contentLength": 121,
+    "hasMoreContent": false,
+    "id": "78476349-b540-4987-801a-371e80307f23",
+    "isError": false,
+    "nextOffset": 121,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_ZFgRvftQJSBvjjWY0XMxTGYv",
+    "toolCalls": [],
+    "toolName": "ls"
+  }
+}

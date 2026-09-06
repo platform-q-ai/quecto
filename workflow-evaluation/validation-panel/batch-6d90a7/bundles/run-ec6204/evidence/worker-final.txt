@@ -1,0 +1,5 @@
+- **Summary:** Fixed `resolve` so `False`, `0`, and `""` override defaults. Only `None` or missing keys fall back. API, input immutability, fresh dictionary results, and unknown-key filtering are preserved.
+- **Checks:** Regression tests rejected the original implementation; all 5 tests pass with the fix.
+- **Changed files:** `settings.py`, `tests/test_settings.py`.
+- **Blockers:** None.
+- **Next action:** Ready for review.

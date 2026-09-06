@@ -1,0 +1,30 @@
+{
+  "command": [
+    "podman",
+    "exec",
+    "--workdir",
+    "/tmp/workflow-eval.HErNBC0b/pristine-with-worker-tests",
+    "-e",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "-e",
+    "PYTHONHASHSEED=0",
+    "-e",
+    "TZ=UTC",
+    "quecto-env-8tiROn4wvC",
+    "env",
+    "-u",
+    "PYTHONPATH",
+    "python3",
+    "-B",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests",
+    "-v"
+  ],
+  "returncode": 1,
+  "stderr": "test_empty_defaults_return_new_empty_dictionary (test_settings.ResolveTests.test_empty_defaults_return_new_empty_dictionary) ... ok\ntest_falsy_overrides_are_preserved (test_settings.ResolveTests.test_falsy_overrides_are_preserved) ... \n  test_falsy_overrides_are_preserved (test_settings.ResolveTests.test_falsy_overrides_are_preserved) (override=False) ... FAIL\n  test_falsy_overrides_are_preserved (test_settings.ResolveTests.test_falsy_overrides_are_preserved) (override=0) ... FAIL\n  test_falsy_overrides_are_preserved (test_settings.ResolveTests.test_falsy_overrides_are_preserved) (override='') ... FAIL\ntest_new_dictionary_inputs_unchanged_and_unknown_keys_ignored (test_settings.ResolveTests.test_new_dictionary_inputs_unchanged_and_unknown_keys_ignored) ... FAIL\ntest_none_and_missing_keys_use_defaults (test_settings.ResolveTests.test_none_and_missing_keys_use_defaults) ... ok\ntest_override (test_smoke.Smoke.test_override) ... ok\n\n======================================================================\nFAIL: test_falsy_overrides_are_preserved (test_settings.ResolveTests.test_falsy_overrides_are_preserved) (override=False)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/workflow-eval.HErNBC0b/pristine-with-worker-tests/tests/test_settings.py\", line 11, in test_falsy_overrides_are_preserved\n    self.assertEqual(result, {\"key\": override})\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: {'key': 'default'} != {'key': False}\n- {'key': 'default'}\n+ {'key': False}\n\n======================================================================\nFAIL: test_falsy_overrides_are_preserved (test_settings.ResolveTests.test_falsy_overrides_are_preserved) (override=0)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/workflow-eval.HErNBC0b/pristine-with-worker-tests/tests/test_settings.py\", line 11, in test_falsy_overrides_are_preserved\n    self.assertEqual(result, {\"key\": override})\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: {'key': 'default'} != {'key': 0}\n- {'key': 'default'}\n+ {'key': 0}\n\n======================================================================\nFAIL: test_falsy_overrides_are_preserved (test_settings.ResolveTests.test_falsy_overrides_are_preserved) (override='')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/workflow-eval.HErNBC0b/pristine-with-worker-tests/tests/test_settings.py\", line 11, in test_falsy_overrides_are_preserved\n    self.assertEqual(result, {\"key\": override})\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: {'key': 'default'} != {'key': ''}\n- {'key': 'default'}\n?          -------\n\n+ {'key': ''}\n\n======================================================================\nFAIL: test_new_dictionary_inputs_unchanged_and_unknown_keys_ignored (test_settings.ResolveTests.test_new_dictionary_inputs_unchanged_and_unknown_keys_ignored)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/workflow-eval.HErNBC0b/pristine-with-worker-tests/tests/test_settings.py\", line 25, in test_new_dictionary_inputs_unchanged_and_unknown_keys_ignored\n    self.assertEqual(result, {\"enabled\": False, \"port\": 8000})\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: {'enabled': True, 'port': 8000} != {'enabled': False, 'port': 8000}\n- {'enabled': True, 'port': 8000}\n?             ^^^\n\n+ {'enabled': False, 'port': 8000}\n?             ^^^^\n\n\n----------------------------------------------------------------------\nRan 5 tests in 0.001s\n\nFAILED (failures=4)\n",
+  "stdout": "",
+  "timed_out": false
+}

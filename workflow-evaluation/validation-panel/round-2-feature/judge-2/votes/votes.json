@@ -1,0 +1,45 @@
+{
+  "judge_id": "judge-2",
+  "phase": "feature-round-2-votes",
+  "votes": [
+    {
+      "alternative_id": "F1",
+      "vote": "YES",
+      "rationale": "Acceptable as an exact standalone replacement. It converts prospective test planning into a focused, target-caused failing check, requires expected and observed results, and explicitly addresses truthful late entry. Its 'absent or wrong' formulation accommodates both new capabilities and planned changes to existing behavior. The discriminating comparison alternative preserves appropriate non-executable verification without prescribing tools or manufacturing RED. The retained Feature transcript, ordinals 11-18 and 24-27, supports targeting implementation-first execution and retrospective design completion, although it does not prove this wording will prevent either. This is the most economical complete treatment of the observed limitations.",
+      "goal_conflicts": []
+    },
+    {
+      "alternative_id": "F2",
+      "vote": "YES",
+      "rationale": "Acceptable as an exact standalone replacement. It requires actual pre-implementation evidence, excludes unrelated setup failures, provides reproducible source/data/artifact alternatives, and correctly distinguishes later replay from chronological verification. Those distinctions fit the Feature transcript at ordinals 11-18 and the limitation documented in evidence/replay-selection.json. Requiring evidence and limitations before completion supports honesty, but the wording is less explicit than F1 and F3 about disclosing an already-missed ordering requirement. 'Missing behavior' is also slightly narrower than F1's coverage of absent or wrong behavior. These are preference differences, not goal conflicts.",
+      "goal_conflicts": []
+    },
+    {
+      "alternative_id": "F3",
+      "vote": "YES",
+      "rationale": "Acceptable as an exact standalone replacement. It combines a focused target-caused check, an evidence-first alternative with an expected result, an explicit prohibition on manufactured failure, and direct disclosure of missed ordering. This addresses both the setup-only failure at transcript ordinal 16 and retrospective progression at ordinals 19-27 without treating evaluator replay as worker RED. It remains portable and changes only the relevant guidance field. It is somewhat longer than necessary and frames executable failure around a missing capability rather than also explicitly covering incorrect existing behavior, so I prefer F1.",
+      "goal_conflicts": []
+    }
+  ],
+  "rankings": [
+    {
+      "group_id": "overlap-test_design",
+      "order": [
+        "F1",
+        "F3",
+        "F2",
+        "STATUS_QUO"
+      ],
+      "rationale": "F1 best balances minimality, discriminating execution, expected-versus-observed evidence, suitable alternatives, and explicit late-entry disclosure. F3 provides similarly complete protections, including an express no-manufactured-failure clause, but with more wording and a narrower missing-capability formulation. F2 is sound and reproducibility-oriented, but leaves disclosure of already-missed ordering less direct. The status quo already requires design before implementation, yet does not require observing and recording a target-caused failure where applicable or explain truthful retrospective handling. All three YES votes concern mutually exclusive standalone replacements; no wording should be merged."
+    }
+  ],
+  "binding_selection_confound": "The retained Feature run was bound to its workflow at spawn, whereas earlier baseline conditions used explicit selection. Its initial implementation and handoff preceded recorded workflow engagement, followed by a reminder and retrospective progression. Initial guidance salience, engagement, and reminder mechanics therefore confound any attribution to guidance wording. The existing text already required prospective design, so this evidence establishes neither that wording alone caused the observed failure nor that a replacement will improve chronology. Future validation must distinguish early from late engagement and establish worker execution order directly.",
+  "residual_risks": [
+    "No replacement can recover genuine pre-implementation evidence when first encountered after implementation; its attainable benefit then is accurate disclosure rather than retroactive compliance.",
+    "Workers may still accept setup failures as RED or choose comparisons that do not discriminate the requested behavior. Evidence quality must be assessed, not inferred from a completed step.",
+    "Non-executable alternatives must remain available for unsuitable tasks without becoming a routine substitute for feasible, meaningful executable checks.",
+    "The additional baseline check has a modest execution cost and should remain focused rather than expanding into a testing ritual.",
+    "Later replay remains useful corroboration and should not be discouraged; it simply cannot establish pre-change worker verification.",
+    "Passing final tests alone would not validate the proposed chronology or disclosure mechanisms. Future retained records must show the relevant evidence before implementation, or candidly identify missed ordering."
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "scope": "Hash continuity only; streak decisions deferred until ballots lock. Not judge input.",
+  "checks": [
+    {
+      "run": "investigate-v1-001",
+      "workflow": "investigate",
+      "assigned_template_sha256": "693d790a04369da13abad54205d4758681db9ee45758db35efeff99b7cd57eb2",
+      "matches_base002_template": true,
+      "base_reference": "workflow-evaluation/runs/investigate-base-002/assigned-template.json"
+    },
+    {
+      "run": "investigate-v2-001",
+      "workflow": "investigate",
+      "assigned_template_sha256": "693d790a04369da13abad54205d4758681db9ee45758db35efeff99b7cd57eb2",
+      "matches_base002_template": true,
+      "base_reference": "workflow-evaluation/runs/investigate-base-002/assigned-template.json"
+    },
+    {
+      "run": "chore-v1-001",
+      "workflow": "chore",
+      "assigned_template_sha256": "e1ffac8d37aa4497be98498da7d2894aecce69174288d4f914c6709080f161cd",
+      "matches_base002_template": true,
+      "base_reference": "workflow-evaluation/runs/chore-base-002/assigned-template.json"
+    },
+    {
+      "run": "chore-v2-001",
+      "workflow": "chore",
+      "assigned_template_sha256": "e1ffac8d37aa4497be98498da7d2894aecce69174288d4f914c6709080f161cd",
+      "matches_base002_template": true,
+      "base_reference": "workflow-evaluation/runs/chore-base-002/assigned-template.json"
+    },
+    {
+      "run": "bugfix-v1-001",
+      "workflow": "bugfix",
+      "assigned_template_sha256": "f865c8507466894c02d53dc8ee6fdc99dd7db911c4f8a9dcc445702fbfdec485",
+      "matches_base002_template": true,
+      "base_reference": "workflow-evaluation/runs/bugfix-base-002/assigned-template.json"
+    },
+    {
+      "run": "bugfix-v2-001",
+      "workflow": "bugfix",
+      "assigned_template_sha256": "f865c8507466894c02d53dc8ee6fdc99dd7db911c4f8a9dcc445702fbfdec485",
+      "matches_base002_template": true,
+      "base_reference": "workflow-evaluation/runs/bugfix-base-002/assigned-template.json"
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+In /workspace/task, explain why the report totals 5 units instead of the operator's expected 9. Identify the relevant filtering semantics and whether the supplied specification supports that expectation. Do not change or create workspace files; return your diagnosis in your final response.

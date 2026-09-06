@@ -1,0 +1,42 @@
+{
+  "README.md": {
+    "bytes": 262,
+    "sha256": "f7366e58c279f2344fa8d386e88b225368e559db1778d1eef41fa8aa5b9e694b",
+    "type": "file"
+  },
+  "__pycache__/access.cpython-313.pyc": {
+    "bytes": 390,
+    "sha256": "67d8ed284a2bc6835b6e7fe8b97ab7c7393d313713d9a45a9528ecaa8cc96b7a",
+    "type": "file"
+  },
+  "access.py": {
+    "bytes": 256,
+    "sha256": "9382c00e0ee5f9ec3f5064fab541d13e676b92557f77e84b8d5b4a8176ad5c11",
+    "type": "file"
+  },
+  "notes/operator-draft.txt": {
+    "bytes": 50,
+    "sha256": "d46939cae5e3e620ee9350a64ceeaf46d126933427d77883c3beaa50270d69ee",
+    "type": "file"
+  },
+  "tests/__pycache__/test_parity.cpython-313.pyc": {
+    "bytes": 1176,
+    "sha256": "a4d4e54322ff592d6bde97d654460e1dedcf8747f33f4545415773cc2509ed92",
+    "type": "file"
+  },
+  "tests/__pycache__/test_smoke.cpython-313.pyc": {
+    "bytes": 694,
+    "sha256": "5c2792eab120ba2cdc86af7d33c39f560363e3241449fe1fe2aa0611e8e8c149",
+    "type": "file"
+  },
+  "tests/test_parity.py": {
+    "bytes": 1048,
+    "sha256": "8aee5bc68c65edec075d823084537d2f598fd4ce9e87358eb3662889d5ef92d7",
+    "type": "file"
+  },
+  "tests/test_smoke.py": {
+    "bytes": 172,
+    "sha256": "381f653a4c960da8259fd3a7f9b5c5d08c79d367ca7d4971d309cdccd28636db",
+    "type": "file"
+  }
+}

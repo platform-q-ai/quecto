@@ -1,0 +1,156 @@
+{
+  "phase": "initial",
+  "anonymous_run_id": "run-7e2a91",
+  "original_run": "refactor-v1-001",
+  "locks": [
+    {
+      "judge_id": "judge-1",
+      "message_id": "7c3cc401-6baa-4016-b7eb-0da6c076a592",
+      "ordinal": 18,
+      "raw_messages_sha256": "fa92a6305c0bc7bedd63434bd16d3052f1fd36dce6b1edf43ca5ccf3ab71c119",
+      "ballot_sha256": "6b09bbc52a555e8856d9e30b46bce00b6f7239391759c4c543edae5fe0ef5d3c"
+    },
+    {
+      "judge_id": "judge-2",
+      "message_id": "89aa3c93-9a18-498b-a818-c6ff93c6b068",
+      "ordinal": 21,
+      "raw_messages_sha256": "0538f8263614560e491de64f6925ab29d9e413fbe37e15627aa320bf3afc0d4e",
+      "ballot_sha256": "8731de7cad38661fe73349af5308b6e5d6cea3ea0365f249d233a5c9629f8f25"
+    },
+    {
+      "judge_id": "judge-3",
+      "message_id": "67926a7e-6f58-4da0-a04f-9e60dfb2d575",
+      "ordinal": 19,
+      "raw_messages_sha256": "6d32767c376e92ac485b16f0f8eba7d5d2ff5f9f336029123f357dd8df0b6d7b",
+      "ballot_sha256": "a9e12ef4a7027e58d26c416a98b8ea2d1fefd4bf4d17283816e256dd962211ba"
+    }
+  ],
+  "individual_totals": {
+    "judge-1": 90,
+    "judge-2": 92.5,
+    "judge-3": 90
+  },
+  "total_range": [
+    90,
+    92.5
+  ],
+  "total_spread": 2.5,
+  "criterion_medians": {
+    "A1": 5,
+    "A2": 5,
+    "A3": 5,
+    "A4": 5,
+    "A5": 5,
+    "A6": 5,
+    "B1": 2.5,
+    "B2": 2.5,
+    "B3": 5,
+    "B4": 5,
+    "B5": 5,
+    "C1": 5,
+    "C2": 5,
+    "C3": 5,
+    "C4": 5,
+    "D1": 5,
+    "D2": 2.5,
+    "D3": 5,
+    "E1": 5,
+    "E2": 5
+  },
+  "criterion_ranges": {
+    "A1": [
+      5,
+      5
+    ],
+    "A2": [
+      5,
+      5
+    ],
+    "A3": [
+      5,
+      5
+    ],
+    "A4": [
+      5,
+      5
+    ],
+    "A5": [
+      5,
+      5
+    ],
+    "A6": [
+      5,
+      5
+    ],
+    "B1": [
+      2.5,
+      2.5
+    ],
+    "B2": [
+      2.5,
+      2.5
+    ],
+    "B3": [
+      5,
+      5
+    ],
+    "B4": [
+      5,
+      5
+    ],
+    "B5": [
+      5,
+      5
+    ],
+    "C1": [
+      5,
+      5
+    ],
+    "C2": [
+      5,
+      5
+    ],
+    "C3": [
+      5,
+      5
+    ],
+    "C4": [
+      5,
+      5
+    ],
+    "D1": [
+      2.5,
+      5
+    ],
+    "D2": [
+      2.5,
+      2.5
+    ],
+    "D3": [
+      2.5,
+      5
+    ],
+    "E1": [
+      5,
+      5
+    ],
+    "E2": [
+      5,
+      5
+    ]
+  },
+  "panel_score": 92.5,
+  "gate_votes": {
+    "judge-1": "PASS",
+    "judge-2": "PASS",
+    "judge-3": "PASS"
+  },
+  "aggregate_gate": "PASS",
+  "adjudication_triggered": false,
+  "numeric_and_gate_qualifies": true,
+  "evidence_completeness": "Coordinator must confirm preserved full evidence and locator review before final qualification.",
+  "limitations": [
+    "Independent same-model sessions, not provider diversity.",
+    "Imperfect condition blinding: unaltered raw evidence may reveal labels."
+  ]
+}

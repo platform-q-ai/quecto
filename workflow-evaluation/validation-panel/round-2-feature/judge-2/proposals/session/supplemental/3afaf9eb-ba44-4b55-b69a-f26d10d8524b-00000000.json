@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "9b506e09-7e64-4e2c-a0b4-417a15a11a42",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "{\n  \"command\": [\n    \"podman\",\n    \"exec\",\n    \"quecto-env-UWxC0EG3cG\",\n    \"mktemp\",\n    \"-d\",\n    \"/tmp/workflow-eval.XXXXXXXX\"\n  ],\n  \"returncode\": 0,\n  \"stderr\": \"\",\n  \"stdout\": \"/tmp/workflow-eval.p4JSTWbg\\n\",\n  \"timed_out\": false\n}",
+    "contentLength": 237,
+    "hasMoreContent": false,
+    "id": "3afaf9eb-ba44-4b55-b69a-f26d10d8524b",
+    "isError": false,
+    "nextOffset": 237,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_B3DKnvZ0X0STHIyJtDNpiSvM",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

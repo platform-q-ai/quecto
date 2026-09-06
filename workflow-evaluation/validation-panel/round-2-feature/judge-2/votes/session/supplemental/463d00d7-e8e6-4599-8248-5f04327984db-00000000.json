@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "caef79ff-e0a7-4d49-b248-ebd996f60083",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "{\n  \"limits\": \"Imports of new helpers outside tests/ may fail for setup reasons. Non-unittest checks and shell snippets require manual replay. Evaluator replay proves sensitivity/parity, NOT worker chronological RED.\",\n  \"method\": \"Original fixture plus added/modified tests/** only; original deleted tests retained.\",\n  \"overlaid_paths\": []\n}",
+    "contentLength": 343,
+    "hasMoreContent": false,
+    "id": "463d00d7-e8e6-4599-8248-5f04327984db",
+    "isError": false,
+    "nextOffset": 343,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_0hJgntBRX41wD74J5sW5zFjM",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

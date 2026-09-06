@@ -1,0 +1,1 @@
+POST /receipts accepts a receipt identifier. Idempotency behavior is not recorded in this excerpt.

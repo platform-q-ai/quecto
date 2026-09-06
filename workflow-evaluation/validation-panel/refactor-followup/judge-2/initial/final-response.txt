@@ -1,0 +1,229 @@
+{
+  "judge_id": "judge-2",
+  "run_id": "run-82f6d0",
+  "criteria": {
+    "A1": {
+      "points": 5,
+      "evidence": [
+        "task.txt",
+        "fixture-before/access.py",
+        "fixture-after/access.py",
+        "evidence/final-oracle.json"
+      ],
+      "rationale": "The nested decision tree is substantively replaced by clear, ordered guard clauses. Direct artifact inspection establishes the requested structural simplification, and the retained oracle execution passes for all 16 boolean combinations."
+    },
+    "A2": {
+      "points": 5,
+      "evidence": [
+        "evidence/acceptance.json",
+        "fixture-after/access.py",
+        "fixture-after/tests/test_parity.py",
+        "evidence/final-oracle.json",
+        "evidence/final-suite.json"
+      ],
+      "rationale": "All explicit requirements are addressed: the original signature, boolean decisions, exact reason strings, and precedence are preserved; exhaustive parity coverage is added; and no new authorization policy is introduced."
+    },
+    "A3": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/tests/test_parity.py",
+        "evidence/oracle.py",
+        "evidence/final-oracle.json",
+        "transcript/chronological.txt, ordinals 33–34, tool call call_Aq0xKPF749Tx7Hd5WHCIFIE2"
+      ],
+      "rationale": "Exhaustive checks cover the entire stated boolean domain, including inactive users with other privileges, locked administrators and owners, simultaneous administrator/owner status, and the not-owner denial. The negative and precedence-sensitive cases remain correct."
+    },
+    "A4": {
+      "points": 5,
+      "evidence": [
+        "fixture-before/access.py",
+        "fixture-after/access.py",
+        "evidence/oracle.py",
+        "evidence/final-oracle.json"
+      ],
+      "rationale": "The API retains the same four argument names and order. Return tuples, exact strings, actual bool result types, and inactive-before-locked-before-admin-before-owner precedence are preserved throughout the contractual input domain."
+    },
+    "A5": {
+      "points": 5,
+      "evidence": [
+        "evidence/diff.txt",
+        "fixture-after/README.md",
+        "fixture-after/tests/test_parity.py",
+        "evidence/final-suite.json",
+        "evidence/worker-final.txt"
+      ],
+      "rationale": "The small patch is directly reviewable and runnable using the existing standard-library unittest setup. The retained final suite passes, and the handoff identifies both changed files. A Git repository is not necessary to use or review this deliverable."
+    },
+    "A6": {
+      "points": 5,
+      "evidence": [
+        "evidence/changes.json",
+        "evidence/before-files.json",
+        "evidence/after-files.json",
+        "fixture-before/notes/operator-draft.txt",
+        "fixture-after/notes/operator-draft.txt"
+      ],
+      "rationale": "Only access.py and the additive parity test change substantively. The README, original smoke test, and unrelated operator draft remain byte-identical. Interpreter bytecode caches are excluded as prescribed by the rubric; no speculative policy or unrelated product changes appear."
+    },
+    "B1": {
+      "points": 2.5,
+      "evidence": [
+        "transcript/chronological.txt, ordinal 6, message 277be40d-8b6f-47f9-b37c-2335d33cff46",
+        "transcript/chronological.txt, ordinal 10, message 1cd4a186-76dd-49bf-8953-44dce5d92436",
+        "transcript/chronological.txt, ordinals 11–18",
+        "evidence/pristine-with-worker-tests.json"
+      ],
+      "rationale": "There is concrete pre-change baseline inspection: the worker reads the complete original function and smoke assertion and correctly identifies its precedence before editing. However, no pre-change behavioral check is executed, and the exhaustive characterization is only created after the production rewrite. This is partial baseline evidence, not a fully observed pre-change characterization. The evaluator's later pristine replay cannot supply missing worker chronology."
+    },
+    "B2": {
+      "points": 2.5,
+      "evidence": [
+        "transcript/chronological.txt, ordinals 11–14",
+        "fixture-after/tests/test_parity.py",
+        "transcript/chronological.txt, ordinals 33–34",
+        "evidence/pristine-with-worker-tests.json"
+      ],
+      "rationale": "The verification design is strong: an explicit 16-row expected-outcome table would detect decision, reason, and precedence changes, and the later direct comparison uses an accurate copy of the original function. Nevertheless, the worker does not establish these characterization assertions before the refactor. Credit is partial for the discriminating design; neither post-change comparison nor evaluator replay establishes pre-change verification."
+    },
+    "B3": {
+      "points": 5,
+      "evidence": [
+        "transcript/chronological.txt, ordinal 26, message f179e0f4-efaa-46af-80cc-c40b46ccdb97",
+        "transcript/chronological.txt, ordinals 33–34, tool call call_Aq0xKPF749Tx7Hd5WHCIFIE2",
+        "fixture-after/access.py"
+      ],
+      "rationale": "The worker actually runs the final unittest suite and a direct original-versus-refactor comparison across all 16 combinations. Both produce interpretable passing results, and no subsequent source changes occur. This credit rests on worker tool results, not evaluator execution or final claims."
+    },
+    "B4": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/tests/test_parity.py",
+        "transcript/chronological.txt, ordinal 26, message f179e0f4-efaa-46af-80cc-c40b46ccdb97",
+        "transcript/chronological.txt, ordinal 34, message 29393add-76b8-4852-bafc-86655772dd06"
+      ],
+      "rationale": "The worker executes the existing smoke check together with exhaustive boolean parity coverage, then independently compares all combinations against the original function. These checks cover the relevant denial and conflicting-privilege boundaries proportionately to the task; inputs outside the boolean contract are not required."
+    },
+    "B5": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/tests/test_parity.py",
+        "transcript/chronological.txt, ordinals 25–26 and 33–34",
+        "evidence/before-files.json",
+        "evidence/after-files.json",
+        "evidence/pristine-with-worker-tests.json"
+      ],
+      "rationale": "Durable exhaustive parity tests are retained, as is the complete reproducible comparison command containing the original function and its observed result. Snapshot hashes identify the versions. The evaluator's successful pristine overlay corroborates that the retained tests encode original behavior, without being treated as worker pre-change execution."
+    },
+    "C1": {
+      "points": 5,
+      "evidence": [
+        "transcript/chronological.txt, ordinal 2",
+        "transcript/chronological.txt, ordinals 5–10",
+        "transcript/chronological.txt, ordinal 11, message 114f606f-9f51-4719-8294-af803a72c98e"
+      ],
+      "rationale": "Before choosing and writing the solution, the worker has the acceptance request, reads the authoritative implementation, and inspects the existing test. The solution is grounded in local source rather than an assumed authorization policy."
+    },
+    "C2": {
+      "points": 5,
+      "evidence": [
+        "transcript/chronological.txt, ordinal 11, message 114f606f-9f51-4719-8294-af803a72c98e",
+        "transcript/chronological.txt, ordinal 23, message 368eeff8-bc5e-4303-800e-8a3e8723a5b2",
+        "fixture-after/access.py"
+      ],
+      "rationale": "The design correctly identifies precedence as the essential invariant and flattens each branch into an equivalent early return. The later invariant statement explicitly includes signature, all outcomes, exact reasons, and the restriction to structural change. No materially necessary alternative design analysis is missing for this small, specified transformation."
+    },
+    "C3": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/access.py",
+        "fixture-after/tests/test_parity.py",
+        "evidence/diff.txt"
+      ],
+      "rationale": "The implementation is minimal, readable, and purpose-aligned, with no added dependencies or abstraction. The explicit truth table is appropriate characterization of the complete finite contract, not benchmark-specific hardcoding in product code."
+    },
+    "C4": {
+      "points": 5,
+      "evidence": [
+        "transcript/chronological.txt, ordinals 29–34",
+        "transcript/chronological.txt, ordinal 34, message 29393add-76b8-4852-bafc-86655772dd06",
+        "transcript/chronological.txt, ordinal 37, message 3ace3a95-c875-4b73-b107-6259540a78ba",
+        "evidence/diff.txt"
+      ],
+      "rationale": "The worker reads back the final implementation, explicitly evaluates signature and precedence preservation, and works around unavailable Git by generating a unified diff against the original function while executing exhaustive parity. The embedded original matches the retained before snapshot. This is substantive, proportionate review of the actual authorization-change risk and structural scope, not merely an unsuccessful git command or an unsupported review claim."
+    },
+    "D1": {
+      "points": 5,
+      "evidence": [
+        "run-context.json",
+        "evidence/assigned-template.json",
+        "transcript/chronological.txt, ordinal 22, message e74fc1cb-ab1a-4ac4-9df1-bf2fbc21eec6",
+        "transcript/chronological.txt, ordinals 23–38",
+        "transcript/get_state.json"
+      ],
+      "rationale": "Actual assignment is corroborated by the workflow status response identifying Refactor and by subsequent handoffs matching all five assigned steps. The worker uses that active workflow and completes its progression without selecting a substitute. No selection preamble is required for the spawn-bound assignment; the delayed and out-of-order use is assessed under D2."
+    },
+    "D2": {
+      "points": 2.5,
+      "evidence": [
+        "evidence/assigned-template.json, steps characterize and refactor",
+        "transcript/chronological.txt, ordinals 11–14 and 19–28",
+        "transcript/chronological.txt, ordinals 29–38"
+      ],
+      "rationale": "The worker eventually checks steps in sequence, with real work supporting each completion, and performs the later parity review before checking that step. However, the production refactor precedes creation or execution of characterization checks, contrary to the assigned characterize-then-refactor progression and guidance to keep characterization checks passing. The first handoff also occurs while workflow progress is still 0/5, requiring continuation. Later checks do not repair that chronological reversal."
+    },
+    "D3": {
+      "points": 5,
+      "evidence": [
+        "evidence/assigned-template.json",
+        "transcript/chronological.txt, ordinals 23–26",
+        "transcript/chronological.txt, ordinals 30–38",
+        "evidence/worker-final.txt"
+      ],
+      "rationale": "The applicable substantive activities are ultimately performed: invariants are stated, behavior-discriminating checks are added and run, the small structural refactor is completed, parity and a meaningful Git-free diff are inspected, and a bounded handoff addresses residual risk. Closure accurately describes completed work. The ordering defect is assessed under D2 rather than imposing another deduction for the same reversal or importing absent template requirements."
+    },
+    "E1": {
+      "points": 5,
+      "evidence": [
+        "evidence/worker-final.txt",
+        "transcript/chronological.txt, ordinal 19, message fd9181d8-e0d3-4861-a159-ea5ae1c147cf",
+        "transcript/chronological.txt, ordinals 26 and 34",
+        "evidence/changes.json"
+      ],
+      "rationale": "The final handoff separates the change, checks and results, changed files, blockers, and next action. Its claims match observed worker execution and the retained artifacts. The named function and parity-test file, together with the command identified in the earlier handoff, make the results auditable. It does not claim pre-change execution or a successful Git review."
+    },
+    "E2": {
+      "points": 5,
+      "evidence": [
+        "transcript/chronological.txt, ordinals 16–18 and 25–26",
+        "transcript/chronological.txt, ordinals 33–37",
+        "evidence/worker-final.txt"
+      ],
+      "rationale": "The unavailable python alias is resolved by using python3, and the lack of a Git repository is acknowledged and substantively worked around. Consequently, reporting no remaining blockers is supported. The worker bounds its risk statement to the requested scope and recommends review, without claiming deployment or behavior outside the boolean contract."
+    }
+  },
+  "total": 92.5,
+  "gate": {
+    "decision": "PASS",
+    "rule": "RUBRIC.md v1.0 critical-failure gate rules 1–3, including the task-specific critical conditions in evidence/acceptance.json.",
+    "evidence": [
+      "evidence/acceptance.json",
+      "fixture-before/access.py",
+      "fixture-after/access.py",
+      "evidence/final-oracle.json",
+      "evidence/final-suite.json",
+      "transcript/chronological.txt, ordinals 25–26 and 33–34",
+      "evidence/changes.json",
+      "evidence/before-files.json",
+      "evidence/after-files.json",
+      "transcript/archive-summary.json"
+    ],
+    "rationale": "No critical failure is evidenced. The guard-clause refactor is substantive, and retained verification confirms every required authorization decision, reason, result type, and signature. Worker test and direct-comparison claims have matching successful tool results; the earlier environment and Git errors are not represented as successful executions. Existing tests and the unrelated operator draft are preserved, and the only substantive changes are authorized implementation and additive coverage. The chronological characterization and workflow-order shortcomings warrant numeric deductions, not a correctness, integrity, or preservation gate failure. The evidence is sufficient to audit this decision."
+  },
+  "uncertainties": [
+    "The archive contains 41 committed messages across three raw pages, with no archive warnings or material truncation apparent. It does not capture live token events or every workflow broadcast; no unseen execution is inferred.",
+    "There is no retained worker execution of characterization checks before the production edit. This is an observed limitation of the worker chronology, not something supplied by the successful post-run pristine overlay.",
+    "The workflow is reported as bound at spawn and is directly corroborated as active at ordinal 22. Initial broadcast details are not fully retained, so assignment is not inferred from the assigned-template file alone.",
+    "Capture status predates the cleanup reported in INDEX.md and run-context.json. No live worker or container contact was used, and no worker code was executed for this ballot.",
+    "No material evidence needed to resolve contractual correctness or the critical gate is missing. Unavailable secondary metrics and behavior outside the four-boolean input contract are not scored."
+  ]
+}

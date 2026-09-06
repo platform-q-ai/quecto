@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "f5ea9d40-f1d6-4380-b42e-3c9feffb152c",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "{\n  \"type\": \"response\",\n  \"id\": \"0fec8c40-5f6a-4f9f-9c4e-80551dc394bb\",\n  \"command\": \"get_session_stats\",\n  \"success\": true,\n  \"data\": {\n    \"assistantMessages\": 11,\n    \"cacheHitRatio\": 0.5403563129357087,\n    \"contextTokens\": 3015,\n    \"costMicroUsd\": 203982,\n    \"maxContextTokens\": 250000,\n    \"sessionKey\": \"cli:fb94d174-855b-4240-9dde-a505e5f9f684\",\n    \"tokens\": {\n      \"cacheRead\": 13952,\n      \"cacheWrite\": 0,\n      \"input\": 11868,\n      \"output\": 1427,\n      \"total\": 13295\n    },\n    \"toolCalls\": 15,\n    \"toolResults\": 15,\n    \"totalMessages\": 30,\n    \"userMessages\": 3\n  }\n}",
+    "contentLength": 589,
+    "hasMoreContent": false,
+    "id": "b78e527b-b95f-4ad2-b31f-469c503b7de8",
+    "isError": false,
+    "nextOffset": 589,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_nbaHN52HyG9CDHkGMVJGiWcm",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

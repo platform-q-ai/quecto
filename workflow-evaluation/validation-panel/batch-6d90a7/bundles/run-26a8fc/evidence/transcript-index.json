@@ -1,0 +1,205 @@
+[
+  {
+    "id": "2f59cf4c-557b-4162-b1cb-72880d8e6391",
+    "ordinal": 1,
+    "role": "system",
+    "toolCallId": null,
+    "toolName": null
+  },
+  {
+    "id": "b23e1fdf-12a3-416c-a4a9-66033608723d",
+    "ordinal": 2,
+    "role": "user",
+    "toolCallId": null,
+    "toolName": null
+  },
+  {
+    "id": "e1a71a88-c950-40d9-a59d-eb3f56fe040e",
+    "ordinal": 3,
+    "role": "assistant",
+    "toolCallId": null,
+    "toolName": null
+  },
+  {
+    "id": "8b3cfb82-a04d-4d22-9065-eace0ca8ad42",
+    "ordinal": 4,
+    "role": "tool",
+    "toolCallId": "call_AtIUciQledKXykKDAJY20sDE",
+    "toolName": "ls"
+  },
+  {
+    "id": "86a0c816-8977-468c-9ca4-e95dba188969",
+    "ordinal": 5,
+    "role": "assistant",
+    "toolCallId": null,
+    "toolName": null
+  },
+  {
+    "id": "62fe1e2d-1af0-4d72-8cfe-4ae5f217e4fb",
+    "ordinal": 6,
+    "role": "tool",
+    "toolCallId": "call_Z2guC9r0Q8WE9gpOALEpy2yN",
+    "toolName": "read"
+  },
+  {
+    "id": "67cc3633-d39c-4dc7-9986-91e5a04050a2",
+    "ordinal": 7,
+    "role": "tool",
+    "toolCallId": "call_jVwQ3xq9GQwxV5H4a1hAGv3n",
+    "toolName": "read"
+  },
+  {
+    "id": "b89659c4-7680-4ee4-bbc3-011ea5cdff4a",
+    "ordinal": 8,
+    "role": "tool",
+    "toolCallId": "call_Swkr30Q921NFxTkaUMICLHtI",
+    "toolName": "read"
+  },
+  {
+    "id": "8c03aa08-4c72-47bc-92fc-168db6d60c38",
+    "ordinal": 9,
+    "role": "tool",
+    "toolCallId": "call_wb28aG8XgVgPIeuLQHVkFHdR",
+    "toolName": "read"
+  },
+  {
+    "id": "1c3542d3-8e18-4937-a815-b3e089fc9d33",
+    "ordinal": 10,
+    "role": "tool",
+    "toolCallId": "call_9RSHe1luw1xiWRMueD0HejNd",
+    "toolName": "ls"
+  },
+  {
+    "id": "70e6cd18-75d7-4c1e-83fc-d0451c2c0174",
+    "ordinal": 11,
+    "role": "assistant",
+    "toolCallId": null,
+    "toolName": null
+  },
+  {
+    "id": "0c6aa62a-1abc-4402-af4b-0f75b6456e50",
+    "ordinal": 12,
+    "role": "tool",
+    "toolCallId": "call_oE7t506F3R1zzPeZ54cSdfbK",
+    "toolName": "read"
+  },
+  {
+    "id": "b8bcf665-3ba3-428e-aba4-b082dd57f321",
+    "ordinal": 13,
+    "role": "assistant",
+    "toolCallId": null,
+    "toolName": null
+  },
+  {
+    "id": "eeeb2727-1437-4cfd-a095-e0317726dac2",
+    "ordinal": 14,
+    "role": "user",
+    "toolCallId": null,
+    "toolName": null
+  },
+  {
+    "id": "0057f696-ac0a-49c2-af8b-dd040a0e6378",
+    "ordinal": 15,
+    "role": "assistant",
+    "toolCallId": null,
+    "toolName": null
+  },
+  {
+    "id": "f4653a08-68e5-42f9-bf0a-7197b06c98ec",
+    "ordinal": 16,
+    "role": "tool",
+    "toolCallId": "call_PVuRXbXJKYP9GWjwclAIW1bL",
+    "toolName": "workflow"
+  },
+  {
+    "id": "73d3d3c5-ef60-4c9d-b42e-35826b189ed1",
+    "ordinal": 17,
+    "role": "assistant",
+    "toolCallId": null,
+    "toolName": null
+  },
+  {
+    "id": "f3a6b0d8-cb1f-460c-ba9d-0d434a7b61cd",
+    "ordinal": 18,
+    "role": "tool",
+    "toolCallId": "call_LRPqEbDLkvgaTWat8VdPqr3e",
+    "toolName": "workflow"
+  },
+  {
+    "id": "243720f0-1fd6-4061-a8f3-361a2b5fe0b5",
+    "ordinal": 19,
+    "role": "assistant",
+    "toolCallId": null,
+    "toolName": null
+  },
+  {
+    "id": "0d116a44-8319-4579-94f0-33e79b809354",
+    "ordinal": 20,
+    "role": "tool",
+    "toolCallId": "call_fsmNxfFb5yNJ6Y7viwObZOyp",
+    "toolName": "workflow"
+  },
+  {
+    "id": "eab6fdf3-7f4f-4989-bd71-4bef0e7d337d",
+    "ordinal": 21,
+    "role": "assistant",
+    "toolCallId": null,
+    "toolName": null
+  },
+  {
+    "id": "4118d194-ffd6-4377-a093-dd74d7629485",
+    "ordinal": 22,
+    "role": "tool",
+    "toolCallId": "call_UVWJm3ds4uPUefWu8hl0s4KN",
+    "toolName": "bash"
+  },
+  {
+    "id": "b2d1c4b9-551c-47c7-9c94-e54f6611624c",
+    "ordinal": 23,
+    "role": "assistant",
+    "toolCallId": null,
+    "toolName": null
+  },
+  {
+    "id": "c55d9d6c-8ab7-45a2-9682-4167bfc853a4",
+    "ordinal": 24,
+    "role": "tool",
+    "toolCallId": "call_M78VDFkqizg7igDtwZrPJIJd",
+    "toolName": "workflow"
+  },
+  {
+    "id": "9a11fe05-e972-475d-b5c9-b9d53f015122",
+    "ordinal": 25,
+    "role": "assistant",
+    "toolCallId": null,
+    "toolName": null
+  },
+  {
+    "id": "c4af364c-c9ae-4a39-a04d-02827a10f5a7",
+    "ordinal": 26,
+    "role": "tool",
+    "toolCallId": "call_9cKMMNVW3GiIMsK1oGQMz6sw",
+    "toolName": "workflow"
+  },
+  {
+    "id": "7954a0d5-f5cf-474c-bf08-5621cbffcc11",
+    "ordinal": 27,
+    "role": "assistant",
+    "toolCallId": null,
+    "toolName": null
+  },
+  {
+    "id": "f71089ad-6760-4a40-bd74-3b6b6a00dce9",
+    "ordinal": 28,
+    "role": "user",
+    "toolCallId": null,
+    "toolName": null
+  },
+  {
+    "id": "3f744ca9-55a2-431f-a2ae-43fb321cb1ff",
+    "ordinal": 29,
+    "role": "assistant",
+    "toolCallId": null,
+    "toolName": null
+  }
+]

@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "01a98934-ff52-431c-9856-8d852f364d35",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "acceptance.json\nafter-files.json\nallocate-stage.json\narchive.json\nassigned-template.json\nbefore-files.json\nchanges.json\ncopy-fixture.json\ndiff.txt\nfinal-oracle-copy.json\nfinal-oracle.json\noracle.py\nreplay-selection.json\nRUBRIC.md\nstatus.json\ntranscript-index.json\nworker-final.txt",
+    "contentLength": 280,
+    "hasMoreContent": false,
+    "id": "ff6cbfaa-fe47-4120-ae2d-a4ee103a6119",
+    "isError": false,
+    "nextOffset": 280,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_ot0xhz7QehggOjoiG3AwAlJh",
+    "toolCalls": [],
+    "toolName": "ls"
+  }
+}

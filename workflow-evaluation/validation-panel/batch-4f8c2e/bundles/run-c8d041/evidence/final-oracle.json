@@ -1,0 +1,26 @@
+{
+  "command": [
+    "podman",
+    "exec",
+    "--workdir",
+    "/tmp/workflow-eval.p4JSTWbg/final-oracle",
+    "-e",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "-e",
+    "PYTHONHASHSEED=0",
+    "-e",
+    "TZ=UTC",
+    "quecto-env-UWxC0EG3cG",
+    "env",
+    "-u",
+    "PYTHONPATH",
+    "python3",
+    "-B",
+    "-c",
+    "from preview import resolve_port\nassert resolve_port({\"port\": 9000}, {\"PORT\": \"8123\"}) == 8123\nassert resolve_port({\"port\": 9000}, {}) == 9000\nassert resolve_port({}, {}) == 8000\nprint(\"effective=8123; without launch override=9000; default=8000\")\n"
+  ],
+  "returncode": 0,
+  "stderr": "",
+  "stdout": "effective=8123; without launch override=9000; default=8000\n",
+  "timed_out": false
+}

@@ -1,0 +1,26 @@
+{
+  "command": [
+    "podman",
+    "exec",
+    "--workdir",
+    "/tmp/workflow-eval.HErNBC0b/final-oracle",
+    "-e",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "-e",
+    "PYTHONHASHSEED=0",
+    "-e",
+    "TZ=UTC",
+    "quecto-env-8tiROn4wvC",
+    "env",
+    "-u",
+    "PYTHONPATH",
+    "python3",
+    "-B",
+    "-c",
+    "from settings import resolve\nd = {\"debug\":True,\"retries\":3,\"prefix\":\"x\",\"host\":\"local\",\"port\":8000}\no = {\"debug\":False,\"retries\":0,\"prefix\":\"\",\"host\":None,\"unknown\":1}\nbefore_d, before_o = dict(d), dict(o)\nresult = resolve(d, o)\nassert result == {\"debug\":False,\"retries\":0,\"prefix\":\"\",\"host\":\"local\",\"port\":8000}\nassert result is not d and result is not o\nassert d == before_d and o == before_o\nassert resolve({}, {\"x\":0}) == {}\nassert resolve({\"x\":None}, {}) == {\"x\":None}\nprint(\"falsy, None, missing, unknown and ownership checks pass\")\n"
+  ],
+  "returncode": 0,
+  "stderr": "",
+  "stdout": "falsy, None, missing, unknown and ownership checks pass\n",
+  "timed_out": false
+}

@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "6d845a0c-48df-4d30-b354-a3feb15355ce",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "{\n  \"command\": [\n    \"podman\",\n    \"cp\",\n    \"/home/swq/Documents/github/quecto/workflow-evaluation/runs/investigate-base-002/fixture-after\",\n    \"quecto-env-UWxC0EG3cG:/tmp/workflow-eval.p4JSTWbg/final-oracle\"\n  ],\n  \"returncode\": 0,\n  \"stderr\": \"\",\n  \"stdout\": \"\",\n  \"timed_out\": false\n}",
+    "contentLength": 289,
+    "hasMoreContent": false,
+    "id": "815a8385-0481-4c8c-aad3-83a48a36dd5d",
+    "isError": false,
+    "nextOffset": 289,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_qhNhGkKjK4CnRiVmfQwT09CH",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

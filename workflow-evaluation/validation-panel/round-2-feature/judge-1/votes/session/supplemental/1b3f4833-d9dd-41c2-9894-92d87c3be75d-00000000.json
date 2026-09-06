@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "1dd44432-be7b-49f3-88eb-2e314961d47a",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "Booking intervals are half-open [start,end). merge returns sorted tuples and does not mutate inputs.\n\nRuntime: Python 3.10+ standard library; no installation or network needed.\nExisting smoke checks: python3 -B -m unittest discover -s tests -v",
+    "contentLength": 243,
+    "hasMoreContent": false,
+    "id": "1b3f4833-d9dd-41c2-9894-92d87c3be75d",
+    "isError": false,
+    "nextOffset": 243,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_gIx3bahE37btf2QPbsGLE6Na",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

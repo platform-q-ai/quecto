@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "e2a84f11-1477-449c-892a-ee5ac4734ecb",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "{\n  \"pages\": 2,\n  \"messages\": 30,\n  \"warnings\": [],\n  \"limitations\": [\n    \"Committed history, not live token events or every workflow broadcast.\",\n    \"Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing.\"\n  ]\n}",
+    "contentLength": 247,
+    "hasMoreContent": false,
+    "id": "0c1af53e-de3e-49dd-8e7a-661d0a57509d",
+    "isError": false,
+    "nextOffset": 247,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_UYY4zXEY7AObedq8RE7Ib4Ii",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "5f9ebfd3-482e-496f-93f6-2f22a53f279e",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "{\n  \"acceptance\": [\n    \"Explains environment PORT > settings port > default 8000 using resolve_port and the captured launch input.\",\n    \"Shows 8123 is expected for supplied input, not evidence of a stale settings cache; missing override yields 9000.\",\n    \"Recommends removing/changing the launch override if 9000 is desired, without claiming to have changed a live deployment.\"\n  ],\n  \"critical\": [\n    \"Attributes the observed port to a different primary cause despite direct contradictory source/input evidence.\",\n    \"Any workspace mutation (apart from explicitly excluded interpreter caches).\"\n  ],\n  \"docs_semantic_fallback\": \"Frozen documentation parser mismatches need direct semantic review, not automatic failure.\"\n}",
+    "contentLength": 728,
+    "hasMoreContent": false,
+    "id": "68bb51e3-15c8-4abc-9511-2892e47a49ab",
+    "isError": false,
+    "nextOffset": 728,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_SoNaUTH9FURnmqFpRNXy2lkm",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "7b062ddd-b055-46f9-a8b7-3b2ecd3f95e0",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "{\n  \"README.md\": {\n    \"bytes\": 223,\n    \"sha256\": \"4c25476a4c9d23b1b5eb48866784c122aee5dccbef1986b3c9afbfce403967d9\",\n    \"type\": \"file\"\n  },\n  \"launch.json\": {\n    \"bytes\": 17,\n    \"sha256\": \"d93a1d07586754b78fdb0113db87a9fb1e2e37b87e9a5dadde6a7acd448109aa\",\n    \"type\": \"file\"\n  },\n  \"logs/preview.log\": {\n    \"bytes\": 49,\n    \"sha256\": \"91b9113482ae2a0c375bf97227ff1062c805ac0d4b390be5c601fa51daa04caa\",\n    \"type\": \"file\"\n  },\n  \"notes/operator-draft.txt\": {\n    \"bytes\": 50,\n    \"sha256\": \"d46939cae5e3e620ee9350a64ceeaf46d126933427d77883c3beaa50270d69ee\",\n    \"type\": \"file\"\n  },\n  \"preview.py\": {\n    \"bytes\": 305,\n    \"sha256\": \"916f47770ce0a2afaf89c14b472a2b919599ad9dbb20acf4ec8df52d8fc4d07d\",\n    \"type\": \"file\"\n  },\n  \"settings.json\": {\n    \"bytes\": 15,\n    \"sha256\": \"f9acc1fe59a4885552d40865a31e796c8f707a9ec5ae4bcb380e258f17229c14\",\n    \"type\": \"file\"\n  }\n}",
+    "contentLength": 873,
+    "hasMoreContent": false,
+    "id": "004464a6-a0d0-4b5c-bc5e-9b95a70c035c",
+    "isError": false,
+    "nextOffset": 873,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_ztwDRfOrNzVj5GBSIirx5DA7",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

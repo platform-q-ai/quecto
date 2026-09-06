@@ -1,0 +1,23 @@
+{
+  "checks": [
+    {
+      "judge_id": "judge-1",
+      "all_locator_paths_and_explicit_message_ids_exist": true,
+      "locator_count": 86
+    },
+    {
+      "judge_id": "judge-2",
+      "all_locator_paths_and_explicit_message_ids_exist": true,
+      "locator_count": 90
+    },
+    {
+      "judge_id": "judge-3",
+      "all_locator_paths_and_explicit_message_ids_exist": true,
+      "locator_count": 95
+    }
+  ],
+  "bundle_reverified_unchanged": true,
+  "judge_archives_no_collapsed_or_truncated_messages": true,
+  "substantive_worker_code_review": "Performed independently by judges, not coordinator.",
+  "scope": "Path/message locator existence and evidence preservation; scores unchanged."
+}

@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "b5bf0fef-4ede-4ec9-8bd8-297409a6d6bd",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "# Anonymous batch batch-4f8c2e\n\nScore each run independently, not comparatively. Same frozen standard; separate ballot per run. Read each complete bundle in this fixed randomized order:\n\n- `bundles/run-c8d041/INDEX.md`\n- `bundles/run-f7502a/INDEX.md`\n- `bundles/run-63ab9e/INDEX.md`\n- `bundles/run-1e96b3/INDEX.md`\n\nDo not read sibling coordinator files, other judge sessions, or evidence outside these four bundles.",
+    "contentLength": 416,
+    "hasMoreContent": false,
+    "id": "3b048957-c0fd-4535-86b3-3bea4db8409f",
+    "isError": false,
+    "nextOffset": 416,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_xb43gR7tC6sEL1jBvcpUaOhU",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

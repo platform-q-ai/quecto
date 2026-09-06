@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "253ee5be-6cce-4318-9485-a66d736bc7d6",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "{\"port\": 9000}",
+    "contentLength": 14,
+    "hasMoreContent": false,
+    "id": "2e1ff40a-a4b5-406f-8b26-0e3e765c6781",
+    "isError": false,
+    "nextOffset": 14,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_A547fGY3F0dCdPXfOOtNDg5r",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

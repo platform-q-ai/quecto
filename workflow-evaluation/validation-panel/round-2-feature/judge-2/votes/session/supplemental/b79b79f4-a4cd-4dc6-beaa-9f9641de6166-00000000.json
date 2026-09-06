@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "56002534-e8a3-4eae-b65a-b5b2512ecf35",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "{\n  \"id\": \"investigate\",\n  \"label\": \"Investigate\",\n  \"description\": \"Read-only diagnosis that gathers evidence, identifies root cause or trade-offs, and reports a cited conclusion.\",\n  \"when_to_use\": \"Use when the task is to understand, triage, or explain something without changing files.\",\n  \"steps\": [\n    {\n      \"key\": \"scope\",\n      \"label\": \"Define the question\",\n      \"phase\": \"setup\",\n      \"guidance\": \"Restate the question, constraints, and what evidence would answer it. Do not edit files.\"\n    },\n    {\n      \"key\": \"inspect\",\n      \"label\": \"Inspect evidence\",\n      \"phase\": \"analysis\",\n      \"guidance\": \"Read relevant code, docs, logs, or configuration. Prefer primary sources and record file paths or commands used.\"\n    },\n    {\n      \"key\": \"verify\",\n      \"label\": \"Challenge the conclusion\",\n      \"phase\": \"review\",\n      \"guidance\": \"Look for contradictory evidence and alternative explanations before settling on an answer.\"\n    },\n    {\n      \"key\": \"report\",\n      \"label\": \"Report findings\",\n      \"phase\": \"handoff\",\n      \"guidance\": \"Deliver a bounded report stating the conclusion, auditable evidence, remaining uncertainty, and suggested next steps. Confirm workspace preservation from the actions taken and available evidence. Mark this step complete only after that report has been delivered; a completion check is not a substitute for the report.\"\n    }\n  ],\n  \"guards\": []\n}",
+    "contentLength": 1412,
+    "hasMoreContent": false,
+    "id": "b79b79f4-a4cd-4dc6-beaa-9f9641de6166",
+    "isError": false,
+    "nextOffset": 1412,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_eqEZCSLvbiYuQBA5mSy4N0Kv",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "judge_id": "judge-3",
+  "phase": "feature-round-2-votes",
+  "votes": [
+    {
+      "alternative_id": "F1",
+      "vote": "YES",
+      "rationale": "Acceptable as an exact standalone replacement. It adds observable execution and an expected-versus-observed result to the existing prospective design requirement, distinguishes target failures from broken setup, and explicitly requires disclosure when implementation already occurred. Those distinctions address the retained Feature chronology: implementation precedes tests at transcript/chronological.txt ordinals 11-14, the interpreter failure at ordinal 16 is unrelated setup, and verification design is recorded retrospectively at ordinals 24-27. The discriminating comparison alternative permits appropriate non-executable work without fake RED. The wording is portable and changes only one guidance field; its benefit remains an unvalidated hypothesis.",
+      "goal_conflicts": []
+    },
+    {
+      "alternative_id": "F2",
+      "vote": "YES",
+      "rationale": "Acceptable independently. It requires a target-sensitive check before implementation, supplies reproducible source/data/artifact alternatives, and correctly separates later replay from chronological evidence. This fits the distinction between the worker's final passing checks at transcript/chronological.txt ordinals 18 and 34 and the evaluator's missing-keyword failures in evidence/pristine-with-worker-tests.json. It is somewhat less precise about late engagement than F1 and F3: recording 'any limitations' can encompass missed ordering, but does not explicitly require that disclosure. That is a preference difference, not an unresolved goal conflict.",
+      "goal_conflicts": []
+    },
+    {
+      "alternative_id": "F3",
+      "vote": "YES",
+      "rationale": "Acceptable independently. It explicitly requires focused target-caused failure, permits source comparison or reproducible derivation for unsuitable executable cases, prohibits manufactured failure, and requires truthful late-entry reporting. These provisions address the implementation-first and reminder-driven retrospective progression visible at transcript/chronological.txt ordinals 11-27 without claiming to repair that chronology. The additional wording is justified, though slightly less minimal than F1. It imposes no language, framework, tool, or host requirement and does not authorize scope expansion.",
+      "goal_conflicts": []
+    }
+  ],
+  "rankings": [
+    {
+      "group_id": "overlap-test_design",
+      "order": [
+        "F1",
+        "F3",
+        "F2",
+        "STATUS_QUO"
+      ],
+      "rationale": "F1 offers the best balance of brevity and explicit requirements: a focused target-caused check, expected and observed results, a discriminating alternative, and candid missed-ordering disclosure. F3 is a close second, with especially useful explicit protection against manufactured failure and support for reproducible derivation, at modest additional length. F2 is acceptable but leaves missed-ordering disclosure less explicit. STATUS_QUO already requires prospective design, but does not require executing or retaining a meaningful pre-change check or explain how to report late engagement. These are mutually exclusive preferences; the YES votes do not authorize combining replacements."
+    }
+  ],
+  "binding_selection_confound": "run-63ab9e/run-context.json records that the workflow was bound at spawn. In the retained transcript, the worker implements and gives an initial handoff before the incomplete-workflow reminder at ordinal 20 and the first workflow status interaction at ordinals 21-22. Explicit selection in earlier conditions could have made initial guidance more salient; binding, engagement, and reminder mechanics therefore confound any guidance-only causal account. Committed history also does not expose every live guidance broadcast. The original instruction already required design before implementation, so the observed ordering failure cannot be attributed solely to insufficient wording. These votes accept hypotheses for subsequent validation, not demonstrated improvements.",
+  "residual_risks": [
+    "None of the replacements can produce genuine pre-change evidence if first encountered after implementation; their late-entry provisions can improve honesty but cannot restore chronology.",
+    "A worker could choose a weak check, mistake setup failure for target failure, or overuse a source-comparison alternative despite suitable executable verification.",
+    "Longer guidance adds attention and execution cost and may still be treated as retrospective checklist text.",
+    "Later replay remains useful corroboration and should not be discouraged merely because it cannot earn chronological pre-change credit.",
+    "Future validation must inspect actual worker ordering and target-sensitive evidence, not infer success from checked steps, final passing tests, or evaluator replay. Differences in binding or selection conditions must remain explicit."
+  ]
+}

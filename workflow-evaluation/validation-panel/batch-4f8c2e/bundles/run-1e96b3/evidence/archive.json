@@ -1,0 +1,15 @@
+{
+  "command": [
+    "/usr/bin/python3",
+    "-B",
+    "/home/swq/Documents/github/quecto/workflow-evaluation/archive_session.py",
+    "--socket",
+    "/run/user/1000/quecto-agent-87abf602-1324-40d6-918a-6939a573d359.sock",
+    "--output",
+    "/home/swq/Documents/github/quecto/workflow-evaluation/runs/chore-base-002/transcript"
+  ],
+  "returncode": 0,
+  "stderr": "",
+  "stdout": "Archived 2 pages / 32 messages to /home/swq/Documents/github/quecto/workflow-evaluation/runs/chore-base-002/transcript\n",
+  "timed_out": false
+}

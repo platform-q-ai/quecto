@@ -1,0 +1,21 @@
+{
+  "batch_id": "batch-6d90a7",
+  "phase": "initial-independent-scoring",
+  "sessions": [
+    {
+      "judge_id": "judge-1",
+      "agent_id": "0f0dacc4-9653-4182-a2c1-9af3c3d418ea"
+    },
+    {
+      "judge_id": "judge-2",
+      "agent_id": "76312a01-9445-457d-a6d3-4f3160610f7f"
+    },
+    {
+      "judge_id": "judge-3",
+      "agent_id": "278387e1-ca4b-44e0-bc92-a001115d3e9c"
+    }
+  ],
+  "bare_reports_received": [],
+  "ballots_locked": false,
+  "proposal_phase_authorized": false
+}

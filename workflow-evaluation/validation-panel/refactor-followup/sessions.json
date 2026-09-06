@@ -1,0 +1,24 @@
+{
+  "anonymous_run_id": "run-82f6d0",
+  "phase": "FINAL_LOCKED_NO_ADJUDICATION",
+  "sessions": [
+    {
+      "judge_id": "judge-1",
+      "agent_id": "d55cab0b-10a6-41e4-a689-bec3765104bb"
+    },
+    {
+      "judge_id": "judge-2",
+      "agent_id": "4ec6ceac-ec86-41b3-8bbb-54b04149cb73"
+    },
+    {
+      "judge_id": "judge-3",
+      "agent_id": "78a0656d-8a3b-4707-af08-5a081c2910fd"
+    }
+  ],
+  "bare_reports_received": [
+    "judge-1",
+    "judge-2",
+    "judge-3"
+  ],
+  "ballots_locked": true
+}

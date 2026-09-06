@@ -1,0 +1,84 @@
+{
+  "status": "ALL_SIX_RUNS_FINAL_LOCKED",
+  "locked_results": {
+    "refactor-v1-001": {
+      "panel_score": 92.5,
+      "gate": "PASS",
+      "individual_totals": {
+        "judge-1": 90,
+        "judge-2": 92.5,
+        "judge-3": 90
+      },
+      "final_status": "QUALIFYING",
+      "summary": "summary.json"
+    },
+    "refactor-v2-001": {
+      "panel_score": 92.5,
+      "gate": "PASS",
+      "individual_totals": {
+        "judge-1": 90,
+        "judge-2": 92.5,
+        "judge-3": 92.5
+      },
+      "final_status": "QUALIFYING",
+      "summary": "refactor-followup/summary.json"
+    },
+    "investigate-base-002": {
+      "panel_score": 97.5,
+      "gate": "PASS",
+      "individual_totals": {
+        "judge-1": 97.5,
+        "judge-2": 95,
+        "judge-3": 97.5
+      },
+      "final_status": "QUALIFYING",
+      "summary": "batch-4f8c2e/summary.json",
+      "anonymous_id": "run-c8d041"
+    },
+    "chore-base-002": {
+      "panel_score": 95.0,
+      "gate": "PASS",
+      "individual_totals": {
+        "judge-1": 95,
+        "judge-2": 92.5,
+        "judge-3": 95
+      },
+      "final_status": "QUALIFYING",
+      "summary": "batch-4f8c2e/summary.json",
+      "anonymous_id": "run-1e96b3"
+    },
+    "bugfix-base-002": {
+      "panel_score": 92.5,
+      "gate": "PASS",
+      "individual_totals": {
+        "judge-1": 92.5,
+        "judge-2": 87.5,
+        "judge-3": 92.5
+      },
+      "final_status": "QUALIFYING",
+      "summary": "batch-4f8c2e/summary.json",
+      "anonymous_id": "run-f7502a"
+    },
+    "feature-base-002": {
+      "panel_score": 87.5,
+      "gate": "PASS",
+      "individual_totals": {
+        "judge-1": 87.5,
+        "judge-2": 85,
+        "judge-3": 90
+      },
+      "final_status": "NONQUALIFYING_SCORE_BELOW_90",
+      "summary": "batch-4f8c2e/summary.json",
+      "anonymous_id": "run-63ab9e"
+    }
+  },
+  "limitations": [
+    "Both refactor panels unanimously find partial chronological pre-change characterization (B1/B2) and retrospective progression (D2).",
+    "Minority additional D1/D3 deductions retained in original ballots.",
+    "Independent same-model high-effort sessions, no provider diversity; imperfect condition blinding.",
+    "These run scores alone do not assert a workflow streak or population-level success rate.",
+    "Bugfix meaningful reconstructed-original failures occur after implementation; feature has no worker RED. Evaluator pristine replay cannot supply pre-change chronology.",
+    "Feature remains numerically nonqualifying at 87.5 despite unanimous gate PASS.",
+    "Judge 1/2 batch archive collapse stubs fully recovered with raw supplemental get_message responses."
+  ]
+}

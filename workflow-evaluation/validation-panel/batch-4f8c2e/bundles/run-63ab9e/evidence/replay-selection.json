@@ -1,0 +1,7 @@
+{
+  "limits": "Imports of new helpers outside tests/ may fail for setup reasons. Non-unittest checks and shell snippets require manual replay. Evaluator replay proves sensitivity/parity, NOT worker chronological RED.",
+  "method": "Original fixture plus added/modified tests/** only; original deleted tests retained.",
+  "overlaid_paths": [
+    "tests/test_search.py"
+  ]
+}

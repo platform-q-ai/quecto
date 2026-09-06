@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "cca23e53-5cf6-4e78-ac4f-c1ed4d7fcb72",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "def merge(intervals):\n    result = []\n    for start, end in sorted(intervals):\n        if result and start < result[-1][1]:\n            left, right = result[-1]\n            result[-1] = (left, max(right, end))\n        else:\n            result.append((start, end))\n    return result",
+    "contentLength": 281,
+    "hasMoreContent": false,
+    "id": "cd582372-f809-4708-a0c7-a2a5ce09f92d",
+    "isError": false,
+    "nextOffset": 281,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_qLIaZqv0YuQ3CDpstm0UfSfI",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

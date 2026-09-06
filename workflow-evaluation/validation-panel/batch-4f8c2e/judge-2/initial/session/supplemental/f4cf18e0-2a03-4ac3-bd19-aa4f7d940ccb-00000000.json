@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "7b007b09-5ca5-44ba-a39a-8eeee681db3d",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "archive-summary.json\nchronological.txt\nget_session_stats.json\nget_state.json\nmessages.json\npage-0000.json\npage-0001.json",
+    "contentLength": 120,
+    "hasMoreContent": false,
+    "id": "f4cf18e0-2a03-4ac3-bd19-aa4f7d940ccb",
+    "isError": false,
+    "nextOffset": 120,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_QbHSR5krEfLCSzzu45oZs6y1",
+    "toolCalls": [],
+    "toolName": "ls"
+  }
+}

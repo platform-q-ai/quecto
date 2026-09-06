@@ -1,0 +1,26 @@
+{
+  "command": [
+    "podman",
+    "exec",
+    "--workdir",
+    "/tmp/workflow-eval.ixBuKhKX/final-oracle",
+    "-e",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "-e",
+    "PYTHONHASHSEED=0",
+    "-e",
+    "TZ=UTC",
+    "quecto-env-DdDeeSmQ3X",
+    "env",
+    "-u",
+    "PYTHONPATH",
+    "python3",
+    "-B",
+    "-c",
+    "from delivery import deliver\ncalls = []\ndef send(receipt):\n    calls.append(receipt)\n    if len(calls) == 1:\n        raise TimeoutError(\"ack lost\")\n    return \"ok\"\nassert deliver(send, \"R7\") == \"ok\" and calls == [\"R7\", \"R7\"]\nprint(\"timeout triggers a second send of the same receipt; receiver side effects unknown\")\n"
+  ],
+  "returncode": 0,
+  "stderr": "",
+  "stdout": "timeout triggers a second send of the same receipt; receiver side effects unknown\n",
+  "timed_out": false
+}

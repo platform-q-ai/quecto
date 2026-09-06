@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "5422f676-662e-4b0c-bf29-2b49032241f6",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "import json\nfrom pathlib import Path\n\ndef resolve_port(config, env):\n    return int(env.get(\"PORT\", config.get(\"port\", 8000)))\n\nif __name__ == \"__main__\":\n    config = json.loads(Path(\"settings.json\").read_text())\n    env = json.loads(Path(\"launch.json\").read_text())\n    print(resolve_port(config, env))",
+    "contentLength": 304,
+    "hasMoreContent": false,
+    "id": "5f3cec4d-bf30-484f-8e75-79d7c83b2d66",
+    "isError": false,
+    "nextOffset": 304,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_YZW2bOq9LFhzv6DBYBZ8BDrt",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

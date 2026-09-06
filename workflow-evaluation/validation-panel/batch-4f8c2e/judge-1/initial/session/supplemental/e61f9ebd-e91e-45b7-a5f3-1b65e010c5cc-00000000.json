@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "dc64d2be-f573-40e0-b34b-9198d489adb1",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "{\n  \"command\": [\n    \"/usr/bin/python3\",\n    \"-B\",\n    \"/home/swq/Documents/github/quecto/workflow-evaluation/archive_session.py\",\n    \"--socket\",\n    \"/run/user/1000/quecto-agent-fb94d174-855b-4240-9dde-a505e5f9f684.sock\",\n    \"--output\",\n    \"/home/swq/Documents/github/quecto/workflow-evaluation/runs/investigate-base-002/transcript\"\n  ],\n  \"returncode\": 0,\n  \"stderr\": \"\",\n  \"stdout\": \"Archived 2 pages / 30 messages to /home/swq/Documents/github/quecto/workflow-evaluation/runs/investigate-base-002/transcript\\n\",\n  \"timed_out\": false\n}",
+    "contentLength": 541,
+    "hasMoreContent": false,
+    "id": "e61f9ebd-e91e-45b7-a5f3-1b65e010c5cc",
+    "isError": false,
+    "nextOffset": 541,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_f9jPXagkChlEl4ufc7RgCW4a",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

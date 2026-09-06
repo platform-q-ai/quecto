@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "baad682b-48d6-4fa6-8316-578e14db242f",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "In /workspace/task, explain why the preview service binds port 8123 even though settings.json says 9000. Identify the effective configuration precedence, distinguish facts from uncertainty, and recommend the smallest appropriate next action. This is a diagnosis only: do not change or create workspace files. Return your findings in your final response.",
+    "contentLength": 353,
+    "hasMoreContent": false,
+    "id": "b9e3c1c9-ba83-401e-9b23-7557325e96cc",
+    "isError": false,
+    "nextOffset": 353,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_QoeVjt6ylV2TkVdcfPeyHewm",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

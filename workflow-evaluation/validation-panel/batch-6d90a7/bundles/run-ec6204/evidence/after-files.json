@@ -1,0 +1,27 @@
+{
+  "README.md": {
+    "bytes": 216,
+    "sha256": "e8ff9678980c281c67e7ca1ff3859b2b0fa9ed4f4e3e9931fbe71719c55c9402",
+    "type": "file"
+  },
+  "notes/operator-draft.txt": {
+    "bytes": 50,
+    "sha256": "d46939cae5e3e620ee9350a64ceeaf46d126933427d77883c3beaa50270d69ee",
+    "type": "file"
+  },
+  "settings.py": {
+    "bytes": 173,
+    "sha256": "2515dbd9f846e54d739365e13ad5acae7bfdb62af196196dac16ef69c0783a37",
+    "type": "file"
+  },
+  "tests/test_settings.py": {
+    "bytes": 1450,
+    "sha256": "5a0547be9212d48308e55811533821945ba0c700251b58c6a5971dbab277e579",
+    "type": "file"
+  },
+  "tests/test_smoke.py": {
+    "bytes": 185,
+    "sha256": "d0248da24f1522f41db21d83ffb91963ccdf89ea39082361215c94da20a42c57",
+    "type": "file"
+  }
+}

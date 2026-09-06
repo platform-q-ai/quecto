@@ -1,0 +1,30 @@
+{
+  "command": [
+    "podman",
+    "exec",
+    "--workdir",
+    "/tmp/workflow-eval.L0A6ECFQ/final-suite",
+    "-e",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "-e",
+    "PYTHONHASHSEED=0",
+    "-e",
+    "TZ=UTC",
+    "quecto-env-vlVou6TN24",
+    "env",
+    "-u",
+    "PYTHONPATH",
+    "python3",
+    "-B",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests",
+    "-v"
+  ],
+  "returncode": 0,
+  "stderr": "test_boundaries (test_receipts.TotalCentsTests.test_boundaries) ... ok\ntest_empty (test_receipts.TotalCentsTests.test_empty) ... ok\ntest_float_rounding_regressions (test_receipts.TotalCentsTests.test_float_rounding_regressions) ... ok\ntest_mixed_fractional_lengths (test_receipts.TotalCentsTests.test_mixed_fractional_lengths) ... ok\ntest_total_can_exceed_single_amount_limit (test_receipts.TotalCentsTests.test_total_can_exceed_single_amount_limit) ... ok\ntest_integer (test_smoke.Smoke.test_integer) ... ok\n\n----------------------------------------------------------------------\nRan 6 tests in 0.000s\n\nOK\n",
+  "stdout": "",
+  "timed_out": false
+}

@@ -1,0 +1,51 @@
+{
+  "judge_id": "judge-1",
+  "phase": "feature-round-2-proposals",
+  "proposals": [
+    {
+      "local_id": "P1",
+      "step_key": "test_design",
+      "field": "guidance",
+      "old": "Decide which tests, examples, or checks will prove the behavior before implementation.",
+      "new": "Before implementation, choose a focused check of the requested behavior and run it to demonstrate failure caused by the missing capability, not unrelated setup. For work unsuitable for executable tests, use an appropriate source comparison or reproducible derivation to establish the current mismatch and expected result instead; do not manufacture failure. Record the evidence before completing this step. If implementation already occurred, disclose the missed ordering; retrospective checks do not establish pre-change verification.",
+      "evidence": [
+        {
+          "locator": "assigned-template-reference.json: steps[test_design].guidance",
+          "observation": "The existing guidance already requires prospective verification design, but does not explicitly require executing a target-sensitive check or recording its result."
+        },
+        {
+          "locator": "bundles/run-63ab9e/transcript/chronological.txt: ordinals 6, 10-18",
+          "observation": "The worker reads the original implementation and smoke test, implements the capability, then writes and runs tests. The unavailable python executable is a setup failure, not evidence of the missing capability."
+        },
+        {
+          "locator": "bundles/run-63ab9e/transcript/chronological.txt: ordinals 19-27",
+          "observation": "An initial handoff precedes workflow engagement. After the reminder, the worker describes verification retrospectively and checks the design step despite implementation already being complete."
+        },
+        {
+          "locator": "bundles/run-63ab9e/evidence/pristine-with-worker-tests.json; evidence/replay-selection.json",
+          "observation": "Evaluator replay reaches the intended API and exposes the missing keyword capability. This corroborates test sensitivity but does not establish chronological worker RED."
+        }
+      ],
+      "mechanism": "Replace a design-only completion condition with observable, target-caused pre-implementation evidence while retaining appropriate non-executable alternatives. The late-entry clause protects accurate chronology when the workflow is engaged retrospectively; it does not pretend that guidance can recover a missed pre-change check. This is an unvalidated hypothesis, not a demonstrated improvement.",
+      "risks_costs": [
+        "Adds a focused verification execution before implementation where executable testing is appropriate; setup may require additional effort.",
+        "Workers may mistake unrelated environment failures for target failure or misuse the non-executable alternative; the replacement explicitly distinguishes these cases.",
+        "The text is longer than the current guidance, although it replaces only one field and adds no steps or required tools.",
+        "If guidance is first encountered after implementation, it cannot produce genuine pre-change verification. The expected benefit in that case is candid reporting, not retroactive compliance."
+      ],
+      "transfer_example": "For an optional image-resizing mode, first run a focused check showing that the intended API lacks or mishandles the mode, rather than treating a missing image library as RED. For an associated documentation-only change, compare the documented option with the authoritative interface before editing instead of forcing an executable failure.",
+      "goal_conflicts": [
+        "No identified conflict: the replacement is language-, framework-, platform-, host-, and tool-neutral.",
+        "It favors meaningful TDD where applicable, permits evidence-first alternatives, and explicitly prohibits manufactured failure.",
+        "It changes neither the task contract nor rubric and does not authorize unrelated edits, rollback of others' work, or changes to evaluation machinery."
+      ],
+      "overlaps_or_dependencies": [
+        "No second proposal; no overlapping guidance replacements.",
+        "The prospective-verification mechanism depends on encountering and engaging with this guidance before implementation."
+      ],
+      "falsifiable_prediction": "In future comparable executions where this guidance is visibly encountered before implementation, workers will more often retain a target-caused failing check, or a justified evidence-first alternative, before the first implementation edit and before checking this step. Continued design narration without such evidence would count against the hypothesis. In late-engagement executions, continued claims of prospective completion without disclosing the missed ordering would falsify the separate honesty mechanism. Passing final tests alone would support neither prediction."
+    }
+  ],
+  "no_change_reason": null,
+  "binding_selection_confound": "The Feature workflow was bound at spawn, whereas earlier baseline conditions used explicit selection. The retained run first shows workflow status after implementation, testing, and an initial handoff, following a reminder. Binding establishes assignment, not that the worker engaged with initial guidance before editing. Initial guidance salience, selection-related engagement, and reminder mechanics may therefore explain retrospective progression alongside the wording. This evidence cannot attribute failure or prospective benefit solely to guidance. The proposal addresses the narrower design-versus-executed-evidence distinction and honest late entry; it does not claim to solve timely activation."
+}

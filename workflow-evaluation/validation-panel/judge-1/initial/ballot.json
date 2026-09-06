@@ -1,0 +1,227 @@
+{
+  "judge_id": "judge-1",
+  "run_id": "run-7e2a91",
+  "criteria": {
+    "A1": {
+      "points": 5,
+      "evidence": [
+        "task.txt",
+        "fixture-after/classification.py:4-11",
+        "fixture-after/inventory.py:1-9",
+        "evidence/final-oracle.json"
+      ],
+      "rationale": "The requested extraction is implemented and connected: classification rules live in classify_name in the new module, inventory imports it privately, and summarize retains aggregation. The retained final oracle passes, and direct source review confirms dependency and rule ownership."
+    },
+    "A2": {
+      "points": 5,
+      "evidence": [
+        "evidence/acceptance.json",
+        "evidence/diff.txt",
+        "fixture-after/tests/test_classification.py",
+        "evidence/final-oracle.json"
+      ],
+      "rationale": "All explicit requirements are addressed: the helper is documented as internal, summarize retains its signature, classification remains case-sensitive and last-suffix-based, unsupported extensions remain other, and counts, order, and input ownership are preserved. Meaningful parity coverage is added without expanding supported types."
+    },
+    "A3": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/tests/test_classification.py:8-57",
+        "evidence/final-suite.json",
+        "evidence/final-oracle.json",
+        "fixture-after/classification.py"
+      ],
+      "rationale": "Boundary and alternative cases are correct, including uppercase and mixed-case extensions, multiple suffixes, dotfiles, trailing dots, extensionless and empty names, unknown extensions, trailing whitespace, empty inputs, repeated names, and iterators. Tests check first-seen category order using ordered item lists rather than dictionary equality alone."
+    },
+    "A4": {
+      "points": 5,
+      "evidence": [
+        "fixture-before/inventory.py",
+        "fixture-after/inventory.py",
+        "fixture-after/classification.py",
+        "evidence/oracle.py",
+        "evidence/final-oracle.json"
+      ],
+      "rationale": "The original suffix expression and category decisions are preserved exactly in the helper, while iteration and aggregation remain unchanged. The final oracle confirms the summarize signature, ordered outputs, and lack of input-list mutation. No material compatibility change is evident within the filename input contract."
+    },
+    "A5": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/README.md",
+        "fixture-after/classification.py",
+        "fixture-after/inventory.py",
+        "evidence/final-suite.json",
+        "evidence/worker-final.txt"
+      ],
+      "rationale": "The deliverable is a small, runnable, reviewable standard-library patch. The retained suite runs successfully, and the handoff identifies the changed files and a reproducible test command. A Git repository is not necessary to use or review these artifacts."
+    },
+    "A6": {
+      "points": 5,
+      "evidence": [
+        "evidence/changes.json",
+        "evidence/before-files.json",
+        "evidence/after-files.json",
+        "fixture-before/notes/operator-draft.txt",
+        "fixture-after/notes/operator-draft.txt"
+      ],
+      "rationale": "Substantive changes are confined to the requested extraction and additive parity tests. The README, original smoke test, and unrelated operator draft retain identical hashes. Only the explicitly ignorable interpreter caches appear additionally; there is no speculative product change."
+    },
+    "B1": {
+      "points": 2.5,
+      "evidence": [
+        "transcript/chronological.txt: ordinal 6, message f93d5212-ccab-4c67-ac3d-cc97efca6819",
+        "transcript/chronological.txt: ordinal 10, message fca14443-54ed-4329-a11a-e017c8c26a28",
+        "transcript/chronological.txt: ordinals 11-20"
+      ],
+      "rationale": "Before editing, the worker observes the complete original implementation and its existing smoke assertion, providing concrete but limited baseline characterization. No pre-change execution is retained: both production edits precede the first test attempt, and the first successful test execution is on the changed implementation."
+    },
+    "B2": {
+      "points": 2.5,
+      "evidence": [
+        "transcript/chronological.txt: ordinal 10, message fca14443-54ed-4329-a11a-e017c8c26a28",
+        "transcript/chronological.txt: ordinals 11-16",
+        "fixture-after/tests/test_classification.py",
+        "evidence/pristine-with-worker-tests.json",
+        "evidence/replay-selection.json"
+      ],
+      "rationale": "The verification design meaningfully distinguishes incorrect case normalization, suffix selection, supported-type expansion, counting, and ordering. However, before implementation the only inspected assertion covers a basic text/data count; the comprehensive characterization checks are added afterward. Thus there is partial evidence, not full pre-change characterization of the relevant invariants. The evaluator's missing-helper import error does not establish behavioral parity or chronological worker verification."
+    },
+    "B3": {
+      "points": 5,
+      "evidence": [
+        "transcript/chronological.txt: ordinal 20, message 8108149c-4687-45b4-9017-1cff3fc60ea6",
+        "transcript/chronological.txt: ordinals 31-32, messages 6b024870-3c8e-4780-b76c-2787c6b42869 and a1b63dbc-4673-42e7-b9fa-64f24e28b98d",
+        "evidence/after-files.json"
+      ],
+      "rationale": "The worker executes the primary parity suite on the final implementation and obtains four passing tests, then repeats that execution during final review without further edits. The first combined command's nonzero status belongs to the subsequent Git operation, not the tests; the later command also supplies an unambiguous successful result."
+    },
+    "B4": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/tests/test_classification.py",
+        "fixture-after/tests/test_smoke.py",
+        "transcript/chronological.txt: ordinal 32, message a1b63dbc-4673-42e7-b9fa-64f24e28b98d"
+      ],
+      "rationale": "The worker actually runs proportionate adjacent and boundary checks covering empty inputs, generators and iterators, repeated names, all existing supported types, unknown types, case sensitivity, suffix edges, and category order, alongside the protected smoke test. These are directly relevant to the refactor's risks."
+    },
+    "B5": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/tests/test_classification.py",
+        "evidence/after-files.json",
+        "transcript/chronological.txt: ordinals 15-20 and 31-32",
+        "evidence/final-suite.json"
+      ],
+      "rationale": "Durable, explicit-expected-value regression tests are retained with exact artifact hashes and matching worker execution records. They cover both the helper and summarize rather than relying solely on agreement between two implementations. The evaluator's tests-only pristine overlay limitation does not diminish this retained worker evidence."
+    },
+    "C1": {
+      "points": 5,
+      "evidence": [
+        "transcript/chronological.txt: ordinals 2-10",
+        "transcript/chronological.txt: ordinal 11, message 9b15ef23-5507-4270-967f-bb8a7190e2d5"
+      ],
+      "rationale": "The worker reads the task contract, local implementation, and existing smoke test before choosing and writing the extraction. The solution follows those primary facts rather than assumed extension semantics."
+    },
+    "C2": {
+      "points": 5,
+      "evidence": [
+        "transcript/chronological.txt: ordinal 11, message 9b15ef23-5507-4270-967f-bb8a7190e2d5",
+        "transcript/chronological.txt: ordinal 25, message 225c2c72-5550-4517-acd2-e1b417ddda52",
+        "transcript/chronological.txt: ordinal 35, message c2497cd5-a966-49de-8ddb-15ab5497a9af",
+        "evidence/diff.txt"
+      ],
+      "rationale": "The design coherently separates classification from aggregation while preserving the exact decision expression, supported categories, iteration, and insertion-order behavior. The private import and internal-module documentation match the requested API boundary. This narrowly specified extraction does not require invented alternative designs."
+    },
+    "C3": {
+      "points": 5,
+      "evidence": [
+        "fixture-after/classification.py",
+        "fixture-after/inventory.py",
+        "fixture-after/tests/test_classification.py",
+        "evidence/diff.txt"
+      ],
+      "rationale": "The change is minimal and maintainable: a single helper owns the unchanged classification rules, summarize delegates once per name, and aggregation stays local. Tests are straightforward and purpose-aligned. There is no unnecessary abstraction, dependency, or benchmark-specific hardcoding."
+    },
+    "C4": {
+      "points": 5,
+      "evidence": [
+        "transcript/chronological.txt: ordinal 6, message f93d5212-ccab-4c67-ac3d-cc97efca6819",
+        "transcript/chronological.txt: ordinals 31-32",
+        "transcript/chronological.txt: ordinal 35, message c2497cd5-a966-49de-8ddb-15ab5497a9af",
+        "evidence/changes.json"
+      ],
+      "rationale": "The worker's Git-free fallback substantively reviews the complete final production files against the previously read original and explicitly checks the suffix expression, category rules, signature, counts, and insertion order. The same review reruns the tests. For this small, pure refactor, that is a proportionate scope and compatibility review; unavailable Git alone is not a deficiency."
+    },
+    "D1": {
+      "points": 2.5,
+      "evidence": [
+        "run-context.json: workflow_template_bound_at_spawn",
+        "evidence/assigned-template.json",
+        "transcript/chronological.txt: ordinals 21-24",
+        "transcript/chronological.txt: ordinals 25-36"
+      ],
+      "rationale": "The assigned Refactor template is corroborated as active by the actual workflow status and subsequent guidance, and the worker eventually uses all progression handoffs without changing templates. Nevertheless, the worker initially completes the implementation and attempts to stop while workflow progress remains 0/5; engagement with the assigned progression occurs only after the continuation reminder. This is partial rather than consistent workflow use."
+    },
+    "D2": {
+      "points": 2.5,
+      "evidence": [
+        "evidence/assigned-template.json: steps scope, characterize, refactor, parity",
+        "transcript/chronological.txt: ordinals 11-16",
+        "transcript/chronological.txt: ordinals 25-36"
+      ],
+      "rationale": "The later checkoffs generally follow completed work, and parity review and handoff occur before their respective completion checks. However, the actual template puts characterization before refactoring and asks that characterization checks remain passing during the structural change. Here production code is changed before the new checks are added, and the early steps are checked retrospectively without an evidence-based explanation for reversing that order."
+    },
+    "D3": {
+      "points": 5,
+      "evidence": [
+        "evidence/assigned-template.json",
+        "transcript/chronological.txt: ordinals 25-28",
+        "transcript/chronological.txt: ordinals 31-36",
+        "evidence/worker-final.txt"
+      ],
+      "rationale": "Apart from the ordering and initial progression deficiencies assessed in D1 and D2, the applicable guidance is substantively completed: invariants and allowed restructuring are stated, discriminating checks are added and run, the extraction is small, final parity and unintended-change review occur, and closure summarizes the restructure, verification, review limitation, and next action. Direct source comparison is a justified substitute for unavailable Git diff."
+    },
+    "E1": {
+      "points": 5,
+      "evidence": [
+        "evidence/worker-final.txt",
+        "transcript/chronological.txt: ordinal 32, message a1b63dbc-4673-42e7-b9fa-64f24e28b98d",
+        "evidence/changes.json"
+      ],
+      "rationale": "The final handoff accurately identifies the extraction, changed files, exact test command, and four passing tests. Its direct-review statement is supported by the retained file-display command and accompanying comparison. It does not invent a pre-change test run or claim that Git succeeded."
+    },
+    "E2": {
+      "points": 5,
+      "evidence": [
+        "evidence/worker-final.txt",
+        "transcript/chronological.txt: ordinals 18-20",
+        "transcript/chronological.txt: ordinal 35, message c2497cd5-a966-49de-8ddb-15ab5497a9af"
+      ],
+      "rationale": "The handoff candidly states that Git diff was unavailable and describes the fallback. The missing python executable was successfully worked around with python3, so it is not an outstanding blocker. 'Ready for review' is a bounded next action, with no claim of deployment, universal testing, or unavailable validation."
+    }
+  },
+  "total": 90,
+  "gate": {
+    "decision": "PASS",
+    "rule": "RUBRIC.md v1.0 critical-failure gate, rules 1-3; task-specific critical condition in evidence/acceptance.json: observable summarize output changes or extraction absent/disconnected.",
+    "evidence": [
+      "evidence/acceptance.json",
+      "fixture-before/inventory.py",
+      "fixture-after/classification.py",
+      "fixture-after/inventory.py",
+      "evidence/final-oracle.json",
+      "evidence/final-suite.json",
+      "evidence/before-files.json",
+      "evidence/after-files.json",
+      "transcript/chronological.txt: ordinals 18-20 and 31-39",
+      "transcript/archive-summary.json"
+    ],
+    "rationale": "No critical correctness, integrity, or preservation failure is evidenced. Direct source comparison establishes connected extraction and unchanged classification and aggregation semantics, corroborated by successful final oracle and suite results. Existing tests and the unrelated operator draft are preserved. Test-success claims match retained execution; the failed Git operation is disclosed and replaced with substantive direct review. Missing chronological pre-change verification and delayed workflow engagement warrant numeric deductions, not a critical gate failure. The pristine overlay import failure is an understood evaluator replay limitation, not evidence that the final artifact is incorrect or that worker execution was fabricated."
+  },
+  "uncertainties": [
+    "No worker execution of the original implementation or comprehensive characterization checks before production edits is retained. Source and smoke-test reads provide only partial baseline evidence; evaluator replay cannot fill that chronological gap.",
+    "The pristine-with-worker-tests replay overlays tests but excludes the new classification module, so its ModuleNotFoundError does not establish behavioral test sensitivity against the original implementation. Final correctness remains auditable through the complete snapshots, source comparison, successful final oracle, and retained final suite.",
+    "The archive contains 39 committed messages across two pages with no warnings or visibly collapsed substantive fields. It does not contain live token events or every workflow broadcast; no unretained execution is inferred.",
+    "The original startup guidance is not independently visible as a pre-task broadcast, but assignment is corroborated by the bound-at-spawn context, actual Refactor workflow status at ordinal 24, and matching chronological step guidance. Assignment is not inferred from the template file alone.",
+    "Capture status predates the parent-reported container cleanup. This administrative timing difference does not contradict the retained verification outcomes, and unavailable secondary metrics are not treated as worker deficiencies."
+  ]
+}

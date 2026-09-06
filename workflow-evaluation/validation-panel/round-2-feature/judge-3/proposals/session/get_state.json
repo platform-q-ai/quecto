@@ -1,0 +1,24 @@
+{
+  "type": "response",
+  "id": "9a42b54a-4084-4aa5-bb0d-266c7597d1fe",
+  "command": "get_state",
+  "success": true,
+  "data": {
+    "effort": "high",
+    "effortLevels": [
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "generation": 280,
+    "model": "openai-oauth/gpt-6-astra",
+    "progress": {
+      "reason": "4 tools completed in the last 120 seconds",
+      "state": "advancing"
+    },
+    "sessionKey": "cli:143b2407-1721-443b-b563-d622e04c8344",
+    "state": "idle"
+  }
+}

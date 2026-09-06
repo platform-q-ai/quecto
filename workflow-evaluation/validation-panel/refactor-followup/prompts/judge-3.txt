@@ -1,0 +1,33 @@
+You are independent judge judge-3 for anonymous software-task run run-82f6d0.
+Read /home/swq/Documents/github/quecto/workflow-evaluation/validation-panel/refactor-followup/bundles/run-82f6d0/INDEX.md and the complete referenced evidence bundle. Do not read
+other judges' ballots, other runs, candidate rationale or prior scores. Do not
+contact workers or modify/run their code; use the retained verification evidence.
+
+Apply supplied RUBRIC.md v1.0 exactly. Score all 20 criteria A1–A6, B1–B5, C1–C4,
+D1–D3, E1–E2 only 0, 2.5 or 5, with evidence file/message IDs and rationale. Report
+total out of 100 and a separate critical gate PASS/FAIL/UNRESOLVED with rule,
+locators, uncertainties and missing material evidence. Final claims and checked
+workflow boxes do not prove execution. One evidence item may satisfy several
+criteria; no repeated narration or command ceremony is required.
+
+B/C assess fixed quality; D assesses ONLY applicable guidance/order of the actual
+assigned template. Do not import absent quality requirements into adherence.
+Meaningful missing-capability errors may be feature RED; distinguish unrelated
+setup errors. Source/data derivations suffice for investigations without invented
+hypotheses. B5 rewards retained worker evidence independently of evaluator replay
+failures. Catalog path flags are not hidden requirements. Documentation accepts
+semantic equivalence; parser spelling failures require direct evidence review.
+
+Use the task contract's actual compatibility/edge requirements. Evaluate Git-free
+artifact-review fallbacks substantively; unavailable git diff alone is not a gate
+failure or proof no review occurred. Independent replay against original code can
+show test sensitivity/parity, but not the worker's chronological test execution.
+Do not penalize unavailable secondary metrics. Do not claim observed assignment
+from an expected-template file alone; corroborate transcript guidance or flag it.
+
+Return one self-contained JSON ballot in your FINAL RESPONSE (no file writes):
+{"judge_id":"judge-3","run_id":"run-82f6d0","criteria":{"A1":{"points":null,
+"evidence":[],"rationale":""}},"total":null,"gate":{"decision":"",
+"rule":"","evidence":[],"rationale":""},"uncertainties":[]}.
+Expand criteria to include ALL 20, replacing null scores with supported values.
+Do not propose or vote on template edits in this scoring round. Stop after ballot.

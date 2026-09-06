@@ -1,0 +1,1 @@
+In /workspace/task, simplify access.decide by replacing its nested conditionals with clear guard clauses. Preserve its signature and all current decisions and reason strings for every combination of the four boolean arguments. Keep access precedence unchanged, and add parity coverage. No new authorization policy is requested.

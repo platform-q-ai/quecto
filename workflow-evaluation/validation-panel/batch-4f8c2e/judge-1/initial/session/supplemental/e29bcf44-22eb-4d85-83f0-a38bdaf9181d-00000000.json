@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "06cf44a2-901b-46f2-bd32-5f71628b5ae8",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "**Summary:** The effective precedence is `launch.json` → `PORT`, then `settings.json` → `port`, then default `8000`. Thus `\"PORT\": \"8123\"` overrides `9000`.\n\n**Checks and results:** Inspected code, configuration, README, and logs. `python3 -B preview.py` printed `8123`; the log records `listening port=8123`.\n\n**Uncertainty/blockers:** No diagnosis blockers. The script only prints the resolved port; it does not confirm a current live socket. Why the launch override exists remains unknown.\n\n**Artifacts/changed files:** None; workspace preserved.\n\n**Recommended next action:** If 9000 is intended, locate and remove the actual launcher’s `PORT` override, then relaunch. `launch.json` is documented as a capture, so editing it alone may not change the service.",
+    "contentLength": 768,
+    "hasMoreContent": false,
+    "id": "e29bcf44-22eb-4d85-83f0-a38bdaf9181d",
+    "isError": false,
+    "nextOffset": 768,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_Cyd0vtByRMoDPGXY9eeWFfAD",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

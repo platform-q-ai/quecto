@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "8ff6edbc-0513-4e4f-83d5-5c3ab7802ba9",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "{\n  \"changed\": [\n    \"intervals.py\",\n    \"tests/test_merge.py\"\n  ],\n  \"changed_existing_tests\": [],\n  \"notice\": \"Flags are not hidden requirements or automatic gate failures.\",\n  \"path_review_flags_only\": []\n}",
+    "contentLength": 209,
+    "hasMoreContent": false,
+    "id": "bf34991c-dd7b-4d75-aced-a7d692874353",
+    "isError": false,
+    "nextOffset": 209,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_YfOh4J8JypZMo73uT3TzDSuc",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

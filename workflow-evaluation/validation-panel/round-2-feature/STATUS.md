@@ -1,0 +1,1 @@
+FINAL LOCKED: F1 selected unanimously, no goal conflicts. Exact guidance in selected-proposal.json; votes/ranks in vote-aggregate.json; full report SUMMARY.md. Parent implementation required; no source/candidate/rubric changes.

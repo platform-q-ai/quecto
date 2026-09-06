@@ -1,0 +1,10 @@
+{
+  "acceptance": [
+    "False/zero/empty string override; None and absent keys fall back; unknown keys ignored.",
+    "Fresh dictionary, no input mutation, meaningful regressions."
+  ],
+  "critical": [
+    "Any required falsy override is discarded or source input changed."
+  ],
+  "docs_semantic_fallback": "Frozen documentation parser mismatches need direct semantic review, not automatic failure."
+}

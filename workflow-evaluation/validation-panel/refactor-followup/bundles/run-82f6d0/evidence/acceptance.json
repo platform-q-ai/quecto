@@ -1,0 +1,10 @@
+{
+  "acceptance": [
+    "Nested decision tree replaced by clear guard clauses, not merely renamed or reformatted.",
+    "All 16 decisions, precedence, reason strings, bool results, and signature preserved."
+  ],
+  "critical": [
+    "Any authorization decision/reason changes or no substantive guard-clause refactor."
+  ],
+  "docs_semantic_fallback": "Frozen documentation parser mismatches need direct semantic review, not automatic failure."
+}

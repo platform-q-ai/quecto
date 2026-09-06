@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "f22a259c-d350-446a-b556-98ad8b3e9f5d",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "from intervals import merge\ncases = [([], []), ([(1,2),(2,3)], [(1,2),(2,3)]),\n         ([(5,7),(1,4),(3,6)], [(1,7)]), ([(1,8),(2,3)], [(1,8)]),\n         ([(1,3),(1,3)], [(1,3)]), ([(-4,-2),(-2,0)], [(-4,-2),(-2,0)]),\n         ([(8,9)], [(8,9)]), ([(1,4),(4,6),(3,5)], [(1,6)])]\nfor value, expected in cases:\n    before = list(value)\n    assert merge(value) == expected, (value, expected)\n    assert value == before, \"mutated input\"\nprint(\"8 interval cases and input preservation pass\")",
+    "contentLength": 487,
+    "hasMoreContent": false,
+    "id": "613582d4-90e3-4189-a5e7-56839c6ef94d",
+    "isError": false,
+    "nextOffset": 487,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_ePQ39juv2JAAYfKlPD4NjNsh",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

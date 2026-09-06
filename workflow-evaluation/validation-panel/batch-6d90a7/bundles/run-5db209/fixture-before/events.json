@@ -1,0 +1,6 @@
+[
+  {"receipt":"R7","attempt":1,"event":"receiver accepted"},
+  {"receipt":"R7","attempt":1,"event":"client timeout"},
+  {"receipt":"R7","attempt":2,"event":"receiver accepted"},
+  {"receipt":"R7","attempt":2,"event":"client success"}
+]

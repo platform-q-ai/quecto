@@ -1,0 +1,14 @@
+{
+  "command": [
+    "podman",
+    "exec",
+    "quecto-env-vlVou6TN24",
+    "mktemp",
+    "-d",
+    "/tmp/workflow-eval.XXXXXXXX"
+  ],
+  "returncode": 0,
+  "stderr": "",
+  "stdout": "/tmp/workflow-eval.L0A6ECFQ\n",
+  "timed_out": false
+}

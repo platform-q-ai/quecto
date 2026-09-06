@@ -1,0 +1,42 @@
+{
+  "README.md": {
+    "bytes": 244,
+    "sha256": "d372369b4fa0b32275bc7884e4aa877f3f38fc98419fc178f945c99202463985",
+    "type": "file"
+  },
+  "__pycache__/intervals.cpython-313.pyc": {
+    "bytes": 550,
+    "sha256": "f860f11d329497dc5795fde46b4fbb963ac3157bc8b2b1c841637d3a2c48b9a7",
+    "type": "file"
+  },
+  "intervals.py": {
+    "bytes": 282,
+    "sha256": "24a2bb60a5553e84a1858cf1545d53650f93f397dde38b61a384d4b461523d63",
+    "type": "file"
+  },
+  "notes/operator-draft.txt": {
+    "bytes": 50,
+    "sha256": "d46939cae5e3e620ee9350a64ceeaf46d126933427d77883c3beaa50270d69ee",
+    "type": "file"
+  },
+  "tests/__pycache__/test_merge.cpython-313.pyc": {
+    "bytes": 2259,
+    "sha256": "c4a05b705367f1d81be69e25f377c176eaf40351f6c7581618f2c764ec25628c",
+    "type": "file"
+  },
+  "tests/__pycache__/test_smoke.cpython-313.pyc": {
+    "bytes": 722,
+    "sha256": "e2eb9762da9903a7c6056b6e13cdfd87682ea79fb2f878ecc96c85f46c0cff4a",
+    "type": "file"
+  },
+  "tests/test_merge.py": {
+    "bytes": 970,
+    "sha256": "ce3060b9b9ff177fe5e49478daf275924d990de6b21546e2cb17707742eec2af",
+    "type": "file"
+  },
+  "tests/test_smoke.py": {
+    "bytes": 164,
+    "sha256": "b5b856e31bc0ef041c15a4783b4f841c746015ab8d1ba052d2fcbdfcb7b7dc43",
+    "type": "file"
+  }
+}

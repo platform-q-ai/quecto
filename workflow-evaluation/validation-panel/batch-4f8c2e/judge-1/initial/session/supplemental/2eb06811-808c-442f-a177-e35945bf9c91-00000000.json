@@ -1,0 +1,20 @@
+{
+  "type": "response",
+  "id": "d201603a-11e3-4a7d-bef6-fb2dd55901a4",
+  "command": "get_message",
+  "success": true,
+  "data": {
+    "collapsed": false,
+    "content": "# Anonymous evidence bundle: run-f7502a\n\n## Read all substantive evidence\n- `task.txt`: exact task contract; `evidence/acceptance.json`, `evidence/oracle.py`: frozen task acceptance/oracle.\n- `evidence/RUBRIC.md`: frozen v1.0 criteria and gates.\n- `evidence/assigned-template.json`: exact assigned template, bound at spawn; corroborate actual transcript guidance.\n- `fixture-before/`, `fixture-after/`, `evidence/changes.json`, `evidence/diff.txt`: original and final artifacts and scope.\n- `transcript/messages.json`, `transcript/page-*.json`: complete raw committed messages; `transcript/chronological.txt`: line-addressable rendering with IDs/ordinals.\n- `evidence/transcript-index.json`, `evidence/worker-final.txt`: index and final handoff.\n- `evidence/final-oracle.json`, `evidence/final-suite.json`, `evidence/pristine-with-worker-tests.json` and matching copy/allocation records: retained evaluator outcomes. Absent/inapplicable checks are documented by capture status, not presumed failures.\n- `evidence/status.json`, `evidence/replay-selection.json` when present, `transcript/archive-summary.json`: limitations and warnings.\n- `run-context.json`: execution settings and deviations.\n- `source-map.json`: full original inventory mapping, capture-directory rebased to evidence/ with original hashes.\n- `bundle-index.json`: rebased hash inventory of all bundled evidence.\n\n## Interpretation and limits\nRead-only and documentation task alternatives apply. The evaluator oracle is a floor, not the entire contract. Pristine replay is post-run corroboration, not proof of chronological worker RED; establish chronology from the transcript. Do not execute worker modules or contact containers.\nSource-map entries preserve original hashes and bytes; substantive raw evidence is unchanged. No prior scores, goal document, rationale, proposals, revision history, or other judge ballots are supplied. Absolute paths in raw records can disclose condition labels: blinding is imperfect. Ignore such labels when scoring. Same model family across independent sealed sessions is not provider diversity.\nParent reports complete archival/hash verification followed by cleanup. Status records predate cleanup. Committed history is not every live workflow broadcast; inspect raw tool fields and archive warnings, and do not infer unseen execution. Missing metrics remain unknown.",
+    "contentLength": 2368,
+    "hasMoreContent": false,
+    "id": "2eb06811-808c-442f-a177-e35945bf9c91",
+    "isError": false,
+    "nextOffset": 2368,
+    "offset": 0,
+    "role": "tool",
+    "toolCallId": "call_veLdjlcqhOXIN2B6auq6iDfW",
+    "toolCalls": [],
+    "toolName": "read"
+  }
+}

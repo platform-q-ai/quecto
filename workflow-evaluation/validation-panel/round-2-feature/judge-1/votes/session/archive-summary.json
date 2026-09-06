@@ -1,0 +1,210 @@
+{
+  "pages": 10,
+  "messages": 185,
+  "warnings": [
+    {
+      "message_id": "ac4c8837-5290-4702-9001-53e49aee9a18",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "3b048957-c0fd-4535-86b3-3bea4db8409f",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "b830b888-ee6a-4908-bd81-a41d6909cced",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "ed9e9301-2f4b-4fab-9d6c-3ba37b0f2ce2",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "5f41a66b-6989-45d4-92a6-7343e59cbade",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "bdec9fe4-6f99-4b0e-89da-47654c7285e6",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "e44cd9cf-245e-41cd-9ca2-6a20ec403b5c",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "3c7cbcf1-fffd-41a2-8be8-f0cfbf63daca",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "68bb51e3-15c8-4abc-9511-2892e47a49ab",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "e3a5842d-0a4a-474a-ae77-3646d7e0d7e4",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "c6d5e128-aeb6-4140-9cc2-295486a62ccd",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "791bf048-37d1-4ed3-9a5e-438d7803b6fd",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "c0ea4d69-8feb-4ee7-a46e-d5d43d75fa2d",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "34fe924c-348c-4d47-8d70-1ec30a7e6202",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "946b6bb2-d55f-41fa-844f-4c4c21d690c0",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "eb64c5dd-445a-4ccd-9e7d-e3b412263ce3",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "e6c9b09b-a73c-4ccb-82e9-1f24e99f28d0",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "74249857-ddf3-4a2b-b53d-7026239bb8ac",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "e29bcf44-22eb-4d85-83f0-a38bdaf9181d",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "e6758a71-3a66-491e-baa7-7a01ed0a62a3",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "cda4ea12-399b-40fa-96d9-d95420000197",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "7b910598-5792-436b-af2b-c5cc9a502434",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "e4b59dd9-3838-4e6c-9a2e-2717808f4ae0",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "2e1ff40a-a4b5-406f-8b26-0e3e765c6781",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "d3e47f08-e721-4dd7-a62f-63ff2a07bf05",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "0c4ff8a2-2d79-4765-a1c9-71bec43df1b0",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "e61f9ebd-e91e-45b7-a5f3-1b65e010c5cc",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "6bd809ed-618f-42f2-88c9-ef8a5b158855",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "08be8d67-3711-4593-ade9-70b865f8ff66",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "815a8385-0481-4c8c-aad3-83a48a36dd5d",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "653ef92e-4ac0-4d2c-aebd-e4c618562823",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "004464a6-a0d0-4b5c-bc5e-9b95a70c035c",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "2eb06811-808c-442f-a177-e35945bf9c91",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "5c32771d-d1a0-4fd9-95ac-a9ec0eeb6fc6",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "1ba0785b-475a-40db-b5c9-9078adc4bfe0",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "d6375266-a753-4722-8b99-bdc4aca06c15",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "548b7edc-5ca8-4c99-b4d2-48649e7371ac",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "b4b71739-dd92-4b5e-8348-1a0588eac0ac",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "d98b2701-8f57-491d-b573-131ce95cfda5",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "613582d4-90e3-4189-a5e7-56839c6ef94d",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "3d37697a-3901-45e8-9110-81622885851d",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "d5c44037-cd03-419e-8ddc-dcda903d7a3b",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "caa80f7c-e9f5-4742-9fca-26ee23f75f3b",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "bf34991c-dd7b-4d75-aced-a7d692874353",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "90e3af1c-75e3-48e5-9626-a7cf302c126c",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "ba0fa98c-90c9-470c-a302-628fc5c29ffb",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "31fb03c3-a270-4791-b63a-1aba94d9f0f5",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "73091693-0d62-4402-ad1e-fa5c3682826b",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "1b3f4833-d9dd-41c2-9894-92d87c3be75d",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "cd582372-f809-4708-a0c7-a2a5ce09f92d",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    }
+  ],
+  "limitations": [
+    "Committed history, not live token events or every workflow broadcast.",
+    "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing."
+  ]
+}

@@ -1,0 +1,5 @@
+--- before/config/example.json
++++ after/config/example.json
+@@ -1 +1 @@
+-{"host":"0.0.0.0","port":8080,"debug":true,"logging":{"level":"info","format":"json"},"trace":true}
++{"host":"127.0.0.1","port":8080,"debug":false,"logging":{"level":"info","format":"json"}}

@@ -1,0 +1,102 @@
+{
+  "pages": 8,
+  "messages": 154,
+  "warnings": [
+    {
+      "message_id": "27a4e9f1-ede6-434e-a18b-47b54a208f63",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "34a4efa9-e5d8-4745-88c7-9974cedea7d5",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "08352c04-b207-40ab-b976-0aac5cbafbc9",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "78476349-b540-4987-801a-371e80307f23",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "8337ff34-b375-4cd9-ac8a-e4f8a2753650",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "b9e3c1c9-ba83-401e-9b23-7557325e96cc",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "ff6cbfaa-fe47-4120-ae2d-a4ee103a6119",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "f4cf18e0-2a03-4ac3-bd19-aa4f7d940ccb",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "75a57333-664c-4cf7-9ef6-dbd578c80a9f",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "b79b79f4-a4cd-4dc6-beaa-9f9641de6166",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "c092bb2f-e2a9-4db3-af64-9772bfc82ad5",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "5e58ca10-7193-4592-9e20-b1c73fff2e71",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "30afdcd9-f107-4409-9a10-6bd3b64b3ad4",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "a6990807-d314-4b0b-a8b6-fb4104830fe7",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "40aeef97-ed36-4f66-adf5-d5778640a5c9",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "14106904-58ae-49d6-bbc0-f37f7c2dabb4",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "463d00d7-e8e6-4599-8248-5f04327984db",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "d84acd44-6a2e-43e7-aae6-11913d4d1f9c",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "0c1af53e-de3e-49dd-8e7a-661d0a57509d",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "57de46cb-6ad1-43d0-a1a2-9ca1809cfa1c",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "c303f5ad-740f-4541-92de-19f57337a7b7",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "5f3cec4d-bf30-484f-8e75-79d7c83b2d66",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    },
+    {
+      "message_id": "24929bed-7ac1-4a3b-bd51-3450961d144d",
+      "reason": "collapsed/truncated; original content may need supplementary retrieval"
+    }
+  ],
+  "limitations": [
+    "Committed history, not live token events or every workflow broadcast.",
+    "Inspect raw page/tool fields for truncation. Missing evidence stays explicitly missing."
+  ]
+}
