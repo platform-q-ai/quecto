@@ -35,9 +35,16 @@ pub(crate) struct TrackedSubagent<I: RosterInfo> {
     pub(crate) roster_source: Option<String>,
 }
 
-/// Whether a subagent status counts as "actively running" for the timer.
+/// Whether a subagent status counts as active work for panel animation/GC.
 pub(crate) fn subagent_status_is_active(status: &str) -> bool {
     matches!(status, "starting" | "running")
+}
+
+/// Whether a subagent status counts as elapsed agent run time. `starting` keeps
+/// the row active for visibility/animation, but time belongs to the agent only
+/// once the agent reports `running`.
+fn subagent_status_runs_timer(status: &str) -> bool {
+    status == "running"
 }
 
 /// Whether a subagent status is terminal — the child process is gone and can
@@ -71,12 +78,12 @@ impl<I: RosterInfo> TrackedSubagent<I> {
     /// Clock-injected constructor used by snapshot application so lifecycle
     /// timestamps come from the caller's single `now` reading.
     pub(crate) fn new_at(info: I, now: tokio::time::Instant) -> Self {
-        let active = subagent_status_is_active(info.status());
+        let running = subagent_status_runs_timer(info.status());
         let exited_at = subagent_status_is_terminal(info.status()).then_some(now);
         Self {
             info,
             started_at: now,
-            stopped_at: if active { None } else { Some(now) },
+            stopped_at: if running { None } else { Some(now) },
             exited_at,
             optimistic: false,
             roster_source: None,
@@ -99,11 +106,15 @@ impl<I: RosterInfo> TrackedSubagent<I> {
     /// Clock-injected update used by snapshot application.
     pub(crate) fn update_info_at(&mut self, mut new_info: I, now: tokio::time::Instant) {
         new_info.merge_sticky_fields(&self.info);
-        if subagent_status_is_active(new_info.status()) {
-            // Resumed work — let the timer run again.
+        if subagent_status_runs_timer(new_info.status()) {
+            // Resumed/started work — reset the baseline if the timer was
+            // frozen, then let it run from this transition.
+            if self.stopped_at.is_some() {
+                self.started_at = now;
+            }
             self.stopped_at = None;
         } else if self.stopped_at.is_none() {
-            // First transition into a stopped state — freeze the timer here.
+            // First transition out of running — freeze the timer here.
             self.stopped_at = Some(now);
         }
         if subagent_status_is_terminal(new_info.status()) {
