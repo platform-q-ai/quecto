@@ -36,6 +36,7 @@ edit a superseded ADR receives — its reasoning stays intact as history).
 | [0023](adr-0023-tui-is-a-multiplexer-of-replicant-agents.md) | The TUI Is a Multiplexer of Replicant Agents | ❌ Rejected → [0025](adr-0025-tui-ordinary-exit-terminates-owned-agents.md) | One replicant agent per tab, one session per agent; superseded for ordinary-exit lifecycle semantics. |
 | [0024](adr-0024-observation-tool-output-contract.md) | Observation Tools Use Projection, Delta, or Snapshot-to-File Outputs | ✅ Accepted | Observation tools default to bounded projections, use cursor deltas for polling, spill full-fidelity snapshots to files, exclude static echo data, carry freshness metadata, and degrade over-cap payloads to truncation plus file pointers. |
 | [0025](adr-0025-tui-ordinary-exit-terminates-owned-agents.md) | TUI Ordinary Exit Terminates Owned Agents After Durable Roster Capture | 🕒 Proposed | Ctrl-D, `/exit`, and `/quit` terminate TUI-owned agents after durable per-tab roster capture; `/resume` restores killed agents as historical non-live rows. |
+| [0026](adr-0026-shared-inference-admission.md) | Single-host Shared Inference Admission | ✅ Accepted contract | Pure policy, private authority, per-attempt transport accounting and safety-first uncertainty; implementation pending #1679 P1–P4. |
 
 ## The ADR-0008 protocol series
 

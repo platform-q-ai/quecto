@@ -508,3 +508,23 @@ Rules an author must keep:
    path you have not proven to resolve under your own trusted state root.
 6. **Keep runtime knowledge in the scripts.** Quecto's Rust code contains no
    Docker/Podman/devcontainer special cases and must never need any.
+
+## Planned inference-admission transport (#1679)
+
+[ADR-0026](../quecto-agentic-harness/docs/architecture-design-records/adr-0026-shared-inference-admission.md)
+fixes the private admission transport contract. **Not implemented or enabled by
+this documentation:** existing container scripts do not yet provide admission.
+The planned official same-host Docker/Podman adapter uses a dedicated private
+admission socket-directory mount; create, join and nested launches must verify
+reachability to the same authority. Custom runtimes without path visibility need
+an explicit child-to-host reverse bridge capability. Existing `socket_proxy`
+connects the parent to the child and is not proof of this reverse capability.
+Never expose the entire agent-control socket directory as an admission endpoint.
+
+The P0 prototype in
+`quecto-agentic-harness/tests/inference_admission_transport.rs` uses real local
+processes and a test-only stdio bridge, not Docker or production admission.
+Actual supported-runtime create/join/nested, cancellation and restart evidence is
+required in P3 before activation. Unsupported enabled transport must fail closed,
+not silently substitute an in-process or container-local budget. No multi-host
+coordination is promised.

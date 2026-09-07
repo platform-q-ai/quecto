@@ -1,0 +1,17 @@
+# P0 test/check design
+
+Frozen matrix reviewed clean by fresh 7b45e517-33ed-47b1-8961-1aff6b525c40 after independent counterexamples and replay-retention correction.
+
+New integration test `inference_admission_characterization`: fake TCP server holds SSE termination behind an explicit oneshot barrier. GIVEN an actual OpenAI adapter and withheld terminal response WHEN incremental receiver is obtained THEN receiver return is not completion; one text delta precedes terminal; release barrier yields exactly one Done and EOF. Negative HTTP rejection remains terminal Error. Default port fallback contrasted with live incremental adapter through existing contracts. Bound every socket read/write/task join by timeout; teardown owns tasks.
+
+Extend existing OAuth refresh test with exact actual-call count (2), distinguishing first attempt plus resend; existing provider retries/partial-stream/AbortOnDrop/readiness tests remain regression evidence.
+
+New test-only private transport prototype: child OS process accesses a dedicated broker socket directly or through stdio bridge script; request/reply bounded JSON with authority/epoch/scope/version fields. Assert same authority across two clients/nested subprocess, mismatched version rejection, missing endpoint failure. Prototype proves transport direction/framing only, not admission policy, authentication, official create/join wiring or Docker support.
+
+ADR inspection table covers all matrix contract rows: deterministic fairness/pacing/charge rules, schema/inheritance/reload, durable epoch/replay/uncertainty and cancellation races, identity/capabilities, queue/deadline outcomes, observation/rollback. Document exact production proof owed P1–P4; no new public ports until real callers.
+
+RED: each new assertion deliberately broken via narrowly scoped fixture/expected-output mutation and test fails for intended reason; restore immediately and GREEN before commit. Characterization adds no new production behavior. Concrete commands use nonzero actual module filters. Architecture/contracts/retry/refresh suite gates as baseline.
+
+Accepted test review corrections: scoped abort-on-drop task guard and kill-on-drop subprocess plus bounded reaping; RED records assertion/mutation/output/nonzero command/restore. Add explicit >64 delta delivery and receiver-drop characterization without remote cancellation claims. Existing fallback: `domain::provider::cov_tests::default_incremental_stream_emits_done_for_successful_chat_stream`; readiness: `subagent_launch_ports::...local_adapter_commits_one_entry_owning_the_child_process`; cancellation: `infrastructure::providers::openai::cov_tests::abort_on_drop_cancels_pump_task_when_chat_stream_is_dropped`. Prototype must measure broker-observed correlated requests across real direct/proxy/nested script processes, not echoed authority alone; malformed/oversized/capability/endpoint negative cases and minimal child argv/env inspection. Tests characterize shared framing and transport, not broker auth enforcement. ADR retains exact future security contract.
+
+P0 completed inspection: ADR0026 covers all documentary matrix rows including corrected cooldown/positive pacing boundaries. Existing runtime BDD regressions: QUECTO_TAG=container-liveness and QUECTO_TAG=container-runtime with --features test-support, 13/12 scenarios passed. Canonical command example QUECTO_TAG_EXPR is not supported by current runner and default bdd lacks test-support; execution used verified exact commands, not false-positive tag assumptions.
