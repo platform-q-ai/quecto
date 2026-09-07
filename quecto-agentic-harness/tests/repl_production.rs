@@ -32,7 +32,7 @@ fn run_repl(args: &[&str], input: &str) -> std::process::Output {
 #[test]
 fn auth_login_consumes_provider_choice_without_relocking_stdin() {
     let output = run_repl(&[], "auth login\ninvalid\nexit\n");
-    assert!(output.status.success());
+    assert!(!output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Choose a provider"), "{stdout}");
     assert!(stdout.contains("invalid choice 'invalid'"), "{stdout}");

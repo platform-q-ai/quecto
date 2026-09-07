@@ -61,7 +61,7 @@ where
         let (stdout, stderr, command_code) = execute(args, &mut reader);
         let _ = write!(writer, "{stdout}");
         let _ = write!(writer, "{stderr}");
-        if command_code != 0 {
+        if !is_tty && command_code != 0 {
             exit_code = command_code;
         }
     }
