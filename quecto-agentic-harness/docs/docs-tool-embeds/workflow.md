@@ -9,7 +9,7 @@ You already have the `workflow` tool schema (actions, params). This page is when
 
 ## Parent usage
 
-- Coding tasks that need sequence, verification, or review structure → prefer a child with workflow (see `docs {"name":"quick-start"}`).
+- Coding tasks that need sequence, verification, or review structure → choose an appropriate workflow. Follow your system instructions when deciding whether to delegate.
 - Templates in-repo often include: `feature`, `bugfix`, `refactor`, `remove`, `chore`, `adversarial-review`, `investigate`, `flake-hunt`, `plan`, `prd`. Confirm with `list_templates` — do not invent ids.
 - Bind `workflow_spec` when exact steps must be observable/auditable; otherwise let the child `select_template`.
 
@@ -23,5 +23,5 @@ You already have the `workflow` tool schema (actions, params). This page is when
 
 ## See also
 
-- Entry: `docs {"name":"quick-start"}`
+- Manual index: `docs {}`
 - Full human reference / embedded config examples: `docs/workflow.md` in the repo

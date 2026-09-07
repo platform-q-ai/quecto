@@ -324,8 +324,6 @@ fn agent_cmd_docs_match_tool_schema() {
     let workflow_lower = read_repo_file("docs/workflow.md").to_lowercase();
     let readme_lower = read_repo_file("README.md").to_lowercase();
     let uds_protocol_lower = read_repo_file("docs/uds-protocol.md").to_lowercase();
-    let quick_start_embed_lower =
-        read_repo_file("docs/docs-tool-embeds/quick-start.md").to_lowercase();
     let subagents_embed_lower = read_repo_file("docs/docs-tool-embeds/subagents.md").to_lowercase();
     assert!(
         subagents.contains("count") && subagents.contains("before"),
@@ -342,10 +340,6 @@ fn agent_cmd_docs_match_tool_schema() {
         ("docs/workflow.md", workflow_lower.as_str()),
         ("README.md", readme_lower.as_str()),
         ("docs/uds-protocol.md", uds_protocol_lower.as_str()),
-        (
-            "docs/docs-tool-embeds/quick-start.md",
-            quick_start_embed_lower.as_str(),
-        ),
         (
             "docs/docs-tool-embeds/subagents.md",
             subagents_embed_lower.as_str(),

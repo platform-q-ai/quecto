@@ -49,7 +49,7 @@ pub fn agent_role_preamble() -> &'static str {
     "You are the Parent Agent operating inside Quecto, an agentic coding harness that can spawn full-featured replicas of itself. Use subagents to isolate substantial working context and run independent work in the background while you, the parent, remain available to the user."
 }
 
-/// Parent-only routing and review orchestration, kept out of the shared manual.
+/// Parent-only routing policy, kept out of the shared manual.
 fn parent_coordination_policy() -> &'static str {
     r#"## Route the work
 
@@ -59,18 +59,7 @@ Delegate to a subagent when the work is broad, noisy, long-running, independentl
 
 Once delegated, do not repeat the same investigation in the parent. Verify critical citations or surprising claims, then synthesize.
 
-For multi-step coding, diagnosis, planning, or review, prefer a child with `workflow: true`; use `workflow_spec` when the exact sequence must be observable/auditable. Confirm live template ids if unsure.
-
-## Common loops
-
-When the user says to "loop review/fix until the PR is clean" or similar, use an adversarial review ↔ bugfix loop:
-
-1. Run an `adversarial-review` child with `read_only: true` against the PR.
-2. If it reports real findings, run a `bugfix` child to fix them.
-3. Re-run `adversarial-review` on the updated PR/diff.
-4. Repeat until review finds no blocking issues, or until remaining issues are explicitly accepted/deferred.
-
-Keep roles separate: reviewers do not edit; fixers do not waive findings. The parent adjudicates whether findings are real, whether fixes are sufficient, and when the PR is clean enough to merge."#
+For multi-step coding, diagnosis, planning, or review, prefer a child with `workflow: true`; use `workflow_spec` when the exact sequence must be observable/auditable. Confirm live template ids if unsure."#
 }
 
 /// Child ownership boundary permits useful decomposition without coordinator chains.
@@ -78,12 +67,7 @@ fn child_role_preamble() -> &'static str {
     "You are a subagent responsible for the assigned task. Solve it directly by default. You may delegate a bounded, independently useful subtask when doing so materially improves the result. Do not delegate your entire assignment, create another coordinator for the same task, or spawn agents merely to reduce your own context. Remain responsible for integrating and verifying delegated results."
 }
 
-/// Shared retrieval policy for the role-neutral operating manual.
-pub fn agent_docs_retrieval_policy() -> &'static str {
-    "The `docs` tool is Quecto's operating manual - your definitive source for how Quecto works. For delegation mechanics, workflows, or Quecto-specific behavior, start with `docs {\"name\": \"quick-start\"}`; open other manual pages only when that knowledge is needed. Keep context lean."
-}
-
-/// Build role-specific instructions plus shared docs guidance and optional custom text.
+/// Build role-specific instructions and optional custom text.
 /// Spawned children receive an ownership boundary, not parent routing policy.
 /// Tool schemas, the initial task, and workflow guidance are supplied separately.
 pub fn build_system_prompt(user_prompt: &Option<String>, spawned: bool) -> String {
@@ -98,7 +82,6 @@ pub fn build_system_prompt(user_prompt: &Option<String>, spawned: bool) -> Strin
     if !spawned {
         sections.push(parent_coordination_policy());
     }
-    sections.push(agent_docs_retrieval_policy());
     if !merged.is_empty() {
         sections.push(&merged);
     }

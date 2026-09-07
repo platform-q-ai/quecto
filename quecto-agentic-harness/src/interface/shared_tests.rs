@@ -76,19 +76,20 @@ fn test_merge_prompts_empty_user() {
 }
 
 #[test]
-fn test_build_system_prompt_docs_policy_only() {
+fn test_parent_prompt_contains_only_role_and_routing_guidance() {
     let result = build_system_prompt(&None, false);
     assert!(!result.contains("Current date and time:"));
     assert!(result.contains(agent_role_preamble()));
     assert!(result.contains("Parent Agent"));
-    assert!(result.contains("`docs` tool"));
-    assert!(result.contains("operating manual"));
-    assert!(result.contains("quick-start"));
-    assert!(result.contains("definitive source"));
+    assert!(!result.contains("`docs` tool"));
+    assert!(!result.contains("operating manual"));
+    assert!(!result.contains("quick-start"));
+    assert!(!result.contains("definitive source"));
     assert!(!result.contains("name `quecto`"));
     assert!(!result.contains("quecto-tui"));
     assert!(!result.contains("quecto-api"));
     assert!(!result.contains("quecto-mcp"));
+    assert!(result.ends_with("Confirm live template ids if unsure."));
 }
 
 #[test]
@@ -96,13 +97,13 @@ fn test_build_system_prompt_with_user_only() {
     let result = build_system_prompt(&Some("Be helpful".to_string()), false);
     assert!(!result.contains("Current date and time:"));
     assert!(result.contains(agent_role_preamble()));
-    assert!(result.contains(agent_docs_retrieval_policy()));
+    assert!(!result.contains("operating manual"));
     assert!(result.contains("Be helpful"));
 }
 
 /// Given either role and optional custom instructions, role boundaries remain explicit.
 #[test]
-fn role_specific_prompts_preserve_custom_text_and_share_docs_guidance() {
+fn role_specific_prompts_preserve_custom_text_without_docs_guidance() {
     let child_role = "You are a subagent responsible for the assigned task. Solve it directly by default. You may delegate a bounded, independently useful subtask when doing so materially improves the result. Do not delegate your entire assignment, create another coordinator for the same task, or spawn agents merely to reduce your own context. Remain responsible for integrating and verifying delegated results.";
     for custom in [
         None,
@@ -117,11 +118,15 @@ fn role_specific_prompts_preserve_custom_text_and_share_docs_guidance() {
         assert!(parent.contains(agent_role_preamble()));
         assert!(parent.contains("Delegate to a subagent when the work is broad"));
         assert!(parent.contains("Once delegated, do not repeat the same investigation"));
-        assert!(parent.contains("loop review/fix until the PR is clean"));
+        assert!(!parent.contains("Common loops"));
+        assert!(!parent.contains("quick-start"));
+        assert!(!child.contains("quick-start"));
+        assert!(!child.contains("operating manual"));
+        if custom.as_ref().is_none_or(|text| text.is_empty()) {
+            assert!(child.ends_with(child_role));
+        }
         assert!(!parent.contains(child_role));
         for prompt in [&parent, &child] {
-            assert!(prompt.contains(agent_docs_retrieval_policy()));
-            assert!(prompt.contains("quick-start"));
             if let Some(text) = &custom {
                 if !text.is_empty() {
                     assert!(prompt.ends_with(text));

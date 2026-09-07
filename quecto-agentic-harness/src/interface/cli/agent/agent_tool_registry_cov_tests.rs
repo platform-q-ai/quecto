@@ -108,7 +108,7 @@ async fn build_tool_registry_exposes_shared_docs_for_both_roles() {
     let config = Config::default();
     let http = reqwest::Client::new();
 
-    // Spawned child path: shared quick-start is listed and readable.
+    // Spawned child path: shared workflow is listed and readable.
     let mut spawned_flags = flags();
     spawned_flags.spawned = true;
     let mut stderr = String::new();
@@ -137,27 +137,27 @@ async fn build_tool_registry_exposes_shared_docs_for_both_roles() {
     let toc = spawned.registry.execute("docs", "{}").await.unwrap();
     assert!(!toc.is_error, "spawned TOC must succeed: {}", toc.content);
     assert!(
-        toc.content.contains("quick-start"),
-        "spawned registry docs TOC must list quick-start; got:\n{}",
+        toc.content.contains("workflow"),
+        "spawned registry docs TOC must list workflow; got:\n{}",
         toc.content
     );
 
     let direct = spawned
         .registry
-        .execute("docs", r#"{"name":"quick-start"}"#)
+        .execute("docs", r#"{"name":"workflow"}"#)
         .await
         .unwrap();
     assert!(
         !direct.is_error,
-        "spawned registry must serve quick-start; got:\n{}",
+        "spawned registry must serve workflow; got:\n{}",
         direct.content
     );
     assert!(
-        direct.content.contains("Spawn and recover results"),
-        "spawned registry must return shared quick-start body"
+        direct.content.contains("Workflow"),
+        "spawned registry must return shared workflow body"
     );
 
-    // Top-level path: same glue must keep quick-start available.
+    // Top-level path: same glue must keep workflow available.
     let top_flags = flags(); // spawned: false
     stderr.clear();
     let top = build_tool_registry(ToolRegistryArgs {
@@ -176,21 +176,21 @@ async fn build_tool_registry_exposes_shared_docs_for_both_roles() {
     let top_toc = top.registry.execute("docs", "{}").await.unwrap();
     assert!(!top_toc.is_error);
     assert!(
-        top_toc.content.contains("quick-start — "),
-        "top-level registry docs TOC must list quick-start; got:\n{}",
+        top_toc.content.contains("workflow — "),
+        "top-level registry docs TOC must list workflow; got:\n{}",
         top_toc.content
     );
     let top_direct = top
         .registry
-        .execute("docs", r#"{"name":"quick-start"}"#)
+        .execute("docs", r#"{"name":"workflow"}"#)
         .await
         .unwrap();
     assert!(!top_direct.is_error);
     assert_eq!(top_toc.content, toc.content);
     assert_eq!(top_direct.content, direct.content);
     assert!(
-        top_direct.content.contains("Spawn and recover results"),
-        "top-level registry must still serve quick-start body"
+        top_direct.content.contains("Workflow"),
+        "top-level registry must still serve workflow body"
     );
 }
 

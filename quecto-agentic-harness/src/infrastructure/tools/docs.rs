@@ -21,10 +21,6 @@ use std::pin::Pin;
 /// cannot silently drift.
 const EMBEDDED_DOCS: &[(&str, &str)] = &[
     (
-        "quick-start",
-        include_str!("../../../docs/docs-tool-embeds/quick-start.md"),
-    ),
-    (
         "subagents",
         include_str!("../../../docs/docs-tool-embeds/subagents.md"),
     ),
@@ -101,7 +97,7 @@ fn available_listing() -> String {
     let mut out = String::from(
         "Quecto operating manual (`docs` tool).\n\
          Call with no name to list pages; pass a name to read one.\n\
-         Start with `quick-start` for tool mechanics; open other pages only when needed.\n\n\
+         Open manual pages only when needed.\n\n\
          Table of contents:\n",
     );
     for (name, body) in EMBEDDED_DOCS {
@@ -112,7 +108,7 @@ fn available_listing() -> String {
         out.push_str(title);
         out.push('\n');
     }
-    out.push_str("\nRead one with: docs {\"name\": \"quick-start\"}");
+    out.push_str("\nRead one with: docs {\"name\": \"workflow\"}");
     out
 }
 
@@ -128,7 +124,7 @@ impl Default for DocsTool {
 }
 
 impl DocsTool {
-    /// Top-level (parent) docs tool: full manual including `quick-start`.
+    /// Top-level (parent) docs tool: shared operating manual.
     pub fn new() -> Self {
         Self::with_content_policy(DocsContentPolicy::Parent)
     }
@@ -148,14 +144,14 @@ impl Tool for DocsTool {
     fn definition(&self) -> ToolDefinition {
         let description = "Quecto operating manual (embedded in the binary, CWD-independent). \
             Call with no name (or {}) for the table of contents (name + title per page). \
-            Pass a name to read one page. Start with \"quick-start\" for tool mechanics; \
-            open deep-dive pages only when needed. Do not read docs from the filesystem. \
-            Example: docs {\"name\": \"quick-start\"}"
+            Pass a name to read one page. \
+            Open deep-dive pages only when needed. Do not read docs from the filesystem. \
+            Example: docs {\"name\": \"workflow\"}"
             .into();
         ToolDefinition {
             name: "docs".into(),
             description,
-            parameters_schema: r#"{"type":"object","properties":{"name":{"type":"string","description":"Manual page to read, e.g. \"quick-start\" or \"workflow\" (a docs/ prefix or .md suffix is accepted). Omit to list the table of contents."}}}"#.into(),
+            parameters_schema: r#"{"type":"object","properties":{"name":{"type":"string","description":"Manual page to read, e.g. \"subagents\" or \"workflow\" (a docs/ prefix or .md suffix is accepted). Omit to list the table of contents."}}}"#.into(),
         }
     }
 
