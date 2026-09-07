@@ -17,6 +17,10 @@ pub enum Key {
     Down,
     Left,
     Right,
+    /// Ctrl+Left, when the terminal reports a distinct modified arrow.
+    CtrlLeft,
+    /// Ctrl+Right, when the terminal reports a distinct modified arrow.
+    CtrlRight,
     Home,
     End,
     PageUp,
@@ -133,6 +137,8 @@ fn parse_csi(rest: &[u8]) -> Option<(Key, usize)> {
     let key = match terminator {
         b'A' => Key::Up,
         b'B' => Key::Down,
+        b'C' if params == b"1;5" => Key::CtrlRight,
+        b'D' if params == b"1;5" => Key::CtrlLeft,
         b'C' => Key::Right,
         b'D' => Key::Left,
         b'H' => Key::Home,
@@ -279,6 +285,8 @@ fn parse_kitty_key(params: &[u8]) -> Key {
     match keycode {
         1 => Key::Up,
         2 => Key::Down,
+        57351 if ctrl && !shift && !alt => Key::CtrlRight,
+        57350 if ctrl && !shift && !alt => Key::CtrlLeft,
         3 => Key::Right,
         4 => Key::Left,
         5 => Key::Home,

@@ -702,3 +702,6 @@ fn history_cap_keeps_oldest_at_exactly_500_entries() {
     }
     assert_eq!(e.text(), "entry-0", "exactly 500 entries keep the oldest");
 }
+
+#[path = "editing_shortcuts_tests.rs"]
+mod editing_shortcuts_tests;

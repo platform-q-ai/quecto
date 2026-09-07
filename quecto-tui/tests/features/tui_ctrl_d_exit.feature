@@ -22,6 +22,12 @@ Feature: TUI Ctrl+D exits the app unconditionally
     Then the active agent should continue without a Ctrl-D abort
     And then the app should exit
 
+  Scenario: Ctrl+D exits without editing a non-empty draft
+    Given the editor contains "draft text"
+    When the user presses Ctrl+D
+    Then the app should exit
+    And the editor should still contain "draft text"
+
   Scenario: Ctrl+D exits with autocomplete active
     Given the autocomplete dropdown is showing
     When the user presses Ctrl+D
