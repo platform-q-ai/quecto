@@ -137,6 +137,21 @@ fn test_definition() {
             .contains("apparent failure, disconnect, or provider-error recovery")
     );
     assert!(!def.description.contains("get_messages_tail"));
+    assert!(
+        def.description.contains(
+            "Always set agent_id to a concise, user-friendly display name describing the agent's purpose"
+        ),
+        "spawn instructions must require a purpose-oriented display name"
+    );
+
+    let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
+    let agent_id_description = schema["properties"]["agent_id"]["description"]
+        .as_str()
+        .unwrap();
+    assert!(agent_id_description.contains("Required display name"));
+    assert!(agent_id_description.contains("concise, user-friendly"));
+    assert!(agent_id_description.contains("purpose"));
+    assert!(agent_id_description.contains("spawn-returned UUID"));
 }
 
 #[test]
