@@ -44,11 +44,25 @@ async fn scrolled_chat_shows_jump_tip_until_ctrl_g_returns_to_latest() {
         ),
         "tip should be horizontally centered"
     );
+    let first_chat_row = raw_lines
+        .iter()
+        .position(|line| line.contains("history line"))
+        .expect("conversation should be visible");
     assert!(
         raw_lines[..tip_row]
             .iter()
             .any(|line| line.contains("history line")),
         "tip should overlay the bottom of the conversation, after chat content"
+    );
+    assert!(
+        first_chat_row > 0
+            && crate::components::ansi::strip_ansi(&raw_lines[first_chat_row - 1])
+                .rsplit('│')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .is_empty(),
+        "a blank row should separate the main-pane title from the conversation"
     );
 
     h.press(Key::Ctrl('g'));

@@ -478,9 +478,9 @@ impl App {
         while chat_lines.len() < chat_height {
             chat_lines.insert(0, String::new());
         }
-        lines.extend(chat_lines);
-        // The jump hint floats over this separator instead of displacing chat.
+        // Preserve the breathing room between the main-pane title and chat.
         lines.push(String::new());
+        lines.extend(chat_lines);
         let available = height.saturating_sub(bottom_height);
         while lines.len() < available {
             lines.insert(top_chrome_height + 1, String::new());
