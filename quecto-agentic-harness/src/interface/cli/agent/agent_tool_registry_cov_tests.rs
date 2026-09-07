@@ -101,16 +101,14 @@ fn build_tool_registry_uses_cli_session_name_and_model_override() {
     assert!(!built.extension_prompt_snippets.contains("failed"));
 }
 
-/// #1319 glue: `flags.spawned` must reach the docs tool installed by
-/// `build_tool_registry`. Unit tests on `DocsTool` alone cannot catch a
-/// hard-coded `false` at this call site.
+/// Both CLI runtime roles expose the shared manual through registry wiring.
 #[tokio::test]
-async fn build_tool_registry_forwards_spawned_flag_to_docs_tool() {
+async fn build_tool_registry_exposes_shared_docs_for_both_roles() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = Config::default();
     let http = reqwest::Client::new();
 
-    // Spawned child path: parent-only quick-start is rejected / omitted.
+    // Spawned child path: shared quick-start is listed and readable.
     let mut spawned_flags = flags();
     spawned_flags.spawned = true;
     let mut stderr = String::new();
@@ -139,8 +137,8 @@ async fn build_tool_registry_forwards_spawned_flag_to_docs_tool() {
     let toc = spawned.registry.execute("docs", "{}").await.unwrap();
     assert!(!toc.is_error, "spawned TOC must succeed: {}", toc.content);
     assert!(
-        !toc.content.contains("quick-start"),
-        "spawned registry docs TOC must omit quick-start; got:\n{}",
+        toc.content.contains("quick-start"),
+        "spawned registry docs TOC must list quick-start; got:\n{}",
         toc.content
     );
 
@@ -150,13 +148,13 @@ async fn build_tool_registry_forwards_spawned_flag_to_docs_tool() {
         .await
         .unwrap();
     assert!(
-        direct.is_error,
-        "spawned registry must reject quick-start; got ok:\n{}",
+        !direct.is_error,
+        "spawned registry must serve quick-start; got:\n{}",
         direct.content
     );
     assert!(
-        !direct.content.contains("Route the work"),
-        "spawned registry must not return quick-start body"
+        direct.content.contains("Spawn and recover results"),
+        "spawned registry must return shared quick-start body"
     );
 
     // Top-level path: same glue must keep quick-start available.
@@ -188,8 +186,10 @@ async fn build_tool_registry_forwards_spawned_flag_to_docs_tool() {
         .await
         .unwrap();
     assert!(!top_direct.is_error);
+    assert_eq!(top_toc.content, toc.content);
+    assert_eq!(top_direct.content, direct.content);
     assert!(
-        top_direct.content.contains("Route the work"),
+        top_direct.content.contains("Spawn and recover results"),
         "top-level registry must still serve quick-start body"
     );
 }

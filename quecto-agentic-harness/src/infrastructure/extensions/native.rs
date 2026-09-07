@@ -144,7 +144,7 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
             )),
             // Quecto operating manual, embedded in the binary. Runtime profile
             // policy owns availability; the docs tool only receives explicit
-            // content policy for parent-only quick-start filtering (#1319/#1334).
+            // role-compatible construction; manual content is shared by all agents.
             Arc::new(
                 crate::infrastructure::tools::docs::DocsTool::with_content_policy(
                     deps.docs_content_policy,

@@ -128,15 +128,15 @@ async fn spawned_disable_tools_restrictions_are_layered_over_child_profile_polic
     let toc = built.registry.execute("docs", "{}").await.unwrap();
     assert!(!toc.is_error);
     assert!(
-        !toc.content.contains("quick-start"),
-        "child docs content policy omits quick-start; got {toc:?}"
+        toc.content.contains("quick-start"),
+        "child runtime exposes shared quick-start; got {toc:?}"
     );
     let quick_start = built
         .registry
         .execute("docs", r#"{"name":"quick-start"}"#)
         .await
         .unwrap();
-    assert!(quick_start.is_error);
+    assert!(!quick_start.is_error);
 }
 
 #[tokio::test]

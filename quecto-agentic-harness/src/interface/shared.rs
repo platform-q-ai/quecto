@@ -44,51 +44,65 @@ pub fn merge_prompts(user_prompt: &Option<String>) -> String {
     }
 }
 
-/// Stable parent-agent identity injected into top-level agent system prompts.
-///
-/// Short on purpose (~one paragraph). Full coordination rules live in the
-/// `docs` operating manual (`quick-start`), not here. Spawned children omit this
-/// (#1319) so they do not re-delegate under parent guidance.
+/// Parent identity and coordination policy; never injected into spawned children.
 pub fn agent_role_preamble() -> &'static str {
     "You are the Parent Agent operating inside Quecto, an agentic coding harness that can spawn full-featured replicas of itself. Use subagents to isolate substantial working context and run independent work in the background while you, the parent, remain available to the user."
 }
 
-/// Compact Quecto capability signpost injected into top-level agent system prompts.
-///
-/// This is intentionally a retrieval policy, not full documentation. It tells
-/// parent agents where to look only when Quecto-specific operational knowledge is
-/// needed, keeping normal prompt/context usage small. Spawned children omit this
-/// parent-oriented policy (#1319).
-pub fn agent_docs_retrieval_policy() -> &'static str {
-    "The `docs` tool is Quecto's operating manual - your definitive source for how Quecto works. For parent coordination, delegation, workflows, or Quecto-specific behavior, start with `docs {\"name\": \"quick-start\"}`; open other manual pages only when that knowledge is needed. Keep context lean."
+/// Parent-only routing and review orchestration, kept out of the shared manual.
+fn parent_coordination_policy() -> &'static str {
+    r#"## Route the work
+
+Handle directly in the parent when the task is focused, short-lived, low-context, already localized, or requires user-facing synthesis/judgment.
+
+Delegate to a subagent when the work is broad, noisy, long-running, independently parallelizable, review-shaped, or likely to produce lots of intermediate evidence while the parent only needs conclusions.
+
+Once delegated, do not repeat the same investigation in the parent. Verify critical citations or surprising claims, then synthesize.
+
+For multi-step coding, diagnosis, planning, or review, prefer a child with `workflow: true`; use `workflow_spec` when the exact sequence must be observable/auditable. Confirm live template ids if unsure.
+
+## Common loops
+
+When the user says to "loop review/fix until the PR is clean" or similar, use an adversarial review ↔ bugfix loop:
+
+1. Run an `adversarial-review` child with `read_only: true` against the PR.
+2. If it reports real findings, run a `bugfix` child to fix them.
+3. Re-run `adversarial-review` on the updated PR/diff.
+4. Repeat until review finds no blocking issues, or until remaining issues are explicitly accepted/deferred.
+
+Keep roles separate: reviewers do not edit; fixers do not waive findings. The parent adjudicates whether findings are real, whether fixes are sufficient, and when the PR is clean enough to merge."#
 }
 
-/// Build a complete system prompt for a top-level or spawned agent (#1319).
-///
-/// Top-level (`spawned = false`) combines:
-/// 1. Parent-agent role preamble ([`agent_role_preamble`])
-/// 2. Quecto operating-manual retrieval policy ([`agent_docs_retrieval_policy`])
-/// 3. User-provided system prompt (if any)
-///
-/// Spawned children (`spawned = true`) omit parent identity and parent
-/// coordination/docs policy, retaining only the optional explicit system
-/// prompt (e.g. `spawn.system`). Tool schemas, the initial task, and workflow
-/// guidance are supplied separately by the runtime.
-///
-/// Providers may still inject their own date metadata; Quecto no longer
-/// prepends a local datetime preamble.
+/// Child ownership boundary permits useful decomposition without coordinator chains.
+fn child_role_preamble() -> &'static str {
+    "You are a subagent responsible for the assigned task. Solve it directly by default. You may delegate a bounded, independently useful subtask when doing so materially improves the result. Do not delegate your entire assignment, create another coordinator for the same task, or spawn agents merely to reduce your own context. Remain responsible for integrating and verifying delegated results."
+}
+
+/// Shared retrieval policy for the role-neutral operating manual.
+pub fn agent_docs_retrieval_policy() -> &'static str {
+    "The `docs` tool is Quecto's operating manual - your definitive source for how Quecto works. For delegation mechanics, workflows, or Quecto-specific behavior, start with `docs {\"name\": \"quick-start\"}`; open other manual pages only when that knowledge is needed. Keep context lean."
+}
+
+/// Build role-specific instructions plus shared docs guidance and optional custom text.
+/// Spawned children receive an ownership boundary, not parent routing policy.
+/// Tool schemas, the initial task, and workflow guidance are supplied separately.
 pub fn build_system_prompt(user_prompt: &Option<String>, spawned: bool) -> String {
     let merged = merge_prompts(user_prompt);
-    if spawned {
-        return merged;
-    }
-    let role = agent_role_preamble();
-    let docs_policy = agent_docs_retrieval_policy();
-    if merged.is_empty() {
-        format!("{}\n\n{}", role, docs_policy)
+    let role = if spawned {
+        child_role_preamble()
     } else {
-        format!("{}\n\n{}\n\n{}", role, docs_policy, merged)
+        agent_role_preamble()
+    };
+    let conventions = "Follow the codebase’s conventions whenever possible. When working inside the Quecto codebase specifically, always prefer the BDD/TDD red–green–refactor process and apply Clean Architecture and SOLID principles.";
+    let mut sections = vec![conventions, role];
+    if !spawned {
+        sections.push(parent_coordination_policy());
     }
+    sections.push(agent_docs_retrieval_policy());
+    if !merged.is_empty() {
+        sections.push(&merged);
+    }
+    sections.join("\n\n")
 }
 
 /// Append extension system prompt snippets in a clearly delimited section.

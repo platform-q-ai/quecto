@@ -37,7 +37,7 @@ async fn execute_without_name_lists_toc_with_titles() {
     assert!(result.content.contains("operating manual"));
     assert!(result.content.contains("Table of contents:"));
     assert!(result.content.contains("quick-start — "));
-    assert!(result.content.contains("Quecto parent-agent quick start"));
+    assert!(result.content.contains("Quecto agent quick start"));
     assert!(result.content.contains("subagents — "));
     assert!(result.content.contains("workflow — "));
     assert!(result.content.contains("extensions — "));
@@ -51,7 +51,7 @@ async fn execute_with_name_returns_doc_body() {
     let tool = DocsTool::new();
     let result = tool.execute(r#"{"name":"quick-start"}"#).await.unwrap();
     assert!(!result.is_error);
-    assert!(result.content.contains("Route the work"));
+    assert!(result.content.contains("Spawn and recover results"));
     assert!(result.content.contains("get_messages"));
 }
 
@@ -74,7 +74,7 @@ async fn execute_accepts_md_suffix_and_docs_prefix() {
         .await
         .unwrap();
     assert!(!result.is_error);
-    assert!(result.content.contains("Route the work"));
+    assert!(result.content.contains("Spawn and recover results"));
 }
 
 #[tokio::test]
@@ -103,58 +103,39 @@ async fn top_level_toc_includes_quick_start() {
     assert!(result.content.contains("quick-start — "));
 }
 
-/// #1319: spawned children omit quick-start from the TOC.
+/// Given a child runtime, the shared quick start is listed and readable via every alias.
 #[tokio::test]
-async fn spawned_toc_omits_quick_start() {
-    let tool = DocsTool::for_child_content();
-    let result = tool.execute("{}").await.unwrap();
-    assert!(!result.is_error);
-    assert!(
-        !result.content.contains("quick-start"),
-        "spawned TOC must omit quick-start; got:\n{}",
-        result.content
+async fn spawned_can_read_shared_quick_start_and_aliases() {
+    let child = DocsTool::for_child_content();
+    let parent = DocsTool::new();
+    assert_eq!(
+        child.definition().description,
+        parent.definition().description
     );
-    // Other pages remain available.
-    assert!(result.content.contains("subagents — "));
-    assert!(result.content.contains("workflow — "));
-    assert!(result.content.contains("extensions — "));
-    assert!(result.content.contains("models — "));
-}
-
-/// #1319: direct retrieval of quick-start is rejected for spawned children.
-#[tokio::test]
-async fn spawned_rejects_direct_quick_start() {
-    let tool = DocsTool::for_child_content();
-    let result = tool.execute(r#"{"name":"quick-start"}"#).await.unwrap();
-    assert!(result.is_error);
-    assert!(result.content.contains("No embedded doc named"));
+    assert!(child.definition().description.contains("quick-start"));
+    let toc = child.execute("{}").await.unwrap();
+    assert!(!toc.is_error);
     assert!(
-        !result.content.contains("Route the work"),
-        "must not return quick-start body"
+        toc.content
+            .contains("quick-start — Quecto agent quick start")
     );
-}
-
-/// #1319: aliases like docs/quick-start.md are also rejected when spawned.
-#[tokio::test]
-async fn spawned_rejects_quick_start_aliases() {
-    let tool = DocsTool::for_child_content();
+    assert_eq!(toc.content, parent.execute("{}").await.unwrap().content);
     for name in [
+        "quick-start",
         "quick-start.md",
         "docs/quick-start.md",
         "docs/docs-tool-embeds/quick-start.md",
         "QUICK-START",
     ] {
         let args = format!(r#"{{"name":"{name}"}}"#);
-        let result = tool.execute(&args).await.unwrap();
-        assert!(
-            result.is_error,
-            "spawned must reject alias {name}; got ok content:\n{}",
-            result.content
-        );
-        assert!(
-            !result.content.contains("Route the work"),
-            "alias {name} must not return quick-start body"
-        );
+        let result = child.execute(&args).await.unwrap();
+        assert!(!result.is_error, "alias {name}: {}", result.content);
+        assert_eq!(result.content, parent.execute(&args).await.unwrap().content);
+        assert!(result.content.contains("Spawn and recover results"));
+        assert!(!result.content.contains("Delegate to a subagent when"));
+        assert!(!result.content.contains("prefer a child with"));
+        assert!(!result.content.contains("Run an `adversarial-review` child"));
+        assert!(!result.content.contains("Parent-agent identity"));
     }
 }
 
@@ -173,7 +154,7 @@ async fn top_level_quick_start_still_available() {
     let tool = DocsTool::with_content_policy(DocsContentPolicy::Parent);
     let result = tool.execute(r#"{"name":"quick-start"}"#).await.unwrap();
     assert!(!result.is_error);
-    assert!(result.content.contains("Route the work"));
+    assert!(result.content.contains("Spawn and recover results"));
 }
 
 #[test]
