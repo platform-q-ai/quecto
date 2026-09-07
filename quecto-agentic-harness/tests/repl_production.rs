@@ -69,3 +69,72 @@ fn config_only_invocation_uses_the_live_repl() {
         "{stdout}"
     );
 }
+
+#[test]
+fn standalone_oauth_with_redirected_stdin_starts_browser_callbacks() {
+    use std::io::Read;
+    use std::net::TcpStream;
+
+    for (provider, address, path) in [
+        ("openai", "127.0.0.1:1455", "/auth/callback"),
+        ("xai", "127.0.0.1:56121", "/callback"),
+    ] {
+        let base = tempfile::tempdir().unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_quecto"))
+            .args(["auth", "login", "--provider", provider])
+            .env("QUECTO_BASE_DIR", base.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut response = String::new();
+        while Instant::now() < deadline {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            if let Ok(mut stream) = TcpStream::connect(address) {
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(1)))
+                    .unwrap();
+                // A real callback listener rejects missing state without contacting a provider.
+                write!(
+                    stream,
+                    "GET {path}?code=test HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+                )
+                .unwrap();
+                let _ = stream.read_to_string(&mut response);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let _ = child.kill();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            response.starts_with("HTTP/1.1 400"),
+            "{provider}: callback listener unavailable: {response:?}; stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn piped_repl_oauth_fails_promptly_for_both_providers() {
+    for provider in ["openai", "xai"] {
+        let output = run_repl(
+            &[],
+            &format!("auth login --provider {provider}\n\nhelp\nexit\n"),
+        );
+        assert!(!output.status.success(), "{provider}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("could not extract authorization code"),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("Setup and configuration commands"),
+            "{stdout}"
+        );
+    }
+}

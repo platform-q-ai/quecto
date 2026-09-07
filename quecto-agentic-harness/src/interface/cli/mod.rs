@@ -186,6 +186,8 @@ pub struct CliContext {
     pub stdin_data: Option<String>,
     /// Whether active stdin is interactive, when known.
     pub stdin_is_tty: Option<bool>,
+    /// Whether commands are being delegated by the setup/configuration REPL.
+    pub is_repl: bool,
     /// Override OAuth base URL for testing (e.g. wiremock URI).
     pub oauth_base_url: Option<String>,
     /// Override process current working directory for hermetic tests.
@@ -405,11 +407,15 @@ pub fn run_repl_with_output(
             exit_code: 1,
         };
     }
+    let ctx = CliContext {
+        stdin_is_tty: Some(is_tty),
+        ..ctx.clone()
+    };
     let exit_code = super::repl::run_repl(
         std::io::BufReader::new(input),
         &mut output,
         is_tty,
-        |args, reader| run_repl_command(ctx, args, reader),
+        |args, reader| run_repl_command(&ctx, args, reader),
     );
     CliOutput {
         stdout: String::from_utf8_lossy(&output).to_string(),
@@ -423,6 +429,11 @@ fn run_repl_command(
     args: Vec<String>,
     reader: &mut dyn std::io::BufRead,
 ) -> (String, String, i32) {
+    let ctx = CliContext {
+        is_repl: true,
+        ..ctx.clone()
+    };
+    let ctx = &ctx;
     let mut stdout = String::new();
     let mut stderr = String::new();
     let code = match args.first().map(String::as_str) {

@@ -296,6 +296,12 @@ fn cmd_auth_login_oauth(
     0
 }
 
+/// Redirected stdin only disables browser callbacks in the REPL, where waiting
+/// would stall a command stream. Standalone callbacks do not require stdin.
+fn skip_browser_callback(ctx: &CliContext) -> bool {
+    ctx.stdin_data.is_some() || (ctx.is_repl && ctx.stdin_is_tty == Some(false))
+}
+
 /// OpenAI OAuth login: PKCE + browser callback on localhost:1455.
 fn cmd_auth_login_openai_oauth(
     ctx: &CliContext,
@@ -329,11 +335,10 @@ fn cmd_auth_login_openai_oauth(
         }
     };
 
-    // In test mode (stdin_data set), skip the browser callback and go
-    // straight to the manual code-paste fallback.
-    let code = if ctx.stdin_data.is_some() || ctx.stdin_is_tty == Some(false) {
+    // Test input and non-interactive REPL commands use the manual fallback.
+    let code = if skip_browser_callback(ctx) {
         let err = crate::domain::error::DomainError::Provider(
-            "browser callback skipped in test mode".into(),
+            "browser callback skipped for supplied input or non-interactive REPL".into(),
         );
         match extract_fallback_code_with_reader(ctx, err, Some(&state), out, reader) {
             Some(code) => code,
