@@ -10,7 +10,7 @@ use crate::components::utils::visible_width;
 use unicode_width::UnicodeWidthChar;
 
 /// Splice one overlay row into a frame when the target row is visible.
-pub fn composite_line(
+pub fn splice_frame_line(
     lines: &mut [String],
     row: usize,
     overlay: &str,

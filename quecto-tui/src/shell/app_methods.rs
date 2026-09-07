@@ -504,7 +504,7 @@ impl App {
                 .saturating_sub(1)
                 .min(lines.len().saturating_sub(1));
             let col = width.saturating_sub(overlay_width) / 2;
-            crate::components::overlay::composite_line(
+            crate::components::overlay::splice_frame_line(
                 &mut lines,
                 row,
                 &overlay,
@@ -600,7 +600,7 @@ impl App {
         for i in 0..overlay_height {
             let row = start_row + i;
             if i < overlay_lines.len() {
-                crate::components::overlay::composite_line(
+                crate::components::overlay::splice_frame_line(
                     lines,
                     row,
                     &overlay_lines[i],
