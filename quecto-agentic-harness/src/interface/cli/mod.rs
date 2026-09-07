@@ -279,13 +279,15 @@ pub fn run(args: Vec<String>) -> i32 {
         ..Default::default()
     };
 
-    // No arguments → enter REPL mode with real stdin/stdout
-    if args.len() < 2 {
+    // Enter the live REPL when no command remains after global options.
+    // `run_with_output` intentionally uses captured input, so this decision must
+    // happen here for config-only production invocations.
+    if strip_global_config_flag(&args).len() < 2 {
         return super::repl::run_repl(
             std::io::stdin().lock(),
             std::io::stdout(),
             std::io::IsTerminal::is_terminal(&std::io::stdin()),
-            |args| run_repl_command(&ctx, args),
+            |args, reader| run_repl_command(&ctx, args, reader),
         );
     }
 
@@ -376,7 +378,7 @@ pub fn run_repl_with_output(
         std::io::BufReader::new(input),
         &mut output,
         is_tty,
-        |args| run_repl_command(ctx, args),
+        |args, reader| run_repl_command(ctx, args, reader),
     );
     CliOutput {
         stdout: String::from_utf8_lossy(&output).to_string(),
@@ -385,11 +387,17 @@ pub fn run_repl_with_output(
     }
 }
 
-fn run_repl_command(ctx: &CliContext, args: Vec<String>) -> (String, String, i32) {
+fn run_repl_command(
+    ctx: &CliContext,
+    args: Vec<String>,
+    reader: &mut dyn std::io::BufRead,
+) -> (String, String, i32) {
     let mut stdout = String::new();
     let mut stderr = String::new();
     let code = match args.first().map(String::as_str) {
-        Some("auth") => auth::cmd_auth(ctx, &args[1..], &mut stdout, &mut stderr),
+        Some("auth") => {
+            auth::cmd_auth_with_reader(ctx, &args[1..], &mut stdout, &mut stderr, reader)
+        }
         Some("status") => commands::cmd_status(ctx, &mut stdout, &mut stderr),
         Some("models") => models::cmd_models(ctx, &args[1..], &mut stdout, &mut stderr),
         _ => 1,
@@ -465,3 +473,6 @@ fn help_text(out: &mut String) {
 #[cfg(test)]
 #[path = "leading_config_dispatch_tests.rs"]
 mod leading_config_dispatch_tests;
+
+#[cfg(test)]
+mod mod_tests;

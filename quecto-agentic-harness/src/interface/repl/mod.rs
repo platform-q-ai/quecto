@@ -8,7 +8,7 @@ pub fn run_repl<R, W, F>(mut reader: R, mut writer: W, is_tty: bool, mut execute
 where
     R: BufRead,
     W: Write,
-    F: FnMut(Vec<String>) -> (String, String, i32),
+    F: FnMut(Vec<String>, &mut R) -> (String, String, i32),
 {
     if is_tty {
         let _ = writeln!(
@@ -57,7 +57,7 @@ where
             );
             continue;
         }
-        let (stdout, stderr, _) = execute(args);
+        let (stdout, stderr, _) = execute(args, &mut reader);
         let _ = write!(writer, "{stdout}");
         let _ = write!(writer, "{stderr}");
     }

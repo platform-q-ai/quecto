@@ -416,6 +416,10 @@ fn build_workflow_runtime(
 }
 
 #[cfg(test)]
+#[path = "tool_runtime_catalogue_tests.rs"]
+mod catalogue_tests;
+
+#[cfg(test)]
 #[path = "tool_runtime_profile_tests.rs"]
 mod profile_tests;
 

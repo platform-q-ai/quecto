@@ -1,10 +1,10 @@
 use super::run_repl;
-use std::io::Cursor;
+use std::io::{BufRead, Cursor};
 
 fn run(input: &str) -> (String, Vec<Vec<String>>) {
     let mut output = Vec::new();
     let mut calls = Vec::new();
-    let code = run_repl(Cursor::new(input), &mut output, true, |args| {
+    let code = run_repl(Cursor::new(input), &mut output, true, |args, _reader| {
         calls.push(args);
         ("configured\n".into(), String::new(), 0)
     });
@@ -37,4 +37,23 @@ fn supported_configuration_commands_delegate_to_cli_adapter() {
     assert_eq!(calls[0], ["auth", "status"]);
     assert_eq!(calls[1], ["status"]);
     assert_eq!(calls[2], ["models", "list"]);
+}
+
+#[test]
+fn delegated_commands_can_consume_follow_up_input_from_the_repl_reader() {
+    let mut output = Vec::new();
+    let mut consumed = String::new();
+    let code = run_repl(
+        Cursor::new("auth login\n1\nexit\n"),
+        &mut output,
+        false,
+        |args, reader| {
+            assert_eq!(args, ["auth", "login"]);
+            reader.read_line(&mut consumed).unwrap();
+            ("logged in\n".into(), String::new(), 0)
+        },
+    );
+    assert_eq!(code, 0);
+    assert_eq!(consumed, "1\n");
+    assert_eq!(String::from_utf8(output).unwrap(), "logged in\n");
 }

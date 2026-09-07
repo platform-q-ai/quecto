@@ -46,9 +46,6 @@ quecto agent -m "Hello, what can you do?"
 # Login, setup, and configuration shell
 quecto
 
-# Interactive agent UI
-quecto-tui
-
 # Terminal UI (spawns a UDS agent for you)
 quecto-tui
 ```
