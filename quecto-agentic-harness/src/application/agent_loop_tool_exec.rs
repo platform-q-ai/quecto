@@ -110,7 +110,7 @@ impl AgentLoopImpl {
         Option<String>,
         bool,
     ) {
-        // Emit ToolStarted before executing so the REPL can show the tool name
+        // Emit ToolStarted before executing so interactive clients can show the tool name
         // immediately, even if the tool itself takes a long time.
         // Clones inside the closure are only evaluated when a callback is
         // registered (zero-cost on headless paths via notify's guard).

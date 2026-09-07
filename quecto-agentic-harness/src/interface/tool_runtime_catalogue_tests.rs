@@ -1,5 +1,5 @@
 use crate::domain::tool_descriptor::{
-    ProfileAvailabilityScope, ToolAvailability, ToolHealth, ToolRestrictionReason,
+    ProfileAvailabilityScope, ToolAvailability, ToolRestrictionReason,
 };
 use crate::interface::tool_runtime::{
     ToolEntrypoint, ToolRuntimeBuildArgs, ToolRuntimeProfileContext, ToolRuntimeWorkflowPolicy,
@@ -12,7 +12,7 @@ fn build_runtime_with_flags(
     disabled_tools: &[String],
 ) -> crate::interface::tool_runtime::ToolRuntimeBuild {
     build_runtime_with_entrypoint(
-        ToolEntrypoint::Repl,
+        ToolEntrypoint::UdsAgent,
         profile_context,
         spawned,
         disabled_tools,
@@ -52,25 +52,6 @@ fn build_runtime_with_entrypoint(
         stderr: &mut stderr,
     })
     .expect("runtime should build")
-}
-
-#[test]
-fn repl_catalogue_marks_entrypoint_default_restrictions() {
-    let built = build_runtime_with_flags(ToolRuntimeProfileContext::Parent, false, &[]);
-
-    let spawn = built
-        .catalogue_entries
-        .iter()
-        .find(|entry| entry.name == "spawn")
-        .expect("spawn should be registered but disabled by REPL defaults");
-    assert!(!spawn.default_enabled);
-    assert_eq!(
-        spawn.explicit_restriction,
-        Some(ToolRestrictionReason::EntrypointDefault)
-    );
-    assert_eq!(spawn.runtime_availability, ToolAvailability::Disabled);
-    assert!(!spawn.effective_enabled);
-    assert_eq!(spawn.health, ToolHealth::Disabled);
 }
 
 #[test]

@@ -221,7 +221,7 @@ Static, sampled review of tools, extensions, trust/security and subagent executi
 
 Static review; no tests run. Main entry-point delegation is thin and shared tool-runtime construction reduces entry-point drift. Detailed UDS/protocol behavior and enforcement are deferred to areas 7/8.
 
-#### A6-01 — REPL message persistence resets unrelated metadata (priority: high; extends A2-03)
+#### A6-01 — REPL message persistence resets unrelated metadata (resolved by #1670)
 
 **Evidence:** `src/interface/repl/mod.rs:156-165,236-245` reconstructs a persisted `Session` for clear and exit with `workflow_run: None` and an empty subagent roster.
 

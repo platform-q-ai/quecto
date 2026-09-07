@@ -7,7 +7,7 @@ use super::tool_descriptor::ToolCatalogueEntry;
 
 /// A live progress event emitted by the agent loop during processing.
 ///
-/// Used by the REPL progress renderer to display tool activity and a spinner
+/// Used by interactive agent clients to display tool activity and progress
 /// to the user while the agent is thinking or executing tools. Events are
 /// delivered via a [`ProgressCallback`] registered in [`AgentLoopConfig`].
 #[derive(Debug, Clone)]

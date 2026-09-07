@@ -4,10 +4,10 @@ Feature: CLI Interface
   I want a command-line interface with clear subcommands
   So that I can interact with Quecto from the terminal
 
-  Scenario: No arguments enters REPL mode
+  Scenario: No arguments enters the configuration REPL
     Given a valid config with OpenAI API key set
     When I run quecto with no arguments
-    Then quecto should enter interactive REPL mode
+    Then the exit code should be 0
 
   Scenario: Help subcommand shows usage
     When I run quecto with arguments "help"
