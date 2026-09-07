@@ -285,8 +285,8 @@ fn parse_kitty_key(params: &[u8]) -> Key {
     match keycode {
         1 => Key::Up,
         2 => Key::Down,
-        3 if ctrl && !shift && !alt => Key::CtrlRight,
-        4 if ctrl && !shift && !alt => Key::CtrlLeft,
+        57351 if ctrl && !shift && !alt => Key::CtrlRight,
+        57350 if ctrl && !shift && !alt => Key::CtrlLeft,
         3 => Key::Right,
         4 => Key::Left,
         5 => Key::Home,

@@ -624,6 +624,6 @@ fn legacy_ctrl_arrows_decode_distinctly() {
 
 #[test]
 fn kitty_ctrl_arrows_decode_distinctly() {
-    assert_eq!(parse_key(b"\x1b[4;5u").unwrap().0, Key::CtrlLeft);
-    assert_eq!(parse_key(b"\x1b[3;5u").unwrap().0, Key::CtrlRight);
+    assert_eq!(parse_key(b"\x1b[57350;5u").unwrap().0, Key::CtrlLeft);
+    assert_eq!(parse_key(b"\x1b[57351;5u").unwrap().0, Key::CtrlRight);
 }
