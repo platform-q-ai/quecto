@@ -227,8 +227,8 @@ fn read_line(reader: &mut dyn std::io::BufRead) -> Result<String, String> {
 
 #[cfg(test)]
 pub(crate) fn read_stdin_line(ctx: &CliContext) -> Result<String, String> {
-    let mut input = ctx.stdin_data.as_deref().unwrap_or("").as_bytes();
-    read_line(&mut input)
+    let data = ctx.stdin_data.as_deref().unwrap_or("");
+    Ok(data.lines().next().unwrap_or("").to_string())
 }
 
 pub(crate) fn flush_stdout(ctx: &CliContext, out: &mut Output<'_>) {
