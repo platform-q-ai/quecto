@@ -165,7 +165,7 @@ async fn test_refreshable_retries_on_401() {
 
     let call_count = Arc::new(AtomicU32::new(0));
     let inner = Arc::new(MockRetryProvider::new(call_count.clone(), 1));
-    let factory = make_mock_factory(call_count, 1);
+    let factory = make_mock_factory(call_count.clone(), 1);
     let refreshable = RefreshableProvider::new(RefreshableConfig {
         inner,
         store: store.clone(),
@@ -178,6 +178,11 @@ async fn test_refreshable_retries_on_401() {
     let result = refreshable.chat(test_request()).await;
     assert!(result.is_ok(), "should succeed after refresh: {:?}", result);
     assert_eq!(result.unwrap().content.unwrap(), "success");
+    assert_eq!(
+        call_count.load(Ordering::SeqCst),
+        2,
+        "refresh is a second actual attempt"
+    );
 
     let creds = store.load_snapshot().unwrap();
     let cred = creds.get("anthropic").unwrap();
