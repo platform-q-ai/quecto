@@ -25,7 +25,7 @@ pub fn generate_chat_key() -> String {
 
 /// Scrub the ephemeral (empty-key) spill file at run end; no-op for named
 /// sessions. Shared by every ephemeral interface exit path (one-shot CLI,
-/// UDS server, REPL). See `FileContextSpillStore::scrub_session_spill_sync`:
+/// UDS server). See `FileContextSpillStore::scrub_session_spill_sync`:
 /// ephemeral runs persist spilled content only so the run's own recall()
 /// stubs resolve, and it must never survive the run (PR #1048 security
 /// review).

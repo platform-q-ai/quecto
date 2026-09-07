@@ -43,7 +43,7 @@ Env vars also work: `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`.
 # One-shot
 quecto agent -m "Hello, what can you do?"
 
-# Interactive REPL
+# Login, setup, and configuration shell
 quecto
 
 # Terminal UI (spawns a UDS agent for you)

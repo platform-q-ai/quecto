@@ -512,7 +512,7 @@ fn test_login_oauth_unsupported_provider_direct() {
         stdout: &mut stdout,
         stderr: &mut stderr,
     };
-    let code = cmd_auth_login_oauth(&ctx, "weird", &mut out);
+    let code = cmd_auth_login_oauth(&ctx, "weird", &mut out, &mut std::io::empty());
     assert_eq!(code, 1);
     assert!(stderr.contains("OAuth is not supported for 'weird'"));
 }
@@ -533,7 +533,7 @@ fn test_login_oauth_generic_provider_branch() {
         stdout: &mut stdout,
         stderr: &mut stderr,
     };
-    let code = cmd_auth_login_oauth(&ctx, "weird", &mut out);
+    let code = cmd_auth_login_oauth(&ctx, "weird", &mut out, &mut std::io::empty());
     assert_eq!(code, 0, "stderr: {}", stderr);
     assert!(stdout.contains("Open this URL in your browser"));
     assert!(stdout.contains("Waiting for authorization"));

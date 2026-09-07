@@ -10,7 +10,6 @@ Each session is identified by a key in the format `<interface>:<name>`:
 | Interface | Default key | Example |
 |-----------|-------------|---------|
 | CLI agent | `cli:default` | `cli:my-project` |
-| REPL | `repl:repl_default` | `repl:experiments` |
 
 Sessions are stored as files in `<base_dir>/sessions/`. The file contains
 the full conversation history (system prompt, user messages, assistant

@@ -1,36 +1,41 @@
 #[path = "auth_import.rs"]
 pub(crate) mod auth_import;
-
 #[path = "auth_xai.rs"]
 pub(crate) mod auth_xai;
-
 use super::CliContext;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
-
-/// Known provider names accepted by the auth commands.
 const KNOWN_PROVIDERS: &[&str] = &["openai", "anthropic", "xai"];
-
-/// Bundled output streams for auth subcommands.
 pub(crate) struct Output<'a> {
     pub stdout: &'a mut String,
     pub stderr: &'a mut String,
 }
-
 pub(crate) fn cmd_auth(
     ctx: &CliContext,
     args: &[String],
     stdout: &mut String,
     stderr: &mut String,
 ) -> i32 {
+    let mut input = ctx.stdin_data.as_deref().unwrap_or("").as_bytes();
+    if ctx.stdin_data.is_some() {
+        return cmd_auth_with_reader(ctx, args, stdout, stderr, &mut input);
+    }
+    let stdin = std::io::stdin();
+    cmd_auth_with_reader(ctx, args, stdout, stderr, &mut stdin.lock())
+}
+pub(crate) fn cmd_auth_with_reader(
+    ctx: &CliContext,
+    args: &[String],
+    stdout: &mut String,
+    stderr: &mut String,
+    reader: &mut dyn std::io::BufRead,
+) -> i32 {
     let base = ctx.base_dir();
-
     if args.is_empty() {
         stderr.push_str("auth: missing subcommand (login, logout, status)\n");
         return 1;
     }
-
     match args[0].as_str() {
-        "login" => cmd_auth_login(ctx, &args[1..], stdout, stderr),
+        "login" => cmd_auth_login(ctx, &args[1..], stdout, stderr, reader),
         "logout" => cmd_auth_logout(&base, &args[1..], stdout, stderr),
         "status" => cmd_auth_status(&base, stdout),
         other => {
@@ -39,19 +44,18 @@ pub(crate) fn cmd_auth(
         }
     }
 }
-
 fn cmd_auth_login(
     ctx: &CliContext,
     args: &[String],
     stdout: &mut String,
     stderr: &mut String,
+    reader: &mut dyn std::io::BufRead,
 ) -> i32 {
     let mut provider: Option<String> = None;
     let mut token: Option<String> = None;
     let mut use_device_code = false;
     let mut import_external = false;
     let mut i = 0;
-
     while i < args.len() {
         match args[i].as_str() {
             "--provider" => {
@@ -113,15 +117,14 @@ fn cmd_auth_login(
         return cmd_auth_login_device_code(ctx, &provider, &mut out);
     }
 
-    let provider = match resolve_provider_interactive(ctx, provider, &mut out) {
+    let provider = match resolve_provider_interactive(ctx, provider, &mut out, reader) {
         Some(p) => p,
         None => return 1,
     };
 
-    cmd_auth_login_oauth(ctx, &provider, &mut out)
+    cmd_auth_login_oauth(ctx, &provider, &mut out, reader)
 }
 
-/// Handle `--token` direct API key login.
 fn cmd_auth_login_token(
     ctx: &CliContext,
     provider: Option<String>,
@@ -169,11 +172,11 @@ fn cmd_auth_login_token(
     }
 }
 
-/// Resolve the provider interactively if not specified, or validate the given one.
 fn resolve_provider_interactive(
     ctx: &CliContext,
     provider: Option<String>,
     out: &mut Output<'_>,
+    reader: &mut dyn std::io::BufRead,
 ) -> Option<String> {
     match provider {
         Some(p) => {
@@ -193,7 +196,7 @@ fn resolve_provider_interactive(
                  2) OpenAI (OAuth)\n  3) xAI (SuperGrok / X Premium+ — OAuth)\n\nEnter 1, 2 or 3: ",
             );
             flush_stdout(ctx, out);
-            let choice = match read_stdin_line(ctx) {
+            let choice = match read_line(reader) {
                 Ok(line) => line.trim().to_string(),
                 Err(e) => {
                     out.stderr.push_str(&format!("auth login: {}\n", e));
@@ -214,22 +217,20 @@ fn resolve_provider_interactive(
     }
 }
 
-/// Read a single line from stdin (or from `ctx.stdin_data` in test mode).
-pub(crate) fn read_stdin_line(ctx: &CliContext) -> Result<String, String> {
-    if let Some(ref data) = ctx.stdin_data {
-        Ok(data.lines().next().unwrap_or("").to_string())
-    } else {
-        let mut line = String::new();
-        std::io::stdin()
-            .read_line(&mut line)
-            .map_err(|e| format!("failed to read from stdin: {}", e))?;
-        Ok(line)
-    }
+fn read_line(reader: &mut dyn std::io::BufRead) -> Result<String, String> {
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .map_err(|e| format!("failed to read from stdin: {e}"))?;
+    Ok(line)
 }
 
-/// Flush buffered stdout text to the terminal immediately (for interactive prompts).
-/// In test mode (when `stdin_data` is set), we skip the flush to preserve output
-/// in the buffer for assertions.
+#[cfg(test)]
+pub(crate) fn read_stdin_line(ctx: &CliContext) -> Result<String, String> {
+    let data = ctx.stdin_data.as_deref().unwrap_or("");
+    Ok(data.lines().next().unwrap_or("").to_string())
+}
+
 pub(crate) fn flush_stdout(ctx: &CliContext, out: &mut Output<'_>) {
     if ctx.stdin_data.is_some() || out.stdout.is_empty() {
         return;
@@ -240,7 +241,6 @@ pub(crate) fn flush_stdout(ctx: &CliContext, out: &mut Output<'_>) {
     out.stdout.clear();
 }
 
-/// Resolve OAuth config: use test override if set, otherwise look up the provider.
 fn resolve_oauth_config(
     ctx: &CliContext,
     provider: &str,
@@ -266,22 +266,27 @@ fn resolve_oauth_config(
 }
 
 /// OAuth browser-based login flow.
-fn cmd_auth_login_oauth(ctx: &CliContext, provider: &str, out: &mut Output<'_>) -> i32 {
+fn cmd_auth_login_oauth(
+    ctx: &CliContext,
+    provider: &str,
+    out: &mut Output<'_>,
+    reader: &mut dyn std::io::BufRead,
+) -> i32 {
     let config = match resolve_oauth_config(ctx, provider, "OAuth", out.stderr) {
         Some(c) => c,
         None => return 1,
     };
 
     if provider == "anthropic" {
-        return cmd_auth_login_anthropic_oauth(ctx, &config, out);
+        return cmd_auth_login_anthropic_oauth(ctx, &config, out, reader);
     }
 
     if provider == "openai" {
-        return cmd_auth_login_openai_oauth(ctx, &config, out);
+        return cmd_auth_login_openai_oauth(ctx, &config, out, reader);
     }
 
     if provider == "xai" {
-        return auth_xai::cmd_auth_login_xai_oauth(ctx, &config, out);
+        return auth_xai::cmd_auth_login_xai_oauth(ctx, &config, out, reader);
     }
 
     out.stdout.push_str(&format!(
@@ -291,11 +296,18 @@ fn cmd_auth_login_oauth(ctx: &CliContext, provider: &str, out: &mut Output<'_>) 
     0
 }
 
+/// Redirected stdin only disables browser callbacks in the REPL, where waiting
+/// would stall a command stream. Standalone callbacks do not require stdin.
+fn skip_browser_callback(ctx: &CliContext) -> bool {
+    ctx.stdin_data.is_some() || (ctx.is_repl && ctx.stdin_is_tty == Some(false))
+}
+
 /// OpenAI OAuth login: PKCE + browser callback on localhost:1455.
 fn cmd_auth_login_openai_oauth(
     ctx: &CliContext,
     config: &crate::infrastructure::auth::oauth::OAuthConfig,
     out: &mut Output<'_>,
+    reader: &mut dyn std::io::BufRead,
 ) -> i32 {
     use crate::infrastructure::auth::oauth::{
         build_openai_auth_url, exchange_openai_code, extract_openai_account_id, generate_pkce,
@@ -323,20 +335,19 @@ fn cmd_auth_login_openai_oauth(
         }
     };
 
-    // In test mode (stdin_data set), skip the browser callback and go
-    // straight to the manual code-paste fallback.
-    let code = if ctx.stdin_data.is_some() {
+    // Test input and non-interactive REPL commands use the manual fallback.
+    let code = if skip_browser_callback(ctx) {
         let err = crate::domain::error::DomainError::Provider(
-            "browser callback skipped in test mode".into(),
+            "browser callback skipped for supplied input or non-interactive REPL".into(),
         );
-        match extract_fallback_code(ctx, err, Some(&state), out) {
+        match extract_fallback_code_with_reader(ctx, err, Some(&state), out, reader) {
             Some(code) => code,
             None => return 1,
         }
     } else {
         match rt.block_on(wait_for_oauth_callback(&state, 300)) {
             Ok(code) => code,
-            Err(e) => match extract_fallback_code(ctx, e, Some(&state), out) {
+            Err(e) => match extract_fallback_code_with_reader(ctx, e, Some(&state), out, reader) {
                 Some(code) => code,
                 None => return 1,
             },
@@ -367,24 +378,24 @@ fn cmd_auth_login_openai_oauth(
 }
 
 /// Fallback: prompt user to paste code when callback fails.
-///
 /// When `expected_state` is provided and the pasted input is a redirect URL
 /// or query fragment (i.e. it carries a query string), it MUST carry a
 /// `state` parameter that matches `expected_state`; otherwise the input is
 /// rejected (PR #1087 review). Bare authorization codes cannot carry state
 /// and are accepted as-is, because some providers display a bare code.
-pub(crate) fn extract_fallback_code(
+pub(super) fn extract_fallback_code_with_reader(
     ctx: &CliContext,
     err: crate::domain::error::DomainError,
     expected_state: Option<&str>,
     out: &mut Output<'_>,
+    reader: &mut dyn std::io::BufRead,
 ) -> Option<String> {
     out.stdout.push_str(&format!(
         "\nCallback failed ({}). Paste the authorization code or redirect URL:\n",
         err
     ));
     flush_stdout(ctx, out);
-    match read_stdin_line(ctx) {
+    match read_line(reader) {
         Ok(line) => {
             let line = line.trim().to_string();
             if let Some(reason) = fallback_state_rejection(&line, expected_state) {
@@ -424,14 +435,12 @@ fn fallback_state_rejection(input: &str, expected: Option<&str>) -> Option<Strin
     }
 }
 
-/// Parameters for storing an OAuth credential.
 pub(crate) struct OAuthStoreParams {
     pub(crate) provider: String,
     pub(crate) account_id: Option<String>,
     pub(crate) expires_at: i64,
 }
 
-/// Store an OAuth credential after a successful token exchange.
 pub(crate) fn store_oauth_credential(
     ctx: &CliContext,
     params: OAuthStoreParams,
@@ -470,9 +479,7 @@ fn capitalize(s: &str) -> String {
     }
 }
 
-/// Try to extract an authorization code from user input (URL or raw code).
 fn extract_code_from_input(input: &str) -> Option<String> {
-    // Try as URL: http://localhost:1455/auth/callback?code=<code>&state=<state>
     if input.contains("code=") {
         if let Some(code) = extract_param_from_input(input, "code") {
             return Some(code);
@@ -485,7 +492,6 @@ fn extract_code_from_input(input: &str) -> Option<String> {
     }
 }
 
-/// Extract a URL-decoded query parameter from a pasted URL or query string.
 fn extract_param_from_input(input: &str, name: &str) -> Option<String> {
     let query = input.split('?').nth(1).unwrap_or(input);
     let prefix = format!("{}=", name);
@@ -503,11 +509,11 @@ fn extract_param_from_input(input: &str, name: &str) -> Option<String> {
     None
 }
 
-/// Anthropic OAuth login: PKCE + browser + paste authorization code.
 fn cmd_auth_login_anthropic_oauth(
     ctx: &CliContext,
     config: &crate::infrastructure::auth::oauth::OAuthConfig,
     out: &mut Output<'_>,
+    reader: &mut dyn std::io::BufRead,
 ) -> i32 {
     use crate::infrastructure::auth::oauth::{
         build_anthropic_auth_url, exchange_anthropic_code, generate_pkce, generate_state,
@@ -526,7 +532,7 @@ fn cmd_auth_login_anthropic_oauth(
     ));
     flush_stdout(ctx, out);
 
-    let auth_code = match read_stdin_line(ctx) {
+    let auth_code = match read_line(reader) {
         Ok(line) => line.trim().to_string(),
         Err(e) => {
             out.stderr.push_str(&format!("auth login: {}\n", e));

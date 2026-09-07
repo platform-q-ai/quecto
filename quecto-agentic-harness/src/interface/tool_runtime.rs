@@ -13,17 +13,15 @@ pub(crate) enum ToolEntrypoint {
     CliAgent,
     /// UDS-backed agent session (`quecto agent --mode uds ...`).
     UdsAgent,
-    /// Interactive no-args REPL.
-    Repl,
 }
 
 impl ToolEntrypoint {
     pub fn agent_control_default_enabled(self) -> bool {
-        matches!(self, Self::CliAgent | Self::UdsAgent)
+        true
     }
 
     pub fn web_default_enabled(self) -> bool {
-        matches!(self, Self::CliAgent | Self::UdsAgent)
+        true
     }
 
     pub fn workflow_supported(self) -> bool {
@@ -78,6 +76,7 @@ pub(crate) struct ToolRuntimeWorkflowPolicy<'a> {
 }
 
 impl<'a> ToolRuntimeWorkflowPolicy<'a> {
+    #[cfg(test)]
     pub fn disabled(cwd: &'a std::path::Path, home_dir: Option<&'a std::path::Path>) -> Self {
         Self {
             workflow_disabled: true,
@@ -447,7 +446,3 @@ pub(crate) fn load_workflow_spec(
     let _ = std::fs::remove_file(path);
     serde_json::from_slice(&bytes).map_err(|e| e.to_string())
 }
-
-#[cfg(test)]
-#[path = "tool_runtime_cov_tests.rs"]
-mod cov_tests;
