@@ -478,21 +478,15 @@ impl App {
         while chat_lines.len() < chat_height {
             chat_lines.insert(0, String::new());
         }
-        lines.push(if show_latest_tip {
-            theme::dim("Ctrl+G: latest")
-        } else {
-            String::new()
-        });
         lines.extend(chat_lines);
-
+        // The jump hint floats over this separator instead of displacing chat.
+        lines.push(String::new());
         let available = height.saturating_sub(bottom_height);
         while lines.len() < available {
             lines.insert(top_chrome_height + 1, String::new());
         }
-
         // ── Append bottom section ───────────────────────────────────
         lines.extend(bottom);
-
         // Final safety: ensure exactly `height` lines.
         if lines.len() > height {
             let start = lines.len() - height;
@@ -501,7 +495,23 @@ impl App {
         while lines.len() < height {
             lines.push(String::new());
         }
-
+        if show_latest_tip && width > 0 {
+            let tip = "Ctrl + G - Jump Back to Latest Message";
+            let overlay_width = crate::components::utils::visible_width(tip).min(width);
+            let overlay =
+                crate::components::utils::truncate_to_width(&theme::red(tip), overlay_width, None);
+            let row = available
+                .saturating_sub(1)
+                .min(lines.len().saturating_sub(1));
+            let col = width.saturating_sub(overlay_width) / 2;
+            lines[row] = crate::components::overlay::splice_line(
+                &lines[row],
+                &overlay,
+                col,
+                overlay_width,
+                width,
+            );
+        }
         // Composite the active centered overlay (only one is ever active at a
         // time). All three splice through the same ANSI-aware helper so the
         // centering and escape-safe splice rule lives in one place.
