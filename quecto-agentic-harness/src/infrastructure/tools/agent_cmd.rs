@@ -490,6 +490,12 @@ impl Tool for AgentCmdTool {
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
         let args = arguments.to_string();
         Box::pin(async move {
+            if super::swarm::enabled() {
+                return Ok(ToolResult {
+                    content: "swarm spike fixed pool: nested lifecycle control is disabled; reuse existing members (runner hard limit 10 including coordinator)".into(),
+                    is_error: true, image_blocks: vec![], delivery_metadata: None,
+                });
+            }
             // Parse the argument JSON exactly once and thread the parsed value
             // through every dispatch predicate (#996 item 4).
             let parsed = serde_json::from_str::<serde_json::Value>(&args);

@@ -496,6 +496,12 @@ impl Tool for SpawnTool {
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
         let args = arguments.to_string();
         Box::pin(async move {
+            if super::swarm::enabled() {
+                return Ok(ToolResult {
+                    content: "swarm spike fixed pool: nested lifecycle control is disabled; reuse existing members (runner hard limit 10 including coordinator)".into(),
+                    is_error: true, image_blocks: vec![], delivery_metadata: None,
+                });
+            }
             match self.parse_args(&args) {
                 Ok(config) => {
                     if self.base_dir.as_os_str().is_empty() {

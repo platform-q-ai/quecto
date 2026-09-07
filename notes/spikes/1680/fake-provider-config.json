@@ -1,0 +1,28 @@
+{
+  "tools": {
+    "python_lab": {
+      "max_processes": 256,
+      "default_timeout_seconds": 30,
+      "max_foreground_seconds": 60,
+      "max_background_seconds": 120,
+      "max_concurrent_jobs": 2
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": "spike/swarm-spike-fake",
+      "workspace": "."
+    }
+  },
+  "providers": {
+    "openai_compatible": {
+      "endpoints": [
+        {
+          "prefix": "spike",
+          "api_key": "explicit-fake-not-a-secret",
+          "api_base": "http://127.0.0.1:8765/v1"
+        }
+      ]
+    }
+  }
+}

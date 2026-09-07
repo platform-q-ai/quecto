@@ -84,3 +84,7 @@ harness = false
 # inherit the unit-test `#[cfg(test)]`. `required-features` makes cargo pull
 # the feature in automatically whenever the bdd target is built.
 required-features = ["test-support"]
+
+[[bin]]
+name = "quecto-swarm-spike"
+path = "src/bin/swarm_spike.rs"

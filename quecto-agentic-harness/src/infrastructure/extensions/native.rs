@@ -132,13 +132,19 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
                 workspace.clone(),
                 sandbox.clone(),
             )),
-            Arc::new(
-                crate::infrastructure::tools::python_lab::PythonLabTool::new(
+            {
+                let lab = crate::infrastructure::tools::python_lab::PythonLabTool::new(
                     workspace.clone(),
                     sandbox.clone(),
                     deps.python_lab_config,
-                ),
-            ),
+                );
+                if crate::infrastructure::tools::swarm::enabled() {
+                    Arc::new(crate::infrastructure::tools::swarm::SwarmTool::new(lab))
+                        as Arc<dyn Tool>
+                } else {
+                    Arc::new(lab) as Arc<dyn Tool>
+                }
+            },
             Arc::new(crate::infrastructure::tools::find::FindTool::new(
                 workspace, sandbox,
             )),

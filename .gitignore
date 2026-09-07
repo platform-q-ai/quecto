@@ -3,3 +3,7 @@
 *.swo
 .env
 .quecto/
+# Disposable #1680 spike install and observation handoff
+/.spike-install/
+/.spike-observation/
+__pycache__/

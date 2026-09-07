@@ -1,0 +1,11 @@
+{
+  "tools": {
+    "python_lab": {
+      "max_processes": 256,
+      "default_timeout_seconds": 30,
+      "max_foreground_seconds": 60,
+      "max_background_seconds": 120,
+      "max_concurrent_jobs": 2
+    }
+  }
+}
