@@ -24,7 +24,7 @@ fn doc_title_reads_first_h1() {
 
 #[test]
 fn default_constructs_the_parent_docs_tool() {
-    let tool = DocsTool::default();
+    let tool: DocsTool = Default::default();
     assert_eq!(tool.definition().name.as_ref(), "docs");
     assert!(!tool.definition().description.is_empty());
 }
