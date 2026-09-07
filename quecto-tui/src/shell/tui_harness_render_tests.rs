@@ -8,8 +8,35 @@
 use super::tui_harness::*;
 use crate::components::theme::BG_SUCCESS;
 use crate::protocol::client::Event;
+use crate::shell::keys::Key;
 use crate::shell::render::DiffRenderer;
 use std::sync::{Arc, Mutex};
+
+#[tokio::test]
+async fn scrolled_chat_shows_jump_tip_until_ctrl_g_returns_to_latest() {
+    let mut h = TuiHarness::new().await;
+    for i in 0..40 {
+        h.add_user_message(&format!("history line {i}"));
+    }
+    h.press(Key::PageUp);
+    let scrolled = h.full_frame();
+    assert!(scrolled.contains("Ctrl+G: latest"), "{scrolled}");
+
+    h.press(Key::Ctrl('g'));
+    let latest = h.full_frame();
+    assert!(!latest.contains("Ctrl+G: latest"), "{latest}");
+}
+
+#[tokio::test]
+async fn fitting_chat_never_shows_jump_tip_or_changes_between_frames() {
+    let mut h = TuiHarness::new().await;
+    h.add_user_message("short");
+    h.press(Key::PageUp);
+    let first = h.full_frame();
+    let second = h.full_frame();
+    assert!(!first.contains("Ctrl+G: latest"), "{first}");
+    assert_eq!(first, second);
+}
 
 // ── #884: differential renderer desync at full height ──────────────────
 //

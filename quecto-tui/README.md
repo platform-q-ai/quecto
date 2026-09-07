@@ -119,6 +119,7 @@ the 30s deadline instead.
 | `Escape` | Abort the active agent run, or clear the editor if idle |
 | `Ctrl+C` | Clear the editor first; if the editor is empty, abort the active run |
 | `Ctrl+D` | Exit immediately |
+| `Ctrl+G` | Jump to the latest conversation output |
 | `Ctrl+L` | Open model selector |
 | `Ctrl+O` | Toggle tool output expansion |
 | `Ctrl+Z` | Suspend the TUI (`fg` to resume) |

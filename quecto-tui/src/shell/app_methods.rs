@@ -72,6 +72,7 @@ impl App {
              \x20 Esc Esc        Choose a previous turn to go back to\n\
              \x20 Ctrl+C         Clear editor first, abort if empty\n\
              \x20 Ctrl+D         Exit\n\
+             \x20 Ctrl+G         Jump to latest conversation output\n\
              \x20 Ctrl+L         Open model selector\n\
              \x20 Ctrl+T         Open tool policy selector\n\
              \x20 Ctrl+O         Toggle tool output expansion\n\
@@ -462,8 +463,8 @@ impl App {
         // the environment chrome, so the conversation is suppressed entirely.
         // Overflow: the conversation shows its tail (auto-scroll); the
         // environment body head-anchors (#1401 review, `clamp_environment_body`).
-        let mut chat_lines = match self.render_environment_body(width) {
-            Some(body) => Self::clamp_environment_body(body, chat_height),
+        let (mut chat_lines, show_latest_tip) = match self.render_environment_body(width) {
+            Some(body) => (Self::clamp_environment_body(body, chat_height), false),
             None => {
                 let chat = self.active_chat_mut();
                 chat.set_viewport_height(chat_height);
@@ -471,13 +472,17 @@ impl App {
                 if lines.len() > chat_height {
                     lines = lines[lines.len() - chat_height..].to_vec();
                 }
-                lines
+                (lines, chat.is_scrolled_from_latest())
             }
         };
         while chat_lines.len() < chat_height {
             chat_lines.insert(0, String::new());
         }
-        lines.push(String::new());
+        lines.push(if show_latest_tip {
+            theme::dim("Ctrl+G: latest")
+        } else {
+            String::new()
+        });
         lines.extend(chat_lines);
 
         let available = height.saturating_sub(bottom_height);

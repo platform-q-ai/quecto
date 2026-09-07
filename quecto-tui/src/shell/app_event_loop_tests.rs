@@ -269,6 +269,26 @@ async fn scroll_keys_move_chat_offset() {
 }
 
 #[tokio::test]
+async fn ctrl_g_jumps_active_chat_without_changing_editor() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.editor.set_text("draft text");
+    a.editor.handle_input(&Key::Left);
+    let cursor_before = a.editor.cursor_col();
+    a.ac_mut().master_session.chat.scroll_up(7);
+    a.select_agent(Some("worker"));
+    a.active_chat_mut().scroll_up(20);
+    assert_eq!(a.active_chat_mut().scroll_offset(), 20);
+
+    a.handle_key(Key::Ctrl('g'));
+
+    assert_eq!(a.active_chat_mut().scroll_offset(), 0);
+    assert_eq!(a.ac().master_session.chat.scroll_offset(), 7);
+    assert_eq!(a.editor.text(), "draft text");
+    assert_eq!(a.editor.cursor_col(), cursor_before);
+}
+
+#[tokio::test]
 async fn handle_key_mouse_press_sets_selection() {
     let mut h = harness().await;
     let a = h.app_mut();
