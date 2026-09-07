@@ -2,7 +2,8 @@
 
 use super::super::CliContext;
 use super::{
-    OAuthStoreParams, Output, extract_fallback_code, flush_stdout, store_oauth_credential,
+    OAuthStoreParams, Output, extract_fallback_code_with_reader, flush_stdout,
+    store_oauth_credential,
 };
 
 /// xAI OAuth login: PKCE + browser callback on 127.0.0.1:56121.
@@ -13,6 +14,7 @@ pub(crate) fn cmd_auth_login_xai_oauth(
     ctx: &CliContext,
     config: &crate::infrastructure::auth::oauth::OAuthConfig,
     out: &mut Output<'_>,
+    reader: &mut dyn std::io::BufRead,
 ) -> i32 {
     use crate::infrastructure::auth::oauth::{
         build_xai_auth_url, exchange_xai_code, generate_pkce, generate_state,
@@ -46,7 +48,7 @@ pub(crate) fn cmd_auth_login_xai_oauth(
         let err = crate::domain::error::DomainError::Provider(
             "browser callback skipped in test mode".into(),
         );
-        match extract_fallback_code(ctx, err, Some(&state), out) {
+        match extract_fallback_code_with_reader(ctx, err, Some(&state), out, reader) {
             Some(code) => code,
             None => return 1,
         }
@@ -63,7 +65,7 @@ pub(crate) fn cmd_auth_login_xai_oauth(
         };
         match rt.block_on(wait_for_oauth_callback_at(&addr, &path, &state, 300)) {
             Ok(code) => code,
-            Err(e) => match extract_fallback_code(ctx, e, Some(&state), out) {
+            Err(e) => match extract_fallback_code_with_reader(ctx, e, Some(&state), out, reader) {
                 Some(code) => code,
                 None => return 1,
             },

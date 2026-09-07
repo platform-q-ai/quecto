@@ -286,7 +286,7 @@ fn cmd_auth_login_oauth(
     }
 
     if provider == "xai" {
-        return auth_xai::cmd_auth_login_xai_oauth(ctx, &config, out);
+        return auth_xai::cmd_auth_login_xai_oauth(ctx, &config, out, reader);
     }
 
     out.stdout.push_str(&format!(
@@ -342,7 +342,7 @@ fn cmd_auth_login_openai_oauth(
     } else {
         match rt.block_on(wait_for_oauth_callback(&state, 300)) {
             Ok(code) => code,
-            Err(e) => match extract_fallback_code(ctx, e, Some(&state), out) {
+            Err(e) => match extract_fallback_code_with_reader(ctx, e, Some(&state), out, reader) {
                 Some(code) => code,
                 None => return 1,
             },
@@ -373,23 +373,12 @@ fn cmd_auth_login_openai_oauth(
 }
 
 /// Fallback: prompt user to paste code when callback fails.
-///
 /// When `expected_state` is provided and the pasted input is a redirect URL
 /// or query fragment (i.e. it carries a query string), it MUST carry a
 /// `state` parameter that matches `expected_state`; otherwise the input is
 /// rejected (PR #1087 review). Bare authorization codes cannot carry state
 /// and are accepted as-is, because some providers display a bare code.
-pub(crate) fn extract_fallback_code(
-    ctx: &CliContext,
-    err: crate::domain::error::DomainError,
-    expected_state: Option<&str>,
-    out: &mut Output<'_>,
-) -> Option<String> {
-    let mut input = ctx.stdin_data.as_deref().unwrap_or("").as_bytes();
-    extract_fallback_code_with_reader(ctx, err, expected_state, out, &mut input)
-}
-
-fn extract_fallback_code_with_reader(
+pub(super) fn extract_fallback_code_with_reader(
     ctx: &CliContext,
     err: crate::domain::error::DomainError,
     expected_state: Option<&str>,

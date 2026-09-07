@@ -39,6 +39,24 @@ fn auth_login_consumes_provider_choice_without_relocking_stdin() {
 }
 
 #[test]
+fn config_only_invocation_rejects_a_missing_explicit_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("missing.json");
+    let output = run_repl(&["--config", missing.to_str().unwrap()], "exit\n");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("config not found:"), "{stderr}");
+}
+
+#[test]
+fn option_shaped_config_value_is_rejected() {
+    let output = run_repl(&["--config", "--help"], "exit\n");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--config requires a path"), "{stderr}");
+}
+
+#[test]
 fn config_only_invocation_uses_the_live_repl() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("config.json");

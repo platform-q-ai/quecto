@@ -211,7 +211,7 @@ impl CliContext {
 /// Extract `--config <path>` from args (consumed globally).
 /// Skips values of flags that take arguments (e.g. `-m`, `--system`) to avoid
 /// misinterpreting message text like `-m "--config"` as the flag.
-fn extract_config_flag(args: &[String]) -> Option<PathBuf> {
+fn extract_config_flag(args: &[String]) -> Result<Option<PathBuf>, String> {
     /// Flags that consume the next arg as a value (skip their value during scan).
     const VALUE_FLAGS: &[&str] = &[
         "-m",
@@ -228,8 +228,12 @@ fn extract_config_flag(args: &[String]) -> Option<PathBuf> {
     ];
     let mut i = 0;
     while i < args.len() {
-        if args[i] == "--config" && i + 1 < args.len() {
-            return Some(PathBuf::from(&args[i + 1]));
+        if args[i] == "--config" {
+            let value = args
+                .get(i + 1)
+                .filter(|value| !value.starts_with('-'))
+                .ok_or_else(|| "--config requires a path".to_string())?;
+            return Ok(Some(PathBuf::from(value)));
         }
         if VALUE_FLAGS.contains(&args[i].as_str()) {
             i += 2; // skip the flag and its value
@@ -237,7 +241,7 @@ fn extract_config_flag(args: &[String]) -> Option<PathBuf> {
             i += 1;
         }
     }
-    None
+    Ok(None)
 }
 
 fn strip_global_config_flag(args: &[String]) -> Vec<String> {
@@ -274,8 +278,15 @@ fn strip_global_config_flag(args: &[String]) -> Vec<String> {
 /// Run the CLI with the given args, printing to real stdout/stderr.
 /// Returns the exit code.
 pub fn run(args: Vec<String>) -> i32 {
+    let config_path = match extract_config_flag(&args) {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("{error}");
+            return 1;
+        }
+    };
     let ctx = CliContext {
-        config_path: extract_config_flag(&args),
+        config_path,
         ..Default::default()
     };
 
@@ -283,6 +294,14 @@ pub fn run(args: Vec<String>) -> i32 {
     // `run_with_output` intentionally uses captured input, so this decision must
     // happen here for config-only production invocations.
     if strip_global_config_flag(&args).len() < 2 {
+        if let Some(error) = ctx
+            .config_path
+            .as_deref()
+            .and_then(|path| explicit_config_missing(path, true))
+        {
+            eprintln!("{error}");
+            return 1;
+        }
         return super::repl::run_repl(
             std::io::stdin().lock(),
             std::io::stdout(),
@@ -306,14 +325,22 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
     // Merge --config from args into context if not already set.
     let merged_ctx;
     let ctx = if ctx.config_path.is_none() {
-        if let Some(path) = extract_config_flag(&args) {
-            merged_ctx = CliContext {
-                config_path: Some(path),
-                ..ctx.clone()
-            };
-            &merged_ctx
-        } else {
-            ctx
+        match extract_config_flag(&args) {
+            Ok(Some(path)) => {
+                merged_ctx = CliContext {
+                    config_path: Some(path),
+                    ..ctx.clone()
+                };
+                &merged_ctx
+            }
+            Ok(None) => ctx,
+            Err(error) => {
+                return CliOutput {
+                    stdout: String::new(),
+                    stderr: format!("{error}\n"),
+                    exit_code: 1,
+                };
+            }
         }
     } else {
         ctx
