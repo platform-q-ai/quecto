@@ -44,7 +44,7 @@ pub(crate) fn cmd_auth_login_xai_oauth(
 
     // In test mode (stdin_data set), skip the browser callback and go
     // straight to the manual code-paste fallback.
-    let code = if ctx.stdin_data.is_some() {
+    let code = if ctx.stdin_data.is_some() || ctx.stdin_is_tty == Some(false) {
         let err = crate::domain::error::DomainError::Provider(
             "browser callback skipped in test mode".into(),
         );

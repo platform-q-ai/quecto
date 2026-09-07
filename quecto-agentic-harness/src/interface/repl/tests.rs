@@ -40,6 +40,24 @@ fn supported_configuration_commands_delegate_to_cli_adapter() {
 }
 
 #[test]
+fn non_tty_repl_returns_the_last_failed_command_status() {
+    let mut output = Vec::new();
+    let code = run_repl(
+        Cursor::new("auth bogus\n"),
+        &mut output,
+        false,
+        |_args, _reader| (String::new(), "invalid\n".into(), 7),
+    );
+    assert_eq!(code, 7);
+}
+
+#[test]
+fn help_documents_the_actionable_models_discover_syntax() {
+    let (output, _) = run("help\nexit\n");
+    assert!(output.contains("models discover <provider-key>"));
+}
+
+#[test]
 fn delegated_commands_can_consume_follow_up_input_from_the_repl_reader() {
     let mut output = Vec::new();
     let mut consumed = String::new();

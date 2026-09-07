@@ -184,6 +184,8 @@ pub struct CliContext {
     pub config_path: Option<PathBuf>,
     /// Pre-loaded stdin data for testing interactive commands.
     pub stdin_data: Option<String>,
+    /// Whether active stdin is interactive, when known.
+    pub stdin_is_tty: Option<bool>,
     /// Override OAuth base URL for testing (e.g. wiremock URI).
     pub oauth_base_url: Option<String>,
     /// Override process current working directory for hermetic tests.
@@ -285,8 +287,10 @@ pub fn run(args: Vec<String>) -> i32 {
             return 1;
         }
     };
+    let stdin_is_tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
     let ctx = CliContext {
         config_path,
+        stdin_is_tty: Some(stdin_is_tty),
         ..Default::default()
     };
 
@@ -305,7 +309,7 @@ pub fn run(args: Vec<String>) -> i32 {
         return super::repl::run_repl(
             std::io::stdin().lock(),
             std::io::stdout(),
-            std::io::IsTerminal::is_terminal(&std::io::stdin()),
+            stdin_is_tty,
             |args, reader| run_repl_command(&ctx, args, reader),
         );
     }

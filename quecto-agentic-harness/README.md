@@ -198,7 +198,7 @@ Socket path: `--socket <path>` (max 104 bytes, macOS `sockaddr_un` limit) or aut
 
 ### `quecto` — Setup and configuration REPL
 
-Running `quecto` with no arguments opens a small interactive shell for login, initial setup, and configuration inspection. Supported commands are `auth login`, `auth logout`, `auth status`, `status`, `models`, `help`, and `exit`. Agent prompts, tools, workflows, subagents, chat sessions, and progress rendering are intentionally unavailable. Use `quecto agent` for one-shot/UDS agents or `quecto-tui` for an interactive agent interface.
+Running `quecto` with no arguments opens a small interactive shell for login, initial setup, and configuration inspection. Supported commands are `auth login`, `auth logout`, `auth status`, `status`, `models discover <provider-key>`, `help`, and `exit`. Agent prompts, tools, workflows, subagents, chat sessions, and progress rendering are intentionally unavailable. Use `quecto agent` for one-shot/UDS agents or `quecto-tui` for an interactive agent interface.
 
 ### `quecto agent` — Talk to the agent
 

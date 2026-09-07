@@ -20,6 +20,7 @@ where
     }
 
     let mut line = String::new();
+    let mut exit_code = 0;
     loop {
         if is_tty {
             let _ = write!(writer, "> ");
@@ -57,11 +58,14 @@ where
             );
             continue;
         }
-        let (stdout, stderr, _) = execute(args, &mut reader);
+        let (stdout, stderr, command_code) = execute(args, &mut reader);
         let _ = write!(writer, "{stdout}");
         let _ = write!(writer, "{stderr}");
+        if command_code != 0 {
+            exit_code = command_code;
+        }
     }
-    0
+    exit_code
 }
 
 fn print_help(writer: &mut impl Write) {
@@ -72,7 +76,7 @@ fn print_help(writer: &mut impl Write) {
     let _ = writeln!(writer, "  status           Show effective configuration");
     let _ = writeln!(
         writer,
-        "  models ...       Inspect supported model configuration"
+        "  models discover <provider-key>  Discover a provider's models"
     );
     let _ = writeln!(writer, "  help             Show this help");
     let _ = writeln!(writer, "  exit             Exit");
