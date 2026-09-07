@@ -1,8 +1,8 @@
-use crate::{DebugPythonLab, QuectoWorld};
+use crate::{DebugSwarm, QuectoWorld};
 use cucumber::{given, then, when};
 use quecto::domain::tool::{Tool, ToolResult};
 use quecto::infrastructure::security::sandbox::Sandbox;
-use quecto::infrastructure::tools::python_lab::{PythonLabConfig, PythonLabTool};
+use quecto::infrastructure::tools::swarm::{SwarmConfig, SwarmTool};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -11,7 +11,7 @@ use tempfile::TempDir;
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Background `python_lab` jobs are `tokio::spawn`ed, so they only survive for
+/// Background `swarm` jobs are `tokio::spawn`ed, so they only survive for
 /// as long as the runtime that started them. A per-process runtime keeps those
 /// tasks alive across the separate steps of a scenario; a runtime created and
 /// dropped inside each step would silently kill every background job.
@@ -21,31 +21,35 @@ fn runtime() -> &'static tokio::runtime::Runtime {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
-            .expect("failed to build python lab test runtime")
+            .expect("failed to build swarm test runtime")
     })
 }
 
 fn ensure_workspace(world: &mut QuectoWorld) -> PathBuf {
-    if world.python_lab_workspace.is_none() {
-        let tmp = TempDir::new().expect("failed to create python lab temp dir");
+    if world.swarm_workspace.is_none() {
+        let tmp = TempDir::new().expect("failed to create swarm temp dir");
         let path = tmp.path().to_path_buf();
-        world._python_lab_temp_dir = Some(tmp);
-        world.python_lab_workspace = Some(path);
+        world._swarm_temp_dir = Some(tmp);
+        world.swarm_workspace = Some(path);
     }
-    world.python_lab_workspace.clone().unwrap()
+    world.swarm_workspace.clone().unwrap()
 }
 
 /// One tool instance per scenario, so the background job registry it owns is
 /// shared between the run/status/output/cancel steps.
-fn tool(world: &mut QuectoWorld) -> Arc<PythonLabTool> {
+fn tool(world: &mut QuectoWorld) -> Arc<SwarmTool> {
     let ws = ensure_workspace(world);
-    if world.python_lab_tool.is_none() {
+    if world.swarm_tool.is_none() {
         let sandbox = Arc::new(Sandbox::new(Some(ws.clone())));
-        let tool = PythonLabTool::new(Arc::new(ws), sandbox, PythonLabConfig::default());
+        let tool = quecto::infrastructure::tools::swarm_test_support::tool(
+            Arc::new(ws),
+            sandbox,
+            SwarmConfig::default(),
+        );
         tool.set_session_key("bdd-python-lab".into());
-        world.python_lab_tool = Some(DebugPythonLab(Arc::new(tool)));
+        world.swarm_tool = Some(DebugSwarm(Arc::new(tool)));
     }
-    world.python_lab_tool.as_ref().unwrap().0.clone()
+    world.swarm_tool.as_ref().unwrap().0.clone()
 }
 
 fn run(world: &mut QuectoWorld, args: serde_json::Value) {
@@ -58,42 +62,39 @@ fn run(world: &mut QuectoWorld, args: serde_json::Value) {
             image_blocks: vec![],
             delivery_metadata: None,
         });
-    world.python_lab_result = Some(result);
+    world.swarm_result = Some(result);
 }
 
 fn result(world: &QuectoWorld) -> &ToolResult {
     world
-        .python_lab_result
+        .swarm_result
         .as_ref()
-        .expect("expected a python lab result")
+        .expect("expected a swarm result")
 }
 
 fn result_json(world: &QuectoWorld) -> serde_json::Value {
     serde_json::from_str(&result(world).content).unwrap_or_else(|e| {
         panic!(
-            "python lab result should be JSON ({e}): {}",
+            "swarm result should be JSON ({e}): {}",
             result(world).content
         )
     })
 }
 
 fn job_id(world: &QuectoWorld) -> String {
-    world
-        .python_lab_job_id
-        .clone()
-        .expect("expected a python lab job id")
+    world.swarm_job_id.clone().expect("expected a swarm job id")
 }
 
 // ---------------------------------------------------------------------------
 // Given
 // ---------------------------------------------------------------------------
 
-#[given("a python lab workspace")]
+#[given("a swarm workspace")]
 fn given_workspace(world: &mut QuectoWorld) {
     ensure_workspace(world);
 }
 
-#[given(regex = r#"^a python lab workspace file "([^"]+)" with content:$"#)]
+#[given(regex = r#"^a swarm workspace file "([^"]+)" with content:$"#)]
 fn given_workspace_file(world: &mut QuectoWorld, step: &cucumber::gherkin::Step, filename: String) {
     let ws = ensure_workspace(world);
     let content = step
@@ -101,19 +102,19 @@ fn given_workspace_file(world: &mut QuectoWorld, step: &cucumber::gherkin::Step,
         .as_deref()
         .expect("step should carry a docstring")
         .trim_start_matches('\n');
-    std::fs::write(ws.join(filename), content).expect("failed to write python lab file");
+    std::fs::write(ws.join(filename), content).expect("failed to write swarm file");
 }
 
 // ---------------------------------------------------------------------------
 // When
 // ---------------------------------------------------------------------------
 
-#[when(regex = r#"^I run python lab inline code "(.+)"$"#)]
+#[when(regex = r#"^I run swarm inline code "(.+)"$"#)]
 fn when_run_inline(world: &mut QuectoWorld, code: String) {
     run(world, serde_json::json!({"op": "run", "code": code}));
 }
 
-#[when(regex = r#"^I run python lab inline code "(.+)" with timeout (\d+) seconds$"#)]
+#[when(regex = r#"^I run swarm inline code "(.+)" with timeout (\d+) seconds$"#)]
 fn when_run_inline_with_timeout(world: &mut QuectoWorld, code: String, seconds: u64) {
     run(
         world,
@@ -121,7 +122,7 @@ fn when_run_inline_with_timeout(world: &mut QuectoWorld, code: String, seconds: 
     );
 }
 
-#[when(regex = r#"^I run python lab inline code "(.+)" with max output (\d+) bytes$"#)]
+#[when(regex = r#"^I run swarm inline code "(.+)" with max output (\d+) bytes$"#)]
 fn when_run_inline_with_max_output(world: &mut QuectoWorld, code: String, bytes: u64) {
     run(
         world,
@@ -129,23 +130,23 @@ fn when_run_inline_with_max_output(world: &mut QuectoWorld, code: String, bytes:
     );
 }
 
-#[when(regex = r#"^I run python lab inline code "(.+)" in the background$"#)]
+#[when(regex = r#"^I run swarm inline code "(.+)" in the background$"#)]
 fn when_run_inline_background(world: &mut QuectoWorld, code: String) {
     run(
         world,
         serde_json::json!({"op": "run", "code": code, "background": true}),
     );
     if let Some(id) = result_json(world).get("job_id").and_then(|v| v.as_str()) {
-        world.python_lab_job_id = Some(id.to_string());
+        world.swarm_job_id = Some(id.to_string());
     }
 }
 
-#[when(regex = r#"^I run python lab file "([^"]+)"$"#)]
+#[when(regex = r#"^I run swarm file "([^"]+)"$"#)]
 fn when_run_file(world: &mut QuectoWorld, path: String) {
     run(world, serde_json::json!({"op": "run", "path": path}));
 }
 
-#[when(regex = r#"^I run python lab file "([^"]+)" with args "(.*)" and stdin "(.*)"$"#)]
+#[when(regex = r#"^I run swarm file "([^"]+)" with args "(.*)" and stdin "(.*)"$"#)]
 fn when_run_file_with_args(world: &mut QuectoWorld, path: String, args: String, stdin: String) {
     let args: Vec<&str> = if args.is_empty() {
         vec![]
@@ -158,7 +159,7 @@ fn when_run_file_with_args(world: &mut QuectoWorld, path: String, args: String, 
     );
 }
 
-#[when("I run python lab with both code and path")]
+#[when("I run swarm with both code and path")]
 fn when_run_both(world: &mut QuectoWorld) {
     run(
         world,
@@ -166,22 +167,22 @@ fn when_run_both(world: &mut QuectoWorld) {
     );
 }
 
-#[when("I run python lab with neither code nor path")]
+#[when("I run swarm with neither code nor path")]
 fn when_run_neither(world: &mut QuectoWorld) {
     run(world, serde_json::json!({"op": "run"}));
 }
 
-#[when(regex = r#"^I run python lab op "([^"]+)"$"#)]
+#[when(regex = r#"^I run swarm op "([^"]+)"$"#)]
 fn when_run_op(world: &mut QuectoWorld, op: String) {
     run(world, serde_json::json!({"op": op}));
 }
 
-#[when(regex = r#"^I ask for python lab status of job "([^"]+)"$"#)]
+#[when(regex = r#"^I ask for swarm status of job "([^"]+)"$"#)]
 fn when_status_of(world: &mut QuectoWorld, id: String) {
     run(world, serde_json::json!({"op": "status", "job_id": id}));
 }
 
-#[when("I cancel the background python lab job")]
+#[when("I cancel the background swarm job")]
 fn when_cancel(world: &mut QuectoWorld) {
     let id = job_id(world);
     run(world, serde_json::json!({"op": "cancel", "job_id": id}));
@@ -191,29 +192,29 @@ fn when_cancel(world: &mut QuectoWorld) {
 // Then
 // ---------------------------------------------------------------------------
 
-#[then(regex = r#"^the python lab result should contain "(.+)"$"#)]
+#[then(regex = r#"^the swarm result should contain "(.+)"$"#)]
 fn then_contains(world: &mut QuectoWorld, needle: String) {
     let content = &result(world).content;
     assert!(
         content.contains(&needle),
-        "expected python lab result to contain {needle:?}, got: {content}"
+        "expected swarm result to contain {needle:?}, got: {content}"
     );
 }
 
-#[then(regex = r#"^the python lab status should be "([^"]+)"$"#)]
+#[then(regex = r#"^the swarm status should be "([^"]+)"$"#)]
 fn then_status(world: &mut QuectoWorld, expected: String) {
     let actual = result_json(world)
         .get("status")
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_string();
-    assert_eq!(actual, expected, "unexpected python lab status");
+    assert_eq!(actual, expected, "unexpected swarm status");
 }
 
 /// Distinguishes a sandbox refusal from the tool merely failing for some other
 /// reason — a rejected path and a path that simply does not exist both surface
 /// as errors, so asserting only `is_error` would pass with no sandbox at all.
-#[then("the python lab result should be a sandbox rejection")]
+#[then("the swarm result should be a sandbox rejection")]
 fn then_sandbox_rejection(world: &mut QuectoWorld) {
     let result = result(world);
     assert!(result.is_error, "expected an error: {}", result.content);
@@ -224,25 +225,25 @@ fn then_sandbox_rejection(world: &mut QuectoWorld) {
     );
 }
 
-#[then("the python lab result should be an error")]
+#[then("the swarm result should be an error")]
 fn then_is_error(world: &mut QuectoWorld) {
     assert!(
         result(world).is_error,
-        "expected python lab result to be an error: {}",
+        "expected swarm result to be an error: {}",
         result(world).content
     );
 }
 
-#[then("the python lab result should not be an error")]
+#[then("the swarm result should not be an error")]
 fn then_not_error(world: &mut QuectoWorld) {
     assert!(
         !result(world).is_error,
-        "expected python lab result not to be an error: {}",
+        "expected swarm result not to be an error: {}",
         result(world).content
     );
 }
 
-#[then("the python lab exit code should not be zero")]
+#[then("the swarm exit code should not be zero")]
 fn then_nonzero_exit(world: &mut QuectoWorld) {
     let code = result_json(world)
         .get("exit_code")
@@ -251,7 +252,7 @@ fn then_nonzero_exit(world: &mut QuectoWorld) {
     assert_ne!(code, 0, "expected a non-zero exit code");
 }
 
-#[then(regex = r#"^the python lab result should list "([^"]+)" as modified$"#)]
+#[then(regex = r#"^the swarm result should list "([^"]+)" as modified$"#)]
 fn then_lists_modified(world: &mut QuectoWorld, name: String) {
     let json = result_json(world);
     let changed = json
@@ -264,7 +265,7 @@ fn then_lists_modified(world: &mut QuectoWorld, name: String) {
     );
 }
 
-#[then(regex = r#"^the python lab result should report cancel reason "([^"]+)"$"#)]
+#[then(regex = r#"^the swarm result should report cancel reason "([^"]+)"$"#)]
 fn then_cancel_reason(world: &mut QuectoWorld, expected: String) {
     let json = result_json(world);
     let actual = json
@@ -274,7 +275,7 @@ fn then_cancel_reason(world: &mut QuectoWorld, expected: String) {
     assert_eq!(actual, expected, "unexpected timeout_or_cancel_reason");
 }
 
-#[then("the python lab result should report truncated output")]
+#[then("the swarm result should report truncated output")]
 fn then_truncated(world: &mut QuectoWorld) {
     let json = result_json(world);
     assert_eq!(
@@ -284,7 +285,7 @@ fn then_truncated(world: &mut QuectoWorld) {
     );
 }
 
-#[then("the python lab artifact should contain the full output")]
+#[then("the swarm artifact should contain the full output")]
 fn then_artifact_has_full_output(world: &mut QuectoWorld) {
     let json = result_json(world);
     let paths = json
@@ -296,7 +297,7 @@ fn then_artifact_has_full_output(world: &mut QuectoWorld) {
         .and_then(|v| v.as_str())
         .expect("expected at least one artifact path");
     let ws = ensure_workspace(world);
-    let full = std::fs::read_to_string(ws.join(rel)).expect("failed to read python lab artifact");
+    let full = std::fs::read_to_string(ws.join(rel)).expect("failed to read swarm artifact");
     let preview = json
         .get("stdout")
         .and_then(|v| v.as_str())
@@ -318,7 +319,7 @@ fn then_artifact_has_full_output(world: &mut QuectoWorld) {
     );
 }
 
-#[then(regex = r#"^the python lab workspace should not contain "([^"]+)"$"#)]
+#[then(regex = r#"^the swarm workspace should not contain "([^"]+)"$"#)]
 fn then_workspace_lacks(world: &mut QuectoWorld, name: String) {
     let ws = ensure_workspace(world);
     assert!(
@@ -327,7 +328,7 @@ fn then_workspace_lacks(world: &mut QuectoWorld, name: String) {
     );
 }
 
-#[then("the python lab result should be a slim successful envelope")]
+#[then("the swarm result should be a slim successful envelope")]
 fn then_slim_success_envelope(world: &mut QuectoWorld) {
     let json = result_json(world);
     let keys = json.as_object().expect("result should be an object");
@@ -351,7 +352,7 @@ fn then_slim_success_envelope(world: &mut QuectoWorld) {
     );
 }
 
-#[then("the python lab result should include audit metadata")]
+#[then("the swarm result should include audit metadata")]
 fn then_audit_metadata(world: &mut QuectoWorld) {
     let json = result_json(world);
     for field in [
@@ -390,7 +391,7 @@ fn then_audit_metadata(world: &mut QuectoWorld) {
     );
 }
 
-#[then("the python lab result should report a job id")]
+#[then("the swarm result should report a job id")]
 fn then_has_job_id(world: &mut QuectoWorld) {
     let json = result_json(world);
     let id = json
@@ -398,10 +399,10 @@ fn then_has_job_id(world: &mut QuectoWorld) {
         .and_then(|v| v.as_str())
         .expect("expected a job_id in the background run result");
     assert!(!id.is_empty(), "job_id should not be empty");
-    world.python_lab_job_id = Some(id.to_string());
+    world.swarm_job_id = Some(id.to_string());
 }
 
-#[then(regex = r#"^the background python lab job should reach status "([^"]+)"$"#)]
+#[then(regex = r#"^the background swarm job should reach status "([^"]+)"$"#)]
 fn then_job_reaches_status(world: &mut QuectoWorld, expected: String) {
     let id = job_id(world);
     // Kept short deliberately: cucumber drives every step on one executor
@@ -447,20 +448,20 @@ fn recorded_pid(world: &mut QuectoWorld) -> i32 {
     panic!("background program never recorded its pid at {path:?}");
 }
 
-#[then("the background python lab process should be running")]
+#[then("the background swarm process should be running")]
 fn then_process_running(world: &mut QuectoWorld) {
     let pid = recorded_pid(world);
-    world.python_lab_pid = Some(pid);
+    world.swarm_pid = Some(pid);
     assert!(pid_is_alive(pid), "expected pid {pid} to be running");
 }
 
 /// Asserts the observable effect of cancellation rather than the wording of the
 /// reply: a cancel that returned "cancelling" without killing anything would
 /// still satisfy a response-only assertion.
-#[then("the cancelled python lab process should no longer be running")]
+#[then("the cancelled swarm process should no longer be running")]
 fn then_process_dead(world: &mut QuectoWorld) {
     let pid = world
-        .python_lab_pid
+        .swarm_pid
         .expect("expected a recorded pid from an earlier step");
     for _ in 0..100 {
         if !pid_is_alive(pid) {
@@ -471,7 +472,7 @@ fn then_process_dead(world: &mut QuectoWorld) {
     panic!("pid {pid} was still alive after cancellation");
 }
 
-#[then(regex = r#"^the background python lab output should contain "(.+)"$"#)]
+#[then(regex = r#"^the background swarm output should contain "(.+)"$"#)]
 fn then_job_output_contains(world: &mut QuectoWorld, needle: String) {
     let id = job_id(world);
     run(world, serde_json::json!({"op": "output", "job_id": id}));
@@ -481,3 +482,6 @@ fn then_job_output_contains(world: &mut QuectoWorld, needle: String) {
         "expected background output to contain {needle:?}, got: {content}"
     );
 }
+
+#[path = "swarm_coordination_steps.rs"]
+mod coordination;

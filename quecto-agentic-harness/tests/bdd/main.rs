@@ -271,10 +271,10 @@ impl std::ops::DerefMut for DebugEditor {
     }
 }
 
-pub struct DebugPythonLab(pub Arc<quecto::infrastructure::tools::python_lab::PythonLabTool>);
-impl std::fmt::Debug for DebugPythonLab {
+pub struct DebugSwarm(pub Arc<quecto::infrastructure::tools::swarm::SwarmTool>);
+impl std::fmt::Debug for DebugSwarm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("<PythonLabTool>")
+        f.write_str("<SwarmTool>")
     }
 }
 
@@ -683,19 +683,19 @@ pub struct QuectoWorld {
     pub grep_workspace: Option<PathBuf>,
     /// Result from grep tool execution
     pub grep_result: Option<quecto::domain::tool::ToolResult>,
-    // --- Python Lab BDD fields ---
-    /// Temp dir for the python lab workspace (kept alive)
-    pub _python_lab_temp_dir: Option<TempDir>,
-    /// Workspace path for python lab tests
-    pub python_lab_workspace: Option<PathBuf>,
-    /// Result from the most recent python lab tool execution
-    pub python_lab_result: Option<quecto::domain::tool::ToolResult>,
+    // --- Swarm BDD fields ---
+    /// Temp dir for the swarm workspace (kept alive)
+    pub _swarm_temp_dir: Option<TempDir>,
+    /// Workspace path for swarm tests
+    pub swarm_workspace: Option<PathBuf>,
+    /// Result from the most recent swarm tool execution
+    pub swarm_result: Option<quecto::domain::tool::ToolResult>,
     /// Scenario-scoped tool instance; owns the background job registry
-    pub python_lab_tool: Option<DebugPythonLab>,
+    pub swarm_tool: Option<DebugSwarm>,
     /// Job id returned by the most recent background run
-    pub python_lab_job_id: Option<String>,
-    /// Pid a background python lab program recorded for itself
-    pub python_lab_pid: Option<i32>,
+    pub swarm_job_id: Option<String>,
+    /// Pid a background swarm program recorded for itself
+    pub swarm_pid: Option<i32>,
     // --- Find BDD fields ---
     /// Temp dir for find workspace (kept alive)
     pub _find_temp_dir: Option<TempDir>,
@@ -1395,7 +1395,6 @@ mod path_utils_steps;
 mod provider_auth_modes_steps;
 mod provider_steps;
 mod pruning_1072_steps;
-mod python_lab_steps;
 mod read_tool_steps;
 mod recall_tool_steps;
 mod release_profile_steps;
@@ -1417,6 +1416,7 @@ mod subagent_notify_steps;
 mod subagent_protocol_steps;
 mod subagent_steps;
 mod subagent_widget_steps;
+mod swarm_steps;
 mod tool_empty_args_steps;
 mod tool_stable_ids_steps;
 mod truncate_steps;

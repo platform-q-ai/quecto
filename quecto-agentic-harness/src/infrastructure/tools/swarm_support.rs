@@ -65,7 +65,7 @@ pub(crate) fn snapshot_files(root: &Path) -> BTreeMap<String, SystemTime> {
 /// Workspace-relative paths under the tool's own artifact directory.
 pub(crate) fn is_reserved_artifact_rel(rel: &Path) -> bool {
     let mut parts = rel.components().map(|c| c.as_os_str());
-    parts.next().is_some_and(|c| c == ".quecto") && parts.next().is_some_and(|c| c == "python_lab")
+    parts.next().is_some_and(|c| c == ".quecto") && parts.next().is_some_and(|c| c == "swarm")
 }
 
 pub(crate) fn lexical_normalize(path: &Path) -> PathBuf {
@@ -88,7 +88,7 @@ pub(crate) fn is_reserved_artifact_path(workspace: &Path, path: &Path) -> bool {
     } else {
         workspace.join(path)
     };
-    let reserved = workspace.join(".quecto/python_lab");
+    let reserved = workspace.join(".quecto/swarm");
 
     let resolved_effective = effective
         .canonicalize()

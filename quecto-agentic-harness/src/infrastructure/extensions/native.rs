@@ -96,7 +96,7 @@ pub struct OfficialToolDeps {
     pub sandbox: crate::infrastructure::security::sandbox::Sandbox,
     pub exec_options: crate::infrastructure::tools::bash::ExecOptions,
     pub docs_content_policy: crate::infrastructure::tools::docs::DocsContentPolicy,
-    pub python_lab_config: crate::infrastructure::tools::python_lab::PythonLabConfig,
+    pub swarm_config: crate::infrastructure::tools::swarm::SwarmConfig,
 }
 
 pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Extension>> {
@@ -133,11 +133,12 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
                 sandbox.clone(),
             )),
             Arc::new(
-                crate::infrastructure::tools::python_lab::PythonLabTool::new(
+                crate::infrastructure::tools::swarm::SwarmTool::new(
                     workspace.clone(),
                     sandbox.clone(),
-                    deps.python_lab_config,
-                ),
+                    deps.swarm_config,
+                )
+                .with_context(crate::infrastructure::tools::swarm_bridge::SwarmContext::discover()),
             ),
             Arc::new(crate::infrastructure::tools::find::FindTool::new(
                 workspace, sandbox,
@@ -295,7 +296,7 @@ pub fn build_official_tool_registry(
             sandbox,
             exec_options,
             docs_content_policy: crate::infrastructure::tools::docs::DocsContentPolicy::Parent,
-            python_lab_config: crate::infrastructure::tools::python_lab::PythonLabConfig::default(),
+            swarm_config: crate::infrastructure::tools::swarm::SwarmConfig::default(),
         }),
     );
     registry

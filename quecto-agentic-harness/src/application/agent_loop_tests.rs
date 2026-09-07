@@ -241,8 +241,7 @@ impl crate::domain::tool::Tool for MockTool {
     }
 }
 
-/// Baseline test config; override individual fields with functional-update
-/// syntax (`AgentLoopConfig { field: ..., ..test_config(...) }`).
+/// Baseline config; override fields with `..test_config(...)`.
 pub(super) fn test_config(
     provider: Arc<dyn crate::domain::provider::LlmProvider>,
     tool_registry: Box<dyn crate::domain::tool::ToolRegistry>,
@@ -747,3 +746,5 @@ async fn mock_streaming_provider_trait_surface_chat_and_incremental() {
     let response = provider.chat(request).await.unwrap();
     assert_eq!(response.content.as_deref(), Some("chat done"));
 }
+#[path = "agent_loop_swarm_tests.rs"]
+mod swarm;

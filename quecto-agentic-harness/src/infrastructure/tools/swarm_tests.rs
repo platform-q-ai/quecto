@@ -3,13 +3,13 @@ use std::sync::Arc;
 use crate::domain::tool::Tool;
 use crate::infrastructure::security::sandbox::Sandbox;
 
-use super::python_lab::{PythonLabConfig, PythonLabTool};
+use super::swarm::{SwarmConfig, SwarmTool};
 
-fn tool(dir: &std::path::Path) -> PythonLabTool {
-    PythonLabTool::new(
+fn tool(dir: &std::path::Path) -> SwarmTool {
+    super::swarm_test_support::tool(
         Arc::new(dir.to_path_buf()),
         Arc::new(Sandbox::new(Some(dir.to_path_buf()))),
-        PythonLabConfig {
+        SwarmConfig {
             default_timeout_seconds: 1,
             max_foreground_seconds: 2,
             default_max_output_bytes: 8,
@@ -219,8 +219,8 @@ async fn stderr_truncation_uses_stderr_artifact() {
 }
 
 #[test]
-fn python_lab_config_defaults_and_conversion_are_stable() {
-    let tool_cfg = super::python_lab::PythonLabToolConfig::default();
+fn swarm_config_defaults_and_conversion_are_stable() {
+    let tool_cfg = super::swarm::SwarmToolConfig::default();
     assert_eq!(tool_cfg.default_timeout_seconds, 60);
     assert_eq!(tool_cfg.max_foreground_seconds, 300);
     assert_eq!(tool_cfg.max_background_seconds, 1800);
@@ -229,7 +229,7 @@ fn python_lab_config_defaults_and_conversion_are_stable() {
     assert_eq!(tool_cfg.max_processes, Some(1));
     assert_eq!(tool_cfg.max_concurrent_jobs, 2);
     assert!(!tool_cfg.inherit_environment);
-    let runtime_cfg = PythonLabConfig::from(tool_cfg);
+    let runtime_cfg = SwarmConfig::from(tool_cfg);
     assert_eq!(runtime_cfg.default_timeout_seconds, 60);
     assert_eq!(runtime_cfg.max_output_bytes, 1_000_000);
 }
@@ -268,10 +268,10 @@ async fn session_key_and_limit_clamping_are_reported() {
 #[tokio::test]
 async fn configured_resource_limit_success_reports_resource_metadata() {
     let tmp = tempfile::tempdir().unwrap();
-    let lab = PythonLabTool::new(
+    let lab = super::swarm_test_support::tool(
         Arc::new(tmp.path().to_path_buf()),
         Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()))),
-        PythonLabConfig {
+        SwarmConfig {
             max_cpu_seconds: Some(5),
             ..Default::default()
         },
@@ -346,10 +346,10 @@ async fn stderr_only_truncation_reports_stderr_artifact() {
 #[tokio::test]
 async fn inherit_environment_can_be_enabled() {
     let tmp = tempfile::tempdir().unwrap();
-    let lab = PythonLabTool::new(
+    let lab = super::swarm_test_support::tool(
         Arc::new(tmp.path().to_path_buf()),
         Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()))),
-        PythonLabConfig {
+        SwarmConfig {
             inherit_environment: true,
             default_max_output_bytes: 32,
             ..Default::default()
@@ -407,18 +407,17 @@ async fn stderr_and_stdout_truncation_report_both_artifacts() {
 }
 
 #[test]
-fn python_lab_config_deserializes_partial_and_full_json_shapes() {
-    let partial: super::python_lab::PythonLabToolConfig =
-        serde_json::from_value(serde_json::json!({
-            "max_output_bytes": 1234,
-            "inherit_environment": true
-        }))
-        .unwrap();
+fn swarm_config_deserializes_partial_and_full_json_shapes() {
+    let partial: super::swarm::SwarmToolConfig = serde_json::from_value(serde_json::json!({
+        "max_output_bytes": 1234,
+        "inherit_environment": true
+    }))
+    .unwrap();
     assert_eq!(partial.default_timeout_seconds, 60);
     assert_eq!(partial.max_output_bytes, 1234);
     assert!(partial.inherit_environment);
 
-    let full: super::python_lab::PythonLabToolConfig = serde_json::from_value(serde_json::json!({
+    let full: super::swarm::SwarmToolConfig = serde_json::from_value(serde_json::json!({
         "default_timeout_seconds": 5,
         "max_foreground_seconds": 6,
         "max_background_seconds": 7,
@@ -466,8 +465,8 @@ async fn max_output_bytes_caps_each_stream_artifact_independently() {
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
     let exec_id = v["execution_id"].as_str().unwrap();
-    let stdout_artifact = format!(".quecto/python_lab/{exec_id}/stdout.txt");
-    let stderr_artifact = format!(".quecto/python_lab/{exec_id}/stderr.txt");
+    let stdout_artifact = format!(".quecto/swarm/{exec_id}/stdout.txt");
+    let stderr_artifact = format!(".quecto/swarm/{exec_id}/stderr.txt");
     // Each stream gets its own budget sized by the configured hard cap, so a
     // flooding stdout cannot consume the allowance stderr needs for a traceback.
     for artifact in [stdout_artifact, stderr_artifact] {
@@ -571,7 +570,7 @@ async fn own_artifacts_are_not_reported_as_program_writes() {
 async fn script_paths_inside_the_artifact_directory_are_rejected() {
     let tmp = tempfile::tempdir().unwrap();
     let result = tool(tmp.path())
-        .execute(r#"{"op":"run","path":".quecto/python_lab/planted.py"}"#)
+        .execute(r#"{"op":"run","path":".quecto/swarm/planted.py"}"#)
         .await
         .unwrap();
     assert!(result.is_error);
@@ -585,7 +584,7 @@ async fn script_paths_inside_the_artifact_directory_are_rejected() {
 #[tokio::test]
 async fn absolute_script_paths_inside_the_artifact_directory_are_rejected() {
     let tmp = tempfile::tempdir().unwrap();
-    let planted = tmp.path().join(".quecto/python_lab/planted.py");
+    let planted = tmp.path().join(".quecto/swarm/planted.py");
     std::fs::create_dir_all(planted.parent().unwrap()).unwrap();
     std::fs::write(&planted, "print('should not run')").unwrap();
     let payload = format!(
@@ -604,11 +603,11 @@ async fn absolute_script_paths_inside_the_artifact_directory_are_rejected() {
 #[tokio::test]
 async fn traversal_script_paths_inside_the_artifact_directory_are_rejected() {
     let tmp = tempfile::tempdir().unwrap();
-    let planted = tmp.path().join(".quecto/python_lab/planted.py");
+    let planted = tmp.path().join(".quecto/swarm/planted.py");
     std::fs::create_dir_all(planted.parent().unwrap()).unwrap();
     std::fs::write(&planted, "print('should not run')").unwrap();
     let result = tool(tmp.path())
-        .execute(r#"{"op":"run","path":"safe/../.quecto/python_lab/planted.py"}"#)
+        .execute(r#"{"op":"run","path":"safe/../.quecto/swarm/planted.py"}"#)
         .await
         .unwrap();
     assert!(result.is_error, "{}", result.content);
@@ -622,10 +621,10 @@ async fn traversal_script_paths_inside_the_artifact_directory_are_rejected() {
 #[tokio::test]
 async fn symlink_script_paths_inside_the_artifact_directory_are_rejected() {
     let tmp = tempfile::tempdir().unwrap();
-    let planted = tmp.path().join(".quecto/python_lab/planted.py");
+    let planted = tmp.path().join(".quecto/swarm/planted.py");
     std::fs::create_dir_all(planted.parent().unwrap()).unwrap();
     std::fs::write(&planted, "print('should not run')").unwrap();
-    std::os::unix::fs::symlink(".quecto/python_lab", tmp.path().join("pl")).unwrap();
+    std::os::unix::fs::symlink(".quecto/swarm", tmp.path().join("pl")).unwrap();
 
     let result = tool(tmp.path())
         .execute(r#"{"op":"run","path":"pl/planted.py"}"#)
@@ -645,10 +644,10 @@ async fn preview_larger_than_one_read_is_returned_whole() {
     // tokio caps a single read at 2 MiB; a lone read() would silently return a
     // short preview while reporting output_truncated: false.
     let tmp = tempfile::tempdir().unwrap();
-    let lab = PythonLabTool::new(
+    let lab = super::swarm_test_support::tool(
         Arc::new(tmp.path().to_path_buf()),
         Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()))),
-        PythonLabConfig {
+        SwarmConfig {
             default_timeout_seconds: 30,
             default_max_output_bytes: 8_000_000,
             max_output_bytes: 8_000_000,

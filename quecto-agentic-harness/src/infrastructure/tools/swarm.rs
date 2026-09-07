@@ -4,116 +4,20 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-#[path = "python_lab_process.rs"]
-mod python_lab_process;
-#[path = "python_lab_result.rs"]
-mod python_lab_result;
-use python_lab_process::{interpreter_version, kill_pid, kill_pid_tree_best_effort, run_child};
-use python_lab_result::{ResultContext, artifacts_diverged, build_result, file_len};
+#[path = "swarm_process.rs"]
+mod swarm_process;
+#[path = "swarm_result.rs"]
+mod swarm_result;
+use swarm_process::{interpreter_version, kill_pid, kill_pid_tree_best_effort, run_child};
+use swarm_result::{ResultContext, artifacts_diverged, build_result, file_len};
 
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 
-#[derive(Debug, Clone)]
-pub struct PythonLabConfig {
-    pub default_timeout_seconds: u64,
-    pub max_foreground_seconds: u64,
-    pub max_background_seconds: u64,
-    pub default_max_output_bytes: usize,
-    pub max_output_bytes: usize,
-    pub max_memory_bytes: Option<u64>,
-    pub max_cpu_seconds: Option<u64>,
-    pub max_processes: Option<u32>,
-    pub max_concurrent_jobs: usize,
-    pub inherit_environment: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PythonLabToolConfig {
-    #[serde(default = "default_python_lab_timeout_seconds")]
-    pub default_timeout_seconds: u64,
-    #[serde(default = "default_python_lab_max_foreground_seconds")]
-    pub max_foreground_seconds: u64,
-    #[serde(default = "default_python_lab_max_background_seconds")]
-    pub max_background_seconds: u64,
-    #[serde(default = "default_python_lab_output_bytes")]
-    pub default_max_output_bytes: usize,
-    #[serde(default = "default_python_lab_max_output_bytes")]
-    pub max_output_bytes: usize,
-    #[serde(default)]
-    pub max_memory_bytes: Option<u64>,
-    #[serde(default)]
-    pub max_cpu_seconds: Option<u64>,
-    #[serde(default = "default_python_lab_max_processes")]
-    pub max_processes: Option<u32>,
-    #[serde(default = "default_python_lab_concurrent_jobs")]
-    pub max_concurrent_jobs: usize,
-    #[serde(default)]
-    pub inherit_environment: bool,
-}
-
-impl Default for PythonLabToolConfig {
-    fn default() -> Self {
-        Self {
-            default_timeout_seconds: default_python_lab_timeout_seconds(),
-            max_foreground_seconds: default_python_lab_max_foreground_seconds(),
-            max_background_seconds: default_python_lab_max_background_seconds(),
-            default_max_output_bytes: default_python_lab_output_bytes(),
-            max_output_bytes: default_python_lab_max_output_bytes(),
-            max_memory_bytes: None,
-            max_cpu_seconds: None,
-            max_processes: default_python_lab_max_processes(),
-            max_concurrent_jobs: default_python_lab_concurrent_jobs(),
-            inherit_environment: false,
-        }
-    }
-}
-impl From<PythonLabToolConfig> for PythonLabConfig {
-    fn from(v: PythonLabToolConfig) -> Self {
-        Self {
-            default_timeout_seconds: v.default_timeout_seconds,
-            max_foreground_seconds: v.max_foreground_seconds,
-            max_background_seconds: v.max_background_seconds,
-            default_max_output_bytes: v.default_max_output_bytes,
-            max_output_bytes: v.max_output_bytes,
-            max_memory_bytes: v.max_memory_bytes,
-            max_cpu_seconds: v.max_cpu_seconds,
-            max_processes: v.max_processes,
-            max_concurrent_jobs: v.max_concurrent_jobs,
-            inherit_environment: v.inherit_environment,
-        }
-    }
-}
-fn default_python_lab_timeout_seconds() -> u64 {
-    60
-}
-fn default_python_lab_max_foreground_seconds() -> u64 {
-    300
-}
-fn default_python_lab_max_background_seconds() -> u64 {
-    1800
-}
-fn default_python_lab_output_bytes() -> usize {
-    200_000
-}
-fn default_python_lab_max_output_bytes() -> usize {
-    1_000_000
-}
-fn default_python_lab_max_processes() -> Option<u32> {
-    Some(1)
-}
-fn default_python_lab_concurrent_jobs() -> usize {
-    2
-}
-impl Default for PythonLabConfig {
-    fn default() -> Self {
-        PythonLabToolConfig::default().into()
-    }
-}
+pub use super::swarm_config::{SwarmConfig, SwarmToolConfig};
 
 /// Registry of background jobs, keyed by job id.
 type JobRegistry = Arc<Mutex<HashMap<String, Arc<Mutex<JobState>>>>>;
@@ -136,10 +40,11 @@ impl Drop for ActiveGuard {
     }
 }
 
-pub struct PythonLabTool {
+pub struct SwarmTool {
+    context: Option<super::swarm_bridge::SwarmContext>,
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
-    config: PythonLabConfig,
+    config: SwarmConfig,
     session_key: Mutex<String>,
     jobs: JobRegistry,
     active: ActiveExecutions,
@@ -165,9 +70,10 @@ pub(crate) struct JobState {
     pub(crate) inherit_environment: bool,
 }
 
-impl PythonLabTool {
-    pub fn new(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>, config: PythonLabConfig) -> Self {
+impl SwarmTool {
+    pub fn new(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>, config: SwarmConfig) -> Self {
         Self {
+            context: None,
             workspace,
             sandbox,
             config,
@@ -178,7 +84,14 @@ impl PythonLabTool {
     }
 }
 
-impl Drop for PythonLabTool {
+impl SwarmTool {
+    pub fn with_context(mut self, context: Option<super::swarm_bridge::SwarmContext>) -> Self {
+        self.context = context;
+        self
+    }
+}
+
+impl Drop for SwarmTool {
     fn drop(&mut self) {
         if let Ok(jobs) = self.jobs.lock() {
             for job in jobs.values() {
@@ -200,9 +113,13 @@ impl Drop for PythonLabTool {
     }
 }
 
-impl Tool for PythonLabTool {
+impl Tool for SwarmTool {
     fn definition(&self) -> ToolDefinition {
-        ToolDefinition { name: "python_lab".into(), description: "Execute Python programs in the persistent task workspace for domain-neutral computation. Provide op=run with exactly one of code or path; programs may read and write workspace files. Use background=true for long computations, then status/output/cancel by job_id. Prefer concise output and store large results as artifacts. Example: {\"op\":\"run\",\"code\":\"print(2 + 2)\"}".into(), parameters_schema: r#"{"type":"object","properties":{"op":{"type":"string","enum":["run","status","output","cancel"],"default":"run"},"code":{"type":"string"},"path":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"stdin":{"type":"string"},"timeout_seconds":{"type":"number"},"max_output_bytes":{"type":"number"},"background":{"type":"boolean"},"job_id":{"type":"string"},"offset":{"type":"number"},"limit":{"type":"number"}},"required":["op"]}"#.into() }
+        ToolDefinition {
+            name: "swarm".into(),
+            description: include_str!("swarm_helpers/tool_description.txt").into(),
+            parameters_schema: include_str!("swarm_helpers/tool_schema.json").into(),
+        }
     }
     fn set_session_key(&self, session_key: String) {
         if let Ok(mut g) = self.session_key.lock() {
@@ -213,6 +130,7 @@ impl Tool for PythonLabTool {
         &self,
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
+        let context = self.context.clone();
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(arguments);
         let workspace = self.workspace.clone();
         let sandbox = self.sandbox.clone();
@@ -225,15 +143,30 @@ impl Tool for PythonLabTool {
             .map(|g| g.clone())
             .unwrap_or_default();
         Box::pin(async move {
+            let Some(context) = context else {
+                return tool_err("swarm is container-only: use spawn with an official Docker/Podman container, then create a bounded run inside it".into());
+            };
             let v = match parsed {
                 Ok(v) => v,
                 Err(e) => return tool_err(format!("invalid JSON arguments: {e}")),
             };
             match v.get("op").and_then(|x| x.as_str()).unwrap_or("run") {
+                op @ ("create" | "summary" | "reconcile" | "cancel_run") => {
+                    match super::swarm_control::control(context, op, v.clone()).await {
+                        Ok(value) => {
+                            if value["status"] == "cancelled" {
+                                cancel_jobs(&jobs);
+                            }
+                            ok_json(value, false)
+                        }
+                        Err(error) => tool_err(error.to_string()),
+                    }
+                }
                 "run" => {
                     run_op(
                         v,
                         RunEnv {
+                            context,
                             workspace,
                             sandbox,
                             cfg,
@@ -258,9 +191,10 @@ impl Tool for PythonLabTool {
 
 /// Everything a run needs from the tool instance.
 struct RunEnv {
+    context: super::swarm_bridge::SwarmContext,
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
-    cfg: PythonLabConfig,
+    cfg: SwarmConfig,
     jobs: JobRegistry,
     active: ActiveExecutions,
     session_key: String,
@@ -268,6 +202,7 @@ struct RunEnv {
 
 async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainError> {
     let RunEnv {
+        context,
         workspace,
         sandbox,
         cfg,
@@ -275,10 +210,23 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
         active,
         session_key,
     } = env;
-    let spec = match parse_run(&v, &workspace, &sandbox, &cfg) {
+    let summary = match super::swarm_control::execution_state(context.clone()).await {
+        Ok(summary) => summary,
+        Err(error) => return tool_err(error.to_string()),
+    };
+    if summary["status"] != "running" {
+        return tool_err(format!("swarm is {}; inspect summary", summary["status"]));
+    }
+    let mut spec = match parse_run(&v, &workspace, &sandbox, &cfg) {
         Ok(s) => s,
         Err(e) => return tool_err(e.to_string()),
     };
+    let remaining = summary["deadline"].as_f64().unwrap_or(0.0) - now_ms() as f64 / 1000.0;
+    if remaining <= 0.0 {
+        return tool_err("swarm budget-exhausted".into());
+    }
+    spec.timeout_secs = spec.timeout_secs.min(remaining.ceil() as u64);
+    spec.bootstrap = Some(context.bootstrap());
     let exec_id = format!(
         "py_{}_{:x}_{}",
         std::process::id(),
@@ -293,7 +241,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
             .await
             .map_err(|e| DomainError::Other(e.to_string()))?
     };
-    let artifact_dir = workspace.join(".quecto/python_lab").join(&exec_id);
+    let artifact_dir = workspace.join(".quecto/swarm").join(&exec_id);
     tokio::fs::create_dir_all(&artifact_dir)
         .await
         .map_err(ioerr)?;
@@ -343,7 +291,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
                 .count();
             if running >= cfg.max_concurrent_jobs {
                 return ok_json(
-                    json!({"status":"rejected","message":"python_lab concurrent job limit reached","max_concurrent_jobs":cfg.max_concurrent_jobs}),
+                    json!({"status":"rejected","message":"swarm concurrent job limit reached","max_concurrent_jobs":cfg.max_concurrent_jobs}),
                     true,
                 );
             }
@@ -404,6 +352,14 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
             })
             .await
             .unwrap_or_else(|e| json!({"status":"failed","message":e.to_string()}));
+            let mut res = res;
+            match super::swarm_control::after_execution(context, &summary).await {
+                Ok(warnings) if !warnings.is_empty() => {
+                    res["notification_warnings"] = json!(warnings)
+                }
+                Err(error) => res["coordination_error"] = json!(error.to_string()),
+                _ => {}
+            }
             if let Ok(mut s) = state.lock() {
                 s.exit_code = exit_code;
                 s.completed_ms = Some(completed_ms);
@@ -450,12 +406,18 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
         cfg: &cfg,
     })
     .await?;
+    let warnings = super::swarm_control::after_execution(context, &summary).await?;
+    let mut result = result;
+    if !warnings.is_empty() {
+        result["notification_warnings"] = json!(warnings);
+    }
     let is_err = status != "completed" || code.unwrap_or(0) != 0;
     ok_json(result, is_err)
 }
 
 #[derive(Clone)]
 pub(crate) struct RunSpec {
+    pub(crate) bootstrap: Option<String>,
     pub(crate) invocation_type: String,
     pub(crate) code: Option<String>,
     pub(crate) script: Option<PathBuf>,
@@ -478,7 +440,7 @@ fn parse_run(
     v: &serde_json::Value,
     workspace: &Path,
     sandbox: &Sandbox,
-    cfg: &PythonLabConfig,
+    cfg: &SwarmConfig,
 ) -> Result<RunSpec, DomainError> {
     let code = v.get("code").and_then(|x| x.as_str()).map(str::to_string);
     let path = v.get("path").and_then(|x| x.as_str());
@@ -526,7 +488,7 @@ fn parse_run(
         // program cannot stage code inside another execution's directory.
         if is_reserved_artifact_path(workspace, Path::new(p)) {
             return Err(DomainError::Security(
-                ".quecto/python_lab is reserved for python_lab artifacts".into(),
+                ".quecto/swarm is reserved for swarm artifacts".into(),
             ));
         }
         let p = workspace.join(p);
@@ -539,6 +501,7 @@ fn parse_run(
         None
     };
     Ok(RunSpec {
+        bootstrap: None,
         invocation_type: if code.is_some() { "inline" } else { "file" }.into(),
         code,
         script,
@@ -632,7 +595,7 @@ async fn status_op(
         }
     }
     if let Some(obj) = detail.as_object_mut() {
-        let artifact_root = workspace.join(format!(".quecto/python_lab/{execution_id}"));
+        let artifact_root = workspace.join(format!(".quecto/swarm/{execution_id}"));
         obj.insert("artifact_dir".into(), json!(artifact_rel(&artifact_root)));
         obj.insert("max_output_bytes".into(), json!(max_output_bytes));
     }
@@ -724,9 +687,31 @@ fn ok_json(v: serde_json::Value, is_error: bool) -> Result<ToolResult, DomainErr
         delivery_metadata: None,
     })
 }
-#[path = "python_lab_support.rs"]
-mod python_lab_support;
-pub(crate) use python_lab_support::*;
-#[path = "python_lab_registry.rs"]
-mod python_lab_registry;
-pub(crate) use python_lab_registry::*;
+#[path = "swarm_support.rs"]
+mod swarm_support;
+pub(crate) use swarm_support::*;
+#[path = "swarm_registry.rs"]
+mod swarm_registry;
+pub(crate) use swarm_registry::*;
+
+fn cancel_jobs(jobs: &JobRegistry) {
+    if let Ok(jobs) = jobs.lock() {
+        for job in jobs.values() {
+            if let Ok(mut job) = job.lock() {
+                if !is_terminal(&job.status) {
+                    job.cancel_requested = true;
+                    if let Some(pid) = job.pid {
+                        terminate_member(pid);
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn terminate_member(pid: u32) {
+    // Snapshot/terminate descendants while the parent is still present, then
+    // use the existing group-or-PID fallback for both local and Docker joins.
+    kill_pid_tree_best_effort(pid);
+    kill_pid(pid);
+}

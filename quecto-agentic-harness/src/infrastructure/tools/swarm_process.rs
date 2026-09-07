@@ -7,7 +7,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 use crate::domain::error::DomainError;
-use crate::infrastructure::tools::python_lab::{JobState, RunSpec};
+use crate::infrastructure::tools::swarm::{JobState, RunSpec};
 
 /// PATH handed to the interpreter when the environment is cleared. Includes
 /// `/usr/local/bin` because that is where a source-built or Homebrew `python3`
@@ -32,14 +32,22 @@ pub(crate) async fn run_child(
             .env("PYTHONNOUSERSITE", "1");
     }
     apply_child_limits(&mut cmd, &spec);
-    if let Some(src) = spec.code {
+    if let Some(bootstrap) = &spec.bootstrap {
+        let program = match &spec.code {
+            Some(source) => format!(
+                "sys.argv=['-c']+sys.argv[1:]\nexec(compile({}, '<swarm>', 'exec'), {{'__name__':'__main__'}})",
+                serde_json::json!(source)
+            ),
+            None => format!(
+                "import os, runpy\nsys.argv=[{}]+sys.argv[1:]\nif not os.path.exists(sys.argv[0]):\n print(\"python3: can't open file \"+repr(sys.argv[0]),file=sys.stderr); sys.exit(2)\nrunpy.run_path({},run_name='__main__')",
+                serde_json::json!(spec.script),
+                serde_json::json!(spec.script)
+            ),
+        };
+        cmd.arg("-c").arg(format!("{bootstrap}\n{program}"));
+    } else if let Some(src) = spec.code {
         cmd.arg("-c").arg(src);
     } else {
-        // Defence in depth only: `spec.script` comes back from the sandbox
-        // validator already canonicalised and absolute, so it can never be
-        // mistaken for an interpreter option. That also makes this separator
-        // impossible to exercise through the public API — it guards against a
-        // future change that stops canonicalising, not against today's input.
         cmd.arg("--").arg(spec.script.unwrap());
     }
     for a in spec.args {

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde_json::json;
 
-use super::{PythonLabConfig, artifact_rel, read_preview, truncation_marker_exists};
+use super::{SwarmConfig, artifact_rel, read_preview, truncation_marker_exists};
 use crate::domain::error::DomainError;
 
 /// True when an artifact's size no longer matches what was captured when the
@@ -46,7 +46,7 @@ pub(crate) struct ResultContext<'a> {
     pub(crate) stderr_path: &'a Path,
     pub(crate) max_out: usize,
     pub(crate) changed: Vec<String>,
-    pub(crate) cfg: &'a PythonLabConfig,
+    pub(crate) cfg: &'a SwarmConfig,
 }
 
 pub(crate) async fn build_result(ctx: ResultContext<'_>) -> Result<serde_json::Value, DomainError> {

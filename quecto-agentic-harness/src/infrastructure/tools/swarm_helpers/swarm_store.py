@@ -1,0 +1,122 @@
+"""SQLite adapter. Transactions never span execution or lifecycle callbacks."""
+import contextlib
+import json
+import sqlite3
+import time
+
+
+class SwarmError(RuntimeError):
+    pass
+
+
+SCHEMA = '''
+CREATE TABLE IF NOT EXISTS run (id TEXT PRIMARY KEY, goal TEXT, constraints TEXT, criteria TEXT,
+ coordinator TEXT, integrator TEXT, member_limit INTEGER, deadline REAL, status TEXT);
+CREATE TABLE IF NOT EXISTS members (id TEXT PRIMARY KEY, reservation TEXT UNIQUE, status TEXT,
+ pid INTEGER, started TEXT, socket TEXT);
+CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY, title TEXT, acceptance TEXT, dependencies TEXT,
+ status TEXT, owner TEXT, token TEXT, evidence TEXT, blocker TEXT);
+CREATE TABLE IF NOT EXISTS files (path TEXT PRIMARY KEY, task INTEGER, owner TEXT, claim TEXT, token TEXT);
+CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, sender TEXT, recipient TEXT, body TEXT, status TEXT);
+CREATE TABLE IF NOT EXISTS evidence (criterion TEXT, artifact TEXT, revision TEXT, kind TEXT,
+ actor TEXT, accepted INTEGER, PRIMARY KEY(criterion, actor));
+CREATE TABLE IF NOT EXISTS requests (actor TEXT, request TEXT, payload TEXT, result TEXT,
+ PRIMARY KEY(actor, request));
+CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, actor TEXT, time REAL, action TEXT, detail TEXT);
+'''
+
+
+def encode(value):
+    return json.dumps(value, sort_keys=True, separators=(',', ':'))
+
+
+def bounded(value, label, maximum=8192):
+    if not isinstance(value, str) or not value.strip() or len(value.encode()) > maximum:
+        raise SwarmError(f'{label} must be nonempty and at most {maximum} bytes')
+    return value
+
+
+class Store:
+    def __init__(self, path, actor):
+        self.path, self.actor = path, actor
+
+    @contextlib.contextmanager
+    def transaction(self, create=False):
+        db = None
+        try:
+            # mode=rw avoids fabricating a fresh board when the store is lost.
+            import pathlib
+            uri = pathlib.Path(self.path).absolute().as_uri() + ('?mode=rwc' if create else '?mode=rw')
+            db = sqlite3.connect(uri, uri=True, timeout=0.5, isolation_level=None)
+            db.row_factory = sqlite3.Row
+            db.execute('PRAGMA foreign_keys=ON')
+            db.execute('BEGIN IMMEDIATE')
+            if create:
+                for statement in SCHEMA.split(';'):
+                    if statement.strip():
+                        db.execute(statement)
+            yield db
+            db.commit()
+        except sqlite3.Error as error:
+            if db:
+                db.rollback()
+            raise SwarmError(f'coordination store unavailable or contended: {error}') from error
+        except BaseException:
+            if db:
+                db.rollback()
+            raise
+        finally:
+            if db:
+                db.close()
+
+    def event(self, db, action, detail):
+        db.execute('INSERT INTO events(actor,time,action,detail) VALUES(?,?,?,?)',
+                   (self.actor, time.time(), action, encode(detail)))
+
+    def run(self, db, active=False, coordinator=False):
+        row = db.execute('SELECT * FROM run').fetchone()
+        if row is None:
+            raise SwarmError('coordination run missing')
+        run = dict(row)
+        if coordinator and run['coordinator'] != self.actor:
+            raise SwarmError('only the designated coordinator may do this')
+        member = db.execute('SELECT status FROM members WHERE id=?', (self.actor,)).fetchone()
+        if member is None or member['status'] == 'dead':
+            raise SwarmError('invoking member is unknown or death confirmed')
+        if active and run['status'] != 'running':
+            raise SwarmError(f"run is {run['status']}; no new work permitted")
+        return run
+
+    def expire(self):
+        # Commit expiry independently so rejecting the subsequent mutation does
+        # not roll the terminal state back. Recheck under each mutation lock.
+        with self.transaction() as db:
+            run = self.run(db)
+            if run['status'] == 'running' and run['deadline'] <= time.time():
+                db.execute("UPDATE run SET status='budget-exhausted'")
+                self.event(db, 'stop', {'status': 'budget-exhausted', 'reason': 'deadline'})
+
+    @contextlib.contextmanager
+    def operation(self, active=True, coordinator=False):
+        self.expire()
+        with self.transaction() as db:
+            run = self.run(db, active, coordinator)
+            if active and run['deadline'] <= time.time():
+                raise SwarmError('run is budget-exhausted; no new work permitted')
+            yield db, run
+
+    def retry(self, db, request, payload, action):
+        bounded(request, 'request id', 128)
+        payload = encode(payload)
+        old = db.execute('SELECT * FROM requests WHERE actor=? AND request=?',
+                         (self.actor, request)).fetchone()
+        if old:
+            if old['payload'] != payload:
+                raise SwarmError('request id reused with different payload')
+            return json.loads(old['result'])
+        if db.execute('SELECT count(*) FROM requests').fetchone()[0] >= 10000:
+            raise SwarmError('coordination request ledger full (10000)')
+        result = action()
+        db.execute('INSERT INTO requests VALUES(?,?,?,?)',
+                   (self.actor, request, payload, encode(result)))
+        return result

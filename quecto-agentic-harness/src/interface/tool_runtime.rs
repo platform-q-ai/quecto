@@ -193,6 +193,16 @@ pub(crate) fn build_tool_runtime(
         stderr,
     } = args;
 
+    // All composed harness entrypoints share startup admission, including
+    // nested agents with a new session or a different provider entrypoint.
+    if let Some(context) = crate::infrastructure::tools::swarm_bridge::SwarmContext::discover() {
+        crate::infrastructure::tools::swarm_lifecycle::join_current_process(
+            &context,
+            crate::infrastructure::tools::swarm_bridge::process_socket(),
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
     // PR #1401 review: the parent may have been launched with a RELATIVE
     // `--config` (or hit the relative `.quecto` base-dir fallback). Container
     // spawns reuse this path as their trusted-config fallback, which demands
@@ -216,8 +226,8 @@ pub(crate) fn build_tool_runtime(
             } else {
                 crate::infrastructure::tools::docs::DocsContentPolicy::Parent
             },
-            python_lab_config: crate::infrastructure::tools::python_lab::PythonLabConfig::from(
-                config.tools.python_lab.clone(),
+            swarm_config: crate::infrastructure::tools::swarm::SwarmConfig::from(
+                config.tools.swarm.clone(),
             ),
         }),
         match profile_context {

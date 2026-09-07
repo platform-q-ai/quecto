@@ -97,8 +97,13 @@ pub(super) async fn spawn_prepared_child(
     environments: &EnvironmentRegistry,
     parent_config_path: Option<&Path>,
 ) -> Result<PreparedChild, DomainError> {
+    if super::swarm_bridge::SwarmContext::discover().is_some()
+        && !matches!(config.container, ContainerSelection::Local)
+    {
+        return Err(DomainError::Tool("swarm members must reuse their shared container and fixed pool; nested containers cannot reset admission".into()));
+    }
     match &config.container {
-        ContainerSelection::Local => spawn_local_child(child),
+        ContainerSelection::Local => spawn_local_child(child).await,
         ContainerSelection::New {
             container_config, ..
         } => {
@@ -247,19 +252,51 @@ fn parse_exec_result(stdout: &[u8]) -> Result<ParentEndpoint, DomainError> {
     endpoint_from_wire(wire.socket_path, wire.socket_proxy, &wire.metadata, "exec")
 }
 
-fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, DomainError> {
+async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, DomainError> {
+    let mut reservation = tokio::task::spawn_blocking(|| {
+        super::swarm_bridge::SwarmContext::discover()
+            .map(super::swarm_admission::LaunchReservation::reserve)
+            .transpose()
+    })
+    .await
+    .map_err(|e| DomainError::Tool(e.to_string()))??;
     let mut cmd = tokio::process::Command::new(child.binary);
+    if let Some(reservation) = &reservation {
+        reservation.configure(&mut cmd);
+        cmd.kill_on_drop(true);
+    }
+    #[cfg(unix)]
+    if reservation.is_some() {
+        cmd.process_group(0);
+    }
     cmd.args(child.cli_args);
     apply_common_child_env(&mut cmd, child.base_dir);
-    let child = cmd
+    let mut child = cmd
         .spawn()
         .map_err(|e| DomainError::Tool(format!("failed to spawn subagent: {e}")))?;
+    if let Some(reservation) = &mut reservation {
+        let result = child
+            .id()
+            .ok_or_else(|| DomainError::Tool("swarm child has no pid".into()))
+            .and_then(|pid| reservation.launched(pid));
+        if let Err(error) = result {
+            let _ = child.start_kill();
+            if child.wait().await.is_ok() {
+                reservation.confirmed_dead()?;
+            }
+            return Err(error);
+        }
+    }
     Ok(PreparedChild {
         child: Some(child),
         environment_ref: None,
         endpoint: None,
         proxy_bridge: None,
-        process_owner: super::process_tree::ProcessOwner::DirectPid,
+        process_owner: if reservation.is_some() {
+            super::process_tree::ProcessOwner::LocalProcessGroup
+        } else {
+            super::process_tree::ProcessOwner::DirectPid
+        },
         cleanup_environment_id: None,
         cleanup_argv: Vec::new(),
         environments: None,

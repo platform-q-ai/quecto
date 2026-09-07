@@ -49,14 +49,14 @@ fn readme_runtime_details_match_current_code() {
         "README should not document the old 1M context default"
     );
     // The blanket ban on the numeral used to catch any rewording of the old 1M
-    // context claim. `tools.python_lab` legitimately documents a 1000000-byte
+    // context claim. `tools.swarm` legitimately documents a 1000000-byte
     // output cap, so the ban is scoped to lines that are not about that setting
     // rather than dropped — a reworded context claim still fails here.
     for (number, line) in readme.lines().enumerate() {
         if line.contains("1000000") || line.contains("1,000,000") {
             assert!(
                 line.contains("max_output_bytes"),
-                "README line {} mentions 1000000 outside the python_lab output cap; \
+                "README line {} mentions 1000000 outside the swarm output cap; \
                  if this is a context-window claim it is stale: {line}",
                 number + 1
             );

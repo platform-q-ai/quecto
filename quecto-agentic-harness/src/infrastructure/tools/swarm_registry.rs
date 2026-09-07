@@ -12,7 +12,7 @@ pub(crate) const MAX_RETAINED_ARTIFACT_DIRS: usize = 32;
 /// passed. Directories belonging to a job that has not finished are never
 /// removed, so a running program cannot have its output deleted underneath it.
 pub(crate) fn prune_artifact_dirs(workspace: &Path, jobs: &JobRegistry, active: &ActiveExecutions) {
-    let root = workspace.join(".quecto/python_lab");
+    let root = workspace.join(".quecto/swarm");
     let mut live: Vec<String> = active
         .lock()
         .map(|set| set.iter().cloned().collect())

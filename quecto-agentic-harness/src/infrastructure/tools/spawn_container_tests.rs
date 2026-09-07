@@ -174,6 +174,7 @@ async fn local_subagent_inherits_parent_process_group() {
         cli_args: &cli_args,
         base_dir: dir.path(),
     })
+    .await
     .expect("local child should spawn");
 
     let child = prepared.child.as_mut().expect("local launch owns child");

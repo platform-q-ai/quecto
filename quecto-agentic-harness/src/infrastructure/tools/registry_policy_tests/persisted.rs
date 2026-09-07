@@ -18,9 +18,9 @@ fn persisted_policy_intersects_with_defaults_profile_restrictions_and_runtime() 
         .to_string();
     let python_id = reg
         .metadata
-        .get("python_lab")
+        .get("swarm")
         .unwrap()
-        .identity_for_name("python_lab")
+        .identity_for_name("swarm")
         .stable_id
         .to_string();
     let bash_id = reg
@@ -77,15 +77,15 @@ fn persisted_policy_intersects_with_defaults_profile_restrictions_and_runtime() 
         "persisted both must not widen entrypoint-disabled defaults"
     );
     assert_eq!(
-        ToolRegistryImpl::effective_scope(reg.metadata.get("python_lab").unwrap()),
+        ToolRegistryImpl::effective_scope(reg.metadata.get("swarm").unwrap()),
         ProfileAvailabilityScope::Parent
     );
 
-    let python = reg.metadata.get_mut("python_lab").unwrap();
+    let python = reg.metadata.get_mut("swarm").unwrap();
     python.inherited_scope = Some(ProfileAvailabilityScope::Both);
     python.profile_scope = Some(ProfileAvailabilityScope::Both);
     assert_eq!(
-        ToolRegistryImpl::effective_scope(reg.metadata.get("python_lab").unwrap()),
+        ToolRegistryImpl::effective_scope(reg.metadata.get("swarm").unwrap()),
         ProfileAvailabilityScope::Parent,
         "later inherited/session policy must not widen persisted configured scope"
     );
@@ -96,7 +96,7 @@ fn persisted_policy_intersects_with_defaults_profile_restrictions_and_runtime() 
     );
 
     let mut widen_request = ToolPolicyRequest::patch(vec![ToolPolicyMutation::set_scope(
-        "python_lab",
+        "swarm",
         ProfileAvailabilityScope::Both,
         "user widens durable preference",
     )]);
@@ -112,21 +112,21 @@ fn persisted_policy_intersects_with_defaults_profile_restrictions_and_runtime() 
         "persisted preferences must not lock users out of widening them later"
     );
     assert_eq!(
-        ToolRegistryImpl::effective_scope(reg.metadata.get("python_lab").unwrap()),
+        ToolRegistryImpl::effective_scope(reg.metadata.get("swarm").unwrap()),
         ProfileAvailabilityScope::Both,
         "persisted live widen must update the effective configured preference immediately"
     );
 
     reg.apply_tool_policy_mutations(
         &[ToolPolicyMutation::set_scope(
-            "python_lab",
+            "swarm",
             ProfileAvailabilityScope::None,
             "live profile narrows persisted parent",
         )],
         ToolPolicyApplyMode::ImmediateIfIdle,
     );
     assert_eq!(
-        ToolRegistryImpl::effective_scope(reg.metadata.get("python_lab").unwrap()),
+        ToolRegistryImpl::effective_scope(reg.metadata.get("swarm").unwrap()),
         ProfileAvailabilityScope::None
     );
 }
@@ -398,7 +398,7 @@ fn registry_trait_forwarders_cover_tool_policy_and_catalogue_ports() {
 
     let mutator: &mut dyn ToolPolicyMutator = &mut reg;
     let patch = ToolPolicyMutation::set_scope(
-        "python_lab",
+        "swarm",
         ProfileAvailabilityScope::Child,
         "trait coverage patch",
     );
@@ -407,7 +407,7 @@ fn registry_trait_forwarders_cover_tool_policy_and_catalogue_ports() {
     assert!(!applied.results.is_empty());
     let replace = crate::domain::tool::ToolPolicyRequest::replace(
         vec![ToolPolicyMutation::set_scope(
-            "python_lab",
+            "swarm",
             ProfileAvailabilityScope::Both,
             "trait coverage replace",
         )],
@@ -440,8 +440,8 @@ fn registry_trait_forwarders_cover_tool_policy_and_catalogue_ports() {
             .runtime_tool_names()
             .contains(&"cov_rt".to_string())
     );
-    assert!(lifecycle.enable_tool("python_lab"));
-    assert!(lifecycle.disable_tool("python_lab"));
+    assert!(lifecycle.enable_tool("swarm"));
+    assert!(lifecycle.disable_tool("swarm"));
     lifecycle.unregister_runtime_tool("missing-tool-for-coverage");
     assert!(
         lifecycle
