@@ -206,6 +206,19 @@ fn parse_incomplete_csi_returns_none() {
 // ── Kitty protocol Ctrl+letter tests (issue #496) ─────────────────
 
 #[test]
+fn legacy_ctrl_g_decodes_jump_to_latest_shortcut() {
+    let (key, consumed) = parse_key(b"\x07").unwrap();
+    assert_eq!(key, Key::Ctrl('g'));
+    assert_eq!(consumed, 1);
+}
+
+#[test]
+fn kitty_ctrl_g_decodes_jump_to_latest_shortcut() {
+    let (key, _) = parse_key(b"\x1b[103;5u").unwrap();
+    assert_eq!(key, Key::Ctrl('g'));
+}
+
+#[test]
 fn kitty_ctrl_d() {
     // CSI 100;5u — keycode 100='d', modifier 5=Ctrl+1
     let (key, _) = parse_key(b"\x1b[100;5u").unwrap();

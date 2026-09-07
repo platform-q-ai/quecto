@@ -519,6 +519,12 @@ impl App {
             }
         }
 
+        // Jump before panel/editor input; selectors/autocomplete retain ownership.
+        if matches!(key, Key::Ctrl('g')) {
+            self.active_chat_mut().scroll_to_latest();
+            return;
+        }
+
         // Panel focus model (#802): when the side panel holds focus, keys drive
         // the panel (highlight move, digit-jump, commit, cancel) rather than the
         // editor. An open autocomplete already returned above, so Tab reaching

@@ -8,8 +8,105 @@
 use super::tui_harness::*;
 use crate::components::theme::BG_SUCCESS;
 use crate::protocol::client::Event;
+use crate::shell::keys::Key;
 use crate::shell::render::DiffRenderer;
 use std::sync::{Arc, Mutex};
+
+#[tokio::test]
+async fn scrolled_chat_shows_jump_tip_until_ctrl_g_returns_to_latest() {
+    let mut h = TuiHarness::new().await;
+    for i in 0..40 {
+        h.add_user_message(&format!("history line {i}"));
+    }
+    h.press(Key::PageUp);
+    let scrolled = h.full_frame();
+    assert!(
+        scrolled.contains("Ctrl + G - Jump Back to Latest Message"),
+        "{scrolled}"
+    );
+
+    let raw_lines = h.app.compose_frame();
+    let tip_row = raw_lines
+        .iter()
+        .position(|line| line.contains("Ctrl + G - Jump Back to Latest Message"))
+        .expect("jump tip should be rendered");
+    assert!(
+        raw_lines[tip_row].contains("\x1b[31mCtrl + G - Jump Back to Latest Message\x1b[0m"),
+        "tip should use the red theme"
+    );
+    assert_eq!(
+        crate::components::ansi::strip_ansi(&raw_lines[tip_row])
+            .find("Ctrl + G - Jump Back to Latest Message"),
+        Some(
+            h.terminal_width() - h.app.body_width()
+                + 2
+                + (h.app.body_width() - "Ctrl + G - Jump Back to Latest Message".len()) / 2,
+        ),
+        "tip should be horizontally centered"
+    );
+    let first_chat_row = raw_lines
+        .iter()
+        .position(|line| line.contains("history line"))
+        .expect("conversation should be visible");
+    assert!(
+        raw_lines[..tip_row]
+            .iter()
+            .any(|line| line.contains("history line")),
+        "tip should overlay the bottom of the conversation, after chat content"
+    );
+    assert!(
+        first_chat_row > 0
+            && crate::components::ansi::strip_ansi(&raw_lines[first_chat_row - 1])
+                .rsplit('│')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .is_empty(),
+        "a blank row should separate the main-pane title from the conversation"
+    );
+
+    h.press(Key::Ctrl('g'));
+    let latest = h.full_frame();
+    assert!(
+        !latest.contains("Ctrl + G - Jump Back to Latest Message"),
+        "{latest}"
+    );
+}
+
+#[tokio::test]
+async fn jump_tip_is_width_bounded_on_narrow_conversations() {
+    let mut h = TuiHarness::sized(24, 20).await;
+    for i in 0..40 {
+        h.add_user_message(&format!("history line {i}"));
+    }
+    h.press(Key::PageUp);
+
+    let lines = h.app.compose_frame();
+    assert!(
+        lines
+            .iter()
+            .all(|line| crate::components::utils::visible_width(line) <= 24),
+        "every rendered row must remain terminal-width bounded"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("\x1b[31mCtrl + G")),
+        "the visible portion of the narrow jump overlay should remain red"
+    );
+}
+
+#[tokio::test]
+async fn fitting_chat_never_shows_jump_tip_or_changes_between_frames() {
+    let mut h = TuiHarness::new().await;
+    h.add_user_message("short");
+    h.press(Key::PageUp);
+    let first = h.full_frame();
+    let second = h.full_frame();
+    assert!(
+        !first.contains("Ctrl + G - Jump Back to Latest Message"),
+        "{first}"
+    );
+    assert_eq!(first, second);
+}
 
 // ── #884: differential renderer desync at full height ──────────────────
 //
