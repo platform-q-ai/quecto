@@ -10,8 +10,9 @@ configuration keys is an error rather than silently choosing one.
 ## Container and membership
 
 Use the existing `spawn` container capability with the official Docker/Podman
-adapter. The adapter passes the shared checkout and runtime identity to every
-in-container harness process. Host-local reference scripts do not confer swarm
+adapter. The adapter passes the shared checkout, runtime identity and host PID namespace to every
+in-container harness process. The harness requires a different current PID namespace;
+host-local launches cannot gain availability from a directory marker. Host-local reference scripts do not confer swarm
 availability. The harness rejects `swarm` outside that context, even if someone
 plants a coordination file in the host checkout. Linux procfs supplies process
 start identities for conservative lifecycle reconciliation.
@@ -69,7 +70,8 @@ board.submit(task["id"], claim["token"], [
 ])
 ```
 
-`task(id)` reads a task. `dependencies(id, ids)` edits dependencies before
+`task(id)` reads a task. `tasks(offset=0, limit=50)` and
+`file_owners(offset=0, limit=50)` page the board (maximum page size 100). `dependencies(id, ids)` edits dependencies before
 claiming; missing, self and cyclic dependencies fail. Ready tasks are claimed
 atomically. Unmet dependencies and explicit `block(id, token, reason)` remain
 visible as blockers. `release(id, token)` returns owned work and files to the
@@ -131,8 +133,9 @@ remaining file reservations. Submitted tasks, idle agents and an empty queue do
 not prove success. `amend(goal, constraints, criteria, reason)` is coordinator-only,
 records the amendment, and invalidates prior overall evidence.
 
-`op=summary` reports goal, status, membership usage/limit, task counts and details,
-blockers, file owners, evidence and recent actor/timestamp audit events. The full
+`op=summary` reports goal, status, membership usage/limit, task counts and the first 50 task/file details,
+blockers, evidence and recent actor/timestamp audit events. Total counts include
+entries beyond the first page. File reservations are bounded to 1000 per run. The full
 audit remains in SQLite. `stop(status, reason)` distinguishes `blocked`, `failed`,
 `cancelled`, and `budget-exhausted`; success is `succeeded`. `op=cancel_run` is the
 parent cancellation operation. New work and admission stop at terminal state;

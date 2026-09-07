@@ -244,3 +244,56 @@ async fn run_creation_requires_authorized_container_and_bounded_policy() {
             .contains("reuse")
     );
 }
+
+#[tokio::test]
+async fn ready_failure_releases_reservation_only_after_child_rollback() {
+    let directory = tempfile::tempdir().unwrap();
+    let context = context(&directory);
+    create(&context, 2);
+    let mut reservation =
+        super::swarm_admission::LaunchReservation::reserve(context.clone()).unwrap();
+    let mut command = tokio::process::Command::new("sleep");
+    command.arg("30").kill_on_drop(true);
+    let child = command.spawn().unwrap();
+    reservation.launched(child.id().unwrap()).unwrap();
+    let mut prepared = super::spawn_container::PreparedChild::new_for_test(Some(child), None, None);
+    prepared.swarm_reservation = Some(reservation);
+    assert_eq!(context.summary().unwrap()["usage"], 2);
+    prepared.rollback_once().await;
+    assert_eq!(context.summary().unwrap()["usage"], 1);
+}
+
+#[tokio::test]
+async fn expired_budget_falls_back_to_termination_when_abort_endpoint_is_unavailable() {
+    let directory = tempfile::tempdir().unwrap();
+    let context = context(&directory);
+    create(&context, 1);
+    let mut child = tokio::process::Command::new("sleep")
+        .arg("30")
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let pid = child.id().unwrap();
+    let summary = context.summary().unwrap();
+    context
+        .call(
+            "_activate",
+            json!([
+                "parent",
+                summary["members"][0]["reservation"],
+                pid,
+                process_start(pid),
+                directory.path().join("missing.sock")
+            ]),
+        )
+        .unwrap();
+    context
+        .call("stop", json!(["budget-exhausted", "deadline"]))
+        .unwrap();
+    let _ = super::swarm_lifecycle::settle(context).await;
+    let exit = tokio::time::timeout(std::time::Duration::from_millis(500), child.wait()).await;
+    assert!(
+        exit.is_ok(),
+        "unavailable abort socket allowed work past its budget"
+    );
+}

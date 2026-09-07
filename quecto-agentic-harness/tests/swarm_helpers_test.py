@@ -197,6 +197,27 @@ class WorkbenchBehavior(unittest.TestCase):
         self.assertEqual(summary['status'], 'budget-exhausted')
         self.assertEqual(len(summary['tasks']), 1)
 
+    def test_coordinator_death_leaves_readable_failed_progress(self):
+        self.task()
+        self.worker._confirmed_dead('coordinator')
+        summary = self.parent.summary()
+        self.assertEqual(summary['status'], 'failed')
+        self.assertEqual(summary['task_count'], 1)
+        with self.assertRaises(SwarmError):
+            self.task('after-parent-death')
+
+    def test_summary_is_bounded_and_counts_include_later_pages(self):
+        for i in range(55):
+            self.task(f'task-{i}')
+        summary = self.parent.summary()
+        self.assertEqual(len(summary['tasks']), 50)
+        self.assertEqual(summary['task_count'], 55)
+        self.assertEqual(summary['counts']['ready'], 55)
+        self.assertEqual(len(self.worker.tasks(offset=50)), 5)
+        self.assertEqual(self.worker.file_owners(), [])
+        with self.assertRaises(SwarmError):
+            self.worker.tasks(limit=1000)
+
     def test_contention_and_corruption_fail_explicitly(self):
         with closing(sqlite3.connect(self.db)) as db:
             db.execute('BEGIN IMMEDIATE')

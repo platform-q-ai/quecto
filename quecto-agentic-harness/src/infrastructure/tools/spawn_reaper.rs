@@ -52,6 +52,13 @@ pub(super) fn spawn_reaper_task(
             }
             super::subagent_cascade::terminate_removed_entry(entry);
         }
+        if let Some(context) = super::swarm_bridge::SwarmContext::discover() {
+            let _ = tokio::task::spawn_blocking(move || {
+                if let Err(error) = super::swarm_lifecycle::reconcile(&context) {
+                    tracing::error!(%error, "swarm reaper reconciliation failed; capacity retained");
+                }
+            }).await;
+        }
     });
 }
 

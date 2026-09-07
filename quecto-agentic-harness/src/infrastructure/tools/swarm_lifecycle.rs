@@ -104,15 +104,18 @@ pub async fn settle(context: SwarmContext) -> Result<Value, DomainError> {
         {
             continue;
         }
-        if let Some(socket) = member["socket"].as_str() {
-            let _ = super::subagent_registry::send_subagent_uds_command_with_timeout(
+        let aborted = if let Some(socket) = member["socket"].as_str() {
+            super::subagent_registry::send_subagent_uds_command_with_timeout(
                 std::path::Path::new(socket),
-                r#"{"type":"abort"}"#,
+                r#"{"type":"abort","ack":"accept"}"#,
                 std::time::Duration::from_millis(500),
             )
-            .await;
-        }
-        if member["id"] == summary["coordinator"] && member["socket"].as_str().is_some() {
+            .await
+            .is_ok()
+        } else {
+            false
+        };
+        if member["id"] == summary["coordinator"] && aborted {
             continue;
         }
         if let (Some(pid), Some(start)) = (

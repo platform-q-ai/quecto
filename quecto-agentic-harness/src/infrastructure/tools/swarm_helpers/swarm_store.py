@@ -73,7 +73,7 @@ class Store:
         db.execute('INSERT INTO events(actor,time,action,detail) VALUES(?,?,?,?)',
                    (self.actor, time.time(), action, encode(detail)))
 
-    def run(self, db, active=False, coordinator=False):
+    def run(self, db, active=False, coordinator=False, read_only=False):
         row = db.execute('SELECT * FROM run').fetchone()
         if row is None:
             raise SwarmError('coordination run missing')
@@ -81,7 +81,7 @@ class Store:
         if coordinator and run['coordinator'] != self.actor:
             raise SwarmError('only the designated coordinator may do this')
         member = db.execute('SELECT status FROM members WHERE id=?', (self.actor,)).fetchone()
-        if member is None or member['status'] == 'dead':
+        if member is None or (member['status'] == 'dead' and not read_only):
             raise SwarmError('invoking member is unknown or death confirmed')
         if active and run['status'] != 'running':
             raise SwarmError(f"run is {run['status']}; no new work permitted")
@@ -91,16 +91,16 @@ class Store:
         # Commit expiry independently so rejecting the subsequent mutation does
         # not roll the terminal state back. Recheck under each mutation lock.
         with self.transaction() as db:
-            run = self.run(db)
+            run = self.run(db, read_only=True)
             if run['status'] == 'running' and run['deadline'] <= time.time():
                 db.execute("UPDATE run SET status='budget-exhausted'")
                 self.event(db, 'stop', {'status': 'budget-exhausted', 'reason': 'deadline'})
 
     @contextlib.contextmanager
-    def operation(self, active=True, coordinator=False):
+    def operation(self, active=True, coordinator=False, read_only=False):
         self.expire()
         with self.transaction() as db:
-            run = self.run(db, active, coordinator)
+            run = self.run(db, active, coordinator, read_only)
             if active and run['deadline'] <= time.time():
                 raise SwarmError('run is budget-exhausted; no new work permitted')
             yield db, run

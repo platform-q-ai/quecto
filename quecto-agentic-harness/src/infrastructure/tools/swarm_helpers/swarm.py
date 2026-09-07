@@ -70,17 +70,24 @@ class Workbench(Tasks):
             self.store.event(db, 'amended', {'previous_goal': run['goal'], 'goal': goal, 'reason': reason})
 
     def summary(self):
-        with self.store.operation(active=False) as (db, run):
+        with self.store.operation(active=False, read_only=True) as (db, run):
             for key in ('constraints', 'criteria'):
                 run[key] = json.loads(run[key])
             run['members'] = [dict(r) for r in db.execute('SELECT * FROM members')]
             run['usage'] = sum(m['status'] in ('live', 'reserved') for m in run['members'])
-            run['tasks'] = [self._task(db, r[0]) for r in db.execute('SELECT id FROM tasks')]
-            run['files'] = [dict(r) for r in db.execute('SELECT * FROM files ORDER BY path')]
+            run['task_count'] = db.execute('SELECT count(*) FROM tasks').fetchone()[0]
+            run['tasks'] = [self._task(db, r[0]) for r in db.execute('SELECT id FROM tasks ORDER BY id LIMIT 50')]
+            run['file_count'] = db.execute('SELECT count(*) FROM files').fetchone()[0]
+            run['files'] = [dict(r) for r in db.execute('SELECT * FROM files ORDER BY path LIMIT 50')]
             run['evidence'] = [dict(r) for r in db.execute('SELECT * FROM evidence')]
             run['events'] = list(reversed([dict(r) for r in db.execute('SELECT * FROM events ORDER BY id DESC LIMIT 100')]))
-            run['counts'] = {status: sum(t['status'] == status for t in run['tasks'])
-                             for status in ('ready', 'claimed', 'blocked', 'submitted', 'completed')}
+            run['counts'] = {status: 0 for status in ('ready', 'claimed', 'blocked', 'submitted', 'completed')}
+            states = {r['id']: dict(r) for r in db.execute('SELECT id,status,dependencies FROM tasks')}
+            for task in states.values():
+                status = task['status']
+                if status == 'ready' and any(states[d]['status'] != 'completed' for d in json.loads(task['dependencies'])):
+                    status = 'blocked'
+                run['counts'][status] += 1
             return run
 
     def _bootstrap(self, pid, started, socket, reservation=None):
@@ -142,7 +149,7 @@ class Workbench(Tasks):
     def _confirmed_dead(self, member):
         # The Rust lifecycle adapter calls this only after observing process
         # death (PID + kernel start time), never on idle, timeout or self-report.
-        with self.store.operation(active=False) as (db, _):
+        with self.store.operation(active=False) as (db, run):
             current = db.execute('SELECT status FROM members WHERE id=?', (member,)).fetchone()
             if not current or current['status'] == 'dead':
                 return
@@ -150,6 +157,9 @@ class Workbench(Tasks):
             db.execute("UPDATE tasks SET status='blocked',blocker='worker death confirmed; coordinator recovery required' WHERE owner=? AND status IN ('claimed','blocked','submitted')", (member,))
             db.execute('DELETE FROM files WHERE owner=?', (member,))
             self.store.event(db, 'death_confirmed', {'member': member})
+            if member == run['coordinator'] and run['status'] in ('setup', 'running'):
+                db.execute("UPDATE run SET status='failed'")
+                self.store.event(db, 'stop', {'status': 'failed', 'reason': 'coordinator death confirmed'})
 
     def send(self, request, recipient, body):
         bounded(body, 'message', 8192)
@@ -168,7 +178,7 @@ class Workbench(Tasks):
             return self.store.retry(db, request, ['send', recipient, body], send)
 
     def inbox(self, include_consumed=False):
-        with self.store.operation(active=False) as (db, _):
+        with self.store.operation(active=False, read_only=True) as (db, _):
             return [dict(r) for r in db.execute(
                 "SELECT * FROM messages WHERE recipient=? AND (status='accepted' OR ?) ORDER BY id LIMIT 100",
                 (self.member, include_consumed))]

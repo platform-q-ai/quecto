@@ -3,6 +3,7 @@ use super::swarm_bridge::SwarmContext;
 use crate::domain::error::DomainError;
 use serde_json::json;
 
+#[derive(Debug)]
 pub struct LaunchReservation {
     context: SwarmContext,
     member: String,
@@ -14,6 +15,7 @@ impl LaunchReservation {
     pub fn reserve(context: SwarmContext) -> Result<Self, DomainError> {
         let member = uuid::Uuid::new_v4().to_string();
         let token = uuid::Uuid::new_v4().to_string();
+        super::swarm_lifecycle::reconcile(&context)?;
         context.call("_admit", json!([member, token]))?;
         Ok(Self {
             context,

@@ -21,6 +21,10 @@ impl SwarmContext {
         if !matches!(runtime.as_str(), "docker" | "podman") {
             return None;
         }
+        let host_namespace = std::env::var("QUECTO_SWARM_HOST_PID_NS").ok()?;
+        if !isolated_pid_namespace(&host_namespace) {
+            return None;
+        }
         let member = std::env::var("QUECTO_SWARM_MEMBER")
             .unwrap_or_else(|_| format!("member-{}", std::process::id()));
         Some(Self {
@@ -114,4 +118,21 @@ pub fn set_process_socket(socket: PathBuf) {
 
 pub fn process_socket() -> Option<&'static Path> {
     PROCESS_SOCKET.get().map(PathBuf::as_path)
+}
+
+fn isolated_pid_namespace(host: &str) -> bool {
+    host.starts_with("pid:[")
+        && host.ends_with(']')
+        && std::fs::read_link("/proc/self/ns/pid")
+            .is_ok_and(|current| current.to_string_lossy() != host)
+}
+
+#[cfg(test)]
+mod context_tests {
+    #[test]
+    fn host_pid_namespace_cannot_confer_container_availability() {
+        let current = std::fs::read_link("/proc/self/ns/pid").unwrap();
+        assert!(!super::isolated_pid_namespace(&current.to_string_lossy()));
+        assert!(!super::isolated_pid_namespace("not a namespace identity"));
+    }
 }

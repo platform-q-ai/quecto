@@ -6,8 +6,20 @@ from swarm_store import SwarmError, bounded, encode
 
 
 class Tasks:
+    def tasks(self, offset=0, limit=50):
+        if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 100:
+            raise SwarmError('task page requires nonnegative offset and limit 1 through 100')
+        with self.store.operation(active=False, read_only=True) as (db, _):
+            return [self._task(db, row[0]) for row in db.execute('SELECT id FROM tasks ORDER BY id LIMIT ? OFFSET ?', (limit, offset))]
+
+    def file_owners(self, offset=0, limit=50):
+        if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 100:
+            raise SwarmError('file page requires nonnegative offset and limit 1 through 100')
+        with self.store.operation(active=False, read_only=True) as (db, _):
+            return [dict(row) for row in db.execute('SELECT * FROM files ORDER BY path LIMIT ? OFFSET ?', (limit, offset))]
+
     def task(self, task_id):
-        with self.store.operation(active=False) as (db, _):
+        with self.store.operation(active=False, read_only=True) as (db, _):
             return self._task(db, task_id)
 
     @staticmethod
@@ -158,6 +170,8 @@ class Tasks:
                 raise SwarmError('file must resolve inside the shared checkout') from error
         with self.store.operation() as (db, _):
             self._owned(db, task_id, token)
+            if db.execute('SELECT count(*) FROM files').fetchone()[0] + len(normalized) > 1000:
+                raise SwarmError('file reservation board full (1000); release settled work')
             for path in normalized:
                 if db.execute('SELECT 1 FROM files WHERE path=?', (path,)).fetchone():
                     raise SwarmError(f'file already reserved: {path}; acquire the entire set or release and retry')

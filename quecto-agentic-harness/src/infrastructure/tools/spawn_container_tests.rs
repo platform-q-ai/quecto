@@ -304,6 +304,7 @@ async fn run_cleanup_once_ignores_missing_env_or_empty_argv() {
 #[tokio::test]
 async fn cleanup_plan_clones_environment_and_argv() {
     let prepared = PreparedChild {
+        swarm_reservation: None,
         child: Some(tokio::process::Command::new("true").spawn().unwrap()),
         environment_ref: Some("C-test".into()),
         endpoint: None,
@@ -530,6 +531,7 @@ async fn rollback_kills_child_and_consumes_cleanup_once() {
     let registry = EnvironmentRegistry::new();
     registry.commit(test_record("C-test", "env-test"));
     let mut prepared = PreparedChild {
+        swarm_reservation: None,
         child: Some(
             tokio::process::Command::new("sleep")
                 .arg("30")

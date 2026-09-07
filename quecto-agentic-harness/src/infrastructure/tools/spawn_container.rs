@@ -9,6 +9,7 @@ use crate::infrastructure::config::{Config, ContainerConfig};
 
 #[derive(Debug)]
 pub(super) struct PreparedChild {
+    pub(super) swarm_reservation: Option<super::swarm_admission::LaunchReservation>,
     pub child: Option<tokio::process::Child>,
     pub environment_ref: Option<String>,
     /// Typed parent endpoint from the create/exec result (#1369 slice 3).
@@ -33,6 +34,7 @@ impl PreparedChild {
         endpoint: Option<ParentEndpoint>,
     ) -> Self {
         Self {
+            swarm_reservation: None,
             child,
             environment_ref,
             endpoint,
@@ -64,7 +66,13 @@ impl PreparedChild {
             } else {
                 let _ = child.kill().await;
             }
-            let _ = child.wait().await;
+            if child.wait().await.is_ok() {
+                if let Some(reservation) = &mut self.swarm_reservation {
+                    if let Err(error) = reservation.confirmed_dead() {
+                        tracing::error!(%error, "swarm launch rollback requires reconciliation");
+                    }
+                }
+            }
         }
         if let Some(bridge) = self.proxy_bridge.take() {
             bridge.teardown();
@@ -156,6 +164,7 @@ async fn join_script_managed_child(
     }
     let endpoint = parse_exec_result(&output.stdout)?;
     Ok(PreparedChild {
+        swarm_reservation: None,
         child: None,
         environment_ref: Some(record.environment_ref),
         endpoint: Some(endpoint),
@@ -287,12 +296,14 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
             return Err(error);
         }
     }
+    let swarm_member = reservation.is_some();
     Ok(PreparedChild {
+        swarm_reservation: reservation,
         child: Some(child),
         environment_ref: None,
         endpoint: None,
         proxy_bridge: None,
-        process_owner: if reservation.is_some() {
+        process_owner: if swarm_member {
             super::process_tree::ProcessOwner::LocalProcessGroup
         } else {
             super::process_tree::ProcessOwner::DirectPid
@@ -429,6 +440,7 @@ async fn spawn_script_managed_child(
         last_error: None,
     });
     Ok(PreparedChild {
+        swarm_reservation: None,
         child: None,
         environment_ref: Some(environment_ref),
         endpoint: Some(result.endpoint),
