@@ -129,7 +129,7 @@ async fn spawned_disable_tools_restrictions_are_layered_over_child_profile_polic
     assert!(!toc.is_error);
     assert!(
         !toc.content.contains("quick-start"),
-        "child docs content policy omits quick-start; got {toc:?}"
+        "child runtime omits removed quick-start; got {toc:?}"
     );
     let quick_start = built
         .registry

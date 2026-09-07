@@ -42,5 +42,5 @@ When a config file defines `container_configs`, `spawn` can place a child in an 
 
 ## See also
 
-- Entry: `docs {"name":"quick-start"}`
+- Manual index: `docs {}`
 - Full human reference (not embedded): `docs/subagents.md` in the repo

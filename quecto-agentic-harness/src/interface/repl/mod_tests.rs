@@ -102,11 +102,11 @@ fn test_build_system_prompt_no_user_prompt() {
         progress_callback: None,
     };
     let result = build_system_prompt(&ctx);
-    // Always Some — at minimum contains the docs retrieval policy.
+    // Always Some — at minimum contains the parent role.
     assert!(result.is_some());
     assert!(
-        result.as_deref().unwrap().contains("operating manual"),
-        "expected docs retrieval policy, got: {:?}",
+        result.as_deref().unwrap().contains("Parent Agent"),
+        "expected parent role, got: {:?}",
         result
     );
 }
@@ -132,10 +132,7 @@ fn test_build_system_prompt_with_user_prompt() {
     };
     let result = build_system_prompt(&ctx);
     let prompt = result.as_deref().unwrap();
-    assert!(
-        prompt.contains("operating manual"),
-        "expected docs retrieval policy"
-    );
+    assert!(prompt.contains("Parent Agent"), "expected parent role");
     assert!(
         prompt.contains("Be helpful"),
         "expected user prompt in result"

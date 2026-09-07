@@ -845,7 +845,7 @@ Coverage runs in authoritative CI after `merge-requested` is applied. For manual
 
 ## Documentation
 
-Human guides (full reference). The agent `docs` tool embeds a short **operating manual** from `docs/docs-tool-embeds/` (`quick-start` plus concise deep dives) — not these full files.
+Human guides (full reference). The agent `docs` tool embeds a short **operating manual** from `docs/docs-tool-embeds/` (concise deep dives) — not these full files.
 
 | Guide | Description |
 |---|---|

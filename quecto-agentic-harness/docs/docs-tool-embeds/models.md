@@ -26,5 +26,5 @@ Quecto resolves one **effective catalogue** from ordered source layers — built
 
 ## See also
 
-- Entry: `docs {"name":"quick-start"}`
+- Manual index: `docs {}`
 - Full human reference: `docs/runtime-models-providers.md` in the repo

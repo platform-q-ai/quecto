@@ -23,5 +23,5 @@ Tool names and schemas for enabled extensions already appear in your tool list. 
 
 ## See also
 
-- Entry: `docs {"name":"quick-start"}`
+- Manual index: `docs {}`
 - Full human reference: `docs/extensions.md` in the repo

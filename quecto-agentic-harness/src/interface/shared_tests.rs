@@ -76,52 +76,65 @@ fn test_merge_prompts_empty_user() {
 }
 
 #[test]
-fn test_build_system_prompt_docs_policy_only() {
+fn test_parent_prompt_contains_only_role_and_routing_guidance() {
     let result = build_system_prompt(&None, false);
     assert!(!result.contains("Current date and time:"));
-    assert!(result.starts_with(agent_role_preamble()));
+    assert!(result.contains(agent_role_preamble()));
     assert!(result.contains("Parent Agent"));
-    assert!(result.contains("`docs` tool"));
-    assert!(result.contains("operating manual"));
-    assert!(result.contains("quick-start"));
-    assert!(result.contains("definitive source"));
+    assert!(!result.contains("`docs` tool"));
+    assert!(!result.contains("operating manual"));
+    assert!(!result.contains("quick-start"));
+    assert!(!result.contains("definitive source"));
     assert!(!result.contains("name `quecto`"));
     assert!(!result.contains("quecto-tui"));
     assert!(!result.contains("quecto-api"));
     assert!(!result.contains("quecto-mcp"));
+    assert!(result.ends_with("Confirm live template ids if unsure."));
 }
 
 #[test]
 fn test_build_system_prompt_with_user_only() {
     let result = build_system_prompt(&Some("Be helpful".to_string()), false);
     assert!(!result.contains("Current date and time:"));
-    assert!(result.starts_with(agent_role_preamble()));
-    assert!(result.contains(agent_docs_retrieval_policy()));
+    assert!(result.contains(agent_role_preamble()));
+    assert!(!result.contains("operating manual"));
     assert!(result.contains("Be helpful"));
 }
 
-/// #1319: spawned children omit Parent Agent preamble and parent docs policy.
+/// Given either role and optional custom instructions, role boundaries remain explicit.
 #[test]
-fn test_build_system_prompt_spawned_omits_parent_guidance() {
-    let result = build_system_prompt(&None, true);
-    assert!(
-        result.is_empty(),
-        "minimal child prompt should be empty without system text"
-    );
-    assert!(!result.contains("Parent Agent"));
-    assert!(!result.contains("quick-start"));
-    assert!(!result.contains(agent_role_preamble()));
-    assert!(!result.contains(agent_docs_retrieval_policy()));
-}
-
-/// #1319: explicit spawn.system is retained without parent coordination text.
-#[test]
-fn test_build_system_prompt_spawned_retains_explicit_system() {
-    let result = build_system_prompt(&Some("Focus on the assigned task only.".into()), true);
-    assert_eq!(result, "Focus on the assigned task only.");
-    assert!(!result.contains("Parent Agent"));
-    assert!(!result.contains("quick-start"));
-    assert!(!result.contains(agent_docs_retrieval_policy()));
+fn role_specific_prompts_preserve_custom_text_without_docs_guidance() {
+    let child_role = "You are a subagent responsible for the assigned task. Solve it directly by default. You may delegate a bounded, independently useful subtask when doing so materially improves the result. Do not delegate your entire assignment, create another coordinator for the same task, or spawn agents merely to reduce your own context. Remain responsible for integrating and verifying delegated results.";
+    for custom in [
+        None,
+        Some(String::new()),
+        Some("Custom task constraints.".into()),
+    ] {
+        let child = build_system_prompt(&custom, true);
+        let parent = build_system_prompt(&custom, false);
+        assert!(child.contains(child_role));
+        assert!(!child.contains("Parent Agent"));
+        assert!(!child.contains("Delegate to a subagent when the work is broad"));
+        assert!(parent.contains(agent_role_preamble()));
+        assert!(parent.contains("Delegate to a subagent when the work is broad"));
+        assert!(parent.contains("Once delegated, do not repeat the same investigation"));
+        assert!(!parent.contains("Common loops"));
+        assert!(!parent.contains("quick-start"));
+        assert!(!child.contains("quick-start"));
+        assert!(!child.contains("operating manual"));
+        if custom.as_ref().is_none_or(|text| text.is_empty()) {
+            assert!(child.ends_with(child_role));
+        }
+        assert!(!parent.contains(child_role));
+        for prompt in [&parent, &child] {
+            if let Some(text) = &custom {
+                if !text.is_empty() {
+                    assert!(prompt.ends_with(text));
+                    assert_eq!(prompt.matches(text).count(), 1);
+                }
+            }
+        }
+    }
 }
 
 #[tokio::test]
@@ -670,5 +683,16 @@ mod context_settings {
             1_000_000,
             "a smaller known window must clamp the configured budget"
         );
+    }
+}
+
+#[test]
+fn both_agent_prompts_start_with_codebase_conventions() {
+    let guidance = "Follow the codebase’s conventions whenever possible. When working inside the Quecto codebase specifically, always prefer the BDD/TDD red–green–refactor process and apply Clean Architecture and SOLID principles.";
+    for spawned in [false, true] {
+        for custom in [None, Some("Custom constraints".into())] {
+            let prompt = build_system_prompt(&custom, spawned);
+            assert!(prompt.starts_with(&format!("{guidance}\n\n")));
+        }
     }
 }
