@@ -1,13 +1,14 @@
 //! Fake-provider end-to-end run through the real agent loop and swarm tool.
-use super::{MockProvider, MockRegistry, test_config, text_response};
-use crate::application::agent_loop::AgentLoopImpl;
-use crate::domain::{
+use quecto::application::agent_loop::AgentLoopImpl;
+use quecto::domain::{
     agent::AgentLoop,
     message::{LlmResponse, Message, ToolCall},
 };
-use crate::infrastructure::security::sandbox::Sandbox;
-use crate::infrastructure::tools::{
-    swarm::SwarmConfig, swarm_bridge::SwarmContext, swarm_test_support,
+use quecto::infrastructure::security::sandbox::Sandbox;
+use quecto::infrastructure::tools::{
+    registry::ToolRegistryImpl,
+    swarm::{SwarmConfig, SwarmTool},
+    swarm_bridge::SwarmContext,
 };
 use std::sync::Arc;
 
@@ -26,11 +27,23 @@ fn action(id: usize, source: &str) -> LlmResponse {
 async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
     let directory = tempfile::tempdir().unwrap();
     let workspace = Arc::new(directory.path().to_path_buf());
-    let tool = swarm_test_support::tool(
+    let context = SwarmContext {
+        checkout: workspace.as_ref().clone(),
+        member: "coordinator".into(),
+    };
+    std::fs::create_dir_all(workspace.join(".quecto")).unwrap();
+    let deadline = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 60;
+    context.call("create", serde_json::json!(["ship", [], [{"id":"tests","kind":"command","description":"pass"}], 1, deadline])).unwrap();
+    let tool = SwarmTool::new(
         workspace.clone(),
         Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
         SwarmConfig::default(),
-    );
+    )
+    .with_context(Some(context));
     let provider = Arc::new(MockProvider::new(vec![
         action(
             1,
@@ -46,7 +59,7 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
         ),
         text_response("Verified completion at abc"),
     ]));
-    let mut registry = MockRegistry::new();
+    let mut registry = ToolRegistryImpl::new();
     registry.register(Arc::new(tool));
     let mut agent = AgentLoopImpl::new(test_config(provider.clone(), Box::new(registry)));
     let result = agent
@@ -74,4 +87,84 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
         "PASS revision abc"
     );
     assert_eq!(provider.request_count(), 4);
+}
+
+#[derive(Debug)]
+struct MockProvider {
+    responses: std::sync::Mutex<std::collections::VecDeque<LlmResponse>>,
+    requests: std::sync::atomic::AtomicUsize,
+}
+
+impl MockProvider {
+    fn new(responses: Vec<LlmResponse>) -> Self {
+        Self {
+            responses: std::sync::Mutex::new(responses.into()),
+            requests: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+    fn request_count(&self) -> usize {
+        self.requests.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl quecto::domain::provider::LlmProvider for MockProvider {
+    fn name(&self) -> &str {
+        "swarm-fake"
+    }
+    fn chat(
+        &self,
+        _: quecto::domain::provider::ChatRequest<'_>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<LlmResponse, quecto::domain::error::DomainError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        self.requests
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let response = self
+            .responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("unexpected provider request");
+        Box::pin(async move { Ok(response) })
+    }
+}
+
+fn text_response(content: &str) -> LlmResponse {
+    LlmResponse {
+        content: Some(content.into()),
+        tool_calls: vec![],
+        usage: None,
+        stop_reason: None,
+        thinking_blocks: vec![],
+    }
+}
+
+fn test_config(
+    provider: Arc<MockProvider>,
+    tool_registry: Box<ToolRegistryImpl>,
+) -> quecto::application::agent_loop::AgentLoopConfig {
+    quecto::application::agent_loop::AgentLoopConfig {
+        provider,
+        tool_registry,
+        model: "test-model".into(),
+        max_tokens: 1024,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: String::new(),
+        context_collapse_after_tool_calls: u32::MAX,
+        max_context_tokens: 190000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
+        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+    }
 }

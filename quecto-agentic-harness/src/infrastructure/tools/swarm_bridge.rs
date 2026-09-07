@@ -17,8 +17,8 @@ impl SwarmContext {
     /// reference scripts deliberately do not set this contract.
     pub fn discover() -> Option<Self> {
         let checkout = std::env::var_os("QUECTO_SWARM_CHECKOUT")?;
-        let runtime = std::env::var("QUECTO_CONTAINER_RUNTIME").ok()?;
-        if !matches!(runtime.as_str(), "docker" | "podman") {
+        let protocol = std::env::var("QUECTO_SWARM_CONTAINER").ok()?;
+        if protocol != "isolated-pid-v1" {
             return None;
         }
         let host_namespace = std::env::var("QUECTO_SWARM_HOST_PID_NS").ok()?;

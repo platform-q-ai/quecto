@@ -102,3 +102,19 @@ cargo fmt --all -- --check
 
 Authoritative CI is triggered with `merge-requested`; fixes require pushing and
 reapplying that label. Merging requires separate explicit user approval.
+
+## Authoritative CI follow-up
+
+The first CI run passed static quality, dependency policy, coverage, mock LLM E2E
+and TUI BDD. Its broader integration/architecture checks found two missed
+boundaries: runtime brand names in Rust core, and file I/O in the application
+end-to-end test. The core now accepts an adapter-issued `isolated-pid-v1` context
+plus distinct PID namespace proof; runtime selection remains in scripts. The
+fake-provider test moved intact to the integration-test layer with explicit
+composition. Neither architecture guard was weakened.
+
+CI also reproduced a pre-existing REPL test race: invalid configuration can exit
+before the test finishes writing stdin. The test harness now accepts only
+`BrokenPipe` for that early exit, retaining every status/output assertion and
+rejecting other I/O errors. The affected container-runtime (8 tests), production
+REPL (6 tests), and fake-provider integration checks passed after these fixes.

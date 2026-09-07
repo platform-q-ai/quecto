@@ -10,7 +10,7 @@ configuration keys is an error rather than silently choosing one.
 ## Container and membership
 
 Use the existing `spawn` container capability with the official Docker/Podman
-adapter. The adapter passes the shared checkout, runtime identity and host PID namespace to every
+adapter. The adapter passes the shared checkout, `isolated-pid-v1` context and host PID namespace to every
 in-container harness process. The harness requires a different current PID namespace;
 host-local launches cannot gain availability from a directory marker. Host-local reference scripts do not confer swarm
 availability. The harness rejects `swarm` outside that context, even if someone

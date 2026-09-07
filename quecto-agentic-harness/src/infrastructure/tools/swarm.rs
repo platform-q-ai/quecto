@@ -144,7 +144,7 @@ impl Tool for SwarmTool {
             .unwrap_or_default();
         Box::pin(async move {
             let Some(context) = context else {
-                return tool_err("swarm is container-only: use spawn with an official Docker/Podman container, then create a bounded run inside it".into());
+                return tool_err("swarm is container-only: use spawn with a registered isolated container, then create a bounded run inside it".into());
             };
             let v = match parsed {
                 Ok(v) => v,
@@ -711,7 +711,7 @@ fn cancel_jobs(jobs: &JobRegistry) {
 
 pub(crate) fn terminate_member(pid: u32) {
     // Snapshot/terminate descendants while the parent is still present, then
-    // use the existing group-or-PID fallback for both local and Docker joins.
+    // use the existing group-or-PID fallback for both local and script-managed joins.
     kill_pid_tree_best_effort(pid);
     kill_pid(pid);
 }
