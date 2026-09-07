@@ -127,8 +127,7 @@ the 30s deadline instead.
 | `Ctrl+W` | Delete backward through whitespace and one non-whitespace chunk |
 | `Alt+D` | Delete forward through non-letters/digits and one Unicode letter/digit word |
 | `Ctrl+Y` | Reinsert the latest text removed by `Ctrl+U`, `Ctrl+K`, `Ctrl+W`, or `Alt+D` |
-| `Alt+B` / `Alt+F` | Move backward / forward using existing whitespace word boundaries |
-| `Ctrl+Left` / `Ctrl+Right` | Aliases for `Alt+B` / `Alt+F` |
+| `Ctrl+Left` / `Ctrl+Right` | Word movement aliases using the existing whitespace boundaries |
 
 Alt/Option and modified-arrow sequences depend on terminal and OS configuration;
 Quecto can only handle shortcuts that the terminal sends distinctly.

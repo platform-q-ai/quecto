@@ -86,6 +86,11 @@ fn press_ctrl_d(world: &mut TuiWorld) {
 
 // ── Then ───────────────────────────────────────────────────────────────────
 
+#[then(regex = r#"^the editor should still contain \"([^\"]*)\"$"#)]
+fn editor_should_still_contain(world: &mut TuiWorld, expected: String) {
+    assert_eq!(with_harness(world, |h| h.editor_text()), expected);
+}
+
 #[then("the app should set should_exit to true")]
 fn should_exit_true(world: &mut TuiWorld) {
     assert!(

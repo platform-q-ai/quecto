@@ -83,7 +83,6 @@ impl App {
              \x20 Ctrl+W         Delete previous whitespace-delimited word\n\
              \x20 Alt+D          Delete next Unicode letter/digit word\n\
              \x20 Ctrl+Y         Reinsert the latest line/word deletion\n\
-             \x20 Alt+B/F        Move backward/forward by word\n\
              \x20 Ctrl+Left/Right  Word-movement aliases\n\
              \x20                (Alt/modified arrows depend on terminal support)\n\
              \n\
