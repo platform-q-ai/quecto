@@ -124,6 +124,14 @@ the 30s deadline instead.
 | `Ctrl+Z` | Suspend the TUI (`fg` to resume) |
 | `PageUp` / `PageDown` | Scroll chat |
 | `Up` / `Down` | Browse input history |
+| `Ctrl+W` | Delete backward through whitespace and one non-whitespace chunk |
+| `Alt+D` | Delete forward through non-letters/digits and one Unicode letter/digit word |
+| `Ctrl+Y` | Reinsert the latest text removed by `Ctrl+U`, `Ctrl+K`, `Ctrl+W`, or `Alt+D` |
+| `Alt+B` / `Alt+F` | Move backward / forward using existing whitespace word boundaries |
+| `Ctrl+Left` / `Ctrl+Right` | Aliases for `Alt+B` / `Alt+F` |
+
+Alt/Option and modified-arrow sequences depend on terminal and OS configuration;
+Quecto can only handle shortcuts that the terminal sends distinctly.
 
 ## Mouse and markdown links
 
