@@ -9,6 +9,20 @@ use crate::components::ansi::{AnsiSegment, ansi_segments};
 use crate::components::utils::visible_width;
 use unicode_width::UnicodeWidthChar;
 
+/// Splice one overlay row into a frame when the target row is visible.
+pub fn composite_line(
+    lines: &mut [String],
+    row: usize,
+    overlay: &str,
+    start_col: usize,
+    overlay_width: usize,
+    total_width: usize,
+) {
+    if row < lines.len() {
+        lines[row] = splice_line(&lines[row], overlay, start_col, overlay_width, total_width);
+    }
+}
+
 /// Splice overlay content into a base line at the given column.
 ///
 /// ANSI-aware: properly resets attributes at splice boundaries.

@@ -504,8 +504,9 @@ impl App {
                 .saturating_sub(1)
                 .min(lines.len().saturating_sub(1));
             let col = width.saturating_sub(overlay_width) / 2;
-            lines[row] = crate::components::overlay::splice_line(
-                &lines[row],
+            crate::components::overlay::composite_line(
+                &mut lines,
+                row,
                 &overlay,
                 col,
                 overlay_width,
@@ -582,11 +583,9 @@ impl App {
         lines
     }
 
-    /// Splice a centered overlay into the frame `lines`, in place.
-    ///
-    /// Centers `overlay_lines` (clamped to leave a 4-row margin) and splices
-    /// each row through the ANSI-aware splice helper so escape codes
-    /// from the underlying frame can't bleed into or out of the overlay. Shared
+    /// Splice a centered overlay into `lines`, in place. Centers `overlay_lines` (clamped to leave a 4-row margin) and splices
+    /// each row through the ANSI-aware splice helper so escape codes from the
+    /// underlying frame can't bleed into or out of the overlay. Shared
     /// by every centered overlay (resume / rewind / model selectors).
     pub(super) fn composite_centered(
         lines: &mut [String],
@@ -600,9 +599,10 @@ impl App {
         let start_col = width.saturating_sub(overlay_width) / 2;
         for i in 0..overlay_height {
             let row = start_row + i;
-            if row < lines.len() && i < overlay_lines.len() {
-                lines[row] = crate::components::overlay::splice_line(
-                    &lines[row],
+            if i < overlay_lines.len() {
+                crate::components::overlay::composite_line(
+                    lines,
+                    row,
                     &overlay_lines[i],
                     start_col,
                     overlay_width,
