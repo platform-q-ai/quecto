@@ -131,7 +131,7 @@ Depends only on `domain/`. Orchestration logic, no I/O.
 
 | File | Purpose |
 |---|---|
-| `agent_loop.rs` | Core LLM-tool loop: send → execute tools → repeat. Traces `tool_name`, `duration_ms`, `is_error`. Progress callbacks for REPL spinner. Supports incremental streaming via `chat_stream_incremental()`. Passes configured `effort` level through to every `ChatRequest` |
+| `agent_loop.rs` | Core LLM-tool loop: send → execute tools → repeat. Traces `tool_name`, `duration_ms`, `is_error`. Progress callbacks for interactive agent clients. Supports incremental streaming via `chat_stream_incremental()`. Passes configured `effort` level through to every `ChatRequest` |
 | `context_pruning.rs` | Token estimation, pinned spill manifest, tool-call-count tool-result collapse, conversation-message collapse (`context_collapse_after_messages`, default 50), and the demotion-ladder ceiling (stub, then drop; `pin_recent_turns = 2` tail is never demoted). Current config defaults: `max_context_tokens = 200000`, `context_collapse_after_tool_calls = 50`, `context_collapse_after_messages = 50`; set a collapse knob to `4294967295` (`u32::MAX`) to disable it |
 | `reload.rs` | `/reload` use case: strips stale tool history via `strip_tool_history()`, clears spill index, coordinates `SessionStore` + `ContextSpillStore` |
 | `subagent.rs` | `SubagentContext` — child agent contexts with inherited tool policy |
@@ -163,18 +163,14 @@ Manual arg parsing (no clap). Entry point: `cli::run(args) -> i32`.
 
 | Command | Description |
 |---|---|
-| `quecto` | Interactive REPL (`-s` session, `--system` prompt, `--model` override; global `--config <path>`) with live progress spinner |
+| `quecto` | Interactive login, setup, and configuration shell |
 | `quecto agent -m <msg>` | Headless one-shot (`-s`, `--no-session`, `--system`, `--model`, `--max-iterations`, `--max-time`, `--effort`, `--disable-tool`; global `--config <path>`) |
 | `quecto agent --mode uds` | Persistent UDS event bus: multi-client length-prefixed JSON protocol over Unix domain socket (`--socket <path>` for explicit path, auto-generated otherwise; `--persist`, `--workflow`, `--workflow-guards`, `--no-workflow` supported) |
 | `quecto status` | Config summary, provider availability |
 | `quecto auth login\|logout\|status` | Credential management (token/OAuth/device-code) |
 | `quecto help\|version` | Self-explanatory |
 
-REPL commands: `/help`, `/clear`, `/agent`, `/spawn`, `/exit`, `/quit`. Uses abstracted I/O for testing.
-
-REPL progress: `ProgressRenderer` drives a braille spinner at ~12fps on stderr (TTY only). Shows thinking state, tool name, arguments preview, and execution status. Pure ANSI escape codes — no external crates.
-
-All entry points (REPL, CLI agent) inject a short docs-retrieval policy via `build_system_prompt()` so agents know to use the `docs` tool for Quecto capability guides on demand. A local datetime preamble is not injected (providers may still send their own date metadata).
+The REPL delegates authentication and configuration commands to the existing CLI handlers; it does not construct an agent or tool runtime.
 
 Headless CLI agent includes `SpawnTool` (launches UDS-mode subagents) and `AgentCmdTool` (sends commands to spawned agents). Subagent timeout: 24 hours.
 
@@ -200,42 +196,9 @@ Socket path: `--socket <path>` (max 104 bytes, macOS `sockaddr_un` limit) or aut
 
 ## Commands
 
-### `quecto` — Interactive REPL
+### `quecto` — Setup and configuration REPL
 
-When run with no arguments, quecto enters an interactive read-eval-print loop:
-
-```bash
-quecto
-```
-
-The REPL reads input line by line, sends each to the LLM agent, prints the response, and repeats. While the agent is processing, a live progress spinner shows current activity (thinking, tool execution with arguments and status). The spinner renders on stderr at ~12fps using pure ANSI escape codes (no external crates). Non-TTY output (pipes, CI) is silently suppressed.
-
-| Flag | Description |
-|---|---|
-| `-s` / `--session` | Session name for persistence. Default: `repl:repl_default`. Use `-` for ephemeral |
-| `--system` | System prompt prepended to each turn (not persisted) |
-| `--model` | Override the default model from config |
-| `--config <path>` | Override config file path (global option) |
-
-REPL commands:
-
-| Command | Description |
-|---|---|
-| `/help` | Show available commands |
-| `/clear` | Clear conversation history |
-| `/agent` | Manage subagent profiles (subcommands: `list`, `create`, `show`, `edit`, `remove`, `run`) |
-| `/spawn` | Spawn a task as a child agent (flags: `--agent`, `--system`, `--model`, `--max-time`, `--help`) |
-| `/exit` / `/quit` | Exit the REPL |
-
-Ctrl+D (EOF) also exits cleanly.
-
-Quectoped input is supported for scripting: `echo "hello" | quecto`.
-
-#### REPL model-visible tool surface
-
-The REPL intentionally exposes a narrower model-visible tool surface than `quecto agent` and UDS agents. It uses the same shared tool runtime and catalogue as the other entry points, but REPL entrypoint policy default-disables agent-control tools (`spawn`, `agent_cmd`) and web tools (`web_search`, `web_fetch`) after registration. Workflow tools are UDS-only and are not supported in the REPL.
-
-Disabled REPL tools remain present in the descriptor catalogue for policy/UI consumers, but they are hidden from model-visible tool definitions and reject execution. This keeps the interactive REPL focused on local chat and workspace tools while preserving a single registration path for catalogue and policy state.
+Running `quecto` with no arguments opens a small interactive shell for login, initial setup, and configuration inspection. Supported commands are `auth login`, `auth logout`, `auth status`, `status`, `models`, `help`, and `exit`. Agent prompts, tools, workflows, subagents, chat sessions, and progress rendering are intentionally unavailable. Use `quecto agent` for one-shot/UDS agents or `quecto-tui` for an interactive agent interface.
 
 ### `quecto agent` — Talk to the agent
 

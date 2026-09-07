@@ -105,7 +105,7 @@ pub struct AgentLoopImpl {
     pub(super) model_context_window: Option<usize>,
     /// When true, use incremental streaming for LLM calls.
     streaming: bool,
-    /// Optional live progress callback wired by the REPL progress renderer.
+    /// Optional live progress callback wired by interactive agent clients.
     progress_callback: Option<ProgressCallback>,
     /// Optional effort level passed through to every ChatRequest.
     pub(super) effort: Option<EffortLevel>,
