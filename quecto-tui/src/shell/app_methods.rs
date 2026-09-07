@@ -72,6 +72,7 @@ impl App {
              \x20 Esc Esc        Choose a previous turn to go back to\n\
              \x20 Ctrl+C         Clear editor first, abort if empty\n\
              \x20 Ctrl+D         Exit\n\
+             \x20 Ctrl+G         Jump to latest conversation output\n\
              \x20 Ctrl+L         Open model selector\n\
              \x20 Ctrl+T         Open tool policy selector\n\
              \x20 Ctrl+O         Toggle tool output expansion\n\
@@ -462,8 +463,8 @@ impl App {
         // the environment chrome, so the conversation is suppressed entirely.
         // Overflow: the conversation shows its tail (auto-scroll); the
         // environment body head-anchors (#1401 review, `clamp_environment_body`).
-        let mut chat_lines = match self.render_environment_body(width) {
-            Some(body) => Self::clamp_environment_body(body, chat_height),
+        let (mut chat_lines, show_latest_tip) = match self.render_environment_body(width) {
+            Some(body) => (Self::clamp_environment_body(body, chat_height), false),
             None => {
                 let chat = self.active_chat_mut();
                 chat.set_viewport_height(chat_height);
@@ -471,23 +472,21 @@ impl App {
                 if lines.len() > chat_height {
                     lines = lines[lines.len() - chat_height..].to_vec();
                 }
-                lines
+                (lines, chat.is_scrolled_from_latest())
             }
         };
         while chat_lines.len() < chat_height {
             chat_lines.insert(0, String::new());
         }
+        // Preserve the breathing room between the main-pane title and chat.
         lines.push(String::new());
         lines.extend(chat_lines);
-
         let available = height.saturating_sub(bottom_height);
         while lines.len() < available {
             lines.insert(top_chrome_height + 1, String::new());
         }
-
         // ── Append bottom section ───────────────────────────────────
         lines.extend(bottom);
-
         // Final safety: ensure exactly `height` lines.
         if lines.len() > height {
             let start = lines.len() - height;
@@ -496,7 +495,24 @@ impl App {
         while lines.len() < height {
             lines.push(String::new());
         }
-
+        if show_latest_tip && width > 0 {
+            let tip = "Ctrl + G - Jump Back to Latest Message";
+            let overlay_width = crate::components::utils::visible_width(tip).min(width);
+            let overlay =
+                crate::components::utils::truncate_to_width(&theme::red(tip), overlay_width, None);
+            let row = available
+                .saturating_sub(1)
+                .min(lines.len().saturating_sub(1));
+            let col = width.saturating_sub(overlay_width) / 2;
+            crate::components::overlay::splice_frame_line(
+                &mut lines,
+                row,
+                &overlay,
+                col,
+                overlay_width,
+                width,
+            );
+        }
         // Composite the active centered overlay (only one is ever active at a
         // time). All three splice through the same ANSI-aware helper so the
         // centering and escape-safe splice rule lives in one place.
@@ -567,11 +583,9 @@ impl App {
         lines
     }
 
-    /// Splice a centered overlay into the frame `lines`, in place.
-    ///
-    /// Centers `overlay_lines` (clamped to leave a 4-row margin) and splices
-    /// each row through the ANSI-aware splice helper so escape codes
-    /// from the underlying frame can't bleed into or out of the overlay. Shared
+    /// Splice a centered overlay into `lines`, in place. Centers `overlay_lines` (clamped to leave a 4-row margin) and splices
+    /// each row through the ANSI-aware splice helper so escape codes from the
+    /// underlying frame can't bleed into or out of the overlay. Shared
     /// by every centered overlay (resume / rewind / model selectors).
     pub(super) fn composite_centered(
         lines: &mut [String],
@@ -585,9 +599,10 @@ impl App {
         let start_col = width.saturating_sub(overlay_width) / 2;
         for i in 0..overlay_height {
             let row = start_row + i;
-            if row < lines.len() && i < overlay_lines.len() {
-                lines[row] = crate::components::overlay::splice_line(
-                    &lines[row],
+            if i < overlay_lines.len() {
+                crate::components::overlay::splice_frame_line(
+                    lines,
+                    row,
                     &overlay_lines[i],
                     start_col,
                     overlay_width,
