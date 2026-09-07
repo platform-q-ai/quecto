@@ -80,6 +80,11 @@ impl App {
              \x20 Ctrl+Z         Suspend (resume with fg)\n\
              \x20 PageUp/Down    Scroll chat\n\
              \x20 Up/Down        Input history\n\
+             \x20 Ctrl+W         Delete previous whitespace-delimited word\n\
+             \x20 Alt+D          Delete next Unicode letter/digit word\n\
+             \x20 Ctrl+Y         Reinsert the latest line/word deletion\n\
+             \x20 Ctrl+Left/Right  Word-movement aliases\n\
+             \x20                (Alt/modified arrows depend on terminal support)\n\
              \n\
              \n\
              Mouse / links:\n\

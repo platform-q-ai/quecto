@@ -317,6 +317,25 @@ async fn handle_key_printable_char_goes_to_editor() {
 }
 
 #[tokio::test]
+async fn new_editing_shortcuts_reach_editor_through_app_dispatch() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.editor.set_text("one two");
+    a.handle_key(Key::Ctrl('w'));
+    assert_eq!(a.editor.text(), "one ");
+    a.handle_key(Key::Ctrl('y'));
+    assert_eq!(a.editor.text(), "one two");
+    a.handle_key(Key::CtrlLeft);
+    a.handle_key(Key::Alt('d'));
+    assert_eq!(a.editor.text(), "one ");
+    a.handle_key(Key::CtrlLeft);
+    assert_eq!(a.editor.cursor_col(), 0);
+    a.handle_key(Key::CtrlRight);
+    assert_eq!(a.editor.cursor_col(), 4);
+    assert_eq!(a.editor.text(), "one ");
+}
+
+#[tokio::test]
 async fn handle_key_backspace_goes_to_editor() {
     let mut h = harness().await;
     let a = h.app_mut();
