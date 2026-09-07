@@ -26,6 +26,8 @@ pub struct Editor {
     history: InputHistory,
     /// Submit callback text (set when user presses Enter on non-empty draft).
     submit_text: Option<String>,
+    /// Text most recently removed by a line/word kill command.
+    kill_buffer: Option<String>,
     /// Bash mode when first line `trim_start` starts with `!`.
     bash_mode: bool,
     /// Whether to draw the block cursor (false when focus is elsewhere,
@@ -50,6 +52,7 @@ impl Editor {
             cursor_col: 0,
             history: InputHistory::new(),
             submit_text: None,
+            kill_buffer: None,
             bash_mode: false,
             show_cursor: true,
             cached_width: None,
@@ -261,18 +264,70 @@ impl Editor {
         self.invalidate();
     }
 
-    fn kill_to_start(&mut self) {
-        // Ctrl+U: delete from cursor to start of line.
-        self.lines[self.cursor_row].drain(..self.cursor_col);
-        self.cursor_col = 0;
+    fn kill_range(&mut self, start: usize, end: usize) {
+        if start == end {
+            return;
+        }
+        self.kill_buffer = Some(self.lines[self.cursor_row][start..end].to_string());
+        self.lines[self.cursor_row].drain(start..end);
+        self.cursor_col = start;
         self.update_bash_mode();
         self.invalidate();
     }
 
+    fn kill_to_start(&mut self) {
+        self.kill_range(0, self.cursor_col);
+    }
+
     fn kill_to_end(&mut self) {
-        // Ctrl+K: delete from cursor to end of line.
-        self.lines[self.cursor_row].truncate(self.cursor_col);
-        self.invalidate();
+        let end = self.lines[self.cursor_row].len();
+        self.kill_range(self.cursor_col, end);
+    }
+
+    /// Delete backward over whitespace and then one non-whitespace chunk.
+    fn kill_whitespace_word_backward(&mut self) {
+        let line = &self.lines[self.cursor_row];
+        let mut start = self.cursor_col;
+        while let Some((index, ch)) = line[..start].char_indices().next_back() {
+            if !ch.is_whitespace() {
+                break;
+            }
+            start = index;
+        }
+        while let Some((index, ch)) = line[..start].char_indices().next_back() {
+            if ch.is_whitespace() {
+                break;
+            }
+            start = index;
+        }
+        self.kill_range(start, self.cursor_col);
+    }
+
+    /// Delete punctuation followed by one Unicode letter/digit run.
+    fn kill_word_forward(&mut self) {
+        let line = &self.lines[self.cursor_row];
+        let mut end = self.cursor_col;
+        for ch in line[end..].chars() {
+            if ch.is_alphanumeric() {
+                break;
+            }
+            end += ch.len_utf8();
+        }
+        for ch in line[end..].chars() {
+            if !ch.is_alphanumeric() {
+                break;
+            }
+            end += ch.len_utf8();
+        }
+        self.kill_range(self.cursor_col, end);
+    }
+
+    fn yank(&mut self) {
+        if let Some(text) = self.kill_buffer.clone() {
+            for ch in text.chars() {
+                self.insert_char(ch);
+            }
+        }
     }
 
     pub(super) fn word_left(&mut self) {
@@ -473,6 +528,14 @@ impl Component for Editor {
                 self.kill_to_end();
                 true
             }
+            Key::Ctrl('w') => {
+                self.kill_whitespace_word_backward();
+                true
+            }
+            Key::Ctrl('y') => {
+                self.yank();
+                true
+            }
             Key::Ctrl('a') => {
                 self.move_home();
                 true
@@ -486,13 +549,17 @@ impl Component for Editor {
                 self.insert_newline();
                 true
             }
-            // Alt+b / Alt+f for word movement.
-            Key::Alt('b') => {
+            // Ctrl+arrow aliases use exactly the established Alt+b/f movement.
+            Key::Alt('b') | Key::CtrlLeft => {
                 self.word_left();
                 true
             }
-            Key::Alt('f') => {
+            Key::Alt('f') | Key::CtrlRight => {
                 self.word_right();
+                true
+            }
+            Key::Alt('d') => {
+                self.kill_word_forward();
                 true
             }
             Key::Paste(text) => {

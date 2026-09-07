@@ -615,3 +615,39 @@ fn cov_is_ctrl_c_and_is_char() {
     assert!(Key::Char('x').is_char());
     assert!(!Key::Enter.is_char());
 }
+
+#[test]
+fn legacy_ctrl_arrows_decode_distinctly() {
+    assert_eq!(parse_key(b"\x1b[1;5D").unwrap().0, Key::CtrlLeft);
+    assert_eq!(parse_key(b"\x1b[1;5C").unwrap().0, Key::CtrlRight);
+}
+
+#[test]
+fn kitty_ctrl_arrows_decode_distinctly() {
+    assert_eq!(parse_key(b"\x1b[57350;5u").unwrap(), (Key::CtrlLeft, 10));
+    assert_eq!(parse_key(b"\x1b[57351;5u").unwrap(), (Key::CtrlRight, 10));
+}
+
+#[test]
+fn unrelated_arrow_modifiers_do_not_decode_as_ctrl_arrows() {
+    assert_eq!(parse_key(b"\x1b[D").unwrap().0, Key::Left);
+    assert_eq!(parse_key(b"\x1b[C").unwrap().0, Key::Right);
+    assert_eq!(parse_key(b"\x1b[1;2D").unwrap().0, Key::Left);
+    assert_eq!(parse_key(b"\x1b[1;3C").unwrap().0, Key::Right);
+    assert!(matches!(
+        parse_key(b"\x1b[57350;6u").unwrap().0,
+        Key::Unknown(_)
+    ));
+    assert!(matches!(
+        parse_key(b"\x1b[57351;7u").unwrap().0,
+        Key::Unknown(_)
+    ));
+}
+
+#[test]
+fn kitty_ctrl_arrow_release_is_not_actionable() {
+    assert!(matches!(
+        parse_key(b"\x1b[57350;5:3u").unwrap().0,
+        Key::Unknown(_)
+    ));
+}
