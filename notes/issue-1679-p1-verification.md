@@ -30,3 +30,11 @@ Publication must not use `Closes #1679`: this phase leaves P2–P4 outstanding.
   policy and workflow guard checks. No bypass flags used.
 Final semantic correction rerun: 99 contracts, 46 architecture, 3 BDD/14 steps,
 strict all-target clippy all passed. No mutation residue.
+
+Authoritative CI first run34168549521: every job passed except library-only
+coverage (91.51% functions vs92). Integration public contracts were not part of
+`cargo llvm-cov --lib`, so new policy functions appeared uncovered. Fixed test
+harness registration in lib.rs to execute the exact same public-port source under
+both unit and integration runners (no gate weakening or duplicated assertions).
+22 admission library tests, 99 integration contracts,46 architecture, strict
+all-target clippy/fmt pass. Local llvm-cov unavailable; authoritative rerun required.
