@@ -73,8 +73,7 @@ fn core_system_prompt(spawned: bool) -> String {
     } else {
         agent_role_preamble()
     };
-    let conventions = "Follow the codebase’s conventions whenever possible. When working inside the Quecto codebase specifically, always prefer the BDD/TDD red–green–refactor process and apply Clean Architecture and SOLID principles.";
-    let mut sections = vec![conventions, role];
+    let mut sections = vec![role];
     if !spawned {
         sections.push(parent_coordination_policy());
     }

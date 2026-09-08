@@ -739,12 +739,8 @@ mod context_settings {
 }
 
 #[test]
-fn both_agent_prompts_start_with_codebase_conventions() {
-    let guidance = "Follow the codebase’s conventions whenever possible. When working inside the Quecto codebase specifically, always prefer the BDD/TDD red–green–refactor process and apply Clean Architecture and SOLID principles.";
-    for spawned in [false, true] {
-        for custom in [None, Some("Custom constraints".into())] {
-            let prompt = build_system_prompt(&custom, spawned);
-            assert!(prompt.starts_with(&format!("{guidance}\n\n")));
-        }
-    }
+fn core_prompts_rely_on_agents_md_for_codebase_conventions() {
+    let removed = "Follow the codebase’s conventions whenever possible.";
+    assert!(!build_system_prompt(&None, false).contains(removed));
+    assert!(!build_system_prompt(&None, true).contains(removed));
 }
