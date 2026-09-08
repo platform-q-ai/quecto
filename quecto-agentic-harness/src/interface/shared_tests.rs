@@ -592,33 +592,26 @@ fn test_xdg_runtime_dir_or_temp_returns_path() {
     let path = xdg_runtime_dir_or_temp();
     assert!(path.is_dir());
 }
-
 // --- build_http_client tests ---
-
 #[test]
 fn test_build_http_client_does_not_panic() {
     let _client = build_http_client();
 }
-
 // --- OAUTH_EXPIRY_MARGIN_SECS constant ---
-
 #[test]
 fn test_oauth_expiry_margin_is_five_minutes() {
     assert_eq!(OAUTH_EXPIRY_MARGIN_SECS, 300);
 }
-
 // --- #1044/#1045/#1046: config context knobs thread into the loop ---
 // The knobs are AgentLoopConfig constructor fields (PR #1048 follow-up), so
 // these tests build the loop the way production sites do: config values at
 // construction, exercised through the real process() path.
-
 mod context_settings {
     use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
     use crate::domain::agent::AgentLoop;
     use crate::domain::message::Message;
     use crate::infrastructure::config::AgentDefaults;
     use crate::infrastructure::tools::registry::ToolRegistryImpl;
-
     /// Build a loop the way production sites do: the context knobs come from
     /// `AgentDefaults` as constructor fields.
     fn agent_with(
@@ -646,7 +639,6 @@ mod context_settings {
             tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
         })
     }
-
     /// Four big turn-stamped assistant messages plus the in-flight prompt.
     fn oversized_history(big: &str) -> Vec<Message> {
         let mut v: Vec<Message> = (1..=4u32)
