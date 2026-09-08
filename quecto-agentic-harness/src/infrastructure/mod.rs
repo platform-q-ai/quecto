@@ -1,3 +1,4 @@
+pub mod admission;
 pub mod agents_instructions;
 #[cfg(test)]
 mod agents_instructions_tests;

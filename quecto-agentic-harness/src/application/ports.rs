@@ -18,6 +18,7 @@ pub use super::inference_admission::{
     AdmissionClient, AdmissionDispatcher, AdmissionRecovery, AdmissionRegistry,
 };
 pub use super::inference_attempt::{AttemptAcquisition, AttemptAdmission, AttemptPermit};
+pub use super::inference_authority_ports::{AdmissionJournal, AdmissionSecretSource, JournalError};
 pub use super::provider_runtime::{ProviderRuntimeFactory, RuntimeSnapshotStore};
 
 #[cfg(any(test, feature = "test-support"))]
