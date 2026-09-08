@@ -58,12 +58,7 @@ pub fn compose_and_publish_runtime(
     // or binding set is rejected instead of replacing live budgets (#1679).
     let composed = match crate::infrastructure::admission::process::current() {
         Some(admission) => {
-            // An invalid or removed section is "changed" and rejected below.
-            let proposal = config
-                .admission_proposal()
-                .ok()
-                .flatten()
-                .map(|(_, proposal)| proposal);
+            let proposal = admission_candidate(config);
             ComposeProviderRuntimeUseCase::new().compose_and_publish(
                 &AdmissionProviderRuntimeFactory::new(admission.runtime_context().clone()),
                 &AdmissionRuntimeCandidate {
@@ -82,6 +77,19 @@ pub fn compose_and_publish_runtime(
         )?,
     };
     Ok(composed.snapshot)
+}
+
+/// The configured proposal offered to the restart-only admission factory. An
+/// invalid or removed section yields `None`, which the factory rejects as a
+/// change rather than replacing live budgets.
+pub fn admission_candidate(
+    config: &Config,
+) -> Option<crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal> {
+    config
+        .admission_proposal()
+        .ok()
+        .flatten()
+        .map(|(_, proposal)| proposal)
 }
 
 /// Delegates to the factory's own blank/trim helper so the initially composed

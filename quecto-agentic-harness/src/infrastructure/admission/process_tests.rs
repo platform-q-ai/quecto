@@ -119,6 +119,26 @@ fn root_install_binds_gates_and_shutdown_retires_the_scope() {
     })
     .unwrap();
     assert!(current().is_none());
+    // Once-only install semantics against a private slot: a second, different
+    // negotiation returns the first binding unchanged (restart-only policy).
+    let slot: OnceLock<Arc<ProcessAdmission>> = OnceLock::new();
+    let first = install_in(
+        &slot,
+        Negotiation::Root {
+            directory: directory.clone(),
+        },
+    )
+    .unwrap();
+    let again = install_in(
+        &slot,
+        Negotiation::Child {
+            context: temp.path().join("ignored.json"),
+        },
+    )
+    .unwrap();
+    assert!(Arc::ptr_eq(&first, &again));
+    let (drained, retired) = first.shutdown(Duration::from_secs(3));
+    assert!(drained && retired.is_ok());
     assert_eq!(binding.client_dir(), server.directory().client_dir());
     assert_eq!(binding.endpoint(), server.directory().client_socket());
     assert_eq!(binding.proposal().bindings["openai"], "acct");

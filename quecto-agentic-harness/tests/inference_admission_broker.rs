@@ -897,3 +897,51 @@ async fn client_refusals_name_their_cause() {
     let corrupt = FileJournal::load(&dir).unwrap_err();
     assert!(format!("{corrupt:?}").contains("ledger group"));
 }
+
+/// Every start-time precondition maps to a named refusal: invalid policy,
+/// corrupt ledger, a ledger naming groups the policy no longer has, and a
+/// directory whose initial checkpoint cannot be written.
+#[tokio::test]
+async fn start_time_preconditions_map_to_named_refusals() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
+    let mut invalid = proposal(1, 300);
+    invalid.policy.groups.get_mut(&group()).unwrap().reserve = 1;
+    match AuthorityServer::start(dir.clone(), invalid).await {
+        Err(ServerError::Policy(message)) => assert!(message.contains("invalid"), "{message}"),
+        other => panic!("unexpected {other:?}"),
+    }
+    std::fs::write(dir.journal_path(), b"{corrupt").unwrap();
+    match AuthorityServer::start(dir.clone(), proposal(1, 300)).await {
+        Err(ServerError::Journal(message)) => assert!(message.contains("corrupt"), "{message}"),
+        other => panic!("unexpected {other:?}"),
+    }
+    std::fs::write(
+        dir.journal_path(),
+        br#"{"format":1,"epoch":1,"outstanding":[{"group":"gone","scope":1,"sequence":1}],"groups":{}}"#,
+    )
+    .unwrap();
+    match AuthorityServer::start(dir.clone(), proposal(1, 300)).await {
+        Err(ServerError::Journal(message)) => {
+            assert!(message.contains("incompatible"), "{message}")
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    std::fs::remove_file(dir.journal_path()).unwrap();
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+    let outcome =
+        AuthorityServer::start_accepting_missing_ledger(dir.clone(), proposal(1, 300)).await;
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    match outcome {
+        Err(ServerError::Journal(message)) | Err(ServerError::Io(message)) => {
+            assert!(!message.is_empty())
+        }
+        other => panic!("unwritable directory must refuse to start: {other:?}"),
+    }
+    // A pre-existing directory at the socket path cannot be unlinked or bound.
+    std::fs::create_dir_all(dir.client_socket()).unwrap();
+    match AuthorityServer::start_accepting_missing_ledger(dir.clone(), proposal(1, 300)).await {
+        Err(ServerError::Io(message)) => assert!(message.contains("bind"), "{message}"),
+        other => panic!("unexpected {other:?}"),
+    }
+}

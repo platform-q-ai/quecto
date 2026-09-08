@@ -14,7 +14,7 @@ pub use client::{AdminConnection, AuthorityConnection, ClientError, Hello};
 pub use directory::{AuthorityDirectory, SingletonLock};
 pub use journal::FileJournal;
 pub use process::{
-    AdmissionContext, Negotiation, ProcessAdmission, read_admission_context,
+    AdmissionContext, Negotiation, ProcessAdmission, negotiate, read_admission_context,
     write_admission_context,
 };
 pub use remote_gate::RemoteAdmission;

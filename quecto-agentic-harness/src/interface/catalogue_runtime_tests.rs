@@ -87,3 +87,22 @@ fn selection_returns_structured_reasons_for_unknown_and_unrunnable_models() {
         other => panic!("expected NotRunnable, got {other:?}"),
     }
 }
+
+#[test]
+fn admission_candidate_is_the_configured_proposal_or_none() {
+    let mut config = Config::default();
+    assert!(admission_candidate(&config).is_none());
+    config.admission = serde_json::from_str(
+        r#"{"directory":"/tmp/x","groups":{"g":{"capacity":1,"reserve":0,"min_interval_ms":1,"queue_capacity":1,"queue_timeout_ms":1,"attempt_timeout_ms":1,"fallback_base_ms":1,"max_cooldown_ms":1}},"aliases":{"a":"g"},"bindings":{"openai":"a"}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        admission_candidate(&config).unwrap().bindings["openai"],
+        "a"
+    );
+    config.admission.as_mut().unwrap().bindings.clear();
+    assert!(
+        admission_candidate(&config).is_none(),
+        "invalid sections are not candidates"
+    );
+}

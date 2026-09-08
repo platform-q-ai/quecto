@@ -77,3 +77,18 @@ container e2e (QUECTO_ADMISSION_CONTAINER_E2E=1, podman): 2 passed
   wiring), config defaults, protocol round-trips and error surfaces. Local
   `cargo llvm-cov --lib ... --fail-under-functions 92`: 92.08% (363/4581
   missed), 4180 lib tests green.
+- Second CI run: Non-Real BDD scenarios all passed but that job's own
+  coverage gate (`run-bdd-shards.sh --coverage-threshold 72`, functions
+  reached by BDD scenarios) reported 71.29% against the 72.23% baseline of the
+  last merged PR; the lib gate reported 91.97%. Added
+  `inference_admission_operations.feature` (6 scenarios: process binding
+  negotiation/feedback/shutdown, descendant sidecars and forgeries, broker CLI
+  status/reset/misuse, corrupt/unsupported/missing ledger, owner-token roots
+  and child retirement, raced cancel) driving the public API; tagged lane now
+  15 scenarios / 81 steps.
+- Local gates after the additions: `run-bdd-shards.sh --suite non-real-bdd
+  --coverage --coverage-threshold 72` -> 73.22% (1205/4500 missed), all
+  scenarios green; `cargo llvm-cov --lib ... --fail-under-functions 92` ->
+  92.25% (355/4583 missed), 4182 lib tests. Extra lib-gate margin came from
+  `install_in` (injectable slot), `admission_candidate`, a SIGTERM-driven test
+  of the broker `run` path and named start-time refusals.

@@ -216,13 +216,22 @@ pub fn negotiate(negotiation: Negotiation) -> Result<ProcessAdmission, String> {
 /// Negotiate and install the process binding. A binding is installed once per
 /// process; later calls return it unchanged (policy is restart-only).
 pub fn install(negotiation: Negotiation) -> Result<Arc<ProcessAdmission>, String> {
-    if let Some(existing) = PROCESS.get() {
+    install_in(&PROCESS, negotiation)
+}
+
+/// `install` against an explicit slot so the once-only semantics are testable
+/// without touching the process-wide binding.
+pub fn install_in(
+    slot: &OnceLock<Arc<ProcessAdmission>>,
+    negotiation: Negotiation,
+) -> Result<Arc<ProcessAdmission>, String> {
+    if let Some(existing) = slot.get() {
         return Ok(existing.clone());
     }
     let binding = Arc::new(negotiate(negotiation)?);
-    match PROCESS.set(binding.clone()) {
+    match slot.set(binding.clone()) {
         Ok(()) => Ok(binding),
-        Err(_) => Ok(PROCESS.get().expect("set by a concurrent install").clone()),
+        Err(_) => Ok(slot.get().expect("set by a concurrent install").clone()),
     }
 }
 
