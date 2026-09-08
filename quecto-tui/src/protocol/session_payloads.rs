@@ -172,8 +172,8 @@ fn optional_string(value: &serde_json::Value, key: &str) -> Option<String> {
 
 pub fn parse_list_sessions_response(data: &serde_json::Value) -> ListSessionsResponse {
     let scope_status = match optional_string(data, "scopeStatus").as_deref() {
-        Some("available") => ResumeScopeStatus::Available,
-        _ => ResumeScopeStatus::Unavailable,
+        Some("unavailable") => ResumeScopeStatus::Unavailable,
+        _ => ResumeScopeStatus::Available,
     };
     ListSessionsResponse {
         scope_status,
