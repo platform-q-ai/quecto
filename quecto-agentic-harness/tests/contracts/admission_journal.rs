@@ -339,3 +339,9 @@ fn unhealthy_journal_is_probed_before_dispatch_so_queued_work_is_held() {
         "held work dispatches once durable"
     );
 }
+
+#[test]
+fn journal_errors_convert_to_the_authority_error() {
+    let converted: AuthorityError = JournalError::Unavailable("disk".into()).into();
+    assert_eq!(converted, AuthorityError::JournalUnavailable);
+}

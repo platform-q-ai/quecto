@@ -277,6 +277,14 @@ impl AuthorityServer {
     }
 }
 
+impl std::fmt::Debug for AuthorityServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthorityServer")
+            .field("directory", &self.dir.path())
+            .finish_non_exhaustive()
+    }
+}
+
 impl Drop for AuthorityServer {
     fn drop(&mut self) {
         for task in &self.tasks {

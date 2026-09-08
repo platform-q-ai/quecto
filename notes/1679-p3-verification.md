@@ -60,3 +60,20 @@ uds_termination: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 f
 pre-push (quality, BDD quality/tags, fmt, strict clippy, architecture 46, contracts 277): PASS after the redundant-guard lint fix
 container e2e (QUECTO_ADMISSION_CONTAINER_E2E=1, podman): 2 passed
 ```
+
+## CI follow-up (2026-09-08, PR #1697 first run)
+
+- Non-Real BDD: `Two independent roots share one capacity slot` flaked on the
+  runner because the scenario's 300 ms queue deadline could expire before the
+  poll observed the queued request; the capacity-one scenario now uses a 60 s
+  deadline (the quarantine scenarios keep 300 ms for their bounded refusal).
+- Coverage: the lib gate (`--fail-under-functions 92`) reported 86.33% because
+  the P3 adapters were proven only by integration tests. The contract suites
+  and the broker suite are now folded into the library gate (`lib.rs`
+  `#[path]` includes, the existing pattern), plus unit tests for the process
+  binding (`negotiate` split from the global `install` so tests never leak an
+  installed authority into sibling tests — the first attempt did, failing 63
+  unrelated lib tests), the broker command (`run_until` split from signal
+  wiring), config defaults, protocol round-trips and error surfaces. Local
+  `cargo llvm-cov --lib ... --fail-under-functions 92`: 92.08% (363/4581
+  missed), 4180 lib tests green.

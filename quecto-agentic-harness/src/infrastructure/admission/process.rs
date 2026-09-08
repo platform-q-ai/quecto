@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-use super::client::AuthorityConnection;
+use super::client::{AuthorityConnection, ClientError};
 use super::directory::AuthorityDirectory;
 use crate::application::ports::{AttemptAdmission, Credential};
 use crate::domain::inference_admission::WorkloadClass;
@@ -75,6 +75,14 @@ pub struct ProcessAdmission {
     proposal: AdmissionRuntimeProposal,
     client_dir: PathBuf,
     runtime: tokio::runtime::Runtime,
+}
+
+impl std::fmt::Debug for ProcessAdmission {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProcessAdmission")
+            .field("client_dir", &self.client_dir)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ProcessAdmission {
@@ -172,12 +180,9 @@ async fn connect(negotiation: &Negotiation) -> Result<(AuthorityConnection, Path
     }
 }
 
-/// Negotiate and install the process binding. A binding is installed once per
-/// process; later calls return it unchanged (policy is restart-only).
-pub fn install(negotiation: Negotiation) -> Result<Arc<ProcessAdmission>, String> {
-    if let Some(existing) = PROCESS.get() {
-        return Ok(existing.clone());
-    }
+/// Negotiate with the authority and build a binding without installing it.
+/// Only `install` touches process-wide state.
+pub fn negotiate(negotiation: Negotiation) -> Result<ProcessAdmission, String> {
     let runtime = runtime()?;
     // Never block_on from inside a foreign runtime: negotiate on a plain thread.
     let handle = runtime.handle().clone();
@@ -199,43 +204,62 @@ pub fn install(negotiation: Negotiation) -> Result<Arc<ProcessAdmission>, String
     let client = SingleAttemptClient::build(default_client_builder())
         .map_err(|e| format!("admission HTTP client: {e}"))?;
     let context = AdmissionRuntimeContext::new(proposal.clone(), gates, client)?;
-    let binding = Arc::new(ProcessAdmission {
+    Ok(ProcessAdmission {
         connection: Arc::new(connection),
         context: Arc::new(context),
         proposal,
         client_dir,
         runtime,
-    });
+    })
+}
+
+/// Negotiate and install the process binding. A binding is installed once per
+/// process; later calls return it unchanged (policy is restart-only).
+pub fn install(negotiation: Negotiation) -> Result<Arc<ProcessAdmission>, String> {
+    if let Some(existing) = PROCESS.get() {
+        return Ok(existing.clone());
+    }
+    let binding = Arc::new(negotiate(negotiation)?);
     match PROCESS.set(binding.clone()) {
         Ok(()) => Ok(binding),
         Err(_) => Ok(PROCESS.get().expect("set by a concurrent install").clone()),
     }
 }
 
-/// Orderly exit: wait (bounded) for outstanding completions to be acknowledged,
-/// then retire this process's scope so it stops counting as live. A retire
-/// refused as busy is reported, never forced.
+impl ProcessAdmission {
+    /// Wait (bounded) for outstanding completions, then retire this scope.
+    /// Returns whether completions drained and the retire outcome; a retire
+    /// refused as busy is reported, never forced.
+    pub fn shutdown(&self, limit: std::time::Duration) -> (bool, Result<(), ClientError>) {
+        let handle = self.runtime.handle().clone();
+        let connection = self.connection.clone();
+        std::thread::spawn(move || {
+            handle.block_on(async move {
+                let drained = connection.drain(limit).await;
+                let retired = connection.retire().await;
+                (drained, retired)
+            })
+        })
+        .join()
+        .unwrap_or((false, Err(ClientError::Closed)))
+    }
+}
+
+/// Orderly exit of the installed binding (no-op when none is installed).
 pub fn shutdown(limit: std::time::Duration) {
     let Some(binding) = current() else {
         return;
     };
-    let handle = binding.runtime.handle().clone();
-    let connection = binding.connection.clone();
-    let outcome = std::thread::spawn(move || {
-        handle.block_on(async move {
-            let drained = connection.drain(limit).await;
-            let retired = connection.retire().await;
-            (drained, retired)
-        })
-    })
-    .join();
-    match outcome {
-        Ok((true, Ok(()))) => {}
-        Ok((drained, retired)) => tracing::warn!(
+    match binding.shutdown(limit) {
+        (true, Ok(())) => {}
+        (drained, retired) => tracing::warn!(
             drained,
             ?retired,
             "admission shutdown left work unacknowledged; the authority keeps it as uncertain"
         ),
-        Err(_) => tracing::warn!("admission shutdown thread panicked"),
     }
 }
+
+#[cfg(test)]
+#[path = "process_tests.rs"]
+mod tests;

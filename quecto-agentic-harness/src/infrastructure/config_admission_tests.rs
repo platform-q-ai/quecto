@@ -1,4 +1,5 @@
 use super::*;
+use crate::infrastructure::config_admission::default_admission_directory;
 
 fn load(json: &str) -> Result<Config, ConfigError> {
     let dir = tempfile::tempdir().unwrap();
@@ -63,4 +64,50 @@ fn admission_proposal_reports_invalid_sections_instead_of_panicking() {
         config.admission_proposal(),
         Err(ConfigError::Admission(_))
     ));
+}
+
+#[test]
+fn section_errors_name_the_offending_entry() {
+    let bad_group = ENABLED
+        .replace("\"g\":{\"capacity\"", "\"\":{\"capacity\"")
+        .replace("\"acct\":\"g\"", "\"acct\":\"\"");
+    assert!(matches!(load(&bad_group), Err(ConfigError::Admission(_))));
+    let bad_slot = ENABLED.replace(
+        "\"bindings\":{\"fake\":\"acct\"}",
+        "\"bindings\":{\"fa/ke\":\"acct\"}",
+    );
+    let err = load(&bad_slot).unwrap_err().to_string();
+    assert!(err.contains("provider slot"), "{err}");
+    let no_bindings = ENABLED.replace("\"bindings\":{\"fake\":\"acct\"}", "\"bindings\":{}");
+    let err = load(&no_bindings).unwrap_err().to_string();
+    assert!(err.contains("binding is required"), "{err}");
+}
+
+#[test]
+fn default_directory_lives_under_the_base_dir_or_home() {
+    assert_eq!(
+        default_admission_directory(std::path::Path::new("/srv/quecto")),
+        std::path::PathBuf::from("/srv/quecto/admission")
+    );
+    let fallback = default_admission_directory(std::path::Path::new(""));
+    assert!(
+        fallback.ends_with(".quecto/admission"),
+        "{}",
+        fallback.display()
+    );
+    let without_directory = ENABLED.replace("\"directory\":\"/tmp/x\",", "");
+    let config = load(&without_directory)
+        .unwrap()
+        .with_admission_base_dir(std::path::Path::new("/srv/quecto"));
+    let (directory, _) = config.admission_proposal().unwrap().unwrap();
+    assert_eq!(directory, std::path::PathBuf::from("/srv/quecto/admission"));
+}
+
+#[test]
+fn scope_and_terminal_capacities_default_when_omitted() {
+    let minimal = ENABLED.replace(",\"max_scopes\":16,\"terminal_capacity\":32", "");
+    let config = load(&minimal).unwrap();
+    let (_, proposal) = config.admission_proposal().unwrap().unwrap();
+    assert_eq!(proposal.policy.max_scopes, 1024);
+    assert_eq!(proposal.policy.terminal_capacity, 4096);
 }

@@ -36,7 +36,7 @@ fn group() -> GroupId {
     GroupId::new("g").unwrap()
 }
 
-fn proposal(capacity: usize) -> AdmissionRuntimeProposal {
+fn proposal(capacity: usize, queue_timeout_ms: u64) -> AdmissionRuntimeProposal {
     AdmissionRuntimeProposal {
         policy: quecto::domain::inference_admission::AdmissionConfig {
             groups: BTreeMap::from([(
@@ -46,7 +46,7 @@ fn proposal(capacity: usize) -> AdmissionRuntimeProposal {
                     reserve: 0,
                     min_interval_ms: 1,
                     queue_capacity: 8,
-                    queue_timeout_ms: 300,
+                    queue_timeout_ms,
                     attempt_timeout_ms: 60_000,
                     fallback_base_ms: 100,
                     max_cooldown_ms: 10_000,
@@ -68,7 +68,7 @@ fn rt(state: &AuthorityState) -> &tokio::runtime::Runtime {
     state.runtime.as_ref().expect("authority runtime")
 }
 
-fn start(world: &mut QuectoWorld, capacity: usize) {
+fn start(world: &mut QuectoWorld, capacity: usize, queue_timeout_ms: u64) {
     let s = state(world);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -78,7 +78,10 @@ fn start(world: &mut QuectoWorld, capacity: usize) {
     let temp = tempfile::tempdir().unwrap();
     let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
     let server = runtime
-        .block_on(AuthorityServer::start(dir, proposal(capacity)))
+        .block_on(AuthorityServer::start(
+            dir,
+            proposal(capacity, queue_timeout_ms),
+        ))
         .unwrap();
     s.runtime = Some(runtime);
     s.temp = Some(temp);
@@ -132,12 +135,14 @@ fn wait_for(
 
 #[given("a running admission authority with capacity one")]
 fn given_capacity_one(world: &mut QuectoWorld) {
-    start(world, 1);
+    // The queued request must outlive any scheduling delay on a busy runner.
+    start(world, 1, 60_000);
 }
 
 #[given("a running admission authority with capacity two")]
 fn given_capacity_two(world: &mut QuectoWorld) {
-    start(world, 2);
+    // A short queue deadline makes the quarantine refusal explicit and bounded.
+    start(world, 2, 300);
 }
 
 #[given("two independent root sessions bound to the authority")]

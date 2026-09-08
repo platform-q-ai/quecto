@@ -153,6 +153,33 @@ async fn run(
     stdout: &mut String,
     stderr: &mut String,
 ) -> i32 {
+    let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+    {
+        Ok(signal) => signal,
+        Err(error) => {
+            stderr.push_str(&format!("admission-broker: signal handler: {error}\n"));
+            return 1;
+        }
+    };
+    let stop = async move {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = sigterm.recv() => {}
+        }
+    };
+    run_until(dir, proposal, accept_missing_ledger, stop, stdout, stderr).await
+}
+
+/// Serve until `stop` resolves. Separated from the signal wiring so the
+/// lifecycle is testable in-process.
+pub(crate) async fn run_until(
+    dir: AuthorityDirectory,
+    proposal: crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal,
+    accept_missing_ledger: bool,
+    stop: impl std::future::Future<Output = ()>,
+    stdout: &mut String,
+    stderr: &mut String,
+) -> i32 {
     let started = if accept_missing_ledger {
         AuthorityServer::start_accepting_missing_ledger(dir, proposal).await
     } else {
@@ -175,20 +202,12 @@ async fn run(
         "admission authority ready: {}",
         server.directory().client_socket().display()
     );
-    let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-    {
-        Ok(signal) => signal,
-        Err(error) => {
-            stderr.push_str(&format!("admission-broker: signal handler: {error}\n"));
-            server.shutdown().await;
-            return 1;
-        }
-    };
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {}
-        _ = sigterm.recv() => {}
-    }
+    stop.await;
     server.shutdown().await;
     stdout.push_str("admission authority stopped; outstanding work stays journaled\n");
     0
 }
+
+#[cfg(test)]
+#[path = "admission_broker_tests.rs"]
+mod tests;

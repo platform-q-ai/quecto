@@ -431,6 +431,15 @@ pub struct AuthorityConnection {
     socket: PathBuf,
 }
 
+impl std::fmt::Debug for AuthorityConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthorityConnection")
+            .field("socket", &self.socket)
+            .field("bound", &self.credential().is_some())
+            .finish()
+    }
+}
+
 impl Drop for AuthorityConnection {
     fn drop(&mut self) {
         self.io.abort();
@@ -591,6 +600,12 @@ impl AuthorityConnection {
 pub struct AdminConnection {
     inner: Arc<Inner>,
     io: JoinHandle<()>,
+}
+
+impl std::fmt::Debug for AdminConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdminConnection").finish_non_exhaustive()
+    }
 }
 
 impl Drop for AdminConnection {

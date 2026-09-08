@@ -489,3 +489,7 @@ pub fn status_from_body(
         groups: out,
     })
 }
+
+#[cfg(test)]
+#[path = "protocol_tests.rs"]
+mod tests;

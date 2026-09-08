@@ -697,3 +697,203 @@ async fn a_stalled_frame_is_disconnected_within_the_framing_deadline() {
     assert!(matches!(closed, Ok(0) | Err(_)), "{closed:?}");
     server.shutdown().await;
 }
+
+// ---- Coverage of permit lifecycle, retirement and error surfaces -----------
+
+/// A remote permit exposes the authority's receipt clock and cooldown bound,
+/// forwards typed feedback, and its deadline future resolves when the
+/// authority requires cancellation (attempt deadline elapsed).
+#[tokio::test]
+async fn remote_permit_reports_feedback_and_observes_the_attempt_deadline() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut policy = proposal(2, 20_000);
+    for g in policy.policy.groups.values_mut() {
+        g.attempt_timeout_ms = 200;
+    }
+    let server = AuthorityServer::start(
+        AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
+        policy,
+    )
+    .await
+    .unwrap();
+    let a = root(&server).await;
+    let mut permit = timeout(LIMIT, a.gate("acct").unwrap().acquire())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(permit.maximum_cooldown_ms(), 10_000);
+    let (receipt_ms, wall) = permit.receipt_clock();
+    assert!(wall > std::time::UNIX_EPOCH + Duration::from_secs(1_600_000_000));
+    permit.feedback(ThrottleFeedback::Until(receipt_ms + 5_000));
+    permit.feedback(ThrottleFeedback::NoHint { jitter: 0 });
+    let admin = AdminConnection::connect(&server.directory().admin_socket())
+        .await
+        .unwrap();
+    timeout(LIMIT, async {
+        loop {
+            if admin.inspect().await.unwrap().groups[&group()].cooldown_until >= receipt_ms + 5_000
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("feedback reached the authority");
+    timeout(LIMIT, permit.deadline_expired())
+        .await
+        .expect("attempt deadline elapses into a cancellation notice");
+    assert!(matches!(
+        a.status(1).await.unwrap(),
+        RequestState::Active {
+            cancellation_required: true,
+            ..
+        }
+    ));
+    permit.finish(Feedback::Failure);
+    wait_for(&admin, (0, 0)).await;
+    assert!(format!("{a:?}").contains("bound: true"));
+    let gate = a.gate("acct").unwrap();
+    assert!(format!("{gate:?}").contains("RemoteAdmission"));
+    let probe = timeout(LIMIT, gate.acquire()).await.unwrap().unwrap();
+    assert!(format!("{probe:?}").contains("RemotePermit"));
+    probe.finish(Feedback::Success);
+    assert!(format!("{:?}", a.hello()).contains("epoch"));
+    assert_eq!(a.hello().clone().epoch, a.hello().epoch);
+    assert!(format!("{admin:?}").contains("AdminConnection"));
+    assert_eq!(
+        admin.hello().role,
+        quecto::infrastructure::admission::protocol::Role::Admin
+    );
+    server.shutdown().await;
+}
+
+/// A parent retires a child it registered but never launched; the scope stops
+/// counting as live and the child's capability no longer binds.
+#[tokio::test]
+async fn parent_retires_an_unlaunched_child() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = AuthorityServer::start(
+        AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
+        proposal(1, 300),
+    )
+    .await
+    .unwrap();
+    let parent = root(&server).await;
+    let child = parent.register_child().await.unwrap();
+    let admin = AdminConnection::connect(&server.directory().admin_socket())
+        .await
+        .unwrap();
+    assert_eq!(admin.inspect().await.unwrap().live_scopes, 2);
+    parent.retire_child(child.scope).await.unwrap();
+    assert_eq!(admin.inspect().await.unwrap().live_scopes, 1);
+    let stranger = AuthorityConnection::connect(&server.directory().client_socket())
+        .await
+        .unwrap();
+    assert_eq!(stranger.bind(child).await, Err(ClientError::Unauthorized));
+    parent.retire().await.unwrap();
+    assert_eq!(admin.inspect().await.unwrap().live_scopes, 0);
+    server.shutdown().await;
+}
+
+/// Start-time refusals are explicit: a second authority on the same directory
+/// is busy, an unpublishable policy is rejected, and unreadable or
+/// unsupported ledgers never restart silently.
+#[tokio::test]
+async fn start_refusals_are_explicit() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
+    let server = AuthorityServer::start(dir.clone(), proposal(1, 300))
+        .await
+        .unwrap();
+    let busy = AuthorityServer::start(dir.clone(), proposal(1, 300)).await;
+    match busy {
+        Err(ServerError::Busy(message)) => assert!(message.contains("another"), "{message}"),
+        Err(other) => panic!("unexpected {other}"),
+        Ok(_) => panic!("singleton violated"),
+    }
+    server.shutdown().await;
+    let mut huge = proposal(1, 300);
+    for i in 0..4_000 {
+        let name = format!("group-{i:04}");
+        let g = GroupId::new(&name).unwrap();
+        huge.policy
+            .groups
+            .insert(g.clone(), huge.policy.groups[&group()].clone());
+        huge.policy.aliases.insert(format!("alias-{i:04}"), g);
+    }
+    match AuthorityServer::start(dir.clone(), huge).await {
+        Err(ServerError::Policy(message)) => assert!(message.contains("too large"), "{message}"),
+        other => panic!("unexpected {other:?}"),
+    }
+    std::fs::write(
+        dir.journal_path(),
+        br#"{"format":9,"epoch":1,"outstanding":[],"groups":{}}"#,
+    )
+    .unwrap();
+    let unsupported = FileJournal::load(&dir).unwrap_err();
+    assert!(format!("{unsupported:?}").contains("format"));
+    std::fs::remove_file(dir.journal_path()).unwrap();
+    std::fs::create_dir(dir.journal_path()).unwrap();
+    let unreadable = FileJournal::load(&dir).unwrap_err();
+    assert!(format!("{unreadable:?}").contains("read ledger"));
+    std::fs::remove_dir(dir.journal_path()).unwrap();
+    match AuthorityServer::start(dir.clone(), proposal(1, 300)).await {
+        Err(ServerError::Journal(message)) => assert!(message.contains("missing"), "{message}"),
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+/// Client-side refusals and error surfaces are explicit and named.
+#[tokio::test]
+async fn client_refusals_name_their_cause() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
+    let server = AuthorityServer::start(dir.clone(), proposal(1, 300))
+        .await
+        .unwrap();
+    assert!(format!("{server:?}").contains("AuthorityServer"));
+    let a = root(&server).await;
+    let unpublished = a.gate("nope").err().unwrap().to_string();
+    assert!(unpublished.contains("not published"), "{unpublished}");
+    // Without the owner token no root can be minted, and the error says why.
+    let token = dir.root_token_path();
+    let hidden = temp.path().join("hidden-token");
+    std::fs::rename(&token, &hidden).unwrap();
+    let fresh = AuthorityConnection::connect(&dir.client_socket())
+        .await
+        .unwrap();
+    let denied = fresh
+        .register_root(WorkloadClass::Interactive)
+        .await
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(denied.contains("owner token"), "{denied}");
+    std::fs::rename(&hidden, &token).unwrap();
+    for error in [
+        ServerError::Busy("busy".into()),
+        ServerError::Io("io".into()),
+        ServerError::Journal("journal".into()),
+        ServerError::Policy("policy".into()),
+    ] {
+        assert!(!error.to_string().is_empty());
+    }
+    // A ledger naming an empty group is corrupt, not a fresh start.
+    let admin = AdminConnection::connect(&dir.admin_socket()).await.unwrap();
+    let epoch = admin.reset().await.unwrap();
+    assert_eq!(epoch, 2);
+    // The revoked root closing afterwards is a stale-epoch disconnect the
+    // authority tolerates.
+    drop(a);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert_eq!(admin.inspect().await.unwrap().epoch, 2);
+    server.shutdown().await;
+    std::fs::write(
+        dir.journal_path(),
+        br#"{"format":1,"epoch":1,"outstanding":[],"groups":{"":{"cooldown_remaining_ms":0,"pacing_remaining_ms":0,"unavailable":false}}}"#,
+    )
+    .unwrap();
+    let corrupt = FileJournal::load(&dir).unwrap_err();
+    assert!(format!("{corrupt:?}").contains("ledger group"));
+}
