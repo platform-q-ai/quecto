@@ -302,6 +302,8 @@ async fn forward_get_messages_rejects_stale_historical_before_cursor() {
             messages: vec![Message::user("historical transcript")],
             workflow_run: None,
             subagent_roster: Vec::new(),
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();

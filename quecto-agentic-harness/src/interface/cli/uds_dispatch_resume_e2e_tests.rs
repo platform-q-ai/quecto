@@ -17,6 +17,8 @@ async fn e2e_resume_picker_lists_persisted_default_tui_chat_session() {
             messages: vec![Message::user("persisted message that /resume must offer")],
             workflow_run: None,
             subagent_roster: Vec::new(),
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();
@@ -151,6 +153,8 @@ async fn e2e_resume_restores_transcript_and_prunes_subagent_roster() {
                     SubagentLiveness::Detached,
                 ),
             ],
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();

@@ -34,6 +34,8 @@ async fn resume_session_restores_target_workflow_run_state() {
             messages: vec![crate::domain::message::Message::user("restored")],
             workflow_run: Some(persisted_feature_run(vec![true, false, false])),
             subagent_roster: Vec::new(),
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();
@@ -63,6 +65,8 @@ async fn resume_session_clears_workflow_when_target_has_none() {
             messages: vec![crate::domain::message::Message::user("plain")],
             workflow_run: None,
             subagent_roster: Vec::new(),
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();

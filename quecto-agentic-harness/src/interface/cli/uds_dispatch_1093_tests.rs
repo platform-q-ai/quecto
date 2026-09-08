@@ -63,7 +63,6 @@ impl ContextSpillStore for MemSpillStore {
             .insert((session_key.to_string(), entry.id.clone()), entry.clone());
         Box::pin(async { Ok(()) })
     }
-
     fn recall(
         &self,
         session_key: &str,
@@ -93,7 +92,6 @@ impl ContextSpillStore for MemSpillStore {
             .cloned();
         Box::pin(async move { Ok(hit) })
     }
-
     fn list_entries(
         &self,
         _session_key: &str,
@@ -691,6 +689,8 @@ async fn resume_session_atomically_switches_the_snapshot_spill_namespace() {
             messages: vec![collapsed],
             workflow_run: None,
             subagent_roster: Vec::new(),
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();

@@ -229,6 +229,8 @@ async fn persist_session_empty_roster_replaces_stale_same_session_only() {
                 pending_message_reports: std::collections::VecDeque::new(),
                 status: None,
             }],
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();
@@ -251,6 +253,8 @@ async fn persist_session_empty_roster_replaces_stale_same_session_only() {
                 pending_message_reports: std::collections::VecDeque::new(),
                 status: None,
             }],
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();
@@ -298,6 +302,8 @@ async fn killing_exit_preserves_transcript_without_operational_roster() {
                 pending_message_reports: std::collections::VecDeque::new(),
                 status: None,
             }],
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();

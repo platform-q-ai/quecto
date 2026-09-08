@@ -27,6 +27,8 @@ async fn list_returns_only_user_chat_sessions_with_metadata_newest_first() {
                 messages: vec![chat_message(Role::User, "internal")],
                 workflow_run: None,
                 subagent_roster: Vec::new(),
+                origin_execution_metadata: None,
+                latest_execution_metadata: None,
             })
             .await
             .unwrap();
@@ -41,6 +43,8 @@ async fn list_returns_only_user_chat_sessions_with_metadata_newest_first() {
             ],
             workflow_run: None,
             subagent_roster: Vec::new(),
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();
@@ -56,6 +60,8 @@ async fn list_returns_only_user_chat_sessions_with_metadata_newest_first() {
             ],
             workflow_run: None,
             subagent_roster: Vec::new(),
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();
@@ -88,6 +94,8 @@ async fn list_extracts_raw_first_user_message() {
             messages: vec![chat_message(Role::User, long)],
             workflow_run: None,
             subagent_roster: Vec::new(),
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();
@@ -97,6 +105,8 @@ async fn list_extracts_raw_first_user_message() {
             messages: vec![chat_message(Role::Assistant, "hello")],
             workflow_run: None,
             subagent_roster: Vec::new(),
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();
@@ -106,6 +116,8 @@ async fn list_extracts_raw_first_user_message() {
             messages: vec![chat_message(Role::User, &huge)],
             workflow_run: None,
             subagent_roster: Vec::new(),
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();

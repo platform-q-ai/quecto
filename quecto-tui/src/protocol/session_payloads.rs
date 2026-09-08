@@ -20,6 +20,20 @@ pub struct SessionStats {
     pub context_usage: Option<(u64, usize)>,
 }
 
+/// Server-owned execution-scope result for resume discovery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeScopeStatus {
+    Available,
+    Unavailable,
+}
+
+/// Typed response to `list_sessions`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListSessionsResponse {
+    pub scope_status: ResumeScopeStatus,
+    pub sessions: Vec<ResumeSessionSummary>,
+}
+
 /// A persisted session entry suitable for the resume selector.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResumeSessionSummary {
@@ -27,6 +41,10 @@ pub struct ResumeSessionSummary {
     pub title: String,
     pub message_count: u64,
     pub updated_unix_secs: Option<u64>,
+    pub folder_identity: Option<String>,
+    pub folder_label: Option<String>,
+    pub agent_name: Option<String>,
+    pub git_branch: Option<String>,
 }
 
 /// Displayable chat messages from a resumed/backfilled session.
@@ -141,10 +159,33 @@ pub fn parse_session_stats(data: &serde_json::Value) -> SessionStats {
 /// Parse a `list_sessions` response payload into selector summaries. Entries
 /// without a human-readable title/name are skipped because they cannot be shown
 /// or selected meaningfully.
+fn optional_string(value: &serde_json::Value, key: &str) -> Option<String> {
+    let serde_json::Value::Object(fields) = value else {
+        return None;
+    };
+    let field = fields.get(key)?.clone();
+    match field {
+        serde_json::Value::String(value) => Some(value),
+        _ => None,
+    }
+}
+
+pub fn parse_list_sessions_response(data: &serde_json::Value) -> ListSessionsResponse {
+    let scope_status = match optional_string(data, "scopeStatus").as_deref() {
+        Some("available") => ResumeScopeStatus::Available,
+        _ => ResumeScopeStatus::Unavailable,
+    };
+    ListSessionsResponse {
+        scope_status,
+        sessions: parse_resume_sessions(data),
+    }
+}
+
 pub fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSummary> {
     session_values(data)
         .iter()
         .filter_map(|session| {
+            let folder_identity = optional_string(session, "folderIdentity");
             let title = session
                 .get("title")
                 .or_else(|| session.get("name"))
@@ -161,6 +202,10 @@ pub fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSumma
                     .get("updatedUnixSecs")
                     .or_else(|| session.get("updatedAt"))
                     .and_then(|v| v.as_u64()),
+                folder_identity,
+                folder_label: optional_string(session, "folderLabel"),
+                agent_name: optional_string(session, "agentName"),
+                git_branch: optional_string(session, "gitBranch"),
             })
         })
         .collect()

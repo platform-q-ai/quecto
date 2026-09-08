@@ -530,12 +530,12 @@ pub(crate) fn run_agent_session(
                 {
                     messages.remove(idx);
                 }
-                let session = Session {
-                    key: session_key,
-                    messages: std::mem::take(&mut messages),
-                    workflow_run: None,
-                    subagent_roster: Vec::new(),
-                };
+                let session = Session::from_parts(
+                    session_key,
+                    std::mem::take(&mut messages),
+                    None,
+                    Vec::new(),
+                );
                 if let Err(e) = rt.block_on(session_store.save(&session)) {
                     out.stderr
                         .push_str(&format!("warning: failed to save session: {}\n", e));
@@ -688,6 +688,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         workspace: &build.workspace,
         session_key,
         model,
+        agent_display_name: flags.session_name.clone(),
         ephemeral,
         system_prompt,
         socket_path,

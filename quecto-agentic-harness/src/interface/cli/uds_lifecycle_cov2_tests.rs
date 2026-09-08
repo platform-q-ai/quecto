@@ -63,6 +63,7 @@ fn loop_args<'a>(base: &'a std::path::Path, socket_path: std::path::PathBuf) -> 
         workspace: base,
         session_key: "cli:life".into(),
         model: "stub".into(),
+        agent_display_name: None,
         ephemeral: true,
         system_prompt: "system".into(),
         socket_path,

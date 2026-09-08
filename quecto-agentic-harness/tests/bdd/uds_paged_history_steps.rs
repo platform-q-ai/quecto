@@ -544,6 +544,8 @@ fn seed_oversized_history_session(world: &mut QuectoWorld) {
         messages,
         workflow_run: None,
         subagent_roster: Vec::new(),
+        origin_execution_metadata: None,
+        latest_execution_metadata: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
@@ -586,6 +588,8 @@ fn seed_oversized_tool_call_history_session(world: &mut QuectoWorld) {
         messages: vec![message],
         workflow_run: None,
         subagent_roster: Vec::new(),
+        origin_execution_metadata: None,
+        latest_execution_metadata: None,
     };
     let store = FileSessionStore::new(base_path(world));
     tokio::runtime::Runtime::new().unwrap().block_on(async {
@@ -618,6 +622,8 @@ fn seed_plain_session_with_body(world: &mut QuectoWorld, n: usize, body_len: usi
         messages,
         workflow_run: None,
         subagent_roster: Vec::new(),
+        origin_execution_metadata: None,
+        latest_execution_metadata: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async { store.save(&session).await.expect("save seeded session") });
@@ -700,6 +706,8 @@ fn seed_stub_session(world: &mut QuectoWorld) {
         messages,
         workflow_run: None,
         subagent_roster: Vec::new(),
+        origin_execution_metadata: None,
+        latest_execution_metadata: None,
     };
     rt.block_on(async { store.save(&session).await.expect("save stub session") });
     world.no_session = false;
@@ -905,6 +913,7 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
     let ext_reg = Arc::new(std::sync::Mutex::new(ext_registry));
     let handle = std::thread::spawn(move || {
         run_uds_loop(UdsLoopArgs {
+            agent_display_name: None,
             agent,
             base_dir: &base_for_thread,
             workspace: &base_for_thread,

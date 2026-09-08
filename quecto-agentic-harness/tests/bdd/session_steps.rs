@@ -98,6 +98,8 @@ fn given_session_with_distinct_conversation_content(world: &mut QuectoWorld, key
         ],
         workflow_run: None,
         subagent_roster: Vec::new(),
+        origin_execution_metadata: None,
+        latest_execution_metadata: None,
     };
     world.expected_session_content = session
         .messages

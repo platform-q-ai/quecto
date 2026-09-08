@@ -24,11 +24,18 @@ pub fn user_chat_key(secs: u64, uniq: u64) -> String {
     format!("{USER_CHAT_PREFIX}{secs}-{uniq:x}")
 }
 
+pub use super::execution_metadata::{
+    AgentDisplayName, ExecutionMetadata, ExecutionMetadataWrite, FolderDisplayLabel,
+    FolderIdentity, GitBranchDisplay,
+};
+
 /// Lightweight metadata for a persisted conversation session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionSummary {
     /// Unique key, e.g. "cli:default".
     pub key: String,
+    /// Most recent execution metadata folded from the session record family.
+    pub latest_execution_metadata: Option<ExecutionMetadata>,
     /// Raw title datum — the session's first user message, trimmed (empty when
     /// none). Presentation (truncation, "(untitled)") is applied by the display
     /// layer, not by persistence.
@@ -37,6 +44,12 @@ pub struct SessionSummary {
     pub message_count: usize,
     /// Last modification time in Unix seconds, when available.
     pub updated_unix_secs: Option<u64>,
+}
+
+impl SessionSummary {
+    pub fn latest_execution_metadata(&self) -> Option<&ExecutionMetadata> {
+        self.latest_execution_metadata.as_ref()
+    }
 }
 
 /// Cross-process liveness of a persisted sub-agent roster entry.
@@ -122,6 +135,10 @@ pub struct Session {
     pub workflow_run: Option<super::workflow::WorkflowRunPersisted>,
     /// Persisted sub-agent roster for resumed masters (#1461).
     pub subagent_roster: Vec<PersistedSubagentRosterEntry>,
+    #[doc(hidden)]
+    pub origin_execution_metadata: Option<ExecutionMetadata>,
+    #[doc(hidden)]
+    pub latest_execution_metadata: Option<ExecutionMetadata>,
 }
 
 impl Session {
@@ -132,7 +149,60 @@ impl Session {
             messages: vec![],
             workflow_run: None,
             subagent_roster: Vec::new(),
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         }
+    }
+
+    pub fn from_parts(
+        key: impl Into<String>,
+        messages: Vec<Message>,
+        workflow_run: Option<crate::domain::workflow::WorkflowRunPersisted>,
+        subagent_roster: Vec<PersistedSubagentRosterEntry>,
+    ) -> Self {
+        Self::restore(key, messages, workflow_run, subagent_roster, None, None)
+    }
+
+    pub(crate) fn inherit_execution_metadata_from(&mut self, previous: &Self) {
+        self.origin_execution_metadata = previous.origin_execution_metadata.clone();
+        self.latest_execution_metadata = previous.latest_execution_metadata.clone();
+    }
+
+    pub(crate) fn restore(
+        key: impl Into<String>,
+        messages: Vec<Message>,
+        workflow_run: Option<crate::domain::workflow::WorkflowRunPersisted>,
+        subagent_roster: Vec<PersistedSubagentRosterEntry>,
+        origin_execution_metadata: Option<ExecutionMetadata>,
+        latest_execution_metadata: Option<ExecutionMetadata>,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            messages,
+            workflow_run,
+            subagent_roster,
+            origin_execution_metadata,
+            latest_execution_metadata,
+        }
+    }
+
+    pub fn origin_execution_metadata(&self) -> Option<&ExecutionMetadata> {
+        self.origin_execution_metadata.as_ref()
+    }
+
+    pub fn latest_execution_metadata(&self) -> Option<&ExecutionMetadata> {
+        self.latest_execution_metadata.as_ref()
+    }
+
+    pub fn initialize_execution_metadata(&mut self, metadata: ExecutionMetadata) {
+        if self.origin_execution_metadata.is_none() && self.latest_execution_metadata.is_none() {
+            self.origin_execution_metadata = Some(metadata.clone());
+            self.latest_execution_metadata = Some(metadata);
+        }
+    }
+
+    pub fn update_latest_execution_metadata(&mut self, metadata: ExecutionMetadata) {
+        self.latest_execution_metadata = Some(metadata);
     }
 
     /// Build a session key from channel and user ID.
@@ -168,6 +238,33 @@ pub trait SessionStore: Send + Sync {
         session: &Session,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>>;
 
+    /// Persist an execution-metadata transition without changing transcript state.
+    fn save_execution_metadata<'a>(
+        &'a self,
+        key: &'a str,
+        write: ExecutionMetadataWrite,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + 'a>> {
+        Box::pin(async move {
+            let existing = self.load(key).await?;
+            let mut session = existing.unwrap_or_else(|| Session::new(key));
+            match write {
+                ExecutionMetadataWrite::Initialize(metadata) => {
+                    session.initialize_execution_metadata(metadata);
+                }
+                ExecutionMetadataWrite::UpdateLatest(metadata)
+                    if session.origin_execution_metadata().is_none()
+                        && session.latest_execution_metadata().is_none() =>
+                {
+                    session.initialize_execution_metadata(metadata);
+                }
+                ExecutionMetadataWrite::UpdateLatest(metadata) => {
+                    session.update_latest_execution_metadata(metadata);
+                }
+            }
+            self.save(&session).await
+        })
+    }
+
     /// Save a session when the caller knows how many messages are already durable.
     fn save_delta<'a>(
         &'a self,
@@ -176,13 +273,12 @@ pub trait SessionStore: Send + Sync {
         _previously_persisted: usize,
         workflow_run: Option<super::workflow::WorkflowRunPersisted>,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
-        let session = Session {
-            key: key.to_string(),
-            messages: messages.to_vec(),
-            workflow_run,
-            subagent_roster: Vec::new(),
-        };
-        Box::pin(async move { self.save(&session).await })
+        Box::pin(async move {
+            let mut session = self.load(key).await?.unwrap_or_else(|| Session::new(key));
+            session.messages = messages.to_vec();
+            session.workflow_run = workflow_run;
+            self.save(&session).await
+        })
     }
 
     /// Save a delta when the caller guarantees the durable prefix is unchanged.
@@ -411,3 +507,7 @@ mod cov_tests;
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "session_1612_red_tests.rs"]
+mod issue_1612_red_tests;

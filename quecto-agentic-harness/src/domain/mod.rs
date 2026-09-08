@@ -8,6 +8,7 @@ pub mod environment_finalization;
 mod environment_finalization_tests;
 pub mod environment_registry;
 pub mod error;
+pub mod execution_metadata;
 pub mod extension;
 pub mod extension_tool;
 pub mod ids;

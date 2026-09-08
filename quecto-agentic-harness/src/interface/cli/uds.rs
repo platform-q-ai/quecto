@@ -312,14 +312,12 @@ async fn persist_user_prompt_before_run(
     let workflow_run = persisted_workflow_run(ctx);
     let result = if ctx.subagent_registry.is_some() {
         ctx.session_store
-            .save(&Session {
-                key: ctx.session_key.to_string(),
-                messages: persisted_messages,
+            .save(&Session::from_parts(
+                ctx.session_key.as_str(),
+                persisted_messages,
                 workflow_run,
-                subagent_roster: uds_dispatch_session::snapshot_subagent_roster(
-                    &ctx.subagent_registry,
-                ),
-            })
+                uds_dispatch_session::snapshot_subagent_roster(&ctx.subagent_registry),
+            ))
             .await
     } else {
         ctx.session_store

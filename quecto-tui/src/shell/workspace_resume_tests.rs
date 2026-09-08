@@ -30,6 +30,7 @@ fn resume_selector_ignores_workspace_manifests_and_lists_sessions_directly() {
     store.store(&mpath).unwrap();
 
     let data = serde_json::json!({
+        "scopeStatus": "available",
         "sessions": [
             {"name": "alpha", "messageCount": 2}
         ]
@@ -43,6 +44,56 @@ fn resume_selector_ignores_workspace_manifests_and_lists_sessions_directly() {
         .map(|i| i.value.clone())
         .collect();
     assert_eq!(values, vec!["session:alpha".to_string()]);
+}
+
+#[test]
+fn resume_selector_renders_hostile_metadata_as_plain_sanitized_text() {
+    let mut a = app();
+    let dir = tempfile::tempdir().unwrap();
+    let data = serde_json::json!({
+        "scopeStatus": "available",
+        "sessions": [{
+            "key": "cli:hostile",
+            "title": "Hostile",
+            "messageCount": 1,
+            "agentName": "worker\u{001b}[31m\nspoof",
+            "gitBranch": "feat\rhidden\u{0007}",
+            "updatedUnixSecs": 1
+        }]
+    });
+
+    a.open_resume_selector_at(&data, &dir.path().join("unused.json"));
+    let item = &a
+        .ac()
+        .sessions
+        .resume_selector
+        .as_ref()
+        .expect("selector")
+        .items_for_tests()[0];
+    let description = item.description.as_deref().expect("description");
+    assert!(
+        !description.chars().any(char::is_control),
+        "{description:?}"
+    );
+    assert!(description.contains("worker�[31m�spoof"), "{description:?}");
+    assert!(description.contains("feat�hidden�"), "{description:?}");
+}
+
+#[test]
+fn unavailable_typed_scope_does_not_open_a_picker() {
+    let mut a = app();
+    let dir = tempfile::tempdir().unwrap();
+    a.open_resume_selector_at(
+        &serde_json::json!({"scopeStatus": "unavailable", "sessions": []}),
+        &dir.path().join("unused.json"),
+    );
+    assert!(a.ac().sessions.resume_selector.is_none());
+    let entries = a.ac().master_session.chat.entries();
+    assert!(matches!(
+        entries.last(),
+        Some(crate::components::chat::ChatEntry::Status { text })
+            if text.contains("unavailable for this execution scope")
+    ));
 }
 
 #[test]

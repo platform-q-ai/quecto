@@ -685,6 +685,7 @@ fn session_summary_to_json_projects_stable_wire_fields() {
         title: "".into(),
         message_count: 3,
         updated_unix_secs: Some(1700000000),
+        latest_execution_metadata: None,
     };
     let v = session_summary_to_json(&summary);
     assert_eq!(v["key"], "cli:demo");

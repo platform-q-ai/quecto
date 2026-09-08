@@ -5,15 +5,36 @@ use super::{
 };
 use crate::domain::ids::{CommandId, MessageId, ToolCallId};
 
+fn is_resume_picker_eligible_key(key: &str) -> bool {
+    if let Some(name) = key.strip_prefix("cli:") {
+        return crate::interface::cli::is_valid_session_name(name);
+    }
+    let Some(rest) = key.strip_prefix(crate::domain::session::USER_CHAT_PREFIX) else {
+        return false;
+    };
+    let Some((seconds, unique)) = rest.split_once('-') else {
+        return false;
+    };
+    !seconds.is_empty()
+        && seconds.bytes().all(|byte| byte.is_ascii_digit())
+        && !unique.is_empty()
+        && unique.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 pub(super) fn session_summary_to_json(
     summary: &crate::domain::session::SessionSummary,
 ) -> serde_json::Value {
+    let metadata = summary.latest_execution_metadata.as_ref();
     serde_json::json!({
         "key": summary.key,
         "title": super::display_title(&summary.title),
         "messageCount": summary.message_count,
         "updatedUnixSecs": summary.updated_unix_secs,
         "updatedAt": summary.updated_unix_secs,
+        "folderIdentity": metadata.and_then(|m| m.folder_identity()).map(|v| v.encoded_key()),
+        "folderLabel": metadata.and_then(|m| m.folder_label()).map(|v| v.as_str()),
+        "agentName": metadata.and_then(|m| m.agent_name()).map(|v| v.as_str()),
+        "gitBranch": metadata.and_then(|m| m.git_branch()).map(|v| v.as_str()),
     })
 }
 
@@ -24,7 +45,13 @@ pub(super) async fn dispatch_fieldless_command(
 ) -> Option<bool> {
     let id = cmd.id();
     let tn = cmd.type_name();
-    if matches!(cmd, AgentCommand::ListSessions { .. }) {
+    if let AgentCommand::ListSessions { .. } = cmd {
+        // Scope is an execution property owned by the connected server.  The
+        // request intentionally has no scope field: accepting one would let a
+        // hostile/stale client browse another folder's sessions.
+        let current = super::super::uds_lifecycle::capture_execution_metadata(ctx.base_dir, None);
+        let scope = current.folder_identity();
+        let scope_available = scope.is_some();
         let event = match ctx.session_store.list(None).await {
             Ok(sessions) => AgentEvent::ok(
                 id,
@@ -32,8 +59,14 @@ pub(super) async fn dispatch_fieldless_command(
                 Some(serde_json::json!({
                     "sessions": sessions
                         .iter()
+                        .filter(|summary| scope.is_some_and(|scope| {
+                            summary.latest_execution_metadata.as_ref()
+                                .and_then(|metadata| metadata.folder_identity()) == Some(scope)
+                        }))
+                        .filter(|summary| is_resume_picker_eligible_key(&summary.key))
                         .map(session_summary_to_json)
-                        .collect::<Vec<_>>()
+                        .collect::<Vec<_>>(),
+                    "scopeStatus": if scope_available { "available" } else { "unavailable" }
                 })),
             ),
             Err(err) => AgentEvent::err(id, tn, err.to_string()),
@@ -164,4 +197,32 @@ pub(super) async fn dispatch_fieldless_command(
         return Some(super::uds_dispatch_session::handle_clear_history(ctx, id, tn).await);
     }
     None
+}
+
+#[cfg(test)]
+mod issue_1612_eligibility_tests {
+    use super::is_resume_picker_eligible_key;
+
+    #[test]
+    fn picker_key_eligibility_is_an_exact_allowlist() {
+        for allowed in ["cli:default", "cli:named-session", "chat-1700000000-2a"] {
+            assert!(is_resume_picker_eligible_key(allowed), "{allowed}");
+        }
+        for rejected in [
+            "",
+            "cli:",
+            "cli:a/b",
+            "cli:two words",
+            "chat-",
+            "chat-a-1",
+            "chat-1-xyz",
+            "chat-1-2-extra",
+            "swarm:run",
+            "agent:child",
+            "workflow:state",
+            "other",
+        ] {
+            assert!(!is_resume_picker_eligible_key(rejected), "{rejected}");
+        }
+    }
 }

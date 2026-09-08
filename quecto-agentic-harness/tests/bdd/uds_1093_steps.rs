@@ -242,6 +242,8 @@ fn seed_collapsed_session(world: &mut QuectoWorld, include_spill: bool) {
         messages,
         workflow_run: None,
         subagent_roster: Vec::new(),
+        origin_execution_metadata: None,
+        latest_execution_metadata: None,
     };
     rt.block_on(async {
         store.save(&session).await.expect("save seeded session");
@@ -320,6 +322,7 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
     let ext_reg = Arc::new(std::sync::Mutex::new(ext_registry));
     let handle = std::thread::spawn(move || {
         run_uds_loop(UdsLoopArgs {
+            agent_display_name: None,
             agent,
             base_dir: &base_for_thread,
             workspace: &base_for_thread,

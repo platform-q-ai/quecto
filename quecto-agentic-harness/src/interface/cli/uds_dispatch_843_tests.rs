@@ -633,6 +633,8 @@ async fn forward_get_messages_reads_dead_historical_transcript_by_uuid() {
             messages: vec![Message::user("historical transcript")],
             workflow_run: None,
             subagent_roster: Vec::new(),
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();
@@ -681,6 +683,8 @@ async fn forward_get_messages_reads_full_dead_historical_transcript_when_count_o
             messages,
             workflow_run: None,
             subagent_roster: Vec::new(),
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();

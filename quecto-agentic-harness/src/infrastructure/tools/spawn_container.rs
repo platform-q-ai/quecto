@@ -149,6 +149,10 @@ async fn join_script_managed_child(
     let mut cmd = script_command(&record.retained_exec_argv, child.binary, child.cli_args);
     cmd.env("QUECTO_CONTAINER_CONFIG", &record.script_name);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_ID", &record.environment_id);
+    cmd.env(
+        crate::domain::execution_metadata::NON_NATIVE_EXECUTION_ENV,
+        "1",
+    );
     apply_common_child_env(&mut cmd, child.base_dir);
     cmd.stdout(std::process::Stdio::piped());
     let output = cmd
@@ -280,6 +284,9 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
     }
     cmd.args(child.cli_args);
     apply_common_child_env(&mut cmd, child.base_dir);
+    // Local children execute natively. Remove a marker inherited from a parent
+    // that itself happens to be running inside a container.
+    cmd.env_remove(crate::domain::execution_metadata::NON_NATIVE_EXECUTION_ENV);
     let mut child = cmd
         .spawn()
         .map_err(|e| DomainError::Tool(format!("failed to spawn subagent: {e}")))?;
@@ -397,6 +404,10 @@ async fn spawn_script_managed_child(
     let mut cmd = script_command(&container.create, child.binary, child.cli_args);
     cmd.env("QUECTO_CONTAINER_CONFIG", config_name);
     cmd.env("QUECTO_CONTAINER_ENVIRONMENT_REF", &environment_ref);
+    cmd.env(
+        crate::domain::execution_metadata::NON_NATIVE_EXECUTION_ENV,
+        "1",
+    );
     apply_common_child_env(&mut cmd, child.base_dir);
     cmd.stdout(std::process::Stdio::piped());
     let output = cmd

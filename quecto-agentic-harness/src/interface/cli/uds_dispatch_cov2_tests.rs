@@ -48,6 +48,8 @@ async fn dispatch_fieldless_list_sessions_get_messages_and_() {
             messages: vec![Message::user("hello")],
             workflow_run: None,
             subagent_roster: Vec::new(),
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();
@@ -57,7 +59,7 @@ async fn dispatch_fieldless_list_sessions_get_messages_and_() {
         assert!(
             !super::dispatch_command(
                 AgentCommand::ListSessions {
-                    id: Some("ls".into()),
+                    id: Some("ls".into())
                 },
                 &mut ctx,
             )

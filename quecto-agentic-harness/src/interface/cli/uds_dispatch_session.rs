@@ -241,12 +241,12 @@ async fn persist_current_session_with_options(
         snapshot_subagent_roster_with_restore_reason(&ctx.subagent_registry, restore_reason);
     let result = if force_full_save || ctx.durable_prefix_dirty || ctx.subagent_registry.is_some() {
         ctx.session_store
-            .save(&Session {
-                key: ctx.session_key.to_string(),
-                messages: ctx.messages.to_vec(),
+            .save(&Session::from_parts(
+                ctx.session_key.as_str(),
+                ctx.messages.to_vec(),
                 workflow_run,
-                subagent_roster: roster,
-            })
+                roster,
+            ))
             .await
     } else {
         ctx.session_store
@@ -412,6 +412,27 @@ pub(super) async fn handle_resume_session(
             return false;
         }
     };
+    let activation_metadata =
+        super::super::uds_lifecycle::capture_execution_metadata(ctx.base_dir, Some("native"));
+    if let Err(err) = ctx
+        .session_store
+        .save_execution_metadata(
+            &new_key,
+            crate::domain::execution_metadata::ExecutionMetadataWrite::UpdateLatest(
+                activation_metadata,
+            ),
+        )
+        .await
+    {
+        ctx.session_store.release(&new_key);
+        let ev = AgentEvent::err(
+            id,
+            type_name,
+            format!("failed to persist execution metadata: {err}"),
+        );
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
     let old_key = std::mem::replace(ctx.session_key, new_key.clone());
     if old_key != new_key {
         ctx.session_store.release(&old_key);

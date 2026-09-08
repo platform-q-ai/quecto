@@ -309,6 +309,8 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
             messages: vec![Message::user("saved")],
             workflow_run: None,
             subagent_roster: previous_roster.clone(),
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();
@@ -360,6 +362,8 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
                 pending_message_reports: std::collections::VecDeque::new(),
                 status: None,
             }],
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();

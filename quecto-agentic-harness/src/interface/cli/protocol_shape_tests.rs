@@ -592,6 +592,15 @@ fn core_command_type_names() {
         AgentCommand::ListSessions { id: None }.type_name(),
         "list_sessions"
     );
+    let decoded: AgentCommand =
+        serde_json::from_str(r#"{"type":"list_sessions","id":"ls","folderIdentity":"unix:00"}"#)
+            .unwrap();
+    assert!(matches!(decoded, AgentCommand::ListSessions { .. }));
+    assert_eq!(
+        serde_json::to_value(decoded).unwrap(),
+        serde_json::json!({"type": "list_sessions", "id": "ls"}),
+        "client-supplied scope must not survive protocol decoding"
+    );
     assert_eq!(
         AgentCommand::ResumeSession {
             id: None,

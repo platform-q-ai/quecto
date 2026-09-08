@@ -524,6 +524,8 @@ async fn save_to_key_owned_by_another_live_process_is_refused() {
                 messages: Vec::new(),
                 workflow_run: None,
                 subagent_roster: Vec::new(),
+                origin_execution_metadata: None,
+                latest_execution_metadata: None,
             },
         )
         .await,
@@ -635,6 +637,8 @@ async fn append_time_ordinals_survive_reload_and_compaction_while_ids_regenerate
         messages: vec![Message::user("one"), Message::assistant("two", vec![])],
         workflow_run: None,
         subagent_roster: Vec::new(),
+        origin_execution_metadata: None,
+        latest_execution_metadata: None,
     };
     store.save(&session).await.unwrap();
     let loaded = store.load("ordinals:reload").await.unwrap().unwrap();
@@ -653,6 +657,8 @@ async fn append_time_ordinals_survive_reload_and_compaction_while_ids_regenerate
         messages: loaded.messages.clone(),
         workflow_run: None,
         subagent_roster: Vec::new(),
+        origin_execution_metadata: None,
+        latest_execution_metadata: None,
     };
     store.save(&compacted).await.unwrap();
     let reloaded = store.load("ordinals:reload").await.unwrap().unwrap();

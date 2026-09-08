@@ -1579,6 +1579,7 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
     let persist = world._mc_persist;
     let handle = std::thread::spawn(move || {
         run_uds_loop(UdsLoopArgs {
+            agent_display_name: None,
             agent,
             base_dir: &base_for_thread,
             workspace: &base_for_thread,

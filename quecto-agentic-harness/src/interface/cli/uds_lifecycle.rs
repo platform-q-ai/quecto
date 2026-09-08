@@ -28,6 +28,7 @@ pub struct UdsLoopArgs<'a> {
     pub workspace: &'a std::path::Path,
     pub session_key: String,
     pub model: String,
+    pub agent_display_name: Option<String>,
     pub ephemeral: bool,
     pub system_prompt: String,
     pub socket_path: std::path::PathBuf,
@@ -58,6 +59,76 @@ pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
 }
 use super::uds_socket::{SocketGuard, bind_secure_socket};
 
+pub(crate) fn capture_execution_metadata(
+    base_dir: &std::path::Path,
+    agent_name: Option<&str>,
+) -> crate::domain::execution_metadata::ExecutionMetadata {
+    capture_execution_metadata_for_backend(
+        base_dir,
+        agent_name,
+        crate::domain::execution_metadata::ExecutionBackend::from_marker(
+            std::env::var_os(crate::domain::execution_metadata::NON_NATIVE_EXECUTION_ENV)
+                .as_deref(),
+        ),
+    )
+}
+
+pub(crate) fn capture_execution_metadata_for_backend(
+    base_dir: &std::path::Path,
+    agent_name: Option<&str>,
+    backend: crate::domain::execution_metadata::ExecutionBackend,
+) -> crate::domain::execution_metadata::ExecutionMetadata {
+    use crate::domain::execution_metadata::{
+        AgentDisplayName, ExecutionBackend, ExecutionMetadata, FolderDisplayLabel, FolderIdentity,
+        GitBranchDisplay,
+    };
+    if backend != ExecutionBackend::Native {
+        return ExecutionMetadata::new(
+            None,
+            None,
+            agent_name.and_then(AgentDisplayName::new),
+            None,
+        );
+    }
+    let canonical = std::fs::canonicalize(base_dir).ok();
+    #[cfg(unix)]
+    let folder_identity = canonical.as_ref().and_then(|path| {
+        use std::os::unix::ffi::OsStrExt;
+        FolderIdentity::from_unix_bytes(path.as_os_str().as_bytes().to_vec())
+    });
+    #[cfg(windows)]
+    let folder_identity = canonical.as_ref().and_then(|path| {
+        use std::os::windows::ffi::OsStrExt;
+        FolderIdentity::from_windows_units(path.as_os_str().encode_wide().collect())
+    });
+    #[cfg(not(any(unix, windows)))]
+    let folder_identity = None;
+    let folder_label = canonical
+        .as_ref()
+        .map(|path| path.to_string_lossy().into_owned())
+        .and_then(FolderDisplayLabel::new);
+    let git_branch = std::process::Command::new("git")
+        .args([
+            "-C",
+            &base_dir.to_string_lossy(),
+            "symbolic-ref",
+            "--short",
+            "-q",
+            "HEAD",
+        ])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|branch| GitBranchDisplay::new(branch.trim()));
+    ExecutionMetadata::new(
+        folder_identity,
+        folder_label,
+        agent_name.and_then(AgentDisplayName::new),
+        git_branch,
+    )
+}
+
 async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     let UdsLoopArgs {
         agent,
@@ -65,6 +136,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         workspace,
         session_key,
         model,
+        agent_display_name,
         ephemeral,
         system_prompt,
         socket_path,
@@ -106,6 +178,21 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     };
     let loaded_message_count = loaded_session.messages.len();
     let messages = loaded_session.messages;
+    if !ephemeral && !session_key.is_empty() {
+        let metadata = capture_execution_metadata(base_dir, agent_display_name.as_deref());
+        let metadata_write = if loaded_session.origin_execution_metadata.is_none() {
+            crate::domain::execution_metadata::ExecutionMetadataWrite::Initialize(metadata)
+        } else {
+            crate::domain::execution_metadata::ExecutionMetadataWrite::UpdateLatest(metadata)
+        };
+        if let Err(err) = session_store
+            .save_execution_metadata(&session_key, metadata_write)
+            .await
+        {
+            eprintln!("failed to persist execution metadata: {err}");
+            return 1;
+        }
+    }
     if let (Some(ws), Some(persisted)) = (&workflow_state, loaded_session.workflow_run) {
         if let Ok(mut engine) = ws.lock() {
             engine.restore_run(persisted);
@@ -281,13 +368,13 @@ async fn single_client_loop(
 
     if !ephemeral && !session_key.is_empty() {
         remove_injected_system_prompt(&mut messages, &system_prompt);
-        let session = Session {
-            key: session_key,
-            messages: std::mem::take(&mut messages),
-            workflow_run: workflow_state
+        let session = Session::from_parts(
+            session_key,
+            std::mem::take(&mut messages),
+            workflow_state
                 .as_ref()
                 .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run())),
-            subagent_roster: uds_dispatch_session::snapshot_subagent_roster_with_restore_reason(
+            uds_dispatch_session::snapshot_subagent_roster_with_restore_reason(
                 &subagent_registry,
                 if agent_session.killing_exit {
                     crate::domain::session::SubagentRestoreReason::OrdinaryTuiExitStopped
@@ -295,7 +382,7 @@ async fn single_client_loop(
                     crate::domain::session::SubagentRestoreReason::LegacyUnspecified
                 },
             ),
-        };
+        );
         let _ = session_store.save(&session).await;
     }
     0
@@ -324,5 +411,35 @@ pub(crate) fn remove_injected_system_prompt(messages: &mut Vec<Message>, prompt:
     });
     if is_injected_prompt {
         messages.remove(0);
+    }
+}
+
+#[cfg(test)]
+mod issue_1612_execution_context_tests {
+    use super::capture_execution_metadata_for_backend;
+    use crate::domain::execution_metadata::ExecutionBackend;
+
+    #[test]
+    fn non_native_execution_does_not_claim_a_host_folder_or_git_branch() {
+        let metadata = capture_execution_metadata_for_backend(
+            std::path::Path::new("."),
+            Some("worker"),
+            ExecutionBackend::NonNative,
+        );
+        assert!(metadata.folder_identity().is_none());
+        assert!(metadata.folder_label().is_none());
+        assert!(metadata.git_branch().is_none());
+        assert_eq!(metadata.agent_name().map(|v| v.as_str()), Some("worker"));
+    }
+
+    #[test]
+    fn native_execution_captures_the_server_working_folder() {
+        let metadata = capture_execution_metadata_for_backend(
+            std::path::Path::new("."),
+            None,
+            ExecutionBackend::Native,
+        );
+        assert!(metadata.folder_identity().is_some());
+        assert!(metadata.folder_label().is_some());
     }
 }

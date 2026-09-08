@@ -398,6 +398,7 @@ pub(crate) fn execute_uds(world: &mut QuectoWorld) {
 
     let exit_code = std::thread::spawn(move || {
         run_uds_loop(UdsLoopArgs {
+            agent_display_name: None,
             agent,
             base_dir: &base_for_thread,
             workspace: &base_for_thread,
@@ -1841,6 +1842,8 @@ fn given_session_has_stale_persisted_subagent_roster_row(
                 delivered_message_ordinal: None,
                 pending_message_reports: std::collections::VecDeque::new(),
             }],
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         },
     );
 }
@@ -1874,6 +1877,8 @@ fn given_session_already_contains_messages(
             messages: vec![Message::user(user), Message::assistant(assistant, vec![])],
             workflow_run: None,
             subagent_roster: Vec::new(),
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         },
     );
 }
@@ -1896,6 +1901,8 @@ fn given_session_has_workflow_progress(
                 active_issue: None,
             }),
             subagent_roster: Vec::new(),
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         },
     );
     world._workflow_enabled = true;
@@ -2065,6 +2072,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
 
     let handle = std::thread::spawn(move || {
         run_uds_loop(UdsLoopArgs {
+            agent_display_name: None,
             agent,
             base_dir: &base_dir,
             workspace: &base_dir,
@@ -2479,6 +2487,7 @@ fn mc_spawn_agent(
     let sp = socket_path.clone();
     let handle = std::thread::spawn(move || {
         quecto::interface::cli::uds::run_uds_loop(UdsLoopArgs {
+            agent_display_name: None,
             agent,
             base_dir: &base_for_thread,
             workspace: &base_for_thread,

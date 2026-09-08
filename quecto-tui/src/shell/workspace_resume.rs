@@ -322,6 +322,22 @@ fn live_registry_socket_for_tab(
     }
 }
 
+pub(super) fn sanitize_resume_metadata(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let mut sanitized = String::with_capacity(value.len().min(80));
+    for ch in value.chars().take(64) {
+        if ch.is_control() || matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}') {
+            sanitized.push('�');
+        } else {
+            sanitized.push(ch);
+        }
+    }
+    Some(sanitized)
+}
+
 #[cfg(test)]
 #[path = "workspace_resume_tests.rs"]
 mod workspace_resume_tests;

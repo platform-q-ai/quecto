@@ -321,14 +321,14 @@ pub(super) async fn multi_client_loop(
         } else {
             uds_dispatch_session::snapshot_subagent_roster(&subagent_registry)
         };
-        let session = Session {
-            key: session_key,
-            messages: std::mem::take(&mut messages),
-            workflow_run: wf_state
+        let session = Session::from_parts(
+            session_key,
+            std::mem::take(&mut messages),
+            wf_state
                 .as_ref()
                 .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run())),
             subagent_roster,
-        };
+        );
         let _ = session_store.save(&session).await;
     }
 

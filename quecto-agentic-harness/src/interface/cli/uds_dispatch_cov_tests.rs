@@ -454,6 +454,8 @@ async fn resume_session_success_loads_messages() {
         messages: vec![Message::user("restored")],
         workflow_run: None,
         subagent_roster: Vec::new(),
+        origin_execution_metadata: None,
+        latest_execution_metadata: None,
     };
     fx.store.save(&saved).await.unwrap();
     {
@@ -480,6 +482,8 @@ async fn resume_updates_session_aware_tools() {
             messages: vec![Message::user("restored")],
             workflow_run: None,
             subagent_roster: Vec::new(),
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();
@@ -504,6 +508,8 @@ async fn resume_loads_chat_session_by_full_key() {
         messages: vec![Message::user("restored chat")],
         workflow_run: None,
         subagent_roster: Vec::new(),
+        origin_execution_metadata: None,
+        latest_execution_metadata: None,
     };
     fx.store.save(&saved).await.unwrap();
     {

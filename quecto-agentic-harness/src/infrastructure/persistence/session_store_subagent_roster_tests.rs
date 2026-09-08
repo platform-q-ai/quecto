@@ -61,6 +61,8 @@ async fn subagent_roster_roundtrips_and_legacy_files_load_empty_roster() {
             ),
             roster_entry("dead", crate::domain::session::SubagentLiveness::Dead),
         ],
+        origin_execution_metadata: None,
+        latest_execution_metadata: None,
     };
 
     store.save(&session).await.unwrap();
@@ -137,6 +139,8 @@ async fn roster_only_session_persists_and_empty_roster_session_stays_absent() {
                 "dead",
                 crate::domain::session::SubagentLiveness::Dead,
             )],
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();
@@ -158,6 +162,8 @@ async fn roster_only_session_persists_and_empty_roster_session_stays_absent() {
             messages: vec![],
             workflow_run: None,
             subagent_roster: vec![],
+            origin_execution_metadata: None,
+            latest_execution_metadata: None,
         })
         .await
         .unwrap();
@@ -176,6 +182,8 @@ async fn roster_only_updates_replay_as_full_replacements() {
             "a",
             crate::domain::session::SubagentLiveness::Live,
         )],
+        origin_execution_metadata: None,
+        latest_execution_metadata: None,
     };
     store.save(&session).await.unwrap();
 
@@ -207,6 +215,8 @@ async fn compaction_retains_current_subagent_roster() {
             "a",
             crate::domain::session::SubagentLiveness::Live,
         )],
+        origin_execution_metadata: None,
+        latest_execution_metadata: None,
     };
     store.save(&session).await.unwrap();
     session.messages = vec![make_message(Role::User, "replacement")];
@@ -233,6 +243,8 @@ async fn save_delta_compaction_preserves_persisted_subagent_roster() {
             "a",
             crate::domain::session::SubagentLiveness::Detached,
         )],
+        origin_execution_metadata: None,
+        latest_execution_metadata: None,
     };
     store.save(&session).await.unwrap();
 
