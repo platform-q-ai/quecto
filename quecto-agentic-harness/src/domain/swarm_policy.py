@@ -62,19 +62,28 @@ def revalidation(task, revision, evidence):
     return evidence
 
 
-def notification_targets(run, actor, members, events):
+def notification_targets(run, actor, members, events, state):
     """Coalesce actionable changes; reads/acks/ownership bookkeeping never wake peers."""
     if run['status'] != 'running':
         return []
     targets = set()
+    tasks = {task['id']: task for task in state['tasks']}
+    unread = {message['id'] for message in state['messages']}
+    ready = any(task['status'] == 'ready' and all(
+        tasks.get(dep, {}).get('status') == 'completed' for dep in task['dependencies'])
+        for task in tasks.values())
     live = {m['id']: m for m in members if m['status'] == 'live' and m['id'] != actor}
     for event in events:
         action, detail = event['action'], event['detail']
-        if action == 'message_accepted':
+        if action == 'message_accepted' and detail['message'] in unread:
             targets.add(detail['recipient'])
-        elif action in ('submitted', 'blocked', 'evidence'):
+        elif action in ('submitted', 'blocked'):
+            if tasks.get(detail['task'], {}).get('status') == action:
+                targets.add(run['coordinator'])
+        elif action == 'evidence':
             targets.add(run['coordinator'])
-        elif action in ('task_created', 'dependencies', 'released', 'verified', 'revalidated', 'recovered', 'amended'):
+        elif action == 'amended' or (ready and action in (
+                'task_created', 'dependencies', 'released', 'verified', 'revalidated', 'recovered')):
             targets.update(live)
     return [live[identity] for identity in sorted(targets) if identity in live]
 

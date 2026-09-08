@@ -342,3 +342,50 @@ fn invocation_child_stopped(world: &mut QuectoWorld) {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
+
+#[given("an idle swarm peer with an unavailable endpoint")]
+fn idle_peer(world: &mut QuectoWorld) {
+    use quecto::domain::swarm::{CoordinationPort, ProcessIdentity};
+    run(world, json!({"op":"summary"}));
+    let checkout = world.swarm_workspace.clone().unwrap();
+    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        checkout: checkout.clone(),
+        member: "coordinator".into(),
+        lifecycle: std::sync::Arc::new(quecto::application::ports::SwarmTestLifecycle),
+    };
+    context
+        .reserve_member("idle-peer", "idle-reservation")
+        .unwrap();
+    let worker = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        member: "idle-peer".into(),
+        ..context
+    };
+    worker
+        .join(
+            &ProcessIdentity {
+                pid: 123,
+                started: "fixture".into(),
+            },
+            checkout.join("unavailable.sock").to_str(),
+            Some("idle-reservation"),
+        )
+        .unwrap();
+}
+
+#[when("the coordinator creates and immediately claims a task")]
+fn immediately_claim(world: &mut QuectoWorld) {
+    run(
+        world,
+        json!({"op":"run", "code":"from swarm import board; t=board.task_create('claim-now','work',['pass']); board.claim(t['id'])"}),
+    );
+}
+
+#[then("no swarm wake delivery is attempted")]
+fn no_idle_wake(world: &mut QuectoWorld) {
+    assert!(!result(world).is_error, "{}", result(world).content);
+    assert!(
+        result_json(world).get("notification_warnings").is_none(),
+        "a stale hint attempted delivery to the unavailable peer: {}",
+        result(world).content
+    );
+}

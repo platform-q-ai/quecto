@@ -117,6 +117,8 @@ impl ToolRuntimeProfileContext {
 
 /// Inputs for the shared tool runtime/catalogue builder.
 pub(crate) struct ToolRuntimeBuildArgs<'a> {
+    /// Explicit launch context; reusable runtime construction never discovers ambient membership.
+    pub swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
     pub entrypoint: ToolEntrypoint,
     pub profile_context: ToolRuntimeProfileContext,
     pub base_dir: &'a std::path::Path,
@@ -175,6 +177,7 @@ pub(crate) fn build_tool_runtime(
     use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 
     let ToolRuntimeBuildArgs {
+        swarm_context,
         entrypoint,
         profile_context,
         base_dir,
@@ -193,9 +196,8 @@ pub(crate) fn build_tool_runtime(
         stderr,
     } = args;
 
-    // All composed harness entrypoints share startup admission, including
-    // nested agents with a new session or a different provider entrypoint.
-    let swarm_context = swarm_context();
+    // Entrypoints supply actual launch context; isolated runtime consumers
+    // have no implicit enrollment side effects from their parent environment.
     let swarm_agent = swarm_context.is_some();
     crate::domain::swarm::validate_workflow(
         swarm_agent,

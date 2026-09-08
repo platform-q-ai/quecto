@@ -94,8 +94,21 @@ pub(super) fn intercept_control_forward(line: &str) -> Option<AcceptedControl> {
         _ => return None,
     };
 
+    let forward_line = forward_line.map(|line| {
+        if matches!(raw_cmd_type, "prompt" | "steer" | "follow_up") {
+            let mut forwarded: serde_json::Value =
+                serde_json::from_str(&line).expect("built control JSON");
+            if let Some(id) = id {
+                forwarded["id"] = serde_json::json!(id);
+            }
+            forwarded.to_string()
+        } else {
+            line
+        }
+    });
     let ack_line = {
-        let mut l = AgentEvent::ok(id, cmd_type, None).to_json_line();
+        let mut l = AgentEvent::ok(id, cmd_type, Some(serde_json::json!({"status":"accepted"})))
+            .to_json_line();
         l.push('\n');
         l
     };

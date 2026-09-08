@@ -329,25 +329,16 @@ pub(super) async fn handle_steer(
     type_name: &str,
     message: String,
 ) -> bool {
-    if ctx.session.is_streaming() {
-        // Reader task already fires cancel eagerly — do NOT fire again here (#512).
-        ctx.session.prepend_pending(message);
-    } else {
-        ctx.session.enqueue_pending(message);
-    }
-    // #896: this steer is now being handled, so release the pending-steer gate —
-    // the workflow auto-continue nudge may resume AFTER the steer runs, not
-    // before it. Clearing here (rather than in the reader) keeps the nudge
-    // suppressed across the post-cancel idle drain that ran just ahead of us.
-    ctx.turn_control.clear_steer();
-    let ev = AgentEvent::ok(id, type_name, None);
-    emit_event_to_broadcast_or_writer(ctx, &ev).await;
-    // When idle (e.g. the steered turn was just cancelled and unwound), drive the
-    // steered instruction now so it isn't stranded waiting for the next prompt.
-    if !ctx.session.is_streaming() {
-        super::drain_pending_and_nudge(ctx).await;
-    }
-    false
+    super::handle_prompt(
+        ctx,
+        super::PromptCommand {
+            id: id.map(str::to_owned),
+            type_name: type_name.into(),
+            message,
+            streaming_behavior: Some(super::StreamingBehavior::Steer),
+        },
+    )
+    .await
 }
 
 pub(super) async fn handle_follow_up(
@@ -356,13 +347,10 @@ pub(super) async fn handle_follow_up(
     type_name: &str,
     message: String,
 ) -> bool {
-    // A genuine `follow_up` clears any stale steer gate, so the auto-continue
-    // nudge is not permanently suppressed (#896 AC3).
-    ctx.turn_control.clear_steer();
-    ctx.session.enqueue_pending(message);
-    let ev = AgentEvent::ok(id, type_name, None);
-    emit_event_to_broadcast_or_writer(ctx, &ev).await;
-    if !ctx.session.is_streaming() {
+    // A retained follow-up cannot revoke a later admitted steer. Only that
+    // steer's handler (or explicit abort) releases the priority gate.
+    let retained = super::pending::queue_prompt(ctx, id, type_name, message, false).await;
+    if retained && !ctx.session.is_streaming() {
         super::drain_pending_and_nudge(ctx).await;
     }
     false

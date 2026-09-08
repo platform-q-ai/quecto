@@ -179,26 +179,19 @@ async fn steer_marker_is_obeyed_after_mid_turn_cancel() {
     );
 }
 
-/// Regression for the stuck-steer-gate hazard: if the reader previously marked
-/// `steer_pending`, a genuine `follow_up` must clear it so the auto-continue
-/// nudge is not permanently suppressed (#896 AC3 — no regression to workflow
-/// progress).
+/// Queue admission now precedes flag publication; unrelated follow-ups must
+/// not erase the gate protecting an already retained steering instruction.
 #[tokio::test]
-async fn follow_up_clears_stuck_steer_gate() {
+async fn follow_up_preserves_admitted_steer_gate() {
     let mut env = Env::with_selected_feature();
-    // Simulate a false-positive substring classification leaving the gate set.
     env.turn_control.mark_steer();
-
     let mut ctx = env.ctx();
     super::uds_dispatch::handle_follow_up(&mut ctx, Some("f"), "follow_up", "work".into()).await;
-
-    assert!(
-        !ctx.turn_control.is_steer_pending(),
-        "a genuine follow_up must release a stale steer gate"
-    );
-    assert!(
-        !ctx.messages.is_empty(),
-        "with the gate cleared the follow_up drains and the nudge runs"
+    assert!(ctx.turn_control.is_steer_pending());
+    assert!(ctx.messages.is_empty());
+    assert_eq!(
+        ctx.session.drain_pending(),
+        vec![PendingMessage::user("work".into())]
     );
 }
 
@@ -404,5 +397,132 @@ async fn abort_stops_an_already_running_auto_continue_loop() {
     assert!(
         !env.turn_control.is_abort_pending(),
         "the mid-loop abort flag is consumed by the full stop"
+    );
+}
+
+#[tokio::test]
+async fn trial_accepted_steer_precedes_buffered_idle_work() {
+    let mut env = Env::with_unselected_workflow();
+    env.session.enqueue_pending("old wake hint one".into());
+    env.session.enqueue_pending("old wake hint two".into());
+    env.turn_control.mark_steer();
+    let mut ctx = env.ctx();
+    crate::interface::cli::uds_cancel::fire_cancel(&ctx.cancel_handle);
+    super::drain_pending_and_nudge(&mut ctx).await;
+    assert!(
+        ctx.messages.is_empty(),
+        "buffered work ran before accepted clarification"
+    );
+    assert_eq!(
+        ctx.session.drain_pending().len(),
+        2,
+        "deferred work must be retained"
+    );
+}
+
+struct SteerDuringPendingTurn(crate::interface::cli::uds_cancel::TurnControlHandle);
+impl std::fmt::Debug for SteerDuringPendingTurn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SteerDuringPendingTurn")
+    }
+}
+impl LlmProvider for SteerDuringPendingTurn {
+    fn name(&self) -> &str {
+        "steer-during-pending-turn"
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn chat(
+        &self,
+        _request: crate::domain::provider::ChatRequest<'_>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        crate::domain::message::LlmResponse,
+                        crate::domain::error::DomainError,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
+        self.0.mark_steer();
+        Box::pin(async {
+            Ok(crate::domain::message::LlmResponse {
+                content: Some("first pending turn ended".into()),
+                tool_calls: vec![],
+                usage: None,
+                stop_reason: None,
+                thinking_blocks: vec![],
+            })
+        })
+    }
+}
+
+#[tokio::test]
+async fn trial_steer_arriving_during_pending_batch_retains_remaining_work() {
+    let mut env = Env::with_unselected_workflow();
+    env.agent = make_dispatch_test_agent(std::sync::Arc::new(SteerDuringPendingTurn(
+        env.turn_control.clone(),
+    )));
+    env.session.enqueue_pending("first hint".into());
+    env.session.enqueue_pending("second hint".into());
+    env.session.enqueue_pending("third hint".into());
+    let mut ctx = env.ctx();
+    super::drain_pending_and_nudge(&mut ctx).await;
+    assert_eq!(
+        ctx.session.drain_pending(),
+        vec![
+            PendingMessage::user("second hint".into()),
+            PendingMessage::user("third hint".into())
+        ]
+    );
+    assert!(!ctx.messages.iter().any(|m| m.content == "second hint"));
+}
+
+#[tokio::test]
+async fn trial_queued_hints_cannot_run_ahead_of_admitted_steer() {
+    let mut env = Env::with_unselected_workflow();
+    env.turn_control.mark_steer();
+    let mut ctx = env.ctx();
+    crate::interface::cli::uds_cancel::fire_cancel(&ctx.cancel_handle);
+    for hint in ["queued wake one", "queued wake two"] {
+        super::uds_dispatch::handle_follow_up(&mut ctx, None, "follow_up", hint.into()).await;
+    }
+    assert!(
+        ctx.messages.is_empty(),
+        "queued hints ran ahead of the admitted steer command"
+    );
+    assert_eq!(
+        ctx.session.drain_pending().len(),
+        2,
+        "deferral must not lose queued prompts"
+    );
+}
+
+#[tokio::test]
+async fn trial_full_pending_queue_reports_handling_rejection() {
+    let mut env = Env::with_unselected_workflow();
+    for i in 0..crate::interface::cli::uds_session::AgentSession::MAX_PENDING {
+        env.session.enqueue_pending(format!("hint {i}"));
+    }
+    env.session.set_streaming(true);
+    let mut ctx = env.ctx();
+    let (sender, mut responses) = tokio::sync::broadcast::channel(4);
+    ctx.broadcast_tx = Some(sender);
+    super::uds_dispatch::handle_follow_up(
+        &mut ctx,
+        Some("approval"),
+        "follow_up",
+        "approved".into(),
+    )
+    .await;
+    let response: serde_json::Value =
+        serde_json::from_str(&responses.recv().await.unwrap()).unwrap();
+    assert_eq!(response["id"], "approval");
+    assert_eq!(
+        response["success"], false,
+        "silently dropped work must not report successful handling"
     );
 }

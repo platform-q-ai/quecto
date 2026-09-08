@@ -336,6 +336,18 @@ fn build_shell_command(
         }
     }
 
+    // Ordinary commands (including cargo-spawned test runtimes) are not
+    // admitted swarm members. Only the managed spawn adapter grants identity.
+    for key in [
+        "QUECTO_SWARM_CHECKOUT",
+        "QUECTO_SWARM_MEMBER",
+        "QUECTO_SWARM_RESERVATION",
+        "QUECTO_SWARM_BOOTSTRAP",
+        "QUECTO_SWARM_CONTAINER",
+        "QUECTO_SWARM_HOST_PID_NS",
+    ] {
+        cmd.env_remove(key);
+    }
     cmd
 }
 
@@ -712,3 +724,6 @@ mod tests;
 #[cfg(test)]
 #[path = "../bash_output_file_tests.rs"]
 mod output_file_tests;
+
+#[cfg(test)]
+mod launch_environment_tests;

@@ -29,7 +29,7 @@ fn flagged_prompt_acks_with_id_and_forwards_follow_up() {
         fwd.get("ack").is_none(),
         "marker is stripped before dispatch"
     );
-    assert!(fwd.get("id").is_none(), "id is stripped before dispatch");
+    assert_eq!(fwd["id"], "req-1", "handling retains request correlation");
 }
 
 #[test]
@@ -133,4 +133,15 @@ fn garbage_and_marker_in_string_body_do_not_intercept() {
     // prompt whose body merely mentions the marker.
     let line = r#"{"type":"prompt","message":"the word accept appears here"}"#;
     assert!(intercept_control_forward(line).is_none());
+}
+
+#[test]
+fn trial_accepted_instruction_retains_correlation_for_handling_response() {
+    let got = intercept_control_forward(
+        r#"{"type":"steer","message":"approved","ack":"accept","id":"approval-42"}"#,
+    )
+    .unwrap();
+    let forward: serde_json::Value = serde_json::from_str(&got.forward_line.unwrap()).unwrap();
+    assert_eq!(forward["id"], "approval-42");
+    assert_eq!(ack_json(&got.ack_line)["data"]["status"], "accepted");
 }

@@ -20,6 +20,7 @@ class CoordinationTransaction(Protocol):
     def event(self, action, detail): ...
     def members(self): ...
     def notification_events(self, actor): ...
+    def notification_state(self): ...
     def advance_notifications(self, actor): ...
 
 
@@ -72,7 +73,7 @@ class Coordination:
 
     def notifications(self):
         with self.operation(active=False, read_only=True) as tx:
-            targets = notification_targets(tx.run(), self.actor, tx.members(), tx.notification_events(self.actor))
+            targets = notification_targets(tx.run(), self.actor, tx.members(), tx.notification_events(self.actor), tx.notification_state())
             # Hints are best-effort, not durable delivery. Advance atomically
             # before sending so concurrent/background calls cannot duplicate them.
             tx.advance_notifications(self.actor)

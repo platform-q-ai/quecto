@@ -95,6 +95,49 @@ class WorkbenchBehavior(unittest.TestCase):
         self.parent.complete('R2')
         self.assertEqual(self.parent.summary()['status'], 'succeeded')
 
+    def test_unchanged_blocker_does_not_repeat_idle_wake_cycles(self):
+        task = self.task()
+        claim = self.worker.claim(task['id'])
+        self.worker.block(task['id'], claim['token'], 'awaiting approval')
+        self.assertEqual([m['id'] for m in self.worker._notifications()], ['coordinator'])
+        for _ in range(5):
+            self.parent.summary()
+            self.assertEqual(self.parent.inbox(), [])
+            self.worker.block(task['id'], claim['token'], 'awaiting approval')
+            self.assertEqual(self.worker._notifications(), [])
+        self.worker.block(task['id'], claim['token'], 'new blocker')
+        self.assertEqual([m['id'] for m in self.worker._notifications()], ['coordinator'])
+
+    def test_identical_evidence_does_not_repeat_review_wake(self):
+        for expected in (['coordinator'], []):
+            self.worker.evidence('tests', 'tests.log', 'R1', 'command', True)
+            self.assertEqual([m['id'] for m in self.worker._notifications()], expected)
+
+    def test_dependency_work_only_wakes_when_claimable(self):
+        first = self.task('dependency')
+        claim = self.worker.claim(first['id'])
+        self.worker._notifications()
+        self.task('dependent', [first['id']])
+        self.assertEqual(self.worker._notifications(), [])
+        self.worker.submit(first['id'], claim['token'], [{'artifact':'tests.log','revision':'R1'}])
+        self.parent.verify_task(first['id'], claim['token'], 'R1')
+        self.assertEqual(self.worker._notifications(), [], 'already verified submission is stale')
+        self.assertEqual([m['id'] for m in self.parent._notifications()], ['worker'])
+
+    def test_consumed_work_does_not_emit_stale_wake_hints(self):
+        self.parent._notifications()
+        self.worker._notifications()
+        message = self.worker.send('already-read', 'coordinator', 'Please review')
+        self.parent.ack(message['id'])
+        self.assertEqual(self.worker._notifications(), [])
+
+    def test_claimed_work_does_not_wake_idle_peers(self):
+        self.parent._notifications()
+        self.worker._notifications()
+        task = self.task()
+        self.worker.claim(task['id'])
+        self.assertEqual(self.worker._notifications(), [])
+
     def test_wake_hints_are_targeted_deduplicated_and_terminal_safe(self):
         # Drain any startup hints before the behavior under test.
         self.parent._notifications()

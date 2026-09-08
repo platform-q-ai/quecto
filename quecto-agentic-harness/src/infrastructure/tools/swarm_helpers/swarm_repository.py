@@ -55,3 +55,7 @@ class Transaction:
 
     def advance_notifications(self, actor):
         self.connection.execute('INSERT OR REPLACE INTO notification_cursors VALUES(?,(SELECT coalesce(max(id),0) FROM events))', (actor,))
+
+    def notification_state(self):
+        return {'tasks': [dict(row, dependencies=json.loads(row['dependencies'])) for row in self.connection.execute('SELECT id,status,dependencies FROM tasks')],
+                'messages': [dict(row) for row in self.connection.execute("SELECT id,recipient FROM messages WHERE status='accepted'")]}

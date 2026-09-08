@@ -212,6 +212,10 @@ class Workbench(Tasks):
             if not definition or definition['kind'] != kind:
                 raise SwarmError('evidence must match a configured criterion and kind')
             accepted = self.member == run['coordinator'] and passed is True
+            previous = db.execute('SELECT artifact,revision,kind,accepted FROM evidence WHERE criterion=? AND actor=?',
+                                  (criterion, self.member)).fetchone()
+            if previous is not None and tuple(previous) == (artifact, revision, kind, accepted):
+                return
             db.execute('INSERT OR REPLACE INTO evidence VALUES(?,?,?,?,?,?)',
                        (criterion, artifact, revision, kind, self.member, accepted))
             self.store.event(db, 'evidence', {'criterion': criterion, 'artifact': artifact, 'revision': revision, 'accepted': accepted})

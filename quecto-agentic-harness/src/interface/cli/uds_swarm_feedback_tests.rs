@@ -170,6 +170,10 @@ async fn approval_exchange(busy: bool) {
     let crate::interface::cli::uds_multi::ClientMessage::Command(command) = command else {
         panic!("expected approval command")
     };
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&command.line).unwrap()["id"],
+        serde_json::from_str::<serde_json::Value>(&reply).unwrap()["id"]
+    );
     let super::LineResult::Command(command) = super::parse_line(&command.line) else {
         panic!("expected parsed command")
     };
