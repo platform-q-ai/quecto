@@ -1,3 +1,4 @@
+mod admission_broker;
 mod agent;
 mod auth;
 mod commands;
@@ -369,6 +370,9 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
             "status" => commands::cmd_status(ctx, &mut stdout, &mut stderr),
             "auth" => auth::cmd_auth(ctx, &args[2..], &mut stdout, &mut stderr),
             "models" => models::cmd_models(ctx, &args[2..], &mut stdout, &mut stderr),
+            "admission-broker" => {
+                admission_broker::cmd_admission_broker(ctx, &args[2..], &mut stdout, &mut stderr)
+            }
             "help" | "--help" | "-h" => {
                 help_text(&mut stdout);
                 0
@@ -488,6 +492,8 @@ fn help_text(out: &mut String) {
         "  --config <path>  Override config file path (default: <base_dir>/config.json)\n",
     );
     out.push_str("\nCommands:\n");
+    out.push_str("  admission-broker run|status|reset\n");
+    out.push_str("              Shared inference admission authority (requires an `admission` config section)\n");
     out.push_str("  agent       Run a one-shot agent session (-m required)\n");
     out.push_str("              Options: -s <name>  Named session (default: \"default\")\n");
     out.push_str("                       --no-session  Ephemeral mode — nothing saved or loaded\n");

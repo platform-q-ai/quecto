@@ -1,4 +1,11 @@
 use super::*;
+
+fn parse_create(stdout: &[u8]) -> Result<CreateResult, DomainError> {
+    parse_create_result(stdout, None)
+}
+fn parse_exec(stdout: &[u8]) -> Result<ParentEndpoint, DomainError> {
+    parse_exec_result(stdout, None)
+}
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -174,6 +181,7 @@ async fn local_subagent_inherits_parent_process_group() {
         binary: Path::new("/bin/sleep"),
         cli_args: &cli_args,
         base_dir: dir.path(),
+        admission_dir: None,
     })
     .await
     .expect("local child should spawn");
@@ -331,6 +339,7 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
                 binary: Path::new("/definitely/not/quecto"),
                 cli_args: &[],
                 base_dir: Path::new("/tmp"),
+                admission_dir: None,
             },
             &EnvironmentRegistry::new(),
             None,
@@ -351,6 +360,7 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
                 binary: Path::new("true"),
                 cli_args: &[],
                 base_dir: Path::new("/tmp"),
+                admission_dir: None,
             },
             &EnvironmentRegistry::new(),
             None,
@@ -368,6 +378,7 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
                 binary: Path::new("true"),
                 cli_args: &[],
                 base_dir: Path::new("/tmp"),
+                admission_dir: None,
             },
             &EnvironmentRegistry::new(),
             None,
@@ -404,6 +415,7 @@ async fn script_managed_spawn_error_uses_config_and_selected_script() {
                 binary: Path::new("true"),
                 cli_args: &[],
                 base_dir: dir.path(),
+                admission_dir: None,
             },
             &EnvironmentRegistry::new(),
             None,
@@ -476,6 +488,7 @@ async fn script_env_includes_optional_selection_values() {
             binary: Path::new("true"),
             cli_args: &[],
             base_dir: dir.path(),
+            admission_dir: None,
         },
         &registry,
         None,
@@ -506,6 +519,7 @@ async fn local_child_success_has_no_cleanup_plan() {
             binary: Path::new("true"),
             cli_args: &[],
             base_dir: Path::new("/tmp"),
+            admission_dir: None,
         },
         &EnvironmentRegistry::new(),
         None,
@@ -585,6 +599,7 @@ async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
             binary: Path::new("true"),
             cli_args: &[],
             base_dir: dir.path(),
+            admission_dir: None,
         },
         &registry,
         None,
@@ -606,9 +621,9 @@ async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
 
 #[test]
 fn create_result_contract_rejects_invalid_shapes_and_proxy() {
-    assert!(parse_create_result(b"").is_err());
+    assert!(parse_create(b"").is_err());
     let unknown_key = br#"{"environment_id":"e-unknown","workspace_path":"/tmp/ws","metadata":{},"socket_path":"/tmp/sock","bogus":1}"#;
-    assert!(parse_create_result(unknown_key).is_err());
+    assert!(parse_create(unknown_key).is_err());
     assert_eq!(
         salvage_environment_id(unknown_key).as_deref(),
         Some("e-unknown")
@@ -617,20 +632,20 @@ fn create_result_contract_rejects_invalid_shapes_and_proxy() {
     assert!(salvage_environment_id(br#"{"environment_id":""}"#).is_none());
     let trailing =
         br#"{"environment_id":"e-trail","workspace_path":"/tmp/ws","metadata":{},"socket_path":"/tmp/sock"} extra"#;
-    assert!(parse_create_result(trailing).is_err());
+    assert!(parse_create(trailing).is_err());
     assert_eq!(salvage_environment_id(trailing).as_deref(), Some("e-trail"));
     assert!(
-        parse_create_result(
+        parse_create(
             br#"{"environment_id":"e","workspace_path":"/tmp/ws","metadata":{},"socket_proxy":{}}"#
         )
         .is_err()
     );
-    assert!(parse_create_result(br#"{"environment_id":"e","workspace_path":"/tmp/ws","metadata":[],"socket_path":"/tmp/sock"}"#).is_err());
+    assert!(parse_create(br#"{"environment_id":"e","workspace_path":"/tmp/ws","metadata":[],"socket_path":"/tmp/sock"}"#).is_err());
 }
 
 #[test]
 fn create_result_contract_accepts_direct_endpoint() {
-    let parsed = parse_create_result(
+    let parsed = parse_create(
         br#"{"environment_id":"env","workspace_path":"/tmp/ws","metadata":{"k":"v"},"socket_path":"/tmp/sock"}"#,
     )
     .unwrap();
@@ -652,16 +667,14 @@ fn unsafe_arg_detects_empty_and_nul_only() {
 
 #[test]
 fn exec_result_contract_rejects_invalid_shapes_and_proxy() {
-    assert!(parse_exec_result(b"").is_err());
-    assert!(parse_exec_result(br#"{"metadata":{},"socket_path":""}"#).is_err());
-    assert!(
-        parse_exec_result(br#"{"metadata":{},"socket_proxy":{},"socket_path":"/tmp/s"}"#).is_err()
-    );
-    assert!(parse_exec_result(br#"{"metadata":[],"socket_path":"/tmp/s"}"#).is_err());
-    assert!(parse_exec_result(br#"{"metadata":{},"socket_path":"/tmp/s"} extra"#).is_err());
-    assert!(parse_exec_result(br#"{"metadata":{},"socket_path":"/tmp/s","bogus":1}"#).is_err());
+    assert!(parse_exec(b"").is_err());
+    assert!(parse_exec(br#"{"metadata":{},"socket_path":""}"#).is_err());
+    assert!(parse_exec(br#"{"metadata":{},"socket_proxy":{},"socket_path":"/tmp/s"}"#).is_err());
+    assert!(parse_exec(br#"{"metadata":[],"socket_path":"/tmp/s"}"#).is_err());
+    assert!(parse_exec(br#"{"metadata":{},"socket_path":"/tmp/s"} extra"#).is_err());
+    assert!(parse_exec(br#"{"metadata":{},"socket_path":"/tmp/s","bogus":1}"#).is_err());
     assert_eq!(
-        parse_exec_result(br#"{"metadata":{},"socket_path":"/tmp/s"}"#).unwrap(),
+        parse_exec(br#"{"metadata":{},"socket_path":"/tmp/s"}"#).unwrap(),
         crate::domain::subagent_launch::ParentEndpoint::Direct {
             socket_path: PathBuf::from("/tmp/s")
         }
@@ -686,6 +699,7 @@ async fn join_fails_for_unknown_target_and_missing_retained_exec() {
         binary: Path::new("true"),
         cli_args: &[],
         base_dir: Path::new("/tmp"),
+        admission_dir: None,
     };
     // Unknown ref: no exec is attempted.
     let err = join_script_managed_child(

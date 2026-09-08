@@ -143,6 +143,18 @@ mounts=(
 if [ -n "$config_path" ] && [[ "$config_path" != "$HOME/.quecto/"* ]]; then
   mounts+=(-v "$config_path:$config_path:ro")
 fi
+# Shared inference admission (#1679 P3): the authority's client directory is
+# identity-mounted so the child reaches the same private socket by path. The
+# capability is reported only when the mount is actually present; an
+# admission-enabled parent refuses to launch without it.
+admission_capability=""
+admission_dir="${QUECTO_ADMISSION_DIR:-}"
+if [ -n "$admission_dir" ]; then
+  [ -d "$admission_dir" ] || die "QUECTO_ADMISSION_DIR '$admission_dir' is not a directory"
+  mounts+=(-v "$admission_dir:$admission_dir:rw")
+  admission_capability="shared-directory-v1"
+  printf '%s\n' "$admission_dir" >"$env_dir/admission-dir"
+fi
 # HOME is preserved and QUECTO_BASE_DIR is deliberately NOT overridden:
 # QUECTO_BASE_DIR is quecto's credentials/config home ($HOME/.quecto by
 # default). Overriding it inside the container detaches the child from the
@@ -253,4 +265,5 @@ jq -cn \
   --arg cli "$cli" \
   --arg source "$source" \
   --arg repository "$repo" \
-  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: $cli, image: $image, container: $container, config: $config, source: $source} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket}'
+  --arg admission "$admission_capability" \
+  '{environment_id: $id, workspace_path: $workspace, metadata: ({runtime: $cli, image: $image, container: $container, config: $config, source: $source} + (if $repository == "" then {} else {repository: $repository} end)), socket_path: $socket} + (if $admission == "" then {} else {admission_capability: $admission} end)'

@@ -39,6 +39,26 @@ pub(crate) struct AgentFlags {
     pub(crate) session_key_override: Option<String>,
     /// Test-only effective cwd override supplied by CliContext.
     pub(crate) cwd_override: Option<std::path::PathBuf>,
+    /// `--admission-context <file>`: descendant capability sidecar written by
+    /// the parent (#1679 P3). The child binds it before announcing readiness.
+    pub(crate) admission_context: Option<std::path::PathBuf>,
+}
+
+/// Post-parse validation of mutually exclusive / dependent flags.
+pub(super) fn validate_agent_flags(flags: AgentFlags, stderr: &mut String) -> Option<AgentFlags> {
+    if flags.no_session && flags.session_name.is_some() {
+        stderr.push_str("agent: --no-session and -s are mutually exclusive\n");
+        return None;
+    }
+    if flags.persist && !flags.uds_mode {
+        stderr.push_str("agent: --persist requires --mode uds\n");
+        return None;
+    }
+    if flags.workflow_guards && flags.workflow_disabled {
+        stderr.push_str("agent: --workflow-guards cannot be used with --no-workflow\n");
+        return None;
+    }
+    Some(flags)
 }
 
 /// Return `args[i+1]` or push `err_msg` to stderr and return `None`.

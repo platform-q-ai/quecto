@@ -1,0 +1,210 @@
+//! Process-wide admission binding: one authority connection per agent
+//! process, negotiated before the provider runtime is composed and before a
+//! child announces socket readiness. Installed once; a changed policy needs a
+//! process restart (P2 restart-only contract).
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
+
+use serde::{Deserialize, Serialize};
+
+use super::client::AuthorityConnection;
+use super::directory::AuthorityDirectory;
+use crate::application::ports::{AttemptAdmission, Credential};
+use crate::domain::inference_admission::WorkloadClass;
+use crate::infrastructure::provider_runtime_admission::{
+    AdmissionRuntimeContext, AdmissionRuntimeProposal,
+};
+use crate::infrastructure::providers::{SingleAttemptClient, default_client_builder};
+
+const CONTEXT_FORMAT: u32 = 1;
+
+/// Sidecar handed to a descendant (0600 file, never argv/env): where the
+/// authority is and which pre-registered capability the child must bind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdmissionContext {
+    pub format: u32,
+    pub endpoint: PathBuf,
+    pub epoch: u64,
+    pub serial: u64,
+    pub token: String,
+}
+
+pub fn write_admission_context(
+    path: &Path,
+    endpoint: &Path,
+    credential: &Credential,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let context = AdmissionContext {
+        format: CONTEXT_FORMAT,
+        endpoint: endpoint.to_path_buf(),
+        epoch: credential.scope.epoch,
+        serial: credential.scope.serial,
+        token: credential.token.clone(),
+    };
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(&serde_json::to_vec(&context).expect("context is serializable"))?;
+    file.sync_all()
+}
+
+pub fn read_admission_context(path: &Path) -> Result<AdmissionContext, String> {
+    let bytes = std::fs::read(path)
+        .map_err(|e| format!("admission context {} unreadable: {e}", path.display()))?;
+    let context: AdmissionContext = serde_json::from_slice(&bytes)
+        .map_err(|e| format!("admission context {} malformed: {e}", path.display()))?;
+    if context.format != CONTEXT_FORMAT {
+        return Err(format!(
+            "admission context format {} unsupported (expected {CONTEXT_FORMAT})",
+            context.format
+        ));
+    }
+    Ok(context)
+}
+
+/// The installed binding. The runtime thread owns the connection's I/O so the
+/// binding is independent of whichever runtime the agent loop uses.
+pub struct ProcessAdmission {
+    connection: Arc<AuthorityConnection>,
+    context: Arc<AdmissionRuntimeContext>,
+    proposal: AdmissionRuntimeProposal,
+    client_dir: PathBuf,
+    _runtime: tokio::runtime::Runtime,
+}
+
+impl ProcessAdmission {
+    pub fn connection(&self) -> &Arc<AuthorityConnection> {
+        &self.connection
+    }
+    pub fn runtime_context(&self) -> &Arc<AdmissionRuntimeContext> {
+        &self.context
+    }
+    pub fn proposal(&self) -> &AdmissionRuntimeProposal {
+        &self.proposal
+    }
+    /// Directory containing the client socket; the only path a container
+    /// child needs mounted.
+    pub fn client_dir(&self) -> &Path {
+        &self.client_dir
+    }
+    pub fn endpoint(&self) -> PathBuf {
+        self.client_dir.join("admission.sock")
+    }
+}
+
+static PROCESS: OnceLock<Arc<ProcessAdmission>> = OnceLock::new();
+
+pub fn current() -> Option<Arc<ProcessAdmission>> {
+    PROCESS.get().cloned()
+}
+
+/// How this process joins the authority.
+#[derive(Debug, Clone)]
+pub enum Negotiation {
+    /// A top-level session: register a fresh interactive root at `directory`.
+    Root { directory: PathBuf },
+    /// A descendant: bind the capability its parent registered.
+    Child { context: PathBuf },
+}
+
+fn runtime() -> Result<tokio::runtime::Runtime, String> {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .thread_name("quecto-admission")
+        .build()
+        .map_err(|e| format!("admission runtime: {e}"))
+}
+
+async fn connect(negotiation: &Negotiation) -> Result<(AuthorityConnection, PathBuf), String> {
+    match negotiation {
+        Negotiation::Root { directory } => {
+            let dir = AuthorityDirectory::open(directory)
+                .map_err(|e| format!("admission directory {}: {e}", directory.display()))?;
+            let endpoint = dir.client_socket();
+            let connection = AuthorityConnection::connect(&endpoint).await.map_err(|e| {
+                format!(
+                    "admission authority unreachable at {} ({e}); start `quecto admission-broker run` or remove the admission section",
+                    endpoint.display()
+                )
+            })?;
+            let credential = connection
+                .register_root(WorkloadClass::Interactive)
+                .await
+                .map_err(|e| format!("admission root registration: {e}"))?;
+            connection
+                .bind(credential)
+                .await
+                .map_err(|e| format!("admission root bind: {e}"))?;
+            Ok((connection, dir.client_dir()))
+        }
+        Negotiation::Child { context } => {
+            let context = read_admission_context(context)?;
+            let connection = AuthorityConnection::connect(&context.endpoint)
+                .await
+                .map_err(|e| format!("admission authority unreachable: {e}"))?;
+            let credential = Credential {
+                scope: crate::domain::inference_admission::ScopeId {
+                    epoch: context.epoch,
+                    serial: context.serial,
+                },
+                token: context.token,
+            };
+            connection
+                .bind(credential)
+                .await
+                .map_err(|e| format!("admission capability rejected: {e}"))?;
+            let client_dir = context
+                .endpoint
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_default();
+            Ok((connection, client_dir))
+        }
+    }
+}
+
+/// Negotiate and install the process binding. Idempotent for the same
+/// negotiation; a second, different negotiation is refused.
+pub fn install(negotiation: Negotiation) -> Result<Arc<ProcessAdmission>, String> {
+    if let Some(existing) = PROCESS.get() {
+        return Ok(existing.clone());
+    }
+    let runtime = runtime()?;
+    // Never block_on from inside a foreign runtime: negotiate on a plain thread.
+    let handle = runtime.handle().clone();
+    let negotiation_thread = negotiation.clone();
+    let joined = std::thread::spawn(move || handle.block_on(connect(&negotiation_thread)))
+        .join()
+        .map_err(|_| "admission negotiation thread panicked".to_string())?;
+    let (connection, client_dir) = joined?;
+    let proposal = connection.hello().proposal.clone();
+    let mut gates: BTreeMap<String, Arc<dyn AttemptAdmission>> = BTreeMap::new();
+    for alias in proposal.policy.aliases.keys() {
+        gates.insert(
+            alias.clone(),
+            connection
+                .gate(alias)
+                .map_err(|e| format!("admission gate for '{alias}': {e}"))?,
+        );
+    }
+    let client = SingleAttemptClient::build(default_client_builder())
+        .map_err(|e| format!("admission HTTP client: {e}"))?;
+    let context = AdmissionRuntimeContext::new(proposal.clone(), gates, client)?;
+    let binding = Arc::new(ProcessAdmission {
+        connection: Arc::new(connection),
+        context: Arc::new(context),
+        proposal,
+        client_dir,
+        _runtime: runtime,
+    });
+    match PROCESS.set(binding.clone()) {
+        Ok(()) => Ok(binding),
+        Err(_) => Ok(PROCESS.get().expect("set by a concurrent install").clone()),
+    }
+}

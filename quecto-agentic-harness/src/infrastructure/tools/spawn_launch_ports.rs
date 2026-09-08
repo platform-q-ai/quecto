@@ -174,13 +174,44 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                 self.tool.parent_config_path.as_ref(),
                 inherited_runtime_config_path(),
             );
+            // Admission-enabled parents register the descendant before launch
+            // and hand it the capability through a private sidecar (#1679 P3).
+            let admission = crate::infrastructure::admission::process::current();
+            let mut launch_args = cli_args.to_vec();
+            let admission_dir = match admission.as_ref() {
+                Some(admission) => {
+                    let agent_uuid = self.agent_uuid.as_ref().expect("identity allocated");
+                    let credential =
+                        admission.connection().register_child().await.map_err(|e| {
+                            DomainError::Tool(format!("admission child registration failed: {e}"))
+                        })?;
+                    let path = self.tool.socket_dir.join(child_sidecar_filename(
+                        "quecto-admission",
+                        agent_uuid,
+                        std::process::id(),
+                    ));
+                    crate::infrastructure::admission::write_admission_context(
+                        &path,
+                        &admission.endpoint(),
+                        &credential,
+                    )
+                    .map_err(|e| {
+                        DomainError::Tool(format!("failed to write admission context: {e}"))
+                    })?;
+                    launch_args.push("--admission-context".into());
+                    launch_args.push(path.into());
+                    Some(admission.client_dir().to_path_buf())
+                }
+                None => None,
+            };
             super::spawn_container::spawn_prepared_child(
                 config,
                 &super::spawn_container::ChildCommand {
                     swarm_context: self.tool.swarm_context.as_ref(),
                     binary,
-                    cli_args,
+                    cli_args: &launch_args,
                     base_dir: &self.tool.base_dir,
+                    admission_dir: admission_dir.as_deref(),
                 },
                 &self.tool.environment_registry,
                 parent_config.as_deref(),
