@@ -59,6 +59,7 @@ async fn malformed_steer_admission_does_not_cancel_or_gate_later_work() {
         r#"{"type":"steer"}"#,
         r#"{"type":"prompt","message":3,"streamingBehavior":"steer","ack":"accept"}"#,
         r#"{"type":"steer","message":"bad id","id":3,"ack":"accept"}"#,
+        r#"{"type":"steer","message":"old","message":"new","id":"s1","ack":"accept"}"#,
     ] {
         let registry = super::super::uds_ext_protocol::new_client_tool_registry();
         let (commands, mut received) = tokio::sync::mpsc::channel(1);
