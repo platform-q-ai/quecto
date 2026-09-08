@@ -98,6 +98,8 @@ pub enum AdmissionError {
     Unavailable,
     TimeRegression,
     Busy,
+    /// The group holds uncertain (unacknowledged) occupancy; no grant is safe.
+    Quarantined,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,9 +144,48 @@ pub enum Feedback {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GroupSnapshot {
+    /// Includes uncertain and orphaned occupancy: capacity is never reclaimed silently.
     pub active: usize,
     pub queued: usize,
+    /// Abandoned or restart-orphaned attempts still counted as active.
+    pub uncertain: usize,
     pub cooldown_until: u64,
     pub unavailable: bool,
     pub observed_at: u64,
+}
+
+/// Outcome of a client disappearing: queued work is cancelled, active work is
+/// retained as uncertain occupancy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AbandonReport {
+    pub cancelled: usize,
+    pub uncertain: usize,
+}
+
+/// One possibly outstanding remote attempt. Scope is the serial only: the
+/// epoch is the ledger's, and no capability material is ever recorded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutstandingAttempt {
+    pub group: GroupId,
+    pub scope: u64,
+    pub sequence: u64,
+}
+
+/// Durable per-group timing relative to the ledger's observation instant, so a
+/// restarted authority can rehydrate against a fresh monotonic clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LedgerGroup {
+    pub cooldown_remaining_ms: u64,
+    pub pacing_remaining_ms: u64,
+    pub unavailable: bool,
+}
+
+/// The minimum state an authority must persist before a grant is visible:
+/// accounting epoch, outstanding occupancy and group deadlines. Queue payloads
+/// are deliberately absent; they are cancelled by any restart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmissionLedger {
+    pub epoch: u64,
+    pub outstanding: Vec<OutstandingAttempt>,
+    pub groups: BTreeMap<GroupId, LedgerGroup>,
 }

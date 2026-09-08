@@ -54,6 +54,17 @@ pub trait AdmissionDispatcher {
     fn snapshot(&mut self, group: &GroupId, now: u64) -> Result<GroupSnapshot, AdmissionError>;
 }
 
+/// Owner-only recovery operations: abandonment on disconnect, grant withdrawal
+/// when durability fails, scheduler wake computation, ledger export and the
+/// operator epoch reset. Never exposed through a client capability.
+pub trait AdmissionRecovery {
+    fn abandon(&mut self, scope: ScopeId, now: u64) -> Result<AbandonReport, AdmissionError>;
+    fn withdraw(&mut self, scope: ScopeId, sequence: u64, now: u64) -> Result<(), AdmissionError>;
+    fn next_wake(&mut self, now: u64) -> Result<Option<u64>, AdmissionError>;
+    fn ledger(&mut self, now: u64) -> Result<AdmissionLedger, AdmissionError>;
+    fn reset(&mut self, now: u64) -> Result<u64, AdmissionError>;
+}
+
 /// Serialized in-memory service for contracts and future broker composition.
 /// Not installed at provider boundaries until the later integration phases.
 #[derive(Debug)]
@@ -66,6 +77,37 @@ impl AdmissionService {
         Ok(Self {
             policy: crate::domain::inference_admission_policy::AdmissionPolicy::new(epoch, config)?,
         })
+    }
+
+    /// Rehydrate from a durable ledger: same epoch, outstanding work orphaned.
+    pub fn restore(
+        config: AdmissionConfig,
+        ledger: &AdmissionLedger,
+        now: u64,
+    ) -> Result<Self, AdmissionError> {
+        Ok(Self {
+            policy: crate::domain::inference_admission_policy::AdmissionPolicy::restore(
+                config, ledger, now,
+            )?,
+        })
+    }
+}
+
+impl AdmissionRecovery for AdmissionService {
+    fn abandon(&mut self, scope: ScopeId, now: u64) -> Result<AbandonReport, AdmissionError> {
+        self.policy.abandon(scope, now)
+    }
+    fn withdraw(&mut self, scope: ScopeId, sequence: u64, now: u64) -> Result<(), AdmissionError> {
+        self.policy.withdraw(scope, sequence, now)
+    }
+    fn next_wake(&mut self, now: u64) -> Result<Option<u64>, AdmissionError> {
+        self.policy.next_wake(now)
+    }
+    fn ledger(&mut self, now: u64) -> Result<AdmissionLedger, AdmissionError> {
+        self.policy.ledger(now)
+    }
+    fn reset(&mut self, now: u64) -> Result<u64, AdmissionError> {
+        self.policy.reset(now)
     }
 }
 

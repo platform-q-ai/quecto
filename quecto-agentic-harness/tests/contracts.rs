@@ -11,6 +11,8 @@ mod admission_fallback;
 mod admission_feedback;
 #[path = "contracts/admission_group_fallback.rs"]
 mod admission_group_fallback;
+#[path = "contracts/admission_recovery.rs"]
+mod admission_recovery;
 #[path = "contracts/admission_registry.rs"]
 mod admission_registry;
 #[path = "contracts/admission_typed_feedback.rs"]

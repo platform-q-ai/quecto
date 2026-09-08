@@ -1,7 +1,10 @@
 //! Pure queue, pacing and capacity transitions for one accounting epoch.
 use super::inference_admission::*;
 use super::inference_cooldown::FallbackCooldown;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+#[path = "inference_admission_recovery.rs"]
+mod recovery;
 
 #[derive(Debug)]
 struct Scope {
@@ -31,6 +34,10 @@ struct Group {
     contested_pacing_streak: u8,
     last_root: [Option<ScopeId>; 2],
     last_agent: BTreeMap<(u8, ScopeId), ScopeId>,
+    /// Active attempts whose client vanished before acknowledgement.
+    uncertain: BTreeSet<RequestId>,
+    /// Outstanding attempts inherited from a previous authority process.
+    orphans: Vec<OutstandingAttempt>,
 }
 
 /// In-memory policy, deliberately without persistence or transport assumptions.
@@ -64,6 +71,8 @@ impl AdmissionPolicy {
                         contested_pacing_streak: 0,
                         last_root: [None; 2],
                         last_agent: BTreeMap::new(),
+                        uncertain: BTreeSet::new(),
+                        orphans: Vec::new(),
                     },
                 ))
             })
@@ -186,6 +195,12 @@ impl AdmissionPolicy {
         let request = self.requests.get_mut(&id).expect("live request");
         request.state = RequestState::Terminal(outcome);
         request.feedback = feedback;
+        // A terminal transition is verified (client-acknowledged) evidence.
+        self.groups
+            .get_mut(&request.group)
+            .expect("configured group")
+            .uncertain
+            .remove(&id);
         self.terminals.push_back(id);
         while self.terminals.len() > self.config.terminal_capacity {
             if let Some(old) = self.terminals.pop_front() {
@@ -423,8 +438,9 @@ impl AdmissionPolicy {
         self.tick(now)?;
         let group = self.groups.get(id).ok_or(AdmissionError::UnknownGroup)?;
         let mut snapshot = GroupSnapshot {
-            active: 0,
+            active: group.orphans.len(),
             queued: 0,
+            uncertain: group.uncertain.len() + group.orphans.len(),
             cooldown_until: group.cooldown,
             unavailable: group.unavailable,
             observed_at: now,
@@ -445,6 +461,9 @@ impl AdmissionPolicy {
         let group = &self.groups[id];
         if group.unavailable {
             return Err(AdmissionError::Unavailable);
+        }
+        if snapshot.uncertain > 0 {
+            return Err(AdmissionError::Quarantined);
         }
         if snapshot.active >= policy.capacity || now < group.next_start || now < group.cooldown {
             return Ok(None);
