@@ -16,13 +16,6 @@ mod inherited_tool_policy_unit_tests;
 pub mod path_utils;
 mod process_ownership;
 mod process_tree;
-pub mod python_lab;
-#[cfg(test)]
-mod python_lab_ac_gap_tests;
-#[cfg(test)]
-mod python_lab_job_tests;
-#[cfg(test)]
-mod python_lab_tests;
 pub mod recall;
 pub mod registration;
 #[cfg(test)]
@@ -62,6 +55,20 @@ pub(crate) mod subagent_routing;
 #[cfg(test)]
 mod subagent_routing_tests;
 mod subagent_status;
+pub mod swarm;
+#[cfg(test)]
+mod swarm_ac_gap_tests;
+mod swarm_admission;
+pub mod swarm_bridge;
+mod swarm_config;
+mod swarm_control;
+#[cfg(test)]
+mod swarm_job_tests;
+pub mod swarm_lifecycle;
+#[cfg(any(test, feature = "test-support"))]
+pub mod swarm_test_support;
+#[cfg(test)]
+mod swarm_tests;
 pub mod truncate;
 pub mod web_fetch;
 pub mod web_search;
@@ -70,3 +77,8 @@ pub mod workflow_tool;
 #[cfg(test)]
 #[path = "subagent_status_tests.rs"]
 mod subagent_status_tests;
+
+#[cfg(test)]
+mod swarm_bridge_tests;
+#[cfg(test)]
+mod swarm_scope_tests;

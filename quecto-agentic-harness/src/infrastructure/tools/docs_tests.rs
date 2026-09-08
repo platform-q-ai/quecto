@@ -148,3 +148,22 @@ fn subagents_embed_teaches_container_environments() {
         assert!(doc.contains(needle), "subagents embed misses {needle}");
     }
 }
+
+#[tokio::test]
+async fn embedded_swarm_manual_teaches_types_limits_and_terminal_reporting() {
+    let result = DocsTool::for_child_content()
+        .execute(r#"{"name":"swarm"}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    for required in [
+        "list[str]",
+        "RLIMIT_NPROC",
+        "bash",
+        "accepted",
+        "op=summary",
+        "workspace-relative",
+    ] {
+        assert!(result.content.contains(required), "manual lacks {required}");
+    }
+}

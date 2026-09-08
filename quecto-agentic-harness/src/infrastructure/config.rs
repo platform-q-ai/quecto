@@ -200,8 +200,8 @@ impl std::fmt::Debug for OpenAiCompatibleEndpoint {
 pub struct ToolsConfig {
     #[serde(default)]
     pub web: WebToolConfig,
-    #[serde(default)]
-    pub python_lab: crate::infrastructure::tools::python_lab::PythonLabToolConfig,
+    #[serde(default, alias = "python_lab")]
+    pub swarm: crate::infrastructure::tools::swarm::SwarmToolConfig,
     /// Durable catalogue-backed user policy preferences, keyed by stable tool id.
     #[serde(default)]
     pub policy: ToolPolicyConfig,

@@ -170,10 +170,12 @@ async fn local_subagent_inherits_parent_process_group() {
     let dir = TempDir::new().unwrap();
     let cli_args = vec![std::ffi::OsString::from("2")];
     let mut prepared = spawn_local_child(&ChildCommand {
+        swarm_context: None,
         binary: Path::new("/bin/sleep"),
         cli_args: &cli_args,
         base_dir: dir.path(),
     })
+    .await
     .expect("local child should spawn");
 
     let child = prepared.child.as_mut().expect("local launch owns child");
@@ -303,6 +305,7 @@ async fn run_cleanup_once_ignores_missing_env_or_empty_argv() {
 #[tokio::test]
 async fn cleanup_plan_clones_environment_and_argv() {
     let prepared = PreparedChild {
+        swarm_reservation: None,
         child: Some(tokio::process::Command::new("true").spawn().unwrap()),
         environment_ref: Some("C-test".into()),
         endpoint: None,
@@ -324,6 +327,7 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
         spawn_prepared_child(
             &local,
             &ChildCommand {
+                swarm_context: None,
                 binary: Path::new("/definitely/not/quecto"),
                 cli_args: &[],
                 base_dir: Path::new("/tmp"),
@@ -343,6 +347,7 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
         spawn_prepared_child(
             &without_config,
             &ChildCommand {
+                swarm_context: None,
                 binary: Path::new("true"),
                 cli_args: &[],
                 base_dir: Path::new("/tmp"),
@@ -359,6 +364,7 @@ async fn local_child_and_container_errors_cover_spawn_paths() {
         spawn_prepared_child(
             &without_config,
             &ChildCommand {
+                swarm_context: None,
                 binary: Path::new("true"),
                 cli_args: &[],
                 base_dir: Path::new("/tmp"),
@@ -394,6 +400,7 @@ async fn script_managed_spawn_error_uses_config_and_selected_script() {
         spawn_prepared_child(
             &config,
             &ChildCommand {
+                swarm_context: None,
                 binary: Path::new("true"),
                 cli_args: &[],
                 base_dir: dir.path(),
@@ -465,6 +472,7 @@ async fn script_env_includes_optional_selection_values() {
     spawn_prepared_child(
         &config,
         &ChildCommand {
+            swarm_context: None,
             binary: Path::new("true"),
             cli_args: &[],
             base_dir: dir.path(),
@@ -494,6 +502,7 @@ async fn local_child_success_has_no_cleanup_plan() {
     let mut prepared = spawn_prepared_child(
         &config,
         &ChildCommand {
+            swarm_context: None,
             binary: Path::new("true"),
             cli_args: &[],
             base_dir: Path::new("/tmp"),
@@ -529,6 +538,7 @@ async fn rollback_kills_child_and_consumes_cleanup_once() {
     let registry = EnvironmentRegistry::new();
     registry.commit(test_record("C-test", "env-test"));
     let mut prepared = PreparedChild {
+        swarm_reservation: None,
         child: Some(
             tokio::process::Command::new("sleep")
                 .arg("30")
@@ -571,6 +581,7 @@ async fn script_managed_child_success_sets_environment_ref_and_cleanup() {
     let prepared = spawn_prepared_child(
         &config,
         &ChildCommand {
+            swarm_context: None,
             binary: Path::new("true"),
             cli_args: &[],
             base_dir: dir.path(),
@@ -671,6 +682,7 @@ fn environment_name_is_taken_from_new_mode_only() {
 async fn join_fails_for_unknown_target_and_missing_retained_exec() {
     let registry = EnvironmentRegistry::new();
     let child = ChildCommand {
+        swarm_context: None,
         binary: Path::new("true"),
         cli_args: &[],
         base_dir: Path::new("/tmp"),

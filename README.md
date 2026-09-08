@@ -151,6 +151,7 @@ Some crates also have BDD test targets and package-specific quality scripts. Bef
 - Harness user guide and CLI/UDS reference: [quecto-agentic-harness/README.md](quecto-agentic-harness/README.md)
 - Workflows and templates: [quecto-agentic-harness/docs/workflow.md](quecto-agentic-harness/docs/workflow.md)
 - Subagent spawning and control commands: [quecto-agentic-harness/docs/subagents.md](quecto-agentic-harness/docs/subagents.md)
+- Swarm goals, setup, inspection and results: [Swarm workbench](quecto-agentic-harness/docs/swarm.md)
 - Sessions, context management, spill, and recall: [quecto-agentic-harness/docs/sessions.md](quecto-agentic-harness/docs/sessions.md)
 - Tool policy and command governance: [quecto-agentic-harness/docs/tool-policy.md](quecto-agentic-harness/docs/tool-policy.md)
 - Dangerous-command denylist (not OS isolation): [quecto-agentic-harness/docs/command-policy.md](quecto-agentic-harness/docs/command-policy.md)

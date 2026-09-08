@@ -11,12 +11,11 @@ fn run_repl(args: &[&str], input: &str) -> std::process::Output {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(input.as_bytes())
-        .unwrap();
+    if let Err(error) = child.stdin.take().unwrap().write_all(input.as_bytes()) {
+        // Invalid arguments may close stdin before the parent is scheduled.
+        // Each scenario still verifies the actual exit status and diagnostics.
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe, "{error}");
+    }
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
         if child.try_wait().unwrap().is_some() {

@@ -147,7 +147,7 @@ fi
 # QUECTO_BASE_DIR is quecto's credentials/config home ($HOME/.quecto by
 # default). Overriding it inside the container detaches the child from the
 # identity-mounted $HOME/.quecto and breaks OAuth providers — do not set it.
-envs=(-e "HOME=$HOME")
+envs=(-e "HOME=$HOME" -e "QUECTO_SWARM_CONTAINER=isolated-pid-v1" -e "QUECTO_SWARM_HOST_PID_NS=$(readlink /proc/self/ns/pid)" -e "QUECTO_SWARM_CHECKOUT=$child_cwd" -e "QUECTO_SWARM_BOOTSTRAP=1")
 # Run as the host user so the identity-mounted paths keep their ownership.
 # Under rootless Podman, --userns=keep-id maps the host uid/gid to the same
 # ids inside the container (the default rootless mapping would send uid 1000

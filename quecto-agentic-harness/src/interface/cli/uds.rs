@@ -742,3 +742,7 @@ mod tests;
 #[cfg(test)]
 #[path = "uds_workflow_automation_tests.rs"]
 mod workflow_automation_tests;
+
+#[cfg(test)]
+#[path = "uds_swarm_feedback_tests.rs"]
+mod swarm_feedback_tests;

@@ -20,6 +20,7 @@ pub(crate) struct AgentOutput<'a> {
 
 mod agent_deadline;
 mod flag_parse;
+mod swarm_runtime;
 pub(crate) use agent_deadline::{DeadlineResult, run_with_deadline};
 mod flag_private;
 pub(crate) use flag_parse::AgentFlags;
@@ -235,8 +236,10 @@ pub(crate) fn cmd_agent(
         None => return 1,
     };
     flags.cwd_override = ctx.cwd.clone();
+    if !swarm_runtime::admit(&mut flags, stderr) {
+        return 1;
+    }
 
-    // ── UDS mode ──────────────────────────────────────────────────────────────
     if flags.uds_mode {
         return cmd_agent_uds(ctx, flags, stderr);
     }
@@ -679,6 +682,9 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         dir.join(format!("quecto-agent-{id}.sock"))
     });
 
+    if !swarm_runtime::bind_socket(&socket_path, stderr) {
+        return 1;
+    }
     let mut provider_reload = build.provider_reload;
     let code = crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
         agent,

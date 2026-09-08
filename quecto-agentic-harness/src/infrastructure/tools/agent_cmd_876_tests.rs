@@ -249,3 +249,40 @@ async fn busy_child_set_model_clear_history_return_promptly_without_starting_run
         );
     }
 }
+
+#[tokio::test]
+async fn rejected_clarification_is_an_agent_cmd_tool_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let socket = tmp.path().join("rejected.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let server = std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let Some(line) = crate::infrastructure::test_support::read_framed_command(&stream)
+            else {
+                continue;
+            };
+            let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+            writeln!(stream,"{}",serde_json::json!({"type":"response","id":request["id"],"command":"steer","success":false,"error":"control queue is full; message was not queued"})).unwrap();
+            break;
+        }
+    });
+    let registry = new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("coordinator".into(), SubagentEntry::new(socket, 0));
+    let tool = AgentCmdTool::new(registry);
+    let result = run_with_overall_cap(
+        &tool,
+        r#"{"agent_id":"coordinator","command":"steer","message":"Approved: schema v2"}"#,
+    )
+    .await;
+    server.join().unwrap();
+    assert!(
+        result.is_error,
+        "negative delivery acknowledgment was presented as success: {}",
+        result.content
+    );
+    assert!(result.content.contains("message was not queued"));
+}

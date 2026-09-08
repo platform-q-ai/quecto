@@ -10,7 +10,7 @@ Example:
     "policy": {
       "entries": {
         "tool.v1:native:21:quecto:official-tools:web_search": { "scope": "both" },
-        "tool.v1:native:21:quecto:official-tools:python_lab": { "scope": "none" }
+        "tool.v1:native:21:quecto:official-tools:swarm": { "scope": "none" }
       }
     }
   }

@@ -193,6 +193,23 @@ pub(crate) fn build_tool_runtime(
         stderr,
     } = args;
 
+    // All composed harness entrypoints share startup admission, including
+    // nested agents with a new session or a different provider entrypoint.
+    let swarm_context = swarm_context();
+    let swarm_agent = swarm_context.is_some();
+    crate::domain::swarm::validate_workflow(
+        swarm_agent,
+        workflow.workflow_guards || workflow.workflow_spec_path.is_some(),
+    )
+    .map_err(|e| e.to_string())?;
+    if let Some(context) = &swarm_context {
+        crate::infrastructure::tools::swarm_lifecycle::join_current_process(
+            context,
+            crate::infrastructure::tools::swarm_bridge::process_socket(),
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
     // PR #1401 review: the parent may have been launched with a RELATIVE
     // `--config` (or hit the relative `.quecto` base-dir fallback). Container
     // spawns reuse this path as their trusted-config fallback, which demands
@@ -203,11 +220,13 @@ pub(crate) fn build_tool_runtime(
     let parent_config_path = canonical_parent_config_path(parent_config_path);
 
     let mut policy_state = ToolRuntimePolicyState::for_entrypoint(entrypoint);
+    policy_state.workflow_supported &= !swarm_agent;
     policy_state.inherited_tool_policy = inherited_tool_policy.clone();
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     register_bundled_native_tools_with_scope(
         &mut registry,
         build_official_tool_extensions(OfficialToolDeps {
+            swarm_context: swarm_context.clone(),
             workspace,
             sandbox,
             exec_options,
@@ -216,8 +235,8 @@ pub(crate) fn build_tool_runtime(
             } else {
                 crate::infrastructure::tools::docs::DocsContentPolicy::Parent
             },
-            python_lab_config: crate::infrastructure::tools::python_lab::PythonLabConfig::from(
-                config.tools.python_lab.clone(),
+            swarm_config: crate::infrastructure::tools::swarm::SwarmConfig::from(
+                config.tools.swarm.clone(),
             ),
         }),
         match profile_context {
@@ -242,6 +261,7 @@ pub(crate) fn build_tool_runtime(
     // for every entrypoint. REPL's current public surface is preserved below by
     // policy-disabling the tools after registration.
     let agent_control = build_agent_control_tool_extensions(AgentControlToolDeps {
+        swarm_context,
         base_dir: base_dir.to_path_buf(),
         socket_dir: crate::interface::shared::xdg_runtime_dir_or_temp(),
         broadcast_tx: workflow.broadcast_tx.clone(),
@@ -258,7 +278,14 @@ pub(crate) fn build_tool_runtime(
         registry.disable_tool_by_entrypoint_default("agent_cmd");
     }
 
-    let wf_state = build_workflow_runtime(&mut registry, entrypoint, config, workflow, stderr)?;
+    let wf_state = build_workflow_runtime(
+        &mut registry,
+        entrypoint,
+        config,
+        workflow,
+        stderr,
+        swarm_agent,
+    )?;
 
     let ext_registry =
         crate::interface::shared::build_and_register_native_extensions(config, http_client);
@@ -327,7 +354,16 @@ fn build_workflow_runtime(
     config: &crate::infrastructure::config::Config,
     workflow: ToolRuntimeWorkflowPolicy<'_>,
     stderr: &mut String,
+    swarm_agent: bool,
 ) -> Result<Option<crate::interface::shared::WorkflowStateHandle>, String> {
+    crate::domain::swarm::validate_workflow(
+        swarm_agent,
+        workflow.workflow_guards || workflow.workflow_spec_path.is_some(),
+    )
+    .map_err(|e| e.to_string())?;
+    if swarm_agent {
+        return Ok(None);
+    }
     if !entrypoint.workflow_supported() {
         return Ok(None);
     }
@@ -445,4 +481,10 @@ pub(crate) fn load_workflow_spec(
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_file(path);
     serde_json::from_slice(&bytes).map_err(|e| e.to_string())
+}
+
+pub(crate) fn swarm_context() -> Option<crate::infrastructure::tools::swarm_bridge::SwarmContext> {
+    crate::infrastructure::tools::swarm_bridge::SwarmContext::discover(std::sync::Arc::new(
+        crate::application::swarm::LifecycleService,
+    ))
 }

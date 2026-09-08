@@ -3,13 +3,13 @@ use std::sync::Arc;
 use crate::domain::tool::Tool;
 use crate::infrastructure::security::sandbox::Sandbox;
 
-use super::python_lab::{PythonLabConfig, PythonLabTool};
+use super::swarm::{SwarmConfig, SwarmTool};
 
-fn tool(dir: &std::path::Path) -> PythonLabTool {
-    PythonLabTool::new(
+fn tool(dir: &std::path::Path) -> SwarmTool {
+    super::swarm_test_support::tool(
         Arc::new(dir.to_path_buf()),
         Arc::new(Sandbox::new(Some(dir.to_path_buf()))),
-        PythonLabConfig {
+        SwarmConfig {
             default_timeout_seconds: 1,
             max_foreground_seconds: 2,
             default_max_output_bytes: 8,
@@ -49,7 +49,7 @@ async fn rewritten_artifacts_are_flagged_on_output() {
     let exec_id = v["execution_id"].as_str().unwrap();
     let artifact = tmp
         .path()
-        .join(format!(".quecto/python_lab/{exec_id}/stdout.txt"));
+        .join(format!(".quecto/swarm/{exec_id}/stdout.txt"));
     std::fs::write(&artifact, "ALL TESTS PASSED, forged by another program").unwrap();
     let tampered = lab
         .execute(&format!(r#"{{"op":"output","job_id":"{job_id}"}}"#))
@@ -111,7 +111,7 @@ async fn old_artifact_directories_are_pruned() {
     for _ in 0..40 {
         lab.execute(r#"{"op":"run","code":"pass"}"#).await.unwrap();
     }
-    let root = tmp.path().join(".quecto/python_lab");
+    let root = tmp.path().join(".quecto/swarm");
     let dirs = std::fs::read_dir(&root).unwrap().flatten().count();
     assert!(
         dirs <= 33,
@@ -192,10 +192,10 @@ async fn background_output_does_not_flag_lossy_utf8_as_artifact_tampering() {
 #[tokio::test]
 async fn concurrent_background_jobs_are_capped_until_cancelled() {
     let tmp = tempfile::tempdir().unwrap();
-    let lab = PythonLabTool::new(
+    let lab = super::swarm_test_support::tool(
         Arc::new(tmp.path().to_path_buf()),
         Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()))),
-        PythonLabConfig {
+        SwarmConfig {
             max_concurrent_jobs: 1,
             default_timeout_seconds: 5,
             ..Default::default()
@@ -285,7 +285,7 @@ async fn background_output_is_empty_before_artifacts_exist() {
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&started.content).unwrap();
     let job_id = v["job_id"].as_str().unwrap();
-    for entry in std::fs::read_dir(tmp.path().join(".quecto/python_lab")).unwrap() {
+    for entry in std::fs::read_dir(tmp.path().join(".quecto/swarm")).unwrap() {
         let dir = entry.unwrap().path();
         let _ = std::fs::remove_file(dir.join("stdout.txt"));
         let _ = std::fs::remove_file(dir.join("stderr.txt"));
@@ -473,4 +473,88 @@ async fn cancel_during_result_build_is_not_overwritten() {
             .await;
         tokio::time::sleep(std::time::Duration::from_millis(2)).await;
     }
+}
+
+#[tokio::test]
+async fn another_member_cannot_prune_a_live_foreground_result() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fast = tool(tmp.path());
+    let worker = super::swarm_bridge::SwarmContext {
+        checkout: tmp.path().to_path_buf(),
+        member: "worker".into(),
+        lifecycle: Arc::new(crate::application::ports::SwarmTestLifecycle),
+    };
+    let parent = super::swarm_bridge::SwarmContext {
+        member: "coordinator".into(),
+        ..worker.clone()
+    };
+    parent
+        .call("_admit", serde_json::json!(["worker", "reservation"]))
+        .unwrap();
+    parent
+        .call(
+            "_activate",
+            serde_json::json!(["worker", "reservation", 123, "start", null]),
+        )
+        .unwrap();
+    let slow = SwarmTool::new(
+        Arc::new(tmp.path().to_path_buf()),
+        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()))),
+        SwarmConfig::default(),
+    )
+    .with_context(Some(worker));
+    let run = tokio::spawn(async move {
+        slow.execute(r#"{"op":"run","code":"import pathlib,time; pathlib.Path('ready').touch();\nwhile not pathlib.Path('release').exists(): time.sleep(0.01)\nprint('survived')","timeout_seconds":30}"#).await.unwrap()
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !tmp.path().join("ready").exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    for _ in 0..40 {
+        fast.execute(r#"{"op":"run","code":"pass"}"#).await.unwrap();
+    }
+    std::fs::write(tmp.path().join("release"), "").unwrap();
+    let result = run.await.unwrap();
+    let value: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(value["stdout"], "survived\n", "{}", result.content);
+}
+
+#[tokio::test]
+async fn foreground_registration_preserves_background_job_capacity() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lab = Arc::new(super::swarm_test_support::tool(
+        Arc::new(tmp.path().to_path_buf()),
+        Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()))),
+        SwarmConfig {
+            max_concurrent_jobs: 1,
+            ..Default::default()
+        },
+    ));
+    let foreground = {
+        let lab = lab.clone();
+        tokio::spawn(async move {
+            lab.execute(r#"{"op":"run","code":"import pathlib,time; pathlib.Path('ready').touch();\nwhile not pathlib.Path('release').exists(): time.sleep(0.01)","timeout_seconds":30}"#).await.unwrap()
+        })
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !tmp.path().join("ready").exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let background = lab
+        .execute(r#"{"op":"run","code":"pass","background":true}"#)
+        .await
+        .unwrap();
+    std::fs::write(tmp.path().join("release"), "").unwrap();
+    assert!(!foreground.await.unwrap().is_error);
+    assert!(
+        !background.is_error,
+        "foreground work consumed the background job slot: {}",
+        background.content
+    );
 }

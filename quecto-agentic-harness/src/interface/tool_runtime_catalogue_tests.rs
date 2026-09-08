@@ -132,3 +132,53 @@ fn fresh_child_runtime_catalogue_leaves_agent_control_tools_available_to_parent_
         assert!(entry.effective_enabled, "{name} effective enabled");
     }
 }
+
+#[test]
+fn swarm_runtime_omits_workflow_engine_tool_and_guards() {
+    let root = tempfile::tempdir().unwrap();
+    let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+    let config = crate::infrastructure::config::Config::default();
+    let mut workflow = ToolRuntimeWorkflowPolicy::disabled(root.path(), None);
+    workflow.workflow_disabled = false; // Normal UDS default makes workflow available.
+    let state = super::build_workflow_runtime(
+        &mut registry,
+        ToolEntrypoint::UdsAgent,
+        &config,
+        workflow,
+        &mut String::new(),
+        true,
+    )
+    .unwrap();
+    assert!(state.is_none());
+    assert_eq!(registry.guard_count(), 0);
+    assert!(registry.get("workflow").is_none());
+    assert!(!registry.definitions().iter().any(|t| t.name == "workflow"));
+}
+
+#[test]
+fn swarm_runtime_rejects_guards_and_bound_specs_before_loading_files() {
+    let root = tempfile::tempdir().unwrap();
+    let spec = root.path().join("unread-spec.json");
+    std::fs::write(&spec, "not loaded").unwrap();
+    for bound in [false, true] {
+        let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+        let config = crate::infrastructure::config::Config::default();
+        let mut workflow = ToolRuntimeWorkflowPolicy::disabled(root.path(), None);
+        workflow.workflow_guards = !bound;
+        workflow.workflow_spec_path = bound.then_some(spec.as_path());
+        let error = super::build_workflow_runtime(
+            &mut registry,
+            ToolEntrypoint::UdsAgent,
+            &config,
+            workflow,
+            &mut String::new(),
+            true,
+        )
+        .unwrap_err();
+        assert!(error.contains("workflow is unavailable for swarm agents"));
+        assert!(
+            spec.exists(),
+            "rejection must precede bound-spec consumption"
+        );
+    }
+}

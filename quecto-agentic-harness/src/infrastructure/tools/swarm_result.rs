@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde_json::json;
 
-use super::{PythonLabConfig, artifact_rel, read_preview, truncation_marker_exists};
+use super::{SwarmConfig, read_preview, rel, truncation_marker_exists};
 use crate::domain::error::DomainError;
 
 /// True when an artifact's size no longer matches what was captured when the
@@ -33,6 +33,7 @@ pub(crate) async fn artifacts_diverged(
 }
 
 pub(crate) struct ResultContext<'a> {
+    pub(crate) workspace: &'a Path,
     pub(crate) status: &'a str,
     pub(crate) exit_code: Option<i32>,
     pub(crate) exec_id: &'a str,
@@ -46,7 +47,7 @@ pub(crate) struct ResultContext<'a> {
     pub(crate) stderr_path: &'a Path,
     pub(crate) max_out: usize,
     pub(crate) changed: Vec<String>,
-    pub(crate) cfg: &'a PythonLabConfig,
+    pub(crate) cfg: &'a SwarmConfig,
 }
 
 pub(crate) async fn build_result(ctx: ResultContext<'_>) -> Result<serde_json::Value, DomainError> {
@@ -59,7 +60,7 @@ pub(crate) async fn build_result(ctx: ResultContext<'_>) -> Result<serde_json::V
     let artifact_paths = [(st, ctx.stdout_path), (et, ctx.stderr_path)]
         .into_iter()
         .filter(|(t, _)| *t)
-        .map(|(_, p)| artifact_rel(p))
+        .map(|(_, p)| rel(ctx.workspace, p))
         .collect::<Vec<_>>();
     // Per-process CPU and peak-RSS accounting would need wait4(2) rusage, which
     // tokio::process reaps internally and does not expose. Those fields are
@@ -87,6 +88,8 @@ pub(crate) async fn build_result(ctx: ResultContext<'_>) -> Result<serde_json::V
             obj.insert("stderr_truncated".into(), json!(true));
         }
         obj.insert("artifact_paths".into(), json!(artifact_paths));
+        obj.insert("artifact_namespace".into(), json!("workspace-relative"));
+        obj.insert("artifact_base".into(), json!(ctx.workspace));
         obj.insert("resource_usage".into(), resource_usage.clone());
     }
     if !ctx.changed.is_empty() {
@@ -116,6 +119,16 @@ pub(crate) async fn build_result(ctx: ResultContext<'_>) -> Result<serde_json::V
             json!({"memory_bytes":ctx.cfg.max_memory_bytes,"cpu_seconds":ctx.cfg.max_cpu_seconds,"processes":ctx.cfg.max_processes}),
         );
         obj.insert("resource_usage".into(), resource_usage);
+    }
+    if ctx.cfg.max_processes == Some(1)
+        && result["stderr"]
+            .as_str()
+            .is_some_and(|s| s.contains("BlockingIOError: [Errno 11]"))
+    {
+        result["resource_limits"] = json!({"memory_bytes":ctx.cfg.max_memory_bytes,"cpu_seconds":ctx.cfg.max_cpu_seconds,"processes":ctx.cfg.max_processes});
+        result["diagnostic"] = json!(
+            "Python is configured with RLIMIT_NPROC=1; child processes may be denied even when the container has capacity. Use the bash tool for external commands under its configured policy, and use Python for in-process work and board coordination. Do not change limits from agent code."
+        );
     }
     Ok(result)
 }

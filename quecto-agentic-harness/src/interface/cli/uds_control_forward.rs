@@ -10,13 +10,15 @@
 //! The parent marks these forwards with `"ack":"accept"`. The child's
 //! per-connection reader task — which runs independently of the (possibly
 //! blocked) dispatch loop — recognises the marker and:
-//!   1. emits an IMMEDIATE, id-correlated acceptance ack to THAT client, so the
+//!   1. reserves dispatch capacity for queueable work; rejected admission does
+//!      not interrupt the active turn;
+//!   2. emits an IMMEDIATE, id-correlated acceptance ack to THAT client, so the
 //!      parent returns on ACCEPTANCE rather than on the child's turn completion
 //!      (preserving #835 id-correlation); and
-//!   2. forwards the work to the dispatch loop transformed so a busy child
+//!   3. forwards the work to the dispatch loop transformed so a busy child
 //!      QUEUES it for the next turn (`prompt`/`follow_up` → `follow_up`) while
 //!      `steer`/`abort` keep interrupting via the cancel side-channel that the
-//!      reader already fires.
+//!      reader fires after admission (abort needs no queue slot).
 //!
 //! Completion still surfaces later via the passive completion-note path (#816). The marker gates this
 //! behaviour to the `agent_cmd` forward path only, so interactive TUI/CLI
@@ -78,8 +80,8 @@ pub(super) fn intercept_control_forward(line: &str) -> Option<AcceptedControl> {
         "prompt" | "follow_up" => {
             Some(serde_json::json!({ "type": "follow_up", "message": message? }).to_string())
         }
-        // steer/abort interrupt via the cancel side-channel the reader already
-        // fired; steer also re-queues its message ahead of the line.
+        // Steering interrupts only after the reader reserves queue capacity.
+        // Explicit abort uses its independent cancellation side-channel.
         "steer" => Some(serde_json::json!({ "type": "prompt", "message": message?, "streamingBehavior": "steer" }).to_string()),
         "abort" => None,
         "set_model" | "clear_history" => {

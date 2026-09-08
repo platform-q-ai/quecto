@@ -7,11 +7,15 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 use crate::domain::error::DomainError;
-use crate::infrastructure::tools::python_lab::{JobState, RunSpec};
+use crate::infrastructure::tools::swarm::{JobState, RunSpec};
 
 /// PATH handed to the interpreter when the environment is cleared. Includes
 /// `/usr/local/bin` because that is where a source-built or Homebrew `python3`
 /// commonly lives; omitting it made the tool unusable on those hosts.
+#[path = "swarm_scope.rs"]
+mod swarm_scope;
+use swarm_scope::ExecutionScope;
+
 const CHILD_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
 
 pub(crate) async fn run_child(
@@ -32,14 +36,22 @@ pub(crate) async fn run_child(
             .env("PYTHONNOUSERSITE", "1");
     }
     apply_child_limits(&mut cmd, &spec);
-    if let Some(src) = spec.code {
+    if let Some(bootstrap) = &spec.bootstrap {
+        let program = match &spec.code {
+            Some(source) => format!(
+                "sys.argv=['-c']+sys.argv[1:]\nexec(compile({}, '<swarm>', 'exec'), {{'__name__':'__main__'}})",
+                serde_json::json!(source)
+            ),
+            None => format!(
+                "import os, runpy\nsys.argv=[{}]+sys.argv[1:]\nif not os.path.exists(sys.argv[0]):\n print(\"python3: can't open file \"+repr(sys.argv[0]),file=sys.stderr); sys.exit(2)\nrunpy.run_path({},run_name='__main__')",
+                serde_json::json!(spec.script),
+                serde_json::json!(spec.script)
+            ),
+        };
+        cmd.arg("-c").arg(format!("{bootstrap}\n{program}"));
+    } else if let Some(src) = spec.code {
         cmd.arg("-c").arg(src);
     } else {
-        // Defence in depth only: `spec.script` comes back from the sandbox
-        // validator already canonicalised and absolute, so it can never be
-        // mistaken for an interpreter option. That also makes this separator
-        // impossible to exercise through the public API — it guards against a
-        // future change that stops canonicalising, not against today's input.
         cmd.arg("--").arg(spec.script.unwrap());
     }
     for a in spec.args {
@@ -50,39 +62,42 @@ pub(crate) async fn run_child(
     }
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| DomainError::Other(format!("failed to start python3: {e}")))?;
+    // Serialize spawn/identity publication against registry cancellation. A
+    // cancellation that wins this lock prevents the child from starting.
+    let child = {
+        let mut job = state.as_ref().map(|s| s.lock().unwrap());
+        if job.as_ref().is_some_and(|s| s.cancel_requested) {
+            return Ok(("cancelled".into(), None));
+        }
+        let child = cmd
+            .spawn()
+            .map_err(|e| DomainError::Other(format!("failed to start python3: {e}")))?;
+        if let Some(job) = &mut job {
+            job.pid = child.id();
+        }
+        child
+    };
+    let mut child = ExecutionScope::new(child, state.clone());
     // Each stream gets its own budget. A shared one let whichever stream wrote
     // first consume the whole allowance, so a program that flooded stdout could
     // erase its own traceback from stderr — including from the artifact that is
     // supposed to make truncated output recoverable.
-    let stdout_task = child.stdout.take().map(|pipe| {
+    let stdout_task = child.child.stdout.take().map(|pipe| {
         tokio::spawn(copy_output(
             pipe,
             stdout_path.to_path_buf(),
             Arc::new(AtomicUsize::new(spec.artifact_max_bytes)),
         ))
     });
-    let stderr_task = child.stderr.take().map(|pipe| {
+    let stderr_task = child.child.stderr.take().map(|pipe| {
         tokio::spawn(copy_output(
             pipe,
             stderr_path.to_path_buf(),
             Arc::new(AtomicUsize::new(spec.artifact_max_bytes)),
         ))
     });
-    if let Some(st) = &state {
-        if let Ok(mut s) = st.lock() {
-            s.pid = child.id();
-            if s.cancel_requested {
-                if let Some(pid) = s.pid {
-                    kill_pid(pid);
-                }
-            }
-        }
-    }
     if let Some(input) = spec.stdin {
-        if let Some(mut pipe) = child.stdin.take() {
+        if let Some(mut pipe) = child.child.stdin.take() {
             tokio::spawn(async move {
                 let _ = pipe.write_all(input.as_bytes()).await;
             });
@@ -93,24 +108,11 @@ pub(crate) async fn run_child(
         Ok(Ok(st)) => Ok(("completed".into(), st.code())),
         Ok(Err(e)) => Err(DomainError::Other(format!("python3 execution failed: {e}"))),
         Err(_) => {
-            if let Some(pid) = child.id() {
-                kill_pid(pid);
-                kill_pid_tree_best_effort(pid);
-            } else {
-                let _ = child.kill().await;
-            }
+            child.terminate();
             let _ = child.wait().await;
             Ok(("timed_out".into(), None))
         }
     };
-    // The child has been reaped, so its pid may be recycled by the OS at any
-    // point from here. Clear it before anything else can signal it: a later
-    // cancel or teardown would otherwise SIGKILL an unrelated process group.
-    if let Some(st) = &state {
-        if let Ok(mut s) = st.lock() {
-            s.pid = None;
-        }
-    }
     let drain_timeout = if matches!(outcome, Ok((ref st, _)) if st == "timed_out")
         || state
             .as_ref()
