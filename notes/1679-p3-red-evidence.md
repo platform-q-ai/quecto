@@ -230,3 +230,19 @@ broker, process, config and real-process suites).
 |R2-9 low: replayed queued acquire displaced the waiter|replay observes the queued state; the original waiter keeps the grant|`a_replayed_queued_acquire_keeps_the_first_waiter` (raw framed client)|
 |R2-10 note: 256 KiB frame cap per connection|accepted; same-UID peers only, documented threat model|—|
 |R2-11 note: `process::current()` service locator in the launch path|accepted for P3 (scope registration, not admission state); candidate for P4 injection|—|
+
+## Second-review fix mutations
+    === MUTANT S1 no release on clean disconnect [closing_without_uncertain]
+      test inference_admission_broker_cov::closing_without_uncertain_work_retires_the_scope ... FAILED
+    === MUTANT S2 second bind accepted [a_session_cannot_bind]
+      test inference_admission_broker_cov::a_session_cannot_bind_a_second_capability ... FAILED
+    === MUTANT S3 replay displaces waiter [a_replayed_queued_acquire]
+      test inference_admission_broker_cov::a_replayed_queued_acquire_keeps_the_first_waiter ... FAILED
+    === MUTANT S4 base-dir authority accepted [authority_directory_may_not_be]
+      test infrastructure::config::admission_tests::authority_directory_may_not_be_the_base_dir_itself ... FAILED
+    === MUTANT S5 sidecar kept on failure [child_negotiation_consumes]
+      test infrastructure::admission::process::tests::child_negotiation_consumes_its_sidecar_and_rejects_forgeries ... FAILED
+    === MUTANT S6 client creates directories [root_install_binds]
+      test infrastructure::admission::process::tests::root_install_binds_gates_and_shutdown_retires_the_scope ... FAILED
+
+All six killed.
