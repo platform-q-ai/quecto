@@ -221,6 +221,28 @@ fn validate_agent_flags(flags: AgentFlags, stderr: &mut String) -> Option<AgentF
     Some(flags)
 }
 
+fn initialization_directory(ctx: &CliContext) -> Result<std::path::PathBuf, String> {
+    if let Some(cwd) = &ctx.cwd {
+        return Ok(cwd.clone());
+    }
+    std::env::current_dir()
+        .map_err(|error| format!("failed to determine agent initialization directory: {error}"))
+}
+
+fn compose_startup_system_prompt(
+    agents_instructions: Option<&str>,
+    explicit_system_prompt: Option<&str>,
+    spawned: bool,
+    extension_prompt_snippets: &str,
+) -> String {
+    crate::interface::shared::build_agent_system_prompt(
+        agents_instructions,
+        explicit_system_prompt,
+        spawned,
+        extension_prompt_snippets,
+    )
+}
+
 pub(crate) fn cmd_agent(
     ctx: &CliContext,
     args: &[String],
@@ -250,6 +272,26 @@ pub(crate) fn cmd_agent(
         return 1;
     }
 
+    let initialization_dir = match initialization_directory(ctx) {
+        Ok(directory) => directory,
+        Err(error) => {
+            stderr.push_str(&error);
+            stderr.push('\n');
+            return 1;
+        }
+    };
+    let agents_instructions =
+        match crate::infrastructure::agents_instructions::load_agents_instructions(
+            &initialization_dir,
+        ) {
+            Ok(instructions) => instructions,
+            Err(error) => {
+                stderr.push_str(&error);
+                stderr.push('\n');
+                return 1;
+            }
+        };
+
     let base_dir = ctx.base_dir();
     let config_path = ctx.config_path();
     let build = match build_agent_from_config(
@@ -264,14 +306,12 @@ pub(crate) fn cmd_agent(
         None => return 1,
     };
 
-    // Build system prompt: top-level parent guidance, or minimal child prompt (#1319).
-    let mut system =
-        crate::interface::shared::build_system_prompt(&flags.system_prompt, flags.spawned);
-    crate::interface::shared::append_extension_prompt(
-        &mut system,
+    flags.system_prompt = Some(compose_startup_system_prompt(
+        agents_instructions.as_deref(),
+        flags.system_prompt.as_deref(),
+        flags.spawned,
         &build.extension_prompt_snippets,
-    );
-    flags.system_prompt = Some(system);
+    ));
     let mut out = AgentOutput { stdout, stderr };
     run_agent_session(&base_dir, build.agent, &flags, &mut out)
 }
@@ -604,6 +644,26 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         flags.session_key_override = Some(session_key.clone());
     }
 
+    let initialization_dir = match initialization_directory(ctx) {
+        Ok(directory) => directory,
+        Err(error) => {
+            stderr.push_str(&error);
+            stderr.push('\n');
+            return 1;
+        }
+    };
+    let agents_instructions =
+        match crate::infrastructure::agents_instructions::load_agents_instructions(
+            &initialization_dir,
+        ) {
+            Ok(instructions) => instructions,
+            Err(error) => {
+                stderr.push_str(&error);
+                stderr.push('\n');
+                return 1;
+            }
+        };
+
     let base_dir = ctx.base_dir();
     let config_path = ctx.config_path();
     // Create the broadcast channel early so the WorkflowTool emitter can
@@ -659,10 +719,10 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     // session (#1113): workflow state is never appended, so the provider-side
     // cached prefix survives every workflow step. Dynamic workflow state
     // reaches the model through tool results and idle-boundary nudges.
-    let mut system_prompt =
-        crate::interface::shared::build_system_prompt(&flags.system_prompt, flags.spawned);
-    crate::interface::shared::append_extension_prompt(
-        &mut system_prompt,
+    let system_prompt = compose_startup_system_prompt(
+        agents_instructions.as_deref(),
+        flags.system_prompt.as_deref(),
+        flags.spawned,
         &build.extension_prompt_snippets,
     );
 
@@ -715,6 +775,9 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
 #[path = "agent_provider.rs"]
 mod agent_provider;
 pub use agent_provider::build_agent_provider;
+#[cfg(test)]
+#[path = "agent_agents_md_tests.rs"]
+mod agents_md_tests;
 #[cfg(test)]
 #[path = "agent_935_clamp_tests.rs"]
 mod clamp_935_tests;

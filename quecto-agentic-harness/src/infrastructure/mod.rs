@@ -1,3 +1,6 @@
+pub mod agents_instructions;
+#[cfg(test)]
+mod agents_instructions_tests;
 pub mod atomic_write;
 pub mod auth;
 pub mod catalogue_discovery;
