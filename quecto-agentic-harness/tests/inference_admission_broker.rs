@@ -202,7 +202,7 @@ async fn dropping_a_queued_acquire_cancels_it_before_dispatch() {
     let temp = tempfile::tempdir().unwrap();
     let server = AuthorityServer::start(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
-        proposal(1, 5_000),
+        proposal(1, 60_000),
     )
     .await
     .unwrap();
@@ -217,12 +217,14 @@ async fn dropping_a_queued_acquire_cancels_it_before_dispatch() {
     let admin = AdminConnection::connect(&server.directory().admin_socket())
         .await
         .unwrap();
-    timeout(LIMIT, async {
+    // The queue deadline is a minute away: only an explicit cancel can empty
+    // the queue this quickly.
+    timeout(Duration::from_secs(1), async {
         loop {
             if admin.inspect().await.unwrap().groups[&group()].queued == 0 {
                 break;
             }
-            tokio::task::yield_now().await;
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
     .await
