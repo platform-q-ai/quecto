@@ -1,4 +1,4 @@
-use super::compose_startup_system_prompt;
+use super::startup_prompt;
 use crate::interface::cli::{CliContext, run_with_output};
 
 #[test]
@@ -28,13 +28,13 @@ fn one_shot_and_uds_share_the_same_startup_prompt_composer() {
     let instructions = Some("AGENTS marker".to_string());
     let explicit = Some("Explicit marker".to_string());
 
-    let one_shot = compose_startup_system_prompt(
+    let one_shot = startup_prompt::compose(
         instructions.as_deref(),
         explicit.as_deref(),
         false,
         "Extension marker",
     );
-    let uds = compose_startup_system_prompt(
+    let uds = startup_prompt::compose(
         instructions.as_deref(),
         explicit.as_deref(),
         false,
