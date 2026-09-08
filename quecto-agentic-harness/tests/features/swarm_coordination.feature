@@ -106,3 +106,9 @@ Feature: Container swarm coordination
     When the supervisor durably pauses the swarm
     And the supervisor inspects the unchanged swarm cursor
     Then the swarm inspection is unchanged without task history
+
+  @done @swarm-supervision
+  Scenario: Supervisor pauses active work and receives approval handling and retained evidence
+    When the supervisor pauses active work then delivers approval and exports evidence
+    Then the swarm approval has a completed receipt and a retained terminal report
+    And the observed usage budget pauses the run and request accounting is available

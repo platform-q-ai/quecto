@@ -485,3 +485,6 @@ fn then_job_output_contains(world: &mut QuectoWorld, needle: String) {
 
 #[path = "swarm_coordination_steps.rs"]
 mod coordination;
+
+#[path = "swarm_supervision_steps.rs"]
+mod supervision_steps;

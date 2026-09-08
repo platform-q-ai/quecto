@@ -70,3 +70,10 @@ explicit API routing plus a valid stream restored prompt/follow-up delivery with
 weakening the failure circuit. Seven targeted BDD scenarios passed. The library-only
 coverage lane now executes the shared swarm contracts and adapter failure tests:
 4,179 tests passed with 92.24% function coverage locally (92% required).
+
+A further BDD scenario drives a real UDS child with a synthetic, private swarm
+launch contract and scripted provider. It verifies in-flight pause, queued approval
+retention, resume and completed receipt, observed-budget pause, raw evidence export,
+and terminal coordinator reporting. It passes locally; it makes no claim of actual
+PID-namespace isolation. The complete prior BDD run passed its scenarios but exposed
+a separate 72% function-coverage gap, which this production-path scenario addresses.
