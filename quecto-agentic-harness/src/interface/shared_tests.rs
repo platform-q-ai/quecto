@@ -731,8 +731,19 @@ mod context_settings {
 }
 
 #[test]
-fn core_prompts_rely_on_agents_md_for_codebase_conventions() {
-    let removed = "Follow the codebase’s conventions whenever possible.";
-    assert!(!build_system_prompt(&None, false).contains(removed));
-    assert!(!build_system_prompt(&None, true).contains(removed));
+fn production_prompts_rely_on_agents_md_for_codebase_conventions() {
+    let removed_clauses = [
+        "Follow the codebase’s conventions whenever possible.",
+        "BDD/TDD red–green–refactor",
+        "Clean Architecture",
+        "SOLID principles",
+    ];
+    for spawned in [false, true] {
+        let prompt = build_agent_system_prompt(None, None, spawned, "");
+        assert!(
+            removed_clauses
+                .iter()
+                .all(|clause| !prompt.contains(clause))
+        );
+    }
 }
