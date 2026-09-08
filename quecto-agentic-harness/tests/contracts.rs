@@ -5,10 +5,24 @@
 mod admission_client;
 #[path = "contracts/admission_dispatcher.rs"]
 mod admission_dispatcher;
+#[path = "contracts/admission_fallback.rs"]
+mod admission_fallback;
+#[path = "contracts/admission_feedback.rs"]
+mod admission_feedback;
+#[path = "contracts/admission_group_fallback.rs"]
+mod admission_group_fallback;
 #[path = "contracts/admission_registry.rs"]
 mod admission_registry;
+#[path = "contracts/admission_typed_feedback.rs"]
+mod admission_typed_feedback;
+#[path = "contracts/admission_typed_feedback_cases.rs"]
+mod admission_typed_feedback_cases;
 #[path = "contracts/agent_loop.rs"]
 mod agent_loop;
+#[path = "contracts/attempt_admission.rs"]
+mod attempt_admission;
+#[path = "contracts/attempt_permit.rs"]
+mod attempt_permit;
 #[path = "contracts/audit_sink.rs"]
 mod audit_sink;
 #[path = "common/catalogue_conformance.rs"]

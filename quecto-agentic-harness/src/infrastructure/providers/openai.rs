@@ -1,3 +1,4 @@
+use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor};
 // OpenAI adapter: impl LlmProvider for OpenAiProvider.
 
 use std::future::Future;
@@ -50,11 +51,21 @@ pub struct OpenAiProvider {
     api_key: String,
     api_base: String,
     client: reqwest::Client,
+    attempt_admission: Option<std::sync::Arc<dyn crate::application::ports::AttemptAdmission>>,
     /// Account ID for OAuth tokens (chatgpt_account_id from JWT).
     account_id: Option<String>,
 }
 
 impl OpenAiProvider {
+    /// Bind leaf attempts to an already authenticated admission capability.
+    pub fn with_attempt_admission(
+        mut self,
+        gate: std::sync::Arc<dyn crate::application::ports::AttemptAdmission>,
+    ) -> Self {
+        self.attempt_admission = Some(gate);
+        self
+    }
+
     pub fn new(api_key: String, api_base: Option<String>) -> Self {
         Self::with_client(api_key, api_base, reqwest::Client::new())
     }
@@ -90,6 +101,7 @@ impl OpenAiProvider {
             api_key,
             api_base: api_base.unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
             client,
+            attempt_admission: None,
             account_id,
         }
     }
@@ -382,6 +394,7 @@ impl LlmProvider for OpenAiProvider {
         &self,
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        let cancel = request.cancel_flag.clone();
         let model = request.model.to_string();
         let body = Self::build_request_body(&request);
         let url = format!("{}/chat/completions", self.api_base);
@@ -393,6 +406,24 @@ impl LlmProvider for OpenAiProvider {
                 .header("Content-Type", "application/json")
                 .json(&body);
             let request_builder = self.apply_auth_headers(request_builder);
+
+            if let Some(gate) = &self.attempt_admission {
+                return super::attempt_transport::text(
+                    gate,
+                    cancel.as_ref(),
+                    request_builder,
+                    Profile::new(Vendor::OpenAi, Surface::Chat),
+                    |text| {
+                        let json = serde_json::from_str(text).map_err(|e| {
+                            DomainError::Provider(format!("failed to parse response JSON: {e}"))
+                        })?;
+                        let mut parsed = Self::parse_response(&json)?;
+                        crate::domain::usage_accounting::attach_cost(&mut parsed, &model);
+                        Ok(parsed)
+                    },
+                )
+                .await;
+            }
 
             let response = request_builder.send().await.map_err(|e| {
                 DomainError::Provider(format!(
@@ -430,6 +461,7 @@ impl LlmProvider for OpenAiProvider {
         &self,
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        let cancel = request.cancel_flag.clone();
         let model = request.model.to_string();
         let mut body = Self::build_request_body(&request);
         body["stream"] = serde_json::Value::Bool(true);
@@ -438,13 +470,30 @@ impl LlmProvider for OpenAiProvider {
         // heuristic estimate.
         body["stream_options"] = serde_json::json!({ "include_usage": true });
         let url = format!("{}/chat/completions", self.api_base);
-        Box::pin(async move { self.stream_chat_with_body(body, &url, &model).await })
+        Box::pin(async move {
+            if let Some(gate) = &self.attempt_admission {
+                let builder = self.apply_auth_headers(self.client.post(&url).json(&body));
+                let (tx, rx) = tokio::sync::mpsc::channel(64);
+                let pump = super::attempt_transport::stream(
+                    gate,
+                    cancel.as_ref(),
+                    builder,
+                    Profile::new(Vendor::OpenAi, Surface::Assembled),
+                    tx,
+                    openai_sse::OpenAiSseHandler::with_model(&model),
+                );
+                let (_, result) = tokio::join!(pump, super::attempt_transport::collect(rx));
+                return result;
+            }
+            self.stream_chat_with_body(body, &url, &model).await
+        })
     }
 
     fn chat_stream_incremental(
         &self,
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + '_>> {
+        let cancel = request.cancel_flag.clone();
         let model = request.model.to_string();
         let mut body = Self::build_request_body(&request);
         body["stream"] = serde_json::Value::Bool(true);
@@ -455,7 +504,21 @@ impl LlmProvider for OpenAiProvider {
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
             tokio::spawn(async move {
-                provider.pump_sse_incremental(body, &url, tx, &model).await;
+                if let Some(gate) = &provider.attempt_admission {
+                    let builder =
+                        provider.apply_auth_headers(provider.client.post(&url).json(&body));
+                    super::attempt_transport::stream(
+                        gate,
+                        cancel.as_ref(),
+                        builder,
+                        Profile::new(Vendor::OpenAi, Surface::Incremental),
+                        tx,
+                        openai_sse::OpenAiSseHandler::with_model(&model),
+                    )
+                    .await;
+                } else {
+                    provider.pump_sse_incremental(body, &url, tx, &model).await;
+                }
             });
             rx
         })

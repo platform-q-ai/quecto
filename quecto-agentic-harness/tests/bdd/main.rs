@@ -281,6 +281,7 @@ impl std::fmt::Debug for DebugPythonLab {
 #[derive(Debug, Default, World)]
 pub struct QuectoWorld {
     pub admission: inference_admission_steps::AdmissionState,
+    pub provider_admission: inference_admission_provider_steps::ProviderAdmissionState,
     /// #1572 catalogue application slice state (sources, store, resolution).
     pub catalogue_application: catalogue_application_steps::CatalogueApplicationState,
     /// #1573 catalogue runtime slice state (factory, stores, composition, selection).
@@ -1613,4 +1614,5 @@ impl Drop for QuectoWorld {
     }
 }
 
+pub mod inference_admission_provider_steps;
 mod inference_admission_steps;

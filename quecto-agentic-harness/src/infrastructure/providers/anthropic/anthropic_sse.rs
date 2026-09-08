@@ -485,7 +485,7 @@ impl AnthropicSseHandler {
         }
     }
 
-    fn with_model(tool_defs: Option<Vec<ToolDefinition>>, model: &str) -> Self {
+    pub(crate) fn with_model(tool_defs: Option<Vec<ToolDefinition>>, model: &str) -> Self {
         let mut handler = Self::new(tool_defs);
         handler.model = Some(model.to_string());
         handler

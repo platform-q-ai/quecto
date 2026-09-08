@@ -11,6 +11,15 @@ pub trait AdmissionRegistry {
 /// Callers must supply their authenticated scope, never a caller-selected identity.
 /// The future IPC adapter binds this input to a capability before invoking the port.
 pub trait AdmissionClient {
+    /// Apply receipt feedback once, retaining transport occupancy until completion.
+    fn report_feedback(
+        &mut self,
+        scope: ScopeId,
+        sequence: u64,
+        report: u64,
+        feedback: ThrottleFeedback,
+        now: u64,
+    ) -> Result<(), AdmissionError>;
     fn enqueue(
         &mut self,
         scope: ScopeId,
@@ -72,6 +81,17 @@ impl AdmissionRegistry for AdmissionService {
     }
 }
 impl AdmissionClient for AdmissionService {
+    fn report_feedback(
+        &mut self,
+        scope: ScopeId,
+        sequence: u64,
+        report: u64,
+        feedback: ThrottleFeedback,
+        now: u64,
+    ) -> Result<(), AdmissionError> {
+        self.policy
+            .report_feedback(scope, sequence, report, feedback, now)
+    }
     fn enqueue(
         &mut self,
         scope: ScopeId,

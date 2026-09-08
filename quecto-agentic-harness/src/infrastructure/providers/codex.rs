@@ -1,3 +1,4 @@
+use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor};
 // OpenAI Responses API adapter: impl LlmProvider using the Responses wire
 // protocol under either auth mode (#1066).
 //
@@ -41,10 +42,20 @@ pub struct CodexProvider {
     api_key: String,
     api_base: String,
     client: reqwest::Client,
+    attempt_admission: Option<std::sync::Arc<dyn crate::application::ports::AttemptAdmission>>,
     auth: ResponsesAuth,
 }
 
 impl CodexProvider {
+    /// Bind leaf attempts to an already authenticated admission capability.
+    pub fn with_attempt_admission(
+        mut self,
+        gate: std::sync::Arc<dyn crate::application::ports::AttemptAdmission>,
+    ) -> Self {
+        self.attempt_admission = Some(gate);
+        self
+    }
+
     /// Create a new Codex provider.
     ///
     /// `account_id` is extracted from the OAuth JWT's
@@ -64,6 +75,7 @@ impl CodexProvider {
             api_key,
             api_base: api_base.unwrap_or_else(|| CODEX_BASE_URL.to_string()),
             client,
+            attempt_admission: None,
             auth: ResponsesAuth::ChatGptOAuth { account_id },
         }
     }
@@ -79,6 +91,7 @@ impl CodexProvider {
             api_key,
             api_base: api_base.unwrap_or_else(|| OPENAI_API_BASE_URL.to_string()),
             client,
+            attempt_admission: None,
             auth: ResponsesAuth::ApiKey,
         }
     }
@@ -550,11 +563,27 @@ impl LlmProvider for CodexProvider {
             return Box::pin(async move { Err(err) });
         }
 
+        let cancel = request.cancel_flag.clone();
         let model = request.model.to_string();
         let body = Self::build_request_body(&request, &self.auth);
         let url = self.responses_url();
 
         Box::pin(async move {
+            if let Some(gate) = &self.attempt_admission {
+                let builder = self.apply_headers(self.client.post(&url)).json(&body);
+                return super::attempt_transport::assembled(
+                    gate,
+                    cancel.as_ref(),
+                    builder,
+                    Profile::new(Vendor::Codex, Surface::Assembled),
+                    |raw| {
+                        let mut parsed = Self::parse_sse_response(raw)?;
+                        crate::domain::usage_accounting::attach_cost(&mut parsed, &model);
+                        Ok(parsed)
+                    },
+                )
+                .await;
+            }
             let resp = self
                 .apply_headers(self.client.post(&url))
                 .json(&body)
@@ -605,6 +634,7 @@ impl LlmProvider for CodexProvider {
                 rx
             });
         }
+        let cancel = request.cancel_flag.clone();
         let model = request.model.to_string();
         let body = Self::build_request_body(&request, &self.auth);
         let url = self.responses_url();
@@ -612,126 +642,33 @@ impl LlmProvider for CodexProvider {
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
             tokio::spawn(async move {
-                provider.pump_codex_sse(&url, body, tx, &model).await;
+                if let Some(gate) = &provider.attempt_admission {
+                    let builder = provider
+                        .apply_headers(provider.client.post(&url))
+                        .json(&body);
+                    super::attempt_transport::stream(
+                        gate,
+                        cancel.as_ref(),
+                        builder,
+                        Profile::new(Vendor::Codex, Surface::Incremental),
+                        tx,
+                        CodexSseHandler::with_model(&model),
+                    )
+                    .await;
+                } else {
+                    provider.pump_codex_sse(&url, body, tx, &model).await;
+                }
             });
             rx
         })
     }
 }
 
+#[path = "codex_sse_handler.rs"]
+mod codex_sse_handler;
+#[cfg(test)]
 use super::sse_common::{SseHandler, SseLineOutcome};
-
-/// SSE line handler for the Codex Responses API.
-struct CodexSseHandler {
-    acc: SseAccumulator,
-    saw_terminal: bool,
-    model: Option<String>,
-}
-
-impl CodexSseHandler {
-    fn new() -> Self {
-        Self {
-            acc: SseAccumulator::default(),
-            saw_terminal: false,
-            model: None,
-        }
-    }
-
-    fn with_model(model: impl Into<String>) -> Self {
-        let mut handler = Self::new();
-        handler.model = Some(model.into());
-        handler
-    }
-
-    fn take_response(&mut self) -> LlmResponse {
-        let mut response = std::mem::take(&mut self.acc).into_response();
-        if let Some(model) = &self.model {
-            crate::domain::usage_accounting::attach_cost(&mut response, model);
-        }
-        response
-    }
-}
-
-impl SseHandler for CodexSseHandler {
-    async fn process_line(
-        &mut self,
-        line: &str,
-        tx: &tokio::sync::mpsc::Sender<StreamEvent>,
-    ) -> SseLineOutcome {
-        let Some(data) = line.strip_prefix("data: ") else {
-            return SseLineOutcome::Continue;
-        };
-        if data == "[DONE]" {
-            self.saw_terminal = true;
-            let _ = tx.send(StreamEvent::Done(self.take_response())).await;
-            return SseLineOutcome::Done;
-        }
-        if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
-            if let Some(error) = CodexProvider::format_stream_failure(&event) {
-                self.saw_terminal = true;
-                let _ = tx.send(StreamEvent::Error(error)).await;
-                return SseLineOutcome::Done;
-            }
-            match event["type"].as_str() {
-                Some("response.output_text.delta") => {
-                    if let Some(delta) = event["delta"].as_str() {
-                        let _ = tx.send(StreamEvent::TextDelta(delta.to_string())).await;
-                    }
-                }
-                Some("response.reasoning_summary_text.delta")
-                | Some("response.reasoning.summary_text.delta") => {
-                    if let Some(delta) = event["delta"].as_str() {
-                        let position = codex_sse_state::reasoning_summary_position(&event);
-                        let emitted = match codex_sse_state::append_reasoning_delta(
-                            &mut self.acc.reasoning,
-                            delta,
-                            position,
-                            &mut self.acc.reasoning_summary_position,
-                        ) {
-                            Ok(emitted) => emitted,
-                            Err(err) => {
-                                self.saw_terminal = true;
-                                let _ = tx.send(StreamEvent::Error(err.to_string())).await;
-                                return SseLineOutcome::Done;
-                            }
-                        };
-                        let _ = tx.send(StreamEvent::ThinkingDelta(emitted)).await;
-                    }
-                }
-                _ => {}
-            }
-            if !matches!(
-                event["type"].as_str(),
-                Some("response.reasoning_summary_text.delta")
-                    | Some("response.reasoning.summary_text.delta")
-            ) {
-                if let Err(err) = self.acc.handle_event(&event) {
-                    self.saw_terminal = true;
-                    let _ = tx.send(StreamEvent::Error(err.to_string())).await;
-                    return SseLineOutcome::Done;
-                }
-            }
-            if event["type"].as_str() == Some("response.completed") {
-                self.saw_terminal = true;
-                let _ = tx.send(StreamEvent::Done(self.take_response())).await;
-                return SseLineOutcome::Done;
-            }
-        }
-        SseLineOutcome::Continue
-    }
-
-    async fn on_eof(&mut self, tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
-        if !self.saw_terminal && !self.acc.has_observable_output() {
-            let _ = tx
-                .send(StreamEvent::Error(
-                    "Responses stream ended without completion".to_string(),
-                ))
-                .await;
-            return;
-        }
-        let _ = tx.send(StreamEvent::Done(self.take_response())).await;
-    }
-}
+use codex_sse_handler::CodexSseHandler;
 
 #[cfg(any(test, feature = "test-support"))]
 #[path = "codex_test_support.rs"]

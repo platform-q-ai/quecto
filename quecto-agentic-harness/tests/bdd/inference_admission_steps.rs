@@ -34,6 +34,7 @@ fn given_group(w: &mut QuectoWorld) {
                     queue_capacity: 4,
                     queue_timeout_ms: 100,
                     attempt_timeout_ms: 100,
+                    fallback_base_ms: 1000,
                     max_cooldown_ms: 1000,
                 },
             )]),

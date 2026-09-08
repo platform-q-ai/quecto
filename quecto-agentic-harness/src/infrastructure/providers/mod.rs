@@ -1,4 +1,7 @@
+pub mod admission_feedback;
 pub mod anthropic;
+pub(crate) mod attempt_profile;
+pub(crate) mod attempt_transport;
 pub mod codex;
 pub mod openai;
 pub mod openai_endpoint_router;
@@ -20,6 +23,24 @@ mod providers_cov2_tests;
 use std::sync::Arc;
 
 use crate::domain::provider::LlmProvider;
+
+/// Shared HTTP connection pool and optional scope-bound attempt capability.
+/// Both endpoint alternatives for a named provider use the same transport context.
+pub(crate) struct ProviderTransportContext {
+    pub client: reqwest::Client,
+    pub admission: Option<Arc<dyn crate::application::ports::AttemptAdmission>>,
+}
+
+// Gate binding must happen before type erasure: a provider-level wrapper is not a leaf attempt gate.
+macro_rules! bind_attempt_admission {
+    ($provider:expr, $admission:expr) => {{
+        let provider = $provider;
+        match $admission {
+            Some(gate) => provider.with_attempt_admission(gate),
+            None => provider,
+        }
+    }};
+}
 
 const ALLOW_CUSTOM_HOSTS_ENV: &str = "QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS";
 const RESERVED_PROVIDER_PREFIXES: &[&str] =
@@ -142,6 +163,16 @@ pub fn create_provider_with_client(
     api_base: Option<String>,
     client: reqwest::Client,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    create_provider_with_client_and_admission(name, api_key, api_base, client, None)
+}
+
+pub(crate) fn create_provider_with_client_and_admission(
+    name: &str,
+    api_key: String,
+    api_base: Option<String>,
+    client: reqwest::Client,
+    admission: Option<Arc<dyn crate::application::ports::AttemptAdmission>>,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
     match name {
         "openai" | "anthropic" => {}
         _ => return Err(ProviderFactoryError::UnknownProvider(name.to_string())),
@@ -152,11 +183,13 @@ pub fn create_provider_with_client(
     }
 
     match name {
-        "openai" => Ok(Arc::new(openai::OpenAiProvider::with_client(
-            api_key, api_base, client,
+        "openai" => Ok(Arc::new(bind_attempt_admission!(
+            openai::OpenAiProvider::with_client(api_key, api_base, client,),
+            admission.clone()
         ))),
-        "anthropic" => Ok(Arc::new(anthropic::AnthropicProvider::with_client(
-            api_key, api_base, client,
+        "anthropic" => Ok(Arc::new(bind_attempt_admission!(
+            anthropic::AnthropicProvider::with_client(api_key, api_base, client,),
+            admission.clone()
         ))),
         _ => unreachable!("provider name validated above"),
     }
@@ -178,10 +211,32 @@ pub fn create_named_openai_provider_with_client(
     include_oauth_headers: bool,
     reasoning_model_ids: std::collections::HashSet<String>,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    create_named_openai_provider_with_client_and_admission(
+        provider_name,
+        api_key,
+        api_base,
+        ProviderTransportContext {
+            client,
+            admission: None,
+        },
+        include_oauth_headers,
+        reasoning_model_ids,
+    )
+}
+
+pub(crate) fn create_named_openai_provider_with_client_and_admission(
+    provider_name: &str,
+    api_key: String,
+    api_base: Option<String>,
+    transport: ProviderTransportContext,
+    include_oauth_headers: bool,
+    reasoning_model_ids: std::collections::HashSet<String>,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    let ProviderTransportContext { client, admission } = transport;
     if let Some(ref base) = api_base {
         validate_provider_api_base("openai", base)?;
     }
-    let chat_completions: Arc<dyn LlmProvider> = Arc::new(
+    let chat_completions: Arc<dyn LlmProvider> = Arc::new(bind_attempt_admission!(
         openai::OpenAiProvider::with_client_and_name_and_oauth_headers(
             provider_name,
             api_key.clone(),
@@ -189,12 +244,14 @@ pub fn create_named_openai_provider_with_client(
             client.clone(),
             include_oauth_headers,
         ),
-    );
+        admission.clone()
+    ));
     if reasoning_model_ids.is_empty() {
         return Ok(chat_completions);
     }
-    let responses: Arc<dyn LlmProvider> = Arc::new(codex::CodexProvider::with_api_key(
-        api_key, api_base, client,
+    let responses: Arc<dyn LlmProvider> = Arc::new(bind_attempt_admission!(
+        codex::CodexProvider::with_api_key(api_key, api_base, client,),
+        admission.clone()
     ));
     Ok(Arc::new(openai_endpoint_router::OpenAiEndpointRouter::new(
         provider_name.to_string(),
@@ -211,10 +268,26 @@ pub fn create_openai_provider_with_client(
     client: reqwest::Client,
     include_oauth_headers: bool,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    create_openai_provider_with_client_and_admission(
+        api_key,
+        api_base,
+        client,
+        include_oauth_headers,
+        None,
+    )
+}
+
+pub(crate) fn create_openai_provider_with_client_and_admission(
+    api_key: String,
+    api_base: Option<String>,
+    client: reqwest::Client,
+    include_oauth_headers: bool,
+    admission: Option<Arc<dyn crate::application::ports::AttemptAdmission>>,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
     if let Some(ref base) = api_base {
         validate_provider_api_base("openai", base)?;
     }
-    Ok(Arc::new(
+    Ok(Arc::new(bind_attempt_admission!(
         openai::OpenAiProvider::with_client_and_name_and_oauth_headers(
             "openai",
             api_key,
@@ -222,7 +295,8 @@ pub fn create_openai_provider_with_client(
             client,
             include_oauth_headers,
         ),
-    ))
+        admission.clone()
+    )))
 }
 
 /// Create an OpenAI-compatible provider with a custom router prefix.
@@ -236,6 +310,24 @@ pub fn create_openai_compatible_provider(
     allow_remote_http: bool,
     client: reqwest::Client,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    create_openai_compatible_provider_and_admission(
+        prefix,
+        api_key,
+        api_base,
+        allow_remote_http,
+        client,
+        None,
+    )
+}
+
+pub(crate) fn create_openai_compatible_provider_and_admission(
+    prefix: &str,
+    api_key: String,
+    api_base: String,
+    allow_remote_http: bool,
+    client: reqwest::Client,
+    admission: Option<Arc<dyn crate::application::ports::AttemptAdmission>>,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
     let prefix = prefix.trim();
     if prefix.is_empty()
         || prefix.contains('/')
@@ -247,7 +339,7 @@ pub fn create_openai_compatible_provider(
     }
     let allow_remote_http = allow_remote_http || allow_custom_provider_hosts();
     validate_provider_api_base_with_options(prefix, &api_base, allow_remote_http, true)?;
-    Ok(Arc::new(
+    Ok(Arc::new(bind_attempt_admission!(
         openai::OpenAiProvider::with_client_and_name_and_oauth_headers(
             prefix,
             api_key,
@@ -255,7 +347,8 @@ pub fn create_openai_compatible_provider(
             client,
             false,
         ),
-    ))
+        admission.clone()
+    )))
 }
 
 /// Create an Anthropic-compatible provider with a custom router prefix.
@@ -270,6 +363,24 @@ pub fn create_anthropic_compatible_provider(
     allow_remote_http: bool,
     client: reqwest::Client,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    create_anthropic_compatible_provider_and_admission(
+        prefix,
+        api_key,
+        api_base,
+        allow_remote_http,
+        client,
+        None,
+    )
+}
+
+pub(crate) fn create_anthropic_compatible_provider_and_admission(
+    prefix: &str,
+    api_key: String,
+    api_base: Option<String>,
+    allow_remote_http: bool,
+    client: reqwest::Client,
+    admission: Option<Arc<dyn crate::application::ports::AttemptAdmission>>,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
     let prefix = prefix.trim();
     if prefix.is_empty()
         || prefix.contains('/')
@@ -283,9 +394,10 @@ pub fn create_anthropic_compatible_provider(
         let allow_remote_http = allow_remote_http || allow_custom_provider_hosts();
         validate_provider_api_base_with_options(prefix, base, allow_remote_http, true)?;
     }
-    Ok(Arc::new(
+    Ok(Arc::new(bind_attempt_admission!(
         anthropic::AnthropicProvider::with_client_and_name(api_key, api_base, client, prefix),
-    ))
+        admission.clone()
+    )))
 }
 
 /// Create a Codex provider with a shared `reqwest::Client`.
@@ -299,6 +411,16 @@ pub fn create_codex_provider_with_client(
     api_base: Option<String>,
     client: reqwest::Client,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    create_codex_provider_with_client_and_admission(api_key, account_id, api_base, client, None)
+}
+
+pub(crate) fn create_codex_provider_with_client_and_admission(
+    api_key: String,
+    account_id: String,
+    api_base: Option<String>,
+    client: reqwest::Client,
+    admission: Option<Arc<dyn crate::application::ports::AttemptAdmission>>,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
     // A config-supplied `providers.openai.api_base` may redirect
     // OAuth-JWT-bearing requests only when it passes the same
     // `validate_provider_api_base` gate as every other provider base
@@ -307,8 +429,9 @@ pub fn create_codex_provider_with_client(
     if let Some(ref base) = api_base {
         validate_provider_api_base("openai", base)?;
     }
-    Ok(Arc::new(codex::CodexProvider::with_client(
-        api_key, account_id, api_base, client,
+    Ok(Arc::new(bind_attempt_admission!(
+        codex::CodexProvider::with_client(api_key, account_id, api_base, client,),
+        admission.clone()
     )))
 }
 

@@ -1,3 +1,4 @@
+use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor};
 // Anthropic adapter: impl LlmProvider for AnthropicProvider.
 //
 // See gap analysis #437 for Anthropic API parity work.
@@ -24,6 +25,7 @@ pub struct AnthropicProvider {
     api_key: String,
     api_base: String,
     client: reqwest::Client,
+    attempt_admission: Option<std::sync::Arc<dyn crate::application::ports::AttemptAdmission>>,
     /// Whether the token is an OAuth access token (Bearer auth + OAuth beta headers).
     is_oauth: bool,
     /// Router-facing provider name. Defaults to `"anthropic"`; registry-built
@@ -33,6 +35,15 @@ pub struct AnthropicProvider {
 }
 
 impl AnthropicProvider {
+    /// Bind leaf attempts to an already authenticated admission capability.
+    pub fn with_attempt_admission(
+        mut self,
+        gate: std::sync::Arc<dyn crate::application::ports::AttemptAdmission>,
+    ) -> Self {
+        self.attempt_admission = Some(gate);
+        self
+    }
+
     pub fn new(api_key: String, api_base: Option<String>) -> Self {
         Self::with_client(api_key, api_base, reqwest::Client::new())
     }
@@ -54,6 +65,7 @@ impl AnthropicProvider {
             api_key,
             api_base: api_base.unwrap_or_else(|| "https://api.anthropic.com".to_string()),
             client,
+            attempt_admission: None,
             is_oauth,
             router_name: router_name.into(),
         }
@@ -533,6 +545,23 @@ impl LlmProvider for AnthropicProvider {
             let request_builder = self.client.post(&url).json(&body);
             let request_builder = self.apply_headers(request_builder, &model);
 
+            if let Some(gate) = &self.attempt_admission {
+                return crate::infrastructure::providers::attempt_transport::text(
+                    gate,
+                    cancel.as_ref(),
+                    request_builder,
+                    Profile::new(Vendor::Anthropic, Surface::Chat),
+                    |text| {
+                        let json = serde_json::from_str(text).map_err(|e| {
+                            DomainError::Provider(format!("failed to parse response JSON: {e}"))
+                        })?;
+                        let mut parsed = Self::parse_response(&json, is_oauth, &tools_snapshot)?;
+                        crate::domain::usage_accounting::attach_cost(&mut parsed, &model);
+                        Ok(parsed)
+                    },
+                )
+                .await;
+            }
             let response = request_builder
                 .send()
                 .await
@@ -585,6 +614,21 @@ impl LlmProvider for AnthropicProvider {
             if cancel.as_ref().is_some_and(|f| f.is_cancelled()) {
                 return Err(DomainError::Provider("request cancelled".into()));
             }
+            if let Some(gate) = &self.attempt_admission {
+                let builder = self.apply_headers(self.client.post(&url).json(&body), &model);
+                return crate::infrastructure::providers::attempt_transport::assembled(
+                    gate,
+                    cancel.as_ref(),
+                    builder,
+                    Profile::new(Vendor::Anthropic, Surface::Assembled),
+                    |raw| {
+                        let mut parsed = Self::parse_sse_response(raw, tools_snapshot)?;
+                        crate::domain::usage_accounting::attach_cost(&mut parsed, &model);
+                        Ok(parsed)
+                    },
+                )
+                .await;
+            }
             let mut resp = self
                 .stream_chat_with_body(anthropic_sse::StreamParams {
                     body,
@@ -629,6 +673,20 @@ impl LlmProvider for AnthropicProvider {
                 return rx;
             }
             tokio::spawn(async move {
+                if let Some(gate) = &provider.attempt_admission {
+                    let builder =
+                        provider.apply_headers(provider.client.post(&url).json(&body), &model);
+                    crate::infrastructure::providers::attempt_transport::stream(
+                        gate,
+                        cancel.as_ref(),
+                        builder,
+                        Profile::new(Vendor::Anthropic, Surface::Incremental),
+                        tx,
+                        anthropic_sse::AnthropicSseHandler::with_model(tools_snapshot, &model),
+                    )
+                    .await;
+                    return;
+                }
                 provider
                     .stream_chat_incremental_with_body(anthropic_sse::IncrementalStreamParams {
                         base: anthropic_sse::StreamParams {
