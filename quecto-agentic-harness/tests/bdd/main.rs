@@ -281,6 +281,7 @@ impl std::fmt::Debug for DebugSwarm {
 #[derive(Debug, Default, World)]
 pub struct QuectoWorld {
     pub admission: inference_admission_steps::AdmissionState,
+    pub authority: inference_admission_authority_steps::AuthorityState,
     pub http_admission: inference_admission_http_steps::HttpAdmissionState,
     pub provider_admission: inference_admission_provider_steps::ProviderAdmissionState,
     /// #1572 catalogue application slice state (sources, store, resolution).
@@ -1615,6 +1616,7 @@ impl Drop for QuectoWorld {
     }
 }
 
+mod inference_admission_authority_steps;
 mod inference_admission_http_steps;
 pub mod inference_admission_provider_steps;
 mod inference_admission_steps;

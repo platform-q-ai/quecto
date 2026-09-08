@@ -704,3 +704,7 @@ mod tests;
 #[cfg(test)]
 #[path = "spawn_container_slice3_tests.rs"]
 mod slice3_tests;
+
+#[cfg(test)]
+#[path = "spawn_container_admission_tests.rs"]
+mod admission_tests;
