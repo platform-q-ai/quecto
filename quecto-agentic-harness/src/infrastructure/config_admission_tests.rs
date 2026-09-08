@@ -111,3 +111,13 @@ fn scope_and_terminal_capacities_default_when_omitted() {
     assert_eq!(proposal.policy.max_scopes, 1024);
     assert_eq!(proposal.policy.terminal_capacity, 4096);
 }
+
+#[test]
+fn authority_directory_may_not_be_the_base_dir_itself() {
+    let same = ENABLED.replace("\"directory\":\"/tmp/x\"", "\"directory\":\"/srv/quecto\"");
+    let config = load(&same)
+        .unwrap()
+        .with_admission_base_dir(std::path::Path::new("/srv/quecto"));
+    let err = config.admission_proposal().unwrap_err().to_string();
+    assert!(err.contains("base directory"), "{err}");
+}

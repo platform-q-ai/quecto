@@ -133,6 +133,18 @@ impl Config {
             .directory
             .clone()
             .unwrap_or_else(|| default_admission_directory(&self.admission_base_dir));
+        // The base directory is identity-mounted into containers by the bundled
+        // adapter; an authority at or above it would expose its journal, admin
+        // socket and owner token to every child.
+        if !self.admission_base_dir.as_os_str().is_empty()
+            && self.admission_base_dir.starts_with(&directory)
+        {
+            return Err(ConfigError::Admission(format!(
+                "directory {} is the base directory or one of its ancestors; use a subdirectory such as {}",
+                directory.display(),
+                default_admission_directory(&self.admission_base_dir).display()
+            )));
+        }
         Ok(Some((directory, proposal)))
     }
 

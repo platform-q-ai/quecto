@@ -98,6 +98,8 @@ struct Actor {
     bound: BTreeMap<ScopeId, u64>,
     waiters: BTreeMap<RequestId, oneshot::Sender<Body>>,
     notified: BTreeSet<RequestId>,
+    /// Last dispatch failure reported, so outages log on transitions only.
+    last_dispatch_failure: Option<String>,
 }
 
 /// Fresh owner token per start, 0600 in the authority root (never in `client/`).
@@ -234,6 +236,7 @@ impl AuthorityServer {
             bound: BTreeMap::new(),
             waiters: BTreeMap::new(),
             notified: BTreeSet::new(),
+            last_dispatch_failure: None,
         };
         let tasks = vec![
             tokio::spawn(actor.run(rx, shutdown_rx.clone())),
@@ -384,7 +387,23 @@ impl Actor {
                                 scope: credential.scope,
                                 sequence,
                             };
-                            self.waiters.insert(id, reply);
+                            match self.waiters.entry(id) {
+                                // A replayed acquire observes the queue; it
+                                // never displaces the original waiter.
+                                std::collections::btree_map::Entry::Occupied(_) => {
+                                    let now = self.clock.now_ms();
+                                    let body = match self.authority.observe(id, now) {
+                                        Ok(state) => Body::State {
+                                            state: state.into(),
+                                        },
+                                        Err(e) => error_body(&e),
+                                    };
+                                    let _ = reply.send(body);
+                                }
+                                std::collections::btree_map::Entry::Vacant(slot) => {
+                                    slot.insert(reply);
+                                }
+                            }
                         }
                     }
                 }
@@ -401,8 +420,16 @@ impl Actor {
             if self.bound.get(&credential.scope) == Some(&session) {
                 self.bound.remove(&credential.scope);
                 let now = self.clock.now_ms();
-                if let Err(error) = self.authority.disconnect(credential.scope, now) {
-                    tracing::warn!(?error, "admission disconnect handling failed");
+                match self.authority.disconnect(credential.scope, now) {
+                    // Nothing unverified remains: the scope is released so an
+                    // abrupt exit never consumes a scope slot until reset.
+                    Ok(report) if report.uncertain == 0 => {
+                        let _ = self.authority.release(credential.scope);
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::warn!(?error, "admission disconnect handling failed");
+                    }
                 }
                 self.waiters.retain(|id, _| id.scope != credential.scope);
             }
@@ -473,6 +500,16 @@ impl Actor {
     }
 
     fn bind(&mut self, session: u64, credential: Credential) -> Result<Body, AuthorityError> {
+        if self
+            .sessions
+            .get(&session)
+            .is_some_and(|state| state.credential.is_some())
+        {
+            return Ok(Body::Error {
+                code: ErrorCode::Malformed,
+                reason: "session already bound; one connection binds one capability".into(),
+            });
+        }
         let high_water = self.authority.verify(&credential)?;
         if let Some(previous) = self.bound.insert(credential.scope, session) {
             if previous != session {
@@ -607,10 +644,18 @@ impl Actor {
     /// Dispatch, answer waiters, emit cancellation notices, compute the wake.
     fn settle(&mut self) -> Instant {
         let now = self.clock.now_ms();
-        if let Err(error) = self.authority.pump(now) {
-            match error {
-                AuthorityError::Admission(_) => {}
-                other => tracing::warn!(?other, "admission dispatch failed closed"),
+        match self.authority.pump(now) {
+            Err(AuthorityError::Admission(_)) | Ok(_) => {
+                if self.last_dispatch_failure.take().is_some() {
+                    tracing::info!("admission dispatch recovered");
+                }
+            }
+            Err(other) => {
+                let failure = format!("{other:?}");
+                if self.last_dispatch_failure.as_ref() != Some(&failure) {
+                    tracing::warn!(failure = %failure, "admission dispatch failed closed");
+                    self.last_dispatch_failure = Some(failure);
+                }
             }
         }
         let ids: Vec<RequestId> = self.waiters.keys().copied().collect();

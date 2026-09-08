@@ -150,33 +150,3 @@ fn run_until_serves_then_stops_and_refuses_a_second_authority() {
     assert!(out.contains("stopped"), "{out}");
     assert!(!dir.client_socket().exists(), "sockets removed on stop");
 }
-
-#[test]
-fn run_serves_until_sigterm() {
-    let temp = tempfile::tempdir().unwrap();
-    let ctx = ctx(temp.path());
-    let authority = temp.path().join("authority");
-    let config = ENABLED.replace("DIR", &format!("{:?}", authority.to_string_lossy()));
-    std::fs::write(temp.path().join("config.json"), config).unwrap();
-    let socket = authority.join("client").join("admission.sock");
-    let server = std::thread::spawn(move || run(&ctx, &["run"]));
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    // `run` registers its SIGTERM handler before the authority accepts, so a
-    // connectable socket proves the signal will be caught, not fatal.
-    while std::os::unix::net::UnixStream::connect(&socket).is_err() {
-        assert!(!server.is_finished(), "run exited before serving");
-        assert!(
-            std::time::Instant::now() < deadline,
-            "authority never accepted"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    // The tokio handler installed by `run` receives the signal.
-    // SAFETY: `kill` on our own pid with SIGTERM has no memory-safety preconditions.
-    let sent = unsafe { libc::kill(libc::getpid(), libc::SIGTERM) };
-    assert_eq!(sent, 0);
-    let (code, out, err) = server.join().unwrap();
-    assert_eq!(code, 0, "{err}");
-    assert!(out.contains("stopped"), "{out}");
-    assert!(!socket.exists(), "sockets removed on stop");
-}

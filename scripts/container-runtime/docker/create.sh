@@ -159,8 +159,16 @@ fi
 admission_capability=""
 if [ -n "$admission_dir" ]; then
   admission_root="$(dirname "$admission_dir")"
-  case "$admission_root" in
-  "$HOME/.quecto"/*)
+  # Compare resolved paths so a symlinked HOME or an aliased base dir cannot
+  # dodge the mask; the mask itself is mounted at the spelled path the child
+  # will use.
+  real_root="$(realpath -m "$admission_root")"
+  real_quecto="$(realpath -m "$HOME/.quecto")"
+  case "$real_root" in
+  "$real_quecto")
+    die "QUECTO_ADMISSION_DIR parent '$admission_root' is the identity-mounted ~/.quecto itself; use a subdirectory"
+    ;;
+  "$real_quecto"/*)
     # An empty owner-only host directory bound read-only over the authority
     # root hides journal/admin/token identically under Docker and Podman
     # (a tmpfs would be copied up by Podman); client/ is re-bound beneath it.

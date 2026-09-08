@@ -44,8 +44,9 @@ section is configured and the authority process is running.
   `openai_compatible` endpoint `prefix`) to alias. Every slot you want bounded
   must be bound explicitly; unknown aliases fail configuration.
 - `directory` (optional, default `<base_dir>/admission`): a private, owner-only
-  directory holding the authority's lock, journal and sockets. It is refused
-  if group/other bits are set.
+  directory holding the authority's lock, journal and sockets. It must be
+  absolute and must not be the base directory or one of its ancestors; it is
+  refused if group/other bits are set.
 
 No numeric value above is a vendor-safe default; measure and set your own.
 Policy and bindings are restart-only: a reload with a changed section is
@@ -92,6 +93,8 @@ authority root with an empty tmpfs and re-exposes only `client/`.
 
 - Every grant is written to the journal (file and directory fsync) before it is
   visible; if the journal cannot be written, no grant is issued.
+- A session that exits with nothing outstanding releases its scope on
+  disconnect; only unverified work keeps a scope registered.
 - A client that disconnects or is killed while an attempt is outstanding leaves
   **uncertain** occupancy: the group stops granting (quarantine) because the
   remote work may still be running. The same session reconnecting and

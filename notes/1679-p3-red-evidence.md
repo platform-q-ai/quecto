@@ -209,3 +209,24 @@ are appended after the final run.
       test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.09s
 
 All nine review-fix mutants killed by their intended tests.
+
+## Second adversarial review (2026-09-09, after CI green on #1697)
+
+Verified 13 of the first-round fixes CLOSED and 4 PARTIAL (H3, H4a, M5, L5,
+all about abnormal exits and layouts), and found 11 new items. Each fix landed
+with a failing test first (RED captured as compile/assertion failures in the
+broker, process, config and real-process suites).
+
+|Finding|Fix|Proof|
+|---|---|---|
+|R2-1 medium: any non-orderly exit leaks a live scope until reset|`Actor::closed` releases the scope when the disconnect leaves nothing uncertain (`AdmissionAuthority::release`); unverified work still keeps it; readiness rollback retires the child and removes its sidecar|`closing_without_uncertain_work_retires_the_scope`|
+|R2-2 medium: mask missed `directory == ~/.quecto` and symlinked/aliased paths|config refuses a directory at or above the base dir; `create.sh` compares `realpath -m` results and dies on equality|`authority_directory_may_not_be_the_base_dir_itself`; container e2e reran green|
+|R2-3 low-medium: a session binding a second capability leaves a stale binding|second `Bind` on a bound session refused|`a_session_cannot_bind_a_second_capability`|
+|R2-4 low: raced-cancel completion had no journal retry|routed through `spawn_completion`|existing `cancel_after_grant...`|
+|R2-5 low: one warning per 250 ms probe during an outage|log on failure transitions and recovery only|reviewed|
+|R2-6 low: sidecar with a valid token left after a non-credential failure|child removes the sidecar on every outcome; parent removes it on readiness rollback|process tests (`!forged.exists()`, `!unreachable.exists()`), BDD updated|
+|R2-7 low: clients created authority directories|`AuthorityDirectory::existing` validates without creating|process test asserts the directory is not created|
+|R2-8 low: SIGTERM test signalled the shared lib test binary|moved to the real-process suite (`sigterm_stops_the_authority_cleanly`); `run` no longer covered in-lib|lib gate still 92.20%|
+|R2-9 low: replayed queued acquire displaced the waiter|replay observes the queued state; the original waiter keeps the grant|`a_replayed_queued_acquire_keeps_the_first_waiter` (raw framed client)|
+|R2-10 note: 256 KiB frame cap per connection|accepted; same-UID peers only, documented threat model|—|
+|R2-11 note: `process::current()` service locator in the launch path|accepted for P3 (scope registration, not admission state); candidate for P4 injection|—|

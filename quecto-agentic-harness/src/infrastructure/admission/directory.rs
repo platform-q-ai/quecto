@@ -33,6 +33,25 @@ impl AuthorityDirectory {
         Ok(dir)
     }
 
+    /// Validate an authority directory that must already exist (client side):
+    /// same ownership and mode checks as `open`, but nothing is created.
+    pub fn existing(path: &Path) -> io::Result<Self> {
+        let dir = Self {
+            root: path.to_path_buf(),
+        };
+        for candidate in [&dir.root, &dir.client_dir()] {
+            let meta = fs::symlink_metadata(candidate)?;
+            if !meta.is_dir() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("{} is not a directory", candidate.display()),
+                ));
+            }
+            check_private(candidate, &meta)?;
+        }
+        Ok(dir)
+    }
+
     pub fn path(&self) -> &Path {
         &self.root
     }

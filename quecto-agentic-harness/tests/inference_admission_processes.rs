@@ -536,3 +536,60 @@ async fn sigkilled_authority_restarts_with_orphans_and_does_not_kill_clients() {
     let _ = uds_root.wait();
     let _ = tokio::task::spawn_blocking(move || finish(holder)).await;
 }
+
+/// R2-8: SIGTERM stops a running authority cleanly (sockets removed, ledger
+/// kept) in its own process rather than signalling a shared test binary.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sigterm_stops_the_authority_cleanly() {
+    let temp = tempfile::tempdir().unwrap();
+    let provider = fake_provider(Duration::from_millis(10)).await;
+    let config = write_config(temp.path(), &provider.base, Some((2, 2_000)));
+    let mut broker = quecto(
+        temp.path(),
+        &[
+            "--config",
+            config.to_str().unwrap(),
+            "admission-broker",
+            "run",
+        ],
+    )
+    .spawn()
+    .expect("spawn broker");
+    let socket = temp
+        .path()
+        .join("authority")
+        .join("client")
+        .join("admission.sock");
+    let deadline = Instant::now() + LIMIT;
+    while std::os::unix::net::UnixStream::connect(&socket).is_err() {
+        assert!(broker.try_wait().unwrap().is_none(), "broker exited early");
+        assert!(Instant::now() < deadline, "authority never accepted");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let pid = broker.id();
+    assert!(
+        Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let output = tokio::task::spawn_blocking(move || broker.wait_with_output().unwrap())
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("stopped"));
+    let dir = temp.path().join("authority");
+    assert!(
+        !dir.join("client").join("admission.sock").exists(),
+        "sockets removed"
+    );
+    assert!(
+        dir.join("journal.json").exists(),
+        "ledger kept for the next start"
+    );
+}

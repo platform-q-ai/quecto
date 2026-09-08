@@ -315,6 +315,14 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
         Ok(())
     }
 
+    /// Owner-side release of a scope with no unverified work (its session
+    /// closed cleanly). Refused as `Busy` while any attempt is still active.
+    pub fn release(&mut self, scope: ScopeId) -> Result<(), AuthorityError> {
+        self.service.retire(scope)?;
+        self.issued.remove(&scope);
+        Ok(())
+    }
+
     /// A parent retires a descendant it registered (for example a launch that
     /// never started). Only the direct parent may do so.
     pub fn retire_child(

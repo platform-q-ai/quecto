@@ -477,7 +477,10 @@ fn then_forged_refused(world: &mut QuectoWorld) {
     })
     .unwrap_err();
     assert!(err.contains("rejected"), "{err}");
-    assert!(forged.exists(), "a refused sidecar stays for diagnosis");
+    assert!(
+        !forged.exists(),
+        "a sidecar is single-use whatever the outcome"
+    );
     let malformed = dir.join("malformed.json");
     std::fs::write(&malformed, b"{nope").unwrap();
     assert!(negotiate(Negotiation::Child { context: malformed }).is_err());

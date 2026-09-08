@@ -132,8 +132,13 @@ fn runtime() -> Result<tokio::runtime::Runtime, String> {
 async fn connect(negotiation: &Negotiation) -> Result<(AuthorityConnection, PathBuf), String> {
     match negotiation {
         Negotiation::Root { directory } => {
-            let dir = AuthorityDirectory::open(directory)
-                .map_err(|e| format!("admission directory {}: {e}", directory.display()))?;
+            // Clients only validate; they never create authority state.
+            let dir = AuthorityDirectory::existing(directory).map_err(|e| {
+                format!(
+                    "admission authority unreachable: directory {} ({e}); start `quecto admission-broker run` or remove the admission section",
+                    directory.display()
+                )
+            })?;
             let endpoint = dir.client_socket();
             let connection = AuthorityConnection::connect(&endpoint).await.map_err(|e| {
                 format!(
@@ -153,31 +158,36 @@ async fn connect(negotiation: &Negotiation) -> Result<(AuthorityConnection, Path
         }
         Negotiation::Child { context: path } => {
             let context = read_admission_context(path)?;
-            let connection = AuthorityConnection::connect(&context.endpoint)
-                .await
-                .map_err(|e| format!("admission authority unreachable: {e}"))?;
-            let credential = Credential {
-                scope: crate::domain::inference_admission::ScopeId {
-                    epoch: context.epoch,
-                    serial: context.serial,
-                },
-                token: context.token,
-            };
-            connection
-                .bind(credential)
-                .await
-                .map_err(|e| format!("admission capability rejected: {e}"))?;
-            // The sidecar is single-use: once bound, the capability material
-            // has no reason to remain on disk.
+            // The sidecar is single-use whatever the outcome: capability
+            // material never lingers on disk after the child has read it.
+            let outcome = bind_child(context).await;
             let _ = std::fs::remove_file(path);
-            let client_dir = context
-                .endpoint
-                .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_default();
-            Ok((connection, client_dir))
+            outcome
         }
     }
+}
+
+async fn bind_child(context: AdmissionContext) -> Result<(AuthorityConnection, PathBuf), String> {
+    let connection = AuthorityConnection::connect(&context.endpoint)
+        .await
+        .map_err(|e| format!("admission authority unreachable: {e}"))?;
+    let credential = Credential {
+        scope: crate::domain::inference_admission::ScopeId {
+            epoch: context.epoch,
+            serial: context.serial,
+        },
+        token: context.token,
+    };
+    connection
+        .bind(credential)
+        .await
+        .map_err(|e| format!("admission capability rejected: {e}"))?;
+    let client_dir = context
+        .endpoint
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    Ok((connection, client_dir))
 }
 
 /// Negotiate with the authority and build a binding without installing it.

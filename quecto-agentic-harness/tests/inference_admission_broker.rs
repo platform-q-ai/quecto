@@ -945,3 +945,171 @@ async fn start_time_preconditions_map_to_named_refusals() {
         other => panic!("unexpected {other:?}"),
     }
 }
+
+// ---- Second review ------------------------------------------------------------
+
+/// R2-1: a session that closes with no uncertain work releases its scope; only
+/// unverified occupancy keeps a scope alive for reconciliation.
+#[tokio::test]
+async fn closing_without_uncertain_work_retires_the_scope() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = AuthorityServer::start(
+        AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
+        proposal(2, 60_000),
+    )
+    .await
+    .unwrap();
+    let admin = AdminConnection::connect(&server.directory().admin_socket())
+        .await
+        .unwrap();
+    let idle = root(&server).await;
+    let busy = root(&server).await;
+    let child = idle.register_child().await.unwrap();
+    assert_eq!(admin.inspect().await.unwrap().live_scopes, 3);
+    let permit = timeout(LIMIT, busy.gate("acct").unwrap().acquire())
+        .await
+        .unwrap()
+        .unwrap();
+    drop(idle);
+    timeout(LIMIT, async {
+        loop {
+            if admin.inspect().await.unwrap().live_scopes == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("idle session's scope retired on close");
+    let stranger = AuthorityConnection::connect(&server.directory().client_socket())
+        .await
+        .unwrap();
+    assert!(
+        stranger.bind(child).await.is_ok(),
+        "a pre-registered child of a vanished parent still binds"
+    );
+    std::mem::forget(permit);
+    drop(busy);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let status = admin.inspect().await.unwrap();
+    assert_eq!(status.groups[&group()].uncertain, 1);
+    assert_eq!(
+        status.live_scopes, 2,
+        "uncertain work keeps its scope for reconciliation"
+    );
+    server.shutdown().await;
+}
+
+/// R2-3: one connection binds one capability; a second bind is refused so no
+/// scope can be left bound to a session that no longer holds it.
+#[tokio::test]
+async fn a_session_cannot_bind_a_second_capability() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = AuthorityServer::start(
+        AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
+        proposal(1, 300),
+    )
+    .await
+    .unwrap();
+    let a = root(&server).await;
+    let other = a.register_child().await.unwrap();
+    let refused = a.bind(other).await.unwrap_err();
+    assert!(
+        matches!(refused, ClientError::Protocol(ref m) if m.contains("already bound")),
+        "{refused:?}"
+    );
+    assert!(a.status(1).await.is_err(), "still the original capability");
+    server.shutdown().await;
+}
+
+/// R2-9: a replayed acquire for a queued sequence does not displace the first
+/// waiter; it observes the queued state and the original caller is granted.
+#[tokio::test]
+async fn a_replayed_queued_acquire_keeps_the_first_waiter() {
+    use quecto::infrastructure::admission::protocol::*;
+    use quecto_line_io::{read_frame, write_frame};
+    use tokio::io::BufReader;
+    let temp = tempfile::tempdir().unwrap();
+    let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
+    let server = AuthorityServer::start(dir.clone(), proposal(1, 60_000))
+        .await
+        .unwrap();
+    let holder = root(&server).await;
+    let permit = timeout(LIMIT, holder.gate("acct").unwrap().acquire())
+        .await
+        .unwrap()
+        .unwrap();
+    let token = std::fs::read_to_string(dir.root_token_path()).unwrap();
+    async fn send(write: &mut tokio::net::unix::OwnedWriteHalf, id: u64, op: Op) {
+        let bytes = serde_json::to_vec(&Request { id, op }).unwrap();
+        write_frame(write, &bytes, FRAME_CAP).await.unwrap();
+    }
+    async fn recv(read: &mut BufReader<tokio::net::unix::OwnedReadHalf>) -> Reply {
+        let bytes = read_frame(read, FRAME_CAP).await.unwrap().unwrap();
+        serde_json::from_slice::<Reply>(&bytes).unwrap()
+    }
+    let stream = tokio::net::UnixStream::connect(dir.client_socket())
+        .await
+        .unwrap();
+    let (read, mut write) = stream.into_split();
+    let mut read = BufReader::new(read);
+    send(
+        &mut write,
+        1,
+        Op::Hello {
+            version: PROTOCOL_VERSION,
+            capability: CAPABILITY_DIRECT.into(),
+        },
+    )
+    .await;
+    assert!(matches!(recv(&mut read).await.body, Body::Hello { .. }));
+    send(
+        &mut write,
+        2,
+        Op::RegisterRoot {
+            class: ClassWire::Interactive,
+            owner_token: token.trim().into(),
+        },
+    )
+    .await;
+    let Body::Credential { credential } = recv(&mut read).await.body else {
+        panic!("credential")
+    };
+    send(&mut write, 3, Op::Bind { credential }).await;
+    assert!(matches!(recv(&mut read).await.body, Body::Bound { .. }));
+    send(
+        &mut write,
+        4,
+        Op::Acquire {
+            sequence: 1,
+            alias: "acct".into(),
+        },
+    )
+    .await;
+    send(
+        &mut write,
+        5,
+        Op::Acquire {
+            sequence: 1,
+            alias: "acct".into(),
+        },
+    )
+    .await;
+    let replay = recv(&mut read).await;
+    assert_eq!(replay.id, Some(5), "the replay is answered immediately");
+    assert!(matches!(
+        replay.body,
+        Body::State {
+            state: StateWire::Queued { .. }
+        }
+    ));
+    permit.finish(Feedback::Success);
+    let granted = timeout(LIMIT, recv(&mut read)).await.unwrap();
+    assert_eq!(
+        granted.id,
+        Some(4),
+        "the original waiter receives the grant"
+    );
+    assert!(matches!(granted.body, Body::Granted { .. }));
+    server.shutdown().await;
+}

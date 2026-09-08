@@ -92,16 +92,19 @@ fn root_install_binds_gates_and_shutdown_retires_the_scope() {
             proposal(),
         ))
         .unwrap();
-    // Unreachable authority is an explicit error, never a fallback.
+    // Unreachable authority is an explicit error, never a fallback, and a
+    // client never manufactures authority directories as a side effect.
+    let nowhere = temp.path().join("nowhere");
     let missing = negotiate(Negotiation::Root {
-        directory: temp.path().join("nowhere"),
+        directory: nowhere.clone(),
     });
     assert!(missing.unwrap_err().contains("unreachable"));
+    assert!(!nowhere.exists(), "client did not create the directory");
     // A directory that cannot be opened as an authority is named.
     let file = temp.path().join("not-a-dir");
     std::fs::write(&file, b"x").unwrap();
     let err = negotiate(Negotiation::Root { directory: file }).unwrap_err();
-    assert!(err.contains("admission directory"), "{err}");
+    assert!(err.contains("not a directory"), "{err}");
     // Without the owner token a root cannot register.
     let token = server.directory().root_token_path();
     let hidden = temp.path().join("hidden");
@@ -206,7 +209,10 @@ fn child_negotiation_consumes_its_sidecar_and_rejects_forgeries() {
         }))
         .unwrap_err();
     assert!(err.contains("rejected"), "{err}");
-    assert!(forged.exists(), "a rejected sidecar is left for diagnosis");
+    assert!(
+        !forged.exists(),
+        "a sidecar is single-use whatever the outcome"
+    );
     let unreachable = temp.path().join("unreachable.json");
     write_admission_context(
         &unreachable,
@@ -216,10 +222,11 @@ fn child_negotiation_consumes_its_sidecar_and_rejects_forgeries() {
     .unwrap();
     let err = rt
         .block_on(connect(&Negotiation::Child {
-            context: unreachable,
+            context: unreachable.clone(),
         }))
         .unwrap_err();
     assert!(err.contains("unreachable"), "{err}");
+    assert!(!unreachable.exists(), "a valid token never lingers on disk");
     drop(parent);
     rt.block_on(server.shutdown());
 }

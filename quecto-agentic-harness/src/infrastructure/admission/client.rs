@@ -260,7 +260,7 @@ impl Inner {
         self.hello.get().expect("hello completes before use")
     }
 
-    fn on_reply(&self, reply: Reply) -> bool {
+    fn on_reply(self: &Arc<Self>, reply: Reply) -> bool {
         match (reply.id, reply.body) {
             (Some(id), body) => {
                 let tracked = self.tracked.lock().expect("tracked map").remove(&id);
@@ -270,10 +270,9 @@ impl Inner {
                             state: StateWire::Active { .. },
                         } = body
                         {
-                            self.send_detached(Op::Complete {
-                                sequence,
-                                feedback: FeedbackWire::Failure,
-                            });
+                            // No transport exists: release durably, with the
+                            // same retry the permit path uses.
+                            self.spawn_completion(sequence, Feedback::Failure);
                         }
                     }
                     None => {

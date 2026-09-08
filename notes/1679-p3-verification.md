@@ -92,3 +92,6 @@ container e2e (QUECTO_ADMISSION_CONTAINER_E2E=1, podman): 2 passed
   92.25% (355/4583 missed), 4182 lib tests. Extra lib-gate margin came from
   `install_in` (injectable slot), `admission_candidate`, a SIGTERM-driven test
   of the broker `run` path and named start-time refusals.
+- Second adversarial review: 11 new findings fixed (see red-evidence); after
+  the fixes lib admission 297, real-process 6 (incl. SIGTERM), container e2e 2,
+  tagged BDD 15/81, pre-push gate green, lib coverage 92.20% (358/4588).
