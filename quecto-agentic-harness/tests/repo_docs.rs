@@ -258,15 +258,13 @@ fn agent_cmd_docs_match_tool_schema() {
         "get_messages_tail must not be a first-class agent_cmd command"
     );
 
-    // README agent_cmd tool row lists agent-facing commands, not the internal
-    // message lookup retained by the parser for conversation updates.
+    // README lists the complete agent-facing surface, including stable message recovery.
     let readme = read_repo_file("README.md");
     let row = readme
         .lines()
         .find(|line| line.contains("Send commands to spawned UDS subagents"))
         .expect("README should document the agent_cmd tool");
-    assert!(!row.contains("`get_message`"));
-    for cmd in commands.iter().filter(|cmd| cmd.as_str() != "get_message") {
+    for cmd in &commands {
         assert!(
             row.contains(&format!("`{cmd}`")),
             "README agent_cmd row missing supported command `{cmd}`"
