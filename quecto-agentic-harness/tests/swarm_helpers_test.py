@@ -11,6 +11,8 @@ import unittest
 
 HELPERS = pathlib.Path(__file__).resolve().parents[1] / 'src/infrastructure/tools/swarm_helpers'
 sys.path.insert(0, str(HELPERS))
+sys.path.insert(0, str(HELPERS.parents[2] / "domain"))
+sys.path.insert(0, str(HELPERS.parents[2] / "application"))
 from swarm import Workbench, SwarmError
 
 
@@ -34,6 +36,26 @@ class WorkbenchBehavior(unittest.TestCase):
 
     def task(self, request='task', dependencies=None):
         return self.worker.task_create(request, 'implement behavior', ['tests pass'], dependencies or [])
+
+    def test_dependent_tasks_can_be_revalidated_at_final_revision(self):
+        a = self.worker.claim(self.task('a')['id'])
+        self.worker.submit(a['id'], a['token'], [{'artifact': 'a-tests', 'revision': 'R1'}])
+        self.parent.verify_task(a['id'], a['token'], 'R1')
+        b = self.worker.claim(self.task('b', [a['id']])['id'])
+        self.worker.submit(b['id'], b['token'], [{'artifact': 'b-tests', 'revision': 'R2'}])
+        self.parent.verify_task(b['id'], b['token'], 'R2')
+        for criterion, kind in [('tests', 'command'), ('review', 'review')]:
+            self.parent.evidence(criterion, 'final-check', 'R2', kind, True)
+        with self.assertRaisesRegex(SwarmError, 'stale revision'):
+            self.parent.complete('R2')
+        evidence = [{'artifact': 'a-rerun-at-R2', 'revision': 'R2'}]
+        with self.assertRaisesRegex(SwarmError, 'coordinator'):
+            self.worker.revalidate_task(a['id'], 'R2', evidence)
+        with self.assertRaisesRegex(SwarmError, 'revision'):
+            self.parent.revalidate_task(a['id'], 'R2', a['evidence'] or [{'artifact': 'old', 'revision': 'R1'}])
+        self.parent.revalidate_task(a['id'], 'R2', evidence)
+        self.parent.complete('R2')
+        self.assertEqual(self.parent.summary()['status'], 'succeeded')
 
     def test_goal_is_durable_and_workers_cannot_amend_it(self):
         self.assertEqual(self.client('worker').summary()['goal'], 'ship feature')

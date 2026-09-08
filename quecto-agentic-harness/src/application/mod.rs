@@ -23,3 +23,5 @@ pub mod subagent_launch;
 mod subagent_launch_tests;
 
 pub mod inference_admission;
+
+pub mod swarm;

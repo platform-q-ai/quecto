@@ -237,6 +237,7 @@ fn build_official_tool_extensions_lists_core_workspace_tools() {
     let sandbox =
         crate::infrastructure::security::sandbox::Sandbox::new(Some(tmp.path().to_path_buf()));
     let exts = build_official_tool_extensions(OfficialToolDeps {
+        swarm_context: None,
         workspace: tmp.path().to_path_buf(),
         sandbox,
         exec_options: crate::infrastructure::tools::bash::ExecOptions::default(),
@@ -273,6 +274,7 @@ fn build_session_tool_extensions_supplies_recall() {
 fn build_agent_control_tool_extensions_supplies_spawn_and_agent_cmd() {
     let tmp = tempfile::TempDir::new().unwrap();
     let built = build_agent_control_tool_extensions(AgentControlToolDeps {
+        swarm_context: None,
         parent_config_path: None,
         base_dir: tmp.path().to_path_buf(),
         socket_dir: tmp.path().to_path_buf(),
@@ -321,6 +323,7 @@ fn register_bundled_native_tools_marks_official_not_extension_tracked() {
     register_bundled_native_tools(
         &mut registry,
         build_official_tool_extensions(OfficialToolDeps {
+            swarm_context: None,
             workspace: tmp.path().to_path_buf(),
             sandbox,
             exec_options: crate::infrastructure::tools::bash::ExecOptions::default(),

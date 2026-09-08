@@ -92,6 +92,7 @@ impl Extension for NativeExtension {
 /// consume `Extension` objects and register their tools through the same
 /// descriptor/policy registry path used by runtime UDS tools.
 pub struct OfficialToolDeps {
+    pub swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
     pub workspace: PathBuf,
     pub sandbox: crate::infrastructure::security::sandbox::Sandbox,
     pub exec_options: crate::infrastructure::tools::bash::ExecOptions,
@@ -138,7 +139,7 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
                     sandbox.clone(),
                     deps.swarm_config,
                 )
-                .with_context(crate::infrastructure::tools::swarm_bridge::SwarmContext::discover()),
+                .with_context(deps.swarm_context),
             ),
             Arc::new(crate::infrastructure::tools::find::FindTool::new(
                 workspace, sandbox,
@@ -172,6 +173,7 @@ pub fn build_session_tool_extensions(deps: SessionToolDeps) -> Vec<Arc<dyn Exten
 }
 
 pub struct AgentControlToolDeps {
+    pub swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
     pub base_dir: PathBuf,
     pub socket_dir: PathBuf,
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
@@ -197,6 +199,7 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
 
     let mut spawn =
         crate::infrastructure::tools::spawn::SpawnTool::with_base_dir(Vec::new(), deps.base_dir)
+            .with_swarm_context(deps.swarm_context)
             .with_socket_dir(deps.socket_dir)
             .with_environment_registry(environment_registry.clone())
             .with_parent_config_path(deps.parent_config_path);
@@ -288,10 +291,20 @@ pub fn build_official_tool_registry(
     sandbox: crate::infrastructure::security::sandbox::Sandbox,
     exec_options: crate::infrastructure::tools::bash::ExecOptions,
 ) -> crate::infrastructure::tools::registry::ToolRegistryImpl {
+    build_official_tool_registry_with_context(workspace, sandbox, exec_options, None)
+}
+
+pub fn build_official_tool_registry_with_context(
+    workspace: PathBuf,
+    sandbox: crate::infrastructure::security::sandbox::Sandbox,
+    exec_options: crate::infrastructure::tools::bash::ExecOptions,
+    swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
+) -> crate::infrastructure::tools::registry::ToolRegistryImpl {
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     register_bundled_native_tools(
         &mut registry,
         build_official_tool_extensions(OfficialToolDeps {
+            swarm_context,
             workspace,
             sandbox,
             exec_options,

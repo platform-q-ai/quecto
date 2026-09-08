@@ -34,3 +34,8 @@ Feature: Container swarm coordination
   Scenario: Shared checkout reservations are all or nothing
     When swarm members contend for an overlapping file set
     Then only the first swarm file set is owned
+
+  Scenario: Completed dependent work can be revalidated at the final revision
+    When the coordinator completes dependent tasks at different revisions
+    And revalidates earlier work with fresh final revision evidence
+    Then the swarm run status is "succeeded"

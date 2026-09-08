@@ -80,3 +80,49 @@ pub(crate) fn evict_finished_jobs(registry: &mut HashMap<String, Arc<Mutex<JobSt
         registry.remove(&id);
     }
 }
+
+type RegisteredJobs = (std::path::PathBuf, String, std::sync::Weak<Mutex<Jobs>>);
+static CONTEXT_JOBS: std::sync::Mutex<Vec<RegisteredJobs>> = std::sync::Mutex::new(Vec::new());
+
+pub(crate) fn register_context_jobs(
+    context: &super::super::swarm_bridge::SwarmContext,
+    jobs: &JobRegistry,
+) {
+    let mut registered = CONTEXT_JOBS.lock().unwrap();
+    registered.retain(|(_, _, weak)| weak.strong_count() > 0);
+    registered.push((
+        context.checkout.clone(),
+        context.member.clone(),
+        Arc::downgrade(jobs),
+    ));
+}
+
+pub(crate) fn cancel_context_jobs(context: &super::super::swarm_bridge::SwarmContext) {
+    let jobs: Vec<_> = CONTEXT_JOBS
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(checkout, member, _)| checkout == &context.checkout && member == &context.member)
+        .filter_map(|(_, _, weak)| weak.upgrade())
+        .collect();
+    for registry in jobs {
+        super::cancel_jobs(&registry);
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Jobs {
+    pub(crate) stopped: bool,
+    entries: HashMap<String, Arc<Mutex<JobState>>>,
+}
+impl std::ops::Deref for Jobs {
+    type Target = HashMap<String, Arc<Mutex<JobState>>>;
+    fn deref(&self) -> &Self::Target {
+        &self.entries
+    }
+}
+impl std::ops::DerefMut for Jobs {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.entries
+    }
+}

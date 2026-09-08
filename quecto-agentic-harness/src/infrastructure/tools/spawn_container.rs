@@ -68,7 +68,7 @@ impl PreparedChild {
             }
             if child.wait().await.is_ok() {
                 if let Some(reservation) = &mut self.swarm_reservation {
-                    if let Err(error) = reservation.confirmed_dead() {
+                    if let Err(error) = reservation.rolled_back() {
                         tracing::error!(%error, "swarm launch rollback requires reconciliation");
                     }
                 }
@@ -94,6 +94,7 @@ pub(super) async fn run_cleanup_once(env_ref: Option<String>, cleanup_argv: &mut
 /// The child command a launch adapter must run (or hand to a create script):
 /// binary, final CLI args, and the parent's base directory.
 pub(super) struct ChildCommand<'a> {
+    pub swarm_context: Option<&'a super::swarm_bridge::SwarmContext>,
     pub binary: &'a Path,
     pub cli_args: &'a [std::ffi::OsString],
     pub base_dir: &'a Path,
@@ -105,9 +106,7 @@ pub(super) async fn spawn_prepared_child(
     environments: &EnvironmentRegistry,
     parent_config_path: Option<&Path>,
 ) -> Result<PreparedChild, DomainError> {
-    if super::swarm_bridge::SwarmContext::discover().is_some()
-        && !matches!(config.container, ContainerSelection::Local)
-    {
+    if child.swarm_context.is_some() && !matches!(config.container, ContainerSelection::Local) {
         return Err(DomainError::Tool("swarm members must reuse their shared container and fixed pool; nested containers cannot reset admission".into()));
     }
     match &config.container {
@@ -262,8 +261,9 @@ fn parse_exec_result(stdout: &[u8]) -> Result<ParentEndpoint, DomainError> {
 }
 
 async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, DomainError> {
-    let mut reservation = tokio::task::spawn_blocking(|| {
-        super::swarm_bridge::SwarmContext::discover()
+    let context = child.swarm_context.cloned();
+    let mut reservation = tokio::task::spawn_blocking(move || {
+        context
             .map(super::swarm_admission::LaunchReservation::reserve)
             .transpose()
     })
@@ -291,7 +291,7 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
         if let Err(error) = result {
             let _ = child.start_kill();
             if child.wait().await.is_ok() {
-                reservation.confirmed_dead()?;
+                reservation.rolled_back()?;
             }
             return Err(error);
         }

@@ -43,12 +43,17 @@ Nested container launches are rejected. An existing run cannot be reset through
 the helper API. This bounds harness-managed agents, not arbitrary subprocesses
 or direct provider API calls. Provider inference admission is separate (#1679).
 
-Launch reservations precede process launch. Failed launches release reservations
-when no process was started or termination was confirmed. Launched processes are
-identified by PID and kernel start time, avoiding accidental reuse of a recycled
-PID. `op=reconcile` updates confirmed deaths. Neither a worker's completion
-message nor elapsed time frees its slot. Unknown lifecycle state retains capacity
-and reports an error; resolve it using existing lifecycle controls.
+Launch reservations precede process launch. Only reservations for processes that
+never started are released automatically. Launched processes are identified by
+PID and kernel start time, avoiding recycled-PID mistakes. `op=reconcile` detects
+harness death, but a dead harness does **not** prove that its Bash/Python execution
+groups stopped: those children can survive and be reparented. Therefore the run
+fails, membership and file ownership stay reserved, and replacement claims are
+rejected. Stop and discard that container environment before starting a fresh run.
+The current adapter cannot safely recover an abruptly exited worker in place;
+`recover` requires independently confirmed execution-scope death, which ordinary
+harness reconciliation deliberately does not assert. Post-launch rollback is also
+conservative. Neither idle time nor a worker's completion message frees a slot.
 
 ## Packaged API
 
@@ -84,7 +89,8 @@ File sets are reserved all at once or not at all. Paths resolve inside the share
 checkout, including symlink aliases and not-yet-created files.
 `release_files(task_id, claim_token, reservation_token)` cannot remove a newer
 owner's reservation. Only the coordinator may `recover(task_id)`, after the
-harness has confirmed that its owner died. There are no expiring ownership leases.
+entire execution scope is confirmed stopped. A harness exit alone cannot grant
+that permission in the current adapter. There are no expiring ownership leases.
 
 These are **cooperative reservations**, not mandatory locks: Bash and arbitrary
 Python can bypass them. The container is the external containment boundary,
@@ -129,7 +135,12 @@ independent reviewer. `command` and `review` evidence are distinguished.
 
 Completion requires accepted evidence for every original criterion at the
 specified revision, completed tasks with matching evidence revisions, and no
-remaining file reservations. Submitted tasks, idle agents and an empty queue do
+remaining file reservations. When later dependent work advances the checkout,
+the coordinator reruns the earlier task's checks, then calls
+`revalidate_task(id, final_revision, fresh_evidence)`. This requires a completed
+task and nonempty artifact evidence matching that revision; it records both old
+and new evidence in the audit. Workers cannot revalidate. Existing evidence is
+never silently relabeled. Submitted tasks, idle agents and an empty queue do
 not prove success. `amend(goal, constraints, criteria, reason)` is coordinator-only,
 records the amendment, and invalidates prior overall evidence.
 
@@ -139,8 +150,11 @@ entries beyond the first page. File reservations are bounded to 1000 per run. Th
 audit remains in SQLite. `stop(status, reason)` distinguishes `blocked`, `failed`,
 `cancelled`, and `budget-exhausted`; success is `succeeded`. `op=cancel_run` is the
 parent cancellation operation. New work and admission stop at terminal state;
-existing harness abort/process cleanup settles workers and reconciliation preserves
-readable partial progress. Keep the coordinator available to report to the parent.
+settlement cancels local detached Python jobs before attempting UDS turn abort,
+then terminates workers through the process adapter. Every member's watcher checks
+for remote terminal outcomes at 500 ms intervals, including while idle, and cancels
+its own detached registry. The registry closes against concurrent new launches.
+Reconciliation preserves readable partial progress and retains uncertain ownership. Keep the coordinator available to report to the parent.
 
 The required run budget is wall-clock time. A harness timer supervises the deadline
 even when agents are idle, and Python execution timeouts cannot exceed the remaining
@@ -154,3 +168,19 @@ Execution artifacts remain under `.quecto/swarm/<execution_id>/` with the existi
 32-directory pruning policy. The sibling `.quecto/swarm.sqlite` database is never
 pruned with those artifacts. Container destruction remains destructive unless the
 user preserves its storage; cross-container recovery is not provided.
+
+## Architecture boundaries
+
+The packaged Python domain (`src/domain/swarm_policy.py`) owns authorization,
+deadline, admission, completion, and revalidation decisions without I/O.
+Application use cases (`src/application/swarm_use_cases.py`) depend on an atomic
+coordination repository and injected clock. SQLite implements that port; admission
+checks and reservation writes share the same immediate transaction. SQL-facing
+workbench/task adapters retain dispatch and the existing task implementation; this
+is an incremental extraction, not a second implementation of the policy in Rust.
+
+Rust domain ports expose typed membership, process identity, outcomes, coordination,
+process control and clock contracts. `src/application/swarm.rs` owns reconciliation
+and settlement sequencing. Infrastructure handles Python wire decoding, Linux
+identity checks, UDS commands, cancellation registries and timer scheduling. Pure
+policy/fake-port tests supplement the real SQLite and process integration tests.

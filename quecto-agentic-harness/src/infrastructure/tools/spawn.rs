@@ -126,6 +126,7 @@ fn validate_config_path(s: &str) -> Result<PathBuf, String> {
 /// When executed, validates the request, launches the child as a
 #[derive(Debug)]
 pub struct SpawnTool {
+    pub(super) swarm_context: Option<super::swarm_bridge::SwarmContext>,
     /// Allowlist of agent IDs that can be spawned.
     pub(super) allowed_agents: Vec<String>,
     /// Base directory for the child agent process.
@@ -154,8 +155,17 @@ pub struct SpawnTool {
 }
 
 impl SpawnTool {
+    pub fn with_swarm_context(
+        mut self,
+        context: Option<super::swarm_bridge::SwarmContext>,
+    ) -> Self {
+        self.swarm_context = context;
+        self
+    }
+
     pub fn new(allowed_agents: Vec<String>) -> Self {
         Self {
+            swarm_context: None,
             allowed_agents,
             base_dir: PathBuf::new(),
             socket_dir: PathBuf::new(),
@@ -173,6 +183,7 @@ impl SpawnTool {
     /// Create with a base directory for subprocess spawning.
     pub fn with_base_dir(allowed_agents: Vec<String>, base_dir: PathBuf) -> Self {
         Self {
+            swarm_context: None,
             allowed_agents,
             base_dir,
             socket_dir: PathBuf::new(),

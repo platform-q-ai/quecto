@@ -10,12 +10,15 @@ use crate::domain::error::DomainError;
 pub struct SwarmContext {
     pub checkout: PathBuf,
     pub member: String,
+    pub lifecycle: std::sync::Arc<dyn crate::domain::swarm::SwarmLifecycle>,
 }
 
 impl SwarmContext {
     /// Explicit context supplied by the container launch adapter. Host-local
     /// reference scripts deliberately do not set this contract.
-    pub fn discover() -> Option<Self> {
+    pub fn discover(
+        lifecycle: std::sync::Arc<dyn crate::domain::swarm::SwarmLifecycle>,
+    ) -> Option<Self> {
         let checkout = std::env::var_os("QUECTO_SWARM_CHECKOUT")?;
         let protocol = std::env::var("QUECTO_SWARM_CONTAINER").ok()?;
         if protocol != "isolated-pid-v1" {
@@ -30,6 +33,7 @@ impl SwarmContext {
         Some(Self {
             checkout: checkout.into(),
             member,
+            lifecycle,
         })
     }
 
@@ -40,6 +44,15 @@ impl SwarmContext {
     pub fn bootstrap(&self) -> String {
         let mut source = String::from("import sys, types, json\n");
         for (name, body) in [
+            ("swarm_policy", include_str!("../../domain/swarm_policy.py")),
+            (
+                "swarm_use_cases",
+                include_str!("../../application/swarm_use_cases.py"),
+            ),
+            (
+                "swarm_repository",
+                include_str!("swarm_helpers/swarm_repository.py"),
+            ),
             ("swarm_store", include_str!("swarm_helpers/swarm_store.py")),
             ("swarm_tasks", include_str!("swarm_helpers/swarm_tasks.py")),
             ("swarm", include_str!("swarm_helpers/swarm.py")),
@@ -58,7 +71,7 @@ impl SwarmContext {
         source
     }
 
-    pub fn call(&self, method: &str, args: Value) -> Result<Value, DomainError> {
+    fn rpc(&self, method: &str, args: Value) -> Result<Value, DomainError> {
         let source = format!(
             "{}\ntry:\n print(json.dumps({{'ok':getattr(swarm.board,{}) (*json.loads({}))}}))\nexcept Exception as e:\n print(json.dumps({{'error':str(e)}}))\n",
             self.bootstrap(),
@@ -85,8 +98,13 @@ impl SwarmContext {
         Ok(value["ok"].clone())
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn call(&self, method: &str, args: Value) -> Result<Value, DomainError> {
+        self.rpc(method, args)
+    }
+
     pub fn summary(&self) -> Result<Value, DomainError> {
-        self.call("summary", json!([]))
+        self.rpc("summary", json!([]))
     }
 }
 
@@ -136,3 +154,6 @@ mod context_tests {
         assert!(!super::isolated_pid_namespace("not a namespace identity"));
     }
 }
+
+#[path = "swarm_coordination.rs"]
+mod coordination;

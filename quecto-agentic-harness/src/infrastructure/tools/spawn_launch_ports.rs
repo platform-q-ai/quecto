@@ -177,6 +177,7 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             super::spawn_container::spawn_prepared_child(
                 config,
                 &super::spawn_container::ChildCommand {
+                    swarm_context: self.tool.swarm_context.as_ref(),
                     binary,
                     cli_args,
                     base_dir: &self.tool.base_dir,
@@ -417,7 +418,10 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
                     identity.registry_key.clone(),
                     exit_tx,
                     self.tool.broadcast_tx.clone(),
-                    ownership,
+                    super::spawn_reaper::ReaperContext {
+                        ownership,
+                        swarm_context: self.tool.swarm_context.clone(),
+                    },
                 );
             }
             Ok(RegisteredLaunch {

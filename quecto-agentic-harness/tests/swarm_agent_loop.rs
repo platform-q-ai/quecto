@@ -28,6 +28,7 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
     let directory = tempfile::tempdir().unwrap();
     let workspace = Arc::new(directory.path().to_path_buf());
     let context = SwarmContext {
+        lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),
     };
@@ -37,7 +38,8 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
         .unwrap()
         .as_secs()
         + 60;
-    context.call("create", serde_json::json!(["ship", [], [{"id":"tests","kind":"command","description":"pass"}], 1, deadline])).unwrap();
+    context.create_run(&serde_json::json!({"goal":"ship","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}),
+        &quecto::domain::swarm::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm_bridge::process_start(std::process::id()).unwrap() }, None).unwrap();
     let tool = SwarmTool::new(
         workspace.clone(),
         Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
@@ -68,6 +70,7 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
         .unwrap();
     assert!(result.response.contains("Verified completion"));
     let summary = SwarmContext {
+        lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),
     }

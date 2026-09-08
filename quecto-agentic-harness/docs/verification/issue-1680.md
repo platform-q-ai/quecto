@@ -118,3 +118,98 @@ before the test finishes writing stdin. The test harness now accepts only
 `BrokenPipe` for that early exit, retaining every status/output assertion and
 rejecting other I/O errors. The affected container-runtime (8 tests), production
 REPL (6 tests), and fake-provider integration checks passed after these fixes.
+
+## Review remediation (2026-09-08)
+
+The external review of `da8b355cf7ba67585f85e94656665167ebfce636` identified
+three correctness defects and four architectural boundary problems. All seven
+were valid. The previous green suite and sequential self-review missed these
+cases; they were not evidence of complete lifecycle safety.
+
+### Reproduction and fixes
+
+- **3956977732 — final revision revalidation.** A new real-SQLite regression
+  completed A at R1, then its dependent B at R2. Completion at R2 rejected A and
+  the required revalidation operation was absent (RED). Coordinator-only
+  `revalidate_task` now requires fresh artifact evidence at the requested
+  revision and audits the old and new evidence. Worker revalidation and stale
+  evidence are rejected. The two-task test and a BDD scenario exercise success.
+- **3956977737 — surviving execution scope.** The original reconciliation test
+  observed an active writer but zero retained file reservations (RED). The
+  strengthened regression starts a real parent and independently grouped writer,
+  kills/reaps only the parent, then verifies reconciliation retains the file and
+  membership while failing the run. The current adapter cannot prove an orphaned
+  execution scope empty: it does not grant replacement claims or in-place crash
+  recovery. The environment must be stopped and discarded. Unlaunched
+  reservations remain safely releasable; post-launch rollback is conservative.
+- **3956977742 — coordinator detached execution.** The initial regression
+  observed a late write after `stop('failed', ...)` (RED). Settlement now cancels
+  the local execution registry before turn abort, including a coordinator whose
+  endpoint accepts abort. The strengthened test gates a real writer until after
+  failed settlement and uses an accepting UDS endpoint. Member watchers also
+  observe remote terminal outcomes. Registry closure plus serialized
+  spawn/identity publication prevents queued jobs escaping cancellation.
+- **3957004456 — completion boundary.** Pure Python domain decisions operate on
+  criteria/evidence/task values. Application completion and revalidation use an
+  injected atomic repository, with in-memory tests that never open SQLite or
+  launch a child interpreter. The SQLite adapter supplies the domain snapshot
+  and persists the decision under the same transaction.
+- **3957004468 — authorization/admission boundary.** Authorization, eligibility,
+  deadline and admission decisions live in the pure domain. Application owns
+  the clock and operation sequencing; expiry commits independently of a rejected
+  mutation. The SQLite adapter retains immediate transactions. Existing real
+  contention/admission/claim tests remain; pure fake-clock and repository tests
+  add isolated policy coverage. Remaining SQL-facing task/workbench operations
+  stay adapters; this is incremental extraction, not duplicate Rust policy.
+- **3957004475 — typed coordination port.** Production callers use typed
+  snapshots, identities, outcomes and operations. Wire method names, positional
+  arguments and JSON decoding stay inside the Python adapter. CLI composition
+  registers endpoints through the port. Invalid lifecycle wire data fails
+  explicitly instead of silently skipping members. Contract tests cover the
+  real packaged adapter and all new public ports.
+- **3957004481 — settlement boundary.** Application owns reconciliation,
+  settlement ordering, coordinator exceptions, fallback and deadline decisions.
+  Process/coordination/clock ports own effects. The interface composition root
+  injects `SwarmLifecycle` into tool, spawn and reaper adapters; infrastructure
+  neither constructs nor directly imports the application service. Fake-port
+  tests require no sockets, process control or persistence. Existing Linux/UDS
+  integration tests cover the adapters.
+
+### Additional adversarial workflow loops
+
+Both loops followed the built-in `adversarial-review` fixture's scope, inspect,
+challenge, validate and report stages. Scope was the remediation diff against
+`da8b355c`, including new files, the seven review claims and existing containment,
+transaction, ownership and cancellation invariants. These were sequential
+self-review loops, not independent reviews or a claim of perfection.
+
+**Loop 1:** Narrow checks covered cross-language dependency direction, admission
+atomicity, cancellation interleavings and process ownership. The queued-background
+launch race was confirmed: cancelling current registry entries alone did not
+close admission to queued/new jobs. Registry closure and a spawn/cancel critical
+section fix it; a current-thread queued-launch regression checks no writer starts
+and later registry admission fails. A supervisor must also retain its known
+deadline when a transient coordination read fails; the watcher now cancels local
+jobs, retries observation and applies the last known budget through the injected
+clock policy. Architectural checks caught direct application references from
+infrastructure; explicit composition-root injection replaced them, without
+weakening the guard or adding an alias to evade it.
+
+**Loop 2:** Rechecked the complete composition path, typed wire validation,
+coordinator abort acceptance/failure, unlaunched versus launched rollback,
+revision-specific revalidation, atomic admission and expiry, and the new tests'
+ability to falsify the claims. Corrected remaining documentation that equated
+harness death with execution-scope death. No additional correctness candidate
+survived the final source verification. Live container/provider behavior remains
+outside this local validation; real SQLite, local orphan-process and UDS tests
+cover the reproduced mechanisms.
+
+The PR remains subject to authoritative CI and explicit user approval before
+merge. No auto-merge is enabled.
+
+Local remediation validation passed: 6,230 workspace library/binary tests;
+46 architecture tests; 104 port contracts; the fake-provider agent-loop test;
+19 real-SQLite Python cases and five pure Python policy/use-case cases;
+28 swarm BDD scenarios (120 steps); and 10 architecture BDD scenarios (17 steps).
+Strict workspace/all-target Clippy and repository quality/status-tag gates passed.
+The BDD quality gate retained its existing warnings without hard failures.

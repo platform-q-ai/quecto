@@ -24,7 +24,10 @@ async fn removed_entry_cannot_signal_after_its_reaper_finishes() {
         "owned".into(),
         exit_tx,
         None,
-        ownership,
+        ReaperContext {
+            ownership,
+            swarm_context: None,
+        },
     );
     // Explicit cleanup may retain this clone while an asynchronous cleanup runs.
     let removed = subagent_cascade::cascade_remove(&registry, "owned");
@@ -79,7 +82,10 @@ async fn reaper_task_forwards_exit_signal_for_untracked_child() {
         "gone".into(),
         exit_tx,
         None,
-        super::super::process_ownership::ProcessOwnership::new(),
+        ReaperContext {
+            ownership: super::super::process_ownership::ProcessOwnership::new(),
+            swarm_context: None,
+        },
     );
 
     exit_rx.changed().await.unwrap();

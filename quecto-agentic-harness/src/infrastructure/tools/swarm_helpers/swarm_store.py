@@ -5,8 +5,9 @@ import sqlite3
 import time
 
 
-class SwarmError(RuntimeError):
-    pass
+from swarm_policy import SwarmError
+from swarm_use_cases import Coordination
+from swarm_repository import Transaction
 
 
 SCHEMA = '''
@@ -73,37 +74,17 @@ class Store:
         db.execute('INSERT INTO events(actor,time,action,detail) VALUES(?,?,?,?)',
                    (self.actor, time.time(), action, encode(detail)))
 
-    def run(self, db, active=False, coordinator=False, read_only=False):
-        row = db.execute('SELECT * FROM run').fetchone()
-        if row is None:
-            raise SwarmError('coordination run missing')
-        run = dict(row)
-        if coordinator and run['coordinator'] != self.actor:
-            raise SwarmError('only the designated coordinator may do this')
-        member = db.execute('SELECT status FROM members WHERE id=?', (self.actor,)).fetchone()
-        if member is None or (member['status'] == 'dead' and not read_only):
-            raise SwarmError('invoking member is unknown or death confirmed')
-        if active and run['status'] != 'running':
-            raise SwarmError(f"run is {run['status']}; no new work permitted")
-        return run
-
-    def expire(self):
-        # Commit expiry independently so rejecting the subsequent mutation does
-        # not roll the terminal state back. Recheck under each mutation lock.
+    @contextlib.contextmanager
+    def atomic(self):
         with self.transaction() as db:
-            run = self.run(db, read_only=True)
-            if run['status'] == 'running' and run['deadline'] <= time.time():
-                db.execute("UPDATE run SET status='budget-exhausted'")
-                self.event(db, 'stop', {'status': 'budget-exhausted', 'reason': 'deadline'})
+            yield Transaction(self, db)
 
     @contextlib.contextmanager
     def operation(self, active=True, coordinator=False, read_only=False):
-        self.expire()
-        with self.transaction() as db:
-            run = self.run(db, active, coordinator, read_only)
-            if active and run['deadline'] <= time.time():
-                raise SwarmError('run is budget-exhausted; no new work permitted')
-            yield db, run
+        # Compatibility for the SQL-facing dispatch adapters. Policy and atomic
+        # use cases see only CoordinationTransaction, never this connection.
+        with Coordination(self, self.actor, time.time).operation(active, coordinator, read_only) as tx:
+            yield tx.connection, tx.run()
 
     def retry(self, db, request, payload, action):
         bounded(request, 'request id', 128)

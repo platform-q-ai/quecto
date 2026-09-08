@@ -1,7 +1,8 @@
 //! Swarm run commands, kept separate from Python execution and output handling.
 use super::swarm_bridge::SwarmContext;
 use crate::domain::error::DomainError;
-use serde_json::{Value, json};
+use crate::domain::swarm::ProcessIdentity;
+use serde_json::Value;
 
 pub async fn control(context: SwarmContext, op: &str, input: Value) -> Result<Value, DomainError> {
     let ctx = context.clone();
@@ -10,35 +11,22 @@ pub async fn control(context: SwarmContext, op: &str, input: Value) -> Result<Va
         "create" => {
             std::fs::create_dir_all(ctx.checkout.join(".quecto"))
                 .map_err(|e| DomainError::Tool(e.to_string()))?;
-            let result = ctx.call(
-                "create",
-                json!([
-                    input["goal"],
-                    input["constraints"],
-                    input["criteria"],
-                    input["member_limit"],
-                    input["deadline"]
-                ]),
+            let process = ProcessIdentity {
+                pid: std::process::id(),
+                started: super::swarm_bridge::process_start(std::process::id())
+                    .ok_or_else(|| DomainError::Tool("process identity unavailable".into()))?,
+            };
+            let snapshot = ctx.create_run(
+                &input,
+                &process,
+                super::swarm_bridge::process_socket().and_then(|s| s.to_str()),
             )?;
-            let reservation = result["members"][0]["reservation"].clone();
-            ctx.call(
-                "_activate",
-                json!([
-                    ctx.member,
-                    reservation,
-                    std::process::id(),
-                    super::swarm_bridge::process_start(std::process::id()),
-                    super::swarm_bridge::process_socket().map(|s| s.to_string_lossy().to_string())
-                ]),
-            )?;
-            if let Some(deadline) = result["deadline"].as_f64() {
-                super::swarm_lifecycle::supervise(ctx.clone(), deadline);
-            }
+            super::swarm_lifecycle::supervise(ctx.clone(), snapshot);
             ctx.summary()
         }
         "summary" | "reconcile" => super::swarm_lifecycle::reconcile(&ctx),
         "cancel_run" => {
-            ctx.call("stop", json!(["cancelled", "parent/user cancellation"]))?;
+            ctx.cancel_run()?;
             ctx.summary()
         }
         _ => Err(DomainError::Tool(format!("unknown swarm operation {op}"))),

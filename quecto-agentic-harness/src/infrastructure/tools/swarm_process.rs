@@ -58,9 +58,21 @@ pub(crate) async fn run_child(
     }
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| DomainError::Other(format!("failed to start python3: {e}")))?;
+    // Serialize spawn/identity publication against registry cancellation. A
+    // cancellation that wins this lock prevents the child from starting.
+    let mut child = {
+        let mut job = state.as_ref().map(|s| s.lock().unwrap());
+        if job.as_ref().is_some_and(|s| s.cancel_requested) {
+            return Ok(("cancelled".into(), None));
+        }
+        let child = cmd
+            .spawn()
+            .map_err(|e| DomainError::Other(format!("failed to start python3: {e}")))?;
+        if let Some(job) = &mut job {
+            job.pid = child.id();
+        }
+        child
+    };
     // Each stream gets its own budget. A shared one let whichever stream wrote
     // first consume the whole allowance, so a program that flooded stdout could
     // erase its own traceback from stderr — including from the artifact that is
@@ -79,16 +91,6 @@ pub(crate) async fn run_child(
             Arc::new(AtomicUsize::new(spec.artifact_max_bytes)),
         ))
     });
-    if let Some(st) = &state {
-        if let Ok(mut s) = st.lock() {
-            s.pid = child.id();
-            if s.cancel_requested {
-                if let Some(pid) = s.pid {
-                    kill_pid(pid);
-                }
-            }
-        }
-    }
     if let Some(input) = spec.stdin {
         if let Some(mut pipe) = child.stdin.take() {
             tokio::spawn(async move {

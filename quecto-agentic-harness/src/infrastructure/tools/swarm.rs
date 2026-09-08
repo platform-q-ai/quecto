@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -20,7 +19,7 @@ use crate::infrastructure::security::sandbox::Sandbox;
 pub use super::swarm_config::{SwarmConfig, SwarmToolConfig};
 
 /// Registry of background jobs, keyed by job id.
-type JobRegistry = Arc<Mutex<HashMap<String, Arc<Mutex<JobState>>>>>;
+type JobRegistry = Arc<Mutex<Jobs>>;
 
 /// Execution ids with a run in flight. Foreground runs never enter the job
 /// registry, so without this their artifact directory is prunable from the
@@ -78,7 +77,7 @@ impl SwarmTool {
             sandbox,
             config,
             session_key: Mutex::new(String::new()),
-            jobs: Arc::new(Mutex::new(HashMap::new())),
+            jobs: Arc::new(Mutex::new(Jobs::default())),
             active: Arc::new(Mutex::new(std::collections::HashSet::new())),
         }
     }
@@ -86,6 +85,9 @@ impl SwarmTool {
 
 impl SwarmTool {
     pub fn with_context(mut self, context: Option<super::swarm_bridge::SwarmContext>) -> Self {
+        if let Some(ctx) = &context {
+            register_context_jobs(ctx, &self.jobs);
+        }
         self.context = context;
         self
     }
@@ -281,6 +283,9 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
         }));
         {
             let mut registry = jobs.lock().unwrap();
+            if registry.stopped {
+                return tool_err("swarm execution registry stopped".into());
+            }
             let running = registry
                 .values()
                 .filter(|j| {
@@ -695,7 +700,8 @@ mod swarm_registry;
 pub(crate) use swarm_registry::*;
 
 fn cancel_jobs(jobs: &JobRegistry) {
-    if let Ok(jobs) = jobs.lock() {
+    if let Ok(mut jobs) = jobs.lock() {
+        jobs.stopped = true;
         for job in jobs.values() {
             if let Ok(mut job) = job.lock() {
                 if !is_terminal(&job.status) {

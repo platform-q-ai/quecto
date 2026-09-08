@@ -1,7 +1,7 @@
-//! A reservation is released only before launch, or after the child has exited.
+//! Release unlaunched reservations; quarantine launched scopes after rollback.
 use super::swarm_bridge::SwarmContext;
 use crate::domain::error::DomainError;
-use serde_json::json;
+use crate::domain::swarm::{CoordinationPort, ProcessIdentity};
 
 #[derive(Debug)]
 pub struct LaunchReservation {
@@ -16,7 +16,7 @@ impl LaunchReservation {
         let member = uuid::Uuid::new_v4().to_string();
         let token = uuid::Uuid::new_v4().to_string();
         super::swarm_lifecycle::reconcile(&context)?;
-        context.call("_admit", json!([member, token]))?;
+        context.reserve_member(&member, &token)?;
         Ok(Self {
             context,
             member,
@@ -33,8 +33,8 @@ impl LaunchReservation {
             .env("QUECTO_SWARM_BOOTSTRAP", "0");
     }
 
-    pub fn confirmed_dead(&mut self) -> Result<(), DomainError> {
-        self.context.call("_confirmed_dead", json!([self.member]))?;
+    pub fn rolled_back(&mut self) -> Result<(), DomainError> {
+        self.context.quarantine(&self.member)?;
         self.launched = true;
         Ok(())
     }
@@ -48,9 +48,13 @@ impl LaunchReservation {
                 "cannot establish swarm child process identity; reservation retained".into(),
             )
         })?;
-        self.context.call(
-            "_record_launch",
-            json!([self.member, self.token, pid, start]),
+        self.context.record_launch(
+            &self.member,
+            &self.token,
+            &ProcessIdentity {
+                pid,
+                started: start,
+            },
         )?;
         Ok(())
     }
@@ -59,7 +63,7 @@ impl LaunchReservation {
 impl Drop for LaunchReservation {
     fn drop(&mut self) {
         if !self.launched {
-            if let Err(error) = self.context.call("_confirmed_dead", json!([self.member])) {
+            if let Err(error) = self.context.confirm_unlaunched(&self.member) {
                 tracing::error!(%error, "swarm failed-launch reservation retained");
             }
         }

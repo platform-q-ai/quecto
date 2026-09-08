@@ -89,3 +89,23 @@ fn ownership(world: &mut QuectoWorld) {
     assert_eq!(files[0]["path"], "a.rs");
     assert_eq!(files[0]["task"], 1);
 }
+
+#[when("the coordinator completes dependent tasks at different revisions")]
+fn dependent_revisions(world: &mut QuectoWorld) {
+    run(
+        world,
+        json!({"code":"from swarm import board\na=board.task_create('a','first',['pass'])\nx=board.claim(a['id'])\nboard.submit(a['id'],x['token'],[{'artifact':'a.log','revision':'R1'}])\nboard.verify_task(a['id'],x['token'],'R1')\nb=board.task_create('b','second',['pass'],[a['id']])\ny=board.claim(b['id'])\nboard.submit(b['id'],y['token'],[{'artifact':'b.log','revision':'R2'}])\nboard.verify_task(b['id'],y['token'],'R2')\nboard.evidence('tests','final.log','R2','command',True)\nboard.complete('R2')"}),
+    );
+    assert!(result(world).is_error);
+    assert!(result(world).content.contains("stale revision"));
+}
+
+#[when("revalidates earlier work with fresh final revision evidence")]
+fn revalidate_revision(world: &mut QuectoWorld) {
+    run(
+        world,
+        json!({"code":"from swarm import board\nboard.revalidate_task(1,'R2',[{'artifact':'a-rerun.log','revision':'R2'}])\nboard.complete('R2')"}),
+    );
+    assert!(!result(world).is_error, "{}", result(world).content);
+    run(world, json!({"op":"summary"}));
+}

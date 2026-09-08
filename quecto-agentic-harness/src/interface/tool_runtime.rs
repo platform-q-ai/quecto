@@ -195,9 +195,10 @@ pub(crate) fn build_tool_runtime(
 
     // All composed harness entrypoints share startup admission, including
     // nested agents with a new session or a different provider entrypoint.
-    if let Some(context) = crate::infrastructure::tools::swarm_bridge::SwarmContext::discover() {
+    let swarm_context = swarm_context();
+    if let Some(context) = &swarm_context {
         crate::infrastructure::tools::swarm_lifecycle::join_current_process(
-            &context,
+            context,
             crate::infrastructure::tools::swarm_bridge::process_socket(),
         )
         .map_err(|e| e.to_string())?;
@@ -218,6 +219,7 @@ pub(crate) fn build_tool_runtime(
     register_bundled_native_tools_with_scope(
         &mut registry,
         build_official_tool_extensions(OfficialToolDeps {
+            swarm_context: swarm_context.clone(),
             workspace,
             sandbox,
             exec_options,
@@ -252,6 +254,7 @@ pub(crate) fn build_tool_runtime(
     // for every entrypoint. REPL's current public surface is preserved below by
     // policy-disabling the tools after registration.
     let agent_control = build_agent_control_tool_extensions(AgentControlToolDeps {
+        swarm_context,
         base_dir: base_dir.to_path_buf(),
         socket_dir: crate::interface::shared::xdg_runtime_dir_or_temp(),
         broadcast_tx: workflow.broadcast_tx.clone(),
@@ -455,4 +458,10 @@ pub(crate) fn load_workflow_spec(
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_file(path);
     serde_json::from_slice(&bytes).map_err(|e| e.to_string())
+}
+
+pub(crate) fn swarm_context() -> Option<crate::infrastructure::tools::swarm_bridge::SwarmContext> {
+    crate::infrastructure::tools::swarm_bridge::SwarmContext::discover(std::sync::Arc::new(
+        crate::application::swarm::LifecycleService,
+    ))
 }

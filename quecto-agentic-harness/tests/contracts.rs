@@ -57,3 +57,14 @@ mod tool_guard;
 mod tool_policy_mutator;
 #[path = "contracts/tool_registry.rs"]
 mod tool_registry;
+
+#[path = "contracts/clock.rs"]
+mod clock;
+#[path = "contracts/coordination_port.rs"]
+mod coordination_port;
+#[path = "contracts/process_control.rs"]
+mod process_control;
+#[path = "contracts/process_observation.rs"]
+mod process_observation;
+#[path = "contracts/swarm_lifecycle.rs"]
+mod swarm_lifecycle;

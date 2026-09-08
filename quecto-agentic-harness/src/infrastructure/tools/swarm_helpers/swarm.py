@@ -9,12 +9,14 @@ import time
 import uuid
 from swarm_store import Store, SwarmError, bounded, encode
 from swarm_tasks import Tasks
+from swarm_use_cases import Coordination
 
 
 class Workbench(Tasks):
     def __init__(self, path, checkout, member):
         self.store = Store(path, member)
         self.checkout, self.member = checkout, member
+        self.coordination = Coordination(self.store, member, time.time)
 
     @staticmethod
     def _criteria(criteria):
@@ -69,6 +71,12 @@ class Workbench(Tasks):
             db.execute('DELETE FROM evidence')
             self.store.event(db, 'amended', {'previous_goal': run['goal'], 'goal': goal, 'reason': reason})
 
+    def _snapshot(self):
+        with self.store.operation(active=False, read_only=True) as (db, run):
+            return {'status': run['status'], 'coordinator': run['coordinator'],
+                    'deadline': run['deadline'],
+                    'members': [dict(r) for r in db.execute('SELECT * FROM members')]}
+
     def summary(self):
         with self.store.operation(active=False, read_only=True) as (db, run):
             for key in ('constraints', 'criteria'):
@@ -103,20 +111,7 @@ class Workbench(Tasks):
     def _admit(self, member, reservation):
         """Harness-only reservation, including nested launches. Never called by board users."""
         bounded(member, 'member', 128)
-        with self.store.operation(active=False) as (db, run):
-            if run['status'] not in ('setup', 'running') or (run['status'] == 'running' and run['deadline'] <= time.time()):
-                raise SwarmError(f"run is {run['status']}; no new admission")
-            prior = db.execute('SELECT * FROM members WHERE id=?', (member,)).fetchone()
-            if prior and prior['reservation'] == reservation and prior['status'] != 'dead':
-                return dict(prior)
-            usage = db.execute("SELECT count(*) FROM members WHERE status IN ('live','reserved')").fetchone()[0]
-            if usage >= run['member_limit']:
-                raise SwarmError(f"swarm limit {run['member_limit']}, current usage {usage}; reuse the existing pool")
-            if prior:
-                raise SwarmError('member identity already used; choose a stable new identity')
-            db.execute("INSERT INTO members VALUES(?,?,'reserved',NULL,NULL,NULL)", (member, reservation))
-            self.store.event(db, 'reserved', {'member': member})
-            return {'id': member, 'reservation': reservation, 'status': 'reserved'}
+        return self.coordination.reserve_member(member, reservation)
 
     def _activate(self, member, reservation, pid, started, socket):
         with self.store.operation(active=False) as (db, run):
@@ -146,9 +141,18 @@ class Workbench(Tasks):
                 raise SwarmError('conflicting launch identity')
             db.execute('UPDATE members SET pid=?,started=? WHERE id=?', (pid, started, member))
 
+    def _release_unlaunched(self, member):
+        with self.store.operation(active=False) as (db, _):
+            row = db.execute('SELECT * FROM members WHERE id=?', (member,)).fetchone()
+            if not row or row['status'] != 'reserved' or row['pid'] is not None:
+                raise SwarmError('only an unlaunched reservation may be released')
+            db.execute("UPDATE members SET status='dead' WHERE id=?", (member,))
+            self.store.event(db, 'launch_abandoned', {'member': member})
+
     def _confirmed_dead(self, member):
-        # The Rust lifecycle adapter calls this only after observing process
-        # death (PID + kernel start time), never on idle, timeout or self-report.
+        # Reserved for a lifecycle adapter that can prove the entire execution
+        # scope stopped. The current adapter quarantines harness-only death
+        # instead; idle, timeout and self-report never confer this authority.
         with self.store.operation(active=False) as (db, run):
             current = db.execute('SELECT status FROM members WHERE id=?', (member,)).fetchone()
             if not current or current['status'] == 'dead':
@@ -205,18 +209,20 @@ class Workbench(Tasks):
             self.store.event(db, 'evidence', {'criterion': criterion, 'artifact': artifact, 'revision': revision, 'accepted': accepted})
 
     def complete(self, revision):
-        with self.store.operation(coordinator=True) as (db, run):
-            for criterion in json.loads(run['criteria']):
-                if not db.execute('SELECT 1 FROM evidence WHERE criterion=? AND revision=? AND accepted=1',
-                                  (criterion['id'], revision)).fetchone():
-                    raise SwarmError('completion requires accepted evidence at the current revision for every criterion')
-            if db.execute("SELECT 1 FROM tasks WHERE status!='completed'").fetchone() or db.execute('SELECT 1 FROM files').fetchone():
-                raise SwarmError('settle outstanding work and file reservations before success')
-            for row in db.execute('SELECT evidence FROM tasks'):
-                if any(e['revision'] != revision for e in json.loads(row[0])):
-                    raise SwarmError('task evidence refers to stale revision')
-            db.execute("UPDATE run SET status='succeeded'")
-            self.store.event(db, 'completed', {'revision': revision})
+        return self.coordination.complete(revision)
+
+    def revalidate_task(self, task_id, revision, evidence):
+        bounded(encode(evidence), 'evidence references')
+        return self.coordination.revalidate_task(task_id, revision, evidence)
+
+    def _quarantine(self, member):
+        # A missing harness is not proof that its independent execution groups
+        # stopped. Keep all ownership until the environment is discarded.
+        with self.store.operation(active=False) as (db, run):
+            if run['status'] in ('setup', 'running'):
+                db.execute("UPDATE run SET status='failed'")
+                self.store.event(db, 'scope_unknown', {'member': member,
+                    'reason': 'harness exited; execution scope unconfirmed; discard environment'})
 
     def stop(self, status, reason):
         if status not in ('blocked', 'failed', 'cancelled', 'budget-exhausted'):

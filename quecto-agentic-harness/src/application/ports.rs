@@ -16,3 +16,6 @@ pub use super::catalogue_refresh::{
 };
 pub use super::inference_admission::{AdmissionClient, AdmissionDispatcher, AdmissionRegistry};
 pub use super::provider_runtime::{ProviderRuntimeFactory, RuntimeSnapshotStore};
+
+#[cfg(any(test, feature = "test-support"))]
+pub use super::swarm::LifecycleService as SwarmTestLifecycle;

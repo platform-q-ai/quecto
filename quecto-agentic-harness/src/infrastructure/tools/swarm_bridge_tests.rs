@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 fn context(directory: &tempfile::TempDir) -> SwarmContext {
     SwarmContext {
+        lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
         checkout: directory.path().to_path_buf(),
         member: "parent".into(),
     }
@@ -136,7 +137,7 @@ fn failed_launch_releases_capacity_but_live_reservation_does_not() {
 }
 
 #[test]
-fn only_confirmed_death_recovers_a_recorded_launch() {
+fn harness_death_alone_retains_a_recorded_launch() {
     let directory = tempfile::tempdir().unwrap();
     let context = context(&directory);
     create(&context, 2);
@@ -149,7 +150,7 @@ fn only_confirmed_death_recovers_a_recorded_launch() {
         .unwrap();
     assert_eq!(
         super::swarm_lifecycle::reconcile(&context).unwrap()["usage"],
-        1
+        2
     );
     assert!(!process_confirmed_dead(
         std::process::id(),
@@ -246,7 +247,7 @@ async fn run_creation_requires_authorized_container_and_bounded_policy() {
 }
 
 #[tokio::test]
-async fn ready_failure_releases_reservation_only_after_child_rollback() {
+async fn ready_failure_retains_launched_scope_after_child_rollback() {
     let directory = tempfile::tempdir().unwrap();
     let context = context(&directory);
     create(&context, 2);
@@ -260,7 +261,8 @@ async fn ready_failure_releases_reservation_only_after_child_rollback() {
     prepared.swarm_reservation = Some(reservation);
     assert_eq!(context.summary().unwrap()["usage"], 2);
     prepared.rollback_once().await;
-    assert_eq!(context.summary().unwrap()["usage"], 1);
+    assert_eq!(context.summary().unwrap()["usage"], 2);
+    assert_eq!(context.summary().unwrap()["status"], "failed");
 }
 
 #[tokio::test]
@@ -296,4 +298,175 @@ async fn expired_budget_falls_back_to_termination_when_abort_endpoint_is_unavail
         exit.is_ok(),
         "unavailable abort socket allowed work past its budget"
     );
+}
+
+#[tokio::test]
+async fn failed_run_cancels_coordinator_detached_jobs() {
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = Arc::new(directory.path().to_path_buf());
+    let tool = super::swarm_test_support::tool(
+        workspace.clone(),
+        Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
+        SwarmConfig::default(),
+    );
+    use crate::domain::swarm::CoordinationPort;
+    let socket = directory.path().join("accept.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let coordinator = SwarmContext {
+        lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
+        checkout: directory.path().to_path_buf(),
+        member: "coordinator".into(),
+    };
+    coordinator
+        .register_endpoint(socket.to_str().unwrap())
+        .unwrap();
+    let accepts_abort = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read, mut write) = tokio::io::split(stream);
+        let mut read = tokio::io::BufReader::new(read);
+        let bytes = quecto_line_io::read_frame(&mut read, quecto_line_io::PROTOCOL_FRAME_CAP_BYTES)
+            .await
+            .unwrap()
+            .unwrap();
+        let command: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(command["type"], "abort");
+        let response = json!({"type":"response", "id":command["id"], "success":true});
+        quecto_line_io::write_frame(
+            &mut write,
+            response.to_string().as_bytes(),
+            quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
+        )
+        .await
+        .unwrap();
+    });
+    let start = tool.execute(r#"{"code":"import time, pathlib; pathlib.Path('writer-ready').touch()\nwhile not pathlib.Path('release-writer').exists(): time.sleep(0.01)\nopen('late-write','w').write('unsafe')","background":true}"#).await.unwrap();
+    assert!(!start.is_error, "{}", start.content);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !directory.path().join("writer-ready").exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let stop = tool
+        .execute(r#"{"code":"from swarm import board; board.stop('failed','review regression')"}"#)
+        .await
+        .unwrap();
+    assert!(!stop.is_error, "{}", stop.content);
+    tokio::time::timeout(std::time::Duration::from_secs(2), accepts_abort)
+        .await
+        .unwrap()
+        .unwrap();
+    std::fs::write(directory.path().join("release-writer"), "go").unwrap();
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    assert!(
+        !directory.path().join("late-write").exists(),
+        "background writer survived terminal settlement"
+    );
+}
+
+#[test]
+fn abrupt_harness_death_retains_ownership_while_orphan_writer_survives() {
+    use std::io::BufRead;
+    let directory = tempfile::tempdir().unwrap();
+    let parent = context(&directory);
+    create(&parent, 2);
+    let mut harness = std::process::Command::new("python3")
+        .args(["-c", "import subprocess,time; p=subprocess.Popen(['sh','-c','while true; do echo writing >> orphan-write; sleep 0.05; done'], start_new_session=True, stdout=subprocess.DEVNULL); print(p.pid,flush=True); time.sleep(30)"])
+        .current_dir(directory.path()).stdout(std::process::Stdio::piped()).spawn().unwrap();
+    let mut line = String::new();
+    std::io::BufReader::new(harness.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let writer_pid: u32 = line.trim().parse().unwrap();
+    let writer_start = process_start(writer_pid).unwrap();
+    let worker = SwarmContext {
+        member: "worker".into(),
+        ..parent.clone()
+    };
+    parent.call("_admit", json!(["worker", "r"])).unwrap();
+    parent
+        .call(
+            "_activate",
+            json!([
+                "worker",
+                "r",
+                harness.id(),
+                process_start(harness.id()),
+                null
+            ]),
+        )
+        .unwrap();
+    let task = worker
+        .call("task_create", json!(["t", "write file", ["pass"]]))
+        .unwrap();
+    let claim = worker.call("claim", json!([task["id"]])).unwrap();
+    worker
+        .call(
+            "reserve",
+            json!([task["id"], claim["token"], ["orphan-write"]]),
+        )
+        .unwrap();
+    harness.kill().unwrap();
+    harness.wait().unwrap();
+    let snapshot = super::swarm_lifecycle::reconcile(&parent).unwrap();
+    let surviving = !process_confirmed_dead(writer_pid, &writer_start);
+    super::swarm::terminate_member(writer_pid);
+    assert!(surviving);
+    assert_eq!(
+        snapshot["file_count"], 1,
+        "harness death cannot prove its execution scope stopped"
+    );
+    assert_eq!(snapshot["usage"], 2);
+    assert_eq!(snapshot["status"], "failed");
+    assert!(parent.call("recover", json!([task["id"]])).is_err());
+}
+
+#[tokio::test]
+async fn terminal_cancellation_closes_queued_and_future_background_launches() {
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = Arc::new(directory.path().to_path_buf());
+    let tool = super::swarm_test_support::tool(
+        workspace.clone(),
+        Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
+        SwarmConfig::default(),
+    );
+    let context = SwarmContext {
+        checkout: directory.path().to_path_buf(),
+        member: "coordinator".into(),
+        lifecycle: Arc::new(crate::application::swarm::LifecycleService),
+    };
+    let started = tool
+        .execute(r#"{"background":true,"code":"open('must-not-start','w').write('unsafe')"}"#)
+        .await
+        .unwrap();
+    assert!(!started.is_error, "{}", started.content);
+    // Current-thread runtime: the queued background future has not been polled.
+    super::swarm::cancel_context_jobs(&context);
+    let later = tool
+        .execute(r#"{"background":true,"code":"print('new work')"}"#)
+        .await
+        .unwrap();
+    assert!(
+        later.is_error,
+        "closed registry admitted a new job: {}",
+        later.content
+    );
+    let job: serde_json::Value = serde_json::from_str(&started.content).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let result = tool
+                .execute(&json!({"op":"status","job_id":job["job_id"]}).to_string())
+                .await
+                .unwrap();
+            let state: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+            if state["status"] == "cancelled" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!directory.path().join("must-not-start").exists());
 }

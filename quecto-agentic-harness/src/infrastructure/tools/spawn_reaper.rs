@@ -9,14 +9,23 @@
 use super::subagent_cleanup;
 use super::subagent_registry::{ExitSignal, ExitSignalTx, SubagentRegistry};
 
+pub(super) struct ReaperContext {
+    pub ownership: super::process_ownership::ProcessOwnership,
+    pub swarm_context: Option<super::swarm_bridge::SwarmContext>,
+}
+
 pub(super) fn spawn_reaper_task(
     mut child: tokio::process::Child,
     registry: SubagentRegistry,
     registry_key: String,
     exit_tx: ExitSignalTx,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    ownership: super::process_ownership::ProcessOwnership,
+    context: ReaperContext,
 ) {
+    let ReaperContext {
+        ownership,
+        swarm_context,
+    } = context;
     tokio::spawn(async move {
         let status = ownership.wait(&mut child).await;
         // send_replace: store the real exit status even when no awaiter holds
@@ -52,7 +61,7 @@ pub(super) fn spawn_reaper_task(
             }
             super::subagent_cascade::terminate_removed_entry(entry);
         }
-        if let Some(context) = super::swarm_bridge::SwarmContext::discover() {
+        if let Some(context) = swarm_context {
             let _ = tokio::task::spawn_blocking(move || {
                 if let Err(error) = super::swarm_lifecycle::reconcile(&context) {
                     tracing::error!(%error, "swarm reaper reconciliation failed; capacity retained");
