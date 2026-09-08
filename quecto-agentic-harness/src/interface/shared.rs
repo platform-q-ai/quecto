@@ -67,25 +67,69 @@ fn child_role_preamble() -> &'static str {
     "You are a subagent responsible for the assigned task. Solve it directly by default. You may delegate a bounded, independently useful subtask when doing so materially improves the result. Do not delegate your entire assignment, create another coordinator for the same task, or spawn agents merely to reduce your own context. Remain responsible for integrating and verifying delegated results."
 }
 
-/// Build role-specific instructions and optional custom text.
-/// Spawned children receive an ownership boundary, not parent routing policy.
-/// Tool schemas, the initial task, and workflow guidance are supplied separately.
-pub fn build_system_prompt(user_prompt: &Option<String>, spawned: bool) -> String {
-    let merged = merge_prompts(user_prompt);
+fn core_system_prompt(spawned: bool) -> String {
     let role = if spawned {
         child_role_preamble()
     } else {
         agent_role_preamble()
     };
-    let conventions = "Follow the codebase’s conventions whenever possible. When working inside the Quecto codebase specifically, always prefer the BDD/TDD red–green–refactor process and apply Clean Architecture and SOLID principles.";
-    let mut sections = vec![conventions, role];
+    let mut sections = vec![role];
     if !spawned {
         sections.push(parent_coordination_policy());
     }
-    if !merged.is_empty() {
-        sections.push(&merged);
-    }
     sections.join("\n\n")
+}
+
+fn append_prompt_section(prompt: &mut String, heading: &str, content: &str) {
+    if content.is_empty() {
+        return;
+    }
+    let delimiter = format!("<{heading}>");
+    prompt.push_str("\n\n");
+    prompt.push_str(&delimiter);
+    prompt.push_str("\nContent length: ");
+    prompt.push_str(&content.len().to_string());
+    prompt.push_str(" bytes\n\n");
+    prompt.push_str(content);
+    prompt.push_str("\n\n</");
+    prompt.push_str(heading);
+    prompt.push('>');
+}
+
+/// Build the full startup system prompt in stable precedence order.
+///
+/// Core policy comes first, followed by initialization-directory `AGENTS.md`,
+/// the explicit CLI system prompt, and extension snippets. Each optional source
+/// is wrapped so adjacent instructions cannot be accidentally concatenated.
+pub fn build_agent_system_prompt(
+    agents_instructions: Option<&str>,
+    user_prompt: Option<&str>,
+    spawned: bool,
+    extension_snippets: &str,
+) -> String {
+    let mut prompt = core_system_prompt(spawned);
+    prompt.push_str("\n\n## End Core Instructions");
+    if let Some(instructions) = agents_instructions {
+        append_prompt_section(&mut prompt, "agents-md-instructions", instructions);
+    }
+    if let Some(user_prompt) = user_prompt {
+        append_prompt_section(&mut prompt, "user-system-prompt", user_prompt);
+    }
+    append_prompt_section(&mut prompt, "extensions", extension_snippets);
+    prompt
+}
+
+/// Build role-specific instructions and optional custom text.
+/// Spawned children receive an ownership boundary, not parent routing policy.
+/// Tool schemas, the initial task, and workflow guidance are supplied separately.
+pub fn build_system_prompt(user_prompt: &Option<String>, spawned: bool) -> String {
+    let merged = merge_prompts(user_prompt);
+    let mut prompt = core_system_prompt(spawned);
+    if !merged.is_empty() {
+        prompt.push_str("\n\n");
+        prompt.push_str(&merged);
+    }
+    prompt
 }
 
 /// Append extension system prompt snippets in a clearly delimited section.

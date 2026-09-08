@@ -2762,6 +2762,44 @@ fn given_mock_llm_captures_and_returns(world: &mut QuectoWorld, content: String)
     std::mem::forget(rt);
 }
 
+fn first_llm_system_message(world: &QuectoWorld) -> String {
+    let server = world
+        .wiremock_server_ref
+        .expect("no capturing mock LLM configured");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let requests = rt.block_on(async { server.received_requests().await });
+    std::mem::forget(rt);
+    let requests = requests.expect("request recording not enabled");
+    let first = requests.first().expect("expected an LLM request");
+    let body: serde_json::Value =
+        serde_json::from_slice(&first.body).expect("LLM request should be JSON");
+    body["messages"]
+        .as_array()
+        .and_then(|messages| messages.iter().find(|message| message["role"] == "system"))
+        .and_then(|message| message["content"].as_str())
+        .expect("first LLM request should contain a system message")
+        .to_string()
+}
+
+#[then(expr = "the first LLM system message should contain {string} before {string}")]
+fn then_first_llm_system_message_contains_before(
+    world: &mut QuectoWorld,
+    earlier: String,
+    later: String,
+) {
+    let system = first_llm_system_message(world);
+    let earlier_position = system.find(&earlier).unwrap_or_else(|| {
+        panic!("first LLM system message did not contain {earlier:?}: {system}")
+    });
+    let later_position = system
+        .find(&later)
+        .unwrap_or_else(|| panic!("first LLM system message did not contain {later:?}: {system}"));
+    assert!(
+        earlier_position < later_position,
+        "expected {earlier:?} before {later:?} in first LLM system message: {system}"
+    );
+}
+
 /// Assert that the LLM received at least one request containing a system
 /// message with the given substring.
 #[then(expr = "the LLM should have received a system message containing {string}")]

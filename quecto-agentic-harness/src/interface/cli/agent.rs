@@ -9,10 +9,8 @@ use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 
-/// Max byte length for `--socket` paths.  Linux allows 108, macOS 104;
-/// we use the stricter limit for portability.
+/// Max byte length for `--socket` paths (the portable macOS/Linux limit).
 const MAX_SOCKET_PATH_BYTES: usize = 104;
-/// Bundles the stdout/stderr pair passed through the agent pipeline.
 pub(crate) struct AgentOutput<'a> {
     pub(crate) stdout: &'a mut String,
     pub(crate) stderr: &'a mut String,
@@ -20,6 +18,7 @@ pub(crate) struct AgentOutput<'a> {
 
 mod agent_deadline;
 mod flag_parse;
+mod startup_prompt;
 mod swarm_runtime;
 pub(crate) use agent_deadline::{DeadlineResult, run_with_deadline};
 mod flag_private;
@@ -250,6 +249,11 @@ pub(crate) fn cmd_agent(
         return 1;
     }
 
+    let agents_instructions = match startup_prompt::load_agents_instructions(ctx, stderr) {
+        Some(instructions) => instructions,
+        None => return 1,
+    };
+
     let base_dir = ctx.base_dir();
     let config_path = ctx.config_path();
     let build = match build_agent_from_config(
@@ -264,14 +268,12 @@ pub(crate) fn cmd_agent(
         None => return 1,
     };
 
-    // Build system prompt: top-level parent guidance, or minimal child prompt (#1319).
-    let mut system =
-        crate::interface::shared::build_system_prompt(&flags.system_prompt, flags.spawned);
-    crate::interface::shared::append_extension_prompt(
-        &mut system,
+    flags.system_prompt = Some(startup_prompt::compose(
+        agents_instructions.as_deref(),
+        flags.system_prompt.as_deref(),
+        flags.spawned,
         &build.extension_prompt_snippets,
-    );
-    flags.system_prompt = Some(system);
+    ));
     let mut out = AgentOutput { stdout, stderr };
     run_agent_session(&base_dir, build.agent, &flags, &mut out)
 }
@@ -290,7 +292,6 @@ pub(crate) struct AgentBuildResult {
     pub provider_reload_inputs: crate::interface::cli::provider_reload::ProviderReloadInputs,
     pub workspace: std::path::PathBuf,
 }
-
 pub(crate) fn build_agent_from_config(
     base_dir: &std::path::Path,
     config_path: &std::path::Path,
@@ -310,7 +311,6 @@ pub(crate) fn build_agent_from_config(
     let env_overrides: HashMap<String, String> = std::env::vars()
         .filter(|(k, _)| k.starts_with("QUECTO_"))
         .collect();
-
     let config = match Config::load_with_env(config_path.to_str().unwrap_or(""), &env_overrides) {
         Ok(c) => c,
         Err(e) => {
@@ -318,9 +318,7 @@ pub(crate) fn build_agent_from_config(
             return None;
         }
     };
-
     let http_client = crate::interface::shared::build_http_client();
-
     let provider = match build_agent_provider(&config, base_dir, &http_client) {
         Ok(p) => p,
         Err(msg) => {
@@ -339,7 +337,6 @@ pub(crate) fn build_agent_from_config(
         env_overrides.clone(),
         http_client.clone(),
     );
-
     // Workflow templates resolve against CWD and home.
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let home_dir = crate::infrastructure::tools::path_utils::home_dir();
@@ -373,7 +370,6 @@ pub(crate) fn build_agent_from_config(
             return None;
         }
     };
-
     let effort = flags.effort.or_else(|| {
         config.agents.defaults.effort.as_deref().and_then(|s| {
             crate::domain::provider::EffortLevel::parse(s).or_else(|| {
@@ -386,7 +382,6 @@ pub(crate) fn build_agent_from_config(
             })
         })
     });
-
     // #1113: an explicit `--workflow` session arms the idle-boundary template
     // selector nudge — the selector reaches the model through the nudge
     // channel and the workflow tool description, never through the system
@@ -434,7 +429,6 @@ pub(crate) fn build_agent_from_config(
             .unwrap_or(config.agents.defaults.max_tool_iterations),
     )
     .with_model_max_tokens(cap);
-
     Some(AgentBuildResult {
         agent,
         workflow_config: wf_config,
@@ -449,10 +443,8 @@ pub(crate) fn build_agent_from_config(
         workspace,
     })
 }
-
 mod agent_tool_registry;
 use agent_tool_registry::{ToolRegistryArgs, ToolRegistryBuild, build_tool_registry};
-
 pub(crate) fn run_agent_session(
     base_dir: &std::path::Path,
     mut agent: AgentLoopImpl,
@@ -466,7 +458,6 @@ pub(crate) fn run_agent_session(
         let name = flags.session_name.as_deref().unwrap_or("default");
         Session::build_key("cli", name)
     };
-
     let session_store = FileSessionStore::new(base_dir);
     let rt = match super::build_tokio_runtime() {
         Ok(rt) => rt,
@@ -604,6 +595,11 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         flags.session_key_override = Some(session_key.clone());
     }
 
+    let agents_instructions = match startup_prompt::load_agents_instructions(ctx, stderr) {
+        Some(instructions) => instructions,
+        None => return 1,
+    };
+
     let base_dir = ctx.base_dir();
     let config_path = ctx.config_path();
     // Create the broadcast channel early so the WorkflowTool emitter can
@@ -659,10 +655,10 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     // session (#1113): workflow state is never appended, so the provider-side
     // cached prefix survives every workflow step. Dynamic workflow state
     // reaches the model through tool results and idle-boundary nudges.
-    let mut system_prompt =
-        crate::interface::shared::build_system_prompt(&flags.system_prompt, flags.spawned);
-    crate::interface::shared::append_extension_prompt(
-        &mut system_prompt,
+    let system_prompt = startup_prompt::compose(
+        agents_instructions.as_deref(),
+        flags.system_prompt.as_deref(),
+        flags.spawned,
         &build.extension_prompt_snippets,
     );
 
@@ -715,6 +711,9 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
 #[path = "agent_provider.rs"]
 mod agent_provider;
 pub use agent_provider::build_agent_provider;
+#[cfg(test)]
+#[path = "agent_agents_md_tests.rs"]
+mod agents_md_tests;
 #[cfg(test)]
 #[path = "agent_935_clamp_tests.rs"]
 mod clamp_935_tests;
