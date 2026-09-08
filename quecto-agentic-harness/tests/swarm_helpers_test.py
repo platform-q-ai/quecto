@@ -57,6 +57,39 @@ class WorkbenchBehavior(unittest.TestCase):
         self.parent.complete('R2')
         self.assertEqual(self.parent.summary()['status'], 'succeeded')
 
+    def test_wake_hints_are_targeted_deduplicated_and_terminal_safe(self):
+        # Drain any startup hints before the behavior under test.
+        self.parent._notifications()
+        self.worker._notifications()
+        message = self.worker.send('question', 'coordinator', 'Review my result')
+        hints = self.worker._notifications()
+        self.assertEqual([m['id'] for m in hints], ['coordinator'])
+        self.assertEqual(self.worker._notifications(), [])
+        self.parent.ack(message['id'])
+        self.assertEqual(self.parent._notifications(), [], 'acknowledgment must not wake the pool')
+        self.worker.send('late-question', 'coordinator', 'Late result')
+        self.parent.stop('blocked', 'report partial progress')
+        self.assertEqual(self.worker._notifications(), [], 'terminal state must suppress queued work hints')
+
+    def test_an_observers_read_does_not_broadcast_another_members_changes(self):
+        self.parent._notifications()
+        self.worker.task_create('new', 'work', ['pass'])
+        self.parent.summary()
+        self.assertEqual(self.parent._notifications(), [])
+        self.assertEqual([m['id'] for m in self.worker._notifications()], ['coordinator'])
+
+    def test_task_acceptance_errors_teach_the_required_type(self):
+        for invalid in ('tests pass', [], [42], ['']):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(SwarmError, r'list\[str\]'):
+                self.worker.task_create('invalid', 'work', invalid)
+
+    def test_concurrent_notification_claims_do_not_duplicate_hints(self):
+        self.worker.send('one', 'coordinator', 'Please review')
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: self.client('worker')._notifications(), range(2)))
+        self.assertEqual(sum(len(hints) for hints in results), 1)
+        self.assertEqual(self.client('worker')._notifications(), [])
+
     def test_goal_is_durable_and_workers_cannot_amend_it(self):
         self.assertEqual(self.client('worker').summary()['goal'], 'ship feature')
         with self.assertRaisesRegex(SwarmError, 'coordinator'):

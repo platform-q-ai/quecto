@@ -40,27 +40,7 @@ fn decode(value: Value) -> Result<Snapshot, DomainError> {
     let members = wire
         .members
         .into_iter()
-        .map(|m| {
-            let status = match m.status.as_str() {
-                "live" => MemberStatus::Live,
-                "reserved" => MemberStatus::Reserved,
-                "dead" => MemberStatus::Dead,
-                _ => return Err(invalid("unknown member status")),
-            };
-            let process = match (m.pid, m.started) {
-                (Some(pid), Some(started)) if pid > 0 && !started.is_empty() => {
-                    Some(ProcessIdentity { pid, started })
-                }
-                (None, None) => None,
-                _ => return Err(invalid("incomplete process identity")),
-            };
-            Ok(Member {
-                id: m.id,
-                status,
-                process,
-                endpoint: m.socket,
-            })
-        })
+        .map(decode_member)
         .collect::<Result<Vec<_>, DomainError>>()?;
     if !members.iter().any(|m| m.id == wire.coordinator) {
         return Err(invalid("coordinator missing from membership"));
@@ -70,6 +50,27 @@ fn decode(value: Value) -> Result<Snapshot, DomainError> {
         coordinator: wire.coordinator,
         deadline: wire.deadline,
         members,
+    })
+}
+fn decode_member(m: WireMember) -> Result<Member, DomainError> {
+    let status = match m.status.as_str() {
+        "live" => MemberStatus::Live,
+        "reserved" => MemberStatus::Reserved,
+        "dead" => MemberStatus::Dead,
+        _ => return Err(invalid("unknown member status")),
+    };
+    let process = match (m.pid, m.started) {
+        (Some(pid), Some(started)) if pid > 0 && !started.is_empty() => {
+            Some(ProcessIdentity { pid, started })
+        }
+        (None, None) => None,
+        _ => return Err(invalid("incomplete process identity")),
+    };
+    Ok(Member {
+        id: m.id,
+        status,
+        process,
+        endpoint: m.socket,
     })
 }
 impl CoordinationPort for SwarmContext {
@@ -102,6 +103,12 @@ impl CoordinationPort for SwarmContext {
     }
 }
 impl SwarmContext {
+    pub fn notifications(&self) -> Result<Vec<Member>, DomainError> {
+        let members: Vec<WireMember> =
+            serde_json::from_value(self.rpc("_notifications", json!([]))?).map_err(invalid)?;
+        members.into_iter().map(decode_member).collect()
+    }
+
     pub fn join(
         &self,
         process: &ProcessIdentity,

@@ -109,3 +109,11 @@ fn revalidate_revision(world: &mut QuectoWorld) {
     assert!(!result(world).is_error, "{}", result(world).content);
     run(world, json!({"op":"summary"}));
 }
+
+#[when("a swarm member supplies acceptance as a string")]
+fn acceptance_type(world: &mut QuectoWorld) {
+    run(
+        world,
+        json!({"op":"run","code":"from swarm import board; board.task_create('invalid','work','tests pass')"}),
+    );
+}

@@ -184,3 +184,39 @@ process control and clock contracts. `src/application/swarm.rs` owns reconciliat
 and settlement sequencing. Infrastructure handles Python wire decoding, Linux
 identity checks, UDS commands, cancellation registries and timer scheduling. Pure
 policy/fake-port tests supplement the real SQLite and process integration tests.
+
+## Python execution policy and agent guidance
+
+The default `tools.swarm.max_processes` remains `1`, applied as `RLIMIT_NPROC`
+to the Python execution process. Child launches such as `subprocess.run` can
+therefore fail with `EAGAIN` even when the container has free capacity. This is
+an execution-policy restriction; it is not a one-agent membership limit or a
+measurement of container exhaustion. Privileged processes may be exempt from
+this OS limit. A matching default-limit error includes an actionable diagnostic.
+Use the existing Bash tool for Git, checks and other external commands under its
+configured policy; Python remains suitable for in-process computation and board
+coordination. Agent code must not raise or bypass the configured limit.
+
+`docs {"name":"swarm"}` serves a compiled-in manual from any working directory,
+including a container without the product source checkout. It documents typed
+arguments, examples, bounds, common errors, evidence proposals versus acceptance,
+and terminal inspection/export. Task acceptance is a nonempty `list[str]`;
+message bodies are strings. Worker `evidence` calls are proposals (`accepted=0`),
+not coordinator acceptance.
+
+All returned artifact references share a `workspace-relative` namespace with an
+explicit `artifact_base` naming the container execution workspace. Resolve status,
+output and spill paths against that base, not against the first `.quecto`
+component of a surrounding container-environment path. Host consumers need the
+container's normal artifact transport, not reinterpretation as a host path.
+
+Wake hints are selected from the invoking member's actionable events and coalesced
+using a durable per-actor cursor. Reading the board, acknowledging messages and
+reservation bookkeeping do not broadcast more work. Message hints target their
+recipient; submissions/blockers/evidence target the coordinator; changes that
+make work available notify peers. The cursor advances atomically before external
+notification, so a failed hint is reported but not endlessly retried; the durable
+board/inbox remains authoritative. Terminal runs generate no new actionable hints.
+Already queued hints instruct the recipient to inspect `op=summary` first and,
+if terminal, avoid Python inbox/ack calls while remaining available for parent
+requests and artifact export.

@@ -7,7 +7,7 @@ import unittest
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / 'src'
 sys.path[:0] = [str(SRC / 'domain'), str(SRC / 'application')]
-from swarm_policy import SwarmError, authorize, completion, admission
+from swarm_policy import SwarmError, authorize, completion, admission, notification_targets
 from swarm_use_cases import Coordination
 
 
@@ -54,6 +54,17 @@ class MemoryRepository:
 
 
 class PolicyContract(unittest.TestCase):
+    def test_notification_policy_ignores_bookkeeping_and_terminal_work(self):
+        run = MemoryRepository().run()
+        members = [{'id':'parent','status':'live'}, {'id':'worker','status':'live'}]
+        events = [{'action':'message_consumed','detail':{}}, {'action':'claimed','detail':{}},
+                  {'action':'files_reserved','detail':{}}]
+        self.assertEqual(notification_targets(run, 'worker', members, events), [])
+        events += [{'action':'submitted','detail':{}}, {'action':'message_accepted','detail':{'recipient':'parent'}}]
+        self.assertEqual([m['id'] for m in notification_targets(run, 'worker', members, events)], ['parent'])
+        run['status'] = 'succeeded'
+        self.assertEqual(notification_targets(run, 'worker', members, events), [])
+
     def test_completion_revalidation_and_transition_without_storage(self):
         repo = MemoryRepository()
         service = Coordination(repo, 'parent', lambda: 50)

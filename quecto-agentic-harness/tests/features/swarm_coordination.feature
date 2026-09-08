@@ -39,3 +39,8 @@ Feature: Container swarm coordination
     When the coordinator completes dependent tasks at different revisions
     And revalidates earlier work with fresh final revision evidence
     Then the swarm run status is "succeeded"
+
+  Scenario: Task validation explains the required acceptance type
+    When a swarm member supplies acceptance as a string
+    Then the swarm result should be an error
+    And the swarm result should contain "list[str]"

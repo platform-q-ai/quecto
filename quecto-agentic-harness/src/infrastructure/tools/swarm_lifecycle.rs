@@ -47,18 +47,18 @@ pub fn reconcile(context: &SwarmContext) -> Result<Value, DomainError> {
 /// Durable messages remain authoritative when a wake hint fails.
 pub async fn notify(context: &SwarmContext) -> Vec<String> {
     let ctx = context.clone();
-    let Ok(Ok(snapshot)) = tokio::task::spawn_blocking(move || ctx.snapshot()).await else {
+    let Ok(Ok(members)) = tokio::task::spawn_blocking(move || ctx.notifications()).await else {
         return vec!["swarm notification summary unavailable; inspect durable inbox".into()];
     };
     let mut warnings = Vec::new();
-    for member in &snapshot.members {
+    for member in &members {
         let Some(socket) = &member.endpoint else {
             continue;
         };
         if member.id == context.member || member.status != MemberStatus::Live {
             continue;
         }
-        let command = json!({"type":"prompt", "message":"Swarm board changed. Inspect your durable inbox and ready work with swarm; acknowledge messages after reading. If no work is ready, yield this turn.", "streamingBehavior":"followUp", "ack":"accept"});
+        let command = json!({"type":"prompt", "message":"Swarm work may be available. First call swarm with op=summary. If the run is running, inspect your durable inbox and ready tasks; acknowledge messages after reading. If it is terminal, do not run Python or attempt inbox acknowledgment: report the final summary and remain available for supervisor requests, including artifact export. This hint may have been queued before completion.", "streamingBehavior":"followUp", "ack":"accept"});
         if super::subagent_registry::send_subagent_uds_command_with_timeout(
             std::path::Path::new(socket),
             &command.to_string(),

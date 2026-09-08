@@ -1,4 +1,5 @@
 """Task and cooperative checkout use cases over a short transaction port."""
+from __future__ import annotations
 import json
 import pathlib
 import uuid
@@ -61,10 +62,11 @@ class Tasks:
                 stack.extend((child, False) for child in graph.get(node, []))
 
 
-    def task_create(self, request, title, acceptance, dependencies=None):
+    def task_create(self, request: str, title: str, acceptance: list[str], dependencies=None):
+        """Create idempotently; acceptance is list[str], dependencies are task IDs."""
         bounded(title, 'title', 1024)
-        if not isinstance(acceptance, list) or not acceptance:
-            raise SwarmError('task acceptance criteria required')
+        if not isinstance(acceptance, list) or not acceptance or any(not isinstance(a, str) or not a.strip() for a in acceptance):
+            raise SwarmError("task acceptance criteria required: use a nonempty list[str], e.g. ['tests pass']")
         bounded(encode(acceptance), 'acceptance')
         dependencies = dependencies or []
         with self.store.operation() as (db, _):
@@ -119,7 +121,8 @@ class Tasks:
             db.execute("UPDATE tasks SET status='blocked',blocker=? WHERE id=?", (reason, task_id))
             self.store.event(db, 'blocked', {'task': task_id, 'reason': reason})
 
-    def submit(self, task_id, token, evidence):
+    def submit(self, task_id: int, token: str, evidence: list[dict]):
+        """Submit nonempty artifact/revision references; coordinator verification follows."""
         if not isinstance(evidence, list) or not evidence or any(
             not isinstance(e, dict) or not e.get('artifact') or not e.get('revision') for e in evidence
         ):
@@ -157,7 +160,8 @@ class Tasks:
             db.execute("UPDATE tasks SET status='ready',owner=NULL,token=NULL,blocker=NULL,evidence='[]' WHERE id=?", (task_id,))
             self.store.event(db, 'recovered', {'task': task_id})
 
-    def reserve(self, task_id, token, paths):
+    def reserve(self, task_id: int, token: str, paths: list[str]):
+        """Atomically reserve 1–100 paths inside the checkout for this claim."""
         if not isinstance(paths, list) or not paths or len(paths) > 100:
             raise SwarmError('reserve 1 through 100 paths together')
         root = pathlib.Path(self.checkout).resolve()

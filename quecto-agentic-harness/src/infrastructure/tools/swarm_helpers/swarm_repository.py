@@ -43,3 +43,15 @@ class Transaction:
 
     def event(self, action, detail):
         self.store.event(self.connection, action, detail)
+
+    def members(self):
+        return [dict(r) for r in self.connection.execute('SELECT * FROM members')]
+
+    def notification_events(self, actor):
+        cursor = self.connection.execute('SELECT event FROM notification_cursors WHERE actor=?', (actor,)).fetchone()
+        for row in self.connection.execute('SELECT action,detail FROM events WHERE actor=? AND id>? ORDER BY id',
+                                           (actor, cursor[0] if cursor else 0)):
+            yield {'action': row['action'], 'detail': json.loads(row['detail'])}
+
+    def advance_notifications(self, actor):
+        self.connection.execute('INSERT OR REPLACE INTO notification_cursors VALUES(?,(SELECT coalesce(max(id),0) FROM events))', (actor,))

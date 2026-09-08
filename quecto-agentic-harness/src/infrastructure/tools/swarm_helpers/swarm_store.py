@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS evidence (criterion TEXT, artifact TEXT, revision TEX
 CREATE TABLE IF NOT EXISTS requests (actor TEXT, request TEXT, payload TEXT, result TEXT,
  PRIMARY KEY(actor, request));
 CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, actor TEXT, time REAL, action TEXT, detail TEXT);
+CREATE INDEX IF NOT EXISTS events_by_actor ON events(actor,id);
+CREATE TABLE IF NOT EXISTS notification_cursors (actor TEXT PRIMARY KEY, event INTEGER);
 '''
 
 

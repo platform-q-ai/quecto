@@ -5,7 +5,7 @@ All decisions and writes occur within the same atomic transaction.
 """
 from contextlib import contextmanager
 from typing import Protocol
-from swarm_policy import authorize, expired, require_budget, admission, completion, revalidation
+from swarm_policy import authorize, expired, require_budget, admission, completion, revalidation, notification_targets
 
 
 class CoordinationTransaction(Protocol):
@@ -18,6 +18,9 @@ class CoordinationTransaction(Protocol):
     def replace_task_evidence(self, identity, evidence): ...
     def set_outcome(self, status): ...
     def event(self, action, detail): ...
+    def members(self): ...
+    def notification_events(self, actor): ...
+    def advance_notifications(self, actor): ...
 
 
 class CoordinationRepository(Protocol):
@@ -66,3 +69,11 @@ class Coordination:
             tx.replace_task_evidence(identity, evidence)
             tx.event('revalidated', {'task': identity, 'revision': revision,
                                     'previous_evidence': task['evidence'], 'evidence': evidence})
+
+    def notifications(self):
+        with self.operation(active=False, read_only=True) as tx:
+            targets = notification_targets(tx.run(), self.actor, tx.members(), tx.notification_events(self.actor))
+            # Hints are best-effort, not durable delivery. Advance atomically
+            # before sending so concurrent/background calls cannot duplicate them.
+            tx.advance_notifications(self.actor)
+            return targets

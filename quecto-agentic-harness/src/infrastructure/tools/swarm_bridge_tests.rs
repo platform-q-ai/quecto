@@ -470,3 +470,77 @@ async fn terminal_cancellation_closes_queued_and_future_background_launches() {
     .unwrap();
     assert!(!directory.path().join("must-not-start").exists());
 }
+
+#[tokio::test]
+async fn terminal_notifications_do_not_queue_impossible_inbox_work() {
+    let directory = tempfile::tempdir().unwrap();
+    let context = context(&directory);
+    create(&context, 2);
+    let socket = directory.path().join("worker.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    context.call("_admit", json!(["worker", "r"])).unwrap();
+    context
+        .call("_activate", json!(["worker", "r", 123, "identity", socket]))
+        .unwrap();
+    context
+        .call("stop", json!(["blocked", "report partial result"]))
+        .unwrap();
+    let warnings = super::swarm_lifecycle::notify(&context).await;
+    assert!(warnings.is_empty());
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept())
+            .await
+            .is_err(),
+        "terminal run queued another wake hint"
+    );
+    assert_eq!(context.summary().unwrap()["status"], "blocked");
+}
+
+#[tokio::test]
+async fn live_wake_hint_is_coalesced_and_teaches_terminal_safe_inspection() {
+    let directory = tempfile::tempdir().unwrap();
+    let context = context(&directory);
+    create(&context, 2);
+    let socket = directory.path().join("worker.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    context.call("_admit", json!(["worker", "r"])).unwrap();
+    context
+        .call("_activate", json!(["worker", "r", 123, "identity", socket]))
+        .unwrap();
+    context
+        .call("task_create", json!(["work", "implement", ["pass"]]))
+        .unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read, mut write) = tokio::io::split(stream);
+        let mut read = tokio::io::BufReader::new(read);
+        let bytes = quecto_line_io::read_frame(&mut read, quecto_line_io::PROTOCOL_FRAME_CAP_BYTES)
+            .await
+            .unwrap()
+            .unwrap();
+        let command: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let message = command["message"].as_str().unwrap();
+        assert!(
+            message.contains("op=summary")
+                && message.contains("terminal")
+                && message.contains("artifact export")
+        );
+        let response = json!({"type":"response","id":command["id"],"success":true});
+        quecto_line_io::write_frame(
+            &mut write,
+            response.to_string().as_bytes(),
+            quecto_line_io::PROTOCOL_FRAME_CAP_BYTES,
+        )
+        .await
+        .unwrap();
+        listener
+    });
+    assert!(super::swarm_lifecycle::notify(&context).await.is_empty());
+    let listener = server.await.unwrap();
+    assert!(super::swarm_lifecycle::notify(&context).await.is_empty());
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept())
+            .await
+            .is_err()
+    );
+}

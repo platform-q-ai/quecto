@@ -213,3 +213,66 @@ Local remediation validation passed: 6,230 workspace library/binary tests;
 28 swarm BDD scenarios (120 steps); and 10 architecture BDD scenarios (17 steps).
 Strict workspace/all-target Clippy and repository quality/status-tag gates passed.
 The BDD quality gate retained its existing warnings without hard failures.
+
+## Local product-report remediation
+
+Scope: changes against `94f63c3d508eae115edd58bd4e7132481db36c42`, prompted by
+`/tmp/swarm-product-report/REPORT.md`. The report's checkout revision did not
+establish its running binary's build identity; its four-agent run is user evidence,
+not a run repeated by this remediation. Unrelated local notes and Python caches
+were preserved.
+
+Regression tests first failed for nested `.quecto` artifact roots, absent process
+limit diagnostics, terminal notification delivery, missing typed acceptance
+errors and missing embedded documentation. Green implementations now resolve
+artifacts against the explicit workspace, retain the default RLIMIT_NPROC=1 with
+Bash routing guidance, document worker evidence proposals separately from
+coordinator acceptance, and expose a packaged `docs` manual. Normal summary and
+artifact export remain usable after successful completion.
+
+### Product-remediation adversarial-review loops
+
+Two sequential self-review loops followed the built-in `adversarial-review`
+fixture's scope, inspect, challenge, validate and report stages. They were not
+independent reviews. Both covered the product-report acceptance criteria,
+notification authority/transactions, artifact namespace, execution policy and
+Clean Architecture dependency direction; each inspection was read-only, with
+accepted fixes made between review stages/cycles.
+
+**Loop 1:** Traced notification producers, consumers and terminal settlement.
+Confirmed that global audit changes could cause an observer's read to rebroadcast
+another member's mutation, acknowledgments could wake the pool, and direct
+notification delivery lacked a terminal guard. This supports a concrete feedback
+mechanism; it does not prove the exact provenance of every prompt in the user's
+report. Target selection now lives in pure domain policy, atomic cursor claiming
+in the application use case and SQL/UDS effects in adapters. Real SQLite tests
+refute duplicate delivery after reads/acks and concurrent claims; the real UDS
+regression rejects terminal wake delivery. The nested-workspace regression
+confirmed the first-`.quecto` path heuristic was wrong and now verifies status,
+output and synchronous spill references resolve to actual files.
+
+**Loop 2:** Challenged concurrent notification claims, restart persistence,
+terminal transitions after hint selection, failed delivery, policy bypass and
+misleading documentation. Concurrent clients and a reopened client consume a
+hint only once. A delivery can race completion, so the prompt explicitly starts
+with summary inspection and permits terminal reporting/export without inbox
+execution. Hints remain best-effort: the cursor commits before delivery and
+failed hints are not retried forever; durable inbox/tasks remain authoritative.
+The default process limit is unchanged, and a real non-root child fails to spawn
+while the separately configured Bash tool executes a command. Typed acceptance,
+worker proposal wording and embedded manual checks pass. No additional finding
+survived these bounded checks; this is not a claim of absence of bugs.
+
+Validation passed: 6,233 workspace library/binary tests; 46 architecture tests;
+104 port contracts; fake-provider agent-loop test; 23 real-SQLite Python cases;
+six pure policy/use-case cases; five product contract tests; 29 swarm BDD scenarios
+(124 steps); strict workspace/all-target Clippy; formatting, quality and BDD tag
+gates. The BDD quality gate retained existing warnings without hard failures.
+
+The five compiled product contract tests also passed in a fresh non-root,
+network-disabled container with read-only root and temporary scratch storage.
+Three further compiled unit tests passed there for coalesced UDS hints, terminal
+notification suppression and embedded docs. The container mounted only the test
+binary, not the checkout or provider credentials. The PR records the final source
+commit, binary SHA-256 digests and image ID for the repeat after commit. This is
+container regression validation, not a new live-provider four-agent walkthrough.

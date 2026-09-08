@@ -4,6 +4,7 @@ Use `from swarm import board`. Do not construct clients or edit SQLite directly
 in agent programs. These conventions are correctness guarantees, not a security
 boundary against arbitrary code running as the same container user.
 """
+from __future__ import annotations
 import json
 import time
 import uuid
@@ -70,6 +71,9 @@ class Workbench(Tasks):
             db.execute('UPDATE run SET goal=?,constraints=?,criteria=?', (goal, encode(constraints), encode(criteria)))
             db.execute('DELETE FROM evidence')
             self.store.event(db, 'amended', {'previous_goal': run['goal'], 'goal': goal, 'reason': reason})
+
+    def _notifications(self):
+        return self.coordination.notifications()
 
     def _snapshot(self):
         with self.store.operation(active=False, read_only=True) as (db, run):
@@ -165,7 +169,8 @@ class Workbench(Tasks):
                 db.execute("UPDATE run SET status='failed'")
                 self.store.event(db, 'stop', {'status': 'failed', 'reason': 'coordinator death confirmed'})
 
-    def send(self, request, recipient, body):
+    def send(self, request: str, recipient: str, body: str):
+        """Send a durable string message (8192 UTF-8 bytes maximum), not a dict."""
         bounded(body, 'message', 8192)
         with self.store.operation() as (db, _):
             def send():
@@ -196,7 +201,8 @@ class Workbench(Tasks):
                 db.execute("UPDATE messages SET status='consumed' WHERE id=?", (message_id,))
                 self.store.event(db, 'message_consumed', {'message': message_id})
 
-    def evidence(self, criterion, artifact, revision, kind, passed):
+    def evidence(self, criterion: str, artifact: str, revision: str, kind: str, passed: bool):
+        """Record a worker proposal (accepted=0), or coordinator acceptance if passed=True."""
         bounded(artifact, 'artifact reference', 2048)
         bounded(revision, 'artifact revision', 256)
         with self.store.operation() as (db, run):

@@ -60,3 +60,20 @@ def revalidation(task, revision, evidence):
            or not e['artifact'].strip() or e.get('revision') != revision for e in evidence):
         raise SwarmError('new artifact evidence must match the revalidated revision')
     return evidence
+
+
+def notification_targets(run, actor, members, events):
+    """Coalesce actionable changes; reads/acks/ownership bookkeeping never wake peers."""
+    if run['status'] != 'running':
+        return []
+    targets = set()
+    live = {m['id']: m for m in members if m['status'] == 'live' and m['id'] != actor}
+    for event in events:
+        action, detail = event['action'], event['detail']
+        if action == 'message_accepted':
+            targets.add(detail['recipient'])
+        elif action in ('submitted', 'blocked', 'evidence'):
+            targets.add(run['coordinator'])
+        elif action in ('task_created', 'dependencies', 'released', 'verified', 'revalidated', 'recovered', 'amended'):
+            targets.update(live)
+    return [live[identity] for identity in sorted(targets) if identity in live]

@@ -171,17 +171,6 @@ pub(crate) fn rel(workspace: &Path, p: &Path) -> String {
         .to_string_lossy()
         .to_string()
 }
-pub(crate) fn artifact_rel(p: &Path) -> String {
-    let parts: Vec<_> = p
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().to_string())
-        .collect();
-    if let Some(i) = parts.iter().position(|x| x == ".quecto") {
-        parts[i..].join("/")
-    } else {
-        p.to_string_lossy().to_string()
-    }
-}
 pub(crate) fn bounded_u64(
     value: &serde_json::Value,
     key: &str,

@@ -340,6 +340,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
                     .unwrap_or_default()
             };
             let res = build_result(ResultContext {
+                workspace: &workspace,
                 status: &final_status,
                 exit_code,
                 exec_id: &exec_id_bg,
@@ -395,6 +396,7 @@ async fn run_op(v: serde_json::Value, env: RunEnv) -> Result<ToolResult, DomainE
             .map_err(|e| DomainError::Other(e.to_string()))?
     };
     let result = build_result(ResultContext {
+        workspace: &workspace,
         status: &status,
         exit_code: code,
         exec_id: &exec_id,
@@ -593,7 +595,7 @@ async fn status_op(
         let artifacts = [stdout_path.as_path(), stderr_path.as_path()]
             .into_iter()
             .filter(|p| p.exists())
-            .map(artifact_rel)
+            .map(|path| rel(&workspace, path))
             .collect::<Vec<_>>();
         if let Some(obj) = detail.as_object_mut() {
             obj.insert("artifact_paths".into(), json!(artifacts));
@@ -601,7 +603,12 @@ async fn status_op(
     }
     if let Some(obj) = detail.as_object_mut() {
         let artifact_root = workspace.join(format!(".quecto/swarm/{execution_id}"));
-        obj.insert("artifact_dir".into(), json!(artifact_rel(&artifact_root)));
+        obj.insert("artifact_namespace".into(), json!("workspace-relative"));
+        obj.insert("artifact_base".into(), json!(workspace.as_ref()));
+        obj.insert(
+            "artifact_dir".into(),
+            json!(rel(&workspace, &artifact_root)),
+        );
         obj.insert("max_output_bytes".into(), json!(max_output_bytes));
     }
     ok_json(
@@ -642,7 +649,7 @@ async fn output_op(
     let is_err = (status != "running" && status != "cancelling" && status != "completed")
         || (status == "completed" && exit_code.unwrap_or(0) != 0);
     ok_json(
-        json!({"status":status,"job_id":id,"stdout":stdout.0,"stderr":stderr.0,"offset":offset,"limit":limit,"stdout_more":stdout.1,"stderr_more":stderr.1,"result":result,"artifacts_modified":artifacts_modified,"artifact_paths":[rel(&workspace,&outp),rel(&workspace,&errp)]}),
+        json!({"status":status,"job_id":id,"stdout":stdout.0,"stderr":stderr.0,"offset":offset,"limit":limit,"stdout_more":stdout.1,"stderr_more":stderr.1,"result":result,"artifacts_modified":artifacts_modified,"artifact_namespace":"workspace-relative","artifact_base":workspace.as_ref(),"artifact_paths":[rel(&workspace,&outp),rel(&workspace,&errp)]}),
         is_err,
     )
 }
