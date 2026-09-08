@@ -83,3 +83,8 @@ Feature: Container swarm coordination
       | mode       |
       | foreground |
       | background |
+
+  Scenario: Claimed work does not wake an idle peer
+    Given an idle swarm peer with an unavailable endpoint
+    When the coordinator creates and immediately claims a task
+    Then no swarm wake delivery is attempted

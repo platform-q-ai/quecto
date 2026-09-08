@@ -245,7 +245,9 @@ pub(crate) fn bounded_report_messages(
         prioritized.extend(candidates.into_iter().rev());
         prioritized
     } else {
-        candidates
+        // During a long tool-only turn, report current progress rather than
+        // forcing the supervisor to page through the oldest unread tools.
+        candidates.into_iter().rev().collect()
     };
 
     let candidate_count = ordered.len();

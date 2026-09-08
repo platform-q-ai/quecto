@@ -52,3 +52,52 @@ async fn rejected_queue(closed: bool) {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn malformed_steer_admission_does_not_cancel_or_gate_later_work() {
+    for line in [
+        r#"{"type":"steer"}"#,
+        r#"{"type":"prompt","message":3,"streamingBehavior":"steer","ack":"accept"}"#,
+        r#"{"type":"steer","message":"bad id","id":3,"ack":"accept"}"#,
+        r#"{"type":"steer","message":"old","message":"new","id":"s1","ack":"accept"}"#,
+    ] {
+        let registry = super::super::uds_ext_protocol::new_client_tool_registry();
+        let (commands, mut received) = tokio::sync::mpsc::channel(1);
+        let snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(Default::default()));
+        let (broadcast, _) = tokio::sync::broadcast::channel(4);
+        let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel();
+        let cancel = std::sync::Arc::new(std::sync::Mutex::new(
+            super::super::uds_cancel::CancelSlot::Armed(cancel_tx),
+        ));
+        let control = super::super::uds_cancel::TurnControl::default();
+        assert!(
+            dispatch(ReaderDispatchCtx {
+                line: line.into(),
+                cancel_handle: &cancel,
+                turn_control: &control,
+                snapshot: &snapshot,
+                registry: &registry,
+                subagent_registry: &None,
+                broadcast_tx: &broadcast,
+                client_id: 1,
+                cmd_tx: &commands,
+            })
+            .await
+        );
+        assert!(
+            !control.is_steer_pending(),
+            "malformed input gated valid future work: {line}"
+        );
+        assert!(matches!(
+            cancel_rx.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        let ClientMessage::Command(command) = received.recv().await.unwrap() else {
+            panic!("command expected")
+        };
+        assert!(matches!(
+            super::super::uds::parse_line(&command.line),
+            super::super::uds::LineResult::ParseError(_)
+        ));
+    }
+}

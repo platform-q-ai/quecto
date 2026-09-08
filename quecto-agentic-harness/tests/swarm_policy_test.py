@@ -57,13 +57,14 @@ class PolicyContract(unittest.TestCase):
     def test_notification_policy_ignores_bookkeeping_and_terminal_work(self):
         run = MemoryRepository().run()
         members = [{'id':'parent','status':'live'}, {'id':'worker','status':'live'}]
+        state = {'tasks':[{'id':1,'status':'submitted','dependencies':[]}], 'messages':[{'id':1}]}
         events = [{'action':'message_consumed','detail':{}}, {'action':'claimed','detail':{}},
                   {'action':'files_reserved','detail':{}}]
-        self.assertEqual(notification_targets(run, 'worker', members, events), [])
-        events += [{'action':'submitted','detail':{}}, {'action':'message_accepted','detail':{'recipient':'parent'}}]
-        self.assertEqual([m['id'] for m in notification_targets(run, 'worker', members, events)], ['parent'])
+        self.assertEqual(notification_targets(run, 'worker', members, events, state), [])
+        events += [{'action':'submitted','detail':{'task':1}}, {'action':'message_accepted','detail':{'message':1,'recipient':'parent'}}]
+        self.assertEqual([m['id'] for m in notification_targets(run, 'worker', members, events, state)], ['parent'])
         run['status'] = 'succeeded'
-        self.assertEqual(notification_targets(run, 'worker', members, events), [])
+        self.assertEqual(notification_targets(run, 'worker', members, events, state), [])
 
     def test_completion_revalidation_and_transition_without_storage(self):
         repo = MemoryRepository()

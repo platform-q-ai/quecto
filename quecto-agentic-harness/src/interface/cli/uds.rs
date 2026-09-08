@@ -44,12 +44,14 @@ pub(super) fn is_abort_command(trimmed: &str) -> bool {
 }
 
 pub(super) fn is_steer_command(trimmed: &str) -> bool {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) else {
-        return false;
-    };
-    v.get("type").and_then(|t| t.as_str()) == Some("steer")
-        || (v.get("type").and_then(|t| t.as_str()) == Some("prompt")
-            && v.get("streamingBehavior").and_then(|b| b.as_str()) == Some("steer"))
+    matches!(
+        serde_json::from_str::<AgentCommand>(trimmed),
+        Ok(AgentCommand::Steer { .. }
+            | AgentCommand::Prompt {
+                streaming_behavior: Some(StreamingBehavior::Steer),
+                ..
+            })
+    )
 }
 
 fn command_type_is(trimmed: &str, expected: &str) -> bool {
@@ -346,16 +348,15 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
     } = cmd;
     if ctx.session.is_streaming() {
         match streaming_behavior {
-            Some(StreamingBehavior::FollowUp) => {
-                ctx.session.enqueue_pending(message);
-                let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
-                emit_event_to_broadcast_or_writer(ctx, &ev).await;
-            }
-            Some(StreamingBehavior::Steer) => {
-                ctx.session.prepend_pending(message);
-                ctx.turn_control.clear_steer();
-                let ev = AgentEvent::ok(id.as_deref(), "steer", None);
-                emit_event_to_broadcast_or_writer(ctx, &ev).await;
+            Some(behavior) => {
+                pending::queue_prompt(
+                    ctx,
+                    id.as_deref(),
+                    &type_name,
+                    message,
+                    matches!(behavior, StreamingBehavior::Steer),
+                )
+                .await;
             }
             None => {
                 let msg = "agent is running; provide streamingBehavior";
@@ -363,6 +364,12 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
                 emit_event_to_broadcast_or_writer(ctx, &ev).await;
             }
         }
+        return false;
+    }
+    if ctx.turn_control.is_steer_pending()
+        && !matches!(streaming_behavior, Some(StreamingBehavior::Steer))
+    {
+        pending::queue_prompt(ctx, id.as_deref(), &type_name, message, false).await;
         return false;
     }
     super::uds_reload::poll_provider_reload_for_ctx(ctx).await;
@@ -404,12 +411,12 @@ fn arm_prompt_cancel(
     ctx: &mut DispatchCtx<'_>,
     is_steer_prompt: bool,
 ) -> Option<tokio::sync::oneshot::Receiver<()>> {
+    if is_steer_prompt {
+        ctx.turn_control.consume_steer();
+    }
     match arm_cancel(&ctx.cancel_handle) {
         Some(rx) => Some(rx),
-        None if is_steer_prompt => {
-            ctx.turn_control.clear_steer();
-            arm_cancel(&ctx.cancel_handle)
-        }
+        None if is_steer_prompt => arm_cancel(&ctx.cancel_handle),
         None => None,
     }
 }
@@ -607,22 +614,9 @@ async fn emit_pre_cancelled(ctx: &mut DispatchCtx<'_>) {
     )
     .await;
 }
-async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
-    let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828
-    loop {
-        // Coalesce a burst of buffered sub-agent completion notes into ONE
-        // informational note at the idle flush (#894) — K separate notes would
-        // send the parent into a catch-up loop. Per-agent dedup already happened
-        // at enqueue; #816 deferral is preserved (this only runs at idle).
-        let pending = super::uds_session::coalesce_pending(ctx.session.drain_pending());
-        if pending.is_empty() {
-            break;
-        }
-        for pending_msg in pending {
-            run_drained_message(ctx, pending_msg.into_message()).await;
-        }
-    }
-}
+#[path = "uds_pending.rs"]
+mod pending;
+use pending::drain_and_run_pending;
 
 /// Run one drained or injected message through the agent: arm cancel, run,
 /// disarm, refresh busy snapshots. A stale abort (#483) skips the run without

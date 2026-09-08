@@ -725,3 +725,6 @@ fn agent_schema_hides_internal_message_lookup_but_parser_preserves_it() {
     assert_eq!(command["limit"], 128);
     assert_eq!(command["toolCallId"], "call-1");
 }
+
+#[path = "agent_cmd_trial_tests.rs"]
+mod trial_tests;

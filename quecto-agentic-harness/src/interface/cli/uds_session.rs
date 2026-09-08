@@ -317,19 +317,20 @@ impl AgentSession {
     /// Prevents OOM from a flood of pending messages from a misbehaving client.
     pub const MAX_PENDING: usize = 64;
     pub(crate) const MAX_DEDUPE_AGENTS: usize = 1024;
-    pub fn enqueue_pending(&mut self, msg: String) {
-        if self.pending.len() < Self::MAX_PENDING {
-            self.pending.push_back(PendingMessage::user(msg));
+    pub fn enqueue_pending(&mut self, msg: String) -> bool {
+        if self.pending.len() >= Self::MAX_PENDING {
+            return false;
         }
-        // Silently drop if the queue is full — caller already got a success ack.
+        self.pending.push_back(PendingMessage::user(msg));
+        true
     }
-    /// Prepend a message to the front of the pending queue so it runs before
-    /// any earlier-enqueued follow-ups.  Used by `steer` for interrupt semantics.
-    /// O(1) with `VecDeque`, unlike `Vec::insert(0)`.
-    pub fn prepend_pending(&mut self, msg: String) {
-        if self.pending.len() < Self::MAX_PENDING {
-            self.pending.push_front(PendingMessage::user(msg));
+    /// Retain a steering message before earlier follow-ups, if capacity permits.
+    pub fn prepend_pending(&mut self, msg: String) -> bool {
+        if self.pending.len() >= Self::MAX_PENDING {
+            return false;
         }
+        self.pending.push_front(PendingMessage::user(msg));
+        true
     }
     /// Test-only: simulate dedupe-watermark eviction at the
     /// `MAX_DEDUPE_AGENTS` cap (#1082 review round 2).
@@ -337,6 +338,13 @@ impl AgentSession {
     pub fn clear_subagent_notification_watermarks_for_test(&mut self) {
         self.last_subagent_notification.clear();
     }
+    /// Return already-admitted work after steering interrupts a pending batch.
+    pub fn restore_pending(&mut self, messages: impl DoubleEndedIterator<Item = PendingMessage>) {
+        for message in messages.rev() {
+            self.pending.push_front(message);
+        }
+    }
+
     pub fn drain_pending(&mut self) -> Vec<PendingMessage> {
         // Vec::from(VecDeque) calls make_contiguous() then ptr::copy when the
         // deque's head != 0 — O(n) in the number of elements, same as the

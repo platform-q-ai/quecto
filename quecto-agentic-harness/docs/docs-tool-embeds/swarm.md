@@ -149,3 +149,5 @@ with `get_messages` to verify handling. A full/closed dispatch queue returns an
 explicit failure instead of falsely accepting the clarification. A terminal run
 cannot be revived by steering: preserve its report and start a fresh environment
 when further implementation is authorized.
+
+Ordinary Bash build/test commands strip swarm launch-context variables, so their test runtimes do not enroll in this live pool. Launch participating agents with managed `spawn`. Wake delivery checks current unread messages and claimable tasks, but queued hints can become stale; inspect the board before acting. Steering takes priority over buffered idle work. Forwarded controls return `data.status: "accepted"` on queue admission and retain that response ID through dispatch; inspect the report for actual acknowledgment and results.

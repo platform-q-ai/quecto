@@ -289,8 +289,11 @@ fn shell_program(env: &HashMap<String, String>) -> String {
 fn test_build_shell_command_inherits_environment_when_no_overrides() {
     let cmd = super::build_shell_command(&PathBuf::from("/tmp"), "echo hi", None);
     assert!(
-        cmd.as_std().get_envs().next().is_none(),
-        "empty env source should inherit the parent environment without clear+rebuild"
+        cmd.as_std().get_envs().all(|(key, value)| key
+            .to_string_lossy()
+            .starts_with("QUECTO_SWARM_")
+            && value.is_none()),
+        "ordinary environment is inherited; only swarm launch context is removed"
     );
 }
 

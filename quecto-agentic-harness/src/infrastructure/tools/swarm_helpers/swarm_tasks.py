@@ -118,7 +118,10 @@ class Tasks:
     def block(self, task_id, token, reason):
         bounded(reason, 'blocker')
         with self.store.operation() as (db, _):
-            require_unsubmitted(self._owned(db, task_id, token))
+            task = self._owned(db, task_id, token)
+            require_unsubmitted(task)
+            if task['status'] == 'blocked' and task['blocker'] == reason:
+                return
             db.execute("UPDATE tasks SET status='blocked',blocker=? WHERE id=?", (reason, task_id))
             self.store.event(db, 'blocked', {'task': task_id, 'reason': reason})
 
