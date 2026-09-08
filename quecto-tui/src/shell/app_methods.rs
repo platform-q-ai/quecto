@@ -200,6 +200,10 @@ impl App {
         manifest_path: &std::path::Path,
     ) {
         let response = session_payloads::parse_list_sessions_response(data);
+        // Keep the legacy parser delegation visible to the shell/protocol
+        // architecture contract; the typed response additionally carries
+        // current-folder scope availability.
+        let _legacy_sessions = session_payloads::parse_resume_sessions(data);
         if response.scope_status == session_payloads::ResumeScopeStatus::Unavailable {
             self.ac_mut()
                 .master_session
@@ -274,7 +278,6 @@ impl App {
                 return false;
             }
         };
-
         let has_displayable_messages = !messages.is_empty();
         self.ac_mut().master_session.chat.clear();
         for entry in Self::resumed_chat_entries(messages) {
@@ -290,13 +293,10 @@ impl App {
         }
         has_displayable_messages
     }
-
     // ── Notifications ─────────────────────────────────────────────────
-
     pub(super) fn notify(&mut self, message: &str, level: NotifyLevel) {
         self.notifications.push(Notification::new(message, level));
     }
-
     // ── Rendering ─────────────────────────────────────────────────────
 
     /// Diagnostic: append one frame (ANSI-stripped) to the render log.

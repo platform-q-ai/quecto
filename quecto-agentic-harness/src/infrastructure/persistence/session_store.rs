@@ -10,23 +10,18 @@ pub struct FileSessionStore {
     sessions_dir: PathBuf,
     ownership: super::session_ownership::SessionOwnershipRegistry,
 }
-
 #[cfg(test)]
 #[path = "session_store_1612_red_tests.rs"]
 mod issue_1612_red_tests;
-#[path = "session_store_io.rs"]
-mod session_store_io;
 #[path = "session_store_message_records.rs"]
 mod session_store_message_records;
 #[path = "session_store_ordinals.rs"]
 pub(crate) mod session_store_ordinals;
 #[path = "session_store_records.rs"]
 mod session_store_records;
-use session_store_io::*;
 use session_store_message_records::*;
 use session_store_ordinals::{assign_missing_ordinals, messages_with_assigned_ordinals};
 use session_store_records::*;
-
 impl FileSessionStore {
     pub fn new(base_dir: impl AsRef<Path>) -> Self {
         Self {
@@ -34,19 +29,15 @@ impl FileSessionStore {
             ownership: super::session_ownership::SessionOwnershipRegistry::default(),
         }
     }
-
     fn claim_key(&self, key: &str) -> Result<(), DomainError> {
         self.ownership.claim(&self.sessions_dir, key)
     }
-
     fn key_to_filename(key: &str) -> String {
         format!("{}.json", super::filename::sanitize_session_key(key))
     }
-
     fn session_path(&self, key: &str) -> PathBuf {
         self.sessions_dir.join(Self::key_to_filename(key))
     }
-
     pub async fn save_clean_delta(
         &self,
         key: &str,
@@ -81,7 +72,6 @@ impl FileSessionStore {
         )
         .await
     }
-
     async fn delete_session_file_if_present(&self, key: &str) -> Result<(), DomainError> {
         match tokio::fs::remove_file(self.session_path(key)).await {
             Ok(()) => Ok(()),
@@ -91,23 +81,19 @@ impl FileSessionStore {
             ))),
         }
     }
-
     async fn ensure_dir(&self) -> Result<(), DomainError> {
         tokio::fs::create_dir_all(&self.sessions_dir)
             .await
             .map_err(|e| DomainError::Session(format!("failed to create sessions dir: {}", e)))
     }
 }
-
 impl SessionStore for FileSessionStore {
     fn claim(&self, key: &str) -> Result<(), DomainError> {
         self.claim_key(key)
     }
-
     fn release(&self, key: &str) {
         self.ownership.release(key);
     }
-
     fn load(
         &self,
         key: &str,
@@ -115,7 +101,6 @@ impl SessionStore for FileSessionStore {
         let path = self.session_path(key);
         Box::pin(async move { load_existing_session(&path).await })
     }
-
     fn save(
         &self,
         session: &Session,
@@ -136,7 +121,6 @@ impl SessionStore for FileSessionStore {
             append_or_compact(&path, &session).await
         })
     }
-
     fn save_execution_metadata<'a>(
         &'a self,
         key: &'a str,
@@ -185,7 +169,6 @@ impl SessionStore for FileSessionStore {
             .await
         })
     }
-
     fn save_delta<'a>(
         &'a self,
         key: &'a str,
@@ -224,7 +207,6 @@ impl SessionStore for FileSessionStore {
             .await
         })
     }
-
     fn save_clean_delta<'a>(
         &'a self,
         key: &'a str,
@@ -243,7 +225,6 @@ impl SessionStore for FileSessionStore {
             .await
         })
     }
-
     fn exists(
         &self,
         key: &str,
@@ -251,7 +232,6 @@ impl SessionStore for FileSessionStore {
         let path = self.session_path(key);
         Box::pin(async move { Ok(path.exists()) })
     }
-
     fn list(
         &self,
         key_prefix: Option<&str>,
@@ -336,12 +316,10 @@ impl SessionStore for FileSessionStore {
         })
     }
 }
-
 fn parse_session_header(data: &str) -> Result<SessionHeader<'_>, serde_json::Error> {
     if let Ok(header) = serde_json::from_str::<SessionHeader<'_>>(data) {
         return Ok(header);
     }
-
     let mut key = std::borrow::Cow::Borrowed("");
     let mut messages = Vec::new();
     let mut latest_execution_metadata = None;
@@ -388,12 +366,10 @@ fn parse_session_header(data: &str) -> Result<SessionHeader<'_>, serde_json::Err
         latest_execution_metadata,
     })
 }
-
 fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
     if let Ok(file) = serde_json::from_str::<SessionFile>(data) {
         return Ok(session_from_file(file));
     }
-
     let mut session: Option<Session> = None;
     let mut parsed_any = false;
     for line in data.lines().filter(|line| !line.trim().is_empty()) {
@@ -452,7 +428,6 @@ fn parse_session_data(data: &str) -> Result<Session, serde_json::Error> {
         .map(session_store_ordinals::with_assigned_ordinals)
         .unwrap_or_else(|| Session::new("")))
 }
-
 async fn load_existing_session(path: &Path) -> Result<Option<Session>, DomainError> {
     match tokio::fs::read_to_string(path).await {
         Ok(data) => parse_session_data(&data)
@@ -464,14 +439,12 @@ async fn load_existing_session(path: &Path) -> Result<Option<Session>, DomainErr
         ))),
     }
 }
-
 fn session_has_non_transcript_state(session: &Session) -> bool {
     session.workflow_run.is_some()
         || !session.subagent_roster.is_empty()
         || session.origin_execution_metadata().is_some()
         || session.latest_execution_metadata().is_some()
 }
-
 fn session_from_file(file: SessionFile) -> Session {
     let messages =
         assign_missing_ordinals(file.messages.into_iter().map(record_to_message).collect());
@@ -484,10 +457,8 @@ fn session_from_file(file: SessionFile) -> Session {
         file.latest_execution_metadata,
     )
 }
-
 async fn is_jsonl_session_file(path: &Path) -> Result<bool, DomainError> {
     use tokio::io::AsyncReadExt;
-
     let mut file = tokio::fs::File::open(path)
         .await
         .map_err(|e| DomainError::Session(format!("failed to read session: {e}")))?;
@@ -499,7 +470,6 @@ async fn is_jsonl_session_file(path: &Path) -> Result<bool, DomainError> {
     let prefix = std::str::from_utf8(&prefix[..len]).unwrap_or("");
     Ok(prefix.trim_start().starts_with(r#"{"type":"#))
 }
-
 async fn persisted_prefix_changed(
     path: &Path,
     messages: &[Message],
@@ -711,6 +681,44 @@ async fn append_record(path: &Path, record: &SessionRecordRef<'_>) -> Result<(),
     file.flush()
         .await
         .map_err(|e| DomainError::Session(format!("failed to flush session: {e}")))
+}
+
+async fn write_session_bytes_atomically(
+    path: &Path,
+    bytes: &[u8],
+    rename_context: &str,
+) -> Result<(), DomainError> {
+    use tokio::io::AsyncWriteExt;
+
+    let tmp_path = path.with_extension("tmp");
+    match tokio::fs::remove_file(&tmp_path).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(DomainError::Session(format!(
+                "failed to write session: could not remove stale temp file: {error}"
+            )));
+        }
+    }
+    let mut options = tokio::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&tmp_path)
+        .await
+        .map_err(|e| DomainError::Session(format!("failed to write session: {e}")))?;
+    file.write_all(bytes)
+        .await
+        .map_err(|e| DomainError::Session(format!("failed to write session: {e}")))?;
+    file.flush()
+        .await
+        .map_err(|e| DomainError::Session(format!("failed to flush session: {e}")))?;
+    tokio::fs::rename(&tmp_path, path)
+        .await
+        .map_err(|e| DomainError::Session(format!("{rename_context}: {e}")))
 }
 
 async fn reject_symlink(path: &Path) -> Result<(), DomainError> {
