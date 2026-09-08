@@ -332,3 +332,22 @@ fn invalid_request_error_with_whitespace_around_colon_is_client() {
     );
     assert_eq!(classify_provider_error(&err), ProviderErrorClass::Client);
 }
+
+#[test]
+fn subscription_usage_limit_is_terminal_but_transient_throttle_still_retries() {
+    for field in ["type", "code"] {
+        let body = format!(
+            r#"HTTP 429: {{"error":{{"{field}":"usage_limit_reached","resets_in_seconds":601828}}}}"#
+        );
+        assert_eq!(
+            classify_provider_error(&provider(&body)),
+            ProviderErrorClass::Billing
+        );
+    }
+    assert_eq!(
+        classify_provider_error(&provider(
+            r#"HTTP 429: {"error":{"type":"rate_limit_exceeded"}}"#
+        )),
+        ProviderErrorClass::RateLimit
+    );
+}

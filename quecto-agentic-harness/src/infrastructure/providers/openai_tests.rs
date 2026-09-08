@@ -109,6 +109,8 @@ async fn test_chat_text_response() {
     let provider = OpenAiProvider::new("sk-test".to_string(), Some(server.uri()));
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "gpt-5.6-luna",
@@ -176,6 +178,8 @@ async fn test_chat_with_tool_calls() {
         parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#.into(),
     }];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: "gpt-4",
@@ -209,6 +213,8 @@ async fn test_chat_server_error() {
     let provider = OpenAiProvider::new("sk-test".to_string(), Some(server.uri()));
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "gpt-4",
@@ -281,6 +287,8 @@ data: [DONE]\n\n";
     let provider = OpenAiProvider::new("sk-test".to_string(), Some(server.uri()));
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "gpt-4",
@@ -325,6 +333,8 @@ async fn test_chat_includes_tools_in_request() {
         parameters_schema: r#"{"type":"object"}"#.into(),
     }];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: "gpt-4",

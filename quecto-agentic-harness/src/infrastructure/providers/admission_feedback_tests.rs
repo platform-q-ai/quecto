@@ -489,3 +489,11 @@ fn arbitrary_root_billing_code_does_not_override_nested_throttle() {
         "code": "insufficient_quota", "error": {"type": "rate_limit_error"}
     })));
 }
+
+#[test]
+fn exhausted_usage_is_terminal_even_inside_a_throttle_envelope() {
+    assert!(!is_typed_throttle(&serde_json::json!({
+        "type":"error", "code":"rate_limit_exceeded",
+        "error":{"type":"usage_limit_reached"}
+    })));
+}

@@ -67,6 +67,9 @@ pub(super) fn query_response_data_result(
     ctx: &DispatchCtx<'_>,
 ) -> Result<Option<serde_json::Value>, String> {
     let data = match cmd {
+        AgentCommand::GetReport { .. } => {
+            Some(super::uds_latest_report::latest_report(ctx.messages))
+        }
         AgentCommand::GetState { since, .. } => {
             let (workflow, workflow_revision) =
                 ctx.workflow_state.as_ref().map_or((None, 0), |ws| {

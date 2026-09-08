@@ -50,6 +50,8 @@ impl LlmProvider for OkProvider {
 
 fn request<'a>(messages: &'a [Message], tools: &'a [ToolDefinition]) -> ChatRequest<'a> {
     ChatRequest {
+        trace: None,
+        admission: None,
         messages,
         tools,
         model: "dummy-model",

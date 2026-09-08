@@ -165,7 +165,9 @@ fn declares_client_error_code(lowered: &str) -> bool {
 /// `type` and `code` for exhausted-credit accounts; retrying those failures only
 /// delays surfacing the actionable billing error to the operator.
 fn declares_billing_or_quota_error(lowered: &str) -> bool {
-    json_field_is(lowered, "code", "insufficient_quota")
+    json_field_is(lowered, "code", "usage_limit_reached")
+        || json_field_is(lowered, "type", "usage_limit_reached")
+        || json_field_is(lowered, "code", "insufficient_quota")
         || json_field_is(lowered, "type", "insufficient_quota")
         || json_field_is(lowered, "code", "billing_hard_limit_reached")
         || json_field_is(lowered, "type", "billing_hard_limit_reached")

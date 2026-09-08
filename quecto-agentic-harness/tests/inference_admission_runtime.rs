@@ -267,6 +267,8 @@ fn config(uri: &str, key: &str) -> Config {
 }
 fn request(model: &str) -> ChatRequest<'_> {
     ChatRequest {
+        trace: None,
+        admission: None,
         messages: &[],
         tools: &[],
         model,

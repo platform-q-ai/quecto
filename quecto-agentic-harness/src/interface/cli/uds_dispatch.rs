@@ -163,6 +163,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         | AgentCommand::GetSubagents { .. }
         | AgentCommand::GetMessage { .. }
         | AgentCommand::GetState { .. }
+        | AgentCommand::GetReport { .. }
         | AgentCommand::GetMessages { .. }
         | AgentCommand::GetMessagesTail { .. }
         | AgentCommand::Sync { .. }
@@ -416,7 +417,7 @@ pub(super) async fn handle_abort(
     // not re-drive this agent. Suppression lasts until a fresh prompt re-arms the
     // loop. The in-flight prompt's idle drain may already have consumed the abort
     // flag; doing it again here is idempotent and covers the idle (no-run) case.
-    ctx.session.drain_pending();
+    ctx.session.discard_pending();
     ctx.turn_control.clear();
     let ev = AgentEvent::ok(id, type_name, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;

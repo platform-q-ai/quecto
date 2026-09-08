@@ -70,6 +70,7 @@ impl Receipt {
                         error[*field].as_str(),
                         Some(
                             "insufficient_quota"
+                                | "usage_limit_reached"
                                 | "billing_hard_limit_reached"
                                 | "authentication_error"
                                 | "permission_error"

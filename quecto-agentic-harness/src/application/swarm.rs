@@ -29,10 +29,18 @@ pub async fn settle(
     actor: &str,
     processes: &(impl ProcessControl + ?Sized),
 ) -> Result<(), DomainError> {
+    if snapshot.status == crate::domain::swarm::RunStatus::Paused {
+        processes.suspend_local_executions(snapshot);
+        processes.suspend_local_inference(snapshot);
+        return Ok(());
+    }
     if !snapshot.status.terminal() {
         return Ok(());
     }
     processes.cancel_local_executions();
+    if actor == snapshot.coordinator && snapshot.status.abort_coordinator() {
+        processes.suspend_local_inference(snapshot);
+    }
     let mut members: Vec<_> = snapshot.members.iter().collect();
     members.sort_by_key(|m| m.id == actor);
     for member in members {
@@ -40,13 +48,10 @@ pub async fn settle(
             continue;
         }
         let coordinator = member.id == snapshot.coordinator;
-        if coordinator && !snapshot.status.abort_coordinator() {
+        if coordinator {
             continue;
         }
-        let aborted = processes.abort(member).await;
-        if coordinator && aborted {
-            continue;
-        }
+        processes.abort(member).await;
         if let Some(process) = &member.process {
             processes.terminate(process).await?;
         }

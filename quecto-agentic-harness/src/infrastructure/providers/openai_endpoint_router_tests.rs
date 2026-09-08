@@ -69,6 +69,8 @@ impl LlmProvider for RecordingProvider {
 
 fn request(model: &str) -> ChatRequest<'_> {
     ChatRequest {
+        trace: None,
+        admission: None,
         messages: &[],
         tools: &[],
         model,

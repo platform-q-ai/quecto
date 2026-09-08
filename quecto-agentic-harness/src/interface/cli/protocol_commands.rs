@@ -48,6 +48,14 @@ pub enum AgentCommand {
     /// own. Omit `count` for the default protocol page, set `count` for an
     /// older-client newest-slice request, and set `before` to page backward.
     /// It is never silently answered from the connected/parent agent's history.
+    GetReport {
+        #[serde(default)]
+        export_raw: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
+    },
     GetMessages {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -333,6 +341,7 @@ impl AgentCommand {
             Self::FollowUp { id, .. } => id.as_deref(),
             Self::Abort { id } => id.as_deref(),
             Self::GetState { id, .. } => id.as_deref(),
+            Self::GetReport { id, .. } => id.as_deref(),
             Self::GetMessages { id, .. } => id.as_deref(),
             Self::Sync { id, .. } => id.as_deref(),
             Self::GetToolCatalogue { id } => id.as_deref(),
@@ -367,6 +376,7 @@ impl AgentCommand {
             Self::FollowUp { .. } => "follow_up",
             Self::Abort { .. } => "abort",
             Self::GetState { .. } => "get_state",
+            Self::GetReport { .. } => "get_report",
             Self::GetMessages { .. } => "get_messages",
             Self::Sync { .. } => "sync",
             Self::GetMessagesTail { .. } => "get_messages_tail",

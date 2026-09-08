@@ -2,12 +2,14 @@ use super::subagent_registry::validate_agent_id_format;
 
 /// Supported commands for interacting with a subagent.
 pub(super) const SUPPORTED_COMMANDS: &[&str] = &[
+    "swarm_control",
     "prompt",
     "steer",
     "follow_up",
     "abort",
     "kill",
     "get_state",
+    "get_report",
     "get_messages",
     "get_message",
     "get_session_stats",
@@ -63,6 +65,32 @@ pub(super) fn build_command(args: &serde_json::Value) -> Result<(String, String,
     // child's turn completes (#876); completion still arrives via the
     // passive completion note.
     let json_cmd = match command.as_str() {
+        "swarm_control" => {
+            let action = args["action"]
+                .as_str()
+                .filter(|action| matches!(*action, "pause" | "resume" | "status" | "usage_budget"))
+                .ok_or("swarm_control action must be pause, resume, status or usage_budget")?;
+            let mut command = serde_json::json!({"type":"swarm_control","action":action});
+            if action == "usage_budget" {
+                let limit = args
+                    .get("token_limit")
+                    .ok_or("token_limit is required; null disables the budget")?;
+                if limit.is_null() || limit.as_u64().is_some_and(|limit| limit > 0) {
+                    command["token_limit"] = limit.clone();
+                } else {
+                    return Err("token_limit must be positive or null".into());
+                }
+                command["strict_unknown"] = serde_json::json!(match args.get("strict_unknown") {
+                    None => true,
+                    Some(value) => value.as_bool().ok_or("strict_unknown must be boolean")?,
+                });
+            }
+            if let Some(reason) = args.get("reason") {
+                command["reason"] =
+                    serde_json::json!(reason.as_str().ok_or("reason must be a string")?);
+            }
+            command
+        }
         "prompt" => {
             let message = args
                 .get("message")
@@ -90,6 +118,13 @@ pub(super) fn build_command(args: &serde_json::Value) -> Result<(String, String,
                 cmd["since"] = serde_json::json!(since);
             }
             cmd
+        }
+        "get_report" => {
+            let export_raw = match args.get("export_raw") {
+                None => false,
+                Some(value) => value.as_bool().ok_or("export_raw must be boolean")?,
+            };
+            serde_json::json!({"type":"get_report", "export_raw":export_raw})
         }
         "get_messages" => {
             let mut cmd = serde_json::json!({"type": "get_messages"});

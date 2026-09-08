@@ -56,6 +56,25 @@ pub(crate) fn plan_default_report(response: &str, delivered: u64) -> DefaultRepo
     let Some(messages) = data.get_mut("messages").and_then(|v| v.as_array_mut()) else {
         return unchanged(response.to_string());
     };
+    // A live turn may publish messages before persistence assigns durable
+    // ordinals. Expose its latest report by ID without inventing a watermark.
+    if messages.iter().any(|message| {
+        message
+            .get("ordinal")
+            .and_then(|value| value.as_u64())
+            .is_none()
+    }) {
+        let latest = messages
+            .iter()
+            .rev()
+            .find(|message| is_substantive_assistant(message))
+            .cloned();
+        let report = bounded_report_messages(latest.into_iter().collect(), 0);
+        *data = serde_json::json!({"messages":report.messages, "cursorNeutral":true,
+            "ordinalStatus":"pending_persistence", "reportIncomplete":true,
+            "messageContentTruncated":report.message_content_truncated});
+        return unchanged(envelope.to_string());
+    }
     let observed_max = messages
         .iter()
         .filter_map(|m| m.get("ordinal").and_then(|v| v.as_u64()))
@@ -93,12 +112,8 @@ pub(crate) fn plan_default_report(response: &str, delivered: u64) -> DefaultRepo
     for (idx, msg) in messages.iter_mut().enumerate() {
         let ord = msg
             .get("ordinal")
-            .and_then(|v| v.as_u64())
-            .unwrap_or_else(|| {
-                let next = max_ord.saturating_add(1);
-                msg["ordinal"] = serde_json::json!(next);
-                next
-            });
+            .and_then(|value| value.as_u64())
+            .expect("durable ordinals validated above");
         max_ord = max_ord.max(ord);
         if ord > delivered {
             unread.push(idx);

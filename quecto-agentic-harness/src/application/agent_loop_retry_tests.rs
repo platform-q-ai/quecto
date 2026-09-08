@@ -313,3 +313,84 @@ async fn empty_streaming_done_with_max_tokens_preserves_stop_reason() {
     assert!(err.contains("stop_reason=max_tokens"), "{err}");
     assert_eq!(provider.request_count(), 1);
 }
+
+#[derive(Debug)]
+struct PausedAdmission;
+impl crate::domain::provider::RequestAdmission for PausedAdmission {
+    fn check(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>>
+    {
+        Box::pin(async { Err(DomainError::Tool("swarm paused".into())) })
+    }
+}
+
+#[tokio::test]
+async fn paused_execution_never_calls_provider() {
+    let provider = Arc::new(MockProvider::new(vec![text_response("must not run")]));
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: provider.clone(),
+        tool_registry: Box::new(MockRegistry::default()),
+        model: "test".into(),
+        max_tokens: 1024,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: "retry-test".into(),
+        context_collapse_after_tool_calls: context_pruning::COLLAPSE_DISABLED,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+    })
+    .with_max_tool_iterations(1)
+    .with_request_admission(Some(Arc::new(PausedAdmission)));
+
+    let result = agent.process(&mut vec![Message::user("queued hint")]).await;
+    assert!(result.is_err());
+    assert_eq!(provider.request_count(), 0);
+}
+
+#[tokio::test]
+async fn long_reset_horizon_prevents_stream_initiation_retry() {
+    let provider = Arc::new(MockStreamingProvider::new(vec![
+        vec![crate::domain::provider::StreamEvent::Error(
+            "HTTP 429: retry-after: 601828".to_string(),
+        )],
+        vec![crate::domain::provider::StreamEvent::Done(text_response(
+            "stream recovered",
+        ))],
+    ]));
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: provider.clone(),
+        tool_registry: Box::new(MockRegistry::default()),
+        model: "test".into(),
+        max_tokens: 1024,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: "stream-retry-test".into(),
+        context_collapse_after_tool_calls: context_pruning::COLLAPSE_DISABLED,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: true,
+        effort: None,
+        audit_log: None,
+        pin_recent_turns: 2,
+        context_collapse_after_messages: u32::MAX,
+        model_context_window: None,
+        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+    })
+    .with_max_tool_iterations(1);
+
+    let mut messages = vec![Message::user("hello")];
+    let result = agent.process(&mut messages).await;
+    assert!(
+        result.is_err(),
+        "must not retry ahead of the provider reset"
+    );
+    assert_eq!(provider.request_count(), 1);
+}

@@ -61,6 +61,11 @@ pub(crate) fn slim_state_projection(state: &SessionState) -> serde_json::Value {
     if let Some(workflow) = state.workflow.as_ref().and_then(slim_workflow) {
         data["workflow"] = workflow;
     }
+    if let [_, ..] = state.control_receipts.as_slice() {
+        data["controlReceipts"] = serde_json::json!(state.control_receipts);
+    }
+    data["automaticTurnsSuspended"] = serde_json::json!(state.automatic_turns_suspended);
+    data["repeatedFailureNotifications"] = serde_json::json!(state.repeated_failure_notifications);
     data["generation"] = serde_json::json!(state.generation);
     data
 }

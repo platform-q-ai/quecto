@@ -21,6 +21,7 @@ pub enum InspectionRoute {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoutableInspectionCommand {
+    GetReport,
     GetMessages,
     GetMessagesTail,
     GetMessage,
@@ -29,6 +30,7 @@ pub enum RoutableInspectionCommand {
 }
 
 pub const UDS_INSPECTION_ALLOWLIST: &[RoutableInspectionCommand] = &[
+    RoutableInspectionCommand::GetReport,
     RoutableInspectionCommand::GetMessages,
     RoutableInspectionCommand::GetMessagesTail,
     RoutableInspectionCommand::GetMessage,
@@ -39,6 +41,7 @@ pub const UDS_INSPECTION_ALLOWLIST: &[RoutableInspectionCommand] = &[
 impl RoutableInspectionCommand {
     pub fn from_uds_type(command_type: &str) -> Option<Self> {
         match command_type {
+            "get_report" => Some(Self::GetReport),
             "get_messages" => Some(Self::GetMessages),
             "get_messages_tail" => Some(Self::GetMessagesTail),
             "get_message" => Some(Self::GetMessage),
@@ -50,6 +53,7 @@ impl RoutableInspectionCommand {
 
     pub fn from_agent_cmd(command: &str) -> Option<Self> {
         match command {
+            "get_report" => Some(Self::GetReport),
             "get_messages" => Some(Self::GetMessages),
             "get_message" => Some(Self::GetMessage),
             "get_state" => Some(Self::GetState),

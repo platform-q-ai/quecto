@@ -19,6 +19,7 @@ pub mod provider_runtime_admission;
 pub mod providers;
 pub mod reload;
 pub mod repo_local_container_config;
+pub mod runtime_identity;
 pub mod security;
 pub mod time;
 pub mod tools;
@@ -31,3 +32,5 @@ mod line_cap_tests;
 
 #[cfg(test)]
 mod issue_996_efficiency_tests;
+
+pub mod session_export;

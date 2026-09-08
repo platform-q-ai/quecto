@@ -2,7 +2,7 @@ use crate::application::agent_loop_policy::ToolPolicyState;
 use crate::application::agent_loop_stream::{
     StreamProviderError, TurnEnd, empty_stream_error_message, is_empty_streamed_response,
 };
-use crate::application::agent_usage::UsageTotals;
+pub use crate::application::agent_usage::UsageTotals;
 use crate::application::context::{ContextManager, ContextManagerConfig};
 use crate::application::context_pruning;
 use crate::domain::agent::{
@@ -91,6 +91,14 @@ pub struct AgentLoopConfig {
     pub tool_profile_context: ToolProfileContext,
 }
 pub struct AgentLoopImpl {
+    unreported_usage: std::sync::Mutex<UsageTotals>,
+    accounting_outbox:
+        std::sync::Mutex<Vec<crate::domain::request_observation::RequestObservation>>,
+    request_observations: std::sync::Mutex<crate::domain::request_observation::RequestDiagnostics>,
+    request_admission: Option<Arc<dyn crate::domain::provider::RequestAdmission>>,
+    request_accounting: Option<Arc<dyn crate::domain::request_observation::RequestAccounting>>,
+    tool_admission: Option<Arc<dyn crate::domain::tool::ToolExecutionAdmission>>,
+    request_prefix: std::sync::Mutex<Option<String>>,
     provider: Arc<dyn LlmProvider>,
     pub(super) tool_registry: Box<dyn ToolRegistry>,
     model: String,
@@ -150,6 +158,13 @@ impl AgentLoopImpl {
             model_context_window: config.model_context_window,
         });
         Self {
+            unreported_usage: std::sync::Mutex::new(UsageTotals::default()),
+            request_observations: std::sync::Mutex::new(Default::default()),
+            request_accounting: None,
+            accounting_outbox: std::sync::Mutex::new(Vec::new()),
+            tool_admission: None,
+            request_prefix: std::sync::Mutex::new(None),
+            request_admission: None,
             provider: config.provider,
             tool_registry: config.tool_registry,
             model: config.model.clone(),
@@ -273,16 +288,6 @@ impl AgentLoopImpl {
         }
     }
 
-    pub fn with_max_tool_iterations(mut self, max: u32) -> Self {
-        self.max_tool_iterations = max;
-        self
-    }
-
-    #[cfg(test)]
-    pub fn with_progress_callback(mut self, callback: Option<ProgressCallback>) -> Self {
-        self.progress_callback = callback;
-        self
-    }
     /// Replace the tool registry with a new one.
     pub fn swap_registry(&mut self, registry: Box<dyn ToolRegistry>) {
         self.tool_registry = registry;
@@ -428,6 +433,8 @@ impl AgentLoopImpl {
             Some(self.session_key.as_str())
         };
         ChatRequest {
+            trace: None,
+            admission: self.request_admission.clone(),
             messages,
             tools: tool_defs,
             model: &self.model,
@@ -598,7 +605,9 @@ impl AgentLoopImpl {
             let llm_start = std::time::Instant::now();
             // Streaming (UDS mode) forwards token events in real time; REPL/
             // one-shot use the non-streaming path.
-            let response = self.request_provider_response(request).await;
+            let response = self
+                .request_provider_response(request, current_turn, estimated_context_tokens)
+                .await;
 
             let llm_duration_ms = llm_start.elapsed().as_millis() as u64;
             let response = match response {
@@ -703,21 +712,6 @@ impl AgentLoopImpl {
     }
 }
 
-impl AgentLoop for AgentLoopImpl {
-    fn process<'a>(
-        &'a mut self,
-        messages: &'a mut Vec<Message>,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<AgentResult, DomainError>> + Send + 'a>>
-    {
-        Box::pin(self.run_loop(messages))
-    }
-
-    fn info(&self) -> AgentInfo {
-        AgentInfo {
-            tool_count: self.tool_catalog().tool_count(),
-        }
-    }
-}
 #[cfg(test)]
 #[path = "agent_loop_catalogue_tests.rs"]
 mod catalogue_tests;
@@ -748,3 +742,6 @@ mod tests;
 #[cfg(test)]
 #[path = "agent_loop_turn_tests.rs"]
 mod turn_tests;
+
+#[path = "agent_loop_accounting.rs"]
+mod accounting;

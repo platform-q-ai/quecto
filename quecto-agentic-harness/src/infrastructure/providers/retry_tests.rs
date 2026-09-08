@@ -68,6 +68,8 @@ impl LlmProvider for CountingMockProvider {
 
 fn test_request() -> ChatRequest<'static> {
     ChatRequest {
+        trace: None,
+        admission: None,
         messages: &[],
         tools: &[],
         model: "test-model",
@@ -306,10 +308,9 @@ async fn test_honours_retry_after_seconds_hint() {
 }
 
 #[tokio::test]
-async fn test_oversized_retry_after_hint_is_clamped_to_max_backoff() {
+async fn long_reset_horizon_does_not_retry_before_provider_allows() {
     let count = Arc::new(AtomicU32::new(0));
-    // A hostile/buggy provider returns an enormous Retry-After. It must be
-    // clamped to max_backoff, never block for the untrusted duration.
+    // A long reset cannot be shortened into another request after thirty seconds.
     let inner = Arc::new(CountingMockProvider::new(
         count.clone(),
         1,
@@ -324,12 +325,12 @@ async fn test_oversized_retry_after_hint_is_clamped_to_max_backoff() {
     let retrying = RetryingProvider::with_sleeper(inner, config, sleeper);
 
     let result = retrying.chat(test_request()).await;
-    assert!(result.is_ok());
-    assert_eq!(
-        delays.lock().unwrap().clone(),
-        vec![Duration::from_secs(30)],
-        "an oversized Retry-After hint must be clamped to max_backoff"
+    assert!(
+        result.is_err(),
+        "long reset must return control without another request"
     );
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    assert!(delays.lock().unwrap().is_empty());
 }
 
 // ── Design constraint: streaming initiation is not retried by the decorator ────
@@ -409,4 +410,38 @@ fn wave3_debug_and_jitter_zero_path() {
     assert!(dbg.contains("RetryingProvider"));
     assert!(dbg.contains("max_attempts"));
     assert_eq!(jitter(std::time::Duration::ZERO), std::time::Duration::ZERO);
+}
+
+#[derive(Debug)]
+struct PauseAfterFirstAttempt(Arc<AtomicU32>);
+impl crate::domain::provider::RequestAdmission for PauseAfterFirstAttempt {
+    fn check(&self) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
+        Box::pin(async move {
+            if self.0.load(Ordering::SeqCst) == 0 {
+                Ok(())
+            } else {
+                Err(DomainError::Tool("swarm paused during backoff".into()))
+            }
+        })
+    }
+}
+
+#[tokio::test]
+async fn pause_during_backoff_prevents_the_next_provider_attempt() {
+    let count = Arc::new(AtomicU32::new(0));
+    let inner = Arc::new(CountingMockProvider::new(
+        count.clone(),
+        2,
+        "provider error (503): unavailable",
+    ));
+    let retrying = RetryingProvider::new(inner, RetryConfig::no_delay(4));
+    let admission = PauseAfterFirstAttempt(count.clone());
+    let mut request = test_request();
+    request.admission = Some(Arc::new(admission));
+    let result = retrying.chat(request).await;
+    assert!(
+        result.is_err(),
+        "paused retry must not reach eventual success"
+    );
+    assert_eq!(count.load(Ordering::SeqCst), 1);
 }

@@ -295,3 +295,20 @@ async fn delete_all_subagents_without_registry_is_a_correlated_error() {
         "unexpected error: {response}"
     );
 }
+
+#[tokio::test]
+async fn descendant_report_and_control_receipt_reads_bypass_busy_parent() {
+    for command in ["get_report", "get_state"] {
+        let (clients, mut replies) = registry_with_writer();
+        let line =
+            serde_json::json!({"type":command,"id":"inspect-42","agent_id":"child"}).to_string();
+        assert!(
+            run(&line, &None, None, &clients).await,
+            "{command} must not queue behind the parent turn"
+        );
+        let response = recv_response(&mut replies).await;
+        assert_eq!(response["id"], "inspect-42");
+        assert_eq!(response["command"], command);
+        assert_eq!(response["success"], false);
+    }
+}

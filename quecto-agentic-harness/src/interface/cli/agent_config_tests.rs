@@ -26,6 +26,8 @@ fn openai_oauth_jwt(account_id: &str) -> String {
 
 fn chat_request<'a>(messages: &'a [Message], model: &'a str) -> ChatRequest<'a> {
     ChatRequest {
+        trace: None,
+        admission: None,
         messages,
         tools: &[],
         model,

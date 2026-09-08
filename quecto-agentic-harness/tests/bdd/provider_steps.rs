@@ -241,6 +241,8 @@ fn when_send_through_router_with_model(world: &mut QuectoWorld, model: String) {
         .expect("provider router not set");
     let messages = vec![Message::user("test")];
     let req = quecto::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: &model,
@@ -349,6 +351,8 @@ fn when_send_through_retrying_provider(world: &mut QuectoWorld) {
 
     let messages = vec![Message::user("test")];
     let req = quecto::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "test-model",
@@ -519,6 +523,8 @@ fn when_send_chat_with_tool(world: &mut QuectoWorld, message: String, tool_name:
         parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#.into(),
     }];
     let req = quecto::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &tools,
         model: "gpt-4",
@@ -678,6 +684,8 @@ fn when_send_streaming_chat(world: &mut QuectoWorld, message: String) {
     let provider = world.provider.as_ref().expect("provider not set");
     let messages = vec![Message::user(message)];
     let req = quecto::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "test-model",
@@ -842,6 +850,8 @@ fn when_send_and_track_ptr(world: &mut QuectoWorld) {
     let _response = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(router.chat(quecto::domain::provider::ChatRequest {
+            trace: None,
+            admission: None,
             messages: &messages,
             tools: &[],
             model: "test-model",
@@ -875,6 +885,8 @@ fn when_send_chat_with_model(world: &mut QuectoWorld, model: String) {
         .expect("fallback provider not set");
     let messages = vec![Message::user("test message")];
     let req = quecto::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: &model,
@@ -1059,6 +1071,8 @@ fn when_send_anthropic_chat(world: &mut QuectoWorld) {
     let provider = world.provider.as_ref().expect("provider not set");
     let messages = vec![Message::user("Hi")];
     let req = quecto::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-sonnet-4-6",
@@ -1185,6 +1199,8 @@ fn when_send_anthropic_streaming(world: &mut QuectoWorld) {
     let provider = world.provider.as_ref().expect("provider not set");
     let messages = vec![Message::user("Hi")];
     let req = quecto::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-sonnet-4-6",
@@ -1358,6 +1374,8 @@ fn given_anthropic_request_multiple_user_msgs(world: &mut QuectoWorld) {
 fn when_build_anthropic_request_body(world: &mut QuectoWorld) {
     let msgs = world.context_messages.as_ref().expect("no messages set");
     let req = quecto::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: msgs,
         tools: &[],
         model: "claude-sonnet-4-6",
@@ -1536,6 +1554,8 @@ fn when_build_with_tool_choice(world: &mut QuectoWorld) {
         parameters_schema: "{}".into(),
     }];
     let req = quecto::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: msgs,
         tools: &tools,
         model: "claude-sonnet-4-6",
@@ -1603,6 +1623,8 @@ fn when_build_with_metadata(world: &mut QuectoWorld) {
         }
     });
     let req = quecto::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: msgs,
         tools: &[],
         model: "claude-sonnet-4-6",
@@ -1708,6 +1730,8 @@ fn when_build_request_body_with_thinking(world: &mut QuectoWorld) {
 
     let messages = vec![quecto::domain::message::Message::user("Think hard")];
     let req = quecto::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: &model,
@@ -1970,6 +1994,8 @@ fn then_cost_none(world: &mut QuectoWorld) {
 /// Helper: build a default ChatRequest for incremental streaming tests.
 fn make_incremental_request(messages: &[Message]) -> quecto::domain::provider::ChatRequest<'_> {
     quecto::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages,
         tools: &[],
         model: "claude-sonnet-4-6",
@@ -3125,6 +3151,8 @@ fn when_chat_with_cancel_flag(world: &mut QuectoWorld) {
     let messages = vec![Message::user("hello")];
     let result = rt.block_on(async move {
         let request = ChatRequest {
+            trace: None,
+            admission: None,
             messages: &messages,
             tools: &[],
             model: "claude-opus-4-5",
@@ -3151,6 +3179,8 @@ fn when_streaming_chat_with_cancel_flag(world: &mut QuectoWorld) {
     let messages = vec![Message::user("hello")];
     let result = rt.block_on(async move {
         let request = ChatRequest {
+            trace: None,
+            admission: None,
             messages: &messages,
             tools: &[],
             model: "claude-opus-4-5",
@@ -3177,6 +3207,8 @@ fn when_incremental_chat_with_cancel_flag(world: &mut QuectoWorld) {
     let messages = vec![Message::user("hello")];
     let events = rt.block_on(async move {
         let request = ChatRequest {
+            trace: None,
+            admission: None,
             messages: &messages,
             tools: &[],
             model: "claude-opus-4-5",
@@ -3429,6 +3461,8 @@ fn when_build_request_body_with_effort(world: &mut QuectoWorld) {
 
     let messages = vec![quecto::domain::message::Message::user("test")];
     let req = quecto::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: &model,
@@ -3689,6 +3723,8 @@ fn parity_build_body(world: &mut QuectoWorld, is_oauth: bool) {
         None => vec![],
     };
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &msgs,
         tools: &tools,
         model: "claude-sonnet-4-6",

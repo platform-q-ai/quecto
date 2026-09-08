@@ -1258,3 +1258,25 @@ All flags for `quecto agent` that affect UDS mode:
 - Extensions (`docs {"name":"extensions"}`) — adding custom tools via native config or UDS registration
 - Subagents (`docs {"name":"subagents"}`) — spawning child agent processes from within a session
 - Workflow Automation (`docs {"name":"workflow"}`) — configurable step-by-step development process
+
+## Swarm supervision additions
+
+`{"type":"swarm_control","id":"pause-1","action":"pause","reason":"approval"}`
+applies a durable pause independently of the prompt queue. Actions are `pause`,
+`resume`, `status`, and `usage_budget`; the latter requires `token_limit` (positive
+integer or explicit null) and optionally `strict_unknown` (default true). Add
+`agent_id` to route to a descendant. Successful responses include `applied`,
+`status`, `generation`, and `budget`. The internal `wake` action carries a durable
+event generation and is rechecked for actionability at dispatch.
+
+`get_state` adds bounded `controlReceipts` identified by command ID, with queued,
+started, completed, failed, cancelled or rejected status. Completed means a model
+turn completed, not that its instructions were semantically fulfilled.
+
+`{"type":"get_report","id":"report-1","agent_id":"...","export_raw":true}`
+returns the latest assistant report and optional retained raw export paths plus
+checksum. Omit `agent_id` for the connected agent and `export_raw` for report-only
+inspection. It is available while busy, does not advance unread history cursors,
+and includes `get_message` recovery for truncated content. Artifact paths are
+local to the responding runtime. See [swarm diagnostics](swarm.md#operational-diagnostics-and-budgets)
+for retention, accounting availability, provenance and export consistency.

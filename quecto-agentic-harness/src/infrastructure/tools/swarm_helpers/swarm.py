@@ -74,17 +74,48 @@ class Workbench(Tasks):
                 'before': {'goal': run['goal'], 'constraints': json.loads(run['constraints']), 'criteria': json.loads(run['criteria'])},
                 'after': {'goal': goal, 'constraints': constraints, 'criteria': criteria}})
 
-    def _notifications(self):
-        return self.coordination.notifications()
+    def usage_budget(self, token_limit, strict_unknown=True):
+        return self.coordination.usage_budget(token_limit, strict_unknown)
+
+    def usage_report(self):
+        return self.coordination.usage_report()
+
+    def _record_request(self, record):
+        return self.coordination.record_request(record)
+
+    def _control_status(self):
+        return self.coordination.control_status()
+
+    def _request_admission(self):
+        return self.coordination.request_admission()
+
+    def pause(self, reason):
+        bounded(reason, 'pause reason')
+        return self.coordination.pause(reason)
+
+    def resume(self):
+        return self.coordination.resume()
+
+    def _accept_wake(self, generation):
+        return self.coordination.accept_wake(generation)
+
+    def _notifications(self, with_generation=False):
+        return self.coordination.notifications(with_generation)
 
     def _snapshot(self):
         with self.store.operation(active=False, read_only=True) as (db, run):
             return {'status': run['status'], 'coordinator': run['coordinator'],
+                    'control_generation': db.execute("SELECT coalesce(max(id),0) FROM events WHERE action IN ('paused','resumed')").fetchone()[0],
                     'deadline': run['deadline'],
                     'members': [dict(r) for r in db.execute('SELECT * FROM members')]}
 
-    def summary(self):
+    def summary(self, since=None):
+        if since is not None and (type(since) is not int or since < 0):
+            raise SwarmError('summary cursor must be a nonnegative integer')
         with self.store.operation(active=False, read_only=True) as (db, run):
+            cursor = db.execute('SELECT coalesce(max(id),0) FROM events').fetchone()[0]
+            if since == cursor:
+                return {'unchanged': True, 'event_cursor': cursor, 'status': run['status']}
             for key in ('constraints', 'criteria'):
                 run[key] = json.loads(run[key])
             run['members'] = [dict(r) for r in db.execute('SELECT * FROM members')]
@@ -94,7 +125,8 @@ class Workbench(Tasks):
             run['file_count'] = db.execute('SELECT count(*) FROM files').fetchone()[0]
             run['files'] = [dict(r) for r in db.execute('SELECT * FROM files ORDER BY path LIMIT 50')]
             run['evidence'] = [dict(r) for r in db.execute('SELECT * FROM evidence')]
-            run['events'] = list(reversed([dict(r) for r in db.execute('SELECT * FROM events ORDER BY id DESC LIMIT 100')]))
+            run['control_generation'] = db.execute("SELECT coalesce(max(id),0) FROM events WHERE action IN ('paused','resumed')").fetchone()[0]
+            run['event_cursor'] = db.execute('SELECT coalesce(max(id),0) FROM events').fetchone()[0]
             run['counts'] = {status: 0 for status in ('ready', 'claimed', 'blocked', 'submitted', 'completed')}
             states = {r['id']: dict(r) for r in db.execute('SELECT id,status,dependencies FROM tasks')}
             for task in states.values():
@@ -103,6 +135,17 @@ class Workbench(Tasks):
                     status = 'blocked'
                 run['counts'][status] += 1
             return run
+
+    def events(self, after=0, limit=25):
+        """Read immutable audit history explicitly, using durable event IDs."""
+        if type(after) is not int or after < 0 or type(limit) is not int or not 1 <= limit <= 100:
+            raise SwarmError('event page requires nonnegative cursor and limit 1 through 100')
+        with self.store.operation(active=False, read_only=True) as (db, _):
+            rows = [dict(row) for row in db.execute(
+                'SELECT * FROM events WHERE id>? ORDER BY id LIMIT ?', (after, limit + 1))]
+            page = rows[:limit]
+            return {'events': page, 'cursor': page[-1]['id'] if page else after,
+                    'has_more': len(rows) > limit}
 
     def _bootstrap(self, pid, started, socket, reservation=None):
         with self.store.transaction(create=True) as db:

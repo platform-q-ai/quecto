@@ -91,3 +91,31 @@ def notification_targets(run, actor, members, events, state):
 def require_unsubmitted(task):
     if task['status'] == 'submitted':
         raise SwarmError('submitted evidence is immutable; release and reclaim before revising')
+
+
+def usage_budget_decision(budget, totals):
+    limit = budget['token_limit']
+    if limit is None:
+        return 'allow'
+    if budget['strict_unknown'] and totals['unknown_usage_requests'] > 0:
+        return 'pause'
+    if totals['observed_tokens'] >= limit:
+        return 'pause'
+    if totals['observed_tokens'] * 5 >= limit * 4:
+        return 'warn'
+    return 'allow'
+
+
+def request_measurement(record):
+    if isinstance(record, dict) and isinstance(record.get('request_id'), str) and 0 < len(record['request_id']) <= 128:
+        fields = ('input_tokens', 'context_input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens')
+        for field in fields:
+            value = record.get(field)
+            if value is None or (type(value) is int and 0 <= value <= 2**32 - 1):
+                continue
+            raise SwarmError(f'invalid request usage {field}')
+        attempts = record.get('instrumented_attempts')
+        if type(attempts) is int and 0 <= attempts <= 2**32 - 1 and record.get('outcome') in ('succeeded', 'failed', 'cancelled', 'rejected'):
+            known = record.get('context_input_tokens') is not None and record.get('output_tokens') is not None
+            return ((record['context_input_tokens'] + record['output_tokens']) if known else 0, int(attempts > 0 and not known), attempts)
+    raise SwarmError('invalid request observation')

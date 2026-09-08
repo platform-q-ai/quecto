@@ -19,3 +19,60 @@ fn definition_does_not_expose_await() {
     assert!(schema["properties"].get("timeout").is_none());
     assert!(schema["properties"].get("idle_timeout").is_none());
 }
+
+#[test]
+fn advertised_truncation_recovery_is_callable_through_tool_schema() {
+    let schema: serde_json::Value = serde_json::from_str(
+        &AgentCmdTool::new(new_registry())
+            .definition()
+            .parameters_schema,
+    )
+    .unwrap();
+    assert!(
+        schema["properties"]["command"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "get_message")
+    );
+    for field in ["messageId", "toolCallId", "offset", "limit"] {
+        assert!(
+            schema["properties"].get(field).is_some(),
+            "missing recovery input {field}"
+        );
+    }
+}
+
+#[test]
+fn latest_report_is_a_separate_cursor_neutral_command() {
+    let (_, wire, command) = super::super::agent_cmd_parse::build_command(&serde_json::json!({
+        "agent_id":"11111111-1111-4111-8111-111111111111", "command":"get_report"
+    }))
+    .expect("latest report should not require draining raw history");
+    assert_eq!(command, "get_report");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&wire).unwrap()["type"],
+        "get_report"
+    );
+}
+
+#[test]
+fn supervisor_budget_command_preserves_explicit_limit_and_unknown_usage_policy() {
+    let (_, wire, _) = super::super::agent_cmd_parse::build_command(&serde_json::json!({
+        "agent_id":"11111111-1111-4111-8111-111111111111", "command":"swarm_control",
+        "action":"usage_budget", "token_limit":1000, "strict_unknown":false
+    }))
+    .unwrap();
+    let command: serde_json::Value = serde_json::from_str(&wire).unwrap();
+    assert_eq!(command["token_limit"], 1000);
+    assert_eq!(command["strict_unknown"], false);
+}
+
+#[test]
+fn report_export_option_is_preserved_and_type_checked() {
+    let (_, wire, _) = super::super::agent_cmd_parse::build_command(&serde_json::json!({"agent_id":"11111111-1111-4111-8111-111111111111", "command":"get_report", "export_raw":true})).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&wire).unwrap()["export_raw"],
+        true
+    );
+}

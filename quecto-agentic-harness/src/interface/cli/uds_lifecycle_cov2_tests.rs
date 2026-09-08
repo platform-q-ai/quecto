@@ -90,6 +90,8 @@ async fn read_only_provider_trait_defaults_are_exercised() {
     assert_eq!(
         provider
             .chat(ChatRequest {
+                trace: None,
+                admission: None,
                 messages: &[],
                 tools: &[],
                 model: "stub",
@@ -110,6 +112,8 @@ async fn read_only_provider_trait_defaults_are_exercised() {
     );
     let response = provider
         .chat_stream(ChatRequest {
+            trace: None,
+            admission: None,
             messages: &[],
             tools: &[],
             model: "stub",
@@ -127,6 +131,8 @@ async fn read_only_provider_trait_defaults_are_exercised() {
     assert_eq!(response.content.as_deref(), Some("read-only-ok"));
     let mut rx = provider
         .chat_stream_incremental(ChatRequest {
+            trace: None,
+            admission: None,
             messages: &[],
             tools: &[],
             model: "stub",

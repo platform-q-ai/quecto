@@ -38,6 +38,8 @@ async fn cov_provider_trait_methods_are_invoked() {
     assert!(provider.as_any().downcast_ref::<CovProvider>().is_some());
     let messages = [];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "stub",
@@ -55,6 +57,8 @@ async fn cov_provider_trait_methods_are_invoked() {
 
     let messages = [];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "stub",
@@ -72,6 +76,8 @@ async fn cov_provider_trait_methods_are_invoked() {
 
     let messages = [];
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "stub",

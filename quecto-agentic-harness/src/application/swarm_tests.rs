@@ -8,6 +8,12 @@ struct Processes {
     accepts: bool,
 }
 impl ProcessControl for Processes {
+    fn suspend_local_executions(&self, _: &Snapshot) {
+        self.events.lock().unwrap().push("suspend-jobs".into());
+    }
+    fn suspend_local_inference(&self, _: &Snapshot) {
+        self.events.lock().unwrap().push("suspend-local".into());
+    }
     fn cancel_local_executions(&self) {
         self.events.lock().unwrap().push("cancel-jobs".into());
     }
@@ -35,6 +41,7 @@ impl ProcessControl for Processes {
 }
 fn snapshot(status: RunStatus) -> Snapshot {
     Snapshot {
+        control_generation: 0,
         status,
         coordinator: "parent".into(),
         deadline: 100.,
@@ -71,13 +78,13 @@ async fn terminal_settlement_cancels_jobs_before_any_abort_and_preserves_reporti
             .unwrap();
         let mut expected = vec!["cancel-jobs", "abort:worker", "terminate:2"];
         if status.abort_coordinator() {
-            expected.push("abort:parent");
+            expected.insert(1, "suspend-local");
         }
         assert_eq!(*processes.events.lock().unwrap(), expected);
     }
 }
 #[tokio::test]
-async fn failed_abort_falls_back_to_identity_checked_termination() {
+async fn failed_worker_abort_still_terminates_worker_and_suspends_local_coordinator() {
     let processes = Processes {
         events: Mutex::new(vec![]),
         accepts: false,
@@ -89,10 +96,9 @@ async fn failed_abort_falls_back_to_identity_checked_termination() {
         *processes.events.lock().unwrap(),
         [
             "cancel-jobs",
+            "suspend-local",
             "abort:worker",
-            "terminate:2",
-            "abort:parent",
-            "terminate:1"
+            "terminate:2"
         ]
     );
 }
@@ -122,6 +128,7 @@ fn deadline_and_terminal_outcomes_trigger_settlement_with_a_fake_clock() {
     assert!(settlement_due(&snapshot(RunStatus::Running), &Time(100.)));
     assert!(settlement_due(&snapshot(RunStatus::Failed), &Time(0.)));
     assert!(!settlement_due(&snapshot(RunStatus::Setup), &Time(1000.)));
+    assert!(!settlement_due(&snapshot(RunStatus::Paused), &Time(1000.)));
 }
 
 struct CoordinationFake(Mutex<Vec<String>>);
@@ -157,4 +164,41 @@ fn harness_death_quarantines_without_releasing_ownership() {
     let coordination = CoordinationFake(Mutex::new(vec![]));
     reconcile(&coordination, &Observations).unwrap();
     assert_eq!(*coordination.0.lock().unwrap(), ["worker"]);
+}
+
+#[tokio::test]
+async fn suspension_cancels_only_local_work_without_terminating_members() {
+    let processes = Processes {
+        events: Mutex::new(vec![]),
+        accepts: false,
+    };
+    settle(&snapshot(RunStatus::Paused), "parent", &processes)
+        .await
+        .unwrap();
+    assert_eq!(
+        *processes.events.lock().unwrap(),
+        ["suspend-jobs", "suspend-local"]
+    );
+}
+
+#[tokio::test]
+async fn failed_or_expired_run_retains_coordinator_when_abort_delivery_fails() {
+    for status in [RunStatus::Failed, RunStatus::BudgetExhausted] {
+        let processes = Processes {
+            events: Mutex::new(vec![]),
+            accepts: false,
+        };
+        settle(&snapshot(status), "parent", &processes)
+            .await
+            .unwrap();
+        let events = processes.events.lock().unwrap();
+        assert!(
+            !events.iter().any(|event| event == "terminate:1"),
+            "coordinator must remain available for reports: {events:?}"
+        );
+        assert!(
+            events.iter().any(|event| event == "terminate:2"),
+            "worker cleanup still required"
+        );
+    }
 }

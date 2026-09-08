@@ -445,6 +445,9 @@ fn busy_guard_sets_flag_for_its_scope_and_clears_on_drop() {
 #[test]
 fn build_get_state_line_serializes_status_snapshot() {
     let state = SessionState {
+        control_receipts: Vec::new(),
+        automatic_turns_suspended: false,
+        repeated_failure_notifications: 0,
         execution: None,
         model: "mock-model".into(),
         generation: 1,
@@ -483,6 +486,9 @@ fn build_get_state_line_serializes_status_snapshot() {
 #[test]
 fn busy_get_state_line_omits_snapshot_marker() {
     let state = SessionState {
+        control_receipts: Vec::new(),
+        automatic_turns_suspended: false,
+        repeated_failure_notifications: 0,
         execution: None,
         model: "mock-model".into(),
         generation: 1,
@@ -624,6 +630,9 @@ fn busy_get_state_reflects_live_workflow_progress_mid_turn() {
     let mut frozen_wf = serde_json::to_value(engine.snapshot(true)).unwrap();
     frozen_wf["automation"] = serde_json::json!({"autoContinue": true, "completionNudge": false});
     let state = SessionState {
+        control_receipts: Vec::new(),
+        automatic_turns_suspended: false,
+        repeated_failure_notifications: 0,
         execution: Some(ExecutionSnapshot {
             phase: "streaming".into(),
             activity_generation: 1,

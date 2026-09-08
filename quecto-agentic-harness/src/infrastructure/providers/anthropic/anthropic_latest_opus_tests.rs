@@ -7,6 +7,8 @@ fn test_opus_47_and_48_omit_deprecated_temperature() {
     for model in ["claude-opus-4-7", "claude-opus-4-8"] {
         let messages = vec![Message::user("Hi")];
         let req = ChatRequest {
+            trace: None,
+            admission: None,
             messages: &messages,
             tools: &[],
             model,
@@ -39,6 +41,8 @@ fn test_opus_47_and_48_omit_deprecated_temperature() {
 fn test_opus_5_omits_deprecated_temperature() {
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &messages,
         tools: &[],
         model: "claude-opus-5",

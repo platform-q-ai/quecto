@@ -1318,6 +1318,8 @@ fn given_provider_success(world: &mut QuectoWorld) {
 async fn when_chat_through_refreshable(world: &mut QuectoWorld) {
     let provider = world.provider.as_ref().expect("provider not set");
     let request = ChatRequest {
+        trace: None,
+        admission: None,
         messages: &[],
         tools: &[],
         model: "test-model",

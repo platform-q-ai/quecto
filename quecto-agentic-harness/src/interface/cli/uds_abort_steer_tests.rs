@@ -71,7 +71,7 @@ async fn mid_turn_follow_up_is_queued() {
 
     let pending = env.session.drain_pending();
     assert!(
-        matches!(pending.as_slice(), [PendingMessage::User(msg)] if msg == "say followed"),
+        matches!(pending.as_slice(), [PendingMessage::Control { id, content, .. }] if id == "f" && content == "say followed"),
         "follow_up success must leave an observable queued message: {pending:?}"
     );
 }
@@ -98,7 +98,7 @@ async fn busy_prompt_with_steer_behavior_is_queued() {
 
     let pending = env.session.drain_pending();
     assert!(
-        matches!(pending.as_slice(), [PendingMessage::User(msg)] if msg == "say steered"),
+        matches!(pending.as_slice(), [PendingMessage::Control { id, content, .. }] if id == "s" && content == "say steered"),
         "steer success must leave an observable queued message: {pending:?}"
     );
 }
@@ -191,7 +191,11 @@ async fn follow_up_preserves_admitted_steer_gate() {
     assert!(ctx.messages.is_empty());
     assert_eq!(
         ctx.session.drain_pending(),
-        vec![PendingMessage::user("work".into())]
+        vec![PendingMessage::Control {
+            id: "f".into(),
+            command: "follow_up".into(),
+            content: "work".into()
+        }]
     );
 }
 
@@ -319,6 +323,8 @@ impl crate::domain::provider::LlmProvider for AdvanceThenAbortProvider {
 
 fn empty_advance_request<'a>() -> crate::domain::provider::ChatRequest<'a> {
     crate::domain::provider::ChatRequest {
+        trace: None,
+        admission: None,
         messages: &[],
         tools: &[],
         model: "stub",
@@ -552,4 +558,170 @@ async fn admitted_steer_burst_precedes_all_buffered_hints() {
         prompts,
         vec!["first steer", "second steer", "buffered hint"]
     );
+}
+
+#[derive(Debug)]
+struct QuotaExhausted(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+impl LlmProvider for QuotaExhausted {
+    fn name(&self) -> &str {
+        "quota-exhausted"
+    }
+    fn chat(
+        &self,
+        _: crate::domain::provider::ChatRequest<'_>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        crate::domain::message::LlmResponse,
+                        crate::domain::error::DomainError,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async {
+            Err(crate::domain::error::DomainError::Provider(
+                r#"HTTP 429: {"error":{"type":"usage_limit_reached","resets_in_seconds":601828}}"#
+                    .into(),
+            ))
+        })
+    }
+}
+
+#[tokio::test]
+async fn quota_failure_stops_pending_turn_amplification_and_retains_work() {
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut env = Env::with_unselected_workflow();
+    env.agent = make_dispatch_test_agent(std::sync::Arc::new(QuotaExhausted(calls.clone())));
+    for hint in ["wake one", "wake two", "operator clarification"] {
+        env.session.enqueue_pending(hint.into());
+    }
+    let mut ctx = env.ctx();
+    super::pending::drain_and_run_pending(&mut ctx).await;
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(ctx.session.drain_pending().len(), 2);
+}
+
+#[tokio::test]
+async fn retained_clarification_has_queryable_correlated_handling_receipt() {
+    let mut env = Env::with_unselected_workflow();
+    let mut ctx = env.ctx();
+    assert!(
+        super::pending::queue_prompt(
+            &mut ctx,
+            Some("approval-42"),
+            "follow_up",
+            "Approved schema v2".into(),
+            false
+        )
+        .await
+    );
+    let state = serde_json::to_value(ctx.session.state_snapshot(0, None, 0, None)).unwrap();
+    assert_eq!(state["controlReceipts"][0]["id"], "approval-42");
+    assert_eq!(state["controlReceipts"][0]["status"], "queued");
+    super::drain_and_run_pending(&mut ctx).await;
+    let state = serde_json::to_value(ctx.session.state_snapshot(0, None, 0, None)).unwrap();
+    assert_eq!(state["controlReceipts"][0]["id"], "approval-42");
+    assert_eq!(state["controlReceipts"][0]["status"], "completed");
+    assert!(
+        ctx.messages
+            .iter()
+            .any(|message| message.content == "Approved schema v2")
+    );
+}
+
+#[tokio::test]
+async fn aborted_queued_clarification_receipt_is_cancelled_without_inference() {
+    let mut env = Env::with_unselected_workflow();
+    let mut ctx = env.ctx();
+    super::pending::queue_prompt(
+        &mut ctx,
+        Some("cancelled-approval"),
+        "follow_up",
+        "approved".into(),
+        false,
+    )
+    .await;
+    ctx.turn_control.mark_abort();
+    super::drain_pending_and_nudge(&mut ctx).await;
+    let state = serde_json::to_value(ctx.session.state_snapshot(0, None, 0, None)).unwrap();
+    assert_eq!(state["controlReceipts"][0]["status"], "cancelled");
+    assert!(ctx.messages.is_empty());
+}
+
+#[tokio::test]
+async fn failed_clarification_receipt_is_failed_and_later_controls_remain_queued() {
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut env = Env::with_unselected_workflow();
+    env.agent = make_dispatch_test_agent(std::sync::Arc::new(QuotaExhausted(calls.clone())));
+    let mut ctx = env.ctx();
+    for id in ["first", "second"] {
+        super::pending::queue_prompt(&mut ctx, Some(id), "follow_up", "approved".into(), false)
+            .await;
+    }
+    super::drain_and_run_pending(&mut ctx).await;
+    let state = serde_json::to_value(ctx.session.state_snapshot(0, None, 0, None)).unwrap();
+    assert_eq!(state["controlReceipts"][0]["status"], "failed");
+    assert_eq!(state["controlReceipts"][1]["status"], "queued");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn session_stats_expose_request_diagnostics_after_failed_prompt() {
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut env = Env::with_unselected_workflow();
+    env.agent = make_dispatch_test_agent(std::sync::Arc::new(QuotaExhausted(calls)));
+    let mut ctx = env.ctx();
+    super::handle_prompt(
+        &mut ctx,
+        super::PromptCommand {
+            id: Some("quota".into()),
+            type_name: "prompt".into(),
+            message: "work".into(),
+            streaming_behavior: None,
+        },
+    )
+    .await;
+    let stats = super::compute_session_stats_with_usage(
+        "test",
+        ctx.messages,
+        ctx.session.usage_snapshot(),
+        0,
+        0,
+    );
+    let data = serde_json::to_value(stats).unwrap();
+    assert_eq!(data["requestDiagnostics"]["logical_requests"], 1);
+    assert_eq!(data["requestDiagnostics"]["recent"][0]["outcome"], "failed");
+    assert_eq!(
+        data["requestDiagnostics"]["recent"][0]["input_tokens"],
+        serde_json::Value::Null
+    );
+}
+
+#[tokio::test]
+async fn direct_rejected_and_precancelled_prompts_have_correlated_receipts() {
+    for (busy, expected) in [(true, "rejected"), (false, "cancelled")] {
+        let mut env = Env::with_unselected_workflow();
+        let mut ctx = env.ctx();
+        ctx.session.set_streaming(busy);
+        if !busy {
+            crate::interface::cli::uds_cancel::fire_cancel(&ctx.cancel_handle);
+        }
+        super::handle_prompt(
+            &mut ctx,
+            super::PromptCommand {
+                id: Some("direct-control".into()),
+                type_name: "prompt".into(),
+                message: "approved".into(),
+                streaming_behavior: None,
+            },
+        )
+        .await;
+        let state = serde_json::to_value(ctx.session.state_snapshot(0, None, 0, None)).unwrap();
+        assert_eq!(state["controlReceipts"][0]["id"], "direct-control");
+        assert_eq!(state["controlReceipts"][0]["status"], expected);
+        assert!(ctx.messages.is_empty());
+    }
 }
