@@ -57,3 +57,9 @@ Feature: Container swarm coordination
     When a workflow-enabled swarm container is requested
     Then the swarm result should be an error
     And the swarm result should contain "workflow is unavailable for swarm agents"
+
+  Scenario: Rejected wake delivery preserves the durable message and reports a warning
+    When a swarm message recipient rejects its wake hint
+    Then the swarm result should not be an error
+    And the swarm result should contain "wake hint failed for worker"
+    And the rejected wake still leaves the message in the recipient inbox

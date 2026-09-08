@@ -358,3 +358,20 @@ formatting, quality and BDD tag gates. Existing BDD quality warnings remain.
 The first broad run caught the intentionally updated spawn-description assertion
 and a transient cleanup-test failure; the corrected assertion, isolated cleanup
 recheck and full workspace rerun passed. PR CI remains required on the final head.
+
+### CI BDD coverage follow-up
+
+CI run `34233291302` passed every scenario and the other seven jobs, but the
+non-real BDD function coverage was 71.96%, below its unchanged 72% gate. The
+additional BDD scenario exercises a rejected real-socket wake hint, checks the
+sender's warning and reads the still-accepted message through the recipient's
+normal swarm tool. Setup uses typed membership ports, not private wire calls.
+All 32 swarm scenarios (140 steps) pass locally.
+
+Two bounded fixture-based self-review loops covered this test-only delta against
+`fee21eec`: scope/inspect/challenge/validate/report first checked that the test
+reaches the changed acknowledgment predicates and distinguishes failed hints
+from lost messages; the second checked bounded socket handling, preserved inbox
+state, typed adapter setup and assertion relevance. No further finding survived.
+These are sequential self-reviews, not independent assurance. No coverage gate
+or production behavior was weakened or changed for this follow-up.

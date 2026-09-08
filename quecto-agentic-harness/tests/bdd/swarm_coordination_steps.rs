@@ -148,3 +148,88 @@ async fn reject_workflow(world: &mut QuectoWorld) {
             .unwrap(),
     );
 }
+
+#[when("a swarm message recipient rejects its wake hint")]
+fn rejected_wake(world: &mut QuectoWorld) {
+    use std::io::Write;
+    run(world, json!({"op":"summary"}));
+    let workspace = world.swarm_workspace.clone().unwrap();
+    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        checkout: workspace.clone(),
+        member: "coordinator".into(),
+        lifecycle: std::sync::Arc::new(quecto::application::ports::SwarmTestLifecycle),
+    };
+    let socket = workspace.join("worker.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    use quecto::domain::swarm::CoordinationPort;
+    context.reserve_member("worker", "reservation").unwrap();
+    let worker = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        member: "worker".into(),
+        ..context
+    };
+    worker
+        .join(
+            &quecto::domain::swarm::ProcessIdentity {
+                pid: 123,
+                started: "identity".into(),
+            },
+            socket.to_str(),
+            Some("reservation"),
+        )
+        .unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let recipient = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(5))
+                }
+                Err(e) => panic!("wake hint not delivered: {e}"),
+            }
+        };
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .unwrap();
+        let command = quecto::infrastructure::test_support::read_framed_command(&stream).unwrap();
+        let command: serde_json::Value = serde_json::from_str(&command).unwrap();
+        assert_eq!(command["type"], "prompt");
+        assert!(command["message"].as_str().unwrap().contains("op=summary"));
+        writeln!(stream,"{}",json!({"type":"response","id":command["id"],"success":false,"error":"control queue is full"})).unwrap();
+    });
+    run(
+        world,
+        json!({"op":"run","code":"from swarm import board; board.send('approval','worker','Approved: schema v2')"}),
+    );
+    recipient.join().unwrap();
+}
+
+#[then("the rejected wake still leaves the message in the recipient inbox")]
+fn durable_rejected_wake(world: &mut QuectoWorld) {
+    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        checkout: world.swarm_workspace.clone().unwrap(),
+        member: "worker".into(),
+        lifecycle: std::sync::Arc::new(quecto::application::ports::SwarmTestLifecycle),
+    };
+    use quecto::domain::tool::Tool;
+    let workspace = std::sync::Arc::new(context.checkout.clone());
+    let tool = quecto::infrastructure::tools::swarm::SwarmTool::new(
+        workspace.clone(),
+        std::sync::Arc::new(quecto::infrastructure::security::sandbox::Sandbox::new(
+            Some(workspace.as_ref().clone()),
+        )),
+        quecto::infrastructure::tools::swarm::SwarmConfig::default(),
+    )
+    .with_context(Some(context));
+    let result = super::runtime().block_on(tool.execute(r#"{"op":"run","code":"from swarm import board; import json; print(json.dumps(board.inbox()))"}"#)).unwrap();
+    assert!(!result.is_error, "{}", result.content);
+    let output: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    let messages: serde_json::Value =
+        serde_json::from_str(output["stdout"].as_str().unwrap()).unwrap();
+    assert_eq!(messages[0]["body"], "Approved: schema v2");
+    assert_eq!(messages[0]["status"], "accepted");
+}
