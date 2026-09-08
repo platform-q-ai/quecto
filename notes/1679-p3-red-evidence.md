@@ -139,3 +139,73 @@ bound its capability through the mount before its control socket accepted; a
 prompt queued behind the test root (active 1 / queued 1) and was granted only
 after the root released; without the directory the adapter reports no
 capability. 1 passed in 1.54 s.
+
+## Adversarial review (2026-09-08) and RED for each fix
+
+An independent adversarial review of the branch diff reported 4 high, 7 medium
+and 6 low findings; every one was reproduced against the code and fixed with a
+failing test first (`notes/1679-p3-verification.md` lists the observable rows).
+Initial RED (compile-level) captured in `review-red.log`: missing
+`cancel_detached`, `register_root_with_token`, `root_token_path`,
+`start_accepting_missing_ledger`, `FRAME_DEADLINE`, `live_scopes`,
+`retire_child`, and the `Result`-returning `admission_proposal`.
+
+|Finding|Fix|Proof|
+|---|---|---|
+|H1 client `select!` dropped half-read frames|reader and writer on separate tasks|`interleaved_grants_and_completions_never_desynchronize_the_connection` (256 cycles, connection still bound)|
+|H2 grant/cancel race leaked the slot|tracked cancel; an `Active` reply completes as failed|`cancel_after_grant_releases_the_slot_as_a_failed_attempt`|
+|H3 no shutdown path; scopes never retired|completions on the connection runtime, bounded drain, `retire` at exit|processes: `live_scopes == 0` after roots exit|
+|H4a default directory visible to containers|adapter masks the authority root with an empty dir, re-binds `client/`|container e2e: journal/admin/token absent, socket present, on podman|
+|H4b any client could mint roots|owner token (0600, outside `client/`) required|`root_registration_requires_the_owner_token_outside_the_client_directory`|
+|M1 concurrent acquires hit the replay fence|sequence allocated and sent under one lock|`concurrent_acquires_on_one_scope_are_never_rejected_as_replay`|
+|M2 vanished ledger restarted empty|initial checkpoint; missing-after-operation refused unless acknowledged|`missing_ledger_after_prior_operation_fails_closed`|
+|M3 rebind orphaned queued work|supersede disconnects the old session|`rebinding_a_capability_supersedes_the_previous_session`|
+|M4 unknown completion poisoned all groups|refused without poisoning|`completing_a_never_enqueued_sequence_is_refused_without_poisoning_groups`|
+|M5 scope exhaustion|live-scope limit, monotonic serials, parent retires unlaunched child|`scope_limit_counts_live_scopes...`, `a_parent_can_retire_only_its_own_descendants`|
+|M6 create.sh leaked env dir|precondition before mktemp|container e2e: failed create leaves no env dir|
+|M7 outage drained queue as "cancelled"|probe before selection, ledger error to withdrawn waiters, probe cadence|`unhealthy_journal_is_probed_before_dispatch...`, `journal_outage_holds_queued_work...`|
+|L1 missed close wakeup|`Notified::enable` before the flag check|reviewed; existing close tests|
+|L2 `inspect_epoch` workaround|ledger epoch reused|existing cancellation contract|
+|L3 doc/`expect` panics|`admission_proposal` returns `Result`|`admission_proposal_reports_invalid_sections_instead_of_panicking`|
+|L4 relative directory|absolute path required|`relative_authority_directory_is_rejected`|
+|L5 sidecars never removed|child consumes after bind; failed launch removes|processes: sidecar absent after descendant run|
+|L6 no framing deadline|15 s deadline once a prefix arrives; cap 256 KiB validated at start|`a_stalled_frame_is_disconnected_within_the_framing_deadline`|
+|N1 restart needs agent restart|documented|docs|
+
+P1-era contract expectations that encoded the replaced behaviour (retired
+scopes counting toward the limit; unknown completion poisoning) were updated in
+`admission_client.rs` with the new rationale. Mutation results for the fixes
+are appended after the final run.
+
+## Review-fix mutations (final run)
+    === MUTANT R2 raced grant not completed on cancel [inference_admission_broker]
+      test cancel_after_grant_releases_the_slot_as_a_failed_attempt ... FAILED
+      test result: FAILED. 15 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.02s
+    === MUTANT R4 owner token not checked [inference_admission_broker]
+      test root_registration_requires_the_owner_token_outside_the_client_directory ... FAILED
+      test result: FAILED. 15 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.02s
+    === MUTANT R5 missing ledger silently accepted [inference_admission_broker]
+      test missing_ledger_after_prior_operation_fails_closed ... FAILED
+      test result: FAILED. 15 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.03s
+    === MUTANT R6 rebind does not supersede [inference_admission_broker]
+      test rebinding_a_capability_supersedes_the_previous_session ... FAILED
+      test result: FAILED. 15 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.02s
+    === MUTANT R7 no journal probe before selection [contracts]
+      test admission_journal::unhealthy_journal_is_probed_before_dispatch_so_queued_work_is_held ... FAILED
+      test admission_journal::journal_failure_withdraws_the_grant_and_stops_new_grants_until_recovery ... FAILED
+      test result: FAILED. 275 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.05s
+    === MUTANT R8 no framing deadline [inference_admission_broker]
+      test a_stalled_frame_is_disconnected_within_the_framing_deadline ... FAILED
+      test result: FAILED. 15 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.02s
+    === MUTANT R9 scope limit counts retired scopes [contracts]
+      test admission_client::duplicate_and_conflicting_acquire_terminal_eviction_and_scope_limits ... FAILED
+      test admission_recovery::scope_limit_counts_live_scopes_and_serials_are_never_recycled ... FAILED
+      test result: FAILED. 275 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.04s
+    === MUTANT R10 shutdown does not retire [inference_admission_processes]
+      test independent_root_processes_share_the_configured_bound ... FAILED
+      test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.09s
+    === MUTANT R11 sidecar not consumed [inference_admission_processes]
+      test descendant_context_waits_behind_its_root_and_a_forged_context_fails_closed ... FAILED
+      test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.09s
+
+All nine review-fix mutants killed by their intended tests.

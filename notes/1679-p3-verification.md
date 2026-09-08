@@ -16,7 +16,8 @@ authority. RED, mutation and container evidence: `notes/1679-p3-red-evidence.md`
 |AC3 restart-only policy|`config_admission_tests`: absent section disabled; validated proposal/directory; invalid reserve, unknown alias, unknown key rejected at load. `catalogue_runtime` composes through the P2 restart-only factory whenever a binding is installed (mutant P2 killed)|
 |Authentication/lineage|contracts `admission_journal`: distinct root secrets, forged tokens `Unauthorized`, children need the parent capability and inherit its root, retire revokes; `admission_secret_source`: 64-hex OS randomness, unique|
 |BDD|`@inference-admission` lane: 9 scenarios / 49 steps GREEN incl. 3 new authority scenarios over a real in-process authority (shared slot, quarantine/reconcile, reset)|
-|Architecture/quality|architecture 46, contracts 273 (+18 new), quality gate PASS, strict clippy (all targets + test-support) clean, harness lib 4113+6|
+|Review fixes (H1–L6)|`inference_admission_broker` 16 scenarios incl. interleaved traffic, raced cancel completes as failed, owner-token roots, missing-ledger refusal, supersede on rebind, outage hold with ledger error, framing deadline; contracts: no-poison unknown completion, live-scope limit, parent-only child retirement, journal probe; processes: `live_scopes` 0 after clean exits, sidecar consumed; container e2e: authority root masked, only `client/` visible, failed create leaks nothing|
+|Architecture/quality|architecture 46, contracts 277 (+22 new), quality gate PASS, strict clippy (all targets + test-support) clean, harness lib 4116+|
 
 Commands (from repo root, `quecto-wt-1679`):
 
@@ -34,3 +35,28 @@ Not claimed: P4 observation/TUI projection, fairness end-to-end matrix, burst
 comparison and rollout runbooks; multi-host or hostile same-UID enforcement;
 remote cancellation on disconnect. Normal runtime stays disabled without an
 `admission` section. Final gate log lines are appended below after the last run.
+
+## Final gate run (2026-09-08, after review fixes)
+
+```
+== docs invariants
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== lib
+test result: ok. 4118 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 21.77s
+== tagged BDD
+9 scenarios (9 passed)
+49 steps (49 passed)
+== admission integration
+inference_admission_broker: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.02s 
+inference_admission_processes: test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.09s 
+inference_admission_runtime: test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s 
+inference_admission_attempts: test result: ok. 65 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.03s 
+inference_admission_transport: test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s 
+uds_termination: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s 
+1455 scenarios (1455 passed)
+7063 steps (7063 passed)
+pre-push (quality, BDD quality/tags, fmt, strict clippy, architecture 46, contracts 277): PASS after the redundant-guard lint fix
+container e2e (QUECTO_ADMISSION_CONTAINER_E2E=1, podman): 2 passed
+```

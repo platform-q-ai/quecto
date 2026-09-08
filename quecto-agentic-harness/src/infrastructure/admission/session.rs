@@ -40,7 +40,7 @@ pub(super) async fn serve(
         // Idle connections wait indefinitely; once the first byte of a frame
         // has arrived the remainder must follow within the framing deadline.
         match reader.fill_buf().await {
-            Ok(buffer) if buffer.is_empty() => break,
+            Ok([]) => break,
             Ok(_) => {}
             Err(_) => break,
         }

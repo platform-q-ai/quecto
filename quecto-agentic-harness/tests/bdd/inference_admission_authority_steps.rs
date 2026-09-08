@@ -236,8 +236,7 @@ fn then_refused(world: &mut QuectoWorld) {
         .block_on(async { tokio::time::timeout(LIMIT, gate.acquire()).await })
         .unwrap();
     let error = outcome
-        .err()
-        .expect("quarantined group never grants")
+        .expect_err("quarantined group never grants")
         .to_string();
     assert!(error.contains("admission"), "{error}");
     s.refusal = Some(error);

@@ -641,8 +641,7 @@ async fn journal_outage_holds_queued_work_and_reports_the_ledger_not_cancellatio
     // waiter learns it was the ledger, not a cancellation.
     let first = timeout(LIMIT, gate_a.acquire()).await.unwrap();
     let error = first
-        .err()
-        .expect("withdrawn without a durable ledger")
+        .expect_err("withdrawn without a durable ledger")
         .to_string();
     assert!(error.contains("ledger"), "{error}");
     // Later requests are held while the journal is probed, never drained.
